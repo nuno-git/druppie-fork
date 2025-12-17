@@ -1,2 +1,0 @@
-# druppie
-Druppie
