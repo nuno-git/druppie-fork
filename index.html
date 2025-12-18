@@ -1,120 +1,603 @@
 <!DOCTYPE html>
 <html lang="nl">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Druppie: Full Cycle Architecture (Interactive)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
-    
+
     <!-- 
-       v10 Updates:
+       v11 Updates:
        - SPLIT: Identity column now contains "Bouwblok Definities" & "Entra ID".
        - LOGIC: Simulations now query the Block Registry before planning.
        - BASE: Built upon user's custom version (loop-user, click-handlers).
+       - SPECIFICATION: Enhanced descriptions for clarity.
     -->
-    
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-        
-        body { font-family: 'Inter', sans-serif; background-color: #f0f4f8; color: #0f172a; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8;
+            color: #0f172a;
+        }
+
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
 
         /* --- KANBAN BOARD --- */
         .kanban-container {
-            display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem;
-            background: #cbd5e1; padding: 4px; border-radius: 6px;
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 0.5rem;
+            background: #cbd5e1;
+            padding: 4px;
+            border-radius: 6px;
         }
+
         .kanban-col {
-            background: #f1f5f9; border-radius: 4px; padding: 6px; min-height: 85px;
-            display: flex; flex-direction: column; border-top: 3px solid #94a3b8;
+            background: #f1f5f9;
+            border-radius: 4px;
+            padding: 6px;
+            min-height: 85px;
+            display: flex;
+            flex-direction: column;
+            border-top: 3px solid #94a3b8;
         }
+
         .kanban-header {
-            font-size: 0.6rem; font-weight: 700; text-transform: uppercase; color: #64748b; margin-bottom: 4px; letter-spacing: 0.05em;
+            font-size: 0.6rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #64748b;
+            margin-bottom: 4px;
+            letter-spacing: 0.05em;
         }
-        
+
         /* Split Column 5 */
-        .split-container { display: flex; gap: 4px; height: 100%; flex-grow: 1; }
-        .split-col { 
-            flex: 1; background: #e2e8f0; border-radius: 3px; display: flex; flex-direction: column; align-items: center; 
-            padding-top: 4px; border: 1px dashed #cbd5e1; position: relative;
+        .split-container {
+            display: flex;
+            gap: 4px;
+            height: 100%;
+            flex-grow: 1;
         }
-        .split-label { font-size: 0.5rem; font-weight: bold; color: #94a3b8; text-transform: uppercase; }
+
+        .split-col {
+            flex: 1;
+            background: #e2e8f0;
+            border-radius: 3px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 4px;
+            border: 1px dashed #cbd5e1;
+            position: relative;
+        }
+
+        .split-label {
+            font-size: 0.5rem;
+            font-weight: bold;
+            color: #94a3b8;
+            text-transform: uppercase;
+        }
 
         .project-card {
-            background: white; padding: 6px; border-radius: 4px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1); border-left: 3px solid #3b82f6;
-            font-size: 0.7rem; font-weight: 600; color: #334155; width: 100%;
+            background: white;
+            padding: 6px;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            border-left: 3px solid #3b82f6;
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: #334155;
+            width: 100%;
             animation: slideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
             margin-bottom: 4px;
         }
-        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
 
         /* --- DIAGRAM --- */
-        .diagram-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 1rem; position: relative; }
+        .diagram-grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 1rem;
+            position: relative;
+        }
+
         .arch-card {
-            background: white; border: 1px solid #cbd5e1; border-radius: 0.5rem; padding: 0.75rem;
-            position: relative; z-index: 10; transition: all 0.2s ease; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            background: white;
+            border: 1px solid #cbd5e1;
+            border-radius: 0.5rem;
+            padding: 0.75rem;
+            position: relative;
+            z-index: 10;
+            transition: all 0.2s ease;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
             cursor: pointer;
         }
-        .arch-card:hover { transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-color: #94a3b8; }
-        
+
+        .arch-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border-color: #94a3b8;
+        }
+
         /* Orchestrator Internals */
         .internal-block {
-            background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
-            border-radius: 4px; padding: 4px; text-align: center;
-            font-size: 0.6rem; color: white; transition: all 0.3s;
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+            padding: 4px;
+            text-align: center;
+            font-size: 0.6rem;
+            color: white;
+            transition: all 0.3s;
         }
-        .internal-active { background: white; color: #2563eb; font-weight: bold; transform: scale(1.05); box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+
+        .internal-active {
+            background: white;
+            color: #2563eb;
+            font-weight: bold;
+            transform: scale(1.05);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
 
         /* Highlighting */
-        .active-comp { transform: scale(1.02); z-index: 20; box-shadow: 0 0 15px rgba(59, 130, 246, 0.4); }
-        .ring-blue { border-color: #3b82f6; border-width: 2px; }
-        .ring-purple { border-color: #9333ea; border-width: 2px; }
-        .ring-orange { border-color: #f97316; border-width: 2px; }
-        .ring-green { border-color: #22c55e; border-width: 2px; }
-        .ring-red { border-color: #f87171; border-width: 2px; }
+        .active-comp {
+            transform: scale(1.02);
+            z-index: 20;
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.4);
+        }
+
+        .ring-blue {
+            border-color: #3b82f6;
+            border-width: 2px;
+        }
+
+        .ring-purple {
+            border-color: #9333ea;
+            border-width: 2px;
+        }
+
+        .ring-orange {
+            border-color: #f97316;
+            border-width: 2px;
+        }
+
+        .ring-green {
+            border-color: #22c55e;
+            border-width: 2px;
+        }
+
+        .ring-red {
+            border-color: #f87171;
+            border-width: 2px;
+        }
 
         /* Animation Packet */
         .packet {
-            position: absolute; width: 14px; height: 14px; border-radius: 50%; z-index: 50;
-            background: #ef4444; border: 2px solid white; box-shadow: 0 0 8px rgba(0,0,0,0.2);
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            z-index: 50;
+            background: #ef4444;
+            border: 2px solid white;
+            box-shadow: 0 0 8px rgba(0, 0, 0, 0.2);
         }
 
         /* Approver Pulse */
-        .pulse-req { animation: pulsePurple 1.5s infinite; }
-        @keyframes pulsePurple { 0% { box-shadow: 0 0 0 0 rgba(147, 51, 234, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(147, 51, 234, 0); } 100% { box-shadow: 0 0 0 0 rgba(147, 51, 234, 0); } }
+        .pulse-req {
+            animation: pulsePurple 1.5s infinite;
+        }
+
+        @keyframes pulsePurple {
+            0% {
+                box-shadow: 0 0 0 0 rgba(147, 51, 234, 0.4);
+            }
+
+            70% {
+                box-shadow: 0 0 0 10px rgba(147, 51, 234, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(147, 51, 234, 0);
+            }
+        }
 
         /* Chat & Terminal */
         .chat-bubble {
-            font-size: 0.75rem; padding: 8px 12px; border-radius: 8px; max-width: 85%;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            font-size: 0.75rem;
+            padding: 8px 12px;
+            border-radius: 8px;
+            max-width: 85%;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
         }
-        .bubble-user { background-color: #dbeafe; color: #1e40af; border-top-right-radius: 0; }
-        .bubble-ai { background-color: white; border: 1px solid #e2e8f0; color: #334155; border-top-left-radius: 0; }
-        .loop-user { background-color: lightsalmon; border: 1px solid #e2e8f0; color: #334155; border-top-left-radius: 0; }
-        
-        
-        .terminal-line {
-            font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; padding: 1px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
-        }
-        .term-info { color: #94a3b8; }
-        .term-success { color: #4ade80; }
-        .term-warn { color: #fbbf24; }
-        .term-error { color: #f87171; }
-        
-        /* Scrollbars */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-        .dark-scroll ::-webkit-scrollbar-thumb { background: #475569; }
 
+        .bubble-user {
+            background-color: #dbeafe;
+            color: #1e40af;
+            border-top-right-radius: 0;
+        }
+
+        .bubble-ai {
+            background-color: white;
+            border: 1px solid #e2e8f0;
+            color: #334155;
+            border-top-left-radius: 0;
+        }
+
+        .loop-user {
+            background-color: lightsalmon;
+            border: 1px solid #e2e8f0;
+            color: #334155;
+            border-top-left-radius: 0;
+        }
+
+
+        .terminal-line {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.65rem;
+            padding: 1px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .term-info {
+            color: #94a3b8;
+        }
+
+        .term-success {
+            color: #4ade80;
+        }
+
+        .term-warn {
+            color: #fbbf24;
+        }
+
+        .term-error {
+            color: #f87171;
+        }
+
+        /* Scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        .dark-scroll ::-webkit-scrollbar-thumb {
+            background: #475569;
+        }
     </style>
 </head>
+
 <body class="h-screen flex flex-col overflow-hidden">
 
+    <!-- SPECIFICATION -->
+    <script>
+        const SPEC = {
+            "comp-copilot": {
+                "name": "Druppie UI (Copilot)",
+                "description": "De gebruikersinterface (Chat) dit kan Copilot zijn voor simple vragen of een specifieke Druppie Applicatie. Ontvangt vragen en stuurt deze door naar de backend.",
+                "steps": [
+                    "Gebruiker verstuurt prompt.",
+                    "Interface rendert chat bubbles.",
+                    "Verzoek wordt doorgestuurd naar Orchestrator."
+                ],
+                "design": {
+                    "components": ["Frontend UI", "API Gateway"],
+                    "dataFlow": ["Gebruiker -> UI -> Backend"]
+                },
+                "prompts": {
+                    "research": "Analyseer user requirements voor nieuwe chat interacties.",
+                    "build": "Genereer responsive HTML/JS componenten voor de chat interface.",
+                    "test": "Valideren van rendering van markdown en user input handling.",
+                    "deploy": "Verpakken van frontend assets en deployen naar static host."
+                }
+            },
+            "comp-compliance": {
+                "name": "Druppie Compliance Layer",
+                "description": "Overkoepelende beveiligingslaag. Voert continue, dagelijkse compliance checks uit over alle logs en markeert kwetsbaarheden op basis van audit regels.",
+                "steps": [
+                    "Monitoren van logs en activiteit.",
+                    "Valideren tegen compliance regels.",
+                    "Markeren van afwijkingen.",
+                    "Genereren van compliance rapporten."
+                ],
+                "design": {
+                    "components": ["Security Scanner", "Audit Rules Engine", "Reporting Dashboard"],
+                    "dataFlow": ["Logs -> Scanner -> Audit DB -> Dashboard"]
+                },
+                "prompts": {
+                    "research": "Identificeer relevante security frameworks (ISO27001, AVG).",
+                    "build": "Schrijf audit regels voor log analyse en anomaly detection.",
+                    "test": "Draai compliance checks tegen test datasets met bekende kwetsbaarheden.",
+                    "deploy": "Activeer ruleset in productie monitoring pipeline."
+                }
+            },
+            "comp-blocks": {
+                "name": "Bouwblok Definities",
+                "description": "Catalogus met specificaties van bouwblokken, skills, agents en MCP services. Druppie Core raadpleegt dit register om te bepalen welke capability de vraag kan beantwoorden.",
+                "steps": [
+                    "Registreren van nieuwe blokken.",
+                    "Zoeken naar geschikte blokken op basis van intentie.",
+                    "Versiebeheer van definities."
+                ],
+                "design": {
+                    "components": ["Registry DB", "Search API", "Definition Schema"],
+                    "dataFlow": ["Core -> Registry -> Capability Metadata"]
+                },
+                "prompts": {
+                    "research": "Definieer metadata schema voor capability discovery.",
+                    "build": "Implementeer vector-search voor semantisch zoeken van skills.",
+                    "test": "Verifieer of correcte skills worden gevonden bij vage omschrijvingen.",
+                    "deploy": "Indexeer initiële set van systeem capabilities."
+                }
+            },
+            "comp-entra": {
+                "name": "Microsoft Entra ID",
+                "description": "Beheert identiteiten en toegang (IAM). Zorgt ervoor dat alleen geautoriseerde gebruikers acties uitvoeren.",
+                "steps": [
+                    "Authenticeren van gebruiker.",
+                    "Valideren van tokens.",
+                    "Toewijzen van rollen en rechten."
+                ],
+                "design": {
+                    "components": ["Identity Provider", "Token Service", "Directory"],
+                    "dataFlow": ["UI -> Entra ID -> Access Token"]
+                },
+                "prompts": {
+                    "research": "Bepaal benodigde Entra rollen en scopes.",
+                    "build": "Configureer App Registration en claim mapping policy.",
+                    "test": "Valideer token generatie en rol toewijzing.",
+                    "deploy": "Provision service principal in tenant."
+                }
+            },
+            "comp-orch": {
+                "name": "Druppie Core (Orchestrator)",
+                "description": "Het brein van de architectuur (Semantic Kernel). Gebruikt LLMs vanuit foundry of eigen datacenter om intentie te bepalen en taken te plannen.",
+                "steps": [
+                    "Ontvangen van gebruikersvraag.",
+                    "Analyseren van intentie (Planner).",
+                    "Raadplegen van geheugen en context.",
+                    "Aansturen van downstream agents."
+                ],
+                "design": {
+                    "components": ["Semantic Kernel", "Planner", "Memory", "RAG", "Safety Filter"],
+                    "dataFlow": ["Input -> Safety -> Planner -> Execution -> Output"]
+                },
+                "prompts": {
+                    "research": "Ontwerp orchestratie logica en planner strategie.",
+                    "build": "Implementeer Semantic Kernel logic en plugin integratie.",
+                    "test": "Test planner gedrag bij complexe, multi-step prompts.",
+                    "deploy": "Deploy core service en verbind met LLM backend."
+                }
+            },
+            "comp-policy": {
+                "name": "Policy Engine",
+                "description": "Controleert of verzoeken voldoen aan bedrijfsregels (bijv. Wetgeving, Ethiek, en controls zoals geen SQL toegang zonder goedkeuring).",
+                "steps": [
+                    "Analyseren van voorgesteld actieplan.",
+                    "Toetsen aan beleidsregels.",
+                    "Blokkeren of flaggen van risico's.",
+                    "Initieren van goedkeuringsflow indien nodig."
+                ],
+                "design": {
+                    "components": ["Rule Engine", "Policy Database", "Violation Handler"],
+                    "dataFlow": ["Orchestrator -> Policy Check -> Decision"]
+                },
+                "prompts": {
+                    "research": "Inventariseer risico's en vereiste controls.",
+                    "build": "Codificeer beleid in Open Policy Agent (OPA) regels.",
+                    "test": "Simuleer violations en verifieer blocking behaviour.",
+                    "deploy": "Push policy bundle naar enforcement points."
+                }
+            },
+            "comp-ciso": {
+                "name": "Mens in de Loop",
+                "description": "Human-in-the-Loop stap. Vereist handmatige goedkeuring voor risicovolle acties of specifieke kennisvragen.",
+                "steps": [
+                    "Ontvangen van goedkeuringsverzoek.",
+                    "Menselijke beoordeling van risico.",
+                    "Goedkeuren of afwijzen.",
+                    "Terugkoppelen aan systeem."
+                ],
+                "design": {
+                    "components": ["Approval Dashboard", "Notification Service", "Audit Logger"],
+                    "dataFlow": ["Policy Engine -> Human -> Approval Status"]
+                },
+                "prompts": {
+                    "research": "Ontwerp workflow voor menselijke goedkeuring.",
+                    "build": "Bouw approval dashboard en notificatie integratie (Email/Teams).",
+                    "test": "Test user flow van verzoek tot goedkeuring.",
+                    "deploy": "Activeer Human-in-the-Loop module."
+                }
+            },
+            "comp-db": {
+                "name": "Traceability DB",
+                "description": "Slaat alle stappen, prompts en goedkeuringen op voor auditing doeleinden.",
+                "steps": [
+                    "Loggen van interacties.",
+                    "Opslaan van beslissingen en prompts.",
+                    "Beschikbaar stellen voor audits."
+                ],
+                "design": {
+                    "components": ["Timeseries DB", "Audit Log Schema", "Query API"],
+                    "dataFlow": ["System Components -> Logging -> Database"]
+                },
+                "prompts": {
+                    "research": "Bepaal audit log schema eisen.",
+                    "build": "Implementeer structured logging en storage backend.",
+                    "test": "Verifieer of events onwijzigbaar worden opgeslagen.",
+                    "deploy": "Provision storage en retentie policies."
+                }
+            },
+            "comp-build-plane": {
+                "name": "Build Plane",
+                "description": "Een Specificatie gestuurde AI omgeving voor het realiseren van een oplossing. Waarbij verschillenden AI-Experts samen werken om een totaal oplossing te realiseren.",
+                "steps": [
+                    "Ontvangen van bouwspecificatie.",
+                    "Genereren van implementatieplan.",
+                    "Coördineren van builders en tools.",
+                    "Opleveren van artifacts."
+                ],
+                "design": {
+                    "components": ["Build Controller", "Agent Swarm", "Artifact Repository"],
+                    "dataFlow": ["Spec -> Build Controller -> Agents -> Artifacts"]
+                },
+                "prompts": {
+                    "research": "Onderzoek optimale agent samenstelling voor build taken.",
+                    "build": "Implementeer multi-agent coördinatie logica.",
+                    "test": "Test generatie snelheid en kwaliteit van output.",
+                    "deploy": "Activeer build plane omgeving."
+                }
+            },
+            "comp-builder": {
+                "name": "Builder Agent",
+                "description": "Gespecialiseerde AI die code en Infrastructure-as-Code (IaC) genereert.",
+                "steps": [
+                    "Lezen van taakomschrijving.",
+                    "Genereren van code (Python, JS, etc.).",
+                    "Schrijven van Terraform/Bicep.",
+                    "Valideren van syntax."
+                ],
+                "design": {
+                    "components": ["Code LLM", "Syntax Checker", "File Writer"],
+                    "dataFlow": ["Task -> LLM -> Code Files"]
+                },
+                "prompts": {
+                    "research": "Selecteer het beste coding LLM model.",
+                    "build": "Implementeer code generatie prompts en syntax validatie.",
+                    "test": "Genereer unit tests voor gegenereerde code.",
+                    "deploy": "Koppel aan Foundry voor build handover."
+                }
+            },
+            "comp-foundry": {
+                "name": "Foundry",
+                "description": "Standaard IT ontwikkel tools: AI models, Secure Build Pipeline en Testing middelen. Bouwt en test container images en scant op kwetsbaarheden.",
+                "steps": [
+                    "Pullen van broncode.",
+                    "Bouwen van container images.",
+                    "Scannen op CVEs (Security).",
+                    "Pushen naar registry."
+                ],
+                "design": {
+                    "components": ["CI/CD Pipeline", "Docker Engine", "Vulnerability Scanner"],
+                    "dataFlow": ["Code -> Build -> Scan -> Image Registry"]
+                },
+                "prompts": {
+                    "research": "Bepaal security scan tools en container base images.",
+                    "build": "Schrijf Dockerfiles en CI/CD pipeline definities.",
+                    "test": "Bouw test images en verifieer scanner output.",
+                    "deploy": "Configureer build runners en registry access."
+                }
+            },
+            "comp-runtime-aks": {
+                "name": "Runtime (AKS)",
+                "description": "Een hardware infrastructuur waarop wij veilig en compliant zonder menselijk tussenkomst snel Bouwblokken kunnen deployen.",
+                "steps": [
+                    "Ontvangen van deployment manifest.",
+                    "Scheduler wijst resources toe.",
+                    "Pullen van images.",
+                    "Starten van pods."
+                ],
+                "design": {
+                    "components": ["Kubernetes API", "Scheduler", "Kubelet", "Network Policy"],
+                    "dataFlow": ["Manifest -> API Server -> Pod Running"]
+                },
+                "prompts": {
+                    "research": "Ontwerp cluster architectuur en netwerk segmentatie.",
+                    "build": "Provision AKS cluster via Terraform.",
+                    "test": "Validatie van failover en scaling behaviour.",
+                    "deploy": "Koppel cluster aan CI/CD voor deployments."
+                }
+            },
+            "comp-mcp": {
+                "name": "MCP Interface",
+                "description": "Een interface waarmee AI toegang kan krijgen tot systemen/data via natuurlijke taal (Model Context Protocol).",
+                "steps": [
+                    "Vertalen van natuurlijke taal naar API calls.",
+                    "Uitvoeren van actie op extern systeem.",
+                    "Retourneren van gestructureerd resultaat."
+                ],
+                "design": {
+                    "components": ["MCP Server", "Tool Definitions", "Connection Managers"],
+                    "dataFlow": ["AI Call -> MCP -> External System -> Result"]
+                },
+                "prompts": {
+                    "research": "Identificeer te ontsluiten systemen en acties.",
+                    "build": "Implementeer MCP server en tool handlers.",
+                    "test": "Test tool execution via LLM calls.",
+                    "deploy": "Expose MCP endpoint aan Orchestrator."
+                }
+            },
+            "comp-pod-exist": {
+                "name": "Knowledge Bot",
+                "description": "Bestaande workload die informatie ophaalt uit documenten.",
+                "steps": [
+                    "Ontvangen van zoekopdracht.",
+                    "Embedden van query.",
+                    "Retrieveren van chunks.",
+                    "Synthetiseren van antwoord."
+                ],
+                "design": {
+                    "components": ["Vector DB Client", "Embedding Model", "Response Generator"],
+                    "dataFlow": ["Query -> Vector Search -> Context -> Answer"]
+                },
+                "prompts": {
+                    "research": "Selecteer embedding model en vector database.",
+                    "build": "Bouw ingest pipeline en RAG retrieval logica.",
+                    "test": "Meet retrieval accuracy op test queries.",
+                    "deploy": "Deploy pod en start indexering."
+                }
+            },
+            "comp-new-pod": {
+                "name": "Dynamic Slot",
+                "description": "Ruimte voor nieuwe applicaties die door de Builder Agent worden gedeployed.",
+                "steps": [
+                    "Reserveren van resources.",
+                    "Deployen van nieuwe container.",
+                    "Configureren van netwerk toegang."
+                ],
+                "design": {
+                    "components": ["Namespace", "Resource Quota", "Ingress"],
+                    "dataFlow": ["Deployment -> New Pod -> Active Service"]
+                },
+                "prompts": {
+                    "research": "Bepaal resource requirements voor nieuwe container workloads.",
+                    "build": "Genereer Kubernetes Deployment en Service manifests.",
+                    "test": "Simuleer deployment en verifieer health probes.",
+                    "deploy": "Apply manifests naar namespace en verifieer rollout status."
+                }
+            }
+        };
+    </script>
     <!-- TOP NAV -->
     <nav class="bg-slate-900 text-white p-3 flex justify-between items-center shadow-lg z-50 flex-none h-14">
         <div class="flex items-center space-x-3">
@@ -126,16 +609,18 @@
         </div>
         <div class="flex space-x-3">
             <!-- Scenario 1 Button -->
-            <button onclick="runScenario('response')" class="group px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-600 transition flex items-center space-x-2">
+            <button onclick="runScenario('response')"
+                class="group px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-600 transition flex items-center space-x-2">
                 <div class="w-2 h-2 rounded-full bg-green-400 group-hover:animate-ping"></div>
                 <div class="text-left">
                     <div class="text-[9px] text-slate-400 uppercase font-bold">Scenario 1</div>
                     <div class="text-xs font-bold">Vraag & Antwoord</div>
                 </div>
             </button>
-            
+
             <!-- Scenario 2 Button -->
-            <button onclick="runScenario('build')" class="group px-3 py-1.5 bg-indigo-900 hover:bg-indigo-800 rounded border border-indigo-700 transition flex items-center space-x-2">
+            <button onclick="runScenario('build')"
+                class="group px-3 py-1.5 bg-indigo-900 hover:bg-indigo-800 rounded border border-indigo-700 transition flex items-center space-x-2">
                 <div class="w-2 h-2 rounded-full bg-orange-400 group-hover:animate-ping"></div>
                 <div class="text-left">
                     <div class="text-[9px] text-indigo-300 uppercase font-bold">Scenario 2 (HITL)</div>
@@ -146,29 +631,37 @@
     </nav>
 
     <div class="flex flex-grow overflow-hidden">
-        
+
         <!-- LEFT: VISUALIZATION -->
         <div class="flex-grow flex flex-col bg-slate-50 relative overflow-y-auto">
-            
+
             <!-- KANBAN BOARD -->
             <div class="p-4 border-b border-slate-200">
                 <div class="kanban-container">
-                    <div class="kanban-col" id="col-backlog"><div class="kanban-header">1. Aanvraag</div></div>
-                    <div class="kanban-col" id="col-spec"><div class="kanban-header">2. Specificatie</div></div>
-                    <div class="kanban-col" id="col-approval"><div class="kanban-header">3. Goedkeuring</div></div>
-                    <div class="kanban-col" id="col-exec"><div class="kanban-header">4. Uitvoering</div></div>
-                    
+                    <div class="kanban-col" id="col-backlog">
+                        <div class="kanban-header">1. Aanvraag</div>
+                    </div>
+                    <div class="kanban-col" id="col-spec">
+                        <div class="kanban-header">2. Specificatie</div>
+                    </div>
+                    <div class="kanban-col" id="col-approval">
+                        <div class="kanban-header">3. Goedkeuring</div>
+                    </div>
+                    <div class="kanban-col" id="col-exec">
+                        <div class="kanban-header">4. Uitvoering</div>
+                    </div>
+
                     <!-- Split Column 5 -->
                     <div class="kanban-col" style="padding: 2px; background: #e2e8f0;">
-                         <div class="kanban-header" style="margin-left: 4px; margin-top: 4px;">5. Output</div>
-                         <div class="split-container">
-                             <div class="split-col" id="col-response">
-                                 <div class="split-label">Antwoord</div>
-                             </div>
-                             <div class="split-col" id="col-live">
-                                 <div class="split-label text-green-700">Live App</div>
-                             </div>
-                         </div>
+                        <div class="kanban-header" style="margin-left: 4px; margin-top: 4px;">5. Output</div>
+                        <div class="split-container">
+                            <div class="split-col" id="col-response">
+                                <div class="split-label">Antwoord</div>
+                            </div>
+                            <div class="split-col" id="col-live">
+                                <div class="split-label text-green-700">Live App</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -176,15 +669,17 @@
             <!-- ARCHITECTURE DIAGRAM -->
             <div class="p-6 flex-grow relative flex flex-col justify-center" id="diagram-area">
                 <!-- Background Grid -->
-                <div class="absolute inset-0 opacity-[0.05] pointer-events-none" style="background-image: radial-gradient(#64748b 1px, transparent 1px); background-size: 20px 20px;"></div>
+                <div class="absolute inset-0 opacity-[0.05] pointer-events-none"
+                    style="background-image: radial-gradient(#64748b 1px, transparent 1px); background-size: 20px 20px;">
+                </div>
 
                 <div class="diagram-grid max-w-5xl mx-auto w-full select-none">
-                    
+
                     <!-- DRUPPIE COMPLIANCE WRAPPER (Background Layer) -->
-                    <div id="comp-compliance" 
-                         onclick="inspect('comp-compliance', 'Druppie Compliance', 'Overkoepelende beveiligingslaag. Voert continue, dagelijkse compliance checks uit over alle logs en markeert kwetsbaarheden op basis van audit regels. Valideert welke bouwblokken veranderd zijn en bepaalt opbasis daarvan welke bouwblokken in productie vernieuwd worden.', 'bg-red-50 border-red-300')" 
-                         class="absolute -inset-8 bg-red-50/40 ml-2 mr-2 border-2 border-dashed border-red-200 rounded-[3rem] z-0 cursor-pointer hover:bg-red-50/60 transition-colors shadow-sm">
-                        <div class="absolute bottom-2 right-6 flex items-center gap-2 text-red-300 font-bold uppercase tracking-widest text-[10px]">
+                    <div id="comp-compliance" onclick="inspect('comp-compliance')"
+                        class="absolute -inset-8 bg-red-50/40 ml-2 mr-2 border-2 border-dashed border-red-200 rounded-[3rem] z-0 cursor-pointer hover:bg-red-50/60 transition-colors shadow-sm">
+                        <div
+                            class="absolute bottom-2 right-6 flex items-center gap-2 text-red-300 font-bold uppercase tracking-widest text-[10px]">
                             <i data-lucide="shield-check" class="w-4 h-4"></i>
                             Druppie Compliance Layer
                         </div>
@@ -192,7 +687,8 @@
 
                     <!-- TOP: USER -->
                     <div class="col-span-12 flex justify-center mb-6 z-10">
-                        <div id="comp-copilot" onclick="inspect('comp-copilot', 'Druppie UI', 'De gebruikersinterface (Chat) dit kan Copilot zijn voor simple vragen of een specifieke Druppie Applicatie. Ontvangt vragen en stuurt deze door naar de backend.', 'border-blue-500')" class="arch-card w-1/3 text-center border-t-4 border-t-blue-500 shadow-sm">
+                        <div id="comp-copilot" onclick="inspect('comp-copilot')"
+                            class="arch-card w-1/3 text-center border-t-4 border-t-blue-500 shadow-sm">
                             <div class="text-3xl mb-1">👤</div>
                             <div class="font-bold text-sm">Druppie APP<BR>Copilot APP</div>
                             <div class="text-[10px] text-slate-400">Gebruiker Interface</div>
@@ -201,24 +697,27 @@
 
                     <!-- MIDDLE: CONTROL PLANE -->
                     <div class="col-span-12 grid grid-cols-12 gap-4 mb-8 z-10">
-                        
+
                         <!-- NEW SPLIT COLUMN: Bouwblokken & Entra -->
                         <div class="col-span-2 flex flex-col gap-2 h-full">
                             <!-- Bouwblok Definities -->
-                            <div id="comp-blocks" onclick="inspect('comp-blocks', 'Bouwblok Definities', 'Catalogus met specificaties van bouwblokken, skills, agents en MCP services. Druppie Core raadpleegt dit register om te bepalen welke capability de vraag kan beantwoorden.', 'border-indigo-300')" class="arch-card flex-1 text-center bg-indigo-50/50 border-indigo-200 flex flex-col justify-center hover:bg-indigo-50 transition">
+                            <div id="comp-blocks" onclick="inspect('comp-blocks')"
+                                class="arch-card flex-1 text-center bg-indigo-50/50 border-indigo-200 flex flex-col justify-center hover:bg-indigo-50 transition">
                                 <div class="text-xl">🧩</div>
                                 <div class="text-[9px] font-bold mt-1 leading-tight">Bouwblok<br>Definities</div>
                             </div>
-                            
+
                             <!-- Entra ID -->
-                            <div id="comp-entra" onclick="inspect('comp-entra', 'Microsoft Entra ID', 'Beheert identiteiten en toegang (IAM). Zorgt ervoor dat alleen geautoriseerde gebruikers acties uitvoeren.', 'border-slate-300')" class="arch-card flex-1 text-center bg-slate-50 flex flex-col justify-center">
+                            <div id="comp-entra" onclick="inspect('comp-entra')"
+                                class="arch-card flex-1 text-center bg-slate-50 flex flex-col justify-center">
                                 <div class="text-xl">🛡️</div>
                                 <div class="text-[9px] font-bold mt-1">Entra ID</div>
                             </div>
                         </div>
 
                         <!-- Orchestrator (X-Ray) -->
-                        <div id="comp-orch" onclick="inspect('comp-orch', 'Druppie Core', 'Het brein van de architectuur (Semantic Kernel). Gebruikt LLMs vanuit foundry of eigen datacenter om intentie te bepalen en taken te plannen.', 'bg-blue-600 text-white')" class="col-span-6 arch-card bg-blue-600 text-white shadow-lg p-3">
+                        <div id="comp-orch" onclick="inspect('comp-orch')"
+                            class="col-span-6 arch-card bg-blue-600 text-white shadow-lg p-3">
                             <div class="flex justify-between items-start mb-3">
                                 <div>
                                     <h3 class="font-bold text-xs">Druppie Core</h3>
@@ -231,26 +730,31 @@
                                 <div id="inner-planner" class="internal-block">Planner (Logic)</div>
                                 <div id="inner-memory" class="internal-block">Memory (Context)</div>
                                 <div id="inner-rag" class="internal-block">RAG (Knowledge)</div>
-                                <div id="inner-safety" class="internal-block bg-red-500/20 border-red-400/50">Safety Filter</div>
+                                <div id="inner-safety" class="internal-block bg-red-500/20 border-red-400/50">Safety
+                                    Filter</div>
                             </div>
                         </div>
 
                         <!-- Governance & Approval -->
                         <div class="col-span-4 grid grid-cols-1 gap-2 h-full">
                             <div class="flex gap-2 h-full">
-                                <div id="comp-policy" onclick="inspect('comp-policy', 'Policy Engine', 'Controleert of verzoeken voldoen aan bedrijfsregels (bijv. Wetgeving, Ethiek, en human in the loop controls zoals geen SQL toegang zonder goedkeuring).', 'bg-slate-50')" class="arch-card flex-1 text-center bg-slate-50 flex flex-col justify-center">
+                                <div id="comp-policy" onclick="inspect('comp-policy')"
+                                    class="arch-card flex-1 text-center bg-slate-50 flex flex-col justify-center">
                                     <div class="text-lg">📜</div>
                                     <div class="text-[9px] font-bold">Policy</div>
                                 </div>
                                 <!-- THE CISO COMPONENT -->
-                                <div id="comp-ciso" onclick="inspect('comp-ciso', 'Mens in de Loop', 'Human-in-the-Loop stap. Vereist handmatige goedkeuring voor risicovolle acties of specifike kennis vragen.', 'bg-purple-50 border-purple-300')" class="arch-card flex-1 text-center border-purple-300 bg-purple-50 flex flex-col justify-center relative transition-all duration-300">
-                                    <div class="absolute -top-2 -right-2 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full hidden shadow-sm" id="ciso-badge">REQ</div>
+                                <div id="comp-ciso" onclick="inspect('comp-ciso')"
+                                    class="arch-card flex-1 text-center border-purple-300 bg-purple-50 flex flex-col justify-center relative transition-all duration-300">
+                                    <div class="absolute -top-2 -right-2 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full hidden shadow-sm"
+                                        id="ciso-badge">REQ</div>
                                     <div class="text-lg">👮‍♂️</div>
                                     <div class="text-[9px] font-bold text-purple-900">Mens in Loop</div>
                                     <div id="ciso-status" class="text-[8px] text-slate-400 mt-1">Idle</div>
                                 </div>
                             </div>
-                            <div id="comp-db" onclick="inspect('comp-db', 'Traceability DB', 'Slaat alle stappen, prompts en goedkeuringen op voor auditing doeleinden.', 'bg-teal-50 border-teal-300')" class="arch-card text-center bg-teal-50 border-teal-300 py-2">
+                            <div id="comp-db" onclick="inspect('comp-db')"
+                                class="arch-card text-center bg-teal-50 border-teal-300 py-2">
                                 <div class="text-xs font-bold text-teal-800">🗄️ Traceability & Audit DB</div>
                             </div>
                         </div>
@@ -258,17 +762,21 @@
 
                     <!-- BOTTOM: EXECUTION PLANES (Parallel) -->
                     <div class="col-span-12 grid grid-cols-2 gap-6 z-10">
-                        
+
                         <!-- Build Plane -->
-                        <div class="border-2 dashed border-orange-200 rounded-xl p-3 bg-orange-50/30 relative" >
-                            <span id="comp-build-plane" onclick="inspect('comp-build-plane', 'Build Plane', 'Een Specificatie gestuurde AI omgeving voor het realiseren van een oplossing. Waarbij verschillenden AI-Experts samen werken om een totaal oplossing te realiseren.', 'border-green-200')" class="absolute -top-3 left-4 bg-orange-100 text-orange-600 text-[9px] font-bold px-2 rounded uppercase tracking-wider">Build Plane</span>
+                        <div class="border-2 dashed border-orange-200 rounded-xl p-3 bg-orange-50/30 relative">
+                            <span id="comp-build-plane" onclick="inspect('comp-build-plane')"
+                                class="absolute -top-3 left-4 bg-orange-100 text-orange-600 text-[9px] font-bold px-2 rounded uppercase tracking-wider">Build
+                                Plane</span>
                             <div class="flex space-x-2 items-center h-full">
-                                <div id="comp-builder" onclick="inspect('comp-builder', 'Builder Agent', 'Gespecialiseerde AI die code en Infrastructure-as-Code (IaC) genereert.', 'border-orange-300')" class="arch-card flex-1 text-center border-orange-300 py-3">
+                                <div id="comp-builder" onclick="inspect('comp-builder')"
+                                    class="arch-card flex-1 text-center border-orange-300 py-3">
                                     <div class="text-xl">👷‍♂️</div>
                                     <div class="font-bold text-[10px] text-orange-900">Builder Agent</div>
                                 </div>
                                 <div class="text-orange-300 text-xs">➔</div>
-                                <div id="comp-foundry" onclick="inspect('comp-foundry', 'Foundry', 'Standaard IT ontwikkel tools: AI models, Secure Build Pipeline en Testing middelen. Bouwt en test container images en scant op kwetsbaarheden.', 'border-orange-300')" class="arch-card flex-1 text-center border-orange-300 opacity-60 py-3">
+                                <div id="comp-foundry" onclick="inspect('comp-foundry')"
+                                    class="arch-card flex-1 text-center border-orange-300 opacity-60 py-3">
                                     <div class="text-xl">🏭</div>
                                     <div class="font-bold text-[10px]">Foundry</div>
                                 </div>
@@ -277,17 +785,22 @@
 
                         <!-- Runtime Plane -->
                         <div class="border-2 dashed border-green-200 rounded-xl p-3 bg-green-50/30 relative">
-                            <span id="comp-runtime-aks" onclick="inspect('comp-runtime-aks', 'AKS (Kubernetes Cluster)', 'Een hardware infrastructuur waarop wij veilig en complaint zonder menselijk tussenkomst snel Bouwblokken kunnen deployen en automatisch kunnen laten beheren', 'border-green-200')" class="absolute -top-3 left-4 bg-green-100 text-green-600 text-[9px] font-bold px-2 rounded uppercase tracking-wider">Runtime (AKS)</span>
+                            <span id="comp-runtime-aks" onclick="inspect('comp-runtime-aks')"
+                                class="absolute -top-3 left-4 bg-green-100 text-green-600 text-[9px] font-bold px-2 rounded uppercase tracking-wider">Runtime
+                                (AKS)</span>
                             <div class="flex flex-col h-full justify-between gap-2">
-                                <div id="comp-mcp" onclick="inspect('comp-mcp', 'MCP Interface', 'Een interface waarmee AI toegang kan krijgen tot systemen/data via natuurlijke taal.', 'bg-blue-600 text-white')" class="bg-slate-800 text-white rounded p-1 text-center text-[9px] font-mono">
+                                <div id="comp-mcp" onclick="inspect('comp-mcp')"
+                                    class="bg-slate-800 text-white rounded p-1 text-center text-[9px] font-mono">
                                     &lt; MCP Interface /&gt;
                                 </div>
                                 <div class="grid grid-cols-2 gap-2">
-                                    <div id="comp-pod-exist" onclick="inspect('comp-pod-exist', 'Knowledge Bot', 'Bestaande workload die informatie ophaalt uit documenten.', 'border-green-200')" class="bg-white border border-green-200 rounded p-2 text-center opacity-60 cursor-pointer hover:shadow-md transition">
+                                    <div id="comp-pod-exist" onclick="inspect('comp-pod-exist')"
+                                        class="bg-white border border-green-200 rounded p-2 text-center opacity-60 cursor-pointer hover:shadow-md transition">
                                         <div class="text-sm">📚</div>
                                         <div class="text-[8px]">Kennis Bot</div>
                                     </div>
-                                    <div id="comp-new-pod" onclick="inspect('comp-new-pod', 'Dynamic Slot', 'Ruimte voor nieuwe applicaties die door de Builder Agent worden gedeployed.', 'border-slate-300')" class="bg-transparent border-2 dashed border-slate-300 rounded p-2 text-center flex flex-col items-center justify-center min-h-[50px] cursor-pointer hover:border-slate-400 transition">
+                                    <div id="comp-new-pod" onclick="inspect('comp-new-pod')"
+                                        class="bg-transparent border-2 dashed border-slate-300 rounded p-2 text-center flex flex-col items-center justify-center min-h-[50px] cursor-pointer hover:border-slate-400 transition">
                                         <span class="text-[8px] text-slate-400">Empty Slot</span>
                                     </div>
                                 </div>
@@ -295,9 +808,9 @@
                         </div>
 
                     </div>
-                    
+
                 </div>
-                
+
                 <!-- Animation Layer -->
                 <div id="anim-layer" class="absolute inset-0 pointer-events-none w-full h-full z-50"></div>
             </div>
@@ -305,18 +818,23 @@
 
         <!-- RIGHT: ENHANCED SIDEBAR (Split View) -->
         <div class="w-96 bg-white border-l border-slate-200 flex flex-col shadow-2xl z-40 flex-none">
-            
+
             <!-- 1. COMPONENT INSPECTOR -->
             <div class="h-1/3 border-b border-slate-200 bg-slate-50 flex flex-col">
                 <div class="p-3 border-b border-slate-200 bg-white flex justify-between items-center">
                     <span class="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
                         <i data-lucide="mouse-pointer-2" class="w-3 h-3"></i> Inspecteur
                     </span>
-                    <span class="text-[9px] text-slate-400">Selecteer een component</span>
+                    <span class="text-[9px] text-slate-400" id="insp-header-status">Selecteer een component</span>
+                    <div id="insp-header-active-status" class="hidden flex items-center gap-2">
+                        <div class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+                        <span class="text-[9px] font-mono text-green-700 font-bold">Active</span>
+                    </div>
                 </div>
                 <div id="inspector-content" class="p-4 flex-1 overflow-y-auto">
                     <!-- Default State -->
-                    <div id="insp-default" class="h-full flex flex-col items-center justify-center text-slate-400 opacity-60">
+                    <div id="insp-default"
+                        class="h-full flex flex-col items-center justify-center text-slate-400 opacity-60">
                         <i data-lucide="box-select" class="w-8 h-8 mb-2"></i>
                         <span class="text-xs">Klik op diagram voor details</span>
                     </div>
@@ -330,12 +848,11 @@
                             <span class="text-[10px] text-slate-400 uppercase font-bold">Beschrijving</span>
                             <p id="insp-desc" class="text-xs text-slate-600 leading-relaxed mt-1">...</p>
                         </div>
-                        <div class="pt-2">
-                             <span class="text-[10px] text-slate-400 uppercase font-bold">Status</span>
-                             <div class="flex items-center gap-2 mt-1">
-                                 <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                                 <span class="text-xs font-mono text-green-700">Active / Listening</span>
-                             </div>
+
+
+                        <div id="insp-spec-container" class="hidden pt-2 border-t border-slate-200 mt-2">
+                            <span class="text-[10px] text-slate-400 uppercase font-bold">Spec Context</span>
+                            <p id="insp-spec-desc" class="text-xs text-indigo-600 leading-relaxed mt-1 italic">...</p>
                         </div>
                     </div>
                 </div>
@@ -367,7 +884,8 @@
                         <div class="w-2 h-2 rounded-full bg-slate-600"></div>
                     </div>
                 </div>
-                <div id="terminal-output" class="flex-1 p-3 overflow-y-auto font-mono text-[10px] text-slate-300 dark-scroll">
+                <div id="terminal-output"
+                    class="flex-1 p-3 overflow-y-auto font-mono text-[10px] text-slate-300 dark-scroll">
                     <div class="terminal-line term-info">> System initialized. Waiting for input...</div>
                 </div>
             </div>
@@ -383,45 +901,138 @@
         // --- UTILS ---
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+        let currentScenarioKey = null;
+
         // --- INSPECTOR LOGIC ---
-        function inspect(id, title, desc, visualClass) {
-            document.getElementById('insp-default').classList.add('hidden');
-            document.getElementById('insp-active').classList.remove('hidden');
-            
-            document.getElementById('insp-title').innerText = title;
-            document.getElementById('insp-desc').innerText = desc;
-            
-            // Highlight in diagram
+        function inspect(id) {
+            const data = SPEC[id];
+
             // If checking compliance, highlight red, otherwise blue
             const color = id === 'comp-compliance' ? 'red' : 'blue';
-            highlight(id, color); 
+            highlight(id, color);
+
+            if (!data && !currentScenarioKey) return;
+
+            document.getElementById('insp-default').classList.add('hidden');
+            document.getElementById('insp-active').classList.remove('hidden');
+
+            const specContainer = document.getElementById('insp-spec-container');
+            const specDesc = document.getElementById('insp-spec-desc');
+            const titleEl = document.getElementById('insp-title');
+            const descEl = document.getElementById('insp-desc');
+
+            specContainer.classList.add('hidden');
+            specDesc.innerHTML = '';
+
+            // 1. Direct SPEC match (Component)
+            if (data) {
+                // Populate Main Header with Name/Description
+                titleEl.innerText = data.name;
+                descEl.innerText = data.description;
+
+                // Show Extra Spec Details
+                specContainer.classList.remove('hidden');
+
+                let html = '';
+
+                // Steps
+                if (data.steps) {
+                    html += `<div class="text-[9px] uppercase font-bold text-slate-400 mt-2 mb-1">Stappen</div>`;
+                    html += `<ul class="list-disc list-inside space-y-0.5 pl-1 opacity-80">`;
+                    data.steps.forEach(s => html += `<li>${s}</li>`);
+                    html += `</ul>`;
+                }
+
+                // Design Components
+                if (data.design && data.design.components) {
+                    html += `<div class="text-[9px] uppercase font-bold text-slate-400 mt-3 mb-1">Design Componenten</div>`;
+                    html += `<div class="flex flex-wrap gap-1">`;
+                    data.design.components.forEach(c => {
+                        let name = typeof c === 'string' ? c : c.name;
+                        html += `<span class="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded border border-indigo-100">${name}</span>`;
+                    });
+                    html += `</div>`;
+                }
+
+                // Data Flow
+                if (data.design && data.design.dataFlow) {
+                    html += `<div class="text-[9px] uppercase font-bold text-slate-400 mt-3 mb-1">Data Flow</div>`;
+                    html += `<div class="p-2 bg-slate-50 border border-slate-100 rounded text-[9px] font-mono text-slate-600 leading-relaxed">`;
+                    data.design.dataFlow.forEach(flow => html += `<div>${flow}</div>`);
+                    html += `</div>`;
+                }
+
+                // Prompts
+                if (data.prompts) {
+                    html += `<div class="text-[9px] uppercase font-bold text-slate-400 mt-3 mb-1">Prompts (Lifecycle)</div>`;
+                    html += `<div class="space-y-1">`;
+                    for (const [key, value] of Object.entries(data.prompts)) {
+                        html += `
+                            <div class="border border-slate-100 rounded bg-indigo-50/30 p-1.5">
+                                <div class="text-[8px] uppercase font-bold text-indigo-500 mb-0.5">${key}</div>
+                                <div class="text-[9px] text-slate-600 italic leading-snug">"${value}"</div>
+                            </div>
+                         `;
+                    }
+                    html += `</div>`;
+                }
+
+                specDesc.innerHTML = html;
+            }
+            // 2. Fallback: Component lookup within active scenario
+            else if (currentScenarioKey && SPEC[currentScenarioKey]) {
+                const comps = SPEC[currentScenarioKey].design.components;
+                // Try to find a match? We don't have title argument anymore.
+                // Best effort: if we don't have ID match, we can't do much without the title arg.
+                // However, user said "remove redundant data". 
+                // All interactive components SHOULD have an ID and a SPEC entry now.
+                // So this fallback might be obsolete if I did my job right in Step 101.
+            }
+
+            // Toggle Header Status
+            const headerStatus = document.getElementById('insp-header-status');
+            const headerActive = document.getElementById('insp-header-active-status');
+            if (headerStatus && headerActive) {
+                headerStatus.classList.add('hidden');
+                headerActive.classList.remove('hidden');
+            }
+        }
+
+        // Helper to reset header status when resetting
+        function resetInspectorHeader() {
+            const headerStatus = document.getElementById('insp-header-status');
+            const headerActive = document.getElementById('insp-header-active-status');
+            if (headerStatus && headerActive) {
+                headerStatus.classList.remove('hidden');
+                headerActive.classList.add('hidden');
+            }
         }
 
         // --- LOGGING LOGIC ---
-        function setStatus(text, type='neutral') {
+        function setStatus(text, type = 'neutral') {
             const el = document.getElementById('status-indicator');
             let color = 'bg-slate-400';
-            if(type==='active') color = 'bg-blue-500 animate-pulse';
-            if(type==='waiting') color = 'bg-purple-500 animate-bounce';
-            if(type==='success') color = 'bg-green-500';
-            
+            if (type === 'active') color = 'bg-blue-500 animate-pulse';
+            if (type === 'waiting') color = 'bg-purple-500 animate-bounce';
+            if (type === 'success') color = 'bg-green-500';
+
             el.innerHTML = `<span class="w-1.5 h-1.5 ${color} rounded-full mr-1.5"></span> ${text}`;
         }
 
         function logChat(role, text) {
             const container = document.getElementById('chat-container');
-            if(container.querySelector('.text-center')) container.innerHTML = '';
+            if (container.querySelector('.text-center')) container.innerHTML = '';
 
             const wrapper = document.createElement('div');
             wrapper.className = `flex gap-2 w-full ${role === 'user' ? 'justify-end' : 'justify-start'}`;
-            
-            let icon = role === 'user' 
+
+            let icon = role === 'user'
                 ? `<div class="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center shrink-0 order-2 text-blue-600"><i data-lucide="user" class="w-3 h-3"></i></div>`
                 : role === 'loop-user' ? `<div class="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 text-indigo-600"><i data-lucide="message-circle-question-mark" class="w-3 h-3"></i></div>`
-                  : `<div class="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 text-indigo-600"><i data-lucide="bot" class="w-3 h-3"></i></div>`;
+                    : `<div class="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 text-indigo-600"><i data-lucide="bot" class="w-3 h-3"></i></div>`;
 
-            let bubbleClass = role === 'user' ? 'bubble-user' :  role === 'loop-user' ? 'loop-user' : 'bubble-ai';
-            
+            let bubbleClass = role === 'user' ? 'bubble-user' : role === 'loop-user' ? 'loop-user' : 'bubble-ai';
+
             wrapper.innerHTML = `
                 ${role === 'ai' || role === 'loop-user' ? icon : ''}
                 <div class="chat-bubble ${bubbleClass}">
@@ -435,24 +1046,24 @@
             lucide.createIcons(); // Refresh icons in new content
         }
 
-        function logTerminal(text, type='info') {
+        function logTerminal(text, type = 'info') {
             const term = document.getElementById('terminal-output');
             const line = document.createElement('div');
-            
+
             let colorClass = 'term-info';
             let prefix = 'INFO';
-            
-            if(type === 'success') { colorClass = 'term-success'; prefix = 'OK'; }
-            if(type === 'warn') { colorClass = 'term-warn'; prefix = 'WARN'; }
-            if(type === 'error') { colorClass = 'term-error'; prefix = 'ERR'; }
-            
+
+            if (type === 'success') { colorClass = 'term-success'; prefix = 'OK'; }
+            if (type === 'warn') { colorClass = 'term-warn'; prefix = 'WARN'; }
+            if (type === 'error') { colorClass = 'term-error'; prefix = 'ERR'; }
+
             // Get timestamp
             const now = new Date();
-            const time = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute:'2-digit', second:'2-digit' });
+            const time = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
             line.className = `terminal-line ${colorClass}`;
             line.innerHTML = `<span class="opacity-50">[${time}]</span> <span class="font-bold">[${prefix}]</span> ${text}`;
-            
+
             term.appendChild(line);
             term.scrollTop = term.scrollHeight;
         }
@@ -461,25 +1072,25 @@
         function resetSimulation() {
             // Reset Kanban
             document.querySelectorAll('.project-card').forEach(el => el.remove());
-            
+
             // Reset Chat & Terminal
             document.getElementById('chat-container').innerHTML = '';
             // Don't clear terminal completely, just add a separator
             logTerminal('--- New Session Started ---', 'info');
-            
+
             // Reset Diagram styles
             document.querySelectorAll('.arch-card').forEach(el => el.classList.remove('active-comp', 'ring-blue', 'ring-purple', 'ring-orange', 'ring-green'));
             document.querySelectorAll('.internal-block').forEach(el => el.classList.remove('internal-active'));
             // Remove compliance highlight
             document.getElementById('comp-compliance').classList.remove('ring-red', 'active-comp');
 
-            
+
             // Reset CISO
             document.getElementById('ciso-badge').classList.add('hidden');
             document.getElementById('comp-ciso').classList.remove('pulse-req');
             document.getElementById('ciso-status').innerText = 'Idle';
             document.getElementById('ciso-status').className = 'text-[8px] text-slate-400 mt-1';
-            
+
             // Reset Pod
             const pod = document.getElementById('comp-new-pod');
             pod.className = "bg-transparent border-2 dashed border-slate-300 rounded p-2 text-center flex flex-col items-center justify-center min-h-[50px] cursor-pointer hover:border-slate-400 transition";
@@ -489,10 +1100,13 @@
             document.getElementById('comp-foundry').classList.add('opacity-60');
 
             setStatus("Simulatie Reset", "neutral");
-            
+
             // Reset Inspector
             document.getElementById('insp-default').classList.remove('hidden');
             document.getElementById('insp-active').classList.add('hidden');
+            document.getElementById('insp-spec-container').classList.add('hidden');
+            resetInspectorHeader();
+            currentScenarioKey = null;
         }
 
         function addCard(title) {
@@ -506,63 +1120,63 @@
         function moveCard(colId) {
             const card = document.getElementById('active-card');
             const target = document.getElementById(colId);
-            if(card && target) target.appendChild(card);
+            if (card && target) target.appendChild(card);
         }
 
-        function highlight(id, color='blue', internal=false) {
+        function highlight(id, color = 'blue', internal = false) {
             const el = document.getElementById(id);
-            if(!el) return;
+            if (!el) return;
 
             // Remove previous highlights
             document.querySelectorAll('.arch-card').forEach(c => c.classList.remove('active-comp', 'ring-blue', 'ring-purple', 'ring-orange', 'ring-green'));
             document.querySelectorAll('.internal-block').forEach(c => c.classList.remove('internal-active'));
-            
+
             // Remove compliance ring explicitly if clicking something else
-            if(id !== 'comp-compliance') {
-                 document.getElementById('comp-compliance').classList.remove('ring-red', 'active-comp');
+            if (id !== 'comp-compliance') {
+                document.getElementById('comp-compliance').classList.remove('ring-red', 'active-comp');
             }
 
-            if(internal) {
+            if (internal) {
                 el.classList.add('internal-active');
                 document.getElementById('comp-orch').classList.add('ring-blue');
             } else {
                 el.classList.add('active-comp');
-                if(color==='blue') el.classList.add('ring-blue');
-                if(color==='purple') el.classList.add('ring-purple');
-                if(color==='orange') el.classList.add('ring-orange');
-                if(color==='green') el.classList.add('ring-green');
-                if(color==='red') el.classList.add('ring-red');
+                if (color === 'blue') el.classList.add('ring-blue');
+                if (color === 'purple') el.classList.add('ring-purple');
+                if (color === 'orange') el.classList.add('ring-orange');
+                if (color === 'green') el.classList.add('ring-green');
+                if (color === 'red') el.classList.add('ring-red');
             }
         }
 
-        function sendPacket(from, to, color='#3b82f6', speed=1200) {
+        function sendPacket(from, to, color = '#3b82f6', speed = 1200) {
             return new Promise((resolve) => {
                 const elFrom = document.getElementById(from);
                 const elTo = document.getElementById(to);
                 const area = document.getElementById('diagram-area');
 
                 if (!elFrom || !elTo || !area) {
-                    resolve(); 
+                    resolve();
                     return;
                 }
 
                 const f = elFrom.getBoundingClientRect();
                 const t = elTo.getBoundingClientRect();
                 const a = area.getBoundingClientRect();
-                
+
                 const pkt = document.createElement('div');
                 pkt.className = 'packet';
                 pkt.style.backgroundColor = color;
                 document.getElementById('anim-layer').appendChild(pkt);
-                
-                const startX = f.left - a.left + f.width/2;
-                const startY = f.top - a.top + f.height/2;
-                const endX = t.left - a.left + t.width/2;
-                const endY = t.top - a.top + t.height/2;
+
+                const startX = f.left - a.left + f.width / 2;
+                const startY = f.top - a.top + f.height / 2;
+                const endX = t.left - a.left + t.width / 2;
+                const endY = t.top - a.top + t.height / 2;
 
                 const anim = pkt.animate([
-                    { left: startX+'px', top: startY+'px', opacity: 1 },
-                    { left: endX+'px', top: endY+'px', opacity: 1 },
+                    { left: startX + 'px', top: startY + 'px', opacity: 1 },
+                    { left: endX + 'px', top: endY + 'px', opacity: 1 },
                     { opacity: 0 }
                 ], { duration: speed, easing: 'ease-in-out' });
 
@@ -574,27 +1188,28 @@
         }
 
         // --- SCENARIOS ---
-        
+
         async function runScenario(type) {
             resetSimulation();
+            currentScenarioKey = type;
             await sleep(800);
 
             // --- SCENARIO 1: RESPONSE ONLY ---
-            if(type === 'response') {
+            if (type === 'response') {
                 addCard("Vraag: HR Beleid");
                 setStatus("Scenario 1: Vraag Verwerking", "active");
-                
+
                 // 1. Request
                 logChat('user', "Wat is het thuiswerkbeleid?");
                 logTerminal("Received prompt via Copilot Interface", "info");
                 highlight('comp-copilot');
                 await sleep(1000);
-                
+
                 await sendPacket('comp-copilot', 'comp-orch');
-                
+
                 // 2. Orchestration
                 moveCard('col-spec');
-                
+
                 // NEW: CHECK BUILDING BLOCKS
                 highlight('comp-blocks', 'blue');
                 logTerminal("Registry: Checking for existing capabilities...", "info");
@@ -608,14 +1223,14 @@
                 highlight('inner-rag', 'blue', true);
                 logTerminal("RAG: Querying Vector DB for 'homework policy'...", "info");
                 await sleep(1000);
-                
+
                 // 3. Execution
                 moveCard('col-exec');
                 logTerminal("Orchestrator: Routing payload to Knowledge Bot", "info");
                 await sendPacket('comp-orch', 'comp-pod-exist', '#22c55e');
                 highlight('comp-pod-exist', 'green');
                 await sleep(1000);
-                
+
                 // 4. Response
                 moveCard('col-response');
                 await sendPacket('comp-pod-exist', 'comp-copilot', '#22c55e');
@@ -626,20 +1241,20 @@
             }
 
             // --- SCENARIO 2: BUILD + APPROVAL ---
-            if(type === 'build') {
+            if (type === 'build') {
                 addCard("Project: Sales Bot");
                 setStatus("Scenario 2: Bouw + Goedkeuring", "active");
-                
+
                 // 1. Request
                 logChat('user', "Bouw een Sales Tool met directe SQL toegang.");
                 logTerminal("Received prompt via Copilot Interface", "info");
                 highlight('comp-copilot');
                 await sleep(1500);
                 await sendPacket('comp-copilot', 'comp-orch');
-                
+
                 // 2. Spec & Policy Check
                 moveCard('col-spec');
-                
+
                 // NEW: CHECK BUILDING BLOCKS
                 highlight('comp-blocks', 'blue');
                 logTerminal("Registry: No matching skill found for SQL Sales access.", "info");
@@ -648,34 +1263,34 @@
                 highlight('inner-planner', 'blue', true);
                 logTerminal("Planner: Detected intent 'NewApplicationScaffold'", "success");
                 await sleep(1500);
-                
+
                 highlight('inner-safety', 'blue', true);
                 logTerminal("Safety Filter: Analyzing constraints...", "info");
                 logTerminal("ALERT: High-risk resource request (SQL Direct Access)", "warn");
                 await sleep(1000);
-                
+
                 await sendPacket('comp-orch', 'comp-policy');
                 highlight('comp-policy');
                 logTerminal("Policy Engine: Rule violation found. Escalating to CISO.", "warn");
-                
+
                 // 3. Approval (CISO)
                 moveCard('col-approval');
                 await sendPacket('comp-policy', 'comp-ciso', '#9333ea');
-                
+
                 // CISO STATE
                 highlight('comp-ciso', 'purple');
                 document.getElementById('comp-ciso').classList.add('pulse-req');
                 document.getElementById('ciso-badge').classList.remove('hidden');
                 document.getElementById('ciso-status').innerText = 'Wachten op actie...';
                 document.getElementById('ciso-status').className = 'text-[8px] text-red-500 font-bold mt-1';
-                
+
                 setStatus("Wachten op CISO...", "waiting");
                 logTerminal("PROCESS SUSPENDED: Awaiting manual approval ticket #8842", "warn");
                 logChat('loop-user', "Ik heb goedkeuring nodig voor SQL toegang. Een verzoek is verstuurd naar Security.");
-                
+
                 // Simulate Wait time
                 await sleep(3000);
-                
+
                 // CISO APPROVED
                 document.getElementById('comp-ciso').classList.remove('pulse-req');
                 document.getElementById('ciso-badge').classList.add('hidden');
@@ -683,14 +1298,14 @@
                 document.getElementById('ciso-status').className = 'text-[8px] text-green-600 font-bold mt-1';
                 logTerminal("CISO Gate: Ticket #8842 Approved by admin", "success");
                 logChat('ai', "Ik heb goedkeuring gekregen voor SQL toegang.");
-              
-                
+
+
                 // 4. Traceability
                 await sendPacket('comp-ciso', 'comp-db', '#22c55e');
                 highlight('comp-db', 'green');
                 logTerminal("Audit DB: Transaction logged.", "info");
                 await sleep(1000);
-                
+
                 // 5. Build
                 moveCard('col-exec');
                 setStatus("Bouw gestart...", "active");
@@ -698,22 +1313,22 @@
                 highlight('comp-builder', 'orange');
                 logTerminal("Builder Agent: Generating Terraform & Python code...", "info");
                 await sleep(2000);
-                
+
                 await sendPacket('comp-builder', 'comp-foundry', '#f97316');
                 highlight('comp-foundry', 'orange');
                 document.getElementById('comp-foundry').classList.remove('opacity-60');
                 logTerminal("Foundry: Docker build started...", "info");
                 logTerminal("Foundry: Scanning image for CVEs... OK", "success");
                 await sleep(2000);
-                
+
                 // 6. Deploy
                 await sendPacket('comp-foundry', 'comp-new-pod', '#22c55e');
-                
+
                 const pod = document.getElementById('comp-new-pod');
                 pod.className = "bg-green-100 border border-green-500 rounded p-1 text-center flex flex-col items-center justify-center min-h-[50px] cursor-pointer hover:shadow-md transition";
                 pod.innerHTML = '<div class="text-xs">📈</div><div class="text-[8px] font-bold text-green-800">Sales Bot</div>';
                 highlight('comp-new-pod', 'green');
-                
+
                 moveCard('col-live');
                 logTerminal("AKS: Pod 'sales-bot-v1' scheduled and running", "success");
                 logChat('ai', "De Sales Tool is gebouwd, beveiligd en staat nu live.");
@@ -722,4 +1337,5 @@
         }
     </script>
 </body>
+
 </html>
