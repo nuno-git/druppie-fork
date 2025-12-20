@@ -28,7 +28,7 @@ Gebruiker -> UI -> Backend
 
 ## Bouwblokken
 - [ ] [Druppie Core (Orchestrator)](./druppie_core.md)
-- [ ] [Identity & Access Management (IAM)](./iam.md)
+- [ ] [Identity & Access Management (IAM)](../compliance/iam.md)
 
 ## Mens in de Loop Requirements
 N.v.t.

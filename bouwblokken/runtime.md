@@ -28,7 +28,7 @@ Manifest -> API Server -> Pod Running
 <!-- Prompts: Ontwerp cluster architectuur, Provision kubernetes cluster, Validatie van failover, Koppel cluster aan CI/CD -->
 
 ## Bouwblokken
-- [ ] [MCP Interface](./mcp_interface.md)
+- [ ] [MCP Interface](../runtime/mcp_interface.md)
 
 ## Mens in de Loop Requirements
 N.v.t.

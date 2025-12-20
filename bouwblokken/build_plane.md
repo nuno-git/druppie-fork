@@ -28,8 +28,8 @@ Spec -> Build Controller -> Agents -> Artifacts
 <!-- Prompts: Onderzoek optimale agent samenstelling, Implementeer multi-agent coördinatie, Test generatie snelheid, Activeer build plane omgeving -->
 
 ## Bouwblokken
-- [ ] [Builder Agent](./builder_agent.md)
-- [ ] [Foundry](./foundry.md)
+- [ ] [Builder Agent](../build_plane/builder_agent.md)
+- [ ] [Foundry](../build_plane/foundry.md)
 
 ## Mens in de Loop Requirements
 N.v.t.

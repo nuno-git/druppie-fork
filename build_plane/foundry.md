@@ -28,7 +28,7 @@ Code -> Build -> Scan -> Image Registry
 <!-- Prompts: Bepaal security scan tools, Schrijf Dockerfiles, Bouw test images, Configureer build runners -->
 
 ## Bouwblokken
-- [ ] [Runtime](./runtime.md)
+- [ ] [Runtime](../bouwblokken/runtime.md)
 
 ## Mens in de Loop Requirements
 N.v.t.

@@ -4,15 +4,10 @@ const DOC_REGISTRY = {
     "bouwblokken": [
         { name: "Bouwblok Definities", path: "bouwblokken/bouwblok_definities.md" },
         { name: "Build Plane", path: "bouwblokken/build_plane.md" },
-        { name: "Builder Agent", path: "bouwblokken/builder_agent.md" },
         { name: "Compliance Layer", path: "bouwblokken/compliance_layer.md" },
         { name: "Druppie Core", path: "bouwblokken/druppie_core.md" },
         { name: "Druppie UI", path: "bouwblokken/druppie_ui.md" },
-        { name: "Dynamic Slot", path: "bouwblokken/dynamic_slot.md" },
-        { name: "Foundry", path: "bouwblokken/foundry.md" },
-        { name: "IAM", path: "bouwblokken/iam.md" },
         { name: "Knowledge Bot", path: "bouwblokken/knowledge_bot.md" },
-        { name: "MCP Interface", path: "bouwblokken/mcp_interface.md" },
         { name: "Mens in de Loop", path: "bouwblokken/mens_in_de_loop.md" },
         { name: "Policy Engine", path: "bouwblokken/policy_engine.md" },
         { name: "Runtime", path: "bouwblokken/runtime.md" },
@@ -27,13 +22,19 @@ const DOC_REGISTRY = {
         { name: "Test Skill", path: "skills/test.md" }
     ],
     "build_plane": [
-        { name: "Build Plane Readme", path: "build_plane/readme.md" }
+        { name: "Build Plane Readme", path: "build_plane/readme.md" },
+        { name: "Builder Agent", path: "build_plane/builder_agent.md" },
+        { name: "Foundry", path: "build_plane/foundry.md" }
     ],
     "runtime": [
-        { name: "Runtime Info", path: "runtime/runtime.md" }
+        { name: "Runtime Info", path: "runtime/runtime.md" },
+        { name: "Role Based Access Control (RBAC)", path: "runtime/rbac.md" },
+        { name: "MCP Interface", path: "runtime/mcp_interface.md" },
+        { name: "Dynamic Slot", path: "runtime/dynamic_slot.md" }
     ],
     "compliance": [
-        { name: "Overview", path: "compliance/overview.md" }
+        { name: "Overview", path: "compliance/overview.md" },
+        { name: "IAM", path: "compliance/iam.md" }
     ],
     "general": [
         { name: "Project Readme", path: "README.md" }

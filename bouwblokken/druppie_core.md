@@ -30,7 +30,7 @@ Input -> Safety -> Planner -> Execution -> Output
 ## Bouwblokken
 - [ ] [Bouwblok Definities](./bouwblok_definities.md)
 - [ ] [Policy Engine](./policy_engine.md)
-- [ ] [MCP Interface](./mcp_interface.md)
+- [ ] [MCP Interface](../runtime/mcp_interface.md)
 
 ## Mens in de Loop Requirements
 N.v.t.
