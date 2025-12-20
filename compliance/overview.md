@@ -1,14 +1,31 @@
-# Compliance
+# Compliance Overview
 
-## Beschrijving
-Overkoepelende beveiligingslaag. Voert continue, dagelijkse compliance checks uit over alle logs en markeert kwetsbaarheden op basis van audit regels.
+De **Compliance Layer** is verantwoordelijk voor het waarborgen van veiligheid, privacy en regelgeving binnen het gehele Druppie-ecosysteem. Het werkt volgens het principe van "Continuous Compliance" en maakt zwaar gebruik van native Azure governance features.
 
-## Componenten
-- **Policy Engine**: Evalueert regels tegen de huidige staat.
-- **Security Scanner**: Zoekt naar kwetsbaarheden.
-- **Audit Logging**: Slaat alle events op.
+## 📜 Doelstellingen
 
-## Doelen
-- Waarborgen van veiligheid en privacy.
-- Voldoen aan wet- en regelgeving (ISO, AVG).
-- Minimaliseren van risico's door automatische detectie.
+- **Security by Design**: Beveiliging is ingebakken in de 'Agent Factory' pipeline.
+- **Auditeerbaarheid**: Elke actie van een agent is traceerbaar tot een unieke identiteit.
+- **Automatic Enforcement**: Regels worden automatisch afgedwongen via **Azure Policy**.
+
+## 🧩 Onderdelen
+
+- **[IAM (Identity & Access Management)](./iam.md)**
+  - **Entra Agent ID**: Unieke identiteiten voor agents (geen gedeelde service accounts).
+  - **Managed Identity**: Wachtwoordloze authenticatie tussen services.
+  - **RBAC**: Fijnmazige rolverdeling op Foundy projecten en resources.
+
+- **[BIO & NIS2 Framework](./bio4_nis2.md)**
+  - Concrete invulling van de Baseline Informatiebeveiliging Overheid en EU NIS2 richtlijn.
+  - Mapping van controls op Druppie technologie en processen.
+
+- **Governance & Policy**
+  - **Azure Policy**: Dwingt regels af op infrastructuur niveau (bijv. "Alleen GPT-4o in West Europe", "Verplicht Private Link").
+  - **Policy Engine** (zie [Bouwblokken](../bouwblokken/policy_engine.md)): Dwingt regels af op applicatie niveau (functionele checks).
+
+- **Data Protection**
+  - **Private Endpoints**: Verkeer blijft binnen het Azure backbone netwerk.
+  - **Data Exfiltration Control**: Agents kunnen alleen communiceren met gewhiteliste domeinen.
+
+- **Security Scanners** (onderdeel van [Foundry](../build_plane/foundry.md))
+  - Automatische scans in de CI/CD pipeline.

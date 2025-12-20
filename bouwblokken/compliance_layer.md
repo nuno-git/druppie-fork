@@ -1,38 +1,19 @@
-# Druppie Compliance Layer
+# Compliance Layer Definitie
 
-## Functionele Beschrijving
-Overkoepelende beveiligingslaag. Voert continue, dagelijkse compliance checks uit over alle logs en markeert kwetsbaarheden op basis van audit regels.
+## 🎯 Doelstelling
+De **Compliance Layer** is het overkoepelende kader dat niet zozeer "iets doet" (zoals code bouwen), maar "overal naar kijkt". Het definieert de standaarden en audit-mechanismen. Zie [Compliance Domein](../compliance/overview.md) voor de diepte-uitwerking.
 
-**Stappen:**
-```mermaid
-timeline
-    Monitoren van logs en activiteit
-    Valideren tegen compliance regels
-    Markeren van afwijkingen
-    Genereren van compliance rapporten
-```
+## 📋 Functionele Specificaties
 
-## Technische Beschrijving
-### Componenten
-Security Scanner, Audit Rules Engine, Reporting Dashboard
+### 1. Continuous Audit
+- **Aggregatie**: Verzamelt signalen uit Policy Engine, Traceability DB, en Runtime logs.
+- **Reporting**: Genereert rapportages voor auditors (bijv. "Lijst van alle code changes die zonder 4-eyes principle naar prod zijn gegaan").
 
-### Data Flow
-Logs -> Scanner -> Audit DB -> Dashboard
+### 2. Machine Identity (Agent ID)
+- **Entra Agent ID**: Elke AI-agent krijgt een unieke identiteit in Entra ID (voorheen Azure AD).
+- **Granulaire Rechten**: Permissies worden toegekend aan de specifieke agent (bijv. "Finance Agent" mag alleen bij de Finance Sharepoint).
+- **Managed Identity**: Gebruik van Managed Identities voor veilige service-to-service communicatie zonder secrets.
 
-
-**Benodigde Skills:**
-- [Security Framework Identification](../skills/research.md)
-- [Audit Rule Creation](../skills/build.md)
-- [Compliance Testing](../skills/test.md)
-- [Rule Activation](../skills/deploy.md)
-<!-- Prompts: Identificeer relevant security frameworks, Schrijf audit regels, Draai compliance checks, Activeer ruleset -->
-
-## Bouwblokken
-- [ ] [Traceability DB](./traceability_db.md)
-- [ ] [Policy Engine](./policy_engine.md)
-
-## Mens in de Loop Requirements
-Rapporten kunnen handmatige review vereisen.
-
-## Compliance Eisen
-- [Compliance Overview](../compliance/overview.md)
+## 🏗️ Relaties
+- **Verwijst naar**: [Compliance Domein](../compliance/overview.md).
+- **Integreert met**: Alle andere bouwblokken (elke actie genereert compliance data).

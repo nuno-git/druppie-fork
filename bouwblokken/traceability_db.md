@@ -1,36 +1,45 @@
-# Traceability DB
+# Traceability DB (Audit Log)
 
-## Functionele Beschrijving
-Slaat alle stappen, prompts en goedkeuringen op voor auditing doeleinden.
+## 🎯 Doelstelling
+De **Traceability DB** fungeert als de onveranderlijke "zwarte doos" (flight recorder) van het Druppie platform. Het doel is om volledige verantwoording en reproduceerbaarheid te garanderen. In een AI-gedreven systeem is het cruciaal om precies te kunnen reconstrueren *waarom* een AI een bepaalde beslissing nam en *volgens welke instructies* code is gegenereerd.
 
-**Stappen:**
-```mermaid
-timeline
-    Loggen van interacties
-    Opslaan van beslissingen en prompts
-    Beschikbaar stellen voor audits
-```
+## 📋 Functionele Specificaties
 
-## Technische Beschrijving
-### Componenten
-Timeseries DB, Audit Log Schema, Query API
+### 1. Granulaire Logging
+- **Prompts & Responses**: Slaat exact op wat er als input naar de LLM ging en wat er terugkwam.
+- **Decision Trees**: Logt de redenering (Thought Process) van de planner.
+- **Code Changes**: Logt diffs van gegenereerde code.
+- **Approval Events**: Logt wie, wanneer, en waarom goedkeuring gaf (inclusief digitale handtekening).
 
-### Data Flow
-System Components -> Logging -> Database
+### 2. Zoekbaarheid & Analyse
+- **Correlatie ID's**: Koppelt alle logs van één sessie/verzoek aan elkaar (`TraceID`).
+- **Niet-technische weergave**: Moet data zo kunnen structureren dat auditors (niet-developers) het kunnen lezen.
 
+### 3. Integriteit
+- **Immutability**: Eenmaal geschreven logs mogen NOOIT gewijzigd of verwijderd worden (Write Once, Read Many).
+- **Retention**: Data moet bewaard blijven conform wettelijke termijnen (bijv. 7 jaar).
 
-**Benodigde Skills:**
-- [Audit Schema Definition](../skills/research.md)
-- [Logging Implementation](../skills/build.md)
-- [Immutability Verification](../skills/test.md)
-- [Storage Provisioning](../skills/deploy.md)
-<!-- Prompts: Bepaal audit log schema, Implementeer structured logging, Verifieer onwijzigbaarheid, Provision storage -->
+## 🔧 Technische Requirements
 
-## Bouwblokken
-- [ ] [Druppie Compliance Layer](./compliance_layer.md)
+- **High Throughput**: Moet grote stromen logdata aankunnen zonder de Core te vertragen (async writing).
+- **Storage Tiering**: Hot storage voor recente logs, Cold storage (Azure Blob/S3 Glacier) voor archief.
+- **Time Series**: Geoptimaliseerd voor tijdreeks-data.
 
-## Mens in de Loop Requirements
-N.v.t.
+## 🔒 Security & Compliance
 
-## Compliance Eisen
-- [Compliance Overview](../compliance/overview.md)
+- **Encryption at Rest & in Transit**: Alle data is versleuteld.
+- **Access Control**: Alleen Security Officers en Auditors hebben leesrechten. Niemand heeft schrijfrechten (behalve het systeem zelf).
+- **Anomaly Detection**: Activeert alerts bij verdachte patronen (bijv. massale export van logs).
+
+## 🔌 Interacties
+
+De DB is passief en ontvangt data van alle componenten.
+
+| Bron | Type Data | Frequentie |
+| :--- | :--- | :--- |
+| **Druppie Core** | Prompts, Tokens, Plans | Hoog |
+| **Policy Engine** | Checks, Violations | Gemiddeld |
+| **Mens in de Loop** | Approvals, Rejections | Laag |
+
+## 🏗️ Relaties tot andere blokken
+- **Ondersteunt**: [Compliance Layer](./compliance_layer.md) (levert bewijslast).

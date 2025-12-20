@@ -1,38 +1,21 @@
-# Build Plane
+# Build Plane Interface
 
-## Functionele Beschrijving
-Een Specificatie gestuurde AI omgeving voor het realiseren van een oplossing. Waarbij verschillenden AI-Experts samen werken om een totaal oplossing te realiseren.
+## 🎯 Doelstelling
+Dit bouwblok definieert de **interface** naar de externe Build Plane. De Build Plane zelf is de "fabriek" die code produceert en verifieert (zie de gedetailleerde [Build Plane documentatie](../build_plane/overview.md)). Vanuit het perspectief van Druppie Core is dit bouwblok de abstractie die toegang geeft tot die fabriek.
 
-**Stappen:**
-```mermaid
-timeline
-    Ontvangen van bouwspecificatie
-    Genereren van implementatieplan
-    Coördineren van builders en tools
-    Opleveren van artifacts
-```
+## 📋 Functionele Specificaties
 
-## Technische Beschrijving
-### Componenten
-Build Controller, Agent Swarm, Artifact Repository
+### 1. Job Submission
+- **Spec-in, Artifact-out**: Accepteert een declaratieve `BuildSpec` als input.
+- **Fire & Forget**: Start asynchrone build taken en geeft een Job ID terug.
 
-### Data Flow
-Spec -> Build Controller -> Agents -> Artifacts
+### 2. Status Monitoring
+- **Polling / Webhooks**: Mechanisme om de voortgang van de build (Compiling... Testing... Scanning...) terug te koppelen aan de Orchestrator en UI.
+- **Log Streaming**: Live logs doorgeven bij failures.
 
+### 3. Artifact Handover
+- Zorgt dat geproduceerde images en packages geregistreerd worden en beschikbaar zijn voor de Runtime.
 
-**Benodigde Skills:**
-- [Agent Coordination Research](../skills/research.md)
-- [Multi-agent Logic Build](../skills/build.md)
-- [Output Quality Testing](../skills/test.md)
-- [Env Activation](../skills/deploy.md)
-<!-- Prompts: Onderzoek optimale agent samenstelling, Implementeer multi-agent coördinatie, Test generatie snelheid, Activeer build plane omgeving -->
-
-## Bouwblokken
-- [ ] [Builder Agent](../build_plane/builder_agent.md)
-- [ ] [Foundry](../build_plane/foundry.md)
-
-## Mens in de Loop Requirements
-N.v.t.
-
-## Compliance Eisen
-- [Compliance Overview](../compliance/overview.md)
+## 🏗️ Relaties
+- **Verwijst naar**: [Build Plane Domein](../build_plane/overview.md).
+- **Wordt gebruikt door**: [Druppie Core](./druppie_core.md) wanneer code gegenereerd of gebouwd moet worden.

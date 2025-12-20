@@ -1,37 +1,27 @@
-# Runtime
+# Runtime Interface
 
-## Functionele Beschrijving
-Een hardware infrastructuur waarop wij veilig en compliant zonder menselijk tussenkomst snel Bouwblokken kunnen deployen.
+## 🎯 Doelstelling
+Dit bouwblok definieert de **interface** naar de Runtime omgeving. In de Azure Foundry architectuur bestaat deze runtime uit twee delen: de **Agent Runtime** (Azure AI Agent Service) voor de intelligentie, en de **Container Runtime** (Kubernetes/ACA) voor de workloads.
 
-**Stappen:**
-```mermaid
-timeline
-    Ontvangen van deployment manifest
-    Scheduler wijst resources toe
-    Pullen van images
-    Starten van pods
-```
+## 📋 Functionele Specificaties
 
-## Technische Beschrijving
-### Componenten
-Kubernetes API, Scheduler, Kubelet, Network Policy
+### 1. Agent Runtime (Azure AI Agent Service)
+- **Host**: De beheerde omgeving waar AI-agenten (Threads, Runs) worden uitgevoerd.
+- **State Management**: Automatisch beheer van conversatie-state en context (persistentie).
+- **Tool Execution**: Veilige uitvoering van code (Code Interpreter) en API-calls via OpenAPI.
 
-### Data Flow
-Manifest -> API Server -> Pod Running
+### 2. Deployment Management (Container Runtime)
+- **Manifest Application**: Vertalen van abstracte deployment intenties naar concrete Kubernetes manifests of Azure Container Apps.
+- **Rollout Control**: Beheren van updates en rollbacks (Blue/Green).
 
+### 3. Resource Provisioning aka "Dynamic Slots"
+- **Namespace on Demand**: Aanmaken van geïsoleerde omgevingen voor nieuwe projecten.
+- **Quota Management**: Toewijzen van CPU/Memory limieten.
 
-**Benodigde Skills:**
-- [Cluster Architecture Design](../skills/research.md)
-- [Terraform Provisioning](../skills/build.md)
-- [Failover Validation](../skills/test.md)
-- [CI/CD Integration](../skills/deploy.md)
-<!-- Prompts: Ontwerp cluster architectuur, Provision kubernetes cluster, Validatie van failover, Koppel cluster aan CI/CD -->
+## 2. Security & Compliance
+- **Entra Agent ID**: Elke agent draait onder zijn eigen Managed Identity.
+- **Network Isolation**: Alle communicatie verloopt via Private Endpoints binnen het VNet.
 
-## Bouwblokken
-- [ ] [MCP Interface](../runtime/mcp_interface.md)
-
-## Mens in de Loop Requirements
-N.v.t.
-
-## Compliance Eisen
-- [Compliance Overview](../compliance/overview.md)
+## 🏗️ Relaties
+- **Verwijst naar**: [Runtime Domein](../runtime/overview.md).
+- **Wordt gebruikt door**: [Druppie Core](./druppie_core.md) en [Build Plane](./build_plane.md).

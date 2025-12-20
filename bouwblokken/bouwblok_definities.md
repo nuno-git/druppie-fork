@@ -1,36 +1,35 @@
-# Bouwblok Definities
+# Bouwblok Definities (Registry)
 
-## Functionele Beschrijving
-Catalogus met specificaties van bouwblokken, skills, agents en MCP services. Druppie Core raadpleegt dit register om te bepalen welke capability de vraag kan beantwoorden.
+## 🎯 Doelstelling
+De **Bouwblok Definities** vormen de catalogus en metadata-laag van het platform. Om de AI (Druppie Core) in staat te stellen zichzelf samen te stellen en de juiste tools te kiezen, moet er een gestructureerde definitie zijn van alle beschikbare capabilities, skills, en services. Dit is de "telefoongids" en "handleiding" voor de AI.
 
-**Stappen:**
-```mermaid
-timeline
-    Registreren van nieuwe blokken
-    Zoeken naar geschikte blokken op basis van intentie
-    Versiebeheer van definities
-```
+## 📋 Functionele Specificaties
 
-## Technische Beschrijving
-### Componenten
-Registry DB, Search API, Definition Schema
+### 1. Spec-Driven Agent Creatie (Agent-as-Code)
+- **Declaratieve Definities**: Capabilities en Agents worden gedefinieerd in **YAML/JSON** schema's (zie research).
+- **Inhoud Definitie**: Bevat Model config, Instructies (Prompts), Tools (OpenAPI) en Governance metadata (Owner, Cost Center).
+- **Versiebeheer**: Alle definities worden opgeslagen in Git voor auditability en rollback mogelijkheden.
 
-### Data Flow
-Core -> Registry -> Capability Metadata
+### 2. Agent Registry
+- **Central Repository**: Een database (Cosmos DB) die fungeert als "Telefoonboek" voor de Router Agent.
+- **Interface Beschrijving**: Bevat technische specs (OpenAPI) zodat de Router weet hoe een Spoke aan te roepen is.
 
+## 🔧 Technische Requirements
 
-**Benodigde Skills:**
-- [Metadata Definition](../skills/research.md)
-- [Vector Search Implementation](../skills/build.md)
-- [Skill Discovery Testing](../skills/test.md)
-- [Capability Indexing](../skills/deploy.md)
-<!-- Prompts: Definieer metadata schema, Implementeer vector-search, Verifieer correcte skills, Indexeer initiële set -->
+- **Standaard Formaat**: Gebruikt open standaarden zoals OpenAPI (Swagger) of Model Context Protocol (MCP) definities.
+- **Extensible**: Nieuwe definities moeten makkelijk toegevoegd kunnen worden zonder herstart van de Core (Plugin architectuur).
 
-## Bouwblokken
-- [ ] [Traceability DB](./traceability_db.md)
+## 🔒 Security & Compliance
 
-## Mens in de Loop Requirements
-N.v.t.
+- **Scoped Access**: Definities bevatten metadata over vereiste permissies (scopes), zodat de Orchestrator vooraf checks kan doen.
 
-## Compliance Eisen
-- [Compliance Overview](../compliance/overview.md)
+## 🔌 Interacties
+
+| Wie | Actie | Doel |
+| :--- | :--- | :--- |
+| **Druppie Core Planner** | Query Registry | "Welke tool kan e-mails sturen?" |
+| **Developer** | Register Tool | Nieuwe capability toevoegen |
+
+## 🏗️ Relaties tot andere blokken
+- **Geraadpleegd door**: [Druppie Core](./druppie_core.md).
+- **Bevat definities voor**: [Build Plane](./build_plane.md), [Runtime](./runtime.md) en alle [Skills](../skills/overview.md).
