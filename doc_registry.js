@@ -22,7 +22,7 @@ const DOC_REGISTRY = {
         { name: "Test Skill", path: "skills/test.md" }
     ],
     "build_plane": [
-        { name: "Build Plane Readme", path: "build_plane/readme.md" },
+        { name: "Build Plane", path: "build_plane/overview.md" },
         { name: "Builder Agent", path: "build_plane/builder_agent.md" },
         { name: "Foundry", path: "build_plane/foundry.md" }
     ],
