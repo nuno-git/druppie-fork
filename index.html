@@ -7,6 +7,7 @@
     <title>Druppie: Full Cycle Architecture (Interactive)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
     <!-- 
        v11 Updates:
@@ -294,6 +295,141 @@
         .dark-scroll ::-webkit-scrollbar-thumb {
             background: #475569;
         }
+
+        /* --- MARKDOWN STYLING (GitHub Flavor-ish) --- */
+        #md-content {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+            line-height: 1.6;
+            color: #24292f;
+        }
+
+        #md-content h1,
+        #md-content h2,
+        #md-content h3,
+        #md-content h4,
+        #md-content h5,
+        #md-content h6 {
+            margin-top: 24px;
+            margin-bottom: 16px;
+            font-weight: 600;
+            line-height: 1.25;
+            color: #1f2937;
+        }
+
+        #md-content h1 {
+            font-size: 2em;
+            border-bottom: 1px solid #eaecef;
+            padding-bottom: .3em;
+        }
+
+        #md-content h2 {
+            font-size: 1.5em;
+            border-bottom: 1px solid #eaecef;
+            padding-bottom: .3em;
+        }
+
+        #md-content h3 {
+            font-size: 1.25em;
+        }
+
+        #md-content p {
+            margin-top: 0;
+            margin-bottom: 16px;
+        }
+
+        #md-content a {
+            color: #0969da;
+            text-decoration: none;
+        }
+
+        #md-content a:hover {
+            text-decoration: underline;
+        }
+
+        #md-content ul,
+        #md-content ol {
+            padding-left: 2em;
+            margin-top: 0;
+            margin-bottom: 16px;
+        }
+
+        #md-content ul {
+            list-style-type: disc;
+        }
+
+        #md-content ol {
+            list-style-type: decimal;
+        }
+
+        #md-content li {
+            margin-top: 0.25em;
+        }
+
+        #md-content blockquote {
+            padding: 0 1em;
+            color: #57606a;
+            border-left: 0.25em solid #d0d7de;
+            margin: 0 0 16px 0;
+        }
+
+        /* Tables */
+        #md-content table {
+            border-spacing: 0;
+            border-collapse: collapse;
+            margin-top: 0;
+            margin-bottom: 16px;
+            width: 100%;
+            overflow: auto;
+        }
+
+        #md-content table th,
+        #md-content table td {
+            padding: 6px 13px;
+            border: 1px solid #d0d7de;
+        }
+
+        #md-content table th {
+            font-weight: 600;
+            background-color: #f6f8fa;
+        }
+
+        #md-content table tr:nth-child(2n) {
+            background-color: #f6f8fa;
+        }
+
+        /* Code */
+        #md-content code {
+            padding: .2em .4em;
+            margin: 0;
+            font-size: 85%;
+            background-color: #afb8c133;
+            border-radius: 6px;
+            font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+        }
+
+        #md-content pre {
+            padding: 16px;
+            overflow: auto;
+            font-size: 85%;
+            line-height: 1.45;
+            background-color: #f6f8fa;
+            border-radius: 6px;
+            margin-bottom: 16px;
+        }
+
+        #md-content pre code {
+            background-color: transparent;
+            padding: 0;
+            border-radius: 0;
+        }
+
+        /* Mermaid */
+        div.mermaid {
+            background: white;
+            padding: 10px;
+            display: flex;
+            justify-content: center;
+        }
     </style>
 </head>
 
@@ -361,7 +497,7 @@
                 }
             },
             "comp-entra": {
-                "name": "Indentity & Access Management",
+                "name": "Identity & Access Management (IAM)",
                 "description": "Beheert identiteiten en toegang (IAM). Zorgt ervoor dat alleen geautoriseerde gebruikers acties uitvoeren.",
                 "steps": [
                     "Authenticeren van gebruiker.",
@@ -370,10 +506,10 @@
                 ],
                 "design": {
                     "components": ["Identity Provider", "Token Service", "Directory"],
-                    "dataFlow": ["UI -> Entra ID -> Access Token"]
+                    "dataFlow": ["UI -> IAM -> Access Token"]
                 },
                 "prompts": {
-                    "research": "Bepaal benodigde Entra rollen en scopes.",
+                    "research": "Bepaal benodigde IAM rollen en scopes.",
                     "build": "Configureer App Registration en claim mapping policy.",
                     "test": "Valideer token generatie en rol toewijzing.",
                     "deploy": "Provision service principal in tenant."
@@ -607,7 +743,7 @@
                 <p class="text-[10px] text-slate-400">Spec-Driven & Human-in-the-Loop</p>
             </div>
         </div>
-        <div class="flex space-x-3">
+        <div class="flex space-x-3" id="top-nav-actions">
             <!-- Scenario 1 Button -->
             <button onclick="runScenario('response')"
                 class="group px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-600 transition flex items-center space-x-2">
@@ -632,408 +768,511 @@
 
     <div class="flex flex-grow overflow-hidden">
 
-        <!-- LEFT: VISUALIZATION -->
-        <div class="flex-grow flex flex-col bg-slate-50 relative overflow-y-auto">
+        <div class="flex flex-grow overflow-hidden relative">
 
-            <!-- KANBAN BOARD -->
-            <div class="p-4 border-b border-slate-200">
-                <div class="kanban-container">
-                    <div class="kanban-col" id="col-backlog">
-                        <div class="kanban-header">1. Aanvraag</div>
-                    </div>
-                    <div class="kanban-col" id="col-spec">
-                        <div class="kanban-header">2. Specificatie</div>
-                    </div>
-                    <div class="kanban-col" id="col-approval">
-                        <div class="kanban-header">3. Goedkeuring</div>
-                    </div>
-                    <div class="kanban-col" id="col-exec">
-                        <div class="kanban-header">4. Uitvoering</div>
-                    </div>
-
-                    <!-- Split Column 5 -->
-                    <div class="kanban-col" style="padding: 2px; background: #e2e8f0;">
-                        <div class="kanban-header" style="margin-left: 4px; margin-top: 4px;">5. Output</div>
-                        <div class="split-container">
-                            <div class="split-col" id="col-response">
-                                <div class="split-label">Antwoord</div>
-                            </div>
-                            <div class="split-col" id="col-live">
-                                <div class="split-label text-green-700">Live App</div>
-                            </div>
-                        </div>
-                    </div>
+            <!-- SIDEBAR -->
+            <div class="w-64 bg-slate-800 text-white flex flex-col flex-none shadow-xl z-50 transition-all duration-300 transform"
+                id="sidebar">
+                <div class="p-4 border-b border-slate-700">
+                    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Navigatie</h2>
                 </div>
-            </div>
+                <div class="flex-grow overflow-y-auto py-2">
+                    <nav class="space-y-1 px-2">
+                        <button onclick="navTo('arch')"
+                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-blue-400 transition-colors">
+                            <i data-lucide="layout-dashboard" class="inline-block w-4 h-4 mr-2"></i> Overall
+                            Architectuur
+                        </button>
 
-            <!-- ARCHITECTURE DIAGRAM -->
-            <div class="p-6 flex-grow relative flex flex-col justify-center" id="diagram-area">
-                <!-- Background Grid -->
-                <div class="absolute inset-0 opacity-[0.05] pointer-events-none"
-                    style="background-image: radial-gradient(#64748b 1px, transparent 1px); background-size: 20px 20px;">
-                </div>
+                        <div class="pt-4 pb-1 px-3 text-[10px] font-bold text-slate-500 uppercase">Specificaties</div>
 
-                <div class="diagram-grid max-w-5xl mx-auto w-full select-none">
+                        <!-- Bouwblokken -->
+                        <button onclick="navTo('dir', 'bouwblokken')"
+                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                            <i data-lucide="package" class="inline-block w-4 h-4 mr-2"></i> Bouwblokken
+                        </button>
 
-                    <!-- DRUPPIE COMPLIANCE WRAPPER (Background Layer) -->
-                    <div id="comp-compliance" onclick="inspect('comp-compliance')"
-                        class="absolute -inset-8 bg-red-50/40 ml-2 mr-2 border-2 border-dashed border-red-200 rounded-[3rem] z-0 cursor-pointer hover:bg-red-50/60 transition-colors shadow-sm">
-                        <div
-                            class="absolute bottom-2 right-6 flex items-center gap-2 text-red-300 font-bold uppercase tracking-widest text-[10px]">
-                            <i data-lucide="shield-check" class="w-4 h-4"></i>
-                            Druppie Compliance Layer
-                        </div>
-                    </div>
-
-                    <!-- TOP: USER -->
-                    <div class="col-span-12 flex justify-center mb-6 z-10">
-                        <div id="comp-copilot" onclick="inspect('comp-copilot')"
-                            class="arch-card w-1/3 text-center border-t-4 border-t-blue-500 shadow-sm">
-                            <div class="text-3xl mb-1">👤</div>
-                            <div class="font-bold text-sm">Druppie APP<BR>Copilot APP</div>
-                            <div class="text-[10px] text-slate-400">Gebruiker Interface</div>
-                        </div>
-                    </div>
-
-                    <!-- MIDDLE: CONTROL PLANE -->
-                    <div class="col-span-12 grid grid-cols-12 gap-4 mb-8 z-10">
-
-                        <!-- NEW SPLIT COLUMN: Bouwblokken & Entra -->
-                        <div class="col-span-2 flex flex-col gap-2 h-full">
-                            <!-- Bouwblok Definities -->
-                            <div id="comp-blocks" onclick="inspect('comp-blocks')"
-                                class="arch-card flex-1 text-center bg-indigo-50/50 border-indigo-200 flex flex-col justify-center hover:bg-indigo-50 transition">
-                                <div class="text-xl">🧩</div>
-                                <div class="text-[9px] font-bold mt-1 leading-tight">Bouwblok<br>Definities</div>
-                            </div>
-
-                            <!-- Entra ID -->
-                            <div id="comp-entra" onclick="inspect('comp-entra')"
-                                class="arch-card flex-1 text-center bg-slate-50 flex flex-col justify-center">
-                                <div class="text-xl">🛡️</div>
-                                <div class="text-[9px] font-bold mt-1">IAM</div>
-                            </div>
-                        </div>
-
-                        <!-- Orchestrator (X-Ray) -->
-                        <div id="comp-orch" onclick="inspect('comp-orch')"
-                            class="col-span-6 arch-card bg-blue-600 text-white shadow-lg p-3">
-                            <div class="flex justify-between items-start mb-3">
-                                <div>
-                                    <h3 class="font-bold text-xs">Druppie Core</h3>
-                                    <p class="text-[9px] text-blue-200">Semantic Kernel</p>
-                                </div>
-                                <span class="text-2xl">🧠</span>
-                            </div>
-                            <!-- Bouwblokken van de Agent -->
-                            <div class="grid grid-cols-2 gap-2">
-                                <div id="inner-planner" class="internal-block">Planner (Logic)</div>
-                                <div id="inner-memory" class="internal-block">Memory (Context)</div>
-                                <div id="inner-rag" class="internal-block">RAG (Knowledge)</div>
-                                <div id="inner-safety" class="internal-block bg-red-500/20 border-red-400/50">Safety
-                                    Filter</div>
-                            </div>
-                        </div>
-
-                        <!-- Governance & Approval -->
-                        <div class="col-span-4 grid grid-cols-1 gap-2 h-full">
-                            <div class="flex gap-2 h-full">
-                                <div id="comp-policy" onclick="inspect('comp-policy')"
-                                    class="arch-card flex-1 text-center bg-slate-50 flex flex-col justify-center">
-                                    <div class="text-lg">📜</div>
-                                    <div class="text-[9px] font-bold">Policy</div>
-                                </div>
-                                <!-- THE CISO COMPONENT -->
-                                <div id="comp-ciso" onclick="inspect('comp-ciso')"
-                                    class="arch-card flex-1 text-center border-purple-300 bg-purple-50 flex flex-col justify-center relative transition-all duration-300">
-                                    <div class="absolute -top-2 -right-2 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full hidden shadow-sm"
-                                        id="ciso-badge">REQ</div>
-                                    <div class="text-lg">👮‍♂️</div>
-                                    <div class="text-[9px] font-bold text-purple-900">Mens in Loop</div>
-                                    <div id="ciso-status" class="text-[8px] text-slate-400 mt-1">Idle</div>
-                                </div>
-                            </div>
-                            <div id="comp-db" onclick="inspect('comp-db')"
-                                class="arch-card text-center bg-teal-50 border-teal-300 py-2">
-                                <div class="text-xs font-bold text-teal-800">🗄️ Traceability & Audit DB</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- BOTTOM: EXECUTION PLANES (Parallel) -->
-                    <div class="col-span-12 grid grid-cols-2 gap-6 z-10">
+                        <!-- Skills -->
+                        <button onclick="navTo('dir', 'skills')"
+                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                            <i data-lucide="zap" class="inline-block w-4 h-4 mr-2"></i> Skills
+                        </button>
 
                         <!-- Build Plane -->
-                        <div class="border-2 dashed border-orange-200 rounded-xl p-3 bg-orange-50/30 relative">
-                            <span id="comp-build-plane" onclick="inspect('comp-build-plane')"
-                                class="absolute -top-3 left-4 bg-orange-100 text-orange-600 text-[9px] font-bold px-2 rounded uppercase tracking-wider">Build
-                                Plane</span>
-                            <div class="flex space-x-2 items-center h-full">
-                                <div id="comp-builder" onclick="inspect('comp-builder')"
-                                    class="arch-card flex-1 text-center border-orange-300 py-3">
-                                    <div class="text-xl">👷‍♂️</div>
-                                    <div class="font-bold text-[10px] text-orange-900">Builder Agent</div>
-                                </div>
-                                <div class="text-orange-300 text-xs">➔</div>
-                                <div id="comp-foundry" onclick="inspect('comp-foundry')"
-                                    class="arch-card flex-1 text-center border-orange-300 opacity-60 py-3">
-                                    <div class="text-xl">🏭</div>
-                                    <div class="font-bold text-[10px]">Foundry</div>
+                        <button onclick="navTo('dir', 'build_plane')"
+                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                            <i data-lucide="hammer" class="inline-block w-4 h-4 mr-2"></i> Build Plane
+                        </button>
+
+                        <!-- Runtime -->
+                        <button onclick="navTo('dir', 'runtime')"
+                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                            <i data-lucide="server" class="inline-block w-4 h-4 mr-2"></i> Runtime
+                        </button>
+
+                        <!-- Compliance -->
+                        <button onclick="navTo('dir', 'compliance')"
+                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                            <i data-lucide="shield" class="inline-block w-4 h-4 mr-2"></i> Compliance
+                        </button>
+
+                        <!-- Top Level Readme -->
+                        <button onclick="navTo('dir', 'general')"
+                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors border-t border-slate-700 mt-2 pt-2">
+                            <i data-lucide="file-text" class="inline-block w-4 h-4 mr-2"></i> Project Readme
+                        </button>
+                    </nav>
+                </div>
+
+                <!-- File System Indicator -->
+                <div id="fs-indicator" class="p-4 bg-slate-900 text-xs text-slate-500 border-t border-slate-700">
+                    Detecting environment...
+                </div>
+                <!-- Local Access Button -->
+                <div id="local-access-ui" class="hidden px-4 pb-4 bg-slate-900 border-t border-slate-800 pt-2">
+                    <button onclick="startLocalSession()"
+                        class="w-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2 rounded flex items-center justify-center">
+                        <i data-lucide="folder-open" class="w-3 h-3 mr-2"></i> Open Project Folder
+                    </button>
+                    <p class="text-[10px] text-slate-400 mt-2 leading-tight">Click to enable Read/Write access to local
+                        files.</p>
+                </div>
+            </div>
+
+            <!-- MAIN CONTENT AREA -->
+            <div class="flex-grow flex flex-col relative overflow-hidden bg-slate-50 min-w-0">
+
+                <!-- VIEW: ARCHITECTURE (Original Content) -->
+                <div id="view-arch" class="flex flex-col h-full overflow-hidden">
+
+                    <!-- KANBAN BOARD -->
+                    <div class="p-4 border-b border-slate-200">
+                        <div class="kanban-container">
+                            <div class="kanban-col" id="col-backlog">
+                                <div class="kanban-header">1. Aanvraag</div>
+                            </div>
+                            <div class="kanban-col" id="col-spec">
+                                <div class="kanban-header">2. Specificatie</div>
+                            </div>
+                            <div class="kanban-col" id="col-approval">
+                                <div class="kanban-header">3. Goedkeuring</div>
+                            </div>
+                            <div class="kanban-col" id="col-exec">
+                                <div class="kanban-header">4. Uitvoering</div>
+                            </div>
+
+                            <!-- Split Column 5 -->
+                            <div class="kanban-col" style="padding: 2px; background: #e2e8f0;">
+                                <div class="kanban-header" style="margin-left: 4px; margin-top: 4px;">5. Output</div>
+                                <div class="split-container">
+                                    <div class="split-col" id="col-response">
+                                        <div class="split-label">Antwoord</div>
+                                    </div>
+                                    <div class="split-col" id="col-live">
+                                        <div class="split-label text-green-700">Live App</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
+                    </div>
 
-                        <!-- Runtime Plane -->
-                        <div class="border-2 dashed border-green-200 rounded-xl p-3 bg-green-50/30 relative">
-                            <span id="comp-runtime-aks" onclick="inspect('comp-runtime-aks')"
-                                class="absolute -top-3 left-4 bg-green-100 text-green-600 text-[9px] font-bold px-2 rounded uppercase tracking-wider">Runtime
-                                (AKS)</span>
-                            <div class="flex flex-col h-full justify-between gap-2">
-                                <div id="comp-mcp" onclick="inspect('comp-mcp')"
-                                    class="bg-slate-800 text-white rounded p-1 text-center text-[9px] font-mono">
-                                    &lt; MCP Interface /&gt;
-                                </div>
-                                <div class="grid grid-cols-2 gap-2">
-                                    <div id="comp-pod-exist" onclick="inspect('comp-pod-exist')"
-                                        class="bg-white border border-green-200 rounded p-2 text-center opacity-60 cursor-pointer hover:shadow-md transition">
-                                        <div class="text-sm">📚</div>
-                                        <div class="text-[8px]">Kennis Bot</div>
+                    <!-- SPLIT ROW: DIAGRAM + INSPECTOR -->
+                    <div class="flex-grow flex overflow-hidden relative">
+
+                        <!-- ARCHITECTURE DIAGRAM -->
+                        <div class="p-6 flex-grow relative flex flex-col justify-center overflow-auto"
+                            id="diagram-area">
+                            <!-- Background Grid -->
+                            <div class="absolute inset-0 opacity-[0.05] pointer-events-none"
+                                style="background-image: radial-gradient(#64748b 1px, transparent 1px); background-size: 20px 20px;">
+                            </div>
+
+                            <div class="diagram-grid max-w-5xl mx-auto w-full select-none">
+
+                                <!-- DRUPPIE COMPLIANCE WRAPPER (Background Layer) -->
+                                <div id="comp-compliance" onclick="inspect('comp-compliance')"
+                                    class="absolute -inset-8 bg-red-50/40 ml-2 mr-2 border-2 border-dashed border-red-200 rounded-[3rem] z-0 cursor-pointer hover:bg-red-50/60 transition-colors shadow-sm">
+                                    <div
+                                        class="absolute bottom-2 right-6 flex items-center gap-2 text-red-300 font-bold uppercase tracking-widest text-[10px]">
+                                        <i data-lucide="shield-check" class="w-4 h-4"></i>
+                                        Druppie Compliance Layer
                                     </div>
-                                    <div id="comp-new-pod" onclick="inspect('comp-new-pod')"
-                                        class="bg-transparent border-2 dashed border-slate-300 rounded p-2 text-center flex flex-col items-center justify-center min-h-[50px] cursor-pointer hover:border-slate-400 transition">
-                                        <span class="text-[8px] text-slate-400">Empty Slot</span>
+                                </div>
+
+                                <!-- TOP: USER -->
+                                <div class="col-span-12 flex justify-center mb-6 z-10">
+                                    <div id="comp-copilot" onclick="inspect('comp-copilot')"
+                                        class="arch-card w-1/3 text-center border-t-4 border-t-blue-500 shadow-sm">
+                                        <div class="text-3xl mb-1">👤</div>
+                                        <div class="font-bold text-sm">Druppie APP<BR>Copilot APP</div>
+                                        <div class="text-[10px] text-slate-400">Gebruiker Interface</div>
+                                    </div>
+                                </div>
+
+                                <!-- MIDDLE: CONTROL PLANE -->
+                                <div class="col-span-12 grid grid-cols-12 gap-4 mb-8 z-10">
+
+                                    <!-- NEW SPLIT COLUMN: Bouwblokken & Entra -->
+                                    <div class="col-span-2 flex flex-col gap-2 h-full">
+                                        <!-- Bouwblok Definities -->
+                                        <div id="comp-blocks" onclick="inspect('comp-blocks')"
+                                            class="arch-card flex-1 text-center bg-indigo-50/50 border-indigo-200 flex flex-col justify-center hover:bg-indigo-50 transition">
+                                            <div class="text-xl">🧩</div>
+                                            <div class="text-[9px] font-bold mt-1 leading-tight">Bouwblok<br>Definities
+                                            </div>
+                                        </div>
+
+                                        <!-- Entra ID -->
+                                        <div id="comp-entra" onclick="inspect('comp-entra')"
+                                            class="arch-card flex-1 text-center bg-slate-50 flex flex-col justify-center">
+                                            <div class="text-xl">🛡️</div>
+                                            <div class="text-[9px] font-bold mt-1">IAM</div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Orchestrator (X-Ray) -->
+                                    <div id="comp-orch" onclick="inspect('comp-orch')"
+                                        class="col-span-6 arch-card bg-blue-600 text-white shadow-lg p-3">
+                                        <div class="flex justify-between items-start mb-3">
+                                            <div>
+                                                <h3 class="font-bold text-xs">Druppie Core</h3>
+                                                <p class="text-[9px] text-blue-200">Semantic Kernel</p>
+                                            </div>
+                                            <span class="text-2xl">🧠</span>
+                                        </div>
+                                        <!-- Bouwblokken van de Agent -->
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div id="inner-planner" class="internal-block">Planner (Logic)</div>
+                                            <div id="inner-memory" class="internal-block">Memory (Context)</div>
+                                            <div id="inner-rag" class="internal-block">RAG (Knowledge)</div>
+                                            <div id="inner-safety"
+                                                class="internal-block bg-red-500/20 border-red-400/50">
+                                                Safety
+                                                Filter</div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Governance & Approval -->
+                                    <div class="col-span-4 grid grid-cols-1 gap-2 h-full">
+                                        <div class="flex gap-2 h-full">
+                                            <div id="comp-policy" onclick="inspect('comp-policy')"
+                                                class="arch-card flex-1 text-center bg-slate-50 flex flex-col justify-center">
+                                                <div class="text-lg">📜</div>
+                                                <div class="text-[9px] font-bold">Policy</div>
+                                            </div>
+                                            <!-- THE CISO COMPONENT -->
+                                            <div id="comp-ciso" onclick="inspect('comp-ciso')"
+                                                class="arch-card flex-1 text-center border-purple-300 bg-purple-50 flex flex-col justify-center relative transition-all duration-300">
+                                                <div class="absolute -top-2 -right-2 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full hidden shadow-sm"
+                                                    id="ciso-badge">REQ</div>
+                                                <div class="text-lg">👮‍♂️</div>
+                                                <div class="text-[9px] font-bold text-purple-900">Mens in Loop</div>
+                                                <div id="ciso-status" class="text-[8px] text-slate-400 mt-1">Idle</div>
+                                            </div>
+                                        </div>
+                                        <div id="comp-db" onclick="inspect('comp-db')"
+                                            class="arch-card text-center bg-teal-50 border-teal-300 py-2">
+                                            <div class="text-xs font-bold text-teal-800">🗄️ Traceability & Audit DB
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- BOTTOM: EXECUTION PLANES (Parallel) -->
+                                <div class="col-span-12 grid grid-cols-2 gap-6 z-10">
+
+                                    <!-- Build Plane -->
+                                    <div
+                                        class="border-2 dashed border-orange-200 rounded-xl p-3 bg-orange-50/30 relative">
+                                        <span id="comp-build-plane" onclick="inspect('comp-build-plane')"
+                                            class="absolute -top-3 left-4 bg-orange-100 text-orange-600 text-[9px] font-bold px-2 rounded uppercase tracking-wider">Build
+                                            Plane</span>
+                                        <div class="flex space-x-2 items-center h-full">
+                                            <div id="comp-builder" onclick="inspect('comp-builder')"
+                                                class="arch-card flex-1 text-center border-orange-300 py-3">
+                                                <div class="text-xl">👷‍♂️</div>
+                                                <div class="font-bold text-[10px] text-orange-900">Builder Agent</div>
+                                            </div>
+                                            <div class="text-orange-300 text-xs">➔</div>
+                                            <div id="comp-foundry" onclick="inspect('comp-foundry')"
+                                                class="arch-card flex-1 text-center border-orange-300 opacity-60 py-3">
+                                                <div class="text-xl">🏭</div>
+                                                <div class="font-bold text-[10px]">Foundry</div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Runtime Plane -->
+                                    <div
+                                        class="border-2 dashed border-green-200 rounded-xl p-3 bg-green-50/30 relative">
+                                        <span id="comp-runtime-aks" onclick="inspect('comp-runtime-aks')"
+                                            class="absolute -top-3 left-4 bg-green-100 text-green-600 text-[9px] font-bold px-2 rounded uppercase tracking-wider">Runtime
+                                            (AKS)</span>
+                                        <div class="flex flex-col h-full justify-between gap-2">
+                                            <div id="comp-mcp" onclick="inspect('comp-mcp')"
+                                                class="bg-slate-800 text-white rounded p-1 text-center text-[9px] font-mono">
+                                                &lt; MCP Interface /&gt;
+                                            </div>
+                                            <div class="grid grid-cols-2 gap-2">
+                                                <div id="comp-pod-exist" onclick="inspect('comp-pod-exist')"
+                                                    class="bg-white border border-green-200 rounded p-2 text-center opacity-60 cursor-pointer hover:shadow-md transition">
+                                                    <div class="text-sm">📚</div>
+                                                    <div class="text-[8px]">Kennis Bot</div>
+                                                </div>
+                                                <div id="comp-new-pod" onclick="inspect('comp-new-pod')"
+                                                    class="bg-transparent border-2 dashed border-slate-300 rounded p-2 text-center flex flex-col items-center justify-center min-h-[50px] cursor-pointer hover:border-slate-400 transition">
+                                                    <span class="text-[8px] text-slate-400">Empty Slot</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+
+                            </div>
+
+                            <!-- Animation Layer -->
+                            <div id="anim-layer" class="absolute inset-0 pointer-events-none w-full h-full z-50"></div>
+                        </div>
+
+                        <!-- RIGHT: ENHANCED SIDEBAR (Split View) -->
+                        <div class="w-96 bg-white border-l border-slate-200 flex flex-col shadow-2xl z-40 flex-none">
+
+                            <!-- 1. COMPONENT INSPECTOR -->
+                            <div class="h-1/3 border-b border-slate-200 bg-slate-50 flex flex-col">
+                                <div class="p-3 border-b border-slate-200 bg-white flex justify-between items-center">
+                                    <span
+                                        class="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                                        <i data-lucide="mouse-pointer-2" class="w-3 h-3"></i> Inspecteur
+                                    </span>
+                                    <span class="text-[9px] text-slate-400" id="insp-header-status">Selecteer een
+                                        component</span>
+                                    <div id="insp-header-active-status" class="hidden flex items-center gap-2">
+                                        <div class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+                                        <span class="text-[9px] font-mono text-green-700 font-bold">Active</span>
+                                    </div>
+                                </div>
+                                <div id="inspector-content" class="p-4 flex-1 overflow-y-auto">
+                                    <!-- Default State -->
+                                    <div id="insp-default"
+                                        class="h-full flex flex-col items-center justify-center text-slate-400 opacity-60">
+                                        <i data-lucide="box-select" class="w-8 h-8 mb-2"></i>
+                                        <span class="text-xs">Klik op diagram voor details</span>
+                                    </div>
+                                    <!-- Active State (Hidden by default) -->
+                                    <div id="insp-active" class="hidden space-y-3">
+                                        <div>
+                                            <span
+                                                class="text-[10px] text-slate-400 uppercase font-bold">Component</span>
+                                            <div id="insp-title" class="text-sm font-bold text-slate-800">...</div>
+                                        </div>
+                                        <div>
+                                            <span
+                                                class="text-[10px] text-slate-400 uppercase font-bold">Beschrijving</span>
+                                            <p id="insp-desc" class="text-xs text-slate-600 leading-relaxed mt-1">...
+                                            </p>
+                                        </div>
+
+
+                                        <div id="insp-spec-container"
+                                            class="hidden pt-2 border-t border-slate-200 mt-2">
+                                            <span class="text-[10px] text-slate-400 uppercase font-bold">Spec
+                                                Context</span>
+                                            <p id="insp-spec-desc"
+                                                class="text-xs text-indigo-600 leading-relaxed mt-1 italic">
+                                                ...</p>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
+
+                            <!-- 2. CHAT INTERFACE -->
+                            <div class="flex-1 flex flex-col min-h-0 border-b border-slate-200 bg-white relative">
+                                <div
+                                    class="p-2 border-b border-slate-100 flex justify-between items-center bg-white z-10">
+                                    <span
+                                        class="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                                        <i data-lucide="message-square" class="w-3 h-3"></i> Conversatie
+                                    </span>
+                                    <div id="status-indicator"
+                                        class="text-[9px] font-bold text-slate-400 flex items-center">
+                                        <span class="w-1.5 h-1.5 bg-slate-300 rounded-full mr-1.5"></span> Gereed
+                                    </div>
+                                </div>
+                                <div id="chat-container" class="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
+                                    <div class="text-center text-slate-300 text-[10px] italic mt-4">Start een
+                                        scenario...
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 3. BUILD TERMINAL -->
+                            <div class="h-48 bg-slate-900 flex flex-col">
+                                <div
+                                    class="h-7 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-3">
+                                    <span class="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-2">
+                                        <i data-lucide="terminal" class="w-3 h-3"></i> Build Terminal
+                                    </span>
+                                    <div class="flex gap-1.5">
+                                        <div class="w-2 h-2 rounded-full bg-slate-600"></div>
+                                        <div class="w-2 h-2 rounded-full bg-slate-600"></div>
+                                    </div>
+                                </div>
+                                <div id="terminal-output"
+                                    class="flex-1 p-3 overflow-y-auto font-mono text-[10px] text-slate-300 dark-scroll">
+                                    <div class="terminal-line term-info">> System initialized. Waiting for input...
+                                    </div>
+                                </div>
+                            </div>
+
                         </div>
 
-                    </div>
-
-                </div>
-
-                <!-- Animation Layer -->
-                <div id="anim-layer" class="absolute inset-0 pointer-events-none w-full h-full z-50"></div>
-            </div>
-        </div>
-
-        <!-- RIGHT: ENHANCED SIDEBAR (Split View) -->
-        <div class="w-96 bg-white border-l border-slate-200 flex flex-col shadow-2xl z-40 flex-none">
-
-            <!-- 1. COMPONENT INSPECTOR -->
-            <div class="h-1/3 border-b border-slate-200 bg-slate-50 flex flex-col">
-                <div class="p-3 border-b border-slate-200 bg-white flex justify-between items-center">
-                    <span class="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
-                        <i data-lucide="mouse-pointer-2" class="w-3 h-3"></i> Inspecteur
-                    </span>
-                    <span class="text-[9px] text-slate-400" id="insp-header-status">Selecteer een component</span>
-                    <div id="insp-header-active-status" class="hidden flex items-center gap-2">
-                        <div class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
-                        <span class="text-[9px] font-mono text-green-700 font-bold">Active</span>
-                    </div>
-                </div>
-                <div id="inspector-content" class="p-4 flex-1 overflow-y-auto">
-                    <!-- Default State -->
-                    <div id="insp-default"
-                        class="h-full flex flex-col items-center justify-center text-slate-400 opacity-60">
-                        <i data-lucide="box-select" class="w-8 h-8 mb-2"></i>
-                        <span class="text-xs">Klik op diagram voor details</span>
-                    </div>
-                    <!-- Active State (Hidden by default) -->
-                    <div id="insp-active" class="hidden space-y-3">
-                        <div>
-                            <span class="text-[10px] text-slate-400 uppercase font-bold">Component</span>
-                            <div id="insp-title" class="text-sm font-bold text-slate-800">...</div>
-                        </div>
-                        <div>
-                            <span class="text-[10px] text-slate-400 uppercase font-bold">Beschrijving</span>
-                            <p id="insp-desc" class="text-xs text-slate-600 leading-relaxed mt-1">...</p>
-                        </div>
 
 
-                        <div id="insp-spec-container" class="hidden pt-2 border-t border-slate-200 mt-2">
-                            <span class="text-[10px] text-slate-400 uppercase font-bold">Spec Context</span>
-                            <p id="insp-spec-desc" class="text-xs text-indigo-600 leading-relaxed mt-1 italic">...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
+                    </div> <!-- End Split Row -->
 
-            <!-- 2. CHAT INTERFACE -->
-            <div class="flex-1 flex flex-col min-h-0 border-b border-slate-200 bg-white relative">
-                <div class="p-2 border-b border-slate-100 flex justify-between items-center bg-white z-10">
-                    <span class="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
-                        <i data-lucide="message-square" class="w-3 h-3"></i> Conversatie
-                    </span>
-                    <div id="status-indicator" class="text-[9px] font-bold text-slate-400 flex items-center">
-                        <span class="w-1.5 h-1.5 bg-slate-300 rounded-full mr-1.5"></span> Gereed
-                    </div>
-                </div>
-                <div id="chat-container" class="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
-                    <div class="text-center text-slate-300 text-[10px] italic mt-4">Start een scenario...</div>
-                </div>
-            </div>
+                </div> <!-- End view-arch -->
 
-            <!-- 3. BUILD TERMINAL -->
-            <div class="h-48 bg-slate-900 flex flex-col">
-                <div class="h-7 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-3">
-                    <span class="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-2">
-                        <i data-lucide="terminal" class="w-3 h-3"></i> Build Terminal
-                    </span>
-                    <div class="flex gap-1.5">
-                        <div class="w-2 h-2 rounded-full bg-slate-600"></div>
-                        <div class="w-2 h-2 rounded-full bg-slate-600"></div>
-                    </div>
-                </div>
-                <div id="terminal-output"
-                    class="flex-1 p-3 overflow-y-auto font-mono text-[10px] text-slate-300 dark-scroll">
-                    <div class="terminal-line term-info">> System initialized. Waiting for input...</div>
-                </div>
-            </div>
+                <script>
+                    // Init Icons
+                    lucide.createIcons();
 
-        </div>
+                    // --- UTILS ---
+                    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    </div>
+                    let currentScenarioKey = null;
 
-    <script>
-        // Init Icons
-        lucide.createIcons();
+                    // --- INSPECTOR LOGIC ---
+                    function inspect(id) {
+                        const data = SPEC[id];
 
-        // --- UTILS ---
-        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                        // If checking compliance, highlight red, otherwise blue
+                        const color = id === 'comp-compliance' ? 'red' : 'blue';
+                        highlight(id, color);
 
-        let currentScenarioKey = null;
+                        if (!data && !currentScenarioKey) return;
 
-        // --- INSPECTOR LOGIC ---
-        function inspect(id) {
-            const data = SPEC[id];
+                        document.getElementById('insp-default').classList.add('hidden');
+                        document.getElementById('insp-active').classList.remove('hidden');
 
-            // If checking compliance, highlight red, otherwise blue
-            const color = id === 'comp-compliance' ? 'red' : 'blue';
-            highlight(id, color);
+                        const specContainer = document.getElementById('insp-spec-container');
+                        const specDesc = document.getElementById('insp-spec-desc');
+                        const titleEl = document.getElementById('insp-title');
+                        const descEl = document.getElementById('insp-desc');
 
-            if (!data && !currentScenarioKey) return;
+                        specContainer.classList.add('hidden');
+                        specDesc.innerHTML = '';
 
-            document.getElementById('insp-default').classList.add('hidden');
-            document.getElementById('insp-active').classList.remove('hidden');
+                        // 1. Direct SPEC match (Component)
+                        if (data) {
+                            // Populate Main Header with Name/Description
+                            titleEl.innerText = data.name;
+                            descEl.innerText = data.description;
 
-            const specContainer = document.getElementById('insp-spec-container');
-            const specDesc = document.getElementById('insp-spec-desc');
-            const titleEl = document.getElementById('insp-title');
-            const descEl = document.getElementById('insp-desc');
+                            // Show Extra Spec Details
+                            specContainer.classList.remove('hidden');
 
-            specContainer.classList.add('hidden');
-            specDesc.innerHTML = '';
+                            let html = '';
 
-            // 1. Direct SPEC match (Component)
-            if (data) {
-                // Populate Main Header with Name/Description
-                titleEl.innerText = data.name;
-                descEl.innerText = data.description;
+                            // Steps
+                            if (data.steps) {
+                                html += `<div class="text-[9px] uppercase font-bold text-slate-400 mt-2 mb-1">Stappen</div>`;
+                                html += `<ul class="list-disc list-inside space-y-0.5 pl-1 opacity-80">`;
+                                data.steps.forEach(s => html += `<li>${s}</li>`);
+                                html += `</ul>`;
+                            }
 
-                // Show Extra Spec Details
-                specContainer.classList.remove('hidden');
+                            // Design Components
+                            if (data.design && data.design.components) {
+                                html += `<div class="text-[9px] uppercase font-bold text-slate-400 mt-3 mb-1">Design Componenten</div>`;
+                                html += `<div class="flex flex-wrap gap-1">`;
+                                data.design.components.forEach(c => {
+                                    let name = typeof c === 'string' ? c : c.name;
+                                    html += `<span class="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded border border-indigo-100">${name}</span>`;
+                                });
+                                html += `</div>`;
+                            }
 
-                let html = '';
+                            // Data Flow
+                            if (data.design && data.design.dataFlow) {
+                                html += `<div class="text-[9px] uppercase font-bold text-slate-400 mt-3 mb-1">Data Flow</div>`;
+                                html += `<div class="p-2 bg-slate-50 border border-slate-100 rounded text-[9px] font-mono text-slate-600 leading-relaxed">`;
+                                data.design.dataFlow.forEach(flow => html += `<div>${flow}</div>`);
+                                html += `</div>`;
+                            }
 
-                // Steps
-                if (data.steps) {
-                    html += `<div class="text-[9px] uppercase font-bold text-slate-400 mt-2 mb-1">Stappen</div>`;
-                    html += `<ul class="list-disc list-inside space-y-0.5 pl-1 opacity-80">`;
-                    data.steps.forEach(s => html += `<li>${s}</li>`);
-                    html += `</ul>`;
-                }
-
-                // Design Components
-                if (data.design && data.design.components) {
-                    html += `<div class="text-[9px] uppercase font-bold text-slate-400 mt-3 mb-1">Design Componenten</div>`;
-                    html += `<div class="flex flex-wrap gap-1">`;
-                    data.design.components.forEach(c => {
-                        let name = typeof c === 'string' ? c : c.name;
-                        html += `<span class="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded border border-indigo-100">${name}</span>`;
-                    });
-                    html += `</div>`;
-                }
-
-                // Data Flow
-                if (data.design && data.design.dataFlow) {
-                    html += `<div class="text-[9px] uppercase font-bold text-slate-400 mt-3 mb-1">Data Flow</div>`;
-                    html += `<div class="p-2 bg-slate-50 border border-slate-100 rounded text-[9px] font-mono text-slate-600 leading-relaxed">`;
-                    data.design.dataFlow.forEach(flow => html += `<div>${flow}</div>`);
-                    html += `</div>`;
-                }
-
-                // Prompts
-                if (data.prompts) {
-                    html += `<div class="text-[9px] uppercase font-bold text-slate-400 mt-3 mb-1">Prompts (Lifecycle)</div>`;
-                    html += `<div class="space-y-1">`;
-                    for (const [key, value] of Object.entries(data.prompts)) {
-                        html += `
+                            // Prompts
+                            if (data.prompts) {
+                                html += `<div class="text-[9px] uppercase font-bold text-slate-400 mt-3 mb-1">Prompts (Lifecycle)</div>`;
+                                html += `<div class="space-y-1">`;
+                                for (const [key, value] of Object.entries(data.prompts)) {
+                                    html += `
                             <div class="border border-slate-100 rounded bg-indigo-50/30 p-1.5">
                                 <div class="text-[8px] uppercase font-bold text-indigo-500 mb-0.5">${key}</div>
                                 <div class="text-[9px] text-slate-600 italic leading-snug">"${value}"</div>
                             </div>
                          `;
+                                }
+                                html += `</div>`;
+                            }
+
+                            specDesc.innerHTML = html;
+                        }
+                        // 2. Fallback: Component lookup within active scenario
+                        else if (currentScenarioKey && SPEC[currentScenarioKey]) {
+                            const comps = SPEC[currentScenarioKey].design.components;
+                            // Try to find a match? We don't have title argument anymore.
+                            // Best effort: if we don't have ID match, we can't do much without the title arg.
+                            // However, user said "remove redundant data". 
+                            // All interactive components SHOULD have an ID and a SPEC entry now.
+                            // So this fallback might be obsolete if I did my job right in Step 101.
+                        }
+
+                        // Toggle Header Status
+                        const headerStatus = document.getElementById('insp-header-status');
+                        const headerActive = document.getElementById('insp-header-active-status');
+                        if (headerStatus && headerActive) {
+                            headerStatus.classList.add('hidden');
+                            headerActive.classList.remove('hidden');
+                        }
                     }
-                    html += `</div>`;
-                }
 
-                specDesc.innerHTML = html;
-            }
-            // 2. Fallback: Component lookup within active scenario
-            else if (currentScenarioKey && SPEC[currentScenarioKey]) {
-                const comps = SPEC[currentScenarioKey].design.components;
-                // Try to find a match? We don't have title argument anymore.
-                // Best effort: if we don't have ID match, we can't do much without the title arg.
-                // However, user said "remove redundant data". 
-                // All interactive components SHOULD have an ID and a SPEC entry now.
-                // So this fallback might be obsolete if I did my job right in Step 101.
-            }
+                    // Helper to reset header status when resetting
+                    function resetInspectorHeader() {
+                        const headerStatus = document.getElementById('insp-header-status');
+                        const headerActive = document.getElementById('insp-header-active-status');
+                        if (headerStatus && headerActive) {
+                            headerStatus.classList.remove('hidden');
+                            headerActive.classList.add('hidden');
+                        }
+                    }
 
-            // Toggle Header Status
-            const headerStatus = document.getElementById('insp-header-status');
-            const headerActive = document.getElementById('insp-header-active-status');
-            if (headerStatus && headerActive) {
-                headerStatus.classList.add('hidden');
-                headerActive.classList.remove('hidden');
-            }
-        }
+                    // --- LOGGING LOGIC ---
+                    function setStatus(text, type = 'neutral') {
+                        const el = document.getElementById('status-indicator');
+                        let color = 'bg-slate-400';
+                        if (type === 'active') color = 'bg-blue-500 animate-pulse';
+                        if (type === 'waiting') color = 'bg-purple-500 animate-bounce';
+                        if (type === 'success') color = 'bg-green-500';
 
-        // Helper to reset header status when resetting
-        function resetInspectorHeader() {
-            const headerStatus = document.getElementById('insp-header-status');
-            const headerActive = document.getElementById('insp-header-active-status');
-            if (headerStatus && headerActive) {
-                headerStatus.classList.remove('hidden');
-                headerActive.classList.add('hidden');
-            }
-        }
+                        el.innerHTML = `<span class="w-1.5 h-1.5 ${color} rounded-full mr-1.5"></span> ${text}`;
+                    }
 
-        // --- LOGGING LOGIC ---
-        function setStatus(text, type = 'neutral') {
-            const el = document.getElementById('status-indicator');
-            let color = 'bg-slate-400';
-            if (type === 'active') color = 'bg-blue-500 animate-pulse';
-            if (type === 'waiting') color = 'bg-purple-500 animate-bounce';
-            if (type === 'success') color = 'bg-green-500';
+                    function logChat(role, text) {
+                        const container = document.getElementById('chat-container');
+                        if (container.querySelector('.text-center')) container.innerHTML = '';
 
-            el.innerHTML = `<span class="w-1.5 h-1.5 ${color} rounded-full mr-1.5"></span> ${text}`;
-        }
+                        const wrapper = document.createElement('div');
+                        wrapper.className = `flex gap-2 w-full ${role === 'user' ? 'justify-end' : 'justify-start'}`;
 
-        function logChat(role, text) {
-            const container = document.getElementById('chat-container');
-            if (container.querySelector('.text-center')) container.innerHTML = '';
+                        let icon = role === 'user'
+                            ? `<div class="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center shrink-0 order-2 text-blue-600"><i data-lucide="user" class="w-3 h-3"></i></div>`
+                            : role === 'loop-user' ? `<div class="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 text-indigo-600"><i data-lucide="message-circle-question-mark" class="w-3 h-3"></i></div>`
+                                : `<div class="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 text-indigo-600"><i data-lucide="bot" class="w-3 h-3"></i></div>`;
 
-            const wrapper = document.createElement('div');
-            wrapper.className = `flex gap-2 w-full ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+                        let bubbleClass = role === 'user' ? 'bubble-user' : role === 'loop-user' ? 'loop-user' : 'bubble-ai';
 
-            let icon = role === 'user'
-                ? `<div class="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center shrink-0 order-2 text-blue-600"><i data-lucide="user" class="w-3 h-3"></i></div>`
-                : role === 'loop-user' ? `<div class="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 text-indigo-600"><i data-lucide="message-circle-question-mark" class="w-3 h-3"></i></div>`
-                    : `<div class="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 text-indigo-600"><i data-lucide="bot" class="w-3 h-3"></i></div>`;
-
-            let bubbleClass = role === 'user' ? 'bubble-user' : role === 'loop-user' ? 'loop-user' : 'bubble-ai';
-
-            wrapper.innerHTML = `
+                        wrapper.innerHTML = `
                 ${role === 'ai' || role === 'loop-user' ? icon : ''}
                 <div class="chat-bubble ${bubbleClass}">
                     ${text}
@@ -1041,300 +1280,816 @@
                 ${role === 'user' ? icon : ''}
             `;
 
-            container.appendChild(wrapper);
-            container.scrollTop = container.scrollHeight;
-            lucide.createIcons(); // Refresh icons in new content
+                        container.appendChild(wrapper);
+                        container.scrollTop = container.scrollHeight;
+                        lucide.createIcons(); // Refresh icons in new content
+                    }
+
+                    function logTerminal(text, type = 'info') {
+                        const term = document.getElementById('terminal-output');
+                        const line = document.createElement('div');
+
+                        let colorClass = 'term-info';
+                        let prefix = 'INFO';
+
+                        if (type === 'success') { colorClass = 'term-success'; prefix = 'OK'; }
+                        if (type === 'warn') { colorClass = 'term-warn'; prefix = 'WARN'; }
+                        if (type === 'error') { colorClass = 'term-error'; prefix = 'ERR'; }
+
+                        // Get timestamp
+                        const now = new Date();
+                        const time = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+                        line.className = `terminal-line ${colorClass}`;
+                        line.innerHTML = `<span class="opacity-50">[${time}]</span> <span class="font-bold">[${prefix}]</span> ${text}`;
+
+                        term.appendChild(line);
+                        term.scrollTop = term.scrollHeight;
+                    }
+
+                    // --- GRAPHICS & RESET ---
+                    function resetSimulation() {
+                        // Reset Kanban
+                        document.querySelectorAll('.project-card').forEach(el => el.remove());
+
+                        // Reset Chat & Terminal
+                        document.getElementById('chat-container').innerHTML = '';
+                        // Don't clear terminal completely, just add a separator
+                        logTerminal('--- New Session Started ---', 'info');
+
+                        // Reset Diagram styles
+                        document.querySelectorAll('.arch-card').forEach(el => el.classList.remove('active-comp', 'ring-blue', 'ring-purple', 'ring-orange', 'ring-green'));
+                        document.querySelectorAll('.internal-block').forEach(el => el.classList.remove('internal-active'));
+                        // Remove compliance highlight
+                        document.getElementById('comp-compliance').classList.remove('ring-red', 'active-comp');
+
+
+                        // Reset CISO
+                        document.getElementById('ciso-badge').classList.add('hidden');
+                        document.getElementById('comp-ciso').classList.remove('pulse-req');
+                        document.getElementById('ciso-status').innerText = 'Idle';
+                        document.getElementById('ciso-status').className = 'text-[8px] text-slate-400 mt-1';
+
+                        // Reset Pod
+                        const pod = document.getElementById('comp-new-pod');
+                        pod.className = "bg-transparent border-2 dashed border-slate-300 rounded p-2 text-center flex flex-col items-center justify-center min-h-[50px] cursor-pointer hover:border-slate-400 transition";
+                        pod.innerHTML = '<span class="text-[8px] text-slate-400">Empty Slot</span>';
+
+                        // Reset Opacity
+                        document.getElementById('comp-foundry').classList.add('opacity-60');
+
+                        setStatus("Simulatie Reset", "neutral");
+
+                        // Reset Inspector
+                        document.getElementById('insp-default').classList.remove('hidden');
+                        document.getElementById('insp-active').classList.add('hidden');
+                        document.getElementById('insp-spec-container').classList.add('hidden');
+                        resetInspectorHeader();
+                        currentScenarioKey = null;
+                    }
+
+                    function addCard(title) {
+                        const card = document.createElement('div');
+                        card.id = 'active-card';
+                        card.className = 'project-card';
+                        card.innerText = title;
+                        document.getElementById('col-backlog').appendChild(card);
+                    }
+
+                    function moveCard(colId) {
+                        const card = document.getElementById('active-card');
+                        const target = document.getElementById(colId);
+                        if (card && target) target.appendChild(card);
+                    }
+
+                    function highlight(id, color = 'blue', internal = false) {
+                        const el = document.getElementById(id);
+                        if (!el) return;
+
+                        // Remove previous highlights
+                        document.querySelectorAll('.arch-card').forEach(c => c.classList.remove('active-comp', 'ring-blue', 'ring-purple', 'ring-orange', 'ring-green'));
+                        document.querySelectorAll('.internal-block').forEach(c => c.classList.remove('internal-active'));
+
+                        // Remove compliance ring explicitly if clicking something else
+                        if (id !== 'comp-compliance') {
+                            document.getElementById('comp-compliance').classList.remove('ring-red', 'active-comp');
+                        }
+
+                        if (internal) {
+                            el.classList.add('internal-active');
+                            document.getElementById('comp-orch').classList.add('ring-blue');
+                        } else {
+                            el.classList.add('active-comp');
+                            if (color === 'blue') el.classList.add('ring-blue');
+                            if (color === 'purple') el.classList.add('ring-purple');
+                            if (color === 'orange') el.classList.add('ring-orange');
+                            if (color === 'green') el.classList.add('ring-green');
+                            if (color === 'red') el.classList.add('ring-red');
+                        }
+                    }
+
+                    function sendPacket(from, to, color = '#3b82f6', speed = 1200) {
+                        return new Promise((resolve) => {
+                            const elFrom = document.getElementById(from);
+                            const elTo = document.getElementById(to);
+                            const area = document.getElementById('diagram-area');
+
+                            if (!elFrom || !elTo || !area) {
+                                resolve();
+                                return;
+                            }
+
+                            const f = elFrom.getBoundingClientRect();
+                            const t = elTo.getBoundingClientRect();
+                            const a = area.getBoundingClientRect();
+
+                            const pkt = document.createElement('div');
+                            pkt.className = 'packet';
+                            pkt.style.backgroundColor = color;
+                            document.getElementById('anim-layer').appendChild(pkt);
+
+                            const startX = f.left - a.left + f.width / 2;
+                            const startY = f.top - a.top + f.height / 2;
+                            const endX = t.left - a.left + t.width / 2;
+                            const endY = t.top - a.top + t.height / 2;
+
+                            const anim = pkt.animate([
+                                { left: startX + 'px', top: startY + 'px', opacity: 1 },
+                                { left: endX + 'px', top: endY + 'px', opacity: 1 },
+                                { opacity: 0 }
+                            ], { duration: speed, easing: 'ease-in-out' });
+
+                            anim.onfinish = () => {
+                                pkt.remove();
+                                resolve();
+                            };
+                        });
+                    }
+
+                    // --- SCENARIOS ---
+
+                    async function runScenario(type) {
+                        resetSimulation();
+                        currentScenarioKey = type;
+                        await sleep(800);
+
+                        // --- SCENARIO 1: RESPONSE ONLY ---
+                        if (type === 'response') {
+                            addCard("Vraag: HR Beleid");
+                            setStatus("Scenario 1: Vraag Verwerking", "active");
+
+                            // 1. Request
+                            logChat('user', "Wat is het thuiswerkbeleid?");
+                            logTerminal("Received prompt via Copilot Interface", "info");
+                            highlight('comp-copilot');
+                            await sleep(1000);
+
+                            await sendPacket('comp-copilot', 'comp-orch');
+
+                            // 2. Orchestration
+                            moveCard('col-spec');
+
+                            // NEW: CHECK BUILDING BLOCKS
+                            highlight('comp-blocks', 'blue');
+                            logTerminal("Registry: Checking for existing capabilities...", "info");
+                            await sleep(800);
+
+                            highlight('inner-planner', 'blue', true);
+                            logTerminal("Semantic Kernel: Planning step invoked", "info");
+                            logTerminal("Planner detected intent: 'InformationRetrieval'", "success");
+                            await sleep(1500);
+
+                            highlight('inner-rag', 'blue', true);
+                            logTerminal("RAG: Querying Vector DB for 'homework policy'...", "info");
+                            await sleep(1000);
+
+                            // 3. Execution
+                            moveCard('col-exec');
+                            logTerminal("Orchestrator: Routing payload to Knowledge Bot", "info");
+                            await sendPacket('comp-orch', 'comp-pod-exist', '#22c55e');
+                            highlight('comp-pod-exist', 'green');
+                            await sleep(1000);
+
+                            // 4. Response
+                            moveCard('col-response');
+                            await sendPacket('comp-pod-exist', 'comp-copilot', '#22c55e');
+                            highlight('comp-copilot');
+                            logTerminal("Response generation completed", "success");
+                            logChat('ai', "Het beleid staat 2 dagen thuiswerken toe, in overleg met je manager.");
+                            setStatus("Scenario 1 Voltooid.", "success");
+                        }
+
+                        // --- SCENARIO 2: BUILD + APPROVAL ---
+                        if (type === 'build') {
+                            addCard("Project: Sales Bot");
+                            setStatus("Scenario 2: Bouw + Goedkeuring", "active");
+
+                            // 1. Request
+                            logChat('user', "Bouw een Sales Tool met directe SQL toegang.");
+                            logTerminal("Received prompt via Copilot Interface", "info");
+                            highlight('comp-copilot');
+                            await sleep(1500);
+                            await sendPacket('comp-copilot', 'comp-orch');
+
+                            // 2. Spec & Policy Check
+                            moveCard('col-spec');
+
+                            // NEW: CHECK BUILDING BLOCKS
+                            highlight('comp-blocks', 'blue');
+                            logTerminal("Registry: No matching skill found for SQL Sales access.", "info");
+                            await sleep(800);
+
+                            highlight('inner-planner', 'blue', true);
+                            logTerminal("Planner: Detected intent 'NewApplicationScaffold'", "success");
+                            await sleep(1500);
+
+                            highlight('inner-safety', 'blue', true);
+                            logTerminal("Safety Filter: Analyzing constraints...", "info");
+                            logTerminal("ALERT: High-risk resource request (SQL Direct Access)", "warn");
+                            await sleep(1000);
+
+                            await sendPacket('comp-orch', 'comp-policy');
+                            highlight('comp-policy');
+                            logTerminal("Policy Engine: Rule violation found. Escalating to CISO.", "warn");
+
+                            // 3. Approval (CISO)
+                            moveCard('col-approval');
+                            await sendPacket('comp-policy', 'comp-ciso', '#9333ea');
+
+                            // CISO STATE
+                            highlight('comp-ciso', 'purple');
+                            document.getElementById('comp-ciso').classList.add('pulse-req');
+                            document.getElementById('ciso-badge').classList.remove('hidden');
+                            document.getElementById('ciso-status').innerText = 'Wachten op actie...';
+                            document.getElementById('ciso-status').className = 'text-[8px] text-red-500 font-bold mt-1';
+
+                            setStatus("Wachten op CISO...", "waiting");
+                            logTerminal("PROCESS SUSPENDED: Awaiting manual approval ticket #8842", "warn");
+                            logChat('loop-user', "Ik heb goedkeuring nodig voor SQL toegang. Een verzoek is verstuurd naar Security.");
+
+                            // Simulate Wait time
+                            await sleep(3000);
+
+                            // CISO APPROVED
+                            document.getElementById('comp-ciso').classList.remove('pulse-req');
+                            document.getElementById('ciso-badge').classList.add('hidden');
+                            document.getElementById('ciso-status').innerText = 'APPROVED';
+                            document.getElementById('ciso-status').className = 'text-[8px] text-green-600 font-bold mt-1';
+                            logTerminal("CISO Gate: Ticket #8842 Approved by admin", "success");
+                            logChat('ai', "Ik heb goedkeuring gekregen voor SQL toegang.");
+
+
+                            // 4. Traceability
+                            await sendPacket('comp-ciso', 'comp-db', '#22c55e');
+                            highlight('comp-db', 'green');
+                            logTerminal("Audit DB: Transaction logged.", "info");
+                            await sleep(1000);
+
+                            // 5. Build
+                            moveCard('col-exec');
+                            setStatus("Bouw gestart...", "active");
+                            await sendPacket('comp-db', 'comp-builder', '#f97316');
+                            highlight('comp-builder', 'orange');
+                            logTerminal("Builder Agent: Generating Terraform & Python code...", "info");
+                            await sleep(2000);
+
+                            await sendPacket('comp-builder', 'comp-foundry', '#f97316');
+                            highlight('comp-foundry', 'orange');
+                            document.getElementById('comp-foundry').classList.remove('opacity-60');
+                            logTerminal("Foundry: Docker build started...", "info");
+                            logTerminal("Foundry: Scanning image for CVEs... OK", "success");
+                            await sleep(2000);
+
+                            // 6. Deploy
+                            await sendPacket('comp-foundry', 'comp-new-pod', '#22c55e');
+
+                            const pod = document.getElementById('comp-new-pod');
+                            pod.className = "bg-green-100 border border-green-500 rounded p-1 text-center flex flex-col items-center justify-center min-h-[50px] cursor-pointer hover:shadow-md transition";
+                            pod.innerHTML = '<div class="text-xs">📈</div><div class="text-[8px] font-bold text-green-800">Sales Bot</div>';
+                            highlight('comp-new-pod', 'green');
+
+                            moveCard('col-live');
+                            logTerminal("AKS: Pod 'sales-bot-v1' scheduled and running", "success");
+                            logChat('ai', "De Sales Tool is gebouwd, beveiligd en staat nu live.");
+                            setStatus("Scenario 2 Succesvol Voltooid.", "success");
+                        }
+                    }
+                </script>
+            </div> <!-- End view-arch -->
+
+
+
+            <!-- VIEW: MARKDOWN READER (Split View) -->
+            <div id="view-markdown" class="hidden flex-row h-full overflow-hidden absolute inset-0 bg-white z-30 ml-64">
+
+                <!-- LEFT: FILE LIST -->
+                <div class="w-56 bg-slate-50 border-r border-slate-200 flex flex-col flex-none">
+                    <div class="p-3 border-b border-slate-200 flex justify-between items-center bg-white">
+                        <h2 id="md-category-title" class="text-xs font-bold text-slate-500 uppercase tracking-wider">...
+                        </h2>
+                        <button id="btn-add-doc" onclick="addNewDoc()"
+                            class="hidden p-1 hover:bg-slate-100 rounded text-slate-500 transition"
+                            title="Nieuw Bestand">
+                            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                        </button>
+
+                    </div>
+                    <div id="md-file-list" class="flex-1 overflow-y-auto p-2 space-y-0.5">
+                        <!-- List Items Injected Here -->
+                    </div>
+                </div>
+
+                <!-- RIGHT: CONTENT -->
+                <div class="flex-1 flex flex-col overflow-hidden bg-white min-w-0">
+                    <!-- Toolbar -->
+                    <div class="border-b border-slate-200 bg-white p-3 flex justify-between items-center shadow-sm">
+                        <h2 id="md-title" class="text-sm font-bold text-slate-800 truncate mr-4">Selecteer een
+                            bestand...</h2>
+                        <div class="space-x-2 flex-none flex items-center">
+                            <button id="btn-edit-template" onclick="enableEditMode()"
+                                class="hidden px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-600 rounded border border-blue-200 hover:bg-blue-100">
+                                <i data-lucide="edit-3" class="inline-block w-3 h-3 mr-1"></i> Bewerk (Template)
+                            </button>
+                            <button id="btn-delete-doc" onclick="deleteCurrentDoc()"
+                                class="hidden px-2 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded transition"
+                                title="Verwijder dit bestand">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button id="btn-save-doc" onclick="saveDoc()"
+                                class="hidden px-2 py-1.5 text-xs font-medium text-green-600 hover:bg-green-50 rounded transition"
+                                title="Opslaan (Lokaal)">
+                                <i data-lucide="save" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Content -->
+                    <div class="flex-grow overflow-y-auto p-8 relative">
+                        <div id="md-loading"
+                            class="hidden absolute inset-0 flex items-center justify-center bg-white/80 z-10">
+                            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-800"></div>
+                        </div>
+
+                        <div id="md-error" class="hidden bg-red-50 border border-red-200 text-red-700 p-4 rounded-lg">
+                            <h3 class="font-bold">Kan bestand niet laden</h3>
+                            <p id="md-error-msg" class="text-sm mt-1">...</p>
+                        </div>
+
+                        <div id="md-content"
+                            class="prose prose-slate max-w-none prose-headings:font-bold prose-a:text-blue-600">
+                            <!-- Markdown rendered here -->
+                        </div>
+
+                        <textarea id="md-editor"
+                            class="hidden w-full h-full p-4 font-mono text-sm border-0 focus:ring-0 resize-none outline-none"
+                            spellcheck="false"></textarea>
+                    </div>
+                </div> <!-- End Right Pane -->
+            </div>
+
+        </div> <!-- End MAIN CONTENT AREA -->
+
+    </div> <!-- End flex-grow container -->
+
+    <!-- Markdown & Mermaid -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script src="doc_registry.js"></script>
+    <script>
+        // Init Lucide icons
+        lucide.createIcons();
+
+        // Init Mermaid
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+
+
+        // --- NAVIGATION & FILESYSTEM LOGIC ---
+
+        const isFileSystem = window.location.protocol === 'file:';
+        const docBaseBase = window.location.href.substring(0, window.location.href.lastIndexOf('/')); // base dir of index.html
+
+        // Update FS Status
+        const fsInd = document.getElementById('fs-indicator');
+        const localAccessUI = document.getElementById('local-access-ui');
+        let projectHandle = null;
+
+        if (isFileSystem) {
+            fsInd.innerHTML = '<span class="text-orange-400 font-bold">⚠️ Lokaal Bestand Systeem</span><br>Beperkte functionaliteit.';
+            localAccessUI.classList.remove('hidden');
+        } else {
+            fsInd.innerHTML = '<span class="text-green-400 font-bold">● Web Server Mode</span><br>Volledige functionaliteit.';
         }
 
-        function logTerminal(text, type = 'info') {
-            const term = document.getElementById('terminal-output');
-            const line = document.createElement('div');
+        // --- FILE SYSTEM ACCESS API ---
+        async function startLocalSession() {
+            try {
+                projectHandle = await window.showDirectoryPicker();
 
-            let colorClass = 'term-info';
-            let prefix = 'INFO';
+                // Update UI
+                fsInd.innerHTML = '<span class="text-green-400 font-bold">● Local Access Active</span><br>Read/Write enabled.';
+                localAccessUI.classList.add('hidden');
 
-            if (type === 'success') { colorClass = 'term-success'; prefix = 'OK'; }
-            if (type === 'warn') { colorClass = 'term-warn'; prefix = 'WARN'; }
-            if (type === 'error') { colorClass = 'term-error'; prefix = 'ERR'; }
+                alert("Verbonden met lokale map! Je kunt nu bestanden lezen en bewerken.");
 
-            // Get timestamp
-            const now = new Date();
-            const time = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                // Refresh current view if needed
+                if (currentCategory) renderDocList(currentCategory);
 
-            line.className = `terminal-line ${colorClass}`;
-            line.innerHTML = `<span class="opacity-50">[${time}]</span> <span class="font-bold">[${prefix}]</span> ${text}`;
-
-            term.appendChild(line);
-            term.scrollTop = term.scrollHeight;
+            } catch (err) {
+                console.error("Local session failed:", err);
+                alert("Kon geen toegang krijgen tot de map. Probeer het opnieuw.");
+            }
         }
 
-        // --- GRAPHICS & RESET ---
-        function resetSimulation() {
-            // Reset Kanban
-            document.querySelectorAll('.project-card').forEach(el => el.remove());
+        async function fetchLocalFile(path) {
+            if (!projectHandle) throw new Error("No Project Handle");
 
-            // Reset Chat & Terminal
-            document.getElementById('chat-container').innerHTML = '';
-            // Don't clear terminal completely, just add a separator
-            logTerminal('--- New Session Started ---', 'info');
+            const parts = path.split('/');
+            let dirHandle = projectHandle;
 
-            // Reset Diagram styles
-            document.querySelectorAll('.arch-card').forEach(el => el.classList.remove('active-comp', 'ring-blue', 'ring-purple', 'ring-orange', 'ring-green'));
-            document.querySelectorAll('.internal-block').forEach(el => el.classList.remove('internal-active'));
-            // Remove compliance highlight
-            document.getElementById('comp-compliance').classList.remove('ring-red', 'active-comp');
-
-
-            // Reset CISO
-            document.getElementById('ciso-badge').classList.add('hidden');
-            document.getElementById('comp-ciso').classList.remove('pulse-req');
-            document.getElementById('ciso-status').innerText = 'Idle';
-            document.getElementById('ciso-status').className = 'text-[8px] text-slate-400 mt-1';
-
-            // Reset Pod
-            const pod = document.getElementById('comp-new-pod');
-            pod.className = "bg-transparent border-2 dashed border-slate-300 rounded p-2 text-center flex flex-col items-center justify-center min-h-[50px] cursor-pointer hover:border-slate-400 transition";
-            pod.innerHTML = '<span class="text-[8px] text-slate-400">Empty Slot</span>';
-
-            // Reset Opacity
-            document.getElementById('comp-foundry').classList.add('opacity-60');
-
-            setStatus("Simulatie Reset", "neutral");
-
-            // Reset Inspector
-            document.getElementById('insp-default').classList.remove('hidden');
-            document.getElementById('insp-active').classList.add('hidden');
-            document.getElementById('insp-spec-container').classList.add('hidden');
-            resetInspectorHeader();
-            currentScenarioKey = null;
-        }
-
-        function addCard(title) {
-            const card = document.createElement('div');
-            card.id = 'active-card';
-            card.className = 'project-card';
-            card.innerText = title;
-            document.getElementById('col-backlog').appendChild(card);
-        }
-
-        function moveCard(colId) {
-            const card = document.getElementById('active-card');
-            const target = document.getElementById(colId);
-            if (card && target) target.appendChild(card);
-        }
-
-        function highlight(id, color = 'blue', internal = false) {
-            const el = document.getElementById(id);
-            if (!el) return;
-
-            // Remove previous highlights
-            document.querySelectorAll('.arch-card').forEach(c => c.classList.remove('active-comp', 'ring-blue', 'ring-purple', 'ring-orange', 'ring-green'));
-            document.querySelectorAll('.internal-block').forEach(c => c.classList.remove('internal-active'));
-
-            // Remove compliance ring explicitly if clicking something else
-            if (id !== 'comp-compliance') {
-                document.getElementById('comp-compliance').classList.remove('ring-red', 'active-comp');
+            // Traverse directories
+            for (let i = 0; i < parts.length - 1; i++) {
+                dirHandle = await dirHandle.getDirectoryHandle(parts[i]);
             }
 
-            if (internal) {
-                el.classList.add('internal-active');
-                document.getElementById('comp-orch').classList.add('ring-blue');
+            // Get File
+            const fileHandle = await dirHandle.getFileHandle(parts[parts.length - 1]);
+            const file = await fileHandle.getFile();
+            return await file.text();
+        }
+
+        async function saveLocalFile(path, content) {
+            if (!projectHandle) throw new Error("No Project Handle");
+
+            const parts = path.split('/');
+            let dirHandle = projectHandle;
+
+            for (let i = 0; i < parts.length - 1; i++) {
+                // Get or Create directory
+                dirHandle = await dirHandle.getDirectoryHandle(parts[i], { create: true });
+            }
+
+            // Create File
+            const fileHandle = await dirHandle.getFileHandle(parts[parts.length - 1], { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(content);
+            await writable.close();
+        }
+
+        async function verifyLocalFileDeletion(path) {
+            if (!projectHandle) return;
+
+            const parts = path.split('/');
+            let dirHandle = projectHandle;
+
+            for (let i = 0; i < parts.length - 1; i++) {
+                dirHandle = await dirHandle.getDirectoryHandle(parts[i]);
+            }
+            await dirHandle.removeEntry(parts[parts.length - 1]);
+        }
+
+        // --- DOCUMENTATION REGISTRY & LOGIC ---
+        // Loaded from doc_registry.js
+
+        let currentCategory = null;
+        let currentDocIndex = -1;
+
+        // Render the Sidebar List for a Category
+        function renderDocList(category) {
+            currentCategory = category;
+            const listContainer = document.getElementById('md-file-list');
+            const catTitle = document.getElementById('md-category-title');
+            const btnAdd = document.getElementById('btn-add-doc');
+
+            // Hide Add Button in File Mode
+            if (isFileSystem) {
+                if (btnAdd) btnAdd.classList.add('hidden');
             } else {
-                el.classList.add('active-comp');
-                if (color === 'blue') el.classList.add('ring-blue');
-                if (color === 'purple') el.classList.add('ring-purple');
-                if (color === 'orange') el.classList.add('ring-orange');
-                if (color === 'green') el.classList.add('ring-green');
-                if (color === 'red') el.classList.add('ring-red');
+                if (btnAdd) btnAdd.classList.remove('hidden');
+            }
+
+            if (!DOC_REGISTRY[category]) return;
+
+            // Set Title
+            catTitle.innerText = category.charAt(0).toUpperCase() + category.slice(1);
+
+            // Clear & Rebuild List
+            listContainer.innerHTML = '';
+            DOC_REGISTRY[category].forEach((doc, index) => {
+                const item = document.createElement('div');
+                item.className = `p-2 text-xs cursor-pointer hover:bg-slate-100 rounded flex justify-between group ${index === currentDocIndex ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-600'}`;
+                item.onclick = () => selectDoc(index);
+
+                item.innerHTML = `
+                    <div class="flex items-center gap-2 overflow-hidden">
+                        <i data-lucide="file-text" class="w-3 h-3 flex-none"></i>
+                        <span class="truncate">${doc.name}</span>
+                    </div>
+                `;
+                listContainer.appendChild(item);
+            });
+            lucide.createIcons();
+        }
+
+        // Select a Document
+        function selectDoc(index) {
+            currentDocIndex = index;
+            const doc = DOC_REGISTRY[currentCategory][index];
+            const btnDelete = document.getElementById('btn-delete-doc');
+
+            // Hide Delete Button in File Mode
+            if (isFileSystem) {
+                if (btnDelete) btnDelete.classList.add('hidden');
+            } else {
+                if (btnDelete) btnDelete.classList.remove('hidden');
+            }
+
+            if (doc) {
+                // Rerender list to update selection state
+                renderDocList(currentCategory);
+                // Load Content
+                loadMarkdown(doc.path);
             }
         }
 
-        function sendPacket(from, to, color = '#3b82f6', speed = 1200) {
-            return new Promise((resolve) => {
-                const elFrom = document.getElementById(from);
-                const elTo = document.getElementById(to);
-                const area = document.getElementById('diagram-area');
+        // Add New Document (Real Persistence)
+        async function addNewDoc() {
+            const name = prompt("Naam van nieuw document:");
+            if (!name) return;
 
-                if (!elFrom || !elTo || !area) {
-                    resolve();
-                    return;
+            const filename = name.toLowerCase().replace(/\s+/g, '-') + '.md';
+            const path = `${currentCategory}/${filename}`;
+            const initialContent = `# ${name}\n\nStart hier met typen...`;
+
+            try {
+                if (projectHandle) {
+                    await saveLocalFile(path, initialContent);
+                    alert("Bestand aangemaakt op schijf!");
                 }
 
-                const f = elFrom.getBoundingClientRect();
-                const t = elTo.getBoundingClientRect();
-                const a = area.getBoundingClientRect();
+                // Add to Registry
+                DOC_REGISTRY[currentCategory].push({ name, path });
 
-                const pkt = document.createElement('div');
-                pkt.className = 'packet';
-                pkt.style.backgroundColor = color;
-                document.getElementById('anim-layer').appendChild(pkt);
+                // Render
+                renderDocList(currentCategory);
 
-                const startX = f.left - a.left + f.width / 2;
-                const startY = f.top - a.top + f.height / 2;
-                const endX = t.left - a.left + t.width / 2;
-                const endY = t.top - a.top + t.height / 2;
+                // Select it
+                selectDoc(DOC_REGISTRY[currentCategory].length - 1);
 
-                const anim = pkt.animate([
-                    { left: startX + 'px', top: startY + 'px', opacity: 1 },
-                    { left: endX + 'px', top: endY + 'px', opacity: 1 },
-                    { opacity: 0 }
-                ], { duration: speed, easing: 'ease-in-out' });
-
-                anim.onfinish = () => {
-                    pkt.remove();
-                    resolve();
-                };
-            });
-        }
-
-        // --- SCENARIOS ---
-
-        async function runScenario(type) {
-            resetSimulation();
-            currentScenarioKey = type;
-            await sleep(800);
-
-            // --- SCENARIO 1: RESPONSE ONLY ---
-            if (type === 'response') {
-                addCard("Vraag: HR Beleid");
-                setStatus("Scenario 1: Vraag Verwerking", "active");
-
-                // 1. Request
-                logChat('user', "Wat is het thuiswerkbeleid?");
-                logTerminal("Received prompt via Copilot Interface", "info");
-                highlight('comp-copilot');
-                await sleep(1000);
-
-                await sendPacket('comp-copilot', 'comp-orch');
-
-                // 2. Orchestration
-                moveCard('col-spec');
-
-                // NEW: CHECK BUILDING BLOCKS
-                highlight('comp-blocks', 'blue');
-                logTerminal("Registry: Checking for existing capabilities...", "info");
-                await sleep(800);
-
-                highlight('inner-planner', 'blue', true);
-                logTerminal("Semantic Kernel: Planning step invoked", "info");
-                logTerminal("Planner detected intent: 'InformationRetrieval'", "success");
-                await sleep(1500);
-
-                highlight('inner-rag', 'blue', true);
-                logTerminal("RAG: Querying Vector DB for 'homework policy'...", "info");
-                await sleep(1000);
-
-                // 3. Execution
-                moveCard('col-exec');
-                logTerminal("Orchestrator: Routing payload to Knowledge Bot", "info");
-                await sendPacket('comp-orch', 'comp-pod-exist', '#22c55e');
-                highlight('comp-pod-exist', 'green');
-                await sleep(1000);
-
-                // 4. Response
-                moveCard('col-response');
-                await sendPacket('comp-pod-exist', 'comp-copilot', '#22c55e');
-                highlight('comp-copilot');
-                logTerminal("Response generation completed", "success");
-                logChat('ai', "Het beleid staat 2 dagen thuiswerken toe, in overleg met je manager.");
-                setStatus("Scenario 1 Voltooid.", "success");
-            }
-
-            // --- SCENARIO 2: BUILD + APPROVAL ---
-            if (type === 'build') {
-                addCard("Project: Sales Bot");
-                setStatus("Scenario 2: Bouw + Goedkeuring", "active");
-
-                // 1. Request
-                logChat('user', "Bouw een Sales Tool met directe SQL toegang.");
-                logTerminal("Received prompt via Copilot Interface", "info");
-                highlight('comp-copilot');
-                await sleep(1500);
-                await sendPacket('comp-copilot', 'comp-orch');
-
-                // 2. Spec & Policy Check
-                moveCard('col-spec');
-
-                // NEW: CHECK BUILDING BLOCKS
-                highlight('comp-blocks', 'blue');
-                logTerminal("Registry: No matching skill found for SQL Sales access.", "info");
-                await sleep(800);
-
-                highlight('inner-planner', 'blue', true);
-                logTerminal("Planner: Detected intent 'NewApplicationScaffold'", "success");
-                await sleep(1500);
-
-                highlight('inner-safety', 'blue', true);
-                logTerminal("Safety Filter: Analyzing constraints...", "info");
-                logTerminal("ALERT: High-risk resource request (SQL Direct Access)", "warn");
-                await sleep(1000);
-
-                await sendPacket('comp-orch', 'comp-policy');
-                highlight('comp-policy');
-                logTerminal("Policy Engine: Rule violation found. Escalating to CISO.", "warn");
-
-                // 3. Approval (CISO)
-                moveCard('col-approval');
-                await sendPacket('comp-policy', 'comp-ciso', '#9333ea');
-
-                // CISO STATE
-                highlight('comp-ciso', 'purple');
-                document.getElementById('comp-ciso').classList.add('pulse-req');
-                document.getElementById('ciso-badge').classList.remove('hidden');
-                document.getElementById('ciso-status').innerText = 'Wachten op actie...';
-                document.getElementById('ciso-status').className = 'text-[8px] text-red-500 font-bold mt-1';
-
-                setStatus("Wachten op CISO...", "waiting");
-                logTerminal("PROCESS SUSPENDED: Awaiting manual approval ticket #8842", "warn");
-                logChat('loop-user', "Ik heb goedkeuring nodig voor SQL toegang. Een verzoek is verstuurd naar Security.");
-
-                // Simulate Wait time
-                await sleep(3000);
-
-                // CISO APPROVED
-                document.getElementById('comp-ciso').classList.remove('pulse-req');
-                document.getElementById('ciso-badge').classList.add('hidden');
-                document.getElementById('ciso-status').innerText = 'APPROVED';
-                document.getElementById('ciso-status').className = 'text-[8px] text-green-600 font-bold mt-1';
-                logTerminal("CISO Gate: Ticket #8842 Approved by admin", "success");
-                logChat('ai', "Ik heb goedkeuring gekregen voor SQL toegang.");
-
-
-                // 4. Traceability
-                await sendPacket('comp-ciso', 'comp-db', '#22c55e');
-                highlight('comp-db', 'green');
-                logTerminal("Audit DB: Transaction logged.", "info");
-                await sleep(1000);
-
-                // 5. Build
-                moveCard('col-exec');
-                setStatus("Bouw gestart...", "active");
-                await sendPacket('comp-db', 'comp-builder', '#f97316');
-                highlight('comp-builder', 'orange');
-                logTerminal("Builder Agent: Generating Terraform & Python code...", "info");
-                await sleep(2000);
-
-                await sendPacket('comp-builder', 'comp-foundry', '#f97316');
-                highlight('comp-foundry', 'orange');
-                document.getElementById('comp-foundry').classList.remove('opacity-60');
-                logTerminal("Foundry: Docker build started...", "info");
-                logTerminal("Foundry: Scanning image for CVEs... OK", "success");
-                await sleep(2000);
-
-                // 6. Deploy
-                await sendPacket('comp-foundry', 'comp-new-pod', '#22c55e');
-
-                const pod = document.getElementById('comp-new-pod');
-                pod.className = "bg-green-100 border border-green-500 rounded p-1 text-center flex flex-col items-center justify-center min-h-[50px] cursor-pointer hover:shadow-md transition";
-                pod.innerHTML = '<div class="text-xs">📈</div><div class="text-[8px] font-bold text-green-800">Sales Bot</div>';
-                highlight('comp-new-pod', 'green');
-
-                moveCard('col-live');
-                logTerminal("AKS: Pod 'sales-bot-v1' scheduled and running", "success");
-                logChat('ai', "De Sales Tool is gebouwd, beveiligd en staat nu live.");
-                setStatus("Scenario 2 Succesvol Voltooid.", "success");
+            } catch (e) {
+                console.error(e);
+                alert("Kon bestand niet aanmaken: " + e.message);
             }
         }
+
+        async function deleteCurrentDoc() {
+            if (currentDocIndex === -1) return;
+            if (!confirm("Weet je zeker dat je dit bestand wilt verwijderen? (Dit is definitief)")) return;
+
+            const doc = DOC_REGISTRY[currentCategory][currentDocIndex];
+
+            try {
+                if (projectHandle) {
+                    await verifyLocalFileDeletion(doc.path);
+                }
+
+                DOC_REGISTRY[currentCategory].splice(currentDocIndex, 1);
+                currentDocIndex = -1;
+
+                renderDocList(currentCategory);
+
+                // Clear view
+                document.getElementById('md-content').innerHTML = '<div class="text-xs text-slate-400 p-8 text-center italic">Selecteer een bestand...</div>';
+                document.getElementById('md-title').innerText = '...';
+
+            } catch (e) {
+                console.error(e);
+                alert("Kon bestand niet verwijderen: " + e.message);
+            }
+        }
+
+        async function saveDoc() {
+            const content = document.getElementById('md-editor').value;
+            try {
+                if (projectHandle) {
+                    // Get current path using currentDocIndex 
+                    // (Assuming currentCategory and currentDocIndex are valid)
+                    const doc = DOC_REGISTRY[currentCategory][currentDocIndex];
+                    if (doc) {
+                        await saveLocalFile(doc.path, content);
+                        alert("Opgeslagen!");
+
+                        // Exit Edit Mode
+                        enableEditMode();
+                    }
+                } else {
+                    alert("Geen lokale toegang. Kan niet opslaan.");
+                }
+            } catch (e) {
+                console.error(e);
+                alert("Fout bij opslaan: " + e.message);
+            }
+        }
+
+        let currentPath = '';
+
+        function navTo(view, path = null) {
+            const btnContainer = document.getElementById('top-nav-actions');
+            const vArch = document.getElementById('view-arch');
+            const vMd = document.getElementById('view-markdown');
+
+            // Toggle Views
+            if (view === 'arch') {
+                // Show Arch
+                vArch.classList.remove('hidden');
+                vArch.style.display = 'flex'; // Enforce Flex
+
+                // Hide Markdown
+                vMd.classList.add('hidden');
+                vMd.style.display = 'none';
+
+                if (btnContainer) btnContainer.classList.remove('hidden');
+            } else if (view === 'dir') {
+                // Hide Arch
+                vArch.classList.add('hidden');
+                vArch.style.display = 'none';
+
+                // Show Markdown
+                vMd.classList.remove('hidden');
+                vMd.style.display = 'flex'; // Enforce Flex (it has flex-row)
+
+                // path argument is now the Category Key
+                renderDocList(path);
+
+                // Auto-select first doc if available
+                if (DOC_REGISTRY[path] && DOC_REGISTRY[path].length > 0) {
+                    selectDoc(0);
+                } else {
+                    document.getElementById('md-content').innerHTML = '<div class="text-xs text-slate-400 p-8 text-center italic">Geen bestanden.</div>';
+                    document.getElementById('md-title').innerText = '...';
+                }
+
+                if (btnContainer) btnContainer.classList.add('hidden');
+            }
+        }
+
+        async function loadMarkdown(path) {
+            currentPath = path;
+            const mdContainer = document.getElementById('md-content');
+            const mdError = document.getElementById('md-error');
+            const mdErrorMsg = document.getElementById('md-error-msg');
+            const mdLoading = document.getElementById('md-loading');
+            const btnEdit = document.getElementById('btn-edit-template');
+
+            // Reset UI
+            mdContainer.innerHTML = '';
+            mdContainer.classList.remove('hidden');
+            document.getElementById('md-editor').classList.add('hidden');
+            mdError.classList.add('hidden');
+            mdLoading.classList.remove('hidden');
+            document.getElementById('md-title').innerText = path;
+
+            // Configure buttons based on Environment
+            if (isFileSystem) {
+                btnEdit.classList.add('hidden');
+            } else {
+                btnEdit.classList.remove('hidden');
+            }
+
+            try {
+                let text = '';
+
+                if (projectHandle) {
+                    // Try Local Handle First
+                    text = await fetchLocalFile(path);
+                } else {
+                    // Fallback to Fetch
+                    // In file mode, fetch() often throws CORS or Network error immediately
+                    const response = await fetch(path);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    text = await response.text();
+                }
+
+                mdContainer.innerHTML = marked.parse(text);
+
+                // Render Mermaid Diagrams
+                // 1. Find all code blocks with 'language-mermaid'
+                const mermaidBlocks = mdContainer.querySelectorAll('pre code.language-mermaid');
+
+                const promises = [];
+                mermaidBlocks.forEach((block, index) => {
+                    const rawMermaid = block.textContent;
+                    const pre = block.parentElement; // The <pre> tag
+
+                    // Create replacement div
+                    const div = document.createElement('div');
+                    div.classList.add('mermaid');
+                    div.textContent = rawMermaid;
+                    div.id = `mermaid-${Date.now()}-${index}`;
+
+                    // Replace <pre> with <div>
+                    pre.replaceWith(div);
+                });
+
+                // Run Mermaid
+                try {
+                    await mermaid.run({
+                        querySelector: '.mermaid'
+                    });
+                } catch (err) {
+                    console.error("Mermaid Render Error:", err);
+                }
+
+            } catch (err) {
+                console.warn("Markdown fetch failed:", err);
+
+                if (isFileSystem && !projectHandle) {
+                    mdErrorMsg.innerHTML = `
+                        <b>Browser Beveiliging:</b> Direct laden van lokale bestanden is geblokkeerd.<br>
+                        Klik op <b>"Open Project Folder"</b> in het menu om toegang te krijgen.
+                        <br><br>
+                        <a href="${path}" target="_blank" class="underline text-red-800 font-bold">Of open handmatig</a>
+                    `;
+                } else {
+                    mdErrorMsg.innerText = err.message;
+                }
+                mdError.classList.remove('hidden');
+            } finally {
+                mdLoading.classList.add('hidden');
+            }
+        }
+
+        function openLocalFile() {
+            window.open(currentPath, '_blank');
+        }
+
+        function enableEditMode(force = false) {
+            const container = document.getElementById('md-content');
+            const editor = document.getElementById('md-editor');
+            const btnEdit = document.getElementById('btn-edit-template');
+            const btnSave = document.getElementById('btn-save-doc');
+
+            // Force Edit Mode (for new files)
+            if (force) {
+                editor.classList.remove('hidden');
+                container.classList.add('hidden');
+                btnEdit.innerHTML = '<i data-lucide="x" class="inline-block w-3 h-3 mr-1"></i> Annuleren';
+                if (projectHandle) btnSave.classList.remove('hidden');
+                return;
+            }
+
+            if (editor.classList.contains('hidden')) {
+                // Switch to Edit
+                // We need the raw text. Fetch again.
+                // If local, we can use fetchLocalFile logic implicitly or fetch again.
+                // Ideally loadMarkdown populated a global rawText, but fetching is fast.
+
+                // Using the simple logic from before, assuming we can get text.
+                // For now, simpler: just toggle UI, assume user clicked because they see content.
+                // WE NEED TO FETCH CONTENT TO EDITOR
+                const doc = DOC_REGISTRY[currentCategory][currentDocIndex];
+                if (doc) {
+                    // Trigger a load into editor? Or just fetch here.
+                    // Let's rely on fetchLocalFile being available globally or duplicate logic?
+                    // Better: Make loadMarkdown populate the editor value too? No.
+
+                    // Async fetch for editor
+                    (async () => {
+                        try {
+                            let text = '';
+                            if (projectHandle) text = await fetchLocalFile(doc.path);
+                            else {
+                                const res = await fetch(doc.path);
+                                text = await res.text();
+                            }
+                            editor.value = text;
+
+                            editor.classList.remove('hidden');
+                            container.classList.add('hidden');
+
+                            btnEdit.innerHTML = '<i data-lucide="x" class="inline-block w-3 h-3 mr-1"></i> Annuleren';
+                            if (projectHandle) btnSave.classList.remove('hidden');
+
+                        } catch (e) {
+                            alert("Kan bestand niet laden voor bewerking.");
+                        }
+                    })();
+                }
+
+            } else {
+                // Switch back (Cancel / Done)
+                editor.classList.add('hidden');
+                container.classList.remove('hidden');
+                btnEdit.innerHTML = '<i data-lucide="edit-3" class="inline-block w-3 h-3 mr-1"></i> Bewerk';
+                btnSave.classList.add('hidden');
+
+                // Re-render PREVIOUS content (discard changes if cancel)
+                // Actually loadMarkdown renders `md-content`. 
+                // So we can just call loadMarkdown(currentPath) -- wait, we have selectDoc logic.
+                const doc = DOC_REGISTRY[currentCategory][currentDocIndex];
+                if (doc) loadMarkdown(doc.path);
+            }
+        }
+
     </script>
 </body>
 
