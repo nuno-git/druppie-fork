@@ -85,6 +85,7 @@ const DOC_REGISTRY = {
         { name: "TO: Component Interactie (Build->Run)", path: "design/component_interaction.md" },
         { name: "TO: Data Lifecycle & Versiebeheer", path: "design/data_lifecycle_drone.md" },
         { name: "TO: Deployment & Rolling Updates", path: "design/deployment_strategies.md" },
+        { name: "TO: IAM & Keycloak Interactie", path: "design/iam_keycloak_interaction.md" },
         { name: "TO: Automated Rebuild (Watchdog)", path: "design/automated_rebuild.md" },
         { name: "TO: Secure Agentic RAG Network", path: "design/agentic_rag_network.md" },
         { name: "TO: Continuous Compliance & Lifecycle", path: "design/compliance_lifecycle_monitoring.md" },
