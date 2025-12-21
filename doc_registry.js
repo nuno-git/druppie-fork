@@ -10,6 +10,7 @@ const DOC_REGISTRY = {
         { name: "Policy Engine", path: "bouwblokken/policy_engine.md" },
         { name: "Compliance Layer", path: "bouwblokken/compliance_layer.md" },
         { name: "Build Plane", path: "bouwblokken/build_plane.md" },
+        { name: "Infrastructure as Code (Terraform)", path: "bouwblokken/iaas_terraform.md" },
         { name: "Runtime", path: "bouwblokken/runtime.md" },
         { name: "Knowledge Bot", path: "bouwblokken/knowledge_bot.md" },
         { name: "Traceability DB", path: "bouwblokken/traceability_db.md" },
