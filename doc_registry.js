@@ -22,6 +22,7 @@ const DOC_REGISTRY = {
         { name: "GitOps & State (Flux)", path: "bouwblokken/gitops_flux.md" },
         { name: "Observability (PLG Stack)", path: "bouwblokken/observability_plg.md" },
         { name: "Git & Versiebeheer (Gitea)", path: "bouwblokken/git_gitea.md" },
+        { name: "Container Registry (Harbor)", path: "bouwblokken/container_registry.md" },
         { name: "Traceability (Tempo & OTEL)", path: "bouwblokken/traceability_otel.md" },
         { name: "IAM (Keycloak & Azure AD)", path: "bouwblokken/iam_keycloak.md" },
         { name: "MCP Server Host", path: "bouwblokken/mcp_server.md" },
@@ -50,6 +51,7 @@ const DOC_REGISTRY = {
         { name: "Mermaid Diagrams", path: "skills/mermaid.md" },
         { name: "Test Skill", path: "skills/test.md" },
         { name: "Node.js Skill", path: "skills/nodejs.md" },
+        { name: "Golang Expert Skill", path: "skills/golang.md" },
         { name: "Python Skill", path: "skills/python.md" },
     ],
     "build_plane": [
@@ -111,6 +113,7 @@ const DOC_REGISTRY = {
     "general": [
         { name: "Project Readme", path: "README.md" },
         { name: "Het Verhaal Druppie", path: "story/story.md" },
+        { name: "Druppie Core", path: "story/druppie_core.md" },
         { name: "License (MIT)", path: "LICENSE.md" },
     ]
 };
