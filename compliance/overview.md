@@ -29,3 +29,8 @@ De **Compliance Layer** is verantwoordelijk voor het waarborgen van veiligheid, 
 
 - **Security Scanners** (onderdeel van [Foundry](../build_plane/foundry.md))
   - Automatische scans in de CI/CD pipeline.
+
+## 🔗 Gerelateerde Ontwerpen
+*   [Continuous Compliance & Lifecycle](../design/compliance_lifecycle_monitoring.md): De implementatie van compliance over de tijd.
+*   [Goed Bestuur](../compliance/good_governance.md): De bestuurlijke principes vertaald naar techniek.
+*   [AI Register](../compliance/ai_register.md): De specifieke vereisten voor AI transparantie.

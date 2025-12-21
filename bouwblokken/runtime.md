@@ -18,7 +18,22 @@ Dit bouwblok definieert de **interface** naar de Runtime omgeving. In de Azure F
 - **Namespace on Demand**: Aanmaken van geïsoleerde omgevingen voor nieuwe projecten.
 - **Quota Management**: Toewijzen van CPU/Memory limieten.
 
-## 2. Security & Compliance
+## 2. Security & Compliance by Design
+De runtime is ontworpen volgens strikte **Security by Design** en **Compliance by Design** principes. Dit betekent dat veiligheid en regelgeving niet achteraf worden getoetst, maar onderdeel zijn van het fundament.
+
+### 🔒 Security by Design (Zero Trust)
+*   **Identity First**: Er zijn geen vaste 'service accounts' met brede rechten. Elke workload (Pod) krijgt via **Azure Workload Identity** (Entra ID) een unieke, tijdelijke identiteit.
+*   **Network Segmentation**: Standaard mag **niets** met elkaar praten (Deny-All). Via `NetworkPolicies` (Canal CNI) wordt verkeer expliciet toegestaan (bijv. "Frontend mag praten met Backend op poort 8080").
+*   **Immutable Infrastructure**: Containers zijn read-only. Als er een patch nodig is, wordt de oude container vernietigd en een nieuwe uitgerold. SSH toegang tot nodes is uitgeschakeld voor beheerders.
+
+### ⚖️ Compliance by Design (Policy Enforcement)
+Regels worden afgedwongen voordat een applicatie start.
+*   **Admission Controllers**: We gebruiken **OPA Gatekeeper** of **Kyverno**. Wanneer de Builder Agent een deployment wil doen, checkt de runtime real-time:
+    *   *"Heeft dit image een 'High' vulnerability?"* -> Deployment Blocked ❌.
+    *   *"Heeft deze deployment een AI Register entry?"* -> Deployment Blocked ❌.
+    *   *"Draait dit als root?"* -> Deployment Blocked ❌.
+*   **Automatic Auditing**: De API server logt elke wijziging (Wie deed wat?) naar de onwijzigbare Traceability DB.
+
 - **Entra Agent ID**: Elke agent draait onder zijn eigen Managed Identity.
 - **Network Isolation**: Alle communicatie verloopt via Private Endpoints binnen het VNet.
 

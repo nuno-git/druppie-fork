@@ -216,9 +216,11 @@ flowchart TD
 
 De agent levert niet alleen code, maar ook:
 
+- **Automated Tests**: Volledige testpiramide (Unit, Integration, E2E) conform [Automated Testing Strategy](../design/automated_testing_docs.md).
+- **Living Documentation**: Gegenereerde API-docs (OpenAPI), code docs (Sphinx) en architectuurdiagrammen (Mermaid).
 - Spec document (versioned)
 - Implementatie (commits/PR)
-- Test reports
+- Test reports en Coverage reports
 - Changelog / release notes
 - “How to run” instructies
 - Risico’s en beperkingen

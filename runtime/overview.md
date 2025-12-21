@@ -1,28 +1,18 @@
 # Runtime Overview
 
-De **Runtime** is de operationele omgeving waarin de applicaties en agents van Druppie draaien. Het is gebaseerd op cloud-native principes en Kubernetes.
+De Runtime is de "motor" van het Druppie platform. Hier draaien de AI agents, de microservices, de databases en de data-pipelines.
 
-Dit overzicht beschrijft de infrastructuur- en integratiecomponenten.
+## 🏗️ De Infrastructuur
 
-## 🏗️ Core Infrastructure
+### [Kubernetes (RKE2)](../bouwblokken/runtime.md)
+De fundering. Een gehard, secure Kubernetes cluster dat voldoet aan overheidsstandaarden.
 
-- **[Kubernetes Runtime](./runtime.md)**
-  - Beschrijft de conceptuele architectuur van de Kubernetes runtime: Nodes, Pods, Services, en Control Loops.
-  - Legt uit hoe Scaling, Failover en Self-healing werken.
+### [Policy Enforcement (Kyverno)](./policy_kyverno.md)
+De "douanier". Zorgt ervoor dat alles wat op het cluster draait voldoet aan de veiligheids- en compliance-eisen. Automatische validatie, mutatie en rapportage.
 
-- **[Dynamic Slot](./dynamic_slot.md)**
-  - Het mechanisme waarmee de `Builder Agent` dynamisch nieuwe workloads kan deployen in gereserveerde namespaces.
-
-## 🔐 Security & Access
-
-- **[RBAC (Role Based Access Control)](./rbac.md)**
-  - Definieert hoe rechten worden beheerd binnen de runtime en API's.
-  - Koppeling tussen identiteiten, rollen en permissies.
-
-## 🔌 Integration & Protocols
-
-- **[MCP Interface](./mcp_interface.md)**
-  - Beschrijft het **Model Context Protocol** (MCP), de standaard waarmee AI-agents praten met tools en externe systemen.
-  
-- **[Git Operations](./git.md)**
-  - Hoe de runtime integreert met versiebeheer voor GitOps-style deployments en source code retrieval.
+## 📦 Workloads
+Op deze runtime draaien de volgende type applicaties, gedefinieerd als **Bouwblokken**:
+*   AI Models & Agents
+*   GIS Applicaties (GeoServer, QGIS)
+*   Data Pipelines (Argo)
+*   Web Apps (React frontends)

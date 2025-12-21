@@ -1,6 +1,6 @@
 # Druppie – Spec-Driven AI Architectuur
 
-Druppie is een geavanceerd architectuur-platform voor **Spec-Driven AI** en **Human-in-the-Loop** automatisering. Dit project beschrijft hoe AI-agents, compliance-regels en menselijke interactie samenkomen om software veilig, schaalbaar en consistent te bouwen en te beheren.
+Druppie is een geavanceerd architectuur-platform voor **Spec-Driven AI** en **Human-in-the-Loop** automatisering. Dit project beschrijft hoe AI-agents, compliance-regels en menselijke interactie samenkomen om software veilig, schaalbaar en consistent te bouwen en te beheren. Waarbij de focus ligt op het ontwikkelen van **compliance** en **security** oplossingen. De tools en technieken die gebruikt worden zijn geselecteerd op basis van hun **security** en **compliance** compliance en **ease of use** tijdens de onderzoeksfase waarin dit project zich bevindt.
 
 De architectuur is ontworpen om volledig **declaratief** te zijn: in plaats van imperatieve scripts, definiëren we **specificaties** (specs) die door AI-agents worden geïnterpreteerd en uitgevoerd.
 

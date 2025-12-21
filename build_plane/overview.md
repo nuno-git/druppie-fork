@@ -72,6 +72,12 @@ flowchart LR
   Outputs --> AI
 ```
 
+### Gerelateerde Ontwerpen
+*   [Component Interactie](../design/component_interaction.md): Hoe de Build Plane praat met de Runtime.
+*   [Automated Rebuild](../design/automated_rebuild.md): Hoe de Build Plane reageert op security patches.
+*   [Automated Testing](../design/automated_testing_docs.md): De teststrategie die hier wordt uitgevoerd.
+
+
 ---
 
 ## 3. De Build Plane bouwblokken
