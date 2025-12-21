@@ -4,6 +4,15 @@ const DOC_REGISTRY = {
     "bouwblokken": [
         { name: "Overview", path: "bouwblokken/overview.md" },
         { name: "Bouwblok Definities", path: "bouwblokken/bouwblok_definities.md" },
+        { name: "Druppie UI", path: "bouwblokken/druppie_ui.md" },
+        { name: "Druppie Core", path: "bouwblokken/druppie_core.md" },
+        { name: "Mens in de Loop", path: "bouwblokken/mens_in_de_loop.md" },
+        { name: "Policy Engine", path: "bouwblokken/policy_engine.md" },
+        { name: "Compliance Layer", path: "bouwblokken/compliance_layer.md" },
+        { name: "Build Plane", path: "bouwblokken/build_plane.md" },
+        { name: "Runtime", path: "bouwblokken/runtime.md" },
+        { name: "Knowledge Bot", path: "bouwblokken/knowledge_bot.md" },
+        { name: "Traceability DB", path: "bouwblokken/traceability_db.md" },
         { name: "CI/CD Pipeline (Tekton)", path: "bouwblokken/ci_cd_tekton.md" },
         { name: "Database (PostgreSQL)", path: "bouwblokken/database_postgres.md" },
         { name: "Vector Database (Qdrant)", path: "bouwblokken/database_qdrant.md" },
@@ -25,27 +34,19 @@ const DOC_REGISTRY = {
         { name: "GIS Desktop (QGIS)", path: "bouwblokken/gis_qgis.md" },
         { name: "GIS Server (GeoServer)", path: "bouwblokken/gis_geoserver.md" },
         { name: "GIS Portal (GeoNode)", path: "bouwblokken/gis_geonode.md" },
-        { name: "Build Plane", path: "bouwblokken/build_plane.md" },
+        { name: "Policy Enforcement (Kyverno)", path: "bouwblokken/policy_kyverno.md" },
         { name: "Scanning & Compliance (Trivy)", path: "bouwblokken/security_scanning_trivy.md" },
         { name: "Code Quality (SonarQube)", path: "bouwblokken/code_quality_sonarqube.md" },
-        { name: "Compliance Layer", path: "bouwblokken/compliance_layer.md" },
-        { name: "Druppie Core", path: "bouwblokken/druppie_core.md" },
-        { name: "Druppie UI", path: "bouwblokken/druppie_ui.md" },
-        { name: "Knowledge Bot", path: "bouwblokken/knowledge_bot.md" },
-        { name: "Mens in de Loop", path: "bouwblokken/mens_in_de_loop.md" },
-        { name: "Policy Engine", path: "bouwblokken/policy_engine.md" },
-        { name: "Runtime", path: "bouwblokken/runtime.md" },
-        { name: "Traceability DB", path: "bouwblokken/traceability_db.md" }
     ],
     "skills": [
         { name: "Overview", path: "skills/overview.md" },
-        { name: "Mermaid Diagrams", path: "skills/mermaid.md" },
+        { name: "Architect Skill", path: "skills/architect.md" },
+        { name: "Business Analyst Skill", path: "skills/business_analyst.md" },
         { name: "Kubernetes Ops", path: "skills/kubernets.md" },
+        { name: "Mermaid Diagrams", path: "skills/mermaid.md" },
         { name: "Test Skill", path: "skills/test.md" },
         { name: "Node.js Skill", path: "skills/nodejs.md" },
         { name: "Python Skill", path: "skills/python.md" },
-        { name: "Architect Skill", path: "skills/architect.md" },
-        { name: "Business Analyst Skill", path: "skills/business_analyst.md" }
     ],
     "build_plane": [
         { name: "Overview", path: "build_plane/overview.md" },
@@ -54,7 +55,6 @@ const DOC_REGISTRY = {
     ],
     "runtime": [
         { name: "Overview", path: "runtime/overview.md" },
-        { name: "Policy Engine (Kyverno)", path: "runtime/policy_kyverno.md" },
         { name: "Runtime Info", path: "runtime/runtime.md" },
         { name: "Role Based Access Control (RBAC)", path: "runtime/rbac.md" },
         { name: "MCP Interface", path: "runtime/mcp_interface.md" },
@@ -63,11 +63,11 @@ const DOC_REGISTRY = {
     ],
     "compliance": [
         { name: "Overview", path: "compliance/overview.md" },
+        { name: "Goed Bestuur (Code)", path: "compliance/good_governance.md" },
         { name: "BIO & NIS2", path: "compliance/bio_nis2.md" },
         { name: "Data Act", path: "compliance/data_act.md" },
         { name: "AI Act (EU & UvW)", path: "compliance/ai_act.md" },
         { name: "AI Register (Algoritmeregister)", path: "compliance/ai_register.md" },
-        { name: "Goed Bestuur (Code)", path: "compliance/good_governance.md" },
         { name: "IAM", path: "compliance/iam.md" }
     ],
     "mcp_catalog": [

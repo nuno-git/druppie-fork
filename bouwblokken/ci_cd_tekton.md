@@ -3,7 +3,7 @@
 ## 🎯 Selectie: Tekton Pipelines
 Voor de CI/CD oplossing binnen het Druppie platform is gekozen voor **Tekton**. Tekton is een krachtig en flexibel, Kubernetes-native open-source raamwerk voor het maken van CI/CD systemen.
 
-### 💡 Onderbouwing van de Kuez
+### 💡 Onderbouwing van de Keuze
 De keuze voor Tekton is gebaseerd op de volgende criteria die naadloos aansluiten bij de architectuur van Druppie:
 
 1.  **Kubernetes Native**: Tekton draait volledig binnen Kubernetes en gebruikt Custom Resource Definitions (CRD's) zoals `Task` en `Pipeline`. Dit betekent dat pipelines beheerd kunnen worden via dezelfde tools als de applicatie zelf (`kubectl`, GitOps) en perfect passen in het "Spec-Driven" concept.
