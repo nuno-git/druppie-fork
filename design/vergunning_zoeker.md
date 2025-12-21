@@ -1,9 +1,9 @@
-# Functioneel Ontwerp: Vergunning Vinder
+# Functioneel Ontwerp: Vergunning zoeker
 
 ## 🎯 Doelstelling
 Veel oude vergunningen (PDFs, Word-documenten) staan nog op file-shares (S-schijf, SharePoint) in plaats van in het officiële Zaaksysteem. Dit maakt ze onvindbaar, juridisch kwetsbaar en niet compliant met de Archiefwet.
 
-De **Vergunning Vinder** is een AI-gedreven flow die deze "verloren" vergunningen opspoort, analyseert, registreert in het Zaaksysteem en vervolgens opruimt.
+De **Vergunning zoeker** is een AI-gedreven flow die deze "verloren" vergunningen opspoort, analyseert, registreert in het Zaaksysteem en vervolgens opruimt.
 
 ---
 

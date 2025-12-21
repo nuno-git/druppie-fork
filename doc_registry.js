@@ -90,7 +90,7 @@ const DOC_REGISTRY = {
         { name: "TO: Secure Agentic RAG Network", path: "design/agentic_rag_network.md" },
         { name: "TO: Continuous Compliance & Lifecycle", path: "design/compliance_lifecycle_monitoring.md" },
         { name: "TO: Automated Testing & Documentation", path: "design/automated_testing_docs.md" },
-        { name: "FO: Vergunning Vinder", path: "design/vergunning_vinder.md" },
+        { name: "FO: Vergunning zoeker", path: "design/vergunning_zoeker.md" },
         { name: "FO: Exoten Detectie", path: "design/exoten_detectie.md" },
         { name: "FO: AI Video Workflow", path: "design/ai_video_workflow.md" },
         { name: "FO: Drone Planner", path: "design/drone_planner.md" }

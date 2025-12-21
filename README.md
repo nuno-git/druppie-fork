@@ -58,7 +58,7 @@ De landingsplaats (Kubernetes):
 ### 4. 📝 [Ontwerpen (Designs)](./design/)
 Gedetailleerde technische ontwerpen en functionele beschrijvingen:
 *   **[Exoten Detectie](./design/exoten_detectie.md)**: Satelliet + Drone flow.
-*   **[Vergunning Vinder](./design/vergunning_vinder.md)**: AI zoekt oude aktes.
+*   **[Vergunning zoeker](./design/vergunning_zoeker.md)**: AI zoekt oude aktes.
 *   **[Automated Rebuild](./design/automated_rebuild.md)**: Self-healing bij security patches.
 
 ### 5. 🛡️ [Compliance](./compliance/)
