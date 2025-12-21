@@ -98,7 +98,7 @@ const DOC_REGISTRY = {
         { name: "FO: Drone Planner", path: "design/drone_planner.md" },
         { name: "AI: Druppie Core", path: "design/druppie_core.md" },
         { name: "AI: Druppie UI", path: "design/druppie_ui.md" },
-        { name: "AI: Agentic Patterns", path: "design/agentic_patterns.md" },
+        { name: "ARCH: Agentic Patterns", path: "design/agentic_patterns.md" },
     ],
     "scripts": [
         { name: "Overview", path: "script/overview.md" },

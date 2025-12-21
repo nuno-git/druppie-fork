@@ -1,4 +1,4 @@
-# Technische Ontwerp: AI Agent Patterns (Agentic Design)
+# Architectuur: AI Agent Patterns (Agentic Design)
 
 ## 1. Reflection (Zelf-Correctie)
 *Het vermogen van de AI om zijn eigen werk te beoordelen en te verbeteren voordat het naar de gebruiker gaat.*
