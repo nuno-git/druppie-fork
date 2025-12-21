@@ -783,6 +783,20 @@
                 <div class="p-4 border-b border-slate-700">
                     <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Navigatie</h2>
                 </div>
+                <!-- Search Input -->
+                <div class="px-3 py-2 border-b border-slate-700 relative">
+                    <div class="relative">
+                        <input type="text" id="docSearch" placeholder="Zoek..."
+                            class="w-full bg-slate-900 text-xs text-slate-300 px-2 py-1.5 rounded border border-slate-700 focus:outline-none focus:border-blue-500 focus:text-white transition-colors"
+                            onkeyup="filterDocs(this.value)">
+                        <i data-lucide="search" class="absolute right-2 top-2 w-3 h-3 text-slate-600"></i>
+                    </div>
+                    <!-- Search Results Dropdown -->
+                    <div id="searchResults"
+                        class="hidden absolute top-9 left-2 w-64 bg-slate-800 border border-slate-600 shadow-2xl rounded-r max-h-96 overflow-y-auto z-[100]">
+                        <!-- Results injected here -->
+                    </div>
+                </div>
                 <div class="flex-grow overflow-y-auto py-2">
                     <nav class="space-y-1 px-2">
                         <button onclick="navTo('arch')"
@@ -1728,7 +1742,7 @@
         class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center backdrop-blur-sm">
         <div class="bg-white rounded-lg shadow-2xl p-6 w-80 border border-slate-200">
             <h3 class="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
-                <i data-lucide="shield-lock" class="w-4 h-4 text-blue-600"></i>
+                <i data-lucide="shield" class="w-4 h-4 text-blue-600"></i>
                 Editor Login
             </h3>
             <input type="password" id="login-pwd"
@@ -1824,6 +1838,9 @@
 
                 // Refresh current view if needed
                 if (currentCategory) renderDocList(currentCategory);
+
+                // Load Search Index
+                await loadSearchIndex();
 
             } catch (err) {
                 console.error("Local session failed:", err);
@@ -2381,6 +2398,131 @@
                 if (doc) loadMarkdown(doc.path);
             }
         }
+
+
+        // --- SEARCH FUNCTIONALITY ---
+        let searchIndex = [];
+
+        // Load Search Index
+        async function loadSearchIndex() {
+            try {
+                let jsonText = "";
+
+                if (projectHandle) {
+                    // Local FS Mode
+                    jsonText = await fetchLocalFile('search_index.json');
+                } else if (!isFileSystem) {
+                    // Web Server Mode
+                    const response = await fetch('search_index.json');
+                    if (!response.ok) throw new Error("No Index");
+                    jsonText = await response.text();
+                } else {
+                    // File Mode but no handle yet
+                    console.log("Waiting for local directory access to load search index...");
+                    return;
+                }
+
+                if (jsonText) {
+                    searchIndex = JSON.parse(jsonText);
+                    console.log(`Search Index Loaded: ${searchIndex.length} items.`);
+                }
+            } catch (err) {
+                console.warn('Search index load failed:', err);
+            }
+        }
+
+        // Init Search if we are on Web
+        if (!isFileSystem) {
+            loadSearchIndex();
+        }
+
+        function filterDocs(query) {
+            const resultsContainer = document.getElementById('searchResults');
+
+            if (!query || query.length < 2) {
+                resultsContainer.classList.add('hidden');
+                return;
+            }
+
+
+
+            const lowerQuery = query.toLowerCase();
+            const terms = lowerQuery.split(/\s+/).filter(t => t.length > 0);
+
+            // Filter: All terms must match either Title OR Content
+            const results = searchIndex
+                .filter(item => {
+                    const title = item.title.toLowerCase();
+                    const content = (item.content || "").toLowerCase();
+
+                    // EVERY term must be found in (Title + " " + Content)
+                    // This allows "ai video" to find a doc with Title "AI" and content "video"
+                    // But we favor title matches
+                    return terms.every(term => title.includes(term) || content.includes(term));
+                })
+                .sort((a, b) => {
+                    // Ranking:
+                    // 1. Exact Title Match
+                    // 2. Title contains query
+                    // 3. Content contains query
+                    const aTitle = a.title.toLowerCase();
+                    const bTitle = b.title.toLowerCase();
+
+                    if (aTitle === lowerQuery) return -1;
+                    if (bTitle === lowerQuery) return 1;
+
+                    const aTitleHas = aTitle.includes(lowerQuery);
+                    const bTitleHas = bTitle.includes(lowerQuery);
+
+                    if (aTitleHas && !bTitleHas) return -1;
+                    if (!aTitleHas && bTitleHas) return 1;
+
+                    return 0;
+                })
+                .slice(0, 15);
+
+            if (results.length > 0) {
+                resultsContainer.innerHTML = results.map(item => `
+                <div onclick="openDoc('${item.category}', '${item.path}')" class="p-2 hover:bg-slate-700 cursor-pointer border-b border-slate-700 last:border-0 group">
+                    <div class="text-xs font-bold text-slate-200 group-hover:text-blue-400">${item.title}</div>
+                    <div class="text-[9px] text-slate-500 uppercase tracking-wide">${item.category}</div>
+                </div>
+            `).join('');
+                resultsContainer.classList.remove('hidden');
+            } else {
+                resultsContainer.innerHTML = '<div class="p-3 text-xs text-slate-500 text-center italic">Geen resultaten gevonden.</div>';
+                resultsContainer.classList.remove('hidden');
+            }
+        }
+
+        // Deep Link Navigation
+        function openDoc(category, path) {
+            // Hide Search
+            document.getElementById('searchResults').classList.add('hidden');
+            document.getElementById('docSearch').value = '';
+
+            // 1. Switch View
+            navTo('dir', category);
+
+            // 2. Select Specific Doc (navTo selects index 0 by default, so we override it)
+            // Wait for renderDocList to finish (synchronous, but just to be safe with execution order)
+            setTimeout(() => {
+                const list = DOC_REGISTRY[category] || [];
+                const idx = list.findIndex(d => d.path === path);
+                if (idx !== -1) {
+                    selectDoc(idx);
+                }
+            }, 50);
+        }
+
+        // Close search on outside click
+        document.addEventListener('click', function (e) {
+            const results = document.getElementById('searchResults');
+            const input = document.getElementById('docSearch');
+            if (!results.contains(e.target) && e.target !== input) {
+                results.classList.add('hidden');
+            }
+        });
 
     </script>
 </body>

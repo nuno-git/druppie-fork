@@ -81,3 +81,7 @@ De regels en wetten vertaald naar techniek:
 ## 🛠️ Scripts & Tools
 
 Bekijk de [Script Overview](./script/overview.md) voor een lijst van alle beschikbare beheerscripts.
+
+## Search index
+
+De search index is gemaakt met de [node generate_search_index.js](./generate_search_index.js) script en wordt opgeslagen in [search_index.json](./search_index.json).
