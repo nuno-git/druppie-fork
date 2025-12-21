@@ -132,5 +132,57 @@ spec:
       readinessDelay: 120
 ```
 
-## ✅ Samenvatting
-Door simpelweg gebruik te maken van de native kracht van Kubernetes RollingUpdates, gecombineerd met slimme defaults ("Profiles") in onze Helm Charts, geven we de gebruiker volledige controle over het risico, zonder complexe extra tools te hoeven installeren.
+## 📚 Bronkeuze: Ramped Slow Rollout & Blue/Green
+
+Naar aanleiding van [best practices](https://octopus.com/devops/kubernetes-deployments/kubernetes-deployment-strategies/), hebben we gekozen voor **Ramped Slow Rollout** als de *standaard* "base option" voor productie. Dit biedt de beste balans tussen veiligheid en resource-efficiëntie.
+
+Echter, voor specifieke **High-Compliance** updates (bijv. een nieuwe versie van de Policy Engine), voegen we de **Blue/Green** strategie toe.
+
+---
+
+## 🔵/🟢 Uitbreiding: Blue/Green Deployment
+
+Voor kritieke componenten waar **geen enkele fout** getolereerd wordt tijdens de switch, of waar een **Human Auditor** expliciet "Go" moet geven, gebruiken we Blue/Green.
+
+### Het Concept
+We draaien twee volledige versies naast elkaar:
+*   **🔵 Blue**: De huidige Live versie (v1).
+*   **🟢 Green**: De nieuwe versie (v2), volledig opgestart maar ontvangt *geen* publiek verkeer.
+
+### Implementatie in Druppie (Service Switch)
+In plaats van een `Deployment` update, gebruiken we een wissel van de `Service` selector.
+
+```yaml
+# 1. Huidige situatie (Verkeer naar Blue)
+kind: Service
+metadata:
+  name: policy-engine
+spec:
+  selector:
+    app: policy-engine
+    version: v1  # <--- WIJST NAAR BLUE
+```
+
+De **Builder Agent** orchestreert dit proces:
+1.  Deploy `policy-engine-v2` (Green).
+2.  Voer automatische tests uit op Green (via port-forward of private ingress).
+3.  **✋ Human-in-the-Loop**: Vraag CISO/Auditor om goedkeuring.
+4.  Bij "GO": Patch de Service selector naar `version: v2`.
+5.  Verkeer gaat *instant* naar Green.
+6.  Na 1 uur stabiel draaien: Verwijder Blue.
+
+### Voordelen voor Compliance
+*   **Isolatie**: De nieuwe versie raakt de productie data/gebruikers pas *na* expliciete goedkeuring.
+*   **Instant Rollback**: Bij problemen patchen we de selector direct terug naar `v1` (die staat nog aan).
+
+---
+
+## ✅ Samenvatting & Keuze
+
+| Use Case | Strategie | Profiel | Omschrijving |
+| :--- | :--- | :--- | :--- |
+| **Standaard Dev** | Rolling Update | *Blitz* | Snelheid boven stabiliteit. |
+| **Standaard Prod** | Ramped Slow Rollout | *Paranoid* | Veilig, native K8s, geen extra kosten. |
+| **High Compliance** | Blue/Green | *Audit-Gate* | Vereist dubbele resources, maar biedt 100% isolatie en goedkeuring. |
+
+Door simpelweg gebruik te maken van de native kracht van Kubernetes RollingUpdates en Services, gecombineerd met slimme defaults, geven we de gebruiker volledige controle over het risico.
