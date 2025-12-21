@@ -7,6 +7,7 @@ Hier worden ontwerpen opgeslagen die door de **Specificatie Experts** en **Archi
 
 *   **Functioneel Ontwerp (FO)**: Wat moet het systeem doen? (User Stories, Flowcharts)
 *   **Technisch Ontwerp (TO)**: Hoe wordt het gebouwd? (Componenten, Data Model, API Specs)
+*   **AI Ontwerp (AI)**: Hoe wordt het gebouwd? (Componenten, Data Model, API Specs)
 
 ## 📝 Nieuw Ontwerp Toevoegen
 1.  Maak een nieuwe map/markdown bestand voor jouw project.

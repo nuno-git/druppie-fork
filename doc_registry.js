@@ -95,7 +95,9 @@ const DOC_REGISTRY = {
         { name: "FO: Vergunning zoeker", path: "design/vergunning_zoeker.md" },
         { name: "FO: Exoten Detectie", path: "design/exoten_detectie.md" },
         { name: "FO: AI Video Workflow", path: "design/ai_video_workflow.md" },
-        { name: "FO: Drone Planner", path: "design/drone_planner.md" }
+        { name: "FO: Drone Planner", path: "design/drone_planner.md" },
+        { name: "AI: Druppie Core", path: "design/druppie_core.md" },
+        { name: "AI: Druppie UI", path: "design/druppie_ui.md" },
     ],
     "scripts": [
         { name: "Overview", path: "script/overview.md" },
@@ -113,7 +115,6 @@ const DOC_REGISTRY = {
     "general": [
         { name: "Project Readme", path: "README.md" },
         { name: "Het Verhaal Druppie", path: "story/story.md" },
-        { name: "Druppie Core", path: "story/druppie_core.md" },
         { name: "License (MIT)", path: "LICENSE.md" },
     ]
 };
