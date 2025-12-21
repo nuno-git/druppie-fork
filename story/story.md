@@ -4,7 +4,7 @@ We vertellen hier het verhaal van Druppie, een AI-assistent die is ontwikkeld om
 
 ## Introductie
 ![Slide Image](story/images/image10.png) <!-- Placeholder, mapping might be off -->
-### 1. De Strategische Verschuiving
+### De Strategische Verschuiving
 
 De kern van de Vaarkaart is de beweging van traditionele automatisering naar een fundamentele digitale transformatie.
 
@@ -12,7 +12,7 @@ De kern van de Vaarkaart is de beweging van traditionele automatisering naar een
 * **Datagedreven Waterbeheer:** De focus verschuift van het beheren van systemen naar het waardevol maken van data. Data wordt gezien als een strategisch asset om wateroverlast, droogte en waterkwaliteit beter te voorspellen en te beheren.
 * **Uniformiteit als Basis:** Om data uitwisselbaar te maken en samen te kunnen werken, is standaardisatie van processen en techniek noodzakelijk. Dit betekent minder maatwerk per waterschap en meer gezamenlijke standaarden.
 
-### 2. De Pijlers van de Transformatie
+### De Pijlers van de Transformatie
 
 De uitvoering van de digitale agenda in de Vaarkaart rust op een aantal concrete thema's:
 
@@ -31,7 +31,7 @@ De uitvoering van de digitale agenda in de Vaarkaart rust op een aantal concrete
   * Actieve inzet van **Digital Twins** (digitale kopieën van het watersysteem) om scenario's te simuleren.
   * Gebruik van **Artificial Intelligence (AI)** en algoritmes voor voorspellend onderhoud en peilbeheer.
 
-### 3. Mens en Organisatie (De Zachte Kant)
+### Mens en Organisatie (De Zachte Kant)
 
 De Vaarkaart benadrukt dat digitale transformatie niet alleen over techniek gaat, maar vooral over mensen.
 
