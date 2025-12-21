@@ -90,7 +90,17 @@ const DOC_REGISTRY = {
         { name: "FO: Drone Planner", path: "design/drone_planner.md" }
     ],
     "scripts": [
-        { name: "Overview", path: "script/overview.md" }
+        { name: "Overview", path: "script/overview.md" },
+        { name: "Druppie CLI", path: "druppie.sh" },
+        { name: "Install Kubernetes (RKE2/k3d)", path: "script/install_k8s.sh" },
+        { name: "Platform Bootstrap (Base)", path: "script/setup_dev_env.sh" },
+        { name: "Data Tools (Gitea/MinIO)", path: "script/setup_data_tools.sh" },
+        { name: "IAM Setup (Keycloak)", path: "script/setup_iam.sh" },
+        { name: "Observability (LGTM)", path: "script/setup_observability.sh" },
+        { name: "Databases (Pg/Qdrant)", path: "script/setup_databases.sh" },
+        { name: "GIS Tools (GeoServer)", path: "script/setup_gis.sh" },
+        { name: "Security Tools (Trivy)", path: "script/setup_security_tools.sh" },
+        { name: "Uninstall Kubernetes", path: "script/uninstall_k8s.sh" }
     ],
     "general": [
         { name: "Project Readme", path: "README.md" },
