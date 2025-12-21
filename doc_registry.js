@@ -11,6 +11,7 @@ const DOC_REGISTRY = {
         { name: "Compliance Layer", path: "bouwblokken/compliance_layer.md" },
         { name: "Build Plane", path: "bouwblokken/build_plane.md" },
         { name: "Infrastructure as Code (Terraform)", path: "bouwblokken/iaas_terraform.md" },
+        { name: "Local AI Runtime (Pinokio)", path: "bouwblokken/runtime_pinokio.md" },
         { name: "Runtime", path: "bouwblokken/runtime.md" },
         { name: "Knowledge Bot", path: "bouwblokken/knowledge_bot.md" },
         { name: "Traceability DB", path: "bouwblokken/traceability_db.md" },
@@ -88,6 +89,7 @@ const DOC_REGISTRY = {
         { name: "TO: Automated Testing & Documentation", path: "design/automated_testing_docs.md" },
         { name: "FO: Vergunning Vinder", path: "design/vergunning_vinder.md" },
         { name: "FO: Exoten Detectie", path: "design/exoten_detectie.md" },
+        { name: "FO: AI Film Workflow", path: "design/ai_film_workflow.md" },
         { name: "FO: Drone Planner", path: "design/drone_planner.md" }
     ],
     "scripts": [
