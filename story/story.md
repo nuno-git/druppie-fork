@@ -36,8 +36,8 @@ De uitvoering van de digitale agenda in de Vaarkaart rust op een aantal concrete
 De Vaarkaart benadrukt dat digitale transformatie niet alleen over techniek gaat, maar vooral over mensen.
 
 * **Digitaal Veradervermogen:** Er is een cultuur nodig waarin men durft te delen, over de grenzen van het eigen waterschap heen kijkt en openstaat voor verandering in werkwijzen.
-* **Digivaardigheid:** Medewerkers van waterschappen moeten worden opgeleid om met nieuwe digitale tools en data-analyses te kunnen werken.
-* **Digitale Technologie:** De waterschappen moeten sneller kunnen inspelen op nieuwe technologische ontwikkelingen en veranderende klimaatomstandigheden.
+* **Digitale Vaardigheid:** Medewerkers van waterschappen moeten worden opgeleid om met nieuwe digitale tools en data-analyses te kunnen werken.
+* **Digitale Innovator:** De waterschappen moeten sneller kunnen inspelen op nieuwe technologische ontwikkelingen en veranderende klimaatomstandigheden en hierdoor moeten we durven te experimenteren en innoveren om nieuwe mogelijkheden te ontdekken.
 
 
 ## We zijn goed op weg
