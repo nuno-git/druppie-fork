@@ -68,18 +68,16 @@ function menu() {
     show_banner
     echo "Beschikbare Acties:"
     echo "-------------------"
-    echo " 1) ☸️  Install Kubernetes (RKE2/k3d)"
-    echo " 2) 🚀 Bootstrap Platform (Base Layer)"
-    echo " 3) 💾 Install Data Services (Gitea + MinIO)"
-    echo " 4) 🛡️  Install Security Services (Trivy + SonarQube)"
-    echo " 5) 🔑 Install IAM (Keycloak)"
-    echo " 6) 👁️  Install Observability (LGTM Stack)"
-    echo " 7) 🗄️  Install Databases (Postgres + Qdrant)"
-    echo " 8) 🌍 Install GIS Services (GeoServer + WebODM)"
-    echo " 9) 📝 Genereer Documentatie (Living Docs)"
-    echo "10) 🧹 Compliance Audit (Trigger Check)"
-    echo "11) 🗑️ Uninstall Kubernetes"
-    echo "12) 📜 List Installation History"
+    echo "1) ☸️  Install Kubernetes (RKE2/k3d)"
+    echo "2) 🚀 Bootstrap Platform (Base Layer)"
+    echo "3) 💾 Install Data Services (Gitea + MinIO + Qdrant)"
+    echo "4) 🛡️  Install Security Services (Trivy + SonarQube)"
+    echo "5) 🔑 Install IAM (Keycloak)"
+    echo "6) 👁️  Install Observability (LGTM Stack)"
+    echo "7) 🌍 Install GIS Services (GeoServer + WebODM)"
+    echo ""
+    echo "u) 🗑️  Uninstall Kubernetes"
+    echo "h) 📜 List Installation History"
     echo "q) Quit"
     echo ""
     read -p "Maak een keuze: " CHOICE
@@ -118,32 +116,18 @@ function menu() {
             read -p "Druk op Enter..."
             menu
             ;;
+
         7)
-            echo "Installing Database Services..."
-            bash "$SCRIPT_DIR/setup_databases.sh"
-            read -p "Druk op Enter..."
-            menu
-            ;;
-        8)
             echo "Installing GIS Services..."
             bash "$SCRIPT_DIR/setup_gis.sh"
             read -p "Druk op Enter..."
             menu
             ;;
-        9)
-            echo "Building documentation... (TODO: Link to Sphinx/Docs script)"
-            read -p "Druk op Enter..."
-            menu
-            ;;
-        10)
-            echo "Running Compliance Scan... (TODO: Link to Trivy script)"
-            read -p "Druk op Enter..."
-            menu
-            ;;
-        11)
+
+        u)
             handle_uninstall
             ;;
-        12)
+        h)
             echo ""
             echo "Installation History:"
             echo "---------------------"
