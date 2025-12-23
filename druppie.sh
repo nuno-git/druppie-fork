@@ -70,7 +70,7 @@ function menu() {
     echo "Beschikbare Acties:"
     echo "-------------------"
     echo "1) ☸️  Install Kubernetes (RKE2/k3d)"
-    echo "2) 🚀 Bootstrap Platform (Base Layer)"
+    echo "2) 🚀 Bootstrap DEV Platform (Helm + Flux CD + Kyverno + Tekton + Kong + Postgres)"
     echo "3) 💾 Install Data Services (Gitea + MinIO + Qdrant)"
     echo "4) 🛡️  Install Security Services (Trivy + SonarQube)"
     echo "5) 🔑 Install IAM (Keycloak)"
