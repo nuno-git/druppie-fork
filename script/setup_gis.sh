@@ -130,36 +130,37 @@ log "Ensuring GeoNode Databases exist..."
 kubectl exec -n databases svc/postgres-postgresql -- env PGPASSWORD=${DRUPPIE_POSTGRES_PASS} psql -U postgres -c "CREATE DATABASE geonode;" || true
 kubectl exec -n databases svc/postgres-postgresql -- env PGPASSWORD=${DRUPPIE_POSTGRES_PASS} psql -U postgres -c "CREATE DATABASE geonode_data;" || true
 
+# FOR NOW DISABLED NEEDS MORE TESTING
 
-OS="$(uname)"
-if [[ "$OS" == "Darwin" ]]; then
- log "GeoNode Not available on macOS..."   
-else
-# 5. Install GeoNode (GIS Portal)
-log "Installing GeoNode..."
+# OS="$(uname)"
+# if [[ "$OS" == "Darwin" ]]; then
+#  log "GeoNode Not available on macOS..."   
+# else
+# # 5. Install GeoNode (GIS Portal)
+# log "Installing GeoNode..."
 
-# Add Official Repo (Community Maintained)
-helm repo add geonode https://GeoNodeUserGroup-DE.github.io/geonode-k8s/
-helm repo up
+# # Add Official Repo (Community Maintained)
+# helm repo add geonode https://GeoNodeUserGroup-DE.github.io/geonode-k8s/
+# helm repo up
 
-# Install via Helm (Robust community chart)
-helm upgrade --install geonode charts/geonode \
-  --namespace gis \
-  --set global.postgresql.host=postgres-postgresql.databases.svc.cluster.local \
-  --set global.postgresql.port=5432 \
-  --set global.postgresql.user=postgres \
-  --set global.postgresql.password=${DRUPPIE_POSTGRES_PASS} \
-  --set postgresql.enabled=false \
-  --set geonode.database.name=geonode \
-  --set geonode.geodatabase.name=geonode_data \
-  --set geoserver.url="http://geoserver.gis.svc.cluster.local:8080/geoserver/" \
-  --set geonode.siteUrl="http://geonode.${DRUPPIE_DOMAIN}/" \
-  --set geonode.adminUser=admin \
-  --set geonode.adminPassword=${DRUPPIE_POSTGRES_PASS} \
-  --set service.type=ClusterIP \
-  --wait
-log_history "GeoNode Installed (Helm)"
-fi
+# # Install via Helm (Robust community chart)
+# helm upgrade --install geonode charts/geonode \
+#   --namespace gis \
+#   --set global.postgresql.host=postgres-postgresql.databases.svc.cluster.local \
+#   --set global.postgresql.port=5432 \
+#   --set global.postgresql.user=postgres \
+#   --set global.postgresql.password=${DRUPPIE_POSTGRES_PASS} \
+#   --set postgresql.enabled=false \
+#   --set geonode.database.name=geonode \
+#   --set geonode.geodatabase.name=geonode_data \
+#   --set geoserver.url="http://geoserver.gis.svc.cluster.local:8080/geoserver/" \
+#   --set geonode.siteUrl="http://geonode.${DRUPPIE_DOMAIN}/" \
+#   --set geonode.adminUser=admin \
+#   --set geonode.adminPassword=${DRUPPIE_POSTGRES_PASS} \
+#   --set service.type=ClusterIP \
+#   --wait
+# log_history "GeoNode Installed (Helm)"
+# fi
 
 # 5. Install WebODM (Lightning/NodeODM)
 # WebODM is complex on K8s (Storage/Postgres/Redis). 
