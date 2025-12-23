@@ -365,12 +365,13 @@ cat <<EOF > "$HTML_FILE"
                 <div class="desc">Geospatial data server and maps.</div>
             </a>
 
+            <!-- GEONode is not yet supported
             <a href="http://geonode.${DRUPPIE_DOMAIN}/" class="card" target="_blank">
                 <div class="category">GIS Services</div>
                 <div class="title">GeoNode</div>
                 <div class="desc">Geospatial content management system.</div>
             </a>
-            
+            -->
             <a href="http://nodeodm.${DRUPPIE_DOMAIN}/" class="card" target="_blank">
                 <div class="category">GIS Services</div>
                 <div class="title">NodeODM</div>
