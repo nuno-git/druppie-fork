@@ -36,14 +36,6 @@ helm repo up
 # 3. Install Gitea (Lightweight Git Server)
 log "Installing Gitea..."
 
-# Clean up previous potentially stuck HA installation
-if helm status gitea -n gitea &> /dev/null; then
-    log "Removing previous Gitea installation to switch to lightweight mode..."
-    helm uninstall gitea -n gitea --wait || true
-    # Ensure PVCs for Postgres are not reused confusingly (optional, but cleaner)
-    kubectl delete pvc -n gitea -l app.kubernetes.io/name=postgresql-ha || true
-fi
-
 helm upgrade --install gitea gitea-charts/gitea \
   --namespace gitea --create-namespace \
   --version 10.6.0 \
@@ -94,6 +86,37 @@ helm upgrade --install qdrant qdrant/qdrant \
   --set apiKey=${DRUPPIE_QDRANT_KEY} \
   --wait
 log_history "Qdrant Installed"
+
+# 6. Install pgAdmin4 (Postgres UI)
+log "Installing pgAdmin4..."
+helm repo add runix https://helm.runix.net
+helm repo up
+
+# Create values file for pgAdmin
+cat <<EOF > /tmp/pgadmin-values.yaml
+serverDefinitions:
+  enabled: true
+  servers:
+    "1":
+      Name: "Druppie Shared DB"
+      Group: "Servers"
+      Host: "postgres-postgresql.databases.svc.cluster.local"
+      Port: 5432
+      MaintenanceDB: "postgres"
+      Username: "postgres"
+      SSLMode: "prefer"
+EOF
+
+helm upgrade --install pgadmin runix/pgadmin4 \
+  --namespace databases --create-namespace \
+  --set env.email=admin@druppie.nl \
+  --set env.password=${DRUPPIE_POSTGRES_PASS} \
+  --set service.type=ClusterIP \
+  -f /tmp/pgadmin-values.yaml \
+  --wait
+
+rm /tmp/pgadmin-values.yaml
+log_history "pgAdmin4 Installed"
 
 # 6. Success
 echo -e "${COLOR_GREEN}"

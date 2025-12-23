@@ -142,6 +142,29 @@ spec:
               number: 9001
 EOF
 
+# Databases Namespace (pgAdmin)
+log "Configuring Databases Ingress (pgadmin.${DRUPPIE_DOMAIN})..."
+cat <<EOF | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pgadmin-ingress
+  namespace: databases
+spec:
+  ingressClassName: kong
+  rules:
+  - host: pgadmin.${DRUPPIE_DOMAIN}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: pgadmin
+            port:
+              number: 80
+EOF
+
 # Observability Namespace (Grafana)
 log "Configuring Observability Ingress (grafana.${DRUPPIE_DOMAIN})..."
 cat <<EOF | kubectl apply -f -
@@ -327,6 +350,12 @@ cat <<EOF > "$HTML_FILE"
                 <div class="category">Data Services</div>
                 <div class="title">MinIO</div>
                 <div class="desc">Object storage (S3) console.</div>
+            </a>
+
+            <a href="http://pgadmin.${DRUPPIE_DOMAIN}/" class="card" target="_blank">
+                <div class="category">Data Services</div>
+                <div class="title">pgAdmin</div>
+                <div class="desc">PostgreSQL database management UI.</div>
             </a>
 
             <!-- GIS -->
@@ -519,6 +548,7 @@ function ensure_fallback_service() {
 # Check known optional services
 ensure_fallback_service "gis" "geonode"
 ensure_fallback_service "gis" "nodeodm"
+ensure_fallback_service "databases" "pgadmin"
 # ensure_fallback_service "gitea" "gitea-http" # Usually installed
 
 
@@ -577,6 +607,7 @@ echo " - Portal:        http://${DRUPPIE_DOMAIN}/"
 echo " - Keycloak:      http://keycloak.${DRUPPIE_DOMAIN}/"
 echo " - Gitea:         http://gitea.${DRUPPIE_DOMAIN}/"
 echo " - MinIO:         http://minio.${DRUPPIE_DOMAIN}/"
+echo " - pgAdmin:       http://pgadmin.${DRUPPIE_DOMAIN}/"
 echo " - GeoServer:     http://geoserver.${DRUPPIE_DOMAIN}/geoserver/"
 echo " - NodeODM:       http://nodeodm.${DRUPPIE_DOMAIN}/"
 echo " - GeoNode:       http://geonode.${DRUPPIE_DOMAIN}/"

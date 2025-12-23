@@ -101,6 +101,34 @@ log_history "Tempo Installed"
 
 # 6. Install Grafana (Dashboarding)
 log "Installing Grafana..."
+
+# Create values file for datasources
+cat <<EOF > /tmp/grafana-values.yaml
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      url: http://prometheus-server.observability.svc.cluster.local
+      access: proxy
+      isDefault: true
+    - name: Loki
+      type: loki
+      url: http://loki-gateway.observability.svc.cluster.local
+      access: proxy
+      jsonData:
+        derivedFields:
+          - datasourceUid: Tempo
+            matcherRegex: "traceID=(\\w+)"
+            name: TraceID
+            url: "\$${__value.raw}"
+    - name: Tempo
+      type: tempo
+      url: http://tempo.observability.svc.cluster.local:3100
+      access: proxy
+EOF
+
 helm upgrade --install grafana grafana/grafana \
   --namespace observability --create-namespace \
   --set adminPassword=${DRUPPIE_GRAFANA_PASS} \
@@ -108,7 +136,10 @@ helm upgrade --install grafana grafana/grafana \
   --set "grafana\.ini.server.root_url=http://grafana.${DRUPPIE_DOMAIN}/" \
   --set "grafana\.ini.server.serve_from_sub_path=false" \
   --set persistence.enabled=true \
-  --set persistence.size=2Gi
+  --set persistence.size=2Gi \
+  -f /tmp/grafana-values.yaml
+
+rm /tmp/grafana-values.yaml
 
 log "Waiting for Grafana to be ready..."
 kubectl rollout status deployment/grafana -n observability --timeout=300s

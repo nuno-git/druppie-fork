@@ -18,7 +18,7 @@ De volledige architectuur is interactief te verkennen.
 
 ## 🚀 Snel Starten met het Platform
 
-De makkelijkste manier om te beginnen is via de **Druppie CLI** ```./druppie.sh ua k3d```
+De makkelijkste manier om te beginnen is via de **Druppie CLI** ```./druppie.sh```
 
  ![Druppie CLI](./druppie_cli.png)
 
@@ -30,7 +30,10 @@ Dit interactieve menu geeft toegang tot:
 
 De password voor de verschillende services is 'druppie' worden opgeslagen in de .secrets file. De installatie logs zijn terug te vinden in de directory .logs. En de applicatie installatie overiew is terug te vinden in de .druppie_history file.
 
-![Druppie k3d](./druppie_k3d.png)
+![Druppie k3d](./druppie_k3d.png) 
+Deze installatie is een lokaal installatie en draait in een docker container en is toegankelijk via de k3d cluster op [https://localhost](https://localhost) waarbij je wel even het certificaat moet accepteren.
+
+Wil je alles in een keer lokaal installeren? dan gebruik je ```./druppie.sh ua k3d```
 ---
 
 ## 📂 Projectstructuur

@@ -113,6 +113,19 @@ const DOC_REGISTRY = {
         { name: "Security Tools (Trivy)", path: "script/setup_security_tools.sh" },
         { name: "Uninstall Kubernetes", path: "script/uninstall_k8s.sh" }
     ],
+    "tools": [
+        { name: "Overview", path: "tools/overview.md" },
+        { name: "Keycloak (IAM)", path: "tools/keycloak.md" },
+        { name: "Grafana (Obs)", path: "tools/grafana.md" },
+        { name: "Gitea (Git)", path: "tools/gitea.md" },
+        { name: "MinIO (S3)", path: "tools/minio.md" },
+        { name: "pgAdmin (DB UI)", path: "tools/pgadmin.md" },
+        { name: "GeoServer (GIS)", path: "tools/geoserver.md" },
+        { name: "GeoNode (GIS CMS)", path: "tools/geonode.md" },
+        { name: "NodeODM (Drone Images)", path: "tools/nodeodm.md" },
+        { name: "Rancher (K8s UI)", path: "tools/rancher.md" },
+        { name: "Kong Manager (API Gateway)", path: "tools/kong.md" }
+    ],
     "general": [
         { name: "Project Readme", path: "README.md" },
         { name: "Het Verhaal Druppie", path: "story/story.md" },
