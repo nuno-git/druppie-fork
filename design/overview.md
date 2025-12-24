@@ -6,7 +6,7 @@ Dit is de centrale locatie voor functionele en technische ontwerpen van specifie
 
 Hier worden ontwerpen opgeslagen die door de **Specificatie Experts** en **Architecten** zijn opgesteld.
 
-*.  **Algemene Ontwerp**: Basis voor de druppie ontwerpen.
+*   **Algemene Ontwerp**: Basis informatie voor de druppie ontwerpen.
 *   **AI Ontwerp (AI)**: Specificaties voor Agentic Workflows en LLM interacties.
 *   **Architectuur Ontwerp (ARCH)**: High-level patronen en strategische keuzes.
 *   **Technisch Ontwerp (TO)**: Hoe wordt het gebouwd? (Componenten, Data Model, API Specs)

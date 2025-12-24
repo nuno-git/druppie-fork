@@ -3,15 +3,6 @@
 const DOC_REGISTRY = {
     "blocks": [
         { name: "Overview", path: "blocks/overview.md" },
-        // { name: "Bouwblok Definities", path: "design/bouwblok_definities.md" }, moved
-        // { name: "Mens in de Loop", path: "design/mens_in_de_loop.md" }, moved
-        // { name: "Policy Engine", path: "design/policy_engine.md" }, moved
-        { name: "Traceability DB", path: "blocks/traceability_db.md" },
-        // { name: "Compliance Layer", path: "design/compliance_layer.md" }, moved
-        // { name: "Build Plane", path: "design/build_plane.md" }, moved
-        { name: "MCP Server Host", path: "blocks/mcp_server.md" },
-        // { name: "Runtime", path: "design/runtime.md" }, moved
-        // { name: "Knowledge Bot", path: "design/knowledge_bot.md" }, moved
         { name: "Druppie UI", path: "blocks/druppie_ui.md" },
         { name: "Druppie Core", path: "blocks/druppie_core.md" },
         { name: "CI/CD Pipeline (Tekton)", path: "blocks/ci_cd_tekton.md" },
@@ -86,10 +77,12 @@ const DOC_REGISTRY = {
         { name: "Compliance Layer", path: "design/compliance_layer.md" },
         { name: "Knowledge Bot", path: "design/knowledge_bot.md" },
         { name: "Mens in de Loop", path: "design/mens_in_de_loop.md" },
+        { name: "Traceability DB", path: "design/traceability_db.md" },
+        { name: "MCP Server Host", path: "design/mcp_server.md" },
         { name: "Policy Engine", path: "design/policy_engine.md" },
         { name: "Runtime Interface", path: "design/runtime.md" },
-        { name: "AI: Druppie Core", path: "design/druppie_core.md" },
-        { name: "AI: Druppie UI", path: "design/druppie_ui.md" },
+        { name: "Druppie Core", path: "design/druppie_core.md" },
+        { name: "Druppie UI", path: "design/druppie_ui.md" },
         { name: "ARCH: Agentic Patterns", path: "design/agentic_patterns.md" },
         { name: "TO: Hybride Architectuur (K8s)", path: "design/hybrid_cluster_architecture.md" },
         { name: "TO: Component Interactie (Build->Run)", path: "design/component_interaction.md" },

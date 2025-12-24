@@ -1,125 +1,48 @@
-# Druppie UI Specification
 
-## 1. System Overview
-**Druppie UI** is the visual control plane for the Druppie Platform. It allows users to interact with the AI Core, visualize generated code, manage projects via a Kanban board, and approve sensitive actions. It connects to the `Druppie Core` via REST, Server-Sent Events (SSE), and WebSockets.
+# Druppie UI
 
-**Key Principles:**
-*   **Human-in-the-Control-Loop**: The UI is designed to give users insight and control over the AI's autonomous actions.
-*   **Real-Time**: State changes in the Core (e.g., Build finished, Plan updated) are reflected instantly.
-*   **Transparency**: No "hidden" AI magic; always show the Plan, the Code, and the Logs.
+## 🎯 Doelstelling
+De **Druppie UI** is het gezicht van het platform. Het biedt een intuïtieve, chat-gebaseerde interface (Copilot) waarmee gebruikers op natuurlijke wijze interactie hebben met de complexe agent-architectuur. Het doel is om de complexiteit van de backend te abstraheren en de gebruiker in controle te houden ("Human in the Loop").
 
-## 2. Technical Stack
-*   **Framework**: Next.js 14+ (App Router).
-*   **Styling**: Tailwind CSS (adhering to Company Style Guide).
-*   **State Management**: React Query (Server State) + Zustang (Client State).
-*   **Visualization**:
-    *   Code: `prismjs`.
-    *   Diagrams: `mermaid.js`.
-    *   Markdown: `react-markdown`.
-*   **Protocol**:
-    *   Chat: SSE (Server-Sent Events) for streaming tokens.
-    *   Events: WebSockets for Kanban/Status updates.
+## 📋 Functionele Specificaties
 
----
+### 1. Conversational Interface & Integratie
+- **Microsoft 365 Copilot**: De primaire interface voor medewerkers, geïntegreerd in Teams, Outlook en Word via **Declarative Agents**.
+- **Druppie Custom UI**: Een fallback/admin chat interface voor geavanceerde taken.
+- **Streaming Response**: Ondersteuning voor real-time text streaming.
+- **Rich Media**: Adaptieve kaarten en deep links naar specifieke applicaties.
 
-## 3. Epics & User Stories
+### 2. Interactieve Elementen
+- **Slash Commands**: Ondersteunt commando's (bijv. `/reset`, `/help`, `/new-project`) voor directe sturing.
+- **Adaptive Cards**: Toont gestructureerde formulieren voor input (bijv. bij requirements intake).
+- **Status Indicatoren**: Geeft duidelijk aan wat het systeem aan het doen is ("Thinking...", "Building...", "Waiting for Approval").
 
-### Epic 1: Conversational Interface (Chat)
-**Goal**: Provide a rich, IDE-like chat experience for instructing the AI.
+### 3. Human Approval Interface
+- **Notifications**: Toont alerts wanneer de gebruiker actie moet ondernemen (goedkeuring geven).
+- **Decision Context**: Biedt alle noodzakelijke informatie om een goedkeuring te kunnen doen (diffs, risico-analyse).
 
-*   **Story 1.1: Streaming Response**
-    *   **User**: "Build me a new drone service."
-    *   **UI**: Renders text token-by-token. Supports Markdown rendering (tables, headers, bold).
-*   **Story 1.2: Interactive Artifacts**
-    *   **Function**: If the AI mentions a file (e.g., "I updated `deployment.yaml`"), the filename is a clickable link that opens the Code Viewer side-panel.
-*   **Story 1.3: Thread Management**
-    *   **Function**: Users can create new threads, rename them, and view history. History is fetched from Core.
+## 🔧 Technische Requirements
 
-### Epic 2: Visual Code Explorer (The "Lens")
-**Goal**: Allow users to verify the AI's work without leaving the browser.
+- **Proxy Pattern**: Gebruik van **Azure Functions** als brug tussen M365 Copilot en de Azure AI Agent Service.
+- **Protocol Translatie**: Mappen van M365 conversationIds naar Azure Agent Thread IDs.
+- **Security**: Validatie van M365 tokens en gebruik van Managed Identity voor backend communicatie.
+- **Responsive Design**: Custom UI moet responsive zijn.
 
-*   **Story 2.1: File Tree Navigator**
-    *   **View**: A VSCode-like file tree representing the target Git repository's structure.
-    *   **Source**: Fetched live from Gitea or the Core's "Temporary Workspace".
-*   **Story 2.2: Code Editor/Viewer**
-    *   **Function**: Read-only view of files with Syntax Highlighting (support for Go, Python, YAML, Markdown).
-*   **Story 2.3: Diff Viewer**
-    *   **Use Case**: When the AI proposes changes (HITL), show a side-by-side Diff (Red/Green) of Before vs After.
-    *   **Action**: "Approve" button executes the change; "Reject" allows commenting feedback.
+## 🔒 Security & Compliance
 
-### Epic 3: Project Management (Kanban)
-**Goal**: Visualize the Execution Plan as manageable tasks.
+- **Auth Integration**: Integreert naadloos met IAM (SSO).
+- **Input Sanitization**: Client-side filtering om XSS en injecties te voorkomen.
+- **Privacy Mode**: Visuele indicatie wanneer gevoelige data wordt verwerkt.
 
-*   **Story 3.1: Live Board**
-    *   **Columns**: `Planning`, `In Progress`, `Review`, `Done`.
-    *   **Sync**: When the Core moves a step to "Completed", the card moves to "Done" automatically via WebSocket.
-*   **Story 3.2: Drag-and-Drop Control**
-    *   **Action**: User drags a card from "In Progress" back to "Planning".
-    *   **Effect**: Sends a signal to Core to STOP execution and replan that step.
-*   **Story 3.3: Project Context Selector**
-    *   **View**: Dropdown menu in the Sidebar/Header to switch the active Project.
-    *   **Action**: "Create New Project" button opens a modal to define Project Name and Key (e.g., `drone-service`).
-    *   **Effect**: Filters the Chat History, Kanban Board, and File Browser to the selected Project scope.
+## 🔌 Interacties
 
-### Epic 4: Registry Explorer
-**Goal**: Browse the available capabilities of the platform.
+| Actie | Richting | Omschrijving |
+| :--- | :--- | :--- |
+| **User Prompt** | UI -> Core | Gebruiker stuurt vraag of commando. |
+| **Stream Chunk** | Core -> UI | Real-time tekst updates van de AI. |
+| **Approval Request** | Policy -> UI | Pop-up voor menselijke goedkeuring. |
 
-*   **Story 4.1: Building Block Catalog**
-    *   **View**: Grid view of cards for each Building Block (e.g., "Postgres", "Redis").
-    *   **Detail**: Clicking a card shows its inputs, outputs, and dependencies (rendered from the Markdown definition).
-*   **Story 4.2: Skill & Persona Viewer**
-    *   **View**: List active Agents and their Skills.
-    *   **Admin**: (If Admin) specific buttons to enable/disable specific skills.
-
-### Epic 5: Governance Dashboard
-**Goal**: Visibility into compliance and security.
-
-*   **Story 5.1: Approval Queue**
-    *   **View**: A dedicated "Inbox" for pending requests (Deployment to Prod, Public S3 bucket creation).
-    *   **Action**: Approve/Deny with reason.
-*   **Story 5.2: Compliance Reports**
-    *   **View**: Tabular list of projects and their latest Compliance Scan status (Pass/Fail).
-
-### Epic 6: Admin Control Plane
-**Goal**: Manage the platform's configuration, users, and health.
-
-*   **Story 6.1: IAM & RBAC Management**
-    *   **View**: Manage Users, Groups, and Role Mappings (UI for Keycloak).
-    *   **Action**: Assign "Platform Admin" or "Developer" roles to users.
-*   **Story 6.2: System Health Monitor**
-    *   **View**: Real-time dashboard of Core Services (Router, Planner, Registry).
-    *   **Metric**: CPU/Memory usage of Agent pods.
-*   **Story 6.3: Audit Log Viewer**
-    *   **View**: Searchable table of all actions taken by Agents and Users.
-    *   **Filter**: Filter by UserID, ProjectID, or Timestamp.
-    *   **Detail**: View the exact differences (diffs) applied during an action.
-*   **Story 6.4: Configuration Manager**
-*   **View**: Edit Global Settings (e.g., "Default LLM Model", "Max Token Limit").
-    *   **Action**: Upload new Corporate Guidelines (PDF) to the Compliance Engine.
-*   **Story 6.5: Building Block Manager**
-    *   **View**: Master list of all registered Building Blocks (e.g., "Postgres", "Redis").
-    *   **Action**: Toggle `Enable/Disable`. Disabled blocks cannot be selected by the Planner.
-    *   **Detail**: View metadata, version history, and dependency graph.
-*   **Story 6.6: MCP Server Manager**
-    *   **View**: List of connected Model Context Protocol (MCP) servers.
-    *   **Action**: Register new MCP endpoint (URL + API Key).
-    *   **Status**: Check health (`Ping`) of external tool providers.
-*   **Story 6.7: Skill & Persona Manager**
-    *   **View**: Catalog of Agent Skills (System Prompts + Tool Sets).
-    *   **Action**: Upload new Skill definitions (Markdown/YAML).
-    *   **Modification**: Hot-patch system prompts for specific Agents (e.g., tweaking the "Reviewer" personality).
-
----
-
-## 4. Design Guidelines (UX)
-*   **Theme**: Dark mode by default (Engineer focused).
-*   **Layout**:
-    *   **Left Sidebar**: Navigation (Chat, Projects, Catalog, Settings).
-    *   **Center**: Main Content (Chat Stream or Kanban Board).
-    *   **Right Panel (Collapsible)**: Context (Code Viewer, Documentation, Logs).
-*   **Feedback**: Use "Toasts" for async events ("Build Started", "Agent Connected").
-
-## 5. Security
-*   **Auth**: Integrate with OIDC Client (Keycloak).
-*   **Token**: Pass Bearer Token in all API calls to Core.
-*   **Role Hiding**: Hide Admin settings if the user lacks the `platform-admin` role.
+## 🏗️ Relaties tot andere blokken
+- **Authenticeert via**: [IAM](../compliance/iam.md).
+- **Stuurt aan**: [Druppie Core](./druppie_core.md).
+- **Toont requests van**: [Mens in de Loop](./../design/mens_in_de_loop.md).

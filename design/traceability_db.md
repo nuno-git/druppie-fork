@@ -1,13 +1,3 @@
----
-id: traceability-db
-name: Traceability DB (Audit Log)
-type: block
-version: 1.0.0
-auth_group: []
-description: "Traceability DB (Audit Log)"
-capabilities: []
----
-
 # Traceability DB (Audit Log)
 
 ## 🎯 Doelstelling
