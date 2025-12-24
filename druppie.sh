@@ -53,6 +53,13 @@ function ensure_secrets() {
     fi
     # Re-export to be safe
     export DRUPPIE_DOMAIN="${DRUPPIE_DOMAIN:-localhost}"
+
+    # Ensure Cluster Name
+    if [ -z "${DRUPPIE_CLUSTER_NAME}" ]; then
+        echo "DRUPPIE_CLUSTER_NAME=druppie-dev" >> "$SECRETS_FILE"
+        export DRUPPIE_CLUSTER_NAME="druppie-dev"
+    fi
+    export DRUPPIE_CLUSTER_NAME="${DRUPPIE_CLUSTER_NAME:-druppie-dev}"
     
     # Reload to be sure
     source "$SECRETS_FILE"
@@ -78,20 +85,22 @@ function menu() {
     show_banner
     echo "Beschikbare Acties:"
     echo "-------------------"
-    echo "1) ☸️  Install Kubernetes (RKE2/k3d)"
-    echo "2) 🚀 Bootstrap DEV Platform (Helm + Flux CD + Kyverno + Tekton + Kong + Postgres)"
-    echo "3) 💾 Install Data Services (Gitea + MinIO + Qdrant)"
-    echo "4) 🛡️  Install Security Services (Trivy + SonarQube)"
-    echo "5) 🔑 Install IAM (Keycloak)"
-    echo "6) 👁️  Install Observability (LGTM Stack)"
-    echo "7) 🌍 Install GIS Services (GeoServer + GEONode + WebODM)"
-    echo "8) 🤠 Install Rancher UI (Cert-Manager + Rancher)"
-    echo "9) 🌐 Configure Ingress (Expose Services)"
+    echo " 0) ☸️  Install Kubernetes (RKE2/k3d)"
+    echo " 1) 🚀 Bootstrap DEV Platform (Helm + Flux CD + Kyverno + Tekton + Kong + Postgres)"
+    echo " 2) 💾 Install Data Services (Gitea + MinIO + Qdrant)"
+    echo " 3) 🛡️  Install Security Services (Trivy + SonarQube)"
+    echo " 4) 🔑 Install IAM (Keycloak)"
+    echo " 5) 👁️  Install Observability (LGTM Stack)"
+    echo " 6) 🌍 Install GIS Services (GeoServer + GEONode + WebODM)"
+    echo " 7) 🤠 Install Rancher UI (Cert-Manager + Rancher)"
+    echo " 8) 💧 Build & Install Druppie"
+    echo " 9) 🌐 Configure Ingress (Expose Services)"
+
     echo ""
-    echo "a) ⏩ Install EVERYTHING (1-9)"
-    echo "u) 🗑️  Uninstall Kubernetes"
-    echo "h) 📜 List Installation History"
-    echo "q) Quit"
+    echo " a) ⏩ Install EVERYTHING (0-9)"
+    echo " u) 🗑️  Uninstall Kubernetes"
+    echo " h) 📜 List Installation History"
+    echo " q) Quit"
     echo ""
     read -p "Maak een keuze: " CHOICE
     execute_choice "$CHOICE"
@@ -116,33 +125,37 @@ function execute_choice() {
     local choice=$1
     local extra_arg=$2
     case $choice in
-        1) handle_k8s_install
+        0) handle_k8s_install
             handle_wait
             ;;
-        2) install_platform
+        1) install_platform
             handle_wait
             ;;
-        3) install_data
+        2) install_data
             handle_wait
             ;;
-        4) install_security
+        3) install_security
             handle_wait
             ;;
-        5) install_iam
+        4) install_iam
             handle_wait
             ;;
-        6) install_observability
+        5) install_observability
             handle_wait
             ;;
-        7) install_gis
+        6) install_gis
             handle_wait
             ;;
-        8) install_rancher
+        7) install_rancher
+            handle_wait
+            ;;
+        8) install_druppie_core
             handle_wait
             ;;
         9) install_ingress
             handle_wait
             ;;
+
         a)
             handle_k8s_install || return 1
             install_platform || return 1
@@ -152,6 +165,7 @@ function execute_choice() {
             install_observability || return 1
             install_gis || return 1
             install_rancher || return 1
+            install_druppie || return 1
             install_ingress || return 1
             handle_wait
             ;;
@@ -283,6 +297,10 @@ function install_rancher() {
 
 function install_ingress() {
     run_script_logged "Ingress Configuration" "$SCRIPT_DIR/setup_ingress.sh"
+}
+
+function install_druppie() {
+    run_script_logged "Druppie" "$SCRIPT_DIR/install_druppie.sh"
 }
 
 function show_history() {

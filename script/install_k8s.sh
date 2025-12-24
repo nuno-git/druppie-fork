@@ -105,11 +105,14 @@ if [ "$PROFILE_OPT" == "1" ]; then
         fi
     fi
 
-    log "Creating/Updating Cluster 'druppie-dev'..."
+    # Default to druppie-dev if env var is missing (e.g. running script directly)
+    CLUSTER_NAME="${DRUPPIE_CLUSTER_NAME:-druppie-dev}"
+
+    log "Creating/Updating Cluster '$CLUSTER_NAME'..."
     # Create cluster with Ingress ports mapped
     # - 80:80 (HTTP Ingress)
     # - 443:443 (HTTPS Ingress)
-    k3d cluster create druppie-dev \
+    k3d cluster create "$CLUSTER_NAME" \
         --api-port 6443 \
         -p "80:80@loadbalancer" \
         -p "443:443@loadbalancer" \
@@ -118,7 +121,7 @@ if [ "$PROFILE_OPT" == "1" ]; then
 
     log "Cluster Ready! 🚀"
     log "Run: kubectl get nodes"
-    log_history "k3d (druppie-dev)"
+    log_history "k3d ($CLUSTER_NAME)"
     exit 0
 fi
 

@@ -58,11 +58,12 @@ if [ "$OPT" == "2" ]; then
 
 elif [ "$OPT" == "1" ]; then
     # k3d Uninstall
-    log "Deleting 'druppie-dev' cluster..."
+    CLUSTER_NAME="${DRUPPIE_CLUSTER_NAME:-druppie-dev}"
+    log "Deleting '$CLUSTER_NAME' cluster..."
     if command -v k3d &> /dev/null; then
-        k3d cluster delete druppie-dev
+        k3d cluster delete "$CLUSTER_NAME"
         log "Cluster deleted."
-        log_history "k3d (druppie-dev)"
+        log_history "k3d ($CLUSTER_NAME)"
         if [[ "$(uname)" == "Darwin" ]]; then
             # macOS: Remove k3d binary
             brew uninstall k3d

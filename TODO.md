@@ -12,4 +12,13 @@
     - [x] Add ingress path to Postgres Admin tool (/sys/postgres) (Skipped - Tool not installed)
     - [x] Add ingress path to Rancher UI (/sys/rancher)
     - [x] Add ingress path to Grafana (/sys/grafana)
+- [ ] Add multi user support, login via KeyCloak
+- [ ] Add support for multiple pods (one per druppie project)
+- [ ] Add ai provider selection
+- [ ] Add authentication groups
+- [ ] Add K3D support intel based macs
+- [ ] Configure the total solution as one working piece 
+
+
+
     

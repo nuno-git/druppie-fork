@@ -1,4 +1,4 @@
-# 🛠️ Tooling Overview
+# 🛠️ Tools Overview
 
 Het Druppie Platform biedt een breed scala aan geïntegreerde tools om jouw ontwikkelproces, data-analyse en beheer te ondersteunen.
 

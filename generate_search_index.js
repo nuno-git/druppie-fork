@@ -34,7 +34,15 @@ for (const [category, items] of Object.entries(registry)) {
             const filePath = path.join(__dirname, item.path);
             // Verify extension is .md or similar text file
             if (fs.existsSync(filePath) && (filePath.endsWith('.md') || filePath.endsWith('.txt') || filePath.endsWith('.sh'))) {
-                const content = fs.readFileSync(filePath, 'utf8');
+                let content = fs.readFileSync(filePath, 'utf8');
+
+                // Handle different file types
+                if (filePath.endsWith('.md')) {
+                    // Strip Frontmatter (--- ... ---) at start of file
+                    // Note: This regex assumes standard frontmatter block at start of file
+                    content = content.replace(/^---\n[\s\S]*?\n---\n/, '');
+                }
+
                 // Simple cleanup: remove markdown syntax for better searching
                 const plainText = content
                     .replace(/[#*`]/g, '')         // Remove #, *, `

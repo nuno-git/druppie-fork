@@ -765,12 +765,7 @@
                 </div>
             </button>
 
-            <!-- Login Button -->
-            <button onclick="toggleLogin()" id="btn-login"
-                class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-600 transition flex items-center gap-2 text-slate-400">
-                <i data-lucide="lock" class="w-4 h-4" id="icon-login"></i>
-                <span class="text-xs font-bold" id="text-login">Login</span>
-            </button>
+
         </div>
     </nav>
 
@@ -781,9 +776,6 @@
             <!-- SIDEBAR -->
             <div class="w-64 bg-slate-800 text-white flex flex-col flex-none shadow-xl z-50 transition-all duration-300 transform"
                 id="sidebar">
-                <div class="p-4 border-b border-slate-700">
-                    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Navigatie</h2>
-                </div>
                 <!-- Search Input -->
                 <div class="px-3 py-2 border-b border-slate-700 relative">
                     <div class="relative">
@@ -802,71 +794,77 @@
                     <nav class="space-y-1 px-2">
                         <button onclick="navTo('arch')"
                             class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-blue-400 transition-colors">
-                            <i data-lucide="layout-dashboard" class="inline-block w-4 h-4 mr-2"></i> Overall
-                            Architectuur
-                        </button>
+                            <i data-lucide="layout-dashboard" class="inline-block w-4 h-4 mr-2"></i> Simulatie
 
-                        <!-- Ontwerpen -->
-                        <button onclick="navTo('dir', 'ontwerpen')"
-                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
-                            <i data-lucide="pen-tool" class="inline-block w-4 h-4 mr-2"></i> Ontwerpen
-                        </button>
+                            <!-- Top Level Informatie -->
+                            <button onclick="navTo('dir', 'general')"
+                                class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors mt-2 pt-2">
+                                <i data-lucide="file-text" class="inline-block w-4 h-4 mr-2"></i> Informatie
+                            </button>
 
-                        <div class="pt-4 pb-1 px-3 text-[10px] font-bold text-slate-500 uppercase">Specificaties</div>
+                            <!-- Design -->
+                            <button onclick="navTo('dir', 'design')"
+                                class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                                <i data-lucide="pen-tool" class="inline-block w-4 h-4 mr-2"></i> Design
+                            </button>
 
-                        <!-- Bouwblokken -->
-                        <button onclick="navTo('dir', 'bouwblokken')"
-                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
-                            <i data-lucide="package" class="inline-block w-4 h-4 mr-2"></i> Bouwblokken
-                        </button>
+                            <!-- Compliance -->
+                            <button onclick="navTo('dir', 'compliance')"
+                                class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors ">
+                                <i data-lucide="shield" class="inline-block w-4 h-4 mr-2"></i> Compliance
+                            </button>
 
-                        <!-- Compliance -->
-                        <button onclick="navTo('dir', 'compliance')"
-                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
-                            <i data-lucide="shield" class="inline-block w-4 h-4 mr-2"></i> Compliance
-                        </button>
+                            <!-- Design -->
+                            <button onclick="navTo('dir', 'research')"
+                                class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                                <i data-lucide="pen-tool" class="inline-block w-4 h-4 mr-2"></i> Onderzoek
+                            </button>
 
-                        <!-- Skills -->
-                        <button onclick="navTo('dir', 'skills')"
-                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
-                            <i data-lucide="zap" class="inline-block w-4 h-4 mr-2"></i> Skills
-                        </button>
+                            <div
+                                class="pt-4 pb-1 px-3 text-[10px] font-bold text-slate-500 uppercase border-t border-slate-700 relative">
+                                Definities</div>
 
-                        <!-- MCP Catalog -->
-                        <button onclick="navTo('dir', 'mcp_catalog')"
-                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
-                            <i data-lucide="database" class="inline-block w-4 h-4 mr-2"></i> MCP Servers
-                        </button>
+                            <!-- Blocks -->
+                            <button onclick="navTo('dir', 'blocks')"
+                                class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                                <i data-lucide="package" class="inline-block w-4 h-4 mr-2"></i> Blocks
+                            </button>
 
-                        <!-- Build Plane -->
-                        <button onclick="navTo('dir', 'build_plane')"
-                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
-                            <i data-lucide="hammer" class="inline-block w-4 h-4 mr-2"></i> Build Plane
-                        </button>
+                            <!-- Agents -->
+                            <button onclick="navTo('dir', 'agents')"
+                                class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                                <i data-lucide="bot" class="inline-block w-4 h-4 mr-2"></i> Agents
+                            </button>
 
-                        <!-- Runtime -->
-                        <button onclick="navTo('dir', 'runtime')"
-                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
-                            <i data-lucide="server" class="inline-block w-4 h-4 mr-2"></i> Runtime
-                        </button>
+                            <!-- Skills -->
+                            <button onclick="navTo('dir', 'skills')"
+                                class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                                <i data-lucide="zap" class="inline-block w-4 h-4 mr-2"></i> Skills
+                            </button>
 
-                        <!-- Tools -->
-                        <button onclick="navTo('dir', 'tools')"
-                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors  border-t border-slate-700 mt-2 pt-2">
-                            <i data-lucide="wrench" class="inline-block w-4 h-4 mr-2"></i>Development Tools
-                        </button>
 
-                        <!-- Scripts -->
-                        <button onclick="navTo('dir', 'scripts')"
-                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
-                            <i data-lucide="terminal-square" class="inline-block w-4 h-4 mr-2"></i> Scripts
-                        </button>
+                            <!-- MCP Catalog -->
+                            <button onclick="navTo('dir', 'mcp')"
+                                class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                                <i data-lucide="database" class="inline-block w-4 h-4 mr-2"></i> MCP
+                            </button>
 
-                        <!-- Top Level Informatie -->
-                        <button onclick="navTo('dir', 'general')"
-                            class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors border-t border-slate-700 mt-2 pt-2">
-                            <i data-lucide="file-text" class="inline-block w-4 h-4 mr-2"></i> Project Informatie
-                        </button>
+                            <div
+                                class="pt-4 pb-1 px-3 text-[10px] font-bold text-slate-500 uppercase border-t border-slate-700 relative">
+                                Support</div>
+
+                            <!-- Tools -->
+                            <button onclick="navTo('dir', 'tools')"
+                                class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors ">
+                                <i data-lucide="wrench" class="inline-block w-4 h-4 mr-2"></i>Tools
+                            </button>
+
+                            <!-- Scripts -->
+                            <button onclick="navTo('dir', 'scripts')"
+                                class="w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                                <i data-lucide="terminal-square" class="inline-block w-4 h-4 mr-2"></i> Scripts
+                            </button>
+
                     </nav>
                 </div>
 
@@ -1699,20 +1697,7 @@
                         <h2 id="md-title" class="text-sm font-bold text-slate-800 truncate mr-4">Selecteer een
                             bestand...</h2>
                         <div class="space-x-2 flex-none flex items-center">
-                            <button id="btn-edit-template" onclick="enableEditMode()"
-                                class="hidden px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-600 rounded border border-blue-200 hover:bg-blue-100">
-                                <i data-lucide="edit-3" class="inline-block w-3 h-3 mr-1"></i> Bewerk (Template)
-                            </button>
-                            <button id="btn-delete-doc" onclick="deleteCurrentDoc()"
-                                class="hidden px-2 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded transition"
-                                title="Verwijder dit bestand">
-                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                            </button>
-                            <button id="btn-save-doc" onclick="saveDoc()"
-                                class="hidden px-2 py-1.5 text-xs font-medium text-green-600 hover:bg-green-50 rounded transition"
-                                title="Opslaan (Lokaal)">
-                                <i data-lucide="save" class="w-3.5 h-3.5"></i>
-                            </button>
+
                         </div>
                     </div>
 
@@ -1733,9 +1718,7 @@
                             <!-- Markdown rendered here -->
                         </div>
 
-                        <textarea id="md-editor"
-                            class="hidden w-full h-full p-4 font-mono text-sm border-0 focus:ring-0 resize-none outline-none"
-                            spellcheck="false"></textarea>
+
                     </div>
                 </div> <!-- End Right Pane -->
             </div>
@@ -1744,29 +1727,7 @@
 
     </div> <!-- End flex-grow container -->
 
-    <!-- LOGIN MODAL -->
-    <div id="login-modal"
-        class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center backdrop-blur-sm">
-        <div class="bg-white rounded-lg shadow-2xl p-6 w-80 border border-slate-200">
-            <h3 class="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
-                <i data-lucide="shield" class="w-4 h-4 text-blue-600"></i>
-                Editor Login
-            </h3>
-            <input type="password" id="login-pwd"
-                class="w-full border border-slate-300 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 mb-4 font-mono"
-                placeholder="Wachtwoord..." onkeyup="if(event.key === 'Enter') submitLogin()">
-            <div class="flex justify-end gap-2">
-                <button onclick="closeLogin()"
-                    class="px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 rounded">
-                    Annuleren
-                </button>
-                <button onclick="submitLogin()"
-                    class="px-3 py-1.5 text-xs font-bold bg-blue-600 text-white hover:bg-blue-500 rounded shadow-sm">
-                    Inloggen
-                </button>
-            </div>
-        </div>
-    </div>
+
 
     <!-- Markdown & Mermaid -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -1812,6 +1773,13 @@
         const isFileSystem = window.location.protocol === 'file:';
         const docBaseBase = window.location.href.substring(0, window.location.href.lastIndexOf('/')); // base dir of index.html
 
+        // Settings (Global)
+        const appSettings = {
+            defaultProvider: 'Google',
+            defaultModel: 'Gemini 1.5 Pro'
+        };
+
+        // Update FS Status
         // Update FS Status
         const fsInd = document.getElementById('fs-indicator');
         const localAccessUI = document.getElementById('local-access-ui');
@@ -1820,10 +1788,6 @@
         if (isFileSystem) {
             fsInd.innerHTML = '<span class="text-orange-400 font-bold">⚠️ Lokaal Bestand Systeem</span><br>Beperkte functionaliteit.';
             localAccessUI.classList.remove('hidden');
-            // Hide Login in File Mode (can't save anyway without handle, but handle requires user interaction first)
-            // Actually, we can save if we have a handle. But user asked to hide it.
-            const btnLogin = document.getElementById('btn-login');
-            if (btnLogin) btnLogin.classList.add('hidden');
         } else {
             fsInd.innerHTML = '<span class="text-green-400 font-bold">● Web Server Mode</span><br>Volledige functionaliteit.';
         }
@@ -1836,12 +1800,6 @@
                 // Update UI
                 fsInd.innerHTML = '<span class="text-green-400 font-bold">● Local Access Active</span><br>Read/Write enabled.';
                 localAccessUI.classList.add('hidden');
-
-                // Enable Login Button now that we have write access
-                const btnLogin = document.getElementById('btn-login');
-                if (btnLogin) btnLogin.classList.remove('hidden');
-
-                alert("Verbonden met lokale map! Je kunt nu bestanden lezen en bewerken.");
 
                 // Refresh current view if needed
                 if (currentCategory) renderDocList(currentCategory);
@@ -1872,143 +1830,17 @@
             return await file.text();
         }
 
-        async function saveLocalFile(path, content) {
-            if (!projectHandle) throw new Error("No Project Handle");
-
-            const parts = path.split('/');
-            let dirHandle = projectHandle;
-
-            for (let i = 0; i < parts.length - 1; i++) {
-                // Get or Create directory
-                dirHandle = await dirHandle.getDirectoryHandle(parts[i], { create: true });
-            }
-
-            // Create File
-            const fileHandle = await dirHandle.getFileHandle(parts[parts.length - 1], { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(content);
-            await writable.close();
-        }
-
-        async function verifyLocalFileDeletion(path) {
-            if (!projectHandle) return;
-
-            const parts = path.split('/');
-            let dirHandle = projectHandle;
-
-            for (let i = 0; i < parts.length - 1; i++) {
-                dirHandle = await dirHandle.getDirectoryHandle(parts[i]);
-            }
-            await dirHandle.removeEntry(parts[parts.length - 1]);
-        }
-
         // --- DOCUMENTATION REGISTRY & LOGIC ---
         // Loaded from doc_registry.js
 
         let currentCategory = null;
         let currentDocIndex = -1;
-        let isEditor = false; // Security State
-        const EDITOR_HASH = "9bf3fd2d2ab098919dc054bc4e67dfc7da370feb3e281dd45e5165ef2c1f98a6"; // SHA-256 for 'DruppieAI'
-
-        async function sha256(message) {
-            const msgBuffer = new TextEncoder().encode(message);
-            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-            const hashArray = Array.from(new Uint8Array(hashBuffer));
-            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-            return hashHex;
-        }
-
-        // Login Logic
-        function toggleLogin() {
-            if (!isEditor) {
-                // Show Modal
-                const modal = document.getElementById('login-modal');
-                const input = document.getElementById('login-pwd');
-                modal.classList.remove('hidden');
-                input.value = '';
-                setTimeout(() => input.focus(), 100);
-            } else {
-                // Logout
-                if (confirm("Uitloggen?")) {
-                    isEditor = false;
-                    updateLoginUI();
-
-                    // Refresh views
-                    if (currentCategory) {
-                        renderDocList(currentCategory);
-                        if (currentDocIndex !== -1) selectDoc(currentDocIndex);
-                    }
-                }
-            }
-        }
-
-        function closeLogin() {
-            document.getElementById('login-modal').classList.add('hidden');
-        }
-
-        async function submitLogin() {
-            const input = document.getElementById('login-pwd');
-            const pwd = input.value;
-
-            if (!pwd) return;
-
-            const hash = await sha256(pwd);
-
-            if (hash === EDITOR_HASH) {
-                isEditor = true;
-                closeLogin();
-                updateLoginUI();
-
-                // Refresh views
-                if (currentCategory) {
-                    renderDocList(currentCategory);
-                    if (currentDocIndex !== -1) selectDoc(currentDocIndex);
-                }
-            } else {
-                alert("Ongeldig wachtwoord.");
-                input.value = '';
-                input.focus();
-            }
-        }
-
-        function updateLoginUI() {
-            const btn = document.getElementById('btn-login');
-            const icon = document.getElementById('icon-login');
-            const text = document.getElementById('text-login');
-
-            if (isEditor) {
-                btn.classList.replace('bg-slate-800', 'bg-blue-900');
-                btn.classList.replace('border-slate-600', 'border-blue-700');
-                btn.classList.replace('text-slate-400', 'text-blue-100');
-                // Lucide icon replacement manually by re-rendering or assuming class change triggers enough? 
-                // Lucide icons are SVGs replaced at runtime. We need to reset innerHTML effectively or just rely on text.
-                // Simpler: Just refresh icon
-                icon.setAttribute('data-lucide', 'unlock');
-                text.innerText = "Editor";
-            } else {
-                btn.classList.replace('bg-blue-900', 'bg-slate-800');
-                btn.classList.replace('border-blue-700', 'border-slate-600');
-                btn.classList.replace('text-blue-100', 'text-slate-400');
-                icon.setAttribute('data-lucide', 'lock');
-                text.innerText = "Login";
-            }
-            lucide.createIcons();
-        }
-
 
         // Render the Sidebar List for a Category
         function renderDocList(category) {
             currentCategory = category;
             const listContainer = document.getElementById('md-file-list');
             const catTitle = document.getElementById('md-category-title');
-            const btnAdd = document.getElementById('btn-add-doc');
-
-            // Gate Add Button behind isEditor
-            if (isEditor) {
-                btnAdd.classList.remove('hidden');
-            } else {
-                btnAdd.classList.add('hidden');
-            }
 
             if (!DOC_REGISTRY[category]) return;
 
@@ -2037,102 +1869,12 @@
         function selectDoc(index) {
             currentDocIndex = index;
             const doc = DOC_REGISTRY[currentCategory][index];
-            const btnDelete = document.getElementById('btn-delete-doc');
-
-            // Gate Delete Button
-            if (isEditor) {
-                btnDelete.classList.remove('hidden');
-            } else {
-                btnDelete.classList.add('hidden');
-            }
 
             if (doc) {
                 // Rerender list to update selection state
                 renderDocList(currentCategory);
                 // Load Content
                 loadMarkdown(doc.path);
-            }
-        }
-
-        // Add New Document (Real Persistence)
-        async function addNewDoc() {
-            if (!isEditor) return;
-            const name = prompt("Naam van nieuw document:");
-            if (!name) return;
-
-            const filename = name.toLowerCase().replace(/\s+/g, '-') + '.md';
-            const path = `${currentCategory}/${filename}`;
-            const initialContent = `# ${name}\n\nStart hier met typen...`;
-
-            try {
-                if (projectHandle) {
-                    await saveLocalFile(path, initialContent);
-                    alert("Bestand aangemaakt op schijf!");
-                }
-
-                // Add to Registry
-                DOC_REGISTRY[currentCategory].push({ name, path });
-
-                // Render
-                renderDocList(currentCategory);
-
-                // Select it
-                selectDoc(DOC_REGISTRY[currentCategory].length - 1);
-
-            } catch (e) {
-                console.error(e);
-                alert("Kon bestand niet aanmaken: " + e.message);
-            }
-        }
-
-        async function deleteCurrentDoc() {
-            if (!isEditor) return;
-            if (currentDocIndex === -1) return;
-            if (!confirm("Weet je zeker dat je dit bestand wilt verwijderen? (Dit is definitief)")) return;
-
-            const doc = DOC_REGISTRY[currentCategory][currentDocIndex];
-
-            try {
-                if (projectHandle) {
-                    await verifyLocalFileDeletion(doc.path);
-                }
-
-                DOC_REGISTRY[currentCategory].splice(currentDocIndex, 1);
-                currentDocIndex = -1;
-
-                renderDocList(currentCategory);
-
-                // Clear view
-                document.getElementById('md-content').innerHTML = '<div class="text-xs text-slate-400 p-4 text-center italic">Selecteer een bestand...</div>';
-                document.getElementById('md-title').innerText = '...';
-
-            } catch (e) {
-                console.error(e);
-                alert("Kon bestand niet verwijderen: " + e.message);
-            }
-        }
-
-        async function saveDoc() {
-            if (!isEditor) return;
-            const content = document.getElementById('md-editor').value;
-            try {
-                if (projectHandle) {
-                    // Get current path using currentDocIndex 
-                    // (Assuming currentCategory and currentDocIndex are valid)
-                    const doc = DOC_REGISTRY[currentCategory][currentDocIndex];
-                    if (doc) {
-                        await saveLocalFile(doc.path, content);
-                        alert("Opgeslagen!");
-
-                        // Exit Edit Mode
-                        enableEditMode();
-                    }
-                } else {
-                    alert("Geen lokale toegang. Kan niet opslaan.");
-                }
-            } catch (e) {
-                console.error(e);
-                alert("Fout bij opslaan: " + e.message);
             }
         }
 
@@ -2178,78 +1920,289 @@
             }
         }
 
+
+
+        // Simple YAML Parser (Good Enough for our use case)
+        function parseYAML(text) {
+            const lines = text.split('\n');
+            const data = {};
+            let currentKey = null;
+            let inBlock = false;
+            let blockContent = [];
+            let blockIndent = 0;
+
+            for (let line of lines) {
+                // handle block continuation
+                if (inBlock) {
+                    if (line.trim().length === 0) {
+                        blockContent.push("");
+                        continue;
+                    }
+                    const indent = line.search(/\S|$/);
+                    // If indent is less than blockIndent, end of block
+                    if (indent < blockIndent && line.trim() !== '') {
+                        inBlock = false;
+                        data[currentKey] = blockContent.join('\n').trim();
+                    } else {
+                        // Strip base indent
+                        blockContent.push(line.substring(blockIndent));
+                        continue;
+                    }
+                }
+
+                // Skip comments/empty
+                if (line.trim().startsWith('#') || line.trim() === '' || line.trim() === '---') continue;
+
+                // Key: Value
+                const colonIdx = line.indexOf(':');
+                if (colonIdx !== -1) {
+                    const key = line.substring(0, colonIdx).trim();
+                    let val = line.substring(colonIdx + 1).trim();
+
+                    if (val === '|') {
+                        currentKey = key;
+                        inBlock = true;
+                        blockContent = [];
+                        // Determine indent from next line (conceptually) - next non-empty line sets it
+                        // For now assume standard 2 or 4 spaces? 
+                        // We'll peek or just set a safe default. 
+                        // Actually, just wait for next line to set blockIndent.
+                        blockIndent = -1;
+                        continue;
+                    }
+
+                    // Simple cleaning for arrays [a, b] or strings
+                    if (val.startsWith('[') && val.endsWith(']')) {
+                        // naive array parse
+                        const inner = val.substring(1, val.length - 1).trim();
+                        if (inner === '') {
+                            val = [];
+                        } else {
+                            val = inner.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, ''));
+                        }
+                    } else {
+                        // remove quotes
+                        val = val.replace(/^['"]|['"]$/g, '');
+                    }
+                    data[key] = val;
+                }
+            }
+            // End of file block check
+            if (inBlock) {
+                data[currentKey] = blockContent.join('\n').trim();
+            }
+            return data;
+        }
+
+        // Render Frontmatter Card
+        function renderFrontmatter(data) {
+            if (!data || Object.keys(data).length === 0) return '';
+
+            // Fields to show prominently
+            const title = data.name || data.title || "Document";
+            const version = data.version ? `<span class="bg-blue-100 text-blue-800 text-[10px] px-1.5 py-0.5 rounded-full font-bold ml-2">v${data.version}</span>` : '';
+            const type = data.type ? `<span class="bg-purple-100 text-purple-800 text-[10px] px-1.5 py-0.5 rounded-full font-mono uppercase ml-2">${data.type}</span>` : '';
+            const category = data.category ? `<span class="bg-orange-100 text-orange-800 text-[10px] px-1.5 py-0.5 rounded-full font-mono uppercase ml-2">${data.category}</span>` : '';
+
+            // Logic for Provider & Model: Explicit or Default
+            // SKILLS inherit from the Agent, so they should NOT show a model/provider badge
+            const isSkill = data.type && (data.type.toLowerCase() === 'skill' || data.type.toLowerCase() === 'persona');
+            const isMCP = data.type && data.type.toLowerCase() === 'mcp-server';
+            const isBlock = data.type && data.type.toLowerCase() === 'block';
+
+            // Logic for Provider & Model: Explicit or Default
+            // SKILLS inherit from the Agent, so they should NOT show a model/provider badge
+            // MCP servers also don't use model/provider in this context typically
+            // BLOCKS are infra, so they don't use it either
+
+            let modelBadge = '';
+            if (!isSkill && !isMCP && !isBlock) {
+                const explicitProvider = data.provider;
+                const explicitModel = data.model;
+
+                const providerName = explicitProvider ? data.provider : appSettings.defaultProvider;
+                const modelName = explicitModel ? data.model : appSettings.defaultModel;
+
+                const isDefault = !explicitProvider && !explicitModel;
+                const badgeBorder = isDefault ? 'border-green-300 border-dashed' : 'border-green-200';
+                const suffix = isDefault ? '(default)' : '';
+
+                modelBadge = isDefault ? '' : `<span class="bg-green-100 text-green-800 text-[10px] px-1.5 py-0.5 rounded-full font-mono ml-2 border ${badgeBorder}">🤖 ${providerName}/${modelName} ${suffix}</span>`;
+            } else if (isMCP) {
+                modelBadge = `<span class="bg-purple-100 text-purple-800 text-[10px] px-1.5 py-0.5 rounded-full font-mono ml-2 border border-purple-200">🔌 MCP Server</span>`;
+            }
+
+            const id = data.id ? `<span class="text-[10px] font-mono text-slate-400 ml-auto">ID: ${data.id}</span>` : '';
+
+            // Logic for Auth Group
+            let authGroups = data.auth_group;
+            let authGroupBadge = '';
+
+            if (authGroups) {
+                // Ensure array
+                if (!Array.isArray(authGroups)) {
+                    authGroups = [authGroups];
+                }
+
+                if (authGroups.length > 0) {
+                    authGroupBadge = authGroups.map(group =>
+                        `<span class="bg-red-100 text-red-800 text-[10px] px-1.5 py-0.5 rounded-full font-mono ml-2 border border-red-200 flex items-center gap-1"><i data-lucide="lock" class="w-2.5 h-2.5"></i> ${group}</span>`
+                    ).join('');
+                }
+            }
+
+            // Filter out system_prompt/instructions from display if we don't want them in the card
+            // User requested nice format.
+            const desc = data.description || '';
+
+            // MCP Specific Details
+            let mcpDetails = '';
+            if (isMCP && (data.url || data.transport)) {
+                mcpDetails = `
+                    <div class="mt-3 mb-2 p-2 bg-slate-50 rounded border border-slate-200 flex flex-col gap-1 shadow-sm">
+                        ${data.url ? `
+                        <div class="flex items-center text-xs">
+                            <span class="font-bold text-slate-500 w-16">URL:</span>
+                            <code class="font-mono bg-white px-1 rounded border border-slate-200 text-blue-600 truncate flex-1 select-all cursor-text">${data.url}</code>
+                        </div>` : ''}
+                        ${data.transport ? `
+                        <div class="flex items-center text-xs">
+                             <span class="font-bold text-slate-500 w-16">Transport:</span>
+                             <span class="font-mono text-slate-700 font-bold bg-white px-1 rounded border border-slate-200">${data.transport}</span>
+                        </div>` : ''}
+                    </div>
+                `;
+            }
+
+            // Other fields
+            let extraFields = '';
+            for (let [k, v] of Object.entries(data)) {
+                if (['name', 'title', 'version', 'type', 'category', 'id', 'description', 'system_prompt', 'instructions', 'model', 'provider', 'auth_group', 'url', 'transport'].includes(k)) continue;
+
+                // Skip empty values to prevent rendering empty headers
+                if (v === null || v === undefined || v === '') continue;
+                if (Array.isArray(v) && v.length === 0) continue;
+                if (typeof v === 'object' && Object.keys(v).length === 0) continue;
+
+                let valueHtml = v;
+                if (Array.isArray(v)) {
+                    if (k === 'skills' || k === 'subagents' || k === 'capabilities') {
+                        valueHtml = `<div class="flex flex-wrap gap-1 mt-1">` +
+                            v.map(item => `<span class="bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded border border-slate-300">${item}</span>`).join('') +
+                            `</div>`;
+                    } else {
+                        valueHtml = v.join(', ');
+                    }
+                } else if (k === 'headers' && typeof v === 'object' && v !== null) { // Check for object and not null
+                    // Render Headers as a mini table
+                    const rows = Object.entries(v).map(([hk, hv]) =>
+                        `<div class="flex justify-between text-[10px] border-b border-slate-100 last:border-0 py-1">
+                            <span class="font-mono font-bold text-slate-600">${hk}:</span>
+                            <span class="font-mono text-slate-500 truncate ml-2" title="${hv}">${hv}</span>
+                         </div>`
+                    ).join('');
+
+                    valueHtml = `
+                        <div class="mt-1 bg-slate-50 border border-slate-200 rounded px-2">
+                            ${rows}
+                        </div>
+                     `;
+                }
+
+
+                extraFields += `<div class="text-xs mt-1"><span class="font-bold text-slate-500 uppercase text-[10px] mr-2 block mb-0.5">${k}:</span> <div class="text-slate-700">${valueHtml}</div></div>`;
+            }
+
+            return `
+                <div class="mb-6 bg-white border border-slate-200 rounded-lg shadow-sm p-4 border-l-4 border-l-blue-500">
+                    <div class="flex items-center mb-2">
+                         <h1 class="text-xl font-bold text-slate-800 m-0 border-none p-0">${title}</h1>
+                         ${version}
+                         ${type}
+                         ${category}
+                         ${modelBadge}
+                         ${authGroupBadge}
+                         ${id}
+                    </div>
+                    ${mcpDetails}
+                    ${desc ? `<p class="text-sm text-slate-600 mb-2 italic">${desc}</p>` : ''}
+                    ${extraFields ? `<div class="mt-3 pt-3 border-t border-slate-100 space-y-1">${extraFields}</div>` : ''}
+                </div>
+            `;
+        }
+
         async function loadMarkdown(path) {
             currentPath = path;
             const mdContainer = document.getElementById('md-content');
             const mdError = document.getElementById('md-error');
             const mdErrorMsg = document.getElementById('md-error-msg');
             const mdLoading = document.getElementById('md-loading');
-            const btnEdit = document.getElementById('btn-edit-template');
 
             // Reset UI
             mdContainer.innerHTML = '';
             mdContainer.classList.remove('hidden');
-            document.getElementById('md-editor').classList.add('hidden');
             mdError.classList.add('hidden');
             mdLoading.classList.remove('hidden');
             document.getElementById('md-title').innerText = path;
 
-            // Gate Edit Button
-            if (isEditor) {
-                btnEdit.classList.remove('hidden');
-            } else {
-                btnEdit.classList.add('hidden');
-            }
-
             try {
                 let text = '';
-
-                if (projectHandle) {
-                    // Try Local Handle First
-                    text = await fetchLocalFile(path);
-                } else {
-                    // Fallback to Fetch
-                    // In file mode, fetch() often throws CORS or Network error immediately
+                if (projectHandle) text = await fetchLocalFile(path);
+                else {
                     const response = await fetch(path);
                     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                     text = await response.text();
                 }
 
-                if (path.endsWith('.md')) {
-                    mdContainer.innerHTML = marked.parse(text);
+                let frontmatterData = {};
+                let markdownBody = text;
+
+                // Handle .yaml Agents
+                if (path.endsWith('.yaml') || path.endsWith('.yml')) {
+                    // Parse entire YAML
+                    frontmatterData = parseYAML(text);
+                    // Body is Instructions
+                    markdownBody = frontmatterData.instructions || frontmatterData.system_prompt || "_No instructions provided._";
+
+                    // We need to parse markdown in body
+                }
+                // Handle .md with Frontmatter
+                else if (path.endsWith('.md')) {
+                    const fmMatch = text.match(/^---\n([\s\S]*?)\n---\n/);
+                    if (fmMatch) {
+                        frontmatterData = parseYAML(fmMatch[1]);
+                        markdownBody = text.substring(fmMatch[0].length);
+                    }
+                }
+
+                if (path.endsWith('.md') || path.endsWith('.yaml') || path.endsWith('.yml')) {
+                    // Render Frontmatter
+                    const headerHTML = renderFrontmatter(frontmatterData);
+                    const bodyHTML = marked.parse(markdownBody);
+
+                    mdContainer.innerHTML = headerHTML + bodyHTML;
 
                     // Render Mermaid Diagrams
-                    // 1. Find all code blocks with 'language-mermaid'
                     const mermaidBlocks = mdContainer.querySelectorAll('pre code.language-mermaid');
-
-                    const promises = [];
                     mermaidBlocks.forEach((block, index) => {
                         const rawMermaid = block.textContent;
-                        const pre = block.parentElement; // The <pre> tag
-
-                        // Create replacement div
+                        const pre = block.parentElement;
                         const div = document.createElement('div');
                         div.classList.add('mermaid');
                         div.textContent = rawMermaid;
                         div.id = `mermaid-${Date.now()}-${index}`;
-
-                        // Replace <pre> with <div>
                         pre.replaceWith(div);
                     });
 
-                    // Run Mermaid
                     try {
-                        await mermaid.run({
-                            querySelector: '.mermaid'
-                        });
+                        await mermaid.run({ querySelector: '.mermaid' });
                     } catch (err) {
                         console.error("Mermaid Render Error:", err);
                     }
                 } else {
-                    // Code Viewer Mode
-                    // Safely escape HTML by using a browser built-in method
+                    // Code Viewer Mode (Plaintext/Code)
                     const div = document.createElement('div');
-                    div.textContent = text; // Use textContent to preserve exact whitespace/newlines
+                    div.textContent = text;
                     const escaped = div.innerHTML;
 
                     let lang = 'plaintext';
@@ -2257,7 +2210,6 @@
                     if (path.endsWith('.js')) lang = 'javascript';
                     if (path.endsWith('.py')) lang = 'python';
                     if (path.endsWith('.json')) lang = 'json';
-                    if (path.endsWith('.yaml') || path.endsWith('.yml')) lang = 'yaml';
 
                     mdContainer.innerHTML = `
                         <div class="bg-slate-800 text-slate-300 p-2 rounded-t text-xs font-mono uppercase flex justify-between items-center border-b border-slate-700">
@@ -2266,67 +2218,35 @@
                         </div>
                         <pre class="!mt-0 !rounded-t-none !bg-[#0d1117] border border-t-0 border-slate-700 overflow-x-auto"><code class="language-${lang}" id="code-interaction">${escaped}</code></pre>
                     `;
-
-                    // Re-init Icons for the new header
-                    lucide.createIcons();
-
-                    // Trigger Highlight.js
                     if (window.hljs) {
                         const codeBlock = document.getElementById('code-interaction');
                         if (codeBlock) hljs.highlightElement(codeBlock);
                     }
                 }
 
-            } catch (err) {
-                console.warn("Markdown fetch failed:", err);
+                lucide.createIcons();
 
-                if (isFileSystem && !projectHandle) {
-                    mdErrorMsg.innerHTML = `
-                        <b>Browser Beveiliging:</b> Direct laden van lokale bestanden is geblokkeerd.<br>
-                        Klik op <b>"Open Project Folder"</b> in het menu om toegang te krijgen.
-                        <br><br>
-                        <a href="${path}" target="_blank" class="underline text-red-800 font-bold">Of open handmatig</a>
-                    `;
-                } else {
-                    mdErrorMsg.innerText = err.message;
-                }
+            } catch (err) {
+                console.warn("Fetch failed:", err);
+                mdErrorMsg.innerText = err.message;
                 mdError.classList.remove('hidden');
             } finally {
                 mdLoading.classList.add('hidden');
 
-                // Add Link Interceptor for .md files
+                // Add Link Interceptor (Duplicate logic kept for safety)
                 mdContainer.querySelectorAll('a').forEach(link => {
                     const href = link.getAttribute('href');
-                    if (href && href.endsWith('.md') && !href.startsWith('http')) {
+                    if (href && (href.endsWith('.md') || href.endsWith('.yaml')) && !href.startsWith('http')) {
                         link.onclick = (e) => {
                             e.preventDefault();
-                            // Resolve relative path
-                            // Simple resolution: if starts with ../, go up. 
-                            // Since we have specific folders, we can hack it or use a proper resolver.
-                            // doc_registry uses relative paths from root: 'skills/research.md'
-                            // currentPath might be 'bouwblokken/druppie_ui.md'
-                            // href might be '../skills/research.md'
-
+                            // Simple resolve
                             let targetPath = href;
-                            // Very basic resolution for ../
-                            if (currentPath && href.startsWith('../')) {
-                                // removing one level folder
-                                // We know our structure is flat 1-level folders mostly
-                                // ../skills/x -> skills/x
-                                targetPath = href.substring(3);
-                            } else if (currentPath && !href.startsWith('/')) {
-                                // sibling
-                                // bouwblokken/x.md + y.md -> bouwblokken/y.md
+                            if (currentPath && href.startsWith('../')) targetPath = href.substring(3);
+                            else if (currentPath && !href.startsWith('/')) {
                                 const currentDir = currentPath.substring(0, currentPath.lastIndexOf('/') + 1);
                                 targetPath = currentDir + href;
-                                // Handle ./
-                                if (targetPath.includes('/./')) targetPath = targetPath.replace('/./', '/');
                             }
-
-                            // Normalize (naive)
                             if (targetPath.startsWith('./')) targetPath = targetPath.substring(2);
-
-                            console.log("Navigating to internal MD:", targetPath);
                             loadMarkdown(targetPath);
                         };
                     }
@@ -2338,73 +2258,7 @@
             window.open(currentPath, '_blank');
         }
 
-        function enableEditMode(force = false) {
-            const container = document.getElementById('md-content');
-            const editor = document.getElementById('md-editor');
-            const btnEdit = document.getElementById('btn-edit-template');
-            const btnSave = document.getElementById('btn-save-doc');
 
-            // Force Edit Mode (for new files)
-            if (force) {
-                editor.classList.remove('hidden');
-                container.classList.add('hidden');
-                btnEdit.innerHTML = '<i data-lucide="x" class="inline-block w-3 h-3 mr-1"></i> Annuleren';
-                if (projectHandle) btnSave.classList.remove('hidden');
-                return;
-            }
-
-            if (editor.classList.contains('hidden')) {
-                // Switch to Edit
-                // We need the raw text. Fetch again.
-                // If local, we can use fetchLocalFile logic implicitly or fetch again.
-                // Ideally loadMarkdown populated a global rawText, but fetching is fast.
-
-                // Using the simple logic from before, assuming we can get text.
-                // For now, simpler: just toggle UI, assume user clicked because they see content.
-                // WE NEED TO FETCH CONTENT TO EDITOR
-                const doc = DOC_REGISTRY[currentCategory][currentDocIndex];
-                if (doc) {
-                    // Trigger a load into editor? Or just fetch here.
-                    // Let's rely on fetchLocalFile being available globally or duplicate logic?
-                    // Better: Make loadMarkdown populate the editor value too? No.
-
-                    // Async fetch for editor
-                    (async () => {
-                        try {
-                            let text = '';
-                            if (projectHandle) text = await fetchLocalFile(doc.path);
-                            else {
-                                const res = await fetch(doc.path);
-                                text = await res.text();
-                            }
-                            editor.value = text;
-
-                            editor.classList.remove('hidden');
-                            container.classList.add('hidden');
-
-                            btnEdit.innerHTML = '<i data-lucide="x" class="inline-block w-3 h-3 mr-1"></i> Annuleren';
-                            if (projectHandle) btnSave.classList.remove('hidden');
-
-                        } catch (e) {
-                            alert("Kan bestand niet laden voor bewerking.");
-                        }
-                    })();
-                }
-
-            } else {
-                // Switch back (Cancel / Done)
-                editor.classList.add('hidden');
-                container.classList.remove('hidden');
-                btnEdit.innerHTML = '<i data-lucide="edit-3" class="inline-block w-3 h-3 mr-1"></i> Bewerk';
-                btnSave.classList.add('hidden');
-
-                // Re-render PREVIOUS content (discard changes if cancel)
-                // Actually loadMarkdown renders `md-content`. 
-                // So we can just call loadMarkdown(currentPath) -- wait, we have selectDoc logic.
-                const doc = DOC_REGISTRY[currentCategory][currentDocIndex];
-                if (doc) loadMarkdown(doc.path);
-            }
-        }
 
 
         // --- SEARCH FUNCTIONALITY ---

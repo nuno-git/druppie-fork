@@ -221,6 +221,29 @@ spec:
               number: 8001
 EOF
 
+# Druppie Namespace
+log "Configuring Druppie Ingress (druppie.${DRUPPIE_DOMAIN})..."
+cat <<EOF | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: druppie-ingress
+  namespace: druppie
+spec:
+  ingressClassName: kong
+  rules:
+  - host: druppie.${DRUPPIE_DOMAIN}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: druppie-ui
+            port:
+              number: 8080
+EOF
+
 # ---------------------------------------------------------
 # Landing Page (Portal) Setup
 # ---------------------------------------------------------
@@ -337,6 +360,13 @@ cat <<EOF > "$HTML_FILE"
                 <div class="category">Observability</div>
                 <div class="title">Grafana</div>
                 <div class="desc">Metrics dashboards, logs (Loki) and traces.</div>
+            </a>
+
+            <!-- Applications -->
+            <a href="http://druppie.${DRUPPIE_DOMAIN}/" class="card" target="_blank">
+                <div class="category">Applications</div>
+                <div class="title">Druppie</div>
+                <div class="desc">The main Druppie Agentic Interface.</div>
             </a>
 
             <!-- Data Services -->
@@ -605,6 +635,7 @@ echo "---------------------------------"
 echo "Domain: ${DRUPPIE_DOMAIN}"
 echo "Service URLs:"
 echo " - Portal:        http://${DRUPPIE_DOMAIN}/"
+echo " - Druppie:       http://druppie.${DRUPPIE_DOMAIN}/"
 echo " - Keycloak:      http://keycloak.${DRUPPIE_DOMAIN}/"
 echo " - Gitea:         http://gitea.${DRUPPIE_DOMAIN}/"
 echo " - MinIO:         http://minio.${DRUPPIE_DOMAIN}/"
