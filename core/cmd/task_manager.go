@@ -156,7 +156,7 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 				tm.OutputChan <- fmt.Sprintf("❌ [Workflow] Execution failed: %v", err)
 				task.Status = TaskStatusError
 			} else {
-				tm.OutputChan <- fmt.Sprintf("✅ [Workflow] Execution completed successfully.")
+				tm.OutputChan <- "✅ [Workflow] Execution completed successfully."
 			}
 			return // STOP HERE, DO NOT PROCEED TO JSON PLAN EXECUTOR
 		}
@@ -323,7 +323,7 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 						tm.OutputChan <- line
 					}
 					logMu.Unlock()
-					tm.OutputChan <- fmt.Sprintf("--------------------------------")
+					tm.OutputChan <- "--------------------------------"
 					step.Status = "completed"
 					if res := resultBuilder.String(); res != "" {
 						step.Result = res
@@ -362,7 +362,8 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 		task.Status = TaskStatusWaitingInput
 
 		// Send prompt to OutputChan
-		if activeStep.Action == "ask_questions" {
+		switch activeStep.Action {
+		case "ask_questions":
 			tm.OutputChan <- fmt.Sprintf("[%s] [%s] Input required: %s", task.ID, activeStep.AgentID, activeStep.Action)
 
 			// Format questions
@@ -396,7 +397,7 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 			tm.OutputChan <- sb.String()
 			tm.OutputChan <- "Options: [Type answer] | '/accept' (defaults) | '/stop'"
 
-		} else if activeStep.Action == "content-review" || activeStep.Action == "draft_scenes" {
+		case "content-review", "draft_scenes":
 			tm.OutputChan <- fmt.Sprintf("\n[%s] Review content (%s):", task.ID, activeStep.AgentID)
 			tm.OutputChan <- formatStepParams(activeStep.Params)
 			tm.OutputChan <- "Options: [Type feedback] | '/accept' | '/stop'"

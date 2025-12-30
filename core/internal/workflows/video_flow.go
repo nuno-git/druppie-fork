@@ -151,7 +151,7 @@ func (w *VideoCreationWorkflow) runPhase(wc *WorkflowContext, scenes []Scene, ge
 	return ordered, nil
 }
 
-func (w *VideoCreationWorkflow) reviewPhase(wc *WorkflowContext, phaseName string, scenes []Scene) error {
+func (w *VideoCreationWorkflow) reviewPhase(wc *WorkflowContext, phaseName string, _ []Scene) error {
 	wc.OutputChan <- fmt.Sprintf("\n🔎 [Review] Please review generated %s assets.", phaseName)
 	// List what we have?
 	// For now, simple confirmation
@@ -382,7 +382,7 @@ func (w *VideoCreationWorkflow) generateVideo(wc *WorkflowContext, s Scene) (Sce
 	return s, nil
 }
 
-func (w *VideoCreationWorkflow) mergeVideo(wc *WorkflowContext, scenes []Scene) error {
+func (w *VideoCreationWorkflow) mergeVideo(wc *WorkflowContext, _ []Scene) error {
 	wc.OutputChan <- "🎬 [VideoWorkflow] Merging final video..."
 	time.Sleep(2 * time.Second)
 	return nil

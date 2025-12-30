@@ -66,7 +66,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 
 	// Helper to bootstrap dependencies
 	// Returns ConfigManager to allow updates, and Builder Engine
-	setup := func(cmd *cobra.Command) (*config.Manager, *registry.Registry, *router.Router, *planner.Planner, builder.BuildEngine, error) {
+	setup := func(_ *cobra.Command) (*config.Manager, *registry.Registry, *router.Router, *planner.Planner, builder.BuildEngine, error) {
 		// Check if we are in 'core' and need to move up to project root
 		cwd, _ := os.Getwd()
 		if filepath.Base(cwd) == "core" {
@@ -506,15 +506,16 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 				case <-time.After(500 * time.Millisecond):
 					// Check status periodically
 					// Note: Direct access is slightly racy but acceptable for this CLI tool
-					if task.Status == TaskStatusWaitingInput {
+					switch task.Status {
+					case TaskStatusWaitingInput:
 						fmt.Println("[Auto-Pilot] Input required. Auto-accepting defaults...")
 						// Simulate user verify/accept delay
 						time.Sleep(1 * time.Second)
 						task.InputChan <- "/accept"
-					} else if task.Status == TaskStatusCompleted {
+					case TaskStatusCompleted:
 						fmt.Println("[Auto-Pilot] Plan execution completed successfully.")
 						done = true
-					} else if task.Status == TaskStatusError {
+					case TaskStatusError:
 						fmt.Println("[Auto-Pilot] Plan execution failed.")
 						done = true
 					}
