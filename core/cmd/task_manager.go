@@ -116,8 +116,10 @@ func (tm *TaskManager) StopTask(id string) {
 // runTaskLoop is the background worker for a single plan
 func (tm *TaskManager) runTaskLoop(task *Task) {
 	defer func() {
-		// Cleanup
-		task.Status = TaskStatusCompleted
+		// Cleanup - set to completed only if not already in terminal state
+		if task.Status != TaskStatusError && task.Status != TaskStatusCompleted {
+			task.Status = TaskStatusCompleted
+		}
 		tm.TaskDoneChan <- task.ID
 	}()
 
@@ -127,7 +129,23 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 	if len(task.Plan.SelectedAgents) > 0 {
 		agentID := task.Plan.SelectedAgents[0]
 		if wf, ok := tm.workflowManager.GetWorkflow(agentID); ok {
-			tm.OutputChan <- fmt.Sprintf("🚀 [Task Manager] Switching to Native Workflow Engine for agent: %s", agentID)
+			tm.OutputChan <- fmt.Sprintf("[%s] 🚀 Switching to Native Workflow Engine for agent: %s", task.ID, agentID)
+
+			// Create a proxy channel to ensure all workflow logs are prefixed with Plan ID
+			// This allows the server log drainer to route them to the correct log file
+			proxyLogChan := make(chan string, 50)
+			proxyDone := make(chan struct{})
+			go func() {
+				defer close(proxyDone)
+				for msg := range proxyLogChan {
+					// Add prefix if not already present
+					if !strings.Contains(msg, "["+task.ID+"]") {
+						tm.OutputChan <- fmt.Sprintf("[%s] %s", task.ID, msg)
+					} else {
+						tm.OutputChan <- msg
+					}
+				}
+			}()
 
 			// Build Context
 			wc := &workflows.WorkflowContext{
@@ -136,28 +154,48 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 				Dispatcher: tm.dispatcher,
 				Store:      tm.planner.Store,
 				PlanID:     task.ID,
-				OutputChan: tm.OutputChan,
+				OutputChan: proxyLogChan,
 				InputChan:  task.InputChan,
 				UpdateStatus: func(status string) {
 					tm.mu.Lock()
 					defer tm.mu.Unlock()
+
+					// Don't update if task is already completed or stopped
+					if task.Status == TaskStatusCompleted || task.Status == TaskStatusError {
+						return
+					}
+
+					var planStatus string
 					switch status {
 					case "Waiting Input":
 						task.Status = TaskStatusWaitingInput
+						planStatus = "waiting_input"
 					case "Running":
 						task.Status = TaskStatusRunning
+						planStatus = "running"
+					case "Completed":
+						task.Status = TaskStatusCompleted
+						planStatus = "completed"
+					case "Stopped", "Error":
+						task.Status = TaskStatusError
+						planStatus = "stopped"
 					default:
-						task.Status = TaskStatusRunning
+						// Don't blindly set to running for unknown statuses
+						return
+					}
+					// Update plan status in store
+					if p, err := tm.planner.Store.GetPlan(task.ID); err == nil {
+						p.Status = planStatus
+						_ = tm.planner.Store.SavePlan(p)
 					}
 				},
 				AppendStep: func(s model.Step) {
 					tm.mu.Lock()
 					defer tm.mu.Unlock()
 
-					// Retrieve current plan to ensure we don't overwrite concurrency (though simpler here)
 					storedPlan, err := tm.planner.Store.GetPlan(task.ID)
 					if err != nil {
-						tm.OutputChan <- fmt.Sprintf("⚠️ [TaskManager] Failed to sync plan update: %v", err)
+						tm.OutputChan <- fmt.Sprintf("[%s] ⚠️ [TaskManager] Failed to sync plan update: %v", task.ID, err)
 						return
 					}
 
@@ -165,30 +203,53 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 					if s.ID == 0 {
 						s.ID = len(storedPlan.Steps) + 1
 					}
-					// Ensure status is completed
 					if s.Status == "" {
 						s.Status = "completed"
 					}
 
-					storedPlan.Steps = append(storedPlan.Steps, s)
-
-					// Update Store
-					if err := tm.planner.Store.SavePlan(storedPlan); err != nil {
-						tm.OutputChan <- fmt.Sprintf("⚠️ [TaskManager] Failed to save plan update: %v", err)
+					// Check if step with this ID already exists - UPDATE instead of APPEND
+					found := false
+					for i, existing := range storedPlan.Steps {
+						if existing.ID == s.ID {
+							storedPlan.Steps[i] = s
+							found = true
+							break
+						}
+					}
+					if !found {
+						storedPlan.Steps = append(storedPlan.Steps, s)
 					}
 
-					// Update local reference
+					if err := tm.planner.Store.SavePlan(storedPlan); err != nil {
+						tm.OutputChan <- fmt.Sprintf("[%s] ⚠️ [TaskManager] Failed to save plan update: %v", task.ID, err)
+					}
+
 					task.Plan = &storedPlan
 				},
 			}
 
 			// Execute
 			err := wf.Run(wc, task.Plan.Intent.Prompt)
+			close(proxyLogChan)
+			<-proxyDone
+
 			if err != nil {
-				tm.OutputChan <- fmt.Sprintf("❌ [Workflow] Execution failed: %v", err)
+				tm.OutputChan <- fmt.Sprintf("[%s] ❌ [Workflow] Execution failed: %v", task.ID, err)
 				task.Status = TaskStatusError
+
+				// Update plan status to stopped
+				tm.mu.Lock()
+				storedPlan, getErr := tm.planner.Store.GetPlan(task.ID)
+				if getErr == nil {
+					storedPlan.Status = "stopped"
+					_ = tm.planner.Store.SavePlan(storedPlan)
+				}
+				tm.mu.Unlock()
 			} else {
-				tm.OutputChan <- "✅ [Workflow] Execution completed successfully."
+				tm.OutputChan <- fmt.Sprintf("[%s] ✅ [Workflow] Execution completed successfully.", task.ID)
+
+				// Update task status
+				task.Status = TaskStatusCompleted
 
 				// Finalize Plan JSON status
 				tm.mu.Lock()
@@ -210,6 +271,14 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 		select {
 		case <-task.Ctx.Done():
 			tm.OutputChan <- fmt.Sprintf("[%s] Task cancelled.", task.ID)
+			task.Status = TaskStatusError
+
+			tm.mu.Lock()
+			if p, err := tm.planner.Store.GetPlan(task.ID); err == nil {
+				p.Status = "stopped"
+				_ = tm.planner.Store.SavePlan(p)
+			}
+			tm.mu.Unlock()
 			return
 		default:
 			// Proceed
@@ -261,12 +330,32 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 			}
 			if allDone && len(task.Plan.Steps) > 0 {
 				tm.OutputChan <- fmt.Sprintf("[%s] All steps completed.", task.ID)
+
+				// Update task status
+				task.Status = TaskStatusCompleted
+
+				// Finalize Plan JSON status
+				tm.mu.Lock()
+				storedPlan, err := tm.planner.Store.GetPlan(task.ID)
+				if err == nil {
+					storedPlan.Status = "completed"
+					_ = tm.planner.Store.SavePlan(storedPlan)
+				}
+				tm.mu.Unlock()
+
 				return
 			}
-			// If not all done but no runnable steps, we might be stuck or waiting for external event?
-			// For now, assume if 0 runnable and not all done, we are stuck?
-			// Actually, if we just updated the plan, we might have new steps.
-			// Let's break slightly to avoid CPU spin if actually stuck, but logic should provide update.
+
+			// If not all done but no runnable steps, we are STUCK.
+			tm.OutputChan <- fmt.Sprintf("[%s] Plan stuck: Unfinished steps but none runnable. Stopping.", task.ID)
+			task.Status = TaskStatusError
+
+			tm.mu.Lock()
+			if p, err := tm.planner.Store.GetPlan(task.ID); err == nil {
+				p.Status = "stopped"
+				_ = tm.planner.Store.SavePlan(p)
+			}
+			tm.mu.Unlock()
 			return
 		}
 

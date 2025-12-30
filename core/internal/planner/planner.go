@@ -172,7 +172,7 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent) (model.Ex
 			a.ID, a.Name, a.Type, a.Condition, a.SubAgents, a.Skills, a.Priority, a.Description, a.Workflow, a.Instructions,
 		))
 	}
-	fmt.Printf("[Planner - Agents] %v\n", sortedIDs)
+	//fmt.Printf("[Planner - Agents] %v\n", sortedIDs)
 
 	// 2. Prompt LLM
 	sysTemplate := ""
@@ -307,8 +307,8 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent) (model.Ex
 	}
 
 	// Persistent Logging
+	// NOTE: Plan is NOT saved here - caller is responsible for saving with correct ID
 	if p.Store != nil {
-		_ = p.Store.SavePlan(plan)
 		planJSON, _ := json.MarshalIndent(plan, "", "  ")
 		_ = p.Store.LogInteraction(plan.ID, "Planner Create",
 			fmt.Sprintf("--- PROMPT ---\n%s\n--- END PROMPT ---", sysPrompt),

@@ -866,6 +866,13 @@
                                 <i data-lucide="terminal-square" class="inline-block w-4 h-4 mr-2"></i> Scripts
                             </button>
 
+
+                            <!-- Chat (Conditional) -->
+                            <button id="menu-chat" onclick="window.open('ui/index.html', '_self')"
+                                class="hidden w-full text-left px-3 py-2 rounded text-sm font-medium hover:bg-slate-700 text-slate-300 transition-colors">
+                                <i data-lucide="message-square" class="inline-block w-4 h-4 mr-2"></i> Druppie UI
+                            </button>
+
                     </nav>
                 </div>
 
@@ -2394,6 +2401,19 @@
             versionEl.innerText = "v" + version;
         }
 
+        // Detect Druppie Core
+        async function checkCoreConnection() {
+            try {
+                const resp = await fetch('/v1/health');
+                if (resp.ok) {
+                    const chatMenu = document.getElementById('menu-chat');
+                    if (chatMenu) chatMenu.classList.remove('hidden');
+                }
+            } catch (e) {
+                // Not connected to core
+            }
+        }
+        checkCoreConnection();
     </script>
 </body>
 

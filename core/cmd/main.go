@@ -132,7 +132,44 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 				fmt.Printf("Startup Error: %v\n", err)
 				os.Exit(1)
 			}
+			tm := NewTaskManager(plannerService)
 			cfg := cfgMgr.Get()
+
+			// Start log drainer to:
+			// 1. Unblock the buffered channel
+			// 2. Print to server console (stdout)
+			// 3. Persist to store logs for UI
+			go func() {
+				// Simple regex to extract Plan ID: [plan-12345]
+				// Note: using regexp.MustCompile outside loop would be better but this is fine
+				for {
+					select {
+					case msg := <-tm.OutputChan:
+						fmt.Println(msg) // Print to console
+
+						// Extract Plan ID roughly
+						var planID string
+						// Find "plan-"
+						if idx := strings.Index(msg, "plan-"); idx != -1 {
+							// Check previous char is [ or space? Not strictly necessary if ID is unique enough
+							// Let's take next 15-20 chars until ] or space
+							rest := msg[idx:]
+							endIdx := strings.IndexAny(rest, "] ")
+							if endIdx != -1 {
+								planID = rest[:endIdx]
+							} else {
+								planID = rest
+							}
+						}
+
+						// Save to store
+						_ = plannerService.Store.AppendRawLog(planID, msg)
+
+					case <-tm.TaskDoneChan:
+						// Just consume
+					}
+				}
+			}()
 
 			r := chi.NewRouter()
 			r.Use(middleware.Logger)
@@ -161,36 +198,84 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						return
 					}
 
-					// 1. Analyze Intent
-					intent, rawRouterResp, err := routerService.Analyze(r.Context(), req.Prompt)
-					if err != nil {
-						http.Error(w, fmt.Sprintf("Router failed: %v", err), http.StatusInternalServerError)
+					// Create plan skeleton IMMEDIATELY for UI visibility
+					planID := fmt.Sprintf("plan-%d", time.Now().Unix())
+					pendingPlan := model.ExecutionPlan{
+						ID: planID,
+						Intent: model.Intent{
+							InitialPrompt: req.Prompt,
+							Prompt:        req.Prompt,
+						},
+						Status: "pending",
+						Steps:  []model.Step{},
+					}
+
+					// Save pending plan to store
+					if err := plannerService.Store.SavePlan(pendingPlan); err != nil {
+						http.Error(w, fmt.Sprintf("Failed to create plan: %v", err), http.StatusInternalServerError)
 						return
 					}
 
-					// 2. Planning (if needed)
-					var plan *model.ExecutionPlan
-					if intent.Action == "create_project" {
-						p, err := plannerService.CreatePlan(r.Context(), intent)
+					// Return plan ID immediately to UI
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"intent": model.Intent{Action: "analyzing"},
+						"plan":   pendingPlan,
+					})
+
+					// Process asynchronously
+					// Process asynchronously
+					go func() {
+						tm.OutputChan <- fmt.Sprintf("[%s] Analyzing request...", planID)
+
+						// 1. Analyze Intent
+						intent, rawRouterResp, err := routerService.Analyze(context.Background(), req.Prompt)
 						if err != nil {
-							http.Error(w, fmt.Sprintf("Planner failed: %v", err), http.StatusInternalServerError)
+							tm.OutputChan <- fmt.Sprintf("[%s] Router failed: %v", planID, err)
+							// Update pending plan to failed
+							pendingPlan.Status = "stopped"
+							_ = plannerService.Store.SavePlan(pendingPlan)
 							return
 						}
-						plan = &p
-						// Log router step to plan log
-						_ = plannerService.Store.LogInteraction(plan.ID, "Router", req.Prompt, rawRouterResp)
-					} else {
-						// Log to generic interaction log
-						_ = plannerService.Store.LogInteraction("", "Router", req.Prompt, rawRouterResp)
-					}
 
-					// 3. Response
-					resp := map[string]interface{}{
-						"intent": intent,
-						"plan":   plan,
-					}
-					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode(resp)
+						tm.OutputChan <- fmt.Sprintf("[%s] Intent: %s", planID, intent.Action)
+
+						// 2. Planning (if needed)
+						if intent.Action == "create_project" {
+							fullPlan, err := plannerService.CreatePlan(context.Background(), intent)
+							if err != nil {
+								tm.OutputChan <- fmt.Sprintf("[%s] Planner failed: %v", planID, err)
+								// Update pending plan to failed
+								pendingPlan.Status = "stopped"
+								_ = plannerService.Store.SavePlan(pendingPlan)
+								return
+							}
+
+							// IMPORTANT: Use the pending plan ID, don't create a new one
+							fullPlan.ID = planID
+							fullPlan.Status = "running"
+
+							tm.OutputChan <- fmt.Sprintf("[%s] Plan created. Starting task...", planID)
+
+							// Log router step
+							_ = plannerService.Store.LogInteraction(fullPlan.ID, "Router", req.Prompt, rawRouterResp)
+
+							// Save updated plan (replaces pending plan)
+							_ = plannerService.Store.SavePlan(fullPlan)
+
+							// START THE TASK
+							tm.StartTask(context.Background(), fullPlan)
+						} else {
+							tm.OutputChan <- fmt.Sprintf("[%s] Request handled by Router (no plan needed).", planID)
+
+							// Log to generic interaction log
+							_ = plannerService.Store.LogInteraction("", "Router", req.Prompt, rawRouterResp)
+
+							// Update plan status to completed (non-project intent)
+							pendingPlan.Status = "completed"
+							_ = plannerService.Store.SavePlan(pendingPlan)
+						}
+					}()
 				})
 
 				// Agent Endpoint
@@ -207,30 +292,10 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 					json.NewEncoder(w).Encode(skills)
 				})
 
-				// MCP Endpoint
-				r.Get("/mcps", func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					mcpServers := reg.ListMCPServers()
-					json.NewEncoder(w).Encode(mcpServers)
-				})
-
 				// Configuration Endpoint
 				r.Get("/config", func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					json.NewEncoder(w).Encode(cfgMgr.Get().Sanitize())
-				})
-
-				r.Put("/config", func(w http.ResponseWriter, r *http.Request) {
-					currentConfig := cfgMgr.Get()
-					if err := json.NewDecoder(r.Body).Decode(&currentConfig); err != nil {
-						http.Error(w, "Invalid config", http.StatusBadRequest)
-						return
-					}
-					if err := cfgMgr.Update(currentConfig); err != nil {
-						http.Error(w, fmt.Sprintf("Failed to update config: %v", err), http.StatusInternalServerError)
-						return
-					}
-					w.WriteHeader(http.StatusOK)
 				})
 
 				// Build Trigger Endpoint
@@ -249,7 +314,6 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						http.Error(w, fmt.Sprintf("Build failed: %v", err), http.StatusInternalServerError)
 						return
 					}
-
 					json.NewEncoder(w).Encode(map[string]string{"build_id": id})
 				})
 
@@ -258,12 +322,236 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 					w.Header().Set("Content-Type", "application/json")
 					json.NewEncoder(w).Encode([]string{})
 				})
+
+				// --- Task & Plan Monitoring ---
+				r.Post("/interaction", func(w http.ResponseWriter, r *http.Request) {
+					var req struct {
+						PlanID  string `json:"plan_id"`
+						AgentID string `json:"agent_id"`
+						Action  string `json:"action"`
+						Result  string `json:"result"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+						http.Error(w, "Invalid request", http.StatusBadRequest)
+						return
+					}
+					_ = plannerService.Store.LogInteraction(req.PlanID, req.AgentID, req.Action, req.Result)
+					w.WriteHeader(http.StatusOK)
+				})
+
+				r.Get("/plans", func(w http.ResponseWriter, r *http.Request) {
+					plans, err := plannerService.Store.ListPlans()
+					if err != nil {
+						http.Error(w, "Failed to list plans", http.StatusInternalServerError)
+						return
+					}
+
+					// Update plan statuses based on actual task states
+					tm.mu.Lock()
+					for i := range plans {
+						if task, ok := tm.tasks[plans[i].ID]; ok {
+							switch task.Status {
+							case TaskStatusRunning:
+								plans[i].Status = "running"
+							case TaskStatusWaitingInput:
+								plans[i].Status = "waiting_input"
+							case TaskStatusCompleted:
+								plans[i].Status = "completed"
+							case TaskStatusError:
+								plans[i].Status = "stopped"
+							}
+						} else {
+							// No active task - mark as stopped if it claims to be running
+							if plans[i].Status == "running" || plans[i].Status == "waiting_input" {
+								plans[i].Status = "stopped"
+							}
+						}
+					}
+					tm.mu.Unlock()
+
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(plans)
+				})
+
+				r.Get("/plans/{id}", func(w http.ResponseWriter, r *http.Request) {
+					id := chi.URLParam(r, "id")
+					if !strings.HasPrefix(id, "plan-") {
+						id = "plan-" + id
+					}
+					plan, err := plannerService.Store.GetPlan(id)
+					if err != nil {
+						http.Error(w, "Plan not found", http.StatusNotFound)
+						return
+					}
+
+					// Update plan status based on actual task state
+					tm.mu.Lock()
+					if task, ok := tm.tasks[id]; ok {
+						switch task.Status {
+						case TaskStatusRunning:
+							plan.Status = "running"
+						case TaskStatusWaitingInput:
+							plan.Status = "waiting_input"
+						case TaskStatusCompleted:
+							plan.Status = "completed"
+						case TaskStatusError:
+							plan.Status = "stopped"
+						}
+					} else {
+						// No active task - check if plan says running but task is gone
+						if plan.Status == "running" || plan.Status == "waiting_input" {
+							plan.Status = "stopped"
+						}
+					}
+					tm.mu.Unlock()
+
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(plan)
+				})
+
+				r.Delete("/plans/{id}", func(w http.ResponseWriter, r *http.Request) {
+					id := chi.URLParam(r, "id")
+					if !strings.HasPrefix(id, "plan-") {
+						id = "plan-" + id
+					}
+
+					// Stop the task if running
+					tm.mu.Lock()
+					if task, ok := tm.tasks[id]; ok {
+						task.Cancel()
+						delete(tm.tasks, id)
+					}
+					tm.mu.Unlock()
+
+					// Wait for task to cleanup and logs to drain preventing race condition where log file is recreated
+					time.Sleep(500 * time.Millisecond)
+
+					// Delete plan file
+					if err := plannerService.Store.DeletePlan(id); err != nil {
+						http.Error(w, "Failed to delete plan", http.StatusInternalServerError)
+						return
+					}
+
+					w.WriteHeader(http.StatusOK)
+				})
+
+				r.Post("/plans/{id}/resume", func(w http.ResponseWriter, r *http.Request) {
+					id := chi.URLParam(r, "id")
+					if !strings.HasPrefix(id, "plan-") {
+						id = "plan-" + id
+					}
+
+					plan, err := plannerService.Store.GetPlan(id)
+					if err != nil {
+						http.Error(w, "Plan not found", http.StatusNotFound)
+						return
+					}
+
+					// Update status to running and restart task
+					plan.Status = "running"
+					if err := plannerService.Store.SavePlan(plan); err != nil {
+						http.Error(w, "Failed to update plan", http.StatusInternalServerError)
+						return
+					}
+
+					// Restart the task
+					tm.StartTask(context.Background(), plan)
+
+					w.WriteHeader(http.StatusOK)
+				})
+
+				r.Get("/logs/{id}", func(w http.ResponseWriter, r *http.Request) {
+					id := chi.URLParam(r, "id")
+					if !strings.HasPrefix(id, "plan-") {
+						id = "plan-" + id
+					}
+					logs, err := plannerService.Store.GetLogs(id)
+					if err != nil {
+						http.Error(w, "Logs not found", http.StatusNotFound)
+						return
+					}
+					w.Header().Set("Content-Type", "text/plain")
+					w.Write([]byte(logs))
+				})
+
+				// Alias for UI which requests /v1/tasks/{id}/output
+				r.Get("/tasks/{id}/output", func(w http.ResponseWriter, r *http.Request) {
+					id := chi.URLParam(r, "id")
+					if !strings.HasPrefix(id, "plan-") {
+						id = "plan-" + id
+					}
+					logs, err := plannerService.Store.GetLogs(id)
+					if err != nil {
+						// Return empty log instead of 404 to avoid console errors if just started
+						w.Header().Set("Content-Type", "text/plain")
+						w.Write([]byte(""))
+						return
+					}
+					w.Header().Set("Content-Type", "text/plain")
+					w.Write([]byte(logs))
+				})
+
+				r.Post("/tasks/{id}/message", func(w http.ResponseWriter, r *http.Request) {
+					id := chi.URLParam(r, "id")
+					var req struct {
+						Input string `json:"input"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+						http.Error(w, "Invalid request", http.StatusBadRequest)
+						return
+					}
+
+					// Find the task
+					// Note: TaskManager stores tasks by plan ID
+					// We need to find the plan ID that matches. Actually TaskManager.tasks uses plan.ID.
+					// Let's assume the ID passed is the plan ID.
+					tm.mu.Lock()
+					task, ok := tm.tasks[id]
+					tm.mu.Unlock()
+
+					if !ok {
+						// Task not started yet - handle stop command directly
+						if req.Input == "/stop" {
+							plan, err := plannerService.Store.GetPlan(id)
+							if err == nil {
+								plan.Status = "stopped"
+								_ = plannerService.Store.SavePlan(plan)
+								w.WriteHeader(http.StatusOK)
+								return
+							}
+						}
+						http.Error(w, "Task not found", http.StatusNotFound)
+						return
+					}
+
+					// Send to task
+					select {
+					case task.InputChan <- req.Input:
+						w.WriteHeader(http.StatusOK)
+					case <-time.After(2 * time.Second):
+						http.Error(w, "Task is not waiting for input", http.StatusConflict)
+					}
+				})
 			})
 
-			// Serve static files from current directory
+			// Serve static files (expecting 'ui' folder to be present in root)
 			workDir, _ := os.Getwd()
-			fmt.Printf("Serving static files from: %s\n", workDir)
-			fs := http.FileServer(http.Dir(workDir))
+			var staticRoot string
+
+			// Check if ./ui exists (Docker / Production)
+			if _, err := os.Stat(filepath.Join(workDir, "ui")); err == nil {
+				staticRoot = workDir
+			} else if _, err := os.Stat(filepath.Join(filepath.Dir(workDir), "ui")); err == nil {
+				// Check if ../ui exists (Local Development from core/)
+				// In this case, we serve the PARENT directory so that /ui/... URLs work correctly
+				staticRoot = filepath.Dir(workDir)
+			} else {
+				fmt.Println("[Warning] Could not find 'ui' directory in ./ui or ../ui. Serving current directory.")
+				staticRoot = workDir
+			}
+
+			fmt.Printf("Serving static files from root: %s\n", staticRoot)
+			fs := http.FileServer(http.Dir(staticRoot))
 			r.Handle("/*", fs)
 
 			port := cfg.Server.Port

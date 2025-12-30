@@ -17,9 +17,12 @@ type Store interface {
 	SavePlan(plan model.ExecutionPlan) error
 	GetPlan(id string) (model.ExecutionPlan, error)
 	ListPlans() ([]model.ExecutionPlan, error)
+	DeletePlan(id string) error
 
 	// Interaction Logging
 	LogInteraction(planID string, tag string, input string, output string) error
+	AppendRawLog(planID string, message string) error
+	GetLogs(id string) (string, error)
 
 	// Config (raw bytes to avoid cycle, manager handles marshaling)
 	SaveConfig(data []byte) error
@@ -114,6 +117,23 @@ func (s *FileStore) ListPlans() ([]model.ExecutionPlan, error) {
 	return plans, nil
 }
 
+func (s *FileStore) DeletePlan(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Delete plan file
+	planFile := filepath.Join(s.baseDir, "plans", id+".json")
+	if err := os.Remove(planFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete plan file: %w", err)
+	}
+
+	// Delete log file if exists
+	logFile := filepath.Join(s.baseDir, "logs", id+".log")
+	_ = os.Remove(logFile) // Ignore error if log doesn't exist
+
+	return nil
+}
+
 func (s *FileStore) LogInteraction(planID string, tag string, input string, output string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -137,6 +157,42 @@ func (s *FileStore) LogInteraction(planID string, tag string, input string, outp
 	entry := fmt.Sprintf("--- [%s] %s ---\nINPUT:\n%s\nOUTPUT:\n%s\n\n", tag, timestamp, input, output)
 	_, err = f.WriteString(entry)
 	return err
+}
+
+func (s *FileStore) AppendRawLog(planID string, message string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	filename := "interaction.log"
+	if planID != "" {
+		filename = planID + ".log"
+	}
+
+	path := filepath.Join(s.baseDir, "logs", filename)
+	// Create dir if missing
+	_ = os.MkdirAll(filepath.Dir(path), 0755)
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(message + "\n")
+	return err
+}
+
+func (s *FileStore) GetLogs(id string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	filename := id + ".log"
+	path := filepath.Join(s.baseDir, "logs", filename)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func (s *FileStore) SaveConfig(data []byte) error {

@@ -4,10 +4,12 @@ Druppie Core is the central orchestration service for the Druppie Platform. It f
 
 ## 🏗️ Build
 
-### Docker
-To build the production image:
+### Docker (Production)
+Since Druppie Core includes the UI and depends on project root context, you must build the image **from the repository root**:
+
 ```bash
-docker build -t druppie-core .
+cd ..
+docker build -t druppie-core -f core/Dockerfile .
 ```
 
 ### Local CLI
@@ -40,7 +42,57 @@ To use Google Gemini, you need to configure OAuth credentials:
           client_secret: "YOUR_CLIENT_SECRET"
     ```
 
-## 🚀 Usage
+## � Deploy & Test (Docker)
+
+Once built, you can run Druppie Core as a standalone server with the integrated UI.
+
+### 1. Simple Run
+To run quickly with ephemeral storage (data lost on restart):
+```bash
+docker run -p 8080:8080 druppie-core
+```
+Access the UI at `http://localhost:8080`.
+
+### 2. Full Development Setup (Recommended)
+This command maps your local `.druppie` configuration/data directory to the container, creating a fully persistent environment where you can edit plans, logs, and config locally.
+
+```bash
+docker run -d \
+  -p 8080:8080 \
+  -v $(pwd)/.druppie:/app/.druppie \
+  --name druppie-server \
+  druppie-core
+```
+
+*   **UI**: `http://localhost:8080`
+*   **Logs**: Check `./.druppie/logs` locally to see execution logs.
+*   **Plans**: Plans are persisted in `./.druppie/plans`.
+*   **Config**: Edit `./.druppie/config.yaml` to change settings (e.g., LLM provider).
+
+### 3. Updating an Existing Container
+If you’ve made changes to the code or UI and want to update your running `druppie-server`:
+
+1.  **Rebuild the Image**:
+    ```bash
+    docker build -t druppie-core -f core/Dockerfile .
+    ```
+
+2.  **Stop & Remove Old Container**:
+    ```bash
+    docker stop druppie-server && docker rm druppie-server
+    ```
+
+3.  **Start New Container**:
+    (Using the recommended persistent setup)
+    ```bash
+    docker run -d \
+      -p 8080:8080 \
+      -v $(pwd)/.druppie:/app/.druppie \
+      --name druppie-server \
+      druppie-core
+    ```
+
+## �🚀 Usage
 
 ### Local Testing (CLI)
 

@@ -1,0 +1,1488 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Druppie Command Center</title>
+    <link rel="icon" type="image/svg+xml" href="../druppie_logo.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --bg-deep: #0f172a;
+            --bg-card: #1e293b;
+            --accent: #38bdf8;
+            --accent-glow: rgba(56, 189, 248, 0.3);
+            --text-main: #f1f5f9;
+            --text-dim: #94a3b8;
+            --success: #22c55e;
+            --running: #f59e0b;
+            --pending: #64748b;
+            --glass: rgba(255, 255, 255, 0.03);
+            --glass-border: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-deep);
+            color: var(--text-main);
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Layout */
+        #sidebar {
+            width: 380px;
+            background: var(--bg-card);
+            border-right: 1px solid var(--glass-border);
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+        }
+
+        #main-view {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        /* Sidebar / Chat Area */
+        .sidebar-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .sidebar-header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+        }
+
+        .sidebar-header i {
+            color: var(--accent);
+        }
+
+        #chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+
+        .message {
+            max-width: 90%;
+            padding: 1rem;
+            border-radius: 1rem;
+            font-size: 0.95rem;
+            line-height: 1.5;
+            animation: fadeIn 0.3s ease;
+            white-space: pre-wrap;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: var(--accent);
+            color: var(--bg-deep);
+            border-bottom-right-radius: 0.25rem;
+        }
+
+        .message.ai {
+            align-self: flex-start;
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            border-bottom-left-radius: 0.25rem;
+        }
+
+        .chat-input-wrapper {
+            padding: 1.25rem;
+            background: rgba(15, 23, 42, 0.5);
+            backdrop-filter: blur(10px);
+            border-top: 1px solid var(--glass-border);
+        }
+
+        .chat-input-container {
+            position: relative;
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        #prompt-input {
+            flex: 1;
+            background: var(--bg-deep);
+            border: 1px solid var(--glass-border);
+            border-radius: 0.75rem;
+            padding: 0.75rem 1rem;
+            color: white;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        #prompt-input:focus {
+            border-color: var(--accent);
+        }
+
+        #send-btn {
+            background: var(--accent);
+            border: none;
+            width: 42px;
+            height: 42px;
+            border-radius: 0.75rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.1s;
+        }
+
+        #send-btn:hover {
+            transform: scale(1.05);
+        }
+
+        /* Kanban Board */
+        #kanban-container {
+            flex: 1;
+            padding: 2rem;
+            overflow-x: auto;
+            display: flex;
+            gap: 2rem;
+            background: radial-gradient(circle at top right, rgba(56, 189, 248, 0.05), transparent);
+            transition: background 0.5s ease;
+        }
+
+        #kanban-container.state-pending {
+            background: radial-gradient(circle at top right, rgba(56, 189, 248, 0.15), rgba(56, 189, 248, 0.05));
+        }
+
+        #kanban-container.state-waiting_input {
+            background: radial-gradient(circle at top right, rgba(251, 146, 60, 0.15), rgba(251, 146, 60, 0.05));
+        }
+
+        #kanban-container.state-running {
+            background: radial-gradient(circle at top right, rgba(34, 197, 94, 0.15), rgba(34, 197, 94, 0.05));
+        }
+
+        #kanban-container.state-completed {
+            background: radial-gradient(circle at top right, rgba(56, 189, 248, 0.05), transparent);
+        }
+
+        .kanban-col {
+            flex: 0 0 320px;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            max-height: 100%;
+        }
+
+        .col-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 0.25rem;
+            flex-shrink: 0;
+        }
+
+        .col-cards {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            padding-top: 1rem;
+        }
+
+        .col-header h3 {
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-dim);
+        }
+
+        .task-count {
+            background: var(--glass);
+            padding: 0.125rem 0.5rem;
+            border-radius: 1rem;
+            font-size: 0.75rem;
+        }
+
+        .task-card {
+            background: var(--bg-card);
+            border: 1px solid var(--glass-border);
+            border-radius: 1rem;
+            padding: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s, border-color 0.2s;
+            cursor: default;
+        }
+
+        .task-card:hover {
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .task-card.status-running {
+            border-left: 3px solid var(--running);
+            box-shadow: 0 0 15px rgba(245, 158, 11, 0.1);
+        }
+
+        .task-card.status-completed {
+            opacity: 0.7;
+            border-left: 3px solid var(--success);
+        }
+
+        .task-card.status-pending {
+            border-left: 3px solid var(--pending);
+        }
+
+        .task-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .task-id {
+            font-size: 0.75rem;
+            font-family: 'JetBrains Mono';
+            color: var(--text-dim);
+        }
+
+        .task-agent {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .task-action {
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+
+        .task-meta {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Log Panel & Tabs */
+        #bottom-panel {
+            max-height: 40vh;
+            background: #0a0f1d;
+            border-top: 1px solid var(--glass-border);
+            display: flex;
+            flex-direction: column;
+            transition: max-height 0.3s ease, min-height 0.3s ease;
+            min-height: 200px;
+        }
+
+        #bottom-panel.collapsed {
+            max-height: 52px;
+            min-height: 52px;
+            overflow: hidden;
+        }
+
+        .tab-strip {
+            padding: 0 1.5rem;
+            background: rgba(255, 255, 255, 0.02);
+            display: flex;
+            gap: 2rem;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .tab-btn {
+            padding: 1rem 0;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .tab-btn.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
+        .tab-content {
+            flex: 1;
+            padding: 1rem 1.5rem;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        #log-content {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: #cbd5e1;
+            line-height: 1.6;
+        }
+
+        #step-log {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .step-log-item {
+            padding: 0.5rem;
+            background: var(--glass);
+            border-radius: 0.5rem;
+            border: 1px solid var(--glass-border);
+            font-size: 0.85rem;
+            /* removed white-space: pre-wrap to fix spacing issues */
+        }
+
+        .step-log-content {
+            font-size: 0.75rem;
+            color: var(--text-main);
+            margin-top: 0.25rem;
+            white-space: pre-wrap;
+        }
+
+        .step-log-header {
+            display: flex;
+            margin-bottom: 0.25rem;
+            font-weight: 600;
+            font-size: 0.75rem;
+        }
+
+        .tag-agent {
+            color: var(--accent);
+        }
+
+        .tag-action {
+            color: var(--text-dim);
+        }
+
+        /* Interactive Cards */
+        .interactive-controls {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--glass-border);
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn-action {
+            flex: 1;
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+            border: 1px solid var(--glass-border);
+            background: var(--glass);
+            color: white;
+            font-size: 0.75rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.25rem;
+            transition: all 0.2s;
+        }
+
+        .btn-action:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-action.primary {
+            background: var(--accent);
+            color: var(--bg-deep);
+            border: none;
+            font-weight: 600;
+        }
+
+        .btn-action.primary:hover {
+            opacity: 0.9;
+        }
+
+        /* Scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--glass-border);
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        /* Modal Overlay */
+        #step-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        #step-modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--bg-card);
+            border: 1px solid var(--glass-border);
+            border-radius: 1.5rem;
+            max-width: 800px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding: 2rem;
+            position: relative;
+            animation: modalSlideIn 0.3s ease;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .modal-close {
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            width: 32px;
+            height: 32px;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-dim);
+            transition: all 0.2s;
+        }
+
+        .modal-close:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-main);
+        }
+
+        .modal-body {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .info-row {
+            display: flex;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .info-label {
+            color: var(--text-dim);
+            min-width: 100px;
+        }
+
+        .info-value {
+            color: var(--text-main);
+            flex: 1;
+        }
+
+        .modal-result {
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            border-radius: 0.75rem;
+            padding: 1rem;
+            white-space: pre-wrap;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            line-height: 1.6;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .feedback-section {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .feedback-input {
+            background: var(--bg-deep);
+            border: 1px solid var(--glass-border);
+            border-radius: 0.75rem;
+            padding: 0.75rem;
+            color: white;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 80px;
+            outline: none;
+        }
+
+        .feedback-input:focus {
+            border-color: var(--accent);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+
+        .modal-btn {
+            flex: 1;
+            padding: 0.75rem;
+            border-radius: 0.75rem;
+            border: 1px solid var(--glass-border);
+            background: var(--glass);
+            color: white;
+            font-size: 0.875rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            transition: all 0.2s;
+        }
+
+        .modal-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .modal-btn.primary {
+            background: var(--accent);
+            color: var(--bg-deep);
+            border: none;
+        }
+
+        .modal-btn.primary:hover {
+            opacity: 0.9;
+        }
+
+        .modal-btn.danger {
+            background: #ef4444;
+            color: white;
+            border: none;
+        }
+
+        .modal-btn.danger:hover {
+            opacity: 0.9;
+        }
+
+        .task-card {
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+
+    <aside id="sidebar">
+        <header class="sidebar-header">
+            <img src="../druppie_logo.svg" alt="Druppie" style="width: 48px; height: 48px;">
+            <div style="flex: 1; display: flex; flex-direction: column; gap: 0.5rem;">
+                <h1>Druppie UI</h1>
+                <select id="plan-selector" style="
+                    background: var(--bg-deep);
+                    border: 1px solid var(--glass-border);
+                    border-radius: 0.5rem;
+                    padding: 0.25rem 0.5rem;
+                    color: var(--text-dim);
+                    font-size: 0.75rem;
+                    font-family: 'JetBrains Mono', monospace;
+                    outline: none;
+                    cursor: pointer;
+                ">
+                    <option value="">No active plan</option>
+                </select>
+            </div>
+        </header>
+
+
+        <div id="chat-messages">
+            <div class="message ai">
+                Hello! I am the Druppie Orchestrator. What would you like to build today?
+            </div>
+        </div>
+
+        <div class="chat-input-wrapper">
+            <div class="chat-input-container">
+                <input type="text" id="prompt-input" placeholder="Type your request here...">
+            </div>
+            <div style="display: flex; gap: 0.5rem; padding: 0.5rem 0; flex-wrap: wrap; align-items: center;">
+                <button onclick="handleCommand('/list')" title="List Plans (/list)" style="
+                    background: var(--glass-bg);
+                    border: 1px solid var(--glass-border);
+                    border-radius: 0.5rem;
+                    padding: 0.25rem 0.75rem;
+                    color: var(--text-dim);
+                    font-size: 0.75rem;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.25rem;
+                ">
+                    <i data-lucide="list" size="14"></i>
+                </button>
+                <button onclick="handleCommand('/stop')" title="Stop Execution (/stop)" style="
+                    background: var(--glass-bg);
+                    border: 1px solid var(--glass-border);
+                    border-radius: 0.5rem;
+                    padding: 0.25rem 0.75rem;
+                    color: var(--text-dim);
+                    font-size: 0.75rem;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.25rem;
+                ">
+                    <i data-lucide="stop-circle" size="14"></i>
+                </button>
+                <button onclick="handleCommand('/del')" title="Delete Plan (/del)" style="
+                    background: var(--glass-bg);
+                    border: 1px solid var(--glass-border);
+                    border-radius: 0.5rem;
+                    padding: 0.25rem 0.75rem;
+                    color: var(--text-dim);
+                    font-size: 0.75rem;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.25rem;
+                ">
+                    <i data-lucide="trash-2" size="14"></i>
+                </button>
+                <button onclick="handleCommand('/resume')" title="Resume Execution (/resume)" style="
+                    background: var(--glass-bg);
+                    border: 1px solid var(--glass-border);
+                    border-radius: 0.5rem;
+                    padding: 0.25rem 0.75rem;
+                    color: var(--text-dim);
+                    font-size: 0.75rem;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.25rem;
+                ">
+                    <i data-lucide="play-circle" size="14"></i>
+                </button>
+                <button onclick="window.open('/', '_self')" title="Open Documentation Portal" style="
+                    background: var(--glass-bg);
+                    border: 1px solid var(--glass-border);
+                    border-radius: 0.5rem;
+                    padding: 0.25rem 0.75rem;
+                    color: var(--text-dim);
+                    font-size: 0.75rem;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.25rem;
+                ">
+                    <i data-lucide="book" size="14"></i>
+                </button>
+                <button id="send-btn" style="
+                    background: var(--accent);
+                    border: none;
+                    border-radius: 0.5rem;
+                    padding: 0.35rem 0.75rem;
+                    color: white;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                ">
+                    <i data-lucide="send" size="16"></i>
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <main id="main-view">
+        <div id="kanban-container">
+            <div class="kanban-col" id="col-pending">
+                <div class="col-header">
+                    <h3>Pending</h3>
+                    <span class="task-count">0</span>
+                </div>
+                <div class="col-cards"></div>
+            </div>
+
+            <div class="kanban-col" id="col-running">
+                <div class="col-header">
+                    <h3>In Progress</h3>
+                    <span class="task-count">0</span>
+                </div>
+                <div class="col-cards"></div>
+            </div>
+
+            <div class="kanban-col" id="col-completed">
+                <div class="col-header">
+                    <h3>Completed</h3>
+                    <span class="task-count">0</span>
+                </div>
+                <div class="col-cards"></div>
+            </div>
+        </div>
+
+        <div id="bottom-panel">
+            <div class="tab-strip">
+                <div class="tab-btn active" onclick="switchTab('system')">
+                    <i data-lucide="terminal" size="14"></i>
+                    System Console
+                </div>
+                <div class="tab-btn" onclick="switchTab('process')">
+                    <i data-lucide="activity" size="14"></i>
+                    Planner - Agents
+                </div>
+                <div style="flex: 1;"></div>
+                <button id="toggle-console-btn" onclick="toggleConsole()"
+                    style="background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 0 1rem; display: flex; align-items: center;"
+                    title="Toggle Console">
+                    <i data-lucide="chevron-down" size="16"></i>
+                </button>
+            </div>
+
+            <div id="system-tab" class="tab-content active">
+                <div id="log-content">
+                    <div class="log-entry info">Bridge active. Waiting for task...</div>
+                </div>
+            </div>
+
+            <div id="process-tab" class="tab-content">
+                <div id="step-log">
+                    <div class="message">No active plan.</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Step Detail Modal -->
+    <div id="step-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h2 id="modal-title" style="font-size: 1.25rem; margin-bottom: 0.5rem;"></h2>
+                    <div id="modal-subtitle" style="font-size: 0.875rem; color: var(--text-dim);"></div>
+                </div>
+                <button class="modal-close" onclick="closeStepModal()">
+                    <i data-lucide="x" size="18"></i>
+                </button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        const state = {
+            currentPlanId: null,
+            lastLogIndex: 0,
+            pollingInterval: null,
+            isWaitingForInput: false
+        };
+
+        const elements = {
+            prompt: document.getElementById('prompt-input'),
+            send: document.getElementById('send-btn'),
+            chat: document.getElementById('chat-messages'),
+            systemLogs: document.getElementById('log-content'),
+            stepLogs: document.getElementById('step-log'),
+            planSelector: document.getElementById('plan-selector'),
+            cols: {
+                pending: document.getElementById('col-pending'),
+                running: document.getElementById('col-running'),
+                completed: document.getElementById('col-completed')
+            }
+        };
+
+        // Plan selector change handler
+        elements.planSelector.onchange = async function () {
+            const selectedPlanId = this.value;
+            if (!selectedPlanId) return;
+
+            state.currentPlanId = selectedPlanId;
+            state.lastLogIndex = 0;
+            elements.systemLogs.innerHTML = '';
+            elements.stepLogs.innerHTML = '';
+
+            addChatMessage('ai', `🔄 Switched to plan: ${selectedPlanId}`);
+            startMonitoring();
+        };
+
+        // Update plan selector with available plans
+        async function updatePlanSelector() {
+            try {
+                const resp = await fetch('/v1/plans');
+                const plans = await resp.json();
+
+                const currentValue = elements.planSelector.value;
+                elements.planSelector.innerHTML = '<option value="">Select a plan...</option>';
+
+                plans.forEach(plan => {
+                    const option = document.createElement('option');
+                    option.value = plan.plan_id;
+
+                    // Add status emoji for visual feedback
+                    let statusEmoji = '⏸️'; // default
+                    if (plan.status === 'pending') statusEmoji = '⏳';
+                    if (plan.status === 'running') statusEmoji = '▶️';
+                    if (plan.status === 'waiting_input') statusEmoji = '⚠️';
+                    if (plan.status === 'completed') statusEmoji = '✅';
+                    if (plan.status === 'stopped') statusEmoji = '🛑';
+
+                    option.textContent = `${statusEmoji} ${plan.plan_id} (${plan.status})`;
+                    if (plan.plan_id === state.currentPlanId) {
+                        option.selected = true;
+                    }
+                    elements.planSelector.appendChild(option);
+                });
+            } catch (e) {
+                console.error('Failed to update plan selector:', e);
+            }
+        }
+
+        // Update selector periodically
+        setInterval(updatePlanSelector, 5000);
+        updatePlanSelector();
+
+        function switchTab(name) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+            if (name === 'system') {
+                document.querySelector('[onclick="switchTab(\'system\')"]').classList.add('active');
+                document.getElementById('system-tab').classList.add('active');
+            } else {
+                document.querySelector('[onclick="switchTab(\'process\')"]').classList.add('active');
+                document.getElementById('process-tab').classList.add('active');
+            }
+        }
+
+        function toggleConsole() {
+            const panel = document.getElementById('bottom-panel');
+            const btn = document.getElementById('toggle-console-btn');
+
+            panel.classList.toggle('collapsed');
+            const isCollapsed = panel.classList.contains('collapsed');
+
+            if (isCollapsed) {
+                btn.innerHTML = '<i data-lucide="chevron-up" size="16"></i>';
+            } else {
+                btn.innerHTML = '<i data-lucide="chevron-down" size="16"></i>';
+            }
+            lucide.createIcons();
+        }
+
+        async function sendMessage() {
+            const prompt = elements.prompt.value.trim();
+            if (!prompt) return;
+
+            addChatMessage('user', prompt);
+            elements.prompt.value = '';
+
+            // Handle commands
+            if (prompt.startsWith('/')) {
+                handleCommand(prompt);
+                return;
+            }
+
+            if (state.isWaitingForInput && state.currentPlanId) {
+                sendTaskInput(state.currentPlanId, prompt);
+                return;
+            }
+
+            // Optimistic UI: Show immediate feedback
+            const thinkingMsg = addChatMessage('ai', '🤔 Analyzing your request...');
+
+            try {
+                const resp = await fetch('/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt })
+                });
+                const data = await resp.json();
+
+                // Remove thinking message
+                thinkingMsg.remove();
+
+                if (data.plan) {
+                    state.currentPlanId = data.plan.plan_id;
+                    state.lastLogIndex = 0;
+                    elements.systemLogs.innerHTML = '';
+                    elements.stepLogs.innerHTML = '';
+
+                    addChatMessage('ai', `✅ Plan created: ${state.currentPlanId}\nStarting orchestration...`);
+
+                    // Update plan selector to show new plan
+                    updatePlanSelector();
+
+                    // Start monitoring immediately to show the pending plan
+                    startMonitoring();
+                } else if (data.intent) {
+                    addChatMessage('ai', `Analysis: ${data.intent.action}.`);
+                }
+            } catch (err) {
+                thinkingMsg.remove();
+                addChatMessage('ai', `Error: ${err.message}`);
+            }
+        }
+
+        function showOptimisticTask(planId, prompt) {
+            // Create a temporary pending card
+            const card = document.createElement('div');
+            card.className = 'task-card status-pending';
+            card.id = `temp-card-${planId}`;
+
+            card.innerHTML = `
+                <div class="task-header">
+                    <span class="task-agent">orchestrator</span>
+                    <span class="task-id">${planId}</span>
+                </div>
+                <div class="task-action">${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}</div>
+                <div class="task-meta">
+                     <i data-lucide="loader-2" size="12" class="lucide-spin"></i>
+                     initializing
+                </div>
+            `;
+
+            elements.cols.pending.appendChild(card);
+            elements.cols.pending.querySelector('.task-count').textContent = '1';
+            lucide.createIcons();
+
+            // Add spinning animation
+            const style = document.createElement('style');
+            style.textContent = `
+                .lucide-spin {
+                    animation: spin 1s linear infinite;
+                }
+                @keyframes spin {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(360deg); }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        async function handleCommand(cmd) {
+            const parts = cmd.split(' ');
+            const command = parts[0].toLowerCase();
+
+            switch (command) {
+                case '/list':
+                    try {
+                        const resp = await fetch('/v1/plans');
+                        const plans = await resp.json();
+                        if (plans && plans.length > 0) {
+                            const list = plans.map(p => `• ${p.plan_id} - ${p.status}`).join('\n');
+                            addChatMessage('ai', `📋 Active Plans:\n${list}`);
+                        } else {
+                            addChatMessage('ai', '📋 No active plans.');
+                        }
+                    } catch (e) {
+                        addChatMessage('ai', `❌ Failed to list plans: ${e.message}`);
+                    }
+                    break;
+
+                case '/stop':
+                    if (state.currentPlanId) {
+                        await sendTaskInput(state.currentPlanId, '/stop');
+                        addChatMessage('ai', '🛑 Stop signal sent.');
+                    } else {
+                        addChatMessage('ai', '⚠️ No active plan to stop.');
+                    }
+                    break;
+
+                case '/switch':
+                    if (parts[1]) {
+                        state.currentPlanId = parts[1];
+                        state.lastLogIndex = 0;
+                        elements.systemLogs.innerHTML = '';
+                        elements.stepLogs.innerHTML = '';
+                        addChatMessage('ai', `🔄 Switched to plan: ${parts[1]}`);
+                        startMonitoring();
+                    } else {
+                        addChatMessage('ai', '⚠️ Usage: /switch <plan-id>');
+                    }
+                    break;
+
+                case '/del':
+                case '/delete':
+                    const delPlanId = parts[1] || state.currentPlanId;
+                    if (!delPlanId) {
+                        addChatMessage('ai', '⚠️ No plan to delete. Usage: /del <plan-id>');
+                        break;
+                    }
+                    try {
+                        const resp = await fetch(`/v1/plans/${delPlanId}`, { method: 'DELETE' });
+                        if (resp.ok) {
+                            addChatMessage('ai', `🗑️ Deleted plan: ${delPlanId}`);
+                            if (state.currentPlanId === delPlanId) {
+                                state.currentPlanId = null;
+                                elements.systemLogs.innerHTML = '';
+                                elements.stepLogs.innerHTML = '';
+
+                                // Clear Kanban board
+                                Object.values(elements.cols).forEach(col => {
+                                    const cardsContainer = col.querySelector('.col-cards');
+                                    if (cardsContainer) cardsContainer.innerHTML = '';
+                                    col.querySelector('.task-count').textContent = '0';
+                                });
+
+                                // Reset Kanban background
+                                document.getElementById('kanban-container').className = '';
+
+                                if (state.pollingInterval) clearInterval(state.pollingInterval);
+                            }
+                            updatePlanSelector();
+                        } else {
+                            addChatMessage('ai', `❌ Failed to delete plan: ${await resp.text()}`);
+                        }
+                    } catch (e) {
+                        addChatMessage('ai', `❌ Error deleting plan: ${e.message}`);
+                    }
+                    break;
+
+                case '/resume':
+                    const resumePlanId = parts[1] || state.currentPlanId;
+                    if (!resumePlanId) {
+                        addChatMessage('ai', '⚠️ No plan to resume. Usage: /resume <plan-id>');
+                        break;
+                    }
+                    try {
+                        const resp = await fetch(`/v1/plans/${resumePlanId}/resume`, { method: 'POST' });
+                        if (resp.ok) {
+                            addChatMessage('ai', `▶️ Resumed plan: ${resumePlanId}`);
+                            updatePlanSelector();
+                        } else {
+                            addChatMessage('ai', `❌ Failed to resume plan: ${await resp.text()}`);
+                        }
+                    } catch (e) {
+                        addChatMessage('ai', `❌ Error resuming plan: ${e.message}`);
+                    }
+                    break;
+
+                default:
+                    addChatMessage('ai', `❓ Unknown command: ${command}\n\nAvailable commands:\n• /list - Show all plans\n• /stop - Stop current plan\n• /switch <plan-id> - Switch to a different plan\n• /del <plan-id> - Delete a plan\n• /resume <plan-id> - Resume a stopped plan`);
+            }
+        }
+
+        async function sendTaskInput(planId, text) {
+            try {
+                const resp = await fetch(`/v1/tasks/${planId}/message`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ input: text })
+                });
+                if (resp.ok) {
+                    state.isWaitingForInput = false;
+                    addChatMessage('ai', `Input sent. Resuming execution...`);
+                } else {
+                    const err = await resp.text();
+                    addChatMessage('ai', `Failed: ${err}`);
+                }
+            } catch (e) {
+                addChatMessage('ai', `Connection error: ${e.message}`);
+            }
+        }
+
+        function addChatMessage(role, text) {
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            div.textContent = text;
+            elements.chat.appendChild(div);
+            div.scrollIntoView({ behavior: 'smooth' });
+            return div; // Return element so it can be removed if needed
+        }
+
+        function startMonitoring() {
+            if (state.pollingInterval) clearInterval(state.pollingInterval);
+            updatePlan();
+            updateLogs();
+            state.pollingInterval = setInterval(() => {
+                updatePlan();
+                updateLogs();
+            }, 2000);
+        }
+
+        async function updatePlan() {
+            if (!state.currentPlanId) return;
+            try {
+                const resp = await fetch(`/v1/plans/${state.currentPlanId}`);
+                if (!resp.ok) return;
+                const plan = await resp.json();
+
+                if (plan.status === 'waiting_input' && !state.isWaitingForInput) {
+                    state.isWaitingForInput = true;
+                    // Find the step that is waiting
+                    const waitingStep = plan.steps.find(s => s.status === 'waiting_input' || (s.status === 'running' && plan.status === 'waiting_input'));
+                    const prompt = waitingStep && waitingStep.result ? waitingStep.result : 'Task is waiting for your input. Use buttons on Kanban or type feedback.';
+                    addChatMessage('ai', prompt);
+                } else if (plan.status !== 'waiting_input') {
+                    state.isWaitingForInput = false;
+                }
+
+                renderPlan(plan);
+                renderStepList(plan);
+            } catch (e) { }
+        }
+
+        async function updateLogs() {
+            if (!state.currentPlanId) return;
+            try {
+                const resp = await fetch(`/v1/logs/${state.currentPlanId}`);
+                if (!resp.ok) return;
+                const text = await resp.text();
+                let lines = text.split('\n');
+
+                // Remove trailing empty line from split
+                if (lines.length > 0 && lines[lines.length - 1] === '') {
+                    lines.pop();
+                }
+
+                const newLines = lines.slice(state.lastLogIndex);
+                if (newLines.length > 0) {
+                    newLines.forEach(line => {
+                        if (!line.trim()) return;
+                        const logDiv = document.createElement('div');
+                        logDiv.className = 'log-entry';
+                        if (line.includes('[Workflow] Completed')) logDiv.classList.add('success');
+                        else if (line.includes('❌')) logDiv.classList.add('warn');
+                        logDiv.textContent = line;
+                        elements.systemLogs.appendChild(logDiv);
+                    });
+                    elements.systemLogs.scrollTop = elements.systemLogs.scrollHeight;
+                    state.lastLogIndex = lines.length;
+                }
+            } catch (e) { }
+        }
+
+        function renderPlan(plan) {
+            // Update Kanban background based on plan state
+            const kanbanContainer = document.getElementById('kanban-container');
+            kanbanContainer.className = `state-${plan.status}`;
+
+            Object.values(elements.cols).forEach(col => {
+                const cardsContainer = col.querySelector('.col-cards');
+                if (cardsContainer) {
+                    cardsContainer.innerHTML = '';
+                }
+            });
+
+            const counts = { pending: 0, running: 0, completed: 0 };
+
+            // If plan has no steps yet (pending state), show a placeholder
+            if (plan.steps.length === 0 && plan.status === 'pending') {
+                const card = document.createElement('div');
+                card.className = 'task-card status-pending';
+                card.onclick = () => openStepModal({
+                    step_id: 0,
+                    agent_id: 'orchestrator',
+                    action: 'Initializing plan...',
+                    status: 'pending',
+                    result: plan.intent.prompt || plan.intent.initial_prompt
+                }, plan);
+
+                card.innerHTML = `
+                    <div class="task-header">
+                        <span class="task-agent">orchestrator</span>
+                        <span class="task-id">${plan.plan_id}</span>
+                    </div>
+                    <div class="task-action">Analyzing request...</div>
+                    <div class="task-meta">
+                         <i data-lucide="loader-2" size="12"></i>
+                         pending
+                    </div>
+                `;
+
+                const pendingCards = elements.cols.pending.querySelector('.col-cards');
+                if (pendingCards) pendingCards.appendChild(card);
+                counts.pending++;
+                lucide.createIcons();
+            }
+
+            plan.steps.forEach(step => {
+                // Skip planner-generated placeholder steps that haven't been executed
+                if (step.status === 'pending' && !step.result) {
+                    return;
+                }
+
+                const card = document.createElement('div');
+                card.className = `task-card status-${step.status}`;
+                card.onclick = () => openStepModal(step, plan);
+
+                let statusIcon = 'clock';
+                if (step.status === 'running') statusIcon = 'loader-2';
+                if (step.status === 'completed') statusIcon = 'check-circle';
+                if (step.status === 'waiting_input') statusIcon = 'alert-circle';
+
+                card.innerHTML = `
+                    <div class="task-header">
+                        <span class="task-agent">${step.agent_id}</span>
+                        <span class="task-id">#${step.step_id}</span>
+                    </div>
+                    <div class="task-action">${step.action}</div>
+                    <div class="task-meta">
+                         <i data-lucide="${statusIcon}" size="12"></i>
+                         ${step.status}
+                    </div>
+                `;
+
+                let targetCol;
+                if (step.status === 'running' || step.status === 'waiting_input') {
+                    targetCol = elements.cols.running.querySelector('.col-cards');
+                    counts.running++;
+                } else if (step.status === 'completed') {
+                    targetCol = elements.cols.completed.querySelector('.col-cards');
+                    counts.completed++;
+                } else {
+                    targetCol = elements.cols.pending.querySelector('.col-cards');
+                    counts.pending++;
+                }
+
+                if (targetCol) targetCol.appendChild(card);
+            });
+
+            elements.cols.pending.querySelector('.task-count').textContent = counts.pending;
+            elements.cols.running.querySelector('.task-count').textContent = counts.running;
+            elements.cols.completed.querySelector('.task-count').textContent = counts.completed;
+
+            lucide.createIcons();
+        }
+
+        function renderStepList(plan) {
+            elements.stepLogs.innerHTML = '';
+            // Show completed, running AND waiting steps
+            plan.steps.filter(s => s.status === 'completed' || s.status === 'running' || s.status === 'waiting_input').forEach(s => {
+                const item = document.createElement('div');
+                item.className = 'step-log-item';
+                if (s.status === 'waiting_input') item.style.borderColor = 'var(--accent)';
+
+                item.innerHTML = `
+                    <div class="step-log-header">
+                        <span class="tag-agent">[${s.agent_id}]</span>
+                        <span class="tag-action">${s.action}</span>
+                        <span style="margin-left:auto; color: ${s.status === 'waiting_input' ? 'var(--accent)' : 'inherit'}">${s.status}</span>
+                    </div>
+                    ${s.result ? `<div class="step-log-content">${s.result}</div>` : ''}
+                `;
+                elements.stepLogs.appendChild(item);
+            });
+            if (elements.stepLogs.innerHTML === '') {
+                elements.stepLogs.innerHTML = '<div class="message">Waiting for agents to begin...</div>';
+            }
+        }
+
+        let currentStep = null;
+        let currentPlan = null;
+
+        function syntaxHighlight(json) {
+            if (typeof json !== 'string') {
+                json = JSON.stringify(json, undefined, 2);
+            }
+            json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+                let style = 'color: #fca5a5;'; // number
+                if (/^"/.test(match)) {
+                    if (/:$/.test(match)) {
+                        style = 'color: #93c5fd;'; // key
+                    } else {
+                        style = 'color: #86efac;'; // string
+                    }
+                } else if (/true|false/.test(match)) {
+                    style = 'color: #fcd34d;'; // boolean
+                } else if (/null/.test(match)) {
+                    style = 'color: #cbd5e1;'; // null
+                }
+                return '<span style="' + style + '">' + match + '</span>';
+            });
+        }
+
+        function openStepModal(step, plan) {
+            currentStep = step;
+            currentPlan = plan;
+
+            const modal = document.getElementById('step-modal');
+            const title = document.getElementById('modal-title');
+            const subtitle = document.getElementById('modal-subtitle');
+            const body = document.getElementById('modal-body');
+
+            title.textContent = step.action;
+            subtitle.textContent = `${step.agent_id} • Step #${step.step_id} • Plan: ${plan.plan_id}`;
+
+            let bodyHTML = `
+                <div class="info-row">
+                    <span class="info-label">Status:</span>
+                    <span class="info-value">${step.status}</span>
+                </div>
+            `;
+
+            // Show Plan Intent context
+            if (plan.intent && (plan.intent.prompt || plan.intent.initial_prompt)) {
+                bodyHTML += `
+                    <div style="margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--glass-border);">
+                        <span class="info-label">Context (Intent):</span>
+                        <div style="font-size: 0.85rem; color: #e2e8f0; margin-top: 0.25rem; font-style: italic;">"${plan.intent.prompt || plan.intent.initial_prompt}"</div>
+                        ${plan.intent.action ? `<div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 0.1rem;">Type: ${plan.intent.action}</div>` : ''}
+                    </div>
+                `;
+            }
+
+            if (step.params && Object.keys(step.params).length > 0) {
+                bodyHTML += `
+                    <div style="margin-bottom: 1rem;">
+                        <span class="info-label">Parameters:</span>
+                        <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; margin-top: 0.25rem; white-space: pre-wrap; overflow-x: auto;">${syntaxHighlight(step.params)}</div>
+                    </div>
+                 `;
+            }
+
+            if (step.result) {
+                // Try to format result if it looks like JSON
+                let resultDisplay = step.result;
+                try {
+                    if (resultDisplay.trim().startsWith('{') || resultDisplay.trim().startsWith('[')) {
+                        const parsed = JSON.parse(resultDisplay);
+                        resultDisplay = `<div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; margin-top: 0.25rem; white-space: pre-wrap; overflow-x: auto;">${syntaxHighlight(parsed)}</div>`;
+                    }
+                } catch (e) { }
+
+                // If not formatted as JSON code block, wrap in result div
+                if (resultDisplay === step.result) {
+                    resultDisplay = `<div class="modal-result" style="white-space: pre-wrap;">${step.result}</div>`;
+                }
+
+                bodyHTML += `
+                    <div>
+                        <div class="info-label" style="margin-bottom: 0.5rem;">Result / Output:</div>
+                        ${resultDisplay}
+                    </div>
+                `;
+            }
+
+            if (step.status === 'waiting_input' || (plan.status === 'waiting_input' && step.status === 'running')) {
+                bodyHTML += `
+                    <div class="feedback-section">
+                        <label class="info-label">Your Response:</label>
+                        <textarea id="feedback-input" class="feedback-input" placeholder="Type your feedback or refinement..."></textarea>
+                        <div class="modal-actions">
+                            <button class="modal-btn primary" onclick="submitModalAction('/accept')">
+                                <i data-lucide="check" size="16"></i> Accept
+                            </button>
+                            <button class="modal-btn" onclick="submitModalFeedback()">
+                                <i data-lucide="message-square" size="16"></i> Send Feedback
+                            </button>
+                            <button class="modal-btn danger" onclick="submitModalAction('/stop')">
+                                <i data-lucide="x" size="16"></i> Stop
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+
+            body.innerHTML = bodyHTML;
+            modal.classList.add('active');
+            lucide.createIcons();
+        }
+
+        function closeStepModal() {
+            document.getElementById('step-modal').classList.remove('active');
+            currentStep = null;
+            currentPlan = null;
+        }
+
+        async function submitModalAction(action) {
+            if (!currentPlan) return;
+            await sendTaskInput(currentPlan.plan_id, action);
+            closeStepModal();
+        }
+
+        async function submitModalFeedback() {
+            const input = document.getElementById('feedback-input');
+            const feedback = input?.value.trim();
+            if (!feedback || !currentPlan) return;
+
+            await sendTaskInput(currentPlan.plan_id, feedback);
+            closeStepModal();
+        }
+
+        // Close modal on background click
+        document.getElementById('step-modal').onclick = (e) => {
+            if (e.target.id === 'step-modal') closeStepModal();
+        };
+
+        elements.send.onclick = sendMessage;
+        elements.prompt.onkeydown = (e) => {
+            if (e.key === 'Enter') sendMessage();
+        };
+    </script>
+</body>
+
+</html>

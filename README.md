@@ -86,6 +86,27 @@ De regels en wetten vertaald naar techniek:
 
 Bekijk de [Script Overview](./script/overview.md) voor een lijst van alle beschikbare beheerscripts.
 
+## 🐳 Docker (Druppie Core)
+
+To run the Druppie Core server (including UI and backend logic) using Docker in a production-like environment:
+
+1.  **Build the image** (execute from the project root):
+    ```bash
+    docker build -t druppie-core -f core/Dockerfile .
+    ```
+
+2.  **Run the container**:
+    ```bash
+    docker run -d \
+      -p 8080:8080 \
+      -v $(pwd)/.druppie:/app/.druppie \
+      --name druppie-server \
+      druppie-core
+    ```
+
+    *   **Port 8080**: Access the UI at `http://localhost:8080/ui/`.
+    *   **Volume**: Maps your local `.druppie` directory to the container, ensuring plans and logs are persisted and accessible locally.
+
 ## Search index
 
 De search index is gemaakt met de [node generate_search_index.js](./generate_search_index.js) script en wordt opgeslagen in [search_index.json](./search_index.json).
