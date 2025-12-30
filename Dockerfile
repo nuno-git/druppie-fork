@@ -25,7 +25,7 @@ FROM gcr.io/distroless/static:nonroot
 WORKDIR /app
 
 # Copy Binary
-COPY --from=builder /app/druppie-core /app/druppie-core
+COPY --from=builder /app/druppie /app/druppie
 
 # Copy Project Documentation & Portal Assets
 COPY --from=builder /app/index.html /app/index.html
