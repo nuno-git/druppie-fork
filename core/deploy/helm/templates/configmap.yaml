@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "druppie-core.fullname" . }}-config
+  labels:
+    {{- include "druppie-core.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    server:
+      port: "8080"
+    llm:
+      provider: "gemini" # Or mock
+      model: "gemini-pro"
+      # API Key is injected via Env Var from Secret
+    build:
+      provider: "tekton"
+      namespace: {{ .Release.Namespace }}
+    git:
+      provider: {{ .Values.git.provider | quote }}
+      url: {{ .Values.git.url | quote }}
+      user: {{ .Values.git.user | quote }}
+      # Token is injected via Env Var

@@ -1,11 +1,11 @@
 ---
-id: video
+id: ai-video-comfyui
 name: AI Video Service (ComfyUI)
 type: service
 version: 1.0.0
 auth_group: []
 description: "ComfyUI de industriestandaard voor schaalbare, geautomatiseerde AI-productie zonder overhead"
-capabilities: ["video"]
+capabilities: ["ai_video"]
 ---
 
 # Bouwblok: Headless ComfyUI (High-Performance Rendering)

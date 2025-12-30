@@ -1779,13 +1779,6 @@
         const isFileSystem = window.location.protocol === 'file:';
         const docBaseBase = window.location.href.substring(0, window.location.href.lastIndexOf('/')); // base dir of index.html
 
-        // Settings (Global)
-        const appSettings = {
-            defaultProvider: 'Google',
-            defaultModel: 'Gemini 1.5 Pro'
-        };
-
-        // Update FS Status
         // Update FS Status
         const fsInd = document.getElementById('fs-indicator');
         const localAccessUI = document.getElementById('local-access-ui');
@@ -1795,9 +1788,11 @@
             fsInd.innerHTML = '<span class="text-orange-400 font-bold">⚠️ Lokaal Bestand Systeem</span><br>Beperkte functionaliteit.';
             fsInd.classList.add('pb-0');
             localAccessUI.classList.remove('hidden');
+            fsInd.classList.remove('hidden');
         } else {
             fsInd.classList.remove('pb-0');
             fsInd.innerHTML = '<span class="text-green-400 font-bold">● Web Server Mode</span><br>Volledige functionaliteit.';
+            fsInd.classList.add('hidden');
         }
 
         // --- FILE SYSTEM ACCESS API ---
@@ -1808,6 +1803,7 @@
                 // Update UI
                 fsInd.innerHTML = '<span class="text-green-400 font-bold">● Local Access Active</span><br>Read/Write enabled.';
                 localAccessUI.classList.add('hidden');
+                fsInd.classList.add('hidden');
 
                 // Refresh current view if needed
                 if (currentCategory) renderDocList(currentCategory);
@@ -2018,20 +2014,16 @@
             const isMCP = data.type && data.type.toLowerCase() === 'mcp-server';
             const isBlock = data.type && data.type.toLowerCase() === 'block';
 
-            // Logic for Provider & Model: Explicit or Default
-            // SKILLS inherit from the Agent, so they should NOT show a model/provider badge
-            // MCP servers also don't use model/provider in this context typically
-            // BLOCKS are infra, so they don't use it either
+            // NATIVE BADGE
+            const isNative = data.native === true || data.native === "true";
+            const nativeBadge = isNative ? `<span class="bg-red-100 text-red-800 text-[10px] px-1.5 py-0.5 rounded-full font-bold ml-2 border border-red-200 uppercase flex items-center gap-1"><i data-lucide="cpu" class="w-3 h-3"></i> NATIVE</span>` : '';
 
             let modelBadge = '';
             if (!isSkill && !isMCP && !isBlock) {
-                const explicitProvider = data.provider;
-                const explicitModel = data.model;
+                const providerName = data.provider;
+                const modelName = data.model
 
-                const providerName = explicitProvider ? data.provider : appSettings.defaultProvider;
-                const modelName = explicitModel ? data.model : appSettings.defaultModel;
-
-                const isDefault = !explicitProvider && !explicitModel;
+                const isDefault = !providerName && !modelName;
                 const badgeBorder = isDefault ? 'border-green-300 border-dashed' : 'border-green-200';
                 const suffix = isDefault ? '(default)' : '';
 
@@ -2085,7 +2077,7 @@
             // Other fields
             let extraFields = '';
             for (let [k, v] of Object.entries(data)) {
-                if (['name', 'title', 'version', 'type', 'category', 'id', 'description', 'system_prompt', 'instructions', 'model', 'provider', 'auth_group', 'url', 'transport'].includes(k)) continue;
+                if (['name', 'title', 'version', 'type', 'category', 'id', 'description', 'system_prompt', 'instructions', 'model', 'provider', 'auth_group', 'url', 'transport', 'native'].includes(k)) continue;
 
                 // Skip empty values to prevent rendering empty headers
                 if (v === null || v === undefined || v === '') continue;
@@ -2093,8 +2085,10 @@
                 if (typeof v === 'object' && Object.keys(v).length === 0) continue;
 
                 let valueHtml = v;
-                if (Array.isArray(v)) {
-                    if (k === 'skills' || k === 'subagents' || k === 'capabilities') {
+                if (k === 'workflow') {
+                    valueHtml = `<div class="mermaid">${v.replace(/\\n/g, '<br/>')}</div>`;
+                } else if (Array.isArray(v)) {
+                    if (k === 'skills' || k === 'subagents' || k === 'sub_agents' || k === 'capabilities') {
                         valueHtml = `<div class="flex flex-wrap gap-1 mt-1">` +
                             v.map(item => `<span class="bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded border border-slate-300">${item}</span>`).join('') +
                             `</div>`;
@@ -2129,6 +2123,7 @@
                          ${type}
                          ${category}
                          ${modelBadge}
+                         ${nativeBadge}
                          ${authGroupBadge}
                          ${id}
                     </div>

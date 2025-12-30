@@ -1,0 +1,6 @@
+2025/12/24 18:01:04 Loading Registry from: /Users/sierk/Github/druppie
+Starting server on port 8080
+2025/12/24 18:01:17 "POST http://localhost:8080/v1/chat/completions HTTP/1.1" from [::1]:60026 - 200 128B in 6.827256917s
+2025/12/24 18:01:20 "PUT http://localhost:8080/v1/config HTTP/1.1" from [::1]:60040 - 200 0B in 838.833µs
+2025/12/24 18:01:25 "POST http://localhost:8080/v1/chat/completions HTTP/1.1" from [::1]:60042 - 200 128B in 1.843760333s
+signal: terminated
