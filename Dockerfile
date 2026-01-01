@@ -35,12 +35,14 @@ COPY --from=builder /app/druppie /app/druppie
 
 # Copy Project Documentation & Portal Assets
 COPY --from=builder /app/index.html /app/index.html
-COPY --from=builder /app/druppie_logo.svg /app/druppie_logo.svg
 COPY --from=builder /app/doc_registry.js /app/doc_registry.js
 COPY --from=builder /app/search_index.json /app/search_index.json
+COPY --from=builder /app/druppie_logo.svg /app/druppie_logo.svg
+COPY --from=builder /app/druppie_logo.png /app/druppie_logo.png
 COPY --from=builder /app/druppie_cli.png /app/druppie_cli.png
 COPY --from=builder /app/druppie_k3d.png /app/druppie_k3d.png
 COPY --from=builder /app/README.md /app/README.md
+COPY --from=builder /app/LICENSE.md /app/LICENSE.md
 
 
 # Copy Concept Folders
