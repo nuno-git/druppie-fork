@@ -1285,204 +1285,205 @@
                 const currentValue = elements.planSelector.value;
                 elements.planSelector.innerHTML = '<option value="">Selecteer of Maak een plan...</option>';
 
-                plans.forEach(plan => {
-                    const option = document.createElement('option');
-                    option.value = plan.plan_id;
+                if (plans && Array.isArray(plans)) {
+                    plans.forEach(plan => {
+                        const option = document.createElement('option');
+                        option.value = plan.plan_id;
 
-                    // Add status emoji for visual feedback
-                    let statusEmoji = '⏸️'; // default
-                    if (plan.status === 'pending') statusEmoji = '⏳';
-                    if (plan.status === 'running') statusEmoji = '▶️';
-                    if (plan.status === 'waiting_input') statusEmoji = '⚠️';
-                    if (plan.status === 'completed') statusEmoji = '✅';
-                    if (plan.status === 'stopped') statusEmoji = '🛑';
+                        // Add status emoji for visual feedback
+                        let statusEmoji = '⏸️'; // default
+                        if (plan.status === 'pending') statusEmoji = '⏳';
+                        if (plan.status === 'running') statusEmoji = '▶️';
+                        if (plan.status === 'waiting_input') statusEmoji = '⚠️';
+                        if (plan.status === 'completed') statusEmoji = '✅';
+                        if (plan.status === 'stopped') statusEmoji = '🛑';
 
-                    option.textContent = `${statusEmoji} ${plan.plan_id} (${plan.status})`;
-                    if (plan.plan_id === state.currentPlanId) {
-                        option.selected = true;
-                    }
-                    elements.planSelector.appendChild(option);
-                });
-            } catch (e) {
-                console.error('Fout bij het selecteren van het plan:', e);
+                        option.textContent = `${statusEmoji} ${plan.plan_id} (${plan.status})`;
+                        if (plan.plan_id === state.currentPlanId) {
+                            option.selected = true;
+                        }
+                        elements.planSelector.appendChild(option);
+                    });
+                } catch (e) {
+                    console.error('Fout bij het selecteren van het plan:', e);
+                }
             }
-        }
 
         // Update selector periodically
         setInterval(updatePlanSelector, 5000);
-        updatePlanSelector();
+            updatePlanSelector();
 
-        function switchTab(name) {
-            const panel = document.getElementById('bottom-panel');
-            const btnId = name === 'system' ? 'tab-btn-system' : 'tab-btn-process';
-            const clickedBtn = document.getElementById(btnId);
+            function switchTab(name) {
+                const panel = document.getElementById('bottom-panel');
+                const btnId = name === 'system' ? 'tab-btn-system' : 'tab-btn-process';
+                const clickedBtn = document.getElementById(btnId);
 
-            // Robust check for active state
-            const isAlreadyActive = clickedBtn.classList.contains('active');
+                // Robust check for active state
+                const isAlreadyActive = clickedBtn.classList.contains('active');
 
-            if (isAlreadyActive) {
-                // If active, just toggle the panel visibility
-                toggleConsole();
-                return;
-            }
-
-            // If switching to a NEW tab:
-            // 1. Deactivate all buttons
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            // 2. Hide all contents
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-
-            // 3. Activate specific button and content
-            clickedBtn.classList.add('active');
-            if (name === 'system') {
-                document.getElementById('system-tab').classList.add('active');
-            } else {
-                document.getElementById('process-tab').classList.add('active');
-            }
-
-            // 4. Ensure panel is OPEN (remove collapsed) if it was closed
-            if (panel.classList.contains('collapsed')) {
-                toggleConsole();
-            }
-        }
-
-        function toggleConsole() {
-            const panel = document.getElementById('bottom-panel');
-            const btn = document.getElementById('toggle-console-btn');
-
-            panel.classList.toggle('collapsed');
-            const isCollapsed = panel.classList.contains('collapsed');
-
-            if (isCollapsed) {
-                btn.innerHTML = '<i data-lucide="chevron-up" size="16"></i>';
-            } else {
-                btn.innerHTML = '<i data-lucide="chevron-down" size="16"></i>';
-            }
-            lucide.createIcons();
-        }
-
-        async function handleFileUpload(input) {
-            if (!input.files || input.files.length === 0) return;
-            const file = input.files[0];
-
-            if (!state.currentPlanId) {
-                addChatMessage('ai', '⚠️ Geen actief plan. Selecteer of maak eerst een plan voordat je bestanden uploadt.');
-                input.value = ''; // Reset input
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append('file', file);
-
-            const msg = addChatMessage('ai', `📁 Uploaden van bestand: ${file.name}...`);
-
-            try {
-                const resp = await fetch(`/v1/plans/${state.currentPlanId}/files`, {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if (resp.ok) {
-                    msg.textContent = `✅ Bestand geupload: ${file.name}`;
-                    // Optionally notify planner if waiting for input?
-                    // For now, just logging it to chat is fine, the planner will see it in context next turn.
-                } else {
-                    const err = await resp.text();
-                    msg.textContent = `❌ Fout bij uploaden: ${err}`;
+                if (isAlreadyActive) {
+                    // If active, just toggle the panel visibility
+                    toggleConsole();
+                    return;
                 }
-            } catch (e) {
-                msg.textContent = `❌ Netwerk fout: ${e.message}`;
-            }
-            input.value = ''; // Reset input to allow re-uploading same file
-        }
 
-        async function sendMessage() {
-            const prompt = elements.prompt.value.trim();
-            if (!prompt) return;
+                // If switching to a NEW tab:
+                // 1. Deactivate all buttons
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                // 2. Hide all contents
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
 
-            addChatMessage('user', prompt);
-            elements.prompt.value = '';
+                // 3. Activate specific button and content
+                clickedBtn.classList.add('active');
+                if (name === 'system') {
+                    document.getElementById('system-tab').classList.add('active');
+                } else {
+                    document.getElementById('process-tab').classList.add('active');
+                }
 
-            // Handle commands
-            if (prompt.startsWith('/')) {
-                handleCommand(prompt);
-                return;
-            }
-
-            if (state.isWaitingForInput && state.currentPlanId) {
-                sendTaskInput(state.currentPlanId, prompt);
-                return;
+                // 4. Ensure panel is OPEN (remove collapsed) if it was closed
+                if (panel.classList.contains('collapsed')) {
+                    toggleConsole();
+                }
             }
 
-            // Optimistic UI: Show immediate feedback
-            const thinkingMsg = addChatMessage('ai', '🤔 Analyseren van je verzoek...');
+            function toggleConsole() {
+                const panel = document.getElementById('bottom-panel');
+                const btn = document.getElementById('toggle-console-btn');
 
-            try {
-                const resp = await fetch('/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        prompt,
-                        plan_id: state.currentPlanId
-                    })
-                });
-                const data = await resp.json();
+                panel.classList.toggle('collapsed');
+                const isCollapsed = panel.classList.contains('collapsed');
 
-                // Remove thinking message
-                thinkingMsg.remove();
+                if (isCollapsed) {
+                    btn.innerHTML = '<i data-lucide="chevron-up" size="16"></i>';
+                } else {
+                    btn.innerHTML = '<i data-lucide="chevron-down" size="16"></i>';
+                }
+                lucide.createIcons();
+            }
 
-                if (data.plan) {
-                    // Reset state if we are switching to a new/different plan
-                    if (state.currentPlanId !== data.plan.plan_id) {
-                        state.shownStepIds = new Set();
-                        state.lastLogIndex = 0;
-                        elements.systemLogs.innerHTML = '';
-                        elements.stepLogs.innerHTML = '';
-                        // Clear chat history so we can rebuild it from the new plan correctly
-                        // Note: This temporarily removes the optimistic user bubble, but strict consistency restores it
-                        elements.chat.innerHTML = '';
-                        // Restore the user prompt immediately
-                        addChatMessage('user', prompt);
+            async function handleFileUpload(input) {
+                if (!input.files || input.files.length === 0) return;
+                const file = input.files[0];
 
-                        // Prevent duplication in updatePlan by fast-forwarding the shown ID
-                        if (data.plan.steps && data.plan.steps.length > 0) {
-                            const lastStep = data.plan.steps[data.plan.steps.length - 1];
-                            if (lastStep.action === 'user_query') {
-                                state.shownStepIds = state.shownStepIds || new Set();
-                                state.shownStepIds.add(lastStep.step_id);
+                if (!state.currentPlanId) {
+                    addChatMessage('ai', '⚠️ Geen actief plan. Selecteer of maak eerst een plan voordat je bestanden uploadt.');
+                    input.value = ''; // Reset input
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const msg = addChatMessage('ai', `📁 Uploaden van bestand: ${file.name}...`);
+
+                try {
+                    const resp = await fetch(`/v1/plans/${state.currentPlanId}/files`, {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (resp.ok) {
+                        msg.textContent = `✅ Bestand geupload: ${file.name}`;
+                        // Optionally notify planner if waiting for input?
+                        // For now, just logging it to chat is fine, the planner will see it in context next turn.
+                    } else {
+                        const err = await resp.text();
+                        msg.textContent = `❌ Fout bij uploaden: ${err}`;
+                    }
+                } catch (e) {
+                    msg.textContent = `❌ Netwerk fout: ${e.message}`;
+                }
+                input.value = ''; // Reset input to allow re-uploading same file
+            }
+
+            async function sendMessage() {
+                const prompt = elements.prompt.value.trim();
+                if (!prompt) return;
+
+                addChatMessage('user', prompt);
+                elements.prompt.value = '';
+
+                // Handle commands
+                if (prompt.startsWith('/')) {
+                    handleCommand(prompt);
+                    return;
+                }
+
+                if (state.isWaitingForInput && state.currentPlanId) {
+                    sendTaskInput(state.currentPlanId, prompt);
+                    return;
+                }
+
+                // Optimistic UI: Show immediate feedback
+                const thinkingMsg = addChatMessage('ai', '🤔 Analyseren van je verzoek...');
+
+                try {
+                    const resp = await fetch('/v1/chat/completions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            prompt,
+                            plan_id: state.currentPlanId
+                        })
+                    });
+                    const data = await resp.json();
+
+                    // Remove thinking message
+                    thinkingMsg.remove();
+
+                    if (data.plan) {
+                        // Reset state if we are switching to a new/different plan
+                        if (state.currentPlanId !== data.plan.plan_id) {
+                            state.shownStepIds = new Set();
+                            state.lastLogIndex = 0;
+                            elements.systemLogs.innerHTML = '';
+                            elements.stepLogs.innerHTML = '';
+                            // Clear chat history so we can rebuild it from the new plan correctly
+                            // Note: This temporarily removes the optimistic user bubble, but strict consistency restores it
+                            elements.chat.innerHTML = '';
+                            // Restore the user prompt immediately
+                            addChatMessage('user', prompt);
+
+                            // Prevent duplication in updatePlan by fast-forwarding the shown ID
+                            if (data.plan.steps && data.plan.steps.length > 0) {
+                                const lastStep = data.plan.steps[data.plan.steps.length - 1];
+                                if (lastStep.action === 'user_query') {
+                                    state.shownStepIds = state.shownStepIds || new Set();
+                                    state.shownStepIds.add(lastStep.step_id);
+                                }
                             }
                         }
+                        state.currentPlanId = data.plan.plan_id;
+                        state.lastShownStepId = state.lastShownStepId || 0;
+
+                        // addChatMessage('ai', `✅ Plan gemaakt: ${state.currentPlanId}\nOrchestration gestart...`);
+
+                        // Update plan selector to show new plan
+                        updatePlanSelector();
+
+                        // Start monitoring immediately to show the pending plan
+                        startMonitoring();
+                    } else if (data.intent) {
+                        if (data.intent.answer) {
+                            addChatMessage('ai', data.intent.answer);
+                        } else {
+                            addChatMessage('ai', `Analyse: ${data.intent.action}.`);
+                        }
                     }
-                    state.currentPlanId = data.plan.plan_id;
-                    state.lastShownStepId = state.lastShownStepId || 0;
-
-                    // addChatMessage('ai', `✅ Plan gemaakt: ${state.currentPlanId}\nOrchestration gestart...`);
-
-                    // Update plan selector to show new plan
-                    updatePlanSelector();
-
-                    // Start monitoring immediately to show the pending plan
-                    startMonitoring();
-                } else if (data.intent) {
-                    if (data.intent.answer) {
-                        addChatMessage('ai', data.intent.answer);
-                    } else {
-                        addChatMessage('ai', `Analyse: ${data.intent.action}.`);
-                    }
+                } catch (err) {
+                    thinkingMsg.remove();
+                    addChatMessage('ai', `Error: ${err.message}`);
                 }
-            } catch (err) {
-                thinkingMsg.remove();
-                addChatMessage('ai', `Error: ${err.message}`);
             }
-        }
 
-        function showOptimisticTask(planId, prompt) {
-            // Create a temporary pending card
-            const card = document.createElement('div');
-            card.className = 'task-card status-pending';
-            card.id = `temp-card-${planId}`;
+            function showOptimisticTask(planId, prompt) {
+                // Create a temporary pending card
+                const card = document.createElement('div');
+                card.className = 'task-card status-pending';
+                card.id = `temp-card-${planId}`;
 
-            card.innerHTML = `
+                card.innerHTML = `
                 <div class="task-header">
                     <span class="task-agent">orchestrator</span>
                     <span class="task-id">${planId}</span>
@@ -1494,13 +1495,13 @@
                 </div>
             `;
 
-            elements.cols.pending.appendChild(card);
-            elements.cols.pending.querySelector('.task-count').textContent = '1';
-            lucide.createIcons();
+                elements.cols.pending.appendChild(card);
+                elements.cols.pending.querySelector('.task-count').textContent = '1';
+                lucide.createIcons();
 
-            // Add spinning animation
-            const style = document.createElement('style');
-            style.textContent = `
+                // Add spinning animation
+                const style = document.createElement('style');
+                style.textContent = `
                 .lucide-spin {
                     animation: spin 1s linear infinite;
                 }
@@ -1509,385 +1510,385 @@
                     to { transform: rotate(360deg); }
                 }
             `;
-            document.head.appendChild(style);
-        }
+                document.head.appendChild(style);
+            }
 
-        async function handleCommand(cmd) {
-            const parts = cmd.split(' ');
-            const command = parts[0].toLowerCase();
+            async function handleCommand(cmd) {
+                const parts = cmd.split(' ');
+                const command = parts[0].toLowerCase();
 
-            switch (command) {
-                case '/list':
-                    try {
-                        const resp = await fetch('/v1/plans');
-                        const plans = await resp.json();
-                        if (plans && plans.length > 0) {
-                            const list = plans.map(p => `• ${p.plan_id} - ${p.status}`).join('\n');
-                            addChatMessage('ai', `📋 Actief Plan:\n${list}`);
-                        } else {
-                            addChatMessage('ai', '📋 Geen actief plan.');
-                        }
-                    } catch (e) {
-                        addChatMessage('ai', `❌ Fout bij het weergeven van de actieve plannen: ${e.message}`);
-                    }
-                    break;
-
-                case '/stop':
-                    if (state.currentPlanId) {
+                switch (command) {
+                    case '/list':
                         try {
-                            const resp = await fetch(`/v1/plans/${state.currentPlanId}/stop`, { method: 'POST' });
-                            if (resp.ok) {
-                                addChatMessage('ai', '🛑 Stop signaal verstuurd.');
+                            const resp = await fetch('/v1/plans');
+                            const plans = await resp.json();
+                            if (plans && plans.length > 0) {
+                                const list = plans.map(p => `• ${p.plan_id} - ${p.status}`).join('\n');
+                                addChatMessage('ai', `📋 Actief Plan:\n${list}`);
                             } else {
-                                addChatMessage('ai', `❌ Fout bij het stoppen van het plan: ${await resp.text()}`);
+                                addChatMessage('ai', '📋 Geen actief plan.');
                             }
                         } catch (e) {
-                            addChatMessage('ai', `❌ Fout bij het stoppen van het plan: ${e.message}`);
+                            addChatMessage('ai', `❌ Fout bij het weergeven van de actieve plannen: ${e.message}`);
                         }
-                    } else {
-                        addChatMessage('ai', '⚠️ Geen actief plan om te stoppen.');
-                    }
-                    break;
-
-                case '/switch':
-                    if (parts[1]) {
-                        state.currentPlanId = parts[1];
-                        state.lastLogIndex = 0;
-                        state.shownStepIds = new Set();
-                        elements.systemLogs.innerHTML = '';
-                        elements.stepLogs.innerHTML = '';
-                        addChatMessage('ai', `🔄 Actief plan veranderd naar: ${parts[1]}`);
-                        startMonitoring();
-                    } else {
-                        addChatMessage('ai', '⚠️ Gebruik: /switch <plan-id>');
-                    }
-                    break;
-
-                case '/del':
-                case '/delete':
-                    const delPlanId = parts[1] || state.currentPlanId;
-                    if (!delPlanId) {
-                        addChatMessage('ai', '⚠️ Geen plan om te verwijderen. Gebruik: /del <plan-id>');
                         break;
-                    }
-                    try {
-                        const resp = await fetch(`/v1/plans/${delPlanId}`, { method: 'DELETE' });
-                        if (resp.ok) {
-                            addChatMessage('ai', `🗑️ Plan verwijderd: ${delPlanId}`);
-                            if (state.currentPlanId === delPlanId) {
-                                state.currentPlanId = null;
-                                elements.systemLogs.innerHTML = '';
-                                elements.stepLogs.innerHTML = '';
 
-                                // Clear Kanban board
-                                Object.values(elements.cols).forEach(col => {
-                                    const cardsContainer = col.querySelector('.col-cards');
-                                    if (cardsContainer) cardsContainer.innerHTML = '';
-                                    col.querySelector('.task-count').textContent = '0';
-                                });
-
-                                // Reset Kanban background
-                                document.getElementById('kanban-container').className = '';
-
-                                if (state.pollingInterval) clearInterval(state.pollingInterval);
+                    case '/stop':
+                        if (state.currentPlanId) {
+                            try {
+                                const resp = await fetch(`/v1/plans/${state.currentPlanId}/stop`, { method: 'POST' });
+                                if (resp.ok) {
+                                    addChatMessage('ai', '🛑 Stop signaal verstuurd.');
+                                } else {
+                                    addChatMessage('ai', `❌ Fout bij het stoppen van het plan: ${await resp.text()}`);
+                                }
+                            } catch (e) {
+                                addChatMessage('ai', `❌ Fout bij het stoppen van het plan: ${e.message}`);
                             }
-                            updatePlanSelector();
                         } else {
-                            addChatMessage('ai', `❌ Fout bij het verwijderen van het plan: ${await resp.text()}`);
+                            addChatMessage('ai', '⚠️ Geen actief plan om te stoppen.');
                         }
-                    } catch (e) {
-                        addChatMessage('ai', `❌ Fout bij het verwijderen van het plan: ${e.message}`);
-                    }
-                    break;
-
-                case '/resume':
-                    const resumePlanId = parts[1] || state.currentPlanId;
-                    if (!resumePlanId) {
-                        addChatMessage('ai', '⚠️ Geen plan om te hervatten. Gebruik: /resume <plan-id>');
                         break;
-                    }
-                    try {
-                        const resp = await fetch(`/v1/plans/${resumePlanId}/resume`, { method: 'POST' });
-                        if (resp.ok) {
-                            addChatMessage('ai', `▶️ Plan hervat: ${resumePlanId}`);
-                            updatePlanSelector();
+
+                    case '/switch':
+                        if (parts[1]) {
+                            state.currentPlanId = parts[1];
+                            state.lastLogIndex = 0;
+                            state.shownStepIds = new Set();
+                            elements.systemLogs.innerHTML = '';
+                            elements.stepLogs.innerHTML = '';
+                            addChatMessage('ai', `🔄 Actief plan veranderd naar: ${parts[1]}`);
+                            startMonitoring();
                         } else {
-                            addChatMessage('ai', `❌ Fout bij het hervatten van het plan: ${await resp.text()}`);
+                            addChatMessage('ai', '⚠️ Gebruik: /switch <plan-id>');
                         }
-                    } catch (e) {
-                        addChatMessage('ai', `❌ Fout bij het hervatten van het plan: ${e.message}`);
-                    }
-                    break;
+                        break;
 
-                default:
-                    addChatMessage('ai', `❓ Onbekend commando: ${command}\n\nBeschikbare commando's:\n• /list - Toon alle plannen\n• /stop - Stop huidige plan\n• /switch <plan-id> - Verander naar een ander plan\n• /del <plan-id> - Verwijder een plan\n• /resume <plan-id> - Hervat een gestopt plan`);
-            }
-        }
+                    case '/del':
+                    case '/delete':
+                        const delPlanId = parts[1] || state.currentPlanId;
+                        if (!delPlanId) {
+                            addChatMessage('ai', '⚠️ Geen plan om te verwijderen. Gebruik: /del <plan-id>');
+                            break;
+                        }
+                        try {
+                            const resp = await fetch(`/v1/plans/${delPlanId}`, { method: 'DELETE' });
+                            if (resp.ok) {
+                                addChatMessage('ai', `🗑️ Plan verwijderd: ${delPlanId}`);
+                                if (state.currentPlanId === delPlanId) {
+                                    state.currentPlanId = null;
+                                    elements.systemLogs.innerHTML = '';
+                                    elements.stepLogs.innerHTML = '';
 
-        async function sendTaskInput(planId, text) {
-            try {
-                const resp = await fetch(`/v1/tasks/${planId}/message`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ input: text })
-                });
-                if (resp.ok) {
-                    state.isWaitingForInput = false;
-                    addChatMessage('user', `Input verstuurd: ${text.length > 50 ? text.substring(0, 50) + '...' : text}`);
-                } else {
-                    const err = await resp.text();
-                    addChatMessage('ai', `Failed: ${err}`);
+                                    // Clear Kanban board
+                                    Object.values(elements.cols).forEach(col => {
+                                        const cardsContainer = col.querySelector('.col-cards');
+                                        if (cardsContainer) cardsContainer.innerHTML = '';
+                                        col.querySelector('.task-count').textContent = '0';
+                                    });
+
+                                    // Reset Kanban background
+                                    document.getElementById('kanban-container').className = '';
+
+                                    if (state.pollingInterval) clearInterval(state.pollingInterval);
+                                }
+                                updatePlanSelector();
+                            } else {
+                                addChatMessage('ai', `❌ Fout bij het verwijderen van het plan: ${await resp.text()}`);
+                            }
+                        } catch (e) {
+                            addChatMessage('ai', `❌ Fout bij het verwijderen van het plan: ${e.message}`);
+                        }
+                        break;
+
+                    case '/resume':
+                        const resumePlanId = parts[1] || state.currentPlanId;
+                        if (!resumePlanId) {
+                            addChatMessage('ai', '⚠️ Geen plan om te hervatten. Gebruik: /resume <plan-id>');
+                            break;
+                        }
+                        try {
+                            const resp = await fetch(`/v1/plans/${resumePlanId}/resume`, { method: 'POST' });
+                            if (resp.ok) {
+                                addChatMessage('ai', `▶️ Plan hervat: ${resumePlanId}`);
+                                updatePlanSelector();
+                            } else {
+                                addChatMessage('ai', `❌ Fout bij het hervatten van het plan: ${await resp.text()}`);
+                            }
+                        } catch (e) {
+                            addChatMessage('ai', `❌ Fout bij het hervatten van het plan: ${e.message}`);
+                        }
+                        break;
+
+                    default:
+                        addChatMessage('ai', `❓ Onbekend commando: ${command}\n\nBeschikbare commando's:\n• /list - Toon alle plannen\n• /stop - Stop huidige plan\n• /switch <plan-id> - Verander naar een ander plan\n• /del <plan-id> - Verwijder een plan\n• /resume <plan-id> - Hervat een gestopt plan`);
                 }
-            } catch (e) {
-                addChatMessage('ai', `Connection error: ${e.message}`);
             }
-        }
 
-        function addChatMessage(role, text, isHtml = false) {
-            const div = document.createElement('div');
-            div.className = `message ${role}`;
-            if (isHtml) {
-                div.innerHTML = text;
-            } else {
-                div.textContent = text;
+            async function sendTaskInput(planId, text) {
+                try {
+                    const resp = await fetch(`/v1/tasks/${planId}/message`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ input: text })
+                    });
+                    if (resp.ok) {
+                        state.isWaitingForInput = false;
+                        addChatMessage('user', `Input verstuurd: ${text.length > 50 ? text.substring(0, 50) + '...' : text}`);
+                    } else {
+                        const err = await resp.text();
+                        addChatMessage('ai', `Failed: ${err}`);
+                    }
+                } catch (e) {
+                    addChatMessage('ai', `Connection error: ${e.message}`);
+                }
             }
-            elements.chat.appendChild(div);
-            div.scrollIntoView({ behavior: 'smooth' });
-            return div; // Return element so it can be removed if needed
-        }
 
-        function startMonitoring() {
-            if (state.pollingInterval) clearInterval(state.pollingInterval);
-            updatePlan();
-            updateLogs();
-            state.pollingInterval = setInterval(() => {
+            function addChatMessage(role, text, isHtml = false) {
+                const div = document.createElement('div');
+                div.className = `message ${role}`;
+                if (isHtml) {
+                    div.innerHTML = text;
+                } else {
+                    div.textContent = text;
+                }
+                elements.chat.appendChild(div);
+                div.scrollIntoView({ behavior: 'smooth' });
+                return div; // Return element so it can be removed if needed
+            }
+
+            function startMonitoring() {
+                if (state.pollingInterval) clearInterval(state.pollingInterval);
                 updatePlan();
                 updateLogs();
-            }, 2000);
-        }
+                state.pollingInterval = setInterval(() => {
+                    updatePlan();
+                    updateLogs();
+                }, 2000);
+            }
 
-        async function updatePlan() {
-            if (!state.currentPlanId) return;
-            try {
-                const resp = await fetch(`/v1/plans/${state.currentPlanId}`);
-                if (!resp.ok) return;
-                const plan = await resp.json();
+            async function updatePlan() {
+                if (!state.currentPlanId) return;
+                try {
+                    const resp = await fetch(`/v1/plans/${state.currentPlanId}`);
+                    if (!resp.ok) return;
+                    const plan = await resp.json();
 
-                // Ensure steps exist
-                const steps = plan.steps || [];
+                    // Ensure steps exist
+                    const steps = plan.steps || [];
 
-                // Generic Chat Result Logic using Set
-                state.shownStepIds = state.shownStepIds || new Set();
+                    // Generic Chat Result Logic using Set
+                    state.shownStepIds = state.shownStepIds || new Set();
 
-                // Process steps in order they appear in the plan
-                steps.forEach(s => {
-                    if (s.status === 'completed' && !state.shownStepIds.has(s.step_id)) {
-                        let msg = null;
-                        let role = 'ai';
+                    // Process steps in order they appear in the plan
+                    steps.forEach(s => {
+                        if (s.status === 'completed' && !state.shownStepIds.has(s.step_id)) {
+                            let msg = null;
+                            let role = 'ai';
 
-                        if (s.agent_id === 'user' || s.action.startsWith('review_')) {
-                            role = 'user';
-                        }
+                            if (s.agent_id === 'user' || s.action.startsWith('review_')) {
+                                role = 'user';
+                            }
 
-                        if (s.action === 'user_query' && s.result) {
-                            role = 'user';
-                            msg = s.result;
-                        } else if ((s.action === 'general_chat' || s.agent_id === 'router') && s.result) {
-                            msg = s.result;
-                        } else {
-                            // Generic Step Display
-                            let label = s.action.replace(/_/g, ' ');
-                            label = label.charAt(0).toUpperCase() + label.slice(1);
-
-                            let details = '';
-
-                            if (s.result && s.result.startsWith('RESULT_')) {
-                                const raw = s.result;
-                                const file = raw.split('=')[1] || raw;
-                                const type = raw.includes('VIDEO') ? '🎬 Video' : raw.includes('IMAGE') ? '🎨 Image' : '✅ Result';
-                                details = `<br><strong>${type}:</strong> ${file}`;
+                            if (s.action === 'user_query' && s.result) {
+                                role = 'user';
+                                msg = s.result;
+                            } else if ((s.action === 'general_chat' || s.agent_id === 'router') && s.result) {
+                                msg = s.result;
                             } else {
-                                // Params Display
-                                if (s.params && Object.keys(s.params).length > 0) {
-                                    const entries = Object.entries(s.params).filter(([k, v]) => v !== null && v !== undefined);
-                                    if (entries.length > 0) {
-                                        let listHtml = '<ul class="param-list">';
-                                        entries.forEach(([k, v]) => {
-                                            let valStr = '';
-                                            if (Array.isArray(v) && v.length > 0 && typeof v[0] === 'object') {
-                                                // Format Array of Objects (like av_script)
-                                                valStr = v.map((item, idx) => {
-                                                    let title = `Item ${idx + 1}`;
-                                                    if (item.scene_id) title = `Scene ${item.scene_id}`;
+                                // Generic Step Display
+                                let label = s.action.replace(/_/g, ' ');
+                                label = label.charAt(0).toUpperCase() + label.slice(1);
 
-                                                    let fields = Object.entries(item).map(([ik, iv]) => {
-                                                        // Recursive simple stringify for sub-fields if needed
-                                                        let displayVal = (typeof iv === 'object') ? JSON.stringify(iv) : String(iv);
-                                                        return `<div class="sub-row"><span class="key">${ik}:</span> <span class="sub-val">${displayVal}</span></div>`;
+                                let details = '';
+
+                                if (s.result && s.result.startsWith('RESULT_')) {
+                                    const raw = s.result;
+                                    const file = raw.split('=')[1] || raw;
+                                    const type = raw.includes('VIDEO') ? '🎬 Video' : raw.includes('IMAGE') ? '🎨 Image' : '✅ Result';
+                                    details = `<br><strong>${type}:</strong> ${file}`;
+                                } else {
+                                    // Params Display
+                                    if (s.params && Object.keys(s.params).length > 0) {
+                                        const entries = Object.entries(s.params).filter(([k, v]) => v !== null && v !== undefined);
+                                        if (entries.length > 0) {
+                                            let listHtml = '<ul class="param-list">';
+                                            entries.forEach(([k, v]) => {
+                                                let valStr = '';
+                                                if (Array.isArray(v) && v.length > 0 && typeof v[0] === 'object') {
+                                                    // Format Array of Objects (like av_script)
+                                                    valStr = v.map((item, idx) => {
+                                                        let title = `Item ${idx + 1}`;
+                                                        if (item.scene_id) title = `Scene ${item.scene_id}`;
+
+                                                        let fields = Object.entries(item).map(([ik, iv]) => {
+                                                            // Recursive simple stringify for sub-fields if needed
+                                                            let displayVal = (typeof iv === 'object') ? JSON.stringify(iv) : String(iv);
+                                                            return `<div class="sub-row"><span class="key">${ik}:</span> <span class="sub-val">${displayVal}</span></div>`;
+                                                        }).join('');
+
+                                                        return `<div class="array-item"><div class="item-header">${title}</div>${fields}</div>`;
                                                     }).join('');
+                                                    // For array items, we use a div for val to allow block display of items
+                                                    listHtml += `<li><span class="key">${k}:</span> <div class="val" style="display:block">${valStr}</div></li>`;
+                                                } else if (typeof v === 'object') {
+                                                    valStr = JSON.stringify(v, null, 2);
+                                                    listHtml += `<li><span class="key">${k}:</span> <span class="val">${valStr}</span></li>`;
+                                                } else {
+                                                    valStr = String(v);
+                                                    listHtml += `<li><span class="key">${k}:</span> <span class="val">${valStr}</span></li>`;
+                                                }
+                                            });
+                                            listHtml += '</ul>';
 
-                                                    return `<div class="array-item"><div class="item-header">${title}</div>${fields}</div>`;
-                                                }).join('');
-                                                // For array items, we use a div for val to allow block display of items
-                                                listHtml += `<li><span class="key">${k}:</span> <div class="val" style="display:block">${valStr}</div></li>`;
-                                            } else if (typeof v === 'object') {
-                                                valStr = JSON.stringify(v, null, 2);
-                                                listHtml += `<li><span class="key">${k}:</span> <span class="val">${valStr}</span></li>`;
-                                            } else {
-                                                valStr = String(v);
-                                                listHtml += `<li><span class="key">${k}:</span> <span class="val">${valStr}</span></li>`;
-                                            }
-                                        });
-                                        listHtml += '</ul>';
+                                            details += `<div class="param-box">${listHtml}</div>`;
+                                        }
+                                    }
 
-                                        details += `<div class="param-box">${listHtml}</div>`;
+                                    // Result Display (if not Approved/Completed redundancy)
+                                    if (s.result && s.result !== 'Approved' && s.result !== 'Approved by user' && s.result !== 'completed') {
+                                        details += `<br><span class="text-dim">Result: ${s.result}</span>`;
                                     }
                                 }
 
-                                // Result Display (if not Approved/Completed redundancy)
-                                if (s.result && s.result !== 'Approved' && s.result !== 'Approved by user' && s.result !== 'completed') {
-                                    details += `<br><span class="text-dim">Result: ${s.result}</span>`;
-                                }
+                                msg = `✅ <strong>${label}</strong> completed.${details}`;
                             }
 
-                            msg = `✅ <strong>${label}</strong> completed.${details}`;
+                            if (msg) {
+                                addChatMessage(role, msg, true);
+                            }
+
+                            state.shownStepIds.add(s.step_id);
+                        }
+                    });
+
+                    renderPlan(plan);
+                    renderStepList(plan);
+
+                    if (plan.status === 'waiting_input' && !state.isWaitingForInput) {
+                        state.isWaitingForInput = true;
+                        const waitingStep = plan.steps.find(s => s.status === 'waiting_input' || (s.status === 'running' && plan.status === 'waiting_input'));
+
+                        let label = 'Task';
+                        let content = 'Task is waiting for your input. Use buttons on Kanban or type feedback.';
+
+                        if (waitingStep) {
+                            label = waitingStep.action.replace(/_/g, ' ');
+                            label = label.charAt(0).toUpperCase() + label.slice(1);
+                            if (waitingStep.result) {
+                                content = waitingStep.result;
+                            }
                         }
 
-                        if (msg) {
-                            addChatMessage(role, msg, true);
-                        }
+                        // Format content (lists to param-list, text to divs)
+                        const formatContentToHtml = (text) => {
+                            if (!text) return '';
+                            const lines = text.split('\n');
+                            let html = '';
+                            let inList = false;
+                            let listHtml = '';
 
-                        state.shownStepIds.add(s.step_id);
+                            lines.forEach(line => {
+                                const trimmed = line.trim();
+                                if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+                                    if (!inList) {
+                                        inList = true;
+                                        listHtml = '<ul class="param-list">';
+                                    }
+                                    const content = trimmed.substring(2);
+                                    let liContent = '';
+                                    if (content.includes(': ')) {
+                                        const [k, ...rest] = content.split(': ');
+                                        const v = rest.join(': ');
+                                        liContent = `<span class="key">${k}:</span> <span class="val">${v}</span>`;
+                                    } else {
+                                        liContent = `<span class="val">${content}</span>`;
+                                    }
+                                    listHtml += `<li>${liContent}</li>`;
+                                } else {
+                                    if (inList) {
+                                        inList = false;
+                                        listHtml += '</ul>';
+                                        html += listHtml;
+                                    }
+                                    if (trimmed.length > 0) html += `<div>${line}</div>`;
+                                }
+                            });
+
+                            if (inList) {
+                                html += listHtml + '</ul>';
+                            }
+                            return html || text;
+                        };
+
+                        const msg = `❓ <strong>${label}</strong> waiting for your input.<br><div class="param-box">${formatContentToHtml(content)}</div>`;
+                        addChatMessage('ai', msg, true);
+                    } else if (plan.status !== 'waiting_input') {
+                        state.isWaitingForInput = false;
+                    }
+                } catch (e) { }
+            }
+
+            async function updateLogs() {
+                if (!state.currentPlanId) return;
+                try {
+                    const resp = await fetch(`/v1/logs/${state.currentPlanId}`);
+                    if (!resp.ok) return;
+                    const text = await resp.text();
+                    let lines = text.split('\n');
+
+                    // Remove trailing empty line from split
+                    if (lines.length > 0 && lines[lines.length - 1] === '') {
+                        lines.pop();
+                    }
+
+                    const newLines = lines.slice(state.lastLogIndex);
+                    if (newLines.length > 0) {
+                        newLines.forEach(line => {
+                            if (!line.trim()) return;
+                            const logDiv = document.createElement('div');
+                            logDiv.className = 'log-entry';
+                            if (line.includes('[Workflow] Completed')) logDiv.classList.add('success');
+                            else if (line.includes('❌')) logDiv.classList.add('warn');
+                            logDiv.textContent = line;
+                            elements.systemLogs.appendChild(logDiv);
+                        });
+                        elements.systemLogs.scrollTop = elements.systemLogs.scrollHeight;
+                        state.lastLogIndex = lines.length;
+                    }
+                } catch (e) { }
+            }
+
+            function renderPlan(plan) {
+                plan.steps = plan.steps || [];
+                // Update Kanban background based on plan state
+                const kanbanContainer = document.getElementById('kanban-container');
+                kanbanContainer.className = `state-${plan.status}`;
+
+                Object.values(elements.cols).forEach(col => {
+                    const cardsContainer = col.querySelector('.col-cards');
+                    if (cardsContainer) {
+                        cardsContainer.innerHTML = '';
                     }
                 });
 
-                renderPlan(plan);
-                renderStepList(plan);
+                const counts = { pending: 0, running: 0, completed: 0 };
 
-                if (plan.status === 'waiting_input' && !state.isWaitingForInput) {
-                    state.isWaitingForInput = true;
-                    const waitingStep = plan.steps.find(s => s.status === 'waiting_input' || (s.status === 'running' && plan.status === 'waiting_input'));
+                // If plan has no steps yet, show a placeholder
+                if (plan.steps.length === 0) {
+                    if (plan.status === 'pending' || plan.status === 'running') {
+                        const isRunning = plan.status === 'running';
+                        const card = document.createElement('div');
+                        card.className = `task-card status-${plan.status}`;
+                        card.onclick = () => openStepModal({
+                            step_id: 0,
+                            agent_id: 'orchestrator',
+                            action: isRunning ? 'Creating plan...' : 'Initializing plan...',
+                            status: plan.status,
+                            result: plan.intent.prompt || plan.intent.initial_prompt
+                        }, plan);
 
-                    let label = 'Task';
-                    let content = 'Task is waiting for your input. Use buttons on Kanban or type feedback.';
-
-                    if (waitingStep) {
-                        label = waitingStep.action.replace(/_/g, ' ');
-                        label = label.charAt(0).toUpperCase() + label.slice(1);
-                        if (waitingStep.result) {
-                            content = waitingStep.result;
-                        }
-                    }
-
-                    // Format content (lists to param-list, text to divs)
-                    const formatContentToHtml = (text) => {
-                        if (!text) return '';
-                        const lines = text.split('\n');
-                        let html = '';
-                        let inList = false;
-                        let listHtml = '';
-
-                        lines.forEach(line => {
-                            const trimmed = line.trim();
-                            if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-                                if (!inList) {
-                                    inList = true;
-                                    listHtml = '<ul class="param-list">';
-                                }
-                                const content = trimmed.substring(2);
-                                let liContent = '';
-                                if (content.includes(': ')) {
-                                    const [k, ...rest] = content.split(': ');
-                                    const v = rest.join(': ');
-                                    liContent = `<span class="key">${k}:</span> <span class="val">${v}</span>`;
-                                } else {
-                                    liContent = `<span class="val">${content}</span>`;
-                                }
-                                listHtml += `<li>${liContent}</li>`;
-                            } else {
-                                if (inList) {
-                                    inList = false;
-                                    listHtml += '</ul>';
-                                    html += listHtml;
-                                }
-                                if (trimmed.length > 0) html += `<div>${line}</div>`;
-                            }
-                        });
-
-                        if (inList) {
-                            html += listHtml + '</ul>';
-                        }
-                        return html || text;
-                    };
-
-                    const msg = `❓ <strong>${label}</strong> waiting for your input.<br><div class="param-box">${formatContentToHtml(content)}</div>`;
-                    addChatMessage('ai', msg, true);
-                } else if (plan.status !== 'waiting_input') {
-                    state.isWaitingForInput = false;
-                }
-            } catch (e) { }
-        }
-
-        async function updateLogs() {
-            if (!state.currentPlanId) return;
-            try {
-                const resp = await fetch(`/v1/logs/${state.currentPlanId}`);
-                if (!resp.ok) return;
-                const text = await resp.text();
-                let lines = text.split('\n');
-
-                // Remove trailing empty line from split
-                if (lines.length > 0 && lines[lines.length - 1] === '') {
-                    lines.pop();
-                }
-
-                const newLines = lines.slice(state.lastLogIndex);
-                if (newLines.length > 0) {
-                    newLines.forEach(line => {
-                        if (!line.trim()) return;
-                        const logDiv = document.createElement('div');
-                        logDiv.className = 'log-entry';
-                        if (line.includes('[Workflow] Completed')) logDiv.classList.add('success');
-                        else if (line.includes('❌')) logDiv.classList.add('warn');
-                        logDiv.textContent = line;
-                        elements.systemLogs.appendChild(logDiv);
-                    });
-                    elements.systemLogs.scrollTop = elements.systemLogs.scrollHeight;
-                    state.lastLogIndex = lines.length;
-                }
-            } catch (e) { }
-        }
-
-        function renderPlan(plan) {
-            plan.steps = plan.steps || [];
-            // Update Kanban background based on plan state
-            const kanbanContainer = document.getElementById('kanban-container');
-            kanbanContainer.className = `state-${plan.status}`;
-
-            Object.values(elements.cols).forEach(col => {
-                const cardsContainer = col.querySelector('.col-cards');
-                if (cardsContainer) {
-                    cardsContainer.innerHTML = '';
-                }
-            });
-
-            const counts = { pending: 0, running: 0, completed: 0 };
-
-            // If plan has no steps yet, show a placeholder
-            if (plan.steps.length === 0) {
-                if (plan.status === 'pending' || plan.status === 'running') {
-                    const isRunning = plan.status === 'running';
-                    const card = document.createElement('div');
-                    card.className = `task-card status-${plan.status}`;
-                    card.onclick = () => openStepModal({
-                        step_id: 0,
-                        agent_id: 'orchestrator',
-                        action: isRunning ? 'Creating plan...' : 'Initializing plan...',
-                        status: plan.status,
-                        result: plan.intent.prompt || plan.intent.initial_prompt
-                    }, plan);
-
-                    card.innerHTML = `
+                        card.innerHTML = `
                         <div class="task-header">
                             <span class="task-agent">orchestrator</span>
                             <span class="task-id">${plan.plan_id}</span>
@@ -1899,43 +1900,43 @@
                         </div>
                     `;
 
-                    let targetContainer;
-                    if (isRunning) {
-                        targetContainer = elements.cols.running.querySelector('.col-cards');
-                        counts.running++;
-                    } else {
-                        targetContainer = elements.cols.pending.querySelector('.col-cards');
-                        counts.pending++;
+                        let targetContainer;
+                        if (isRunning) {
+                            targetContainer = elements.cols.running.querySelector('.col-cards');
+                            counts.running++;
+                        } else {
+                            targetContainer = elements.cols.pending.querySelector('.col-cards');
+                            counts.pending++;
+                        }
+
+                        if (targetContainer) targetContainer.appendChild(card);
+                        lucide.createIcons();
+                    }
+                }
+
+                plan.steps.forEach(step => {
+                    // Skip planner-generated placeholder steps that haven't been executed
+                    // Show all steps including pending
+                    if (step.status === 'pending' && !step.result) {
+                        return;
                     }
 
-                    if (targetContainer) targetContainer.appendChild(card);
-                    lucide.createIcons();
-                }
-            }
+                    // Hide rejected steps from Kanban
+                    if (step.status === 'rejected') {
+                        return;
+                    }
 
-            plan.steps.forEach(step => {
-                // Skip planner-generated placeholder steps that haven't been executed
-                // Show all steps including pending
-                if (step.status === 'pending' && !step.result) {
-                    return;
-                }
+                    const card = document.createElement('div');
+                    // ... (rest of logic)
+                    card.className = `task-card status-${step.status}`;
+                    card.onclick = () => openStepModal(step, plan);
 
-                // Hide rejected steps from Kanban
-                if (step.status === 'rejected') {
-                    return;
-                }
+                    let statusIcon = 'clock';
+                    if (step.status === 'running') statusIcon = 'loader-2';
+                    if (step.status === 'completed') statusIcon = 'check-circle';
+                    if (step.status === 'waiting_input') statusIcon = 'alert-circle';
 
-                const card = document.createElement('div');
-                // ... (rest of logic)
-                card.className = `task-card status-${step.status}`;
-                card.onclick = () => openStepModal(step, plan);
-
-                let statusIcon = 'clock';
-                if (step.status === 'running') statusIcon = 'loader-2';
-                if (step.status === 'completed') statusIcon = 'check-circle';
-                if (step.status === 'waiting_input') statusIcon = 'alert-circle';
-
-                card.innerHTML = `
+                    card.innerHTML = `
                     <div class="task-header">
                         <span class="task-agent">${step.agent_id}</span>
                         <span class="task-id">#${step.step_id}</span>
@@ -1947,48 +1948,48 @@
                     </div>
                 `;
 
-                let targetCol;
-                if (step.status === 'waiting_input') {
-                    targetCol = elements.cols.interaction.querySelector('.col-cards');
-                    // We don't track a separate count for interaction in the 'counts' object in the original code, 
-                    // but we should probably add it or reuse 'running'.
-                    // For now, let's assume we want to track it.
-                    // But wait, the original code had counts defined. I should update counts too.
-                } else if (step.status === 'running') {
-                    targetCol = elements.cols.running.querySelector('.col-cards');
-                    counts.running++;
-                } else if (step.status === 'completed' || step.status === 'failed' || step.status === 'stopped' || step.status === 'error') {
-                    targetCol = elements.cols.completed.querySelector('.col-cards');
-                    counts.completed++;
-                } else {
-                    targetCol = elements.cols.pending.querySelector('.col-cards');
-                    counts.pending++;
-                }
+                    let targetCol;
+                    if (step.status === 'waiting_input') {
+                        targetCol = elements.cols.interaction.querySelector('.col-cards');
+                        // We don't track a separate count for interaction in the 'counts' object in the original code, 
+                        // but we should probably add it or reuse 'running'.
+                        // For now, let's assume we want to track it.
+                        // But wait, the original code had counts defined. I should update counts too.
+                    } else if (step.status === 'running') {
+                        targetCol = elements.cols.running.querySelector('.col-cards');
+                        counts.running++;
+                    } else if (step.status === 'completed' || step.status === 'failed' || step.status === 'stopped' || step.status === 'error') {
+                        targetCol = elements.cols.completed.querySelector('.col-cards');
+                        counts.completed++;
+                    } else {
+                        targetCol = elements.cols.pending.querySelector('.col-cards');
+                        counts.pending++;
+                    }
 
-                if (targetCol) targetCol.appendChild(card);
-            });
+                    if (targetCol) targetCol.appendChild(card);
+                });
 
-            elements.cols.pending.querySelector('.task-count').textContent = counts.pending;
-            elements.cols.interaction.querySelector('.task-count').textContent = plan.steps.filter(s => s.status === 'waiting_input').length;
-            elements.cols.running.querySelector('.task-count').textContent = counts.running;
-            elements.cols.completed.querySelector('.task-count').textContent = counts.completed;
+                elements.cols.pending.querySelector('.task-count').textContent = counts.pending;
+                elements.cols.interaction.querySelector('.task-count').textContent = plan.steps.filter(s => s.status === 'waiting_input').length;
+                elements.cols.running.querySelector('.task-count').textContent = counts.running;
+                elements.cols.completed.querySelector('.task-count').textContent = counts.completed;
 
-            lucide.createIcons();
-        }
+                lucide.createIcons();
+            }
 
-        function renderStepList(plan) {
-            elements.stepLogs.innerHTML = '';
-            // Show completed, running, waiting AND rejected steps
-            plan.steps.filter(s => s.status === 'completed' || s.status === 'running' || s.status === 'waiting_input' || s.status === 'rejected').forEach(s => {
-                const item = document.createElement('div');
-                item.className = 'step-log-item';
-                if (s.status === 'waiting_input') item.style.borderColor = 'var(--accent)';
-                if (s.status === 'rejected') {
-                    item.style.borderColor = '#ef4444';
-                    item.style.opacity = '0.7';
-                }
+            function renderStepList(plan) {
+                elements.stepLogs.innerHTML = '';
+                // Show completed, running, waiting AND rejected steps
+                plan.steps.filter(s => s.status === 'completed' || s.status === 'running' || s.status === 'waiting_input' || s.status === 'rejected').forEach(s => {
+                    const item = document.createElement('div');
+                    item.className = 'step-log-item';
+                    if (s.status === 'waiting_input') item.style.borderColor = 'var(--accent)';
+                    if (s.status === 'rejected') {
+                        item.style.borderColor = '#ef4444';
+                        item.style.opacity = '0.7';
+                    }
 
-                item.innerHTML = `
+                    item.innerHTML = `
                     <div class="step-log-header">
                         <span class="tag-agent">[${s.agent_id}]</span>
                         <span class="tag-action">${s.action}</span>
@@ -1996,104 +1997,104 @@
                     </div>
                     ${s.result ? `<div class="step-log-content">${s.result}</div>` : ''}
                 `;
-                elements.stepLogs.appendChild(item);
-            });
-            if (elements.stepLogs.innerHTML === '') {
-                elements.stepLogs.innerHTML = '<div class="message">Wacht op agents om te beginnen...</div>';
-            }
-        }
-
-        let currentStep = null;
-        let currentPlan = null;
-
-        function syntaxHighlight(json) {
-            if (typeof json !== 'string') {
-                json = JSON.stringify(json, undefined, 2);
-            }
-            json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
-                let style = 'color: #fca5a5;'; // number
-                if (/^"/.test(match)) {
-                    if (/:$/.test(match)) {
-                        style = 'color: #93c5fd;'; // key
-                    } else {
-                        style = 'color: #86efac;'; // string
-                    }
-                } else if (/true|false/.test(match)) {
-                    style = 'color: #fcd34d;'; // boolean
-                } else if (/null/.test(match)) {
-                    style = 'color: #cbd5e1;'; // null
+                    elements.stepLogs.appendChild(item);
+                });
+                if (elements.stepLogs.innerHTML === '') {
+                    elements.stepLogs.innerHTML = '<div class="message">Wacht op agents om te beginnen...</div>';
                 }
-                return '<span style="' + style + '">' + match + '</span>';
-            });
-        }
+            }
 
-        function openStepModal(step, plan) {
-            currentStep = step;
-            currentPlan = plan;
+            let currentStep = null;
+            let currentPlan = null;
 
-            const modal = document.getElementById('step-modal');
-            const title = document.getElementById('modal-title');
-            const subtitle = document.getElementById('modal-subtitle');
-            const body = document.getElementById('modal-body');
-            const footer = document.getElementById('modal-footer');
-            let footerHTML = '';
+            function syntaxHighlight(json) {
+                if (typeof json !== 'string') {
+                    json = JSON.stringify(json, undefined, 2);
+                }
+                json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+                    let style = 'color: #fca5a5;'; // number
+                    if (/^"/.test(match)) {
+                        if (/:$/.test(match)) {
+                            style = 'color: #93c5fd;'; // key
+                        } else {
+                            style = 'color: #86efac;'; // string
+                        }
+                    } else if (/true|false/.test(match)) {
+                        style = 'color: #fcd34d;'; // boolean
+                    } else if (/null/.test(match)) {
+                        style = 'color: #cbd5e1;'; // null
+                    }
+                    return '<span style="' + style + '">' + match + '</span>';
+                });
+            }
 
-            title.textContent = step.action;
-            subtitle.textContent = `${step.agent_id} • Step #${step.step_id} • Plan: ${plan.plan_id}`;
+            function openStepModal(step, plan) {
+                currentStep = step;
+                currentPlan = plan;
 
-            let bodyHTML = `
+                const modal = document.getElementById('step-modal');
+                const title = document.getElementById('modal-title');
+                const subtitle = document.getElementById('modal-subtitle');
+                const body = document.getElementById('modal-body');
+                const footer = document.getElementById('modal-footer');
+                let footerHTML = '';
+
+                title.textContent = step.action;
+                subtitle.textContent = `${step.agent_id} • Step #${step.step_id} • Plan: ${plan.plan_id}`;
+
+                let bodyHTML = `
                 <div class="info-row">
                     <span class="info-label">Status:</span>
                     <span class="info-value">${step.status}</span>
                 </div>
             `;
 
-            // Show Plan Intent context
-            if (plan.intent && (plan.intent.prompt || plan.intent.initial_prompt)) {
-                bodyHTML += `
+                // Show Plan Intent context
+                if (plan.intent && (plan.intent.prompt || plan.intent.initial_prompt)) {
+                    bodyHTML += `
                     <div style="margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--glass-border);">
                         <span class="info-label">Context (Intent):</span>
                         <div style="font-size: 0.85rem; color: #e2e8f0; margin-top: 0.25rem; font-style: italic;">"${plan.intent.prompt || plan.intent.initial_prompt}"</div>
                         ${plan.intent.action ? `<div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 0.1rem;">Type: ${plan.intent.action}</div>` : ''}
                     </div>
                 `;
-            }
+                }
 
-            if (step.params && Object.keys(step.params).length > 0) {
-                bodyHTML += `
+                if (step.params && Object.keys(step.params).length > 0) {
+                    bodyHTML += `
                     <div style="margin-bottom: 1rem;">
                         <span class="info-label">Parameters:</span>
                         <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; margin-top: 0.25rem; white-space: pre-wrap; overflow-x: auto;">${syntaxHighlight(step.params)}</div>
                     </div>
                  `;
-            }
-
-            if (step.result) {
-                // Try to format result if it looks like JSON
-                let resultDisplay = step.result;
-                try {
-                    if (resultDisplay.trim().startsWith('{') || resultDisplay.trim().startsWith('[')) {
-                        const parsed = JSON.parse(resultDisplay);
-                        resultDisplay = `<div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; margin-top: 0.25rem; white-space: pre-wrap; overflow-x: auto;">${syntaxHighlight(parsed)}</div>`;
-                    }
-                } catch (e) { }
-
-                // If not formatted as JSON code block, wrap in result div
-                if (resultDisplay === step.result) {
-                    resultDisplay = `<div class="modal-result" style="white-space: pre-wrap;">${step.result}</div>`;
                 }
 
-                bodyHTML += `
+                if (step.result) {
+                    // Try to format result if it looks like JSON
+                    let resultDisplay = step.result;
+                    try {
+                        if (resultDisplay.trim().startsWith('{') || resultDisplay.trim().startsWith('[')) {
+                            const parsed = JSON.parse(resultDisplay);
+                            resultDisplay = `<div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; margin-top: 0.25rem; white-space: pre-wrap; overflow-x: auto;">${syntaxHighlight(parsed)}</div>`;
+                        }
+                    } catch (e) { }
+
+                    // If not formatted as JSON code block, wrap in result div
+                    if (resultDisplay === step.result) {
+                        resultDisplay = `<div class="modal-result" style="white-space: pre-wrap;">${step.result}</div>`;
+                    }
+
+                    bodyHTML += `
                     <div>
                         <div class="info-label" style="margin-bottom: 0.5rem;">Result / Output:</div>
                         ${resultDisplay}
                     </div>
                 `;
-            }
+                }
 
-            if (step.status === 'waiting_input' || (plan.status === 'waiting_input' && step.status === 'running')) {
-                footerHTML = `
+                if (step.status === 'waiting_input' || (plan.status === 'waiting_input' && step.status === 'running')) {
+                    footerHTML = `
                     <div class="feedback-section">
                         <label class="info-label">Your Response:</label>
                         <textarea id="feedback-input" class="feedback-input" placeholder="Type je feedback of verbetering..."></textarea>
@@ -2110,90 +2111,90 @@
                         </div>
                     </div>
                 `;
+                }
+
+                body.innerHTML = bodyHTML;
+                footer.innerHTML = footerHTML;
+                footer.style.display = footerHTML ? 'flex' : 'none';
+                modal.classList.add('active');
+                lucide.createIcons();
             }
 
-            body.innerHTML = bodyHTML;
-            footer.innerHTML = footerHTML;
-            footer.style.display = footerHTML ? 'flex' : 'none';
-            modal.classList.add('active');
-            lucide.createIcons();
-        }
+            function closeStepModal() {
+                document.getElementById('step-modal').classList.remove('active');
+                currentStep = null;
+                currentPlan = null;
+            }
 
-        function closeStepModal() {
-            document.getElementById('step-modal').classList.remove('active');
-            currentStep = null;
-            currentPlan = null;
-        }
+            // Close on ESC
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    closeStepModal();
+                }
+            });
 
-        // Close on ESC
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
+            async function submitModalAction(action) {
+                if (!currentPlan) return;
+
+                if (action === '/stop') {
+                    try {
+                        const resp = await fetch(`/v1/plans/${currentPlan.plan_id}/stop`, { method: 'POST' });
+                        if (resp.ok) {
+                            addChatMessage('user', '🛑 Stop signaal verstuurd vanuit modal.');
+                        } else {
+                            addChatMessage('ai', `❌ Fout bij het stoppen van het plan: ${await resp.text()}`);
+                        }
+                    } catch (e) {
+                        addChatMessage('ai', `❌ Fout bij het stoppen van het plan: ${e.message}`);
+                    }
+                } else {
+                    await sendTaskInput(currentPlan.plan_id, action);
+                }
                 closeStepModal();
             }
-        });
 
-        async function submitModalAction(action) {
-            if (!currentPlan) return;
+            async function submitModalFeedback() {
+                const input = document.getElementById('feedback-input');
+                const feedback = input?.value.trim();
+                if (!feedback || !currentPlan) return;
 
-            if (action === '/stop') {
-                try {
-                    const resp = await fetch(`/v1/plans/${currentPlan.plan_id}/stop`, { method: 'POST' });
-                    if (resp.ok) {
-                        addChatMessage('user', '🛑 Stop signaal verstuurd vanuit modal.');
-                    } else {
-                        addChatMessage('ai', `❌ Fout bij het stoppen van het plan: ${await resp.text()}`);
-                    }
-                } catch (e) {
-                    addChatMessage('ai', `❌ Fout bij het stoppen van het plan: ${e.message}`);
-                }
-            } else {
-                await sendTaskInput(currentPlan.plan_id, action);
+                await sendTaskInput(currentPlan.plan_id, feedback);
+                closeStepModal();
             }
-            closeStepModal();
-        }
 
-        async function submitModalFeedback() {
-            const input = document.getElementById('feedback-input');
-            const feedback = input?.value.trim();
-            if (!feedback || !currentPlan) return;
+            // Close modal on background click
+            document.getElementById('step-modal').onclick = (e) => {
+                if (e.target.id === 'step-modal') closeStepModal();
+            };
 
-            await sendTaskInput(currentPlan.plan_id, feedback);
-            closeStepModal();
-        }
+            function createNewPlan() {
+                if (state.pollingInterval) clearInterval(state.pollingInterval);
+                state.pollingInterval = null;
+                state.currentPlanId = null;
+                state.shownStepIds = new Set();
+                state.lastLogIndex = 0;
 
-        // Close modal on background click
-        document.getElementById('step-modal').onclick = (e) => {
-            if (e.target.id === 'step-modal') closeStepModal();
-        };
+                elements.planSelector.value = "";
+                elements.chat.innerHTML = '';
+                elements.systemLogs.innerHTML = '';
+                elements.stepLogs.innerHTML = '';
 
-        function createNewPlan() {
-            if (state.pollingInterval) clearInterval(state.pollingInterval);
-            state.pollingInterval = null;
-            state.currentPlanId = null;
-            state.shownStepIds = new Set();
-            state.lastLogIndex = 0;
+                // Clear Kanban board
+                Object.values(elements.cols).forEach(col => {
+                    const cardsContainer = col.querySelector('.col-cards');
+                    if (cardsContainer) cardsContainer.innerHTML = '';
+                    col.querySelector('.task-count').textContent = '0';
+                });
+                // Reset Kanban background
+                document.getElementById('kanban-container').className = '';
 
-            elements.planSelector.value = "";
-            elements.chat.innerHTML = '';
-            elements.systemLogs.innerHTML = '';
-            elements.stepLogs.innerHTML = '';
+                addChatMessage('ai', 'Nieuw plan gestart. Hoe kan ik je helpen?');
+            }
 
-            // Clear Kanban board
-            Object.values(elements.cols).forEach(col => {
-                const cardsContainer = col.querySelector('.col-cards');
-                if (cardsContainer) cardsContainer.innerHTML = '';
-                col.querySelector('.task-count').textContent = '0';
-            });
-            // Reset Kanban background
-            document.getElementById('kanban-container').className = '';
-
-            addChatMessage('ai', 'Nieuw plan gestart. Hoe kan ik je helpen?');
-        }
-
-        elements.send.onclick = sendMessage;
-        elements.prompt.onkeydown = (e) => {
-            if (e.key === 'Enter') sendMessage();
-        };
+            elements.send.onclick = sendMessage;
+            elements.prompt.onkeydown = (e) => {
+                if (e.key === 'Enter') sendMessage();
+            };
     </script>
 </body>
 
