@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"os/exec"
+	"sync"
 
 	"fmt"
 	"io"
@@ -282,20 +283,42 @@ func (e *RunExecutor) Execute(ctx context.Context, step model.Step, outputChan c
 		lcmd.Stdout = pw
 		lcmd.Stderr = pw
 
+		var wg sync.WaitGroup
+		wg.Add(1)
+		var sb strings.Builder
 		go func() {
+			defer wg.Done()
 			scanner := bufio.NewScanner(pr)
+			count := 0
+			const maxLines = 100
 			for scanner.Scan() {
-				outputChan <- scanner.Text()
+				line := scanner.Text()
+				outputChan <- line
+				if count < maxLines {
+					if count > 0 {
+						sb.WriteString("\n")
+					}
+					sb.WriteString(line)
+					count++
+				}
 			}
 		}()
 
 		if err := lcmd.Start(); err != nil {
 			pw.Close()
+			wg.Wait()
 			return fmt.Errorf("failed to start local process: %w", err)
 		}
 
 		err := lcmd.Wait()
 		pw.Close()
+		wg.Wait()
+
+		// Emit accumulated output as result
+		result := sb.String()
+		if result != "" {
+			outputChan <- fmt.Sprintf("RESULT_CONSOLE_OUTPUT=%s", result)
+		}
 
 		if err != nil {
 			return fmt.Errorf("local process exited with error: %w", err)
@@ -338,27 +361,19 @@ func (e *RunExecutor) Execute(ctx context.Context, step model.Step, outputChan c
 
 	// Stream Output
 	out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true, Follow: true})
+	var wg sync.WaitGroup
 	if err == nil {
-		// We copy to a temporary pipe or just read it to our outputChan?
-		// Since we need to prefix/process lines, stdcopy needs a writer.
-		// Let's use a goroutine to read from a wrapper.
-
-		// Actually, we can just dump it to stdout for now (attached to this process) but we want it in outputChan.
-		// Let's create a pipe.
 		r, w := io.Pipe()
+		wg.Add(2)
 		go func() {
+			defer wg.Done()
 			stdcopy.StdCopy(w, w, out)
 			w.Close()
 			out.Close()
 		}()
 
-		// Actually TeeReader is not helpful for string scanning.
-		// Use bufio scanner on the read end
-		// BUT outputChan expects strings.
-
-		// Proper way:
-		// Use bufio scanner on the read end
 		go func() {
+			defer wg.Done()
 			var sb strings.Builder
 			scanner := bufio.NewScanner(r)
 			count := 0
@@ -381,8 +396,7 @@ func (e *RunExecutor) Execute(ctx context.Context, step model.Step, outputChan c
 				outputChan <- fmt.Sprintf("Error reading stream: %v", err)
 			}
 
-			// Emit accumulated output as result (if small enough/clean)
-			// We emit it at the end
+			// Emit accumulated output as result
 			result := sb.String()
 			if result != "" {
 				outputChan <- fmt.Sprintf("RESULT_CONSOLE_OUTPUT=%s", result)
@@ -401,6 +415,9 @@ func (e *RunExecutor) Execute(ctx context.Context, step model.Step, outputChan c
 	case status := <-statusCh:
 		exitCode = status.StatusCode
 	}
+
+	// Wait for output goroutines to finish
+	wg.Wait()
 
 	// Cleanup with detached context to ensure it runs even on cancellation
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
