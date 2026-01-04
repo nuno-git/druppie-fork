@@ -296,10 +296,12 @@
             flex: 1;
             padding: 0rem 2rem 0rem 2rem;
             overflow-x: auto;
+            overflow-y: hidden;
             display: flex;
             gap: 2rem;
             background: radial-gradient(circle at top right, rgba(56, 189, 248, 0.05), transparent);
             transition: background 0.5s ease;
+            min-height: 0;
         }
 
         #kanban-container.state-pending {
@@ -1169,6 +1171,21 @@
                 <i data-lucide="trash-2" size="14"></i>
             </button>
 
+            <button onclick="openCodeEditor()" title="Open Code Editor" style="
+                    background: var(--glass-bg);
+                    border: 1px solid var(--glass-border);
+                    border-radius: 0.5rem;
+                    padding: 0.25rem 0.5rem;
+                    color: var(--text-dim);
+                    font-size: 0.75rem;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.25rem;
+                ">
+                <i data-lucide="code" size="14"></i>
+            </button>
+
             <a href="../index.html" title="Open Documentation Portal" style="
                     background: var(--glass-bg);
                     border: 1px solid var(--glass-border);
@@ -1184,6 +1201,7 @@
                 ">
                 <i data-lucide="book" size="14"></i>
             </a>
+
             <button id="logout-btn" onclick="handleLogout()" title="Logout" style="
                         background: transparent;
                         border: none;
@@ -1304,6 +1322,13 @@
         user: null
     };
 
+    function openCodeEditor() {
+        if (!state.currentPlanId) {
+            return; // Silently return if no plan selected
+        }
+        window.location.href = `/code?plan_id=${state.currentPlanId}`;
+    }
+
     // --- Auth Logic ---
 
     async function checkConfig() {
@@ -1353,10 +1378,33 @@
         if (state.token) {
             // Optimistic success, hide login
             document.getElementById('login-overlay').style.display = 'none';
-            // Start things
-            updatePlanSelector();
+
+            // Check for plan_id in URL parameter (e.g., from code editor)
+            const urlParams = new URLSearchParams(window.location.search);
+            const planIdParam = urlParams.get('plan_id');
+
+            // Start things - await updatePlanSelector if we need to switch to a specific plan
+            if (planIdParam) {
+                await updatePlanSelector();
+                // Set the dropdown value and trigger change event to load the plan
+                // Use setTimeout to avoid interfering with initial page interactions
+                setTimeout(() => {
+                    const selector = document.getElementById('plan-selector');
+                    if (selector && selector.value !== planIdParam) {
+                        selector.value = planIdParam;
+                        // Trigger the onchange event to load the plan with proper bubbling
+                        const event = new Event('change', { bubbles: true });
+                        selector.dispatchEvent(event);
+                    }
+                }, 100);
+                // Clean up URL (remove parameter)
+                window.history.replaceState({}, '', '/ui/index.html');
+            } else {
+                updatePlanSelector();
+            }
+
             state.stateInterval = setInterval(updatePlanSelector, 5000);
-            fetchVersion(); // Added fetchVersion
+            fetchVersion();
         } else {
             // Show login
             showLogin();
@@ -1459,16 +1507,16 @@
     // Plan selector change handler
     elements.planSelector.onchange = async function () {
         const selectedPlanId = this.value;
-        if (!selectedPlanId) return;
+        if (!selectedPlanId || selectedPlanId === state.currentPlanId) return;
 
-        state.currentPlanId = selectedPlanId;
         state.lastLogIndex = 0;
         state.shownStepIds = new Set();
         elements.systemLogs.innerHTML = '';
         elements.stepLogs.innerHTML = '';
         elements.chat.innerHTML = '';
-
-        addChatMessage('ai', `🔄 Wissel naar plan: ${selectedPlanId}`);
+        if (state.currentPlanId)
+            addChatMessage('ai', `🔄 Wissel naar plan: ${selectedPlanId}`);
+        state.currentPlanId = selectedPlanId;
         startMonitoring();
     };
 
@@ -2286,40 +2334,48 @@
 
         lucide.createIcons();
 
-        // Scroll the column containing the LAST card into view
-        // to ensure user sees the latest activity / new card.
-        // Disable auto-scroll if plan is stopped to allow user to inspect history without jumping.
-        if (plan.steps.length > 0 && plan.status !== 'stopped') {
-            const lastStep = plan.steps[plan.steps.length - 1];
-            let lastColContainer = null;
-            if (lastStep.status === 'waiting_input') {
-                lastColContainer = elements.cols.interaction.querySelector('.col-cards');
-            } else if (lastStep.status === 'running') {
-                lastColContainer = elements.cols.running.querySelector('.col-cards');
-            } else if (lastStep.status === 'completed' || lastStep.status === 'failed' || lastStep.status === 'stopped' || lastStep.status === 'error') {
-                lastColContainer = elements.cols.completed.querySelector('.col-cards');
+        // Scroll logic
+        // 1. Scroll on new plan (placeholder)
+        // 2. Scroll on active plan progress
+        // 3. STOP scroll if plan is completed/stopped/failed
+        let scrollTarget = null;
+
+        if (['completed', 'failed'].includes(plan.status)) {
+            // Do not auto-scroll
+        } else if (plan.steps.length === 0) {
+            // New Plan Placeholder Case
+            if (plan.status === 'running') {
+                scrollTarget = elements.cols.running.querySelector('.col-cards');
             } else {
-                lastColContainer = elements.cols.pending.querySelector('.col-cards');
+                scrollTarget = elements.cols.pending.querySelector('.col-cards');
             }
-
-            // Scroll that specific container
-            // Scroll that specific container
-            if (lastColContainer) {
-                requestAnimationFrame(() => {
-                    // Vertical scroll of the card list
-                    if (lastColContainer.scrollHeight > lastColContainer.clientHeight) {
-                        lastColContainer.scrollTop = lastColContainer.scrollHeight;
-                    }
-
-                    // Horizontal scroll of the entire Kanban board (Mobile)
-                    // Find the parent column element (task-card's grand-parent is kanban-col?)
-                    // Actually lastColContainer is .col-cards. Its parent is the .kanban-col.
-                    const col = lastColContainer.parentElement;
-                    if (col) {
-                        col.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-                    }
-                });
+        } else {
+            // Existing Steps Case
+            const lastStep = plan.steps[plan.steps.length - 1];
+            if (lastStep.status === 'waiting_input') {
+                scrollTarget = elements.cols.interaction.querySelector('.col-cards');
+            } else if (lastStep.status === 'running') {
+                scrollTarget = elements.cols.running.querySelector('.col-cards');
+            } else if (['completed', 'failed', 'stopped', 'error'].includes(lastStep.status)) {
+                scrollTarget = elements.cols.completed.querySelector('.col-cards');
+            } else {
+                scrollTarget = elements.cols.pending.querySelector('.col-cards');
             }
+        }
+
+        if (scrollTarget) {
+            requestAnimationFrame(() => {
+                // Vertical scroll of the card list
+                if (scrollTarget.scrollHeight > scrollTarget.clientHeight) {
+                    scrollTarget.scrollTop = scrollTarget.scrollHeight;
+                }
+
+                // Horizontal scroll of the entire Kanban board (for Mobile/Overflow)
+                const col = scrollTarget.parentElement;
+                if (col) {
+                    col.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+                }
+            });
         }
     }
 
@@ -2534,7 +2590,7 @@
         // Reset Kanban background
         document.getElementById('kanban-container').className = '';
 
-        addChatMessage('ai', 'Nieuw plan gestart. Hoe kan ik je helpen?');
+        addChatMessage('ai', 'Klaar voor een nieuw plan. Hoe kan ik je helpen?');
     }
 
     elements.send.onclick = sendMessage;

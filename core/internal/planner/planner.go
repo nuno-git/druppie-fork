@@ -340,12 +340,24 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 // UpdatePlan updates an existing plan based on user feedback or answers.
 func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, feedback string) (*model.ExecutionPlan, error) {
 	// 0. Handle Feedback
-	// Find the first pending step that would have triggered this feedback
+	// Find the first non-completed step that matches the feedback category and mark it as completed
 	for i := range plan.Steps {
-		if plan.Steps[i].Status == "pending" {
+		status := plan.Steps[i].Status
+		// If it was already completed (by TaskManager /accept logic), just ensure the result is set if empty
+		if status == "completed" {
+			action := plan.Steps[i].Action
+			if action == "ask_questions" || action == "copywriting" || action == "video-design" || action == "content-review" || action == "draft_scenes" {
+				if plan.Steps[i].Result == "" {
+					plan.Steps[i].Result = feedback
+				}
+				// We don't break yet, in case there's another active one (unlikely but safe)
+			}
+			continue
+		}
+		if status == "pending" || status == "waiting_input" || status == "running" {
 			// If it's a question or content creation step, mark it as completed
 			action := plan.Steps[i].Action
-			if action == "ask_questions" || action == "copywriting" || action == "video-design" || action == "content-review" {
+			if action == "ask_questions" || action == "copywriting" || action == "video-design" || action == "content-review" || action == "draft_scenes" {
 				plan.Steps[i].Status = "completed"
 				plan.Steps[i].Result = feedback
 				break

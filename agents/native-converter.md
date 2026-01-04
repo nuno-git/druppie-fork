@@ -1,7 +1,7 @@
 ---
 id: native-workflow-engineer
 name: "Native Workflow Engineer"
-description: "Expert Golang Engineer specialized in converting Agent Definitions into High-Performance Native Code Workflows."
+description: "Expert Golang Engineer specialized in converting Agent Definitions into High-Performance Native Code Workflows. Use ONLY when explicitly asked to optimize Druppie agents or when creating complex native workflows."
 type: agent
 version: 1.0.0
 native: true

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sjhoeksma/druppie/core/internal/builder"
 	"github.com/sjhoeksma/druppie/core/internal/executor"
 	"github.com/sjhoeksma/druppie/core/internal/model"
 	"github.com/sjhoeksma/druppie/core/internal/planner"
@@ -44,13 +45,13 @@ type Task struct {
 	Cancel    context.CancelFunc
 }
 
-func NewTaskManager(p *planner.Planner) *TaskManager {
+func NewTaskManager(p *planner.Planner, buildEngine builder.BuildEngine) *TaskManager {
 	tm := &TaskManager{
 		tasks:           make(map[string]*Task),
 		planner:         p,
 		OutputChan:      make(chan string, 100),
 		TaskDoneChan:    make(chan string, 10),
-		dispatcher:      executor.NewDispatcher(),
+		dispatcher:      executor.NewDispatcher(buildEngine),
 		workflowManager: workflows.NewManager(),
 	}
 	return tm
@@ -512,14 +513,14 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 								parts := strings.SplitN(msg, "=", 2)
 								if len(parts) == 2 {
 									key := strings.TrimPrefix(parts[0], "RESULT_")
-									resultBuilder.WriteString(fmt.Sprintf("%s: %s\n", key, parts[1]))
+									if key == "CONSOLE_OUTPUT" {
+										resultBuilder.WriteString(parts[1] + "\n")
+									} else {
+										resultBuilder.WriteString(fmt.Sprintf("%s: %s\n", key, parts[1]))
+									}
 								}
-								// Do NOT log functional results to user console to keep clean?
-								// Or log them? The user example showed RESULT_VIDEO_FILE...
-								// Let's keep logging them but buffered.
-								logMu.Lock()
-								logBuffer = append(logBuffer, msg)
-								logMu.Unlock()
+								// Do NOT log result lines to console/logBuffer.
+								// They are internal protocol for result passing.
 							} else {
 								logMu.Lock()
 								logBuffer = append(logBuffer, msg)
@@ -540,7 +541,46 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 						if step.Params == nil {
 							step.Params = make(map[string]interface{})
 						}
-						step.Params["_plan_id"] = task.ID
+						step.Params["plan_id"] = task.ID
+
+						// Parameter Variable Substitution
+						// Resolve ${VAR} using results from previous steps
+						// 1. Collect results map
+						resultsMap := make(map[string]string)
+						tm.mu.Lock()
+						currentP, _ := tm.planner.Store.GetPlan(task.ID)
+						tm.mu.Unlock()
+
+						for _, prevStep := range currentP.Steps {
+							if prevStep.ID < step.ID && prevStep.Status == "completed" {
+								// Parse result string (Key: Value\nKey:Value)
+								lines := strings.Split(prevStep.Result, "\n")
+								for _, line := range lines {
+									parts := strings.SplitN(line, ":", 2)
+									if len(parts) == 2 {
+										k := strings.TrimSpace(parts[0])
+										v := strings.TrimSpace(parts[1])
+										resultsMap[k] = v
+									}
+								}
+							}
+						}
+
+						// Inject Context Variables
+						resultsMap["PLAN_ID"] = task.ID
+
+						// Replace in Params
+						for k, v := range step.Params {
+							if strVal, ok := v.(string); ok && strings.Contains(strVal, "${") {
+								for rk, rv := range resultsMap {
+									placeholder := "${" + rk + "}"
+									if strings.Contains(strVal, placeholder) {
+										strVal = strings.ReplaceAll(strVal, placeholder, rv)
+									}
+								}
+								step.Params[k] = strVal
+							}
+						}
 						execErr = exec.Execute(task.Ctx, *step, outputBridge)
 					} else {
 						execErr = tm.executeStep(task.Ctx, step)
@@ -566,6 +606,7 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 					if execErr != nil {
 						// FAILURE HANDLING: Set to Waiting Input
 						step.Status = "waiting_input"
+						step.Error = execErr.Error()
 						step.Result = fmt.Sprintf("Error: %v", execErr)
 						tm.OutputChan <- fmt.Sprintf("[%s] Step %d paused on error. Waiting for user input...", task.ID, step.ID)
 					} else {
@@ -708,48 +749,68 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 				tm.OutputChan <- fmt.Sprintf("[%s] Status updated to RUNNING (Input received)", task.ID)
 			}
 			tm.mu.Unlock()
-			activeStepIdx := batchIndices[0]
-
-			// Logic duplication from original main.go
-			if activeStep.Action == "ask_questions" {
-				if answer == "/accept" || answer == "accept" {
-					// Use defaults logic... simplified for simplicity here, assuming main loop might handle or we handle here
-					// We need to reconstruct defaults.
-					// Ideally we refactor defaults logic to helper, but let's do it inlinish
-					var assumptions []interface{}
-					if as, ok := activeStep.Params["assumptions"]; ok {
-						if listAs, isListAs := as.([]interface{}); isListAs {
-							assumptions = listAs
-						}
+			// 1. Identify which step to apply input to
+			activeStepIdx := -1
+			if activeStep != nil {
+				// Find index of activeStep in our local plan copy
+				for i := range task.Plan.Steps {
+					if &task.Plan.Steps[i] == activeStep {
+						activeStepIdx = i
+						break
 					}
-					var questions []interface{}
-					if qs, ok := activeStep.Params["questions"]; ok {
-						if list, isList := qs.([]interface{}); isList {
-							questions = list
-						} else {
-							questions = []interface{}{qs}
-						}
-					}
-					var details strings.Builder
-					for i, q := range questions {
-						val := "Unknown"
-						if i < len(assumptions) {
-							val = fmt.Sprintf("%v", assumptions[i])
-						}
-						details.WriteString(fmt.Sprintf("%v - %v\n", q, val))
-					}
-					answer = details.String()
 				}
+			} else if len(batchIndices) > 0 {
+				activeStepIdx = batchIndices[0]
 			}
 
+			if activeStepIdx == -1 {
+				tm.OutputChan <- fmt.Sprintf("[%s] Error: No active step to apply input to. Resetting state...", task.ID)
+				// If we are getting here repeatedly with "defaults", we are in an infinite loop.
+				// Stop the task.
+				task.Status = TaskStatusError
+				return
+			}
+
+			// Logic duplication from original main.go
 			// Apply to plan
-			if answer == "/accept" || answer == "accept" {
+			isAccept := answer == "/accept" || answer == "accept"
+
+			if activeStep.Action == "ask_questions" && isAccept {
+				// Reconstruct defaults from assumptions
+				var assumptions []interface{}
+				if as, ok := activeStep.Params["assumptions"]; ok {
+					if listAs, isListAs := as.([]interface{}); isListAs {
+						assumptions = listAs
+					}
+				}
+				var questions []interface{}
+				if qs, ok := activeStep.Params["questions"]; ok {
+					if list, isList := qs.([]interface{}); isList {
+						questions = list
+					} else {
+						questions = []interface{}{qs}
+					}
+				}
+				var details strings.Builder
+				for i, q := range questions {
+					val := "Accepted Default"
+					if i < len(assumptions) {
+						val = fmt.Sprintf("%v", assumptions[i])
+					}
+					details.WriteString(fmt.Sprintf("%v: %v\n", q, val))
+				}
+				answer = details.String()
+			}
+
+			if isAccept {
 				task.Plan.Steps[activeStepIdx].Status = "completed"
+				task.Plan.Steps[activeStepIdx].Result = answer
 				_ = tm.planner.Store.SavePlan(*task.Plan)
 
 				if activeStepIdx == len(task.Plan.Steps)-1 {
 					tm.OutputChan <- fmt.Sprintf("[%s] Determining next steps...", task.ID)
-					updatedPlan, err := tm.planner.UpdatePlan(task.Ctx, task.Plan, "User accepted content.")
+					// Use the actual answer (details) instead of a hardcoded string
+					updatedPlan, err := tm.planner.UpdatePlan(task.Ctx, task.Plan, answer)
 					if err == nil {
 						task.Plan = updatedPlan
 					}

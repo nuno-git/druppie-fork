@@ -46,11 +46,6 @@ func NewFileStore(baseDir string) (*FileStore, error) {
 	if err := os.MkdirAll(plansDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create plans directory: %w", err)
 	}
-	// Create logs subdir
-	logsDir := filepath.Join(baseDir, "logs")
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create logs directory: %w", err)
-	}
 	return &FileStore{baseDir: baseDir}, nil
 }
 
@@ -63,7 +58,12 @@ func (s *FileStore) SavePlan(plan model.ExecutionPlan) error {
 		return fmt.Errorf("failed to marshal plan: %w", err)
 	}
 
-	filename := filepath.Join(s.baseDir, "plans", plan.ID+".json")
+	planDir := filepath.Join(s.baseDir, "plans", plan.ID)
+	if err := os.MkdirAll(planDir, 0755); err != nil {
+		return fmt.Errorf("failed to create plan directory: %w", err)
+	}
+
+	filename := filepath.Join(planDir, "plan.json")
 	if err := os.WriteFile(filename, data, 0644); err != nil {
 		return fmt.Errorf("failed to write plan file: %w", err)
 	}
@@ -75,7 +75,7 @@ func (s *FileStore) GetPlan(id string) (model.ExecutionPlan, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	filename := filepath.Join(s.baseDir, "plans", id+".json")
+	filename := filepath.Join(s.baseDir, "plans", id, "plan.json")
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -104,8 +104,8 @@ func (s *FileStore) ListPlans() ([]model.ExecutionPlan, error) {
 
 	var plans []model.ExecutionPlan
 	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
-			data, err := os.ReadFile(filepath.Join(plansDir, entry.Name()))
+		if entry.IsDir() {
+			data, err := os.ReadFile(filepath.Join(plansDir, entry.Name(), "plan.json"))
 			if err == nil {
 				var p model.ExecutionPlan
 				if json.Unmarshal(data, &p) == nil {
@@ -121,19 +121,11 @@ func (s *FileStore) DeletePlan(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Delete plan file
-	planFile := filepath.Join(s.baseDir, "plans", id+".json")
-	if err := os.Remove(planFile); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to delete plan file: %w", err)
+	// Delete plan directory (contains plan.json, logs/, files/)
+	planDir := filepath.Join(s.baseDir, "plans", id)
+	if err := os.RemoveAll(planDir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete plan directory: %w", err)
 	}
-
-	// Delete log file if exists
-	logFile := filepath.Join(s.baseDir, "logs", id+".log")
-	_ = os.Remove(logFile) // Ignore error if log doesn't exist
-
-	// Delete files directory if exists
-	filesDir := filepath.Join(s.baseDir, "files", id)
-	_ = os.RemoveAll(filesDir)
 
 	return nil
 }
@@ -145,11 +137,13 @@ func (s *FileStore) LogInteraction(planID string, tag string, input string, outp
 	if planID == "" {
 		return nil
 	}
-	filename := planID + ".log"
 
-	path := filepath.Join(s.baseDir, "logs", filename)
-	// Create dir if missing (just in case)
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
+	// plans/<id>/logs/execution.log
+	logDir := filepath.Join(s.baseDir, "plans", planID, "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return err
+	}
+	path := filepath.Join(logDir, "execution.log")
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -170,11 +164,12 @@ func (s *FileStore) AppendRawLog(planID string, message string) error {
 	if planID == "" {
 		return fmt.Errorf("planID is empty")
 	}
-	filename := planID + ".log"
 
-	path := filepath.Join(s.baseDir, "logs", filename)
-	// Create dir if missing
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
+	logDir := filepath.Join(s.baseDir, "plans", planID, "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return err
+	}
+	path := filepath.Join(logDir, "execution.log")
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -190,8 +185,7 @@ func (s *FileStore) GetLogs(id string) (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	filename := id + ".log"
-	path := filepath.Join(s.baseDir, "logs", filename)
+	path := filepath.Join(s.baseDir, "plans", id, "logs", "execution.log")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err

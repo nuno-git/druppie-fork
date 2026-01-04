@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/sjhoeksma/druppie/core/internal/builder"
 	"github.com/sjhoeksma/druppie/core/internal/config"
+	"github.com/sjhoeksma/druppie/core/internal/converter"
 	"github.com/sjhoeksma/druppie/core/internal/iam"
 	"github.com/sjhoeksma/druppie/core/internal/llm"
 	"github.com/sjhoeksma/druppie/core/internal/model"
@@ -159,7 +160,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 				fmt.Printf("Startup Error: %v\n", err)
 				os.Exit(1)
 			}
-			tm := NewTaskManager(plannerService)
+			tm := NewTaskManager(plannerService, buildEngine)
 			cfg := cfgMgr.Get()
 
 			// Start Cleanup Routine
@@ -186,10 +187,11 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						count := 0
 
 						for _, entry := range entries {
-							if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
-								info, err := entry.Info()
+							if entry.IsDir() {
+								planPath := filepath.Join(plansDir, entry.Name(), "plan.json")
+								info, err := os.Stat(planPath)
 								if err == nil && info.ModTime().Before(cutoff) {
-									id := strings.TrimSuffix(entry.Name(), ".json")
+									id := entry.Name()
 									// Use Store to delete (handles logs/files/plans)
 									if err := plannerService.Store.DeletePlan(id); err == nil {
 										count++
@@ -276,6 +278,11 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 			r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
 				root, _ := findProjectRoot()
 				http.ServeFile(w, r, filepath.Join(root, "ui", "admin.html"))
+			})
+
+			r.Get("/code", func(w http.ResponseWriter, r *http.Request) {
+				root, _ := findProjectRoot()
+				http.ServeFile(w, r, filepath.Join(root, "ui", "code.html"))
 			})
 
 			// Public System Info
@@ -636,7 +643,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						return
 					}
 
-					id, err := buildEngine.TriggerBuild(r.Context(), req.RepoURL, req.CommitHash)
+					id, err := buildEngine.TriggerBuild(r.Context(), req.RepoURL, req.CommitHash, "", nil)
 					if err != nil {
 						http.Error(w, fmt.Sprintf("Build failed: %v", err), http.StatusInternalServerError)
 						return
@@ -780,6 +787,131 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 
 					w.Header().Set("Content-Type", "application/json")
 					json.NewEncoder(w).Encode(plan)
+				})
+
+				// --- File Management for UI ---
+				r.Get("/plans/{id}/files", func(w http.ResponseWriter, r *http.Request) {
+					id := chi.URLParam(r, "id")
+					if !strings.HasPrefix(id, "plan-") {
+						id = "plan-" + id
+					}
+
+					// Find plan dir: .druppie/plans/<id>/src (source code only)
+					root, _ := findProjectRoot()
+					planDir := filepath.Join(root, ".druppie", "plans", id, "src")
+
+					var files []string
+					// Walk relative
+					err := filepath.Walk(planDir, func(path string, info os.FileInfo, err error) error {
+						if err != nil {
+							return err
+						}
+						if !info.IsDir() {
+							rel, _ := filepath.Rel(planDir, path)
+							// Filter out common junk
+							if !strings.Contains(rel, ".git") && !strings.HasPrefix(rel, "node_modules") {
+								files = append(files, rel)
+							}
+						}
+						return nil
+					})
+
+					if err != nil {
+						http.Error(w, "Error listing files", http.StatusInternalServerError)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(files)
+				})
+
+				r.Get("/plans/{id}/files/content", func(w http.ResponseWriter, r *http.Request) {
+					id := chi.URLParam(r, "id")
+					if !strings.HasPrefix(id, "plan-") {
+						id = "plan-" + id
+					}
+					pathParam := r.URL.Query().Get("path")
+					if pathParam == "" {
+						http.Error(w, "path required", http.StatusBadRequest)
+						return
+					}
+
+					root, _ := findProjectRoot()
+					planDir := filepath.Join(root, ".druppie", "plans", id, "src")
+					absPath := filepath.Join(planDir, pathParam)
+
+					// Security check
+					cleanPlan := filepath.Clean(planDir)
+					cleanTarget := filepath.Clean(absPath)
+					if !strings.HasPrefix(cleanTarget, cleanPlan) {
+						http.Error(w, "Forbidden path", http.StatusForbidden)
+						return
+					}
+
+					http.ServeFile(w, r, absPath)
+				})
+
+				r.Put("/plans/{id}/files/content", func(w http.ResponseWriter, r *http.Request) {
+					id := chi.URLParam(r, "id")
+					if !strings.HasPrefix(id, "plan-") {
+						id = "plan-" + id
+					}
+					pathParam := r.URL.Query().Get("path")
+					if pathParam == "" {
+						http.Error(w, "path required", http.StatusBadRequest)
+						return
+					}
+
+					root, _ := findProjectRoot()
+					planDir := filepath.Join(root, ".druppie", "plans", id, "src")
+					absPath := filepath.Join(planDir, pathParam)
+
+					// Security check
+					cleanPlan := filepath.Clean(planDir)
+					cleanTarget := filepath.Clean(absPath)
+					if !strings.HasPrefix(cleanTarget, cleanPlan) {
+						http.Error(w, "Forbidden path", http.StatusForbidden)
+						return
+					}
+
+					content, err := io.ReadAll(r.Body)
+					if err != nil {
+						http.Error(w, "Failed read body", http.StatusBadRequest)
+						return
+					}
+
+					if err := os.WriteFile(absPath, content, 0644); err != nil {
+						http.Error(w, "Failed write file", http.StatusInternalServerError)
+						return
+					}
+					w.Write([]byte("OK"))
+				})
+
+				// --- Plugin Promotion ---
+				r.Post("/plans/{id}/builds/{buildID}/promote", func(w http.ResponseWriter, r *http.Request) {
+					id := chi.URLParam(r, "id")
+					if !strings.HasPrefix(id, "plan-") {
+						id = "plan-" + id
+					}
+					buildID := chi.URLParam(r, "buildID")
+
+					var req struct {
+						Name        string `json:"name"`
+						Description string `json:"description"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+						http.Error(w, "Invalid body", http.StatusBadRequest)
+						return
+					}
+
+					root, _ := findProjectRoot()
+					conv := converter.NewPluginConverter(reg, root)
+
+					if err := conv.ConvertBuildToBlock(id, buildID, req.Name, req.Description); err != nil {
+						http.Error(w, fmt.Sprintf("Promotion failed: %v", err), http.StatusInternalServerError)
+						return
+					}
+
+					w.Write([]byte("OK"))
 				})
 
 				r.Delete("/plans/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -942,7 +1074,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						return
 					}
 
-					targetDir := filepath.Join(rootDir, ".druppie", "files", id)
+					targetDir := filepath.Join(rootDir, ".druppie", "plans", id, "files")
 					if err := os.MkdirAll(targetDir, 0755); err != nil {
 						http.Error(w, "Failed to create directory", http.StatusInternalServerError)
 						return
@@ -1270,7 +1402,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		Use:   "chat",
 		Short: "Start interactive chat",
 		Run: func(cmd *cobra.Command, args []string) {
-			cfgMgr, _, router, planner, _, iamProv, err := setup(cmd)
+			cfgMgr, _, router, planner, buildEngine, iamProv, err := setup(cmd)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
@@ -1296,7 +1428,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 			}
 
 			// Initialize TaskManager
-			tm = NewTaskManager(planner)
+			tm = NewTaskManager(planner, buildEngine)
 
 			fmt.Println("--- Druppie Chat (Async) ---")
 			fmt.Printf("LLM Provider: %s\n", cfg.LLM.DefaultProvider)
@@ -1424,12 +1556,12 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		},
 	}
 
-	var planCmd = &cobra.Command{
-		Use:   "plan [prompt]",
-		Short: "Generate a plan for a given prompt",
+	var runCmd = &cobra.Command{
+		Use:   "run [prompt]",
+		Short: "Run a plan for a given prompt",
 		Args:  cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			_, _, router, planner, _, iamProv, err := setup(cmd)
+			_, _, router, planner, buildEngine, iamProv, err := setup(cmd)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
@@ -1512,7 +1644,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 			}
 
 			// Initialize TaskManager early to unify output
-			tm := NewTaskManager(planner)
+			tm := NewTaskManager(planner, buildEngine)
 
 			intent, rawRouterResp, err := router.Analyze(ctx, effectivePrompt)
 			if err != nil {
@@ -1575,29 +1707,47 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 				tm.OutputChan <- responseOutput
 			}
 
-			// Execution Loop
-			done := false
-			for !done {
-				select {
-				case log := <-tm.OutputChan:
-					fmt.Println(log)
-				case <-time.After(500 * time.Millisecond):
-					// Check status periodically
-					// Note: Direct access is slightly racy but acceptable for this CLI tool
-					switch task.Status {
-					case TaskStatusWaitingInput:
-						fmt.Println("[Auto-Pilot] Input required. Auto-accepting defaults...")
-						// Simulate user verify/accept delay
-						time.Sleep(1 * time.Second)
-						task.InputChan <- "/accept"
-					case TaskStatusCompleted:
-						fmt.Println("[Auto-Pilot] Plan execution completed successfully.")
-						done = true
-					case TaskStatusError:
-						fmt.Println("[Auto-Pilot] Plan execution failed.")
-						done = true
+			// Initialize Logging to File
+			logDir := filepath.Join(".druppie", "plans", currentPlan.ID, "logs")
+			if err := os.MkdirAll(logDir, 0755); err == nil {
+				logPath := filepath.Join(logDir, "execution.log")
+				if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+					defer f.Close()
+					// Wrap output handling to write to file
+					// We can't easily replace tm.OutputChan logic, but we can intercept the read loop below.
+
+					// Execution Loop with File Logging
+					done := false
+					for !done {
+						select {
+						case log := <-tm.OutputChan:
+							fmt.Println(log)
+							if _, err := f.WriteString(log + "\n"); err != nil {
+								fmt.Printf("Error writing to log: %v\n", err)
+							}
+						case <-time.After(500 * time.Millisecond):
+							// Check status periodically
+							// Note: Direct access is slightly racy but acceptable for this CLI tool
+							switch task.Status {
+							case TaskStatusWaitingInput:
+								fmt.Println("[Auto-Pilot] Input required. Auto-accepting defaults...")
+								// Simulate user verify/accept delay
+								time.Sleep(1 * time.Second)
+								task.InputChan <- "/accept"
+							case TaskStatusCompleted:
+								fmt.Println("[Auto-Pilot] Plan execution completed successfully.")
+								done = true
+							case TaskStatusError:
+								fmt.Println("[Auto-Pilot] Plan execution failed.")
+								done = true
+							}
+						}
 					}
+				} else {
+					fmt.Printf("Failed to open execution log: %v\n", err)
 				}
+			} else {
+				fmt.Printf("Failed to create log dir: %v\n", err)
 			}
 
 			// Fetch final state
@@ -1619,7 +1769,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(logoutCmd)
 	rootCmd.AddCommand(chatCmd)
-	rootCmd.AddCommand(planCmd)
+	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(serveCmd)
 
 	// Default to server mode

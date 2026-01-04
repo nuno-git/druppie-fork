@@ -39,6 +39,13 @@ func (r *Registry) GetBuildingBlock(id string) (model.BuildingBlock, error) {
 	return model.BuildingBlock{}, fmt.Errorf("building block %s not found", id)
 }
 
+// RegisterBuildingBlock adds or updates a building block dynamically
+func (r *Registry) RegisterBuildingBlock(block model.BuildingBlock) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.BuildingBlocks[block.ID] = block
+}
+
 // GetSkill retrieves a skill by ID
 func (r *Registry) GetSkill(id string) (model.Skill, error) {
 	r.mu.RLock()

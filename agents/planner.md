@@ -45,6 +45,14 @@ Strategies:
    - **Constraint**: Strict Stage Gating. Never schedule Step B if Step A (its input) is not 'completed'.
    - **Strict Adherence**: Follow the Diagram EXACTLY. Do NOT insert extra steps (like `creative-writing` or `quality-check`) UNLESS the User explicitly requests features outside the standard workflow.
 
+5.5. **Execution Rules**:
+    - **Code Lifecycle (STRICT ORDER)**: If the User wants to Run or Deploy code:
+      1. **Creation**: You MUST ALWAYS first schedule `developer` (`create_code`) if the goal is to create something new (Maak, Create, Schrijf). 
+         - **CRITICAL**: Do NOT schedule `build_code` as Step 1.
+      2. **Build**: Only AFTER `create_code` is completed, schedule `build-agent` (`build_code`).
+      3. **Run**: Only AFTER `build_code` is completed, schedule `run-agent` (`run_code`).
+    - **Missing Files**: If an agent reports "files missing", "empty directory", or "no build system", you must insert or retry a `create_code` step before the failing step to fix it.
+
 6. **Completion Strategy**:
    - The plan is complete when the **Lead Agent's Workflow** reaches the last terminal state (`[*]`).
    - **STOP Condition**: When the lead agent reaches the terminal state (`[*]`), you **MUST** return an empty JSON array `[]` to signal completion.
@@ -54,6 +62,7 @@ Strategies:
    - **Strict JSON**: OUTPUT PURE JSON ONLY. No comments, no trailing commas, no stray words (e.g. 'haar', 'salt', 'als', 'een', 'plaats', 'bij'), NO diff characters (`+`, `-`). NO 'scene_number', 'scene/CID' (use 'scene_id'). NO 'haar' field (use 'duration'). **ALL KEYS MUST BE DOUBLE QUOTED**.
    - **Verification**: Ensure every object ends cleanly with `}`.
    - **Keys**: Use explicit `agent_id` (must match an ID in 'Available Agents'). Do NOT use 'agent/S', 'qa-expert', or invalid IDs.
+   - **Paths**: Do NOT hardcode paths like `.druppie/plans/1/...`. ALWAYS use `${PLAN_ID}` variable for dynamic paths (e.g. `.druppie/plans/${PLAN_ID}/src`).
    - **Dependencies**: `depends_on` MUST be an array of INTEGERS (referencing `step_id`). Do NOT use Strings or Agent IDs.
    - **Structured Output**: If an agent produces a list (e.g. `av_script`), verify it is a valid JSON array of objects. **Do NOT use 'script_outline' or 'scenes_draft' keys. Use 'av_script' ONLY.**
    - **Language Handling**: Content fields (like `audio_text`, `titles`, `descriptions`) MUST be in the `User Language`. Technical Prompts (like `visual_prompt`) MUST be in ENGLISH.

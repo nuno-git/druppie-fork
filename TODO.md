@@ -23,10 +23,18 @@
 - [x] Add authentication groups
 - [ ] Secret management
 - [ ] Finish the admin UI
-- [ ] Version number by checking git tags
+- [x] Version number by checking git tags
+- [ ] Cost management, tokens used by month
+- [x] Build plane
+- [ ] Plugin system
+- [ ] Git saving of plans
+- [ ] Resume command
 
 # TESTING
 
 - [x] VIDEO: maak een kinder film over het zuiveren van afval water, 1 min, youtube
 - [x] CHAT: Kan je mij een verhaal vertellen over druppie
 - [x] CHAT Continue: Vertel meer over het Druppie-platform.
+- [x] BUILD NodeJs: Maak een node.js hello world script, bouw het en draai het.
+- [x] BUILD Python: Maak een python hello world script, bouw het en draai het.
+- [x] BUILD Go: Maak een go hello world script, bouw het en draai het.

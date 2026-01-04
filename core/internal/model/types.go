@@ -52,6 +52,7 @@ type Step struct {
 	Action    string                 `json:"action"`
 	Params    map[string]interface{} `json:"params"`
 	Result    string                 `json:"result,omitempty"`     // User feedback/answer for this step
+	Error     string                 `json:"error,omitempty"`      // captured error message
 	Status    string                 `json:"status"`               // pending, running, completed, requires_approval
 	DependsOn []int                  `json:"depends_on,omitempty"` // List of step IDs that must complete before this step starts
 }

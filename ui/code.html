@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Druppie">
+    <meta name="theme-color" content="#0f172a">
+    <title>Druppie</title>
+    <link rel="icon" type="image/svg+xml" href="../druppie_logo.svg">
+    <link rel="apple-touch-icon" href="../druppie_logo.png">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --bg-deep: #0f172a;
+            --bg-card: #1e293b;
+            --accent: #38bdf8;
+            --text-main: #f1f5f9;
+            --text-dim: #94a3b8;
+            --border: rgba(255, 255, 255, 0.1);
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg-deep);
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+            display: grid;
+            grid-template-columns: 250px 1fr;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #sidebar {
+            background: var(--bg-card);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.3s ease;
+        }
+
+        .sidebar-header {
+            padding: 0.6rem 1rem;
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #file-tree {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.5rem;
+        }
+
+        .file-item {
+            padding: 0.5rem;
+            cursor: pointer;
+            border-radius: 0.25rem;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-dim);
+            word-break: break-word;
+        }
+
+        .file-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+        }
+
+        .file-item.active {
+            background: rgba(56, 189, 248, 0.1);
+            color: var(--accent);
+        }
+
+        #editor-container {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #editor-header {
+            padding: 0.5rem 1rem;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 50px;
+            gap: 0.5rem;
+        }
+
+        #current-file {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        #monaco {
+            flex: 1;
+        }
+
+        .btn {
+            background: var(--accent);
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 0.25rem;
+            color: var(--bg-deep);
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--text-dim);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--text-main);
+            color: var(--text-main);
+        }
+
+        #menu-toggle {
+            display: none;
+            background: transparent;
+            border: none;
+            color: var(--text-main);
+            cursor: pointer;
+            padding: 0.25rem;
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 768px) {
+            body {
+                grid-template-columns: 1fr;
+            }
+
+            #sidebar {
+                position: fixed;
+                left: 0;
+                top: 0;
+                bottom: 0;
+                width: 250px;
+                z-index: 1000;
+                transform: translateX(-100%);
+            }
+
+            #sidebar.open {
+                transform: translateX(0);
+            }
+
+            #menu-toggle {
+                display: block;
+            }
+
+            #editor-header {
+                padding: 0.5rem;
+            }
+
+            .btn {
+                padding: 0.5rem 0.75rem;
+                font-size: 0.85rem;
+            }
+
+            #current-file {
+                font-size: 0.85rem;
+            }
+
+            /* Overlay when sidebar is open */
+            #sidebar.open::before {
+                content: '';
+                position: fixed;
+                top: 0;
+                left: 250px;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: -1;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .btn-text {
+                display: none;
+            }
+
+            .btn {
+                padding: 0.5rem;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+            }
+        }
+
+        /* Hide Monaco Editor mobile keyboard icon */
+        .monaco-editor .iPadShowKeyboard {
+            display: none !important;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <div style="display: flex; align-items: center; gap: 0.75rem; flex: 1;">
+                <div style="display: flex; flex-direction: column; align-items: center; gap: 0.1rem;">
+                    <img src="../druppie_logo.svg" alt="Druppie" style="width: 32px; height: 32px;">
+                    <div id="app-version" style="font-size: 0.55rem; color: var(--text-dim); opacity: 0.7;">v...</div>
+                </div>
+                <div style="display: flex; flex-direction: column;">
+                    <span style="font-size: 0.95rem; font-weight: 600;">Druppie</span>
+                    <span style="font-size: 0.7rem; color: var(--text-dim); opacity: 0.8;">File Editor</span>
+                </div>
+            </div>
+            <button class="btn-secondary" onclick="refreshFiles()" style="padding:0.25rem;" title="Refresh files">
+                <i data-lucide="refresh-cw" style="width:16px;"></i>
+            </button>
+        </div>
+        <div id="file-tree">Loading...</div>
+    </div>
+    <div id="editor-container">
+        <div id="editor-header">
+            <button id="menu-toggle" onclick="toggleSidebar()"><i data-lucide="menu" style="width:20px;"></i></button>
+            <span id="current-file">No file selected</span>
+            <div style="display:flex; gap:0.5rem;">
+                <button class="btn" style="background:#22c55e;" onclick="saveFile()"><span
+                        class="btn-text">Save</span><i data-lucide="save" style="width:16px;"></i></button>
+                <button class="btn btn-secondary"
+                    onclick="window.location.href=`/ui/index.html?plan_id=${planID}`"><span
+                        class="btn-text">Close</span><i data-lucide="x" style="width:16px;"></i></button>
+            </div>
+        </div>
+        <div id="monaco"></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+    <script>
+        lucide.createIcons();
+        const urlParams = new URLSearchParams(window.location.search);
+        const planID = urlParams.get('plan_id');
+        let editor;
+        let currentPath = null;
+
+        // Get token from localStorage (shared with main UI)
+        const token = localStorage.getItem('druppie_token');
+
+        // Fetch interceptor to add auth token
+        const originalFetch = window.fetch;
+        window.fetch = async (...args) => {
+            let [resource, config] = args;
+            if (typeof resource === 'string' && resource.startsWith('/v1/')) {
+                config = config || {};
+                config.headers = config.headers || {};
+                if (token) {
+                    config.headers['Authorization'] = 'Bearer ' + token;
+                }
+            }
+            const response = await originalFetch(resource, config);
+            if (response.status === 401) {
+                alert('Authentication required. Please login from the main UI.');
+                window.close();
+            }
+            return response;
+        };
+
+        require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
+        require(['vs/editor/editor.main'], function () {
+            editor = monaco.editor.create(document.getElementById('monaco'), {
+                value: '// Select a file from the menu',
+                language: 'javascript',
+                theme: 'vs-dark',
+                automaticLayout: true,
+                quickSuggestions: false,
+                // Hide mobile keyboard icon
+                readOnly: false,
+                domReadOnly: false
+            });
+            refreshFiles();
+            fetchVersion();
+        });
+
+        async function fetchVersion() {
+            try {
+                const res = await fetch('/v1/version');
+                if (res.ok) {
+                    const data = await res.json();
+                    const el = document.getElementById('app-version');
+                    if (el) el.textContent = `v${data.version}`;
+                }
+            } catch (e) {
+                console.warn("Failed to fetch version", e);
+            }
+        }
+
+        async function refreshFiles() {
+            if (!planID) {
+                document.getElementById('file-tree').innerText = 'No Plan ID provided';
+                return;
+            }
+            try {
+                // List files API
+                const res = await fetch(`/v1/plans/${planID}/files`);
+                const files = await res.json();
+                renderTree(files);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function renderTree(files) {
+            const container = document.getElementById('file-tree');
+            container.innerHTML = '';
+
+            // Allow files to be list of strings or objects. Assume list of relative paths.
+            files.forEach(f => {
+                const div = document.createElement('div');
+                div.className = 'file-item';
+                div.innerHTML = `<i data-lucide="file" style="width:16px;"></i> ${f}`;
+                div.onclick = () => loadFile(f);
+                container.appendChild(div);
+            });
+            lucide.createIcons();
+        }
+
+
+        async function saveFile() {
+            if (!currentPath) return;
+            const content = editor.getValue();
+            try {
+                await fetch(`/v1/plans/${planID}/files/content?path=${encodeURIComponent(currentPath)}`, {
+                    method: 'PUT',
+                    body: content
+                });
+                // Flash success
+                const btn = document.querySelector('button[onclick="saveFile()"]');
+                const originalContent = btn.innerHTML;
+                btn.innerHTML = '<span class="btn-text">Saved!</span><i data-lucide="check" style="width:16px;"></i>';
+                lucide.createIcons();
+                setTimeout(() => {
+                    btn.innerHTML = originalContent;
+                    lucide.createIcons();
+                }, 2000);
+            } catch (e) {
+                alert('Failed to save');
+            }
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('open');
+        }
+
+        // Close sidebar on file selection (mobile)
+        function loadFile(path) {
+            currentPath = path;
+            document.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
+            document.getElementById('current-file').innerText = path;
+
+            // Close sidebar on mobile
+            if (window.innerWidth <= 768) {
+                document.getElementById('sidebar').classList.remove('open');
+            }
+
+            try {
+                fetch(`/v1/plans/${planID}/files/content?path=${encodeURIComponent(path)}`)
+                    .then(res => res.text())
+                    .then(content => {
+                        editor.setValue(content);
+
+                        // Detect language
+                        let lang = 'plaintext';
+                        if (path.endsWith('.js')) lang = 'javascript';
+                        if (path.endsWith('.py')) lang = 'python';
+                        if (path.endsWith('.go')) lang = 'go';
+                        if (path.endsWith('.html')) lang = 'html';
+                        if (path.endsWith('.json')) lang = 'json';
+                        if (path.endsWith('.md')) lang = 'markdown';
+                        if (path.endsWith('.yaml')) lang = 'yaml';
+                        monaco.editor.setModelLanguage(editor.getModel(), lang);
+                    })
+                    .catch(e => {
+                        editor.setValue('Error loading file');
+                    });
+            } catch (e) {
+                editor.setValue('Error loading file');
+            }
+        }
+
+        // Initialize icons after DOM updates
+        lucide.createIcons();
+
+    </script>
+</body>
+
+</html>

@@ -3,6 +3,7 @@ package builder
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -13,12 +14,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 )
-
-// BuildEngine defines the interface for triggering builds
-type BuildEngine interface {
-	TriggerBuild(ctx context.Context, repoURL string, commitHash string) (string, error)
-	GetBuildStatus(ctx context.Context, buildID string) (string, error)
-}
 
 // TektonClient implements BuildEngine for Tekton
 type TektonClient struct {
@@ -65,7 +60,7 @@ func NewTektonClient(namespace string) (*TektonClient, error) {
 }
 
 // TriggerBuild creates a PipelineRun to build the repo
-func (c *TektonClient) TriggerBuild(ctx context.Context, repoURL string, commitHash string) (string, error) {
+func (c *TektonClient) TriggerBuild(ctx context.Context, repoURL string, commitHash string, logPath string, logWriter io.Writer) (string, error) {
 	// Name generation
 	runName := fmt.Sprintf("build-%s", filepath.Base(repoURL))
 	// Sanitize name if needed, simple version for now
@@ -75,8 +70,8 @@ func (c *TektonClient) TriggerBuild(ctx context.Context, repoURL string, commitH
 			GenerateName: runName + "-",
 			Namespace:    c.namespace,
 			Labels: map[string]string{
-				"druppie.nl/managed-by": "druppie",
-				"druppie.nl/repo":       repoURL,
+				"3pi.dev/managed-by": "druppie",
+				"3pi.dev/repo":       repoURL,
 			},
 		},
 		Spec: tektonv1.PipelineRunSpec{
@@ -117,9 +112,10 @@ func (c *TektonClient) GetBuildStatus(ctx context.Context, buildID string) (stri
 
 	// Simple status check based on usage of Knative generic conditions
 	condition := pr.Status.Conditions[0]
-	if condition.Status == "True" {
+	switch condition.Status {
+	case "True":
 		return "Succeeded", nil
-	} else if condition.Status == "False" {
+	case "False":
 		return "Failed", nil
 	}
 

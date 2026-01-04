@@ -17,7 +17,7 @@ func NewEngine(cfg config.BuildConfig) (BuildEngine, error) {
 		providerName = cfg.Provider // Legacy fallback
 	}
 	if providerName == "" {
-		providerName = "local" // Final fallback
+		providerName = "docker" // Final fallback - use Docker for consistent containerized builds
 	}
 
 	// 2. Get config for that provider
@@ -48,6 +48,12 @@ func NewEngine(cfg config.BuildConfig) (BuildEngine, error) {
 		client, err := NewLocalClient(pCfg.WorkingDir)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize local client: %w", err)
+		}
+		return client, nil
+	case "docker":
+		client, err := NewDockerClient(pCfg.WorkingDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize docker client: %w", err)
 		}
 		return client, nil
 	default:

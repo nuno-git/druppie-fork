@@ -1,7 +1,7 @@
 ---
 id: architect
 name: "Architect"
-description: "Primary architecture agent"
+description: "Primary architecture agent for designing complex enterprise systems and solution architectures. Use for multi-service or high-level design tasks."
 type: spec-agent
 version: 1.0.0
 skills: ["mermaid", "main-agent", "architectural-design"]

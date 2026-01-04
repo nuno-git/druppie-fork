@@ -15,12 +15,12 @@ docker build -t druppie .
 ### Local CLI
 To build the CLI tool for local testing:
 ```bash
-go build -o druppie ./cmd
+go build -o ../druppie ./druppie
 ```
 
 or just run :
 ```bash
-go run ./cmd
+go run ./druppie
 ```
 
 ### Gemini Setup
@@ -66,8 +66,8 @@ docker run -d \
 
 *   **Portal**: `http://localhost:8080` (Process Flow)
 *   **Chat UI**: `http://localhost:8080/ui/`
-*   **Logs**: Check `./.druppie/logs` locally to see execution logs.
-*   **Plans**: Plans are persisted in `./.druppie/plans`.
+*   **Logs**: Check `./.druppie/plans/<id>/logs` locally to see execution logs.
+*   **Plans**: Plans are persisted in `./.druppie/plans/<id>/plan.json`.
 *   **Config**: Edit `./.druppie/config.yaml` to change settings (e.g., LLM provider).
 
 ### 3. Updating an Existing Container
@@ -109,7 +109,7 @@ If you’ve made changes to the code or UI and want to update your running `drup
 
 3.  **Plan Generation**: Generate a plan for a specific intent.
     ```bash
-    ./druppie plan "create a new project with golang"
+    ./druppie run "create a new project with golang"
     ```
     
 
@@ -118,12 +118,12 @@ If you’ve made changes to the code or UI and want to update your running `drup
 ### Local CLI
 To build the WebServer tool for local testing:
 ```bash
-go build -o druppie ./cmd
+go build -o ../druppie ./cmd
 ```
 
 Start the REST API server:
 ```bash
-go run ./cmd serve
+go run ./druppie serve
 ```
 
 **Testing Config API:**
@@ -183,7 +183,7 @@ For quick testing without login, use the `--demo` flag. This forces the applicat
 
 # Use CLI tools in demo mode (skip login)
 ./druppie chat --demo
-./druppie plan "deploy database" --demo
+./druppie run "deploy database" --demo
 ```
 
 ### 4. RBAC & Filtering
