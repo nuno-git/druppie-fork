@@ -67,21 +67,25 @@ Het proces loopt altijd via vaste stappen (De "Fabriek"):
     *   De gebruiker stelt een vraag in natuurlijke taal. *"Ik wil een dashboard voor waterkwaliteit metingen".*
     *   Druppie (UI) vraagt door om de specificaties helder te krijgen ("Clarification Loop").
 
-2.  **Het Ontwerp (Architect)**:
+2.  **De Analyse (Router)**:
+    *   De **Router Agent** analyseert de intentie van de gebruiker. Is het een simpele vraag? Of wil men iets bouwen?
+    *   De Router bepaalt welk spoor wordt gevolgd: "General Chat", "Registry Search" of "New Project".
+
+3.  **Het Ontwerp (Architect)**:
     *   De **Architect Agent** analyseert de vraag, vertaalt deze naar een Technisch Ontwerp en selecteert de benodigde "Bouwblokken" (Building Blocks) uit de Registry.
 
-3.  **De Toetsing (Policy Engine - Het Geweten)**:
+4.  **De Toetsing (Policy Engine - Het Geweten)**:
     *   Vóórdat er ook maar één regel code wordt geschreven, toetst de Policy Engine het plan aan het **Bestuurlijk Kader**.
     *   *Check*: "Mag deze data wel gedeeld worden?", "Is dit AVG compliant?", "Voldoet dit aan de BIO?".
     *   Indien rood licht: Druppie stopt en legt uit waarom, of vraagt om menselijke escalatie (bijv. CISO goedkeuring voor een uitzondering).
     *   Controleert of er reeds bouwblokken bestaan die voldoen aan de specifiek eisen van de gebruiker.
     *   Elke stap in het proces wordt geregistreerd in een audit trail.
 
-4.  **De Realisatie (Builder & Foundry)**:
+5.  **De Realisatie (Builder & Foundry)**:
     *   De **Builder Agent** genereert de code (Go, Python, Terraform, HTML).
     *   De **Foundry** (Fabriek) bouwt de containers, scant ze op kwetsbaarheden (Trivy), en genereert een SBOM (Software Bill of Materials).
 
-5.  **De Uitrol (Runtime)**:
+6.  **De Uitrol (Runtime)**:
     *   Indien de bouwfase en security scans succesvol zijn, wordt de applicatie automatisch en veilig uitgerold naar de Runtime omgeving. De gebruiker krijgt direct een werkende link.
     *   De **Runtime Agent** zorgt voor de juiste omgeving (Terraform, Kubernetes).
     *   De **Beheer Agent** zorgt voor de dagelijkse beheeromgeving en beheert en update de runtime.
@@ -91,6 +95,7 @@ Het proces loopt altijd via vaste stappen (De "Fabriek"):
 sequenceDiagram
     participant User as Gebruiker
     participant UI as Druppie UI
+    participant Router as Router Agent
     participant Arch as Architect Agent
     participant Policy as Policy Engine
     participant Build as Builder Agent
@@ -98,6 +103,8 @@ sequenceDiagram
     participant Run as Runtime
 
     User->>UI: "Ik wil een Water Dashboard"
+    UI->>Router: Analyseer Intentie
+    Router-->>UI: Intentie = Bouw Opdracht
     UI->>Arch: Vertaal naar specificatie
     Arch->>Policy: Mag ik dit bouwen? (Check Kader)
     Policy-->>Arch: Akkoord (Groen Licht)
@@ -120,6 +127,7 @@ graph TD
         UI["Druppie UI (PWA)"]
         Core["Druppie Core (Orchestrator)"]
         Registry["Registry (Blokken)"]
+        Router["Router (Intent)"]
         Planner["Planner (Logic)"]
         Policy["Policy Engine (Compliance)"]
     end
@@ -140,7 +148,8 @@ graph TD
     UI -->|Stelt Vraag| Core
     Core -->|Raadpleegt| Registry
     Core -->|Toetst| Policy
-    Core -->|Plant| Planner
+    Core -->|Reroutes| Router
+    Router -->|Plant| Planner
     Planner -->|Stuurt aan| Agents
     Agents -->|Gebruikt| Skills
     Agents -->|Werkt met| MCP

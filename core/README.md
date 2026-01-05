@@ -111,8 +111,12 @@ If you’ve made changes to the code or UI and want to update your running `drup
     ```bash
     ./druppie run "create a new project with golang"
     ```
-    
 
+
+4.  **Resume Plan**: Resume a stopped or interrupted plan by ID.
+    ```bash
+    ./druppie resume plan-12345
+    ```
 ### Server Mode (New Features)
 
 ### Local CLI

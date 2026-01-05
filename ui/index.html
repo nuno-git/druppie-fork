@@ -391,6 +391,11 @@
             border-left: 3px solid var(--pending);
         }
 
+        .task-card.status-cancelled {
+            opacity: 0.7;
+            border-left: 3px solid #ef4444;
+        }
+
         .task-header {
             display: flex;
             justify-content: space-between;
@@ -2283,6 +2288,7 @@
             let statusIcon = 'clock';
             if (step.status === 'running') statusIcon = 'loader-2';
             if (step.status === 'completed') statusIcon = 'check-circle';
+            if (step.status === 'cancelled') statusIcon = 'x-circle';
             if (step.status === 'waiting_input') statusIcon = 'alert-circle';
 
             card.innerHTML = `
@@ -2307,7 +2313,7 @@
             } else if (step.status === 'running') {
                 targetCol = elements.cols.running.querySelector('.col-cards');
                 counts.running++;
-            } else if (step.status === 'completed' || step.status === 'failed' || step.status === 'stopped' || step.status === 'error') {
+            } else if (['completed', 'failed', 'stopped', 'error', 'cancelled'].includes(step.status)) {
                 targetCol = elements.cols.completed.querySelector('.col-cards');
                 counts.completed++;
             } else {
@@ -2347,7 +2353,7 @@
                 scrollTarget = elements.cols.interaction.querySelector('.col-cards');
             } else if (lastStep.status === 'running') {
                 scrollTarget = elements.cols.running.querySelector('.col-cards');
-            } else if (['completed', 'failed', 'stopped', 'error'].includes(lastStep.status)) {
+            } else if (['completed', 'failed', 'stopped', 'error', 'cancelled'].includes(lastStep.status)) {
                 scrollTarget = elements.cols.completed.querySelector('.col-cards');
             } else {
                 scrollTarget = elements.cols.pending.querySelector('.col-cards');
@@ -2373,11 +2379,12 @@
     function renderStepList(plan) {
         elements.stepLogs.innerHTML = '';
         // Show completed, running, waiting AND rejected steps
-        plan.steps.filter(s => s.status === 'completed' || s.status === 'running' || s.status === 'waiting_input' || s.status === 'rejected').forEach(s => {
+        // Show completed, running, waiting, rejected AND cancelled steps
+        plan.steps.filter(s => ['completed', 'running', 'waiting_input', 'rejected', 'cancelled'].includes(s.status)).forEach(s => {
             const item = document.createElement('div');
             item.className = 'step-log-item';
             if (s.status === 'waiting_input') item.style.borderColor = 'var(--accent)';
-            if (s.status === 'rejected') {
+            if (s.status === 'rejected' || s.status === 'cancelled') {
                 item.style.borderColor = '#ef4444';
                 item.style.opacity = '0.7';
             }
@@ -2386,7 +2393,7 @@
                     <div class="step-log-header">
                         <span class="tag-agent">[${s.agent_id}]</span>
                         <span class="tag-action">${s.action}</span>
-                        <span style="margin-left:auto; color: ${s.status === 'waiting_input' ? 'var(--accent)' : (s.status === 'rejected' ? '#ef4444' : 'inherit')}">${s.status}</span>
+                        <span style="margin-left:auto; color: ${s.status === 'waiting_input' ? 'var(--accent)' : ((s.status === 'rejected' || s.status === 'cancelled') ? '#ef4444' : 'inherit')}">${s.status}</span>
                     </div>
                     ${s.result ? `<div class="step-log-content">${s.result}</div>` : ''}
                 `;
@@ -2434,7 +2441,8 @@
         let footerHTML = '';
 
         title.textContent = step.action;
-        subtitle.textContent = `${step.agent_id} • Step #${step.step_id} • Plan: ${plan.plan_id}`;
+        // Context/Debug info
+        subtitle.textContent = `${step.agent_id} • Step #${step.step_id} • Plan: ${plan.plan_id} (${step.status})`;
 
         let bodyHTML = `
                 <div class="info-row">
@@ -2486,6 +2494,10 @@
                 `;
         }
 
+        // Footer Actions Logic
+        footerHTML = ''; // Reset
+
+        // 1. Interactive Input Required
         if (step.status === 'waiting_input' || (plan.status === 'waiting_input' && step.status === 'running')) {
             footerHTML = `
                     <div class="feedback-section">
@@ -2505,6 +2517,31 @@
                     </div>
                 `;
         }
+        // 2. Resume for Stopped/Failed Plans (Global Resume) - Prioritize this if plan is halted
+        else if (step.status === 'pending' || plan.status === 'stopped' || plan.status === 'failed' || plan.status === 'error') {
+            // For stopped/failed plans, allow Resume OR Cancel
+            footerHTML = `
+                    <div class="modal-actions">
+                        <button class="modal-btn primary" onclick="submitModalAction('/resume')">
+                            <i data-lucide="play" size="16"></i> Resume
+                        </button>
+                        <button class="modal-btn danger" onclick="submitModalAction('/stop')">
+                            <i data-lucide="x" size="16"></i> Cancel Plan
+                        </button>
+                    </div>
+                `;
+        } // 3. Resume for Stopped/Failed Plans (Global Resume) - Prioritize this if plan is halted
+        else if (step.status === 'cancelled' || plan.status === 'stopped' || plan.status === 'failed' || plan.status === 'error') {
+            // For stopped/failed plans, allow Resume OR Cancel
+            footerHTML = `
+                    <div class="modal-actions">
+                        <button class="modal-btn primary" onclick="submitModalAction('/resume')">
+                            <i data-lucide="play" size="16"></i> Resume
+                        </button>
+                    </div>
+                `;
+        }
+
 
         body.innerHTML = bodyHTML;
         footer.innerHTML = footerHTML;
@@ -2533,12 +2570,27 @@
             try {
                 const resp = await fetch(`/v1/plans/${currentPlan.plan_id}/stop`, { method: 'POST' });
                 if (resp.ok) {
-                    addChatMessage('user', '🛑 Stop signaal verstuurd vanuit modal.');
+                    addChatMessage('user', '🛑 Stop signaal verstuurd.');
+                    await updatePlan();
+                    await updateLogs();
                 } else {
                     addChatMessage('ai', `❌ Fout bij het stoppen van het plan: ${await resp.text()}`);
                 }
             } catch (e) {
                 addChatMessage('ai', `❌ Fout bij het stoppen van het plan: ${e.message}`);
+            }
+        } else if (action === '/resume') {
+            try {
+                const resp = await fetch(`/v1/plans/${currentPlan.plan_id}/resume`, { method: 'POST' });
+                if (resp.ok) {
+                    addChatMessage('ai', `▶️ Plan hervat: ${currentPlan.plan_id}`);
+                    await updatePlan();
+                    await updateLogs();
+                } else {
+                    addChatMessage('ai', `❌ Fout bij het hervatten van het plan: ${await resp.text()}`);
+                }
+            } catch (e) {
+                addChatMessage('ai', `❌ Fout bij het hervatten van het plan: ${e.message}`);
             }
         } else {
             await sendTaskInput(currentPlan.plan_id, action);

@@ -22,6 +22,7 @@ const (
 	TaskStatusRunning      TaskStatus = "Running"
 	TaskStatusWaitingInput TaskStatus = "Waiting Input"
 	TaskStatusCompleted    TaskStatus = "Completed"
+	TaskStatusCancelled    TaskStatus = "Cancelled"
 	TaskStatusError        TaskStatus = "Error"
 )
 
@@ -107,10 +108,22 @@ func (tm *TaskManager) StopTask(id string) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 	if t, ok := tm.tasks[id]; ok {
+		t.Status = TaskStatusCancelled // Mark as cancelled (user action)
 		t.Cancel()
-		t.Status = TaskStatusError // Cancelled
 		delete(tm.tasks, id)
-		tm.OutputChan <- fmt.Sprintf("[Task Manager] Stopped task %s", id)
+		tm.OutputChan <- fmt.Sprintf("[Task Manager] Cancelled task %s (User Stop)", id)
+	}
+}
+
+// FinishTask stops the task but marks it as successfully completed (User request)
+func (tm *TaskManager) FinishTask(id string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if t, ok := tm.tasks[id]; ok {
+		t.Status = TaskStatusCompleted // Mark as completed BEFORE cancelling
+		t.Cancel()
+		delete(tm.tasks, id)
+		tm.OutputChan <- fmt.Sprintf("[Task Manager] Finished task %s (User Requested)", id)
 	}
 }
 
@@ -345,6 +358,31 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 	for {
 		select {
 		case <-task.Ctx.Done():
+			// Check if it was manually cancelled/completed
+			if task.Status == TaskStatusCompleted || task.Status == TaskStatusCancelled {
+				statusStr := "completed"
+				if task.Status == TaskStatusCancelled {
+					statusStr = "cancelled"
+				}
+				tm.OutputChan <- fmt.Sprintf("[%s] Task %s by user request.", task.ID, statusStr)
+
+				tm.mu.Lock()
+				if p, err := tm.planner.Store.GetPlan(task.ID); err == nil {
+					p.Status = statusStr
+					// Mark active/pending steps as cancelled/completed
+					for i := range p.Steps {
+						s := &p.Steps[i]
+						if s.Status == "pending" || s.Status == "running" || s.Status == "waiting_input" {
+							s.Status = "cancelled"
+							s.Result = "Cancelled by user"
+						}
+					}
+					_ = tm.planner.Store.SavePlan(p)
+				}
+				tm.mu.Unlock()
+				return
+			}
+
 			tm.OutputChan <- fmt.Sprintf("[%s] Task cancelled.", task.ID)
 			task.Status = TaskStatusError
 

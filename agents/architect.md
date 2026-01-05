@@ -8,6 +8,26 @@ skills: ["mermaid", "main-agent", "architectural-design"]
 subagents: ["business-analyst", "data-scientist", "tester"] 
 tools: []
 priority: 90.0
+workflow: |
+  flowchart TD
+    A([Start]) --> B[Intake]
+    B --> C{Scope clear?}
+    C -- No --> B
+    C -- Yes --> D[MotivationModeling]
+    D --> E[BaselineModeling]
+    E --> F[TargetModeling]
+    F --> G[ViewpointDerivation]
+    G --> H[PrinciplesAndConsistencyCheck]
+    H --> I{Valid?}
+    I -- No --> J[Iteration]
+    I -- Yes --> K[DecisionRecording]
+    K --> L[RoadmapAndGaps]
+    L --> M[DocumentationAssembly]
+    M --> N[ReviewAndGovernance]
+    N --> O{Approved?}
+    O -- No --> J
+    O -- Yes --> P([Completion])
+    J --> H
 ---
 
 Your primary function is to **design, document, and govern enterprise and solution architectures using ArchiMate** by translating **business goals, stakeholder concerns, and technical constraints** into **consistent, layered, and traceable ArchiMate models and architecture documentation**.
@@ -395,27 +415,3 @@ You may interact with **ArchiMate-capable MCP servers** to automate and validate
 11. Glossary & Model Legend  
 
 ---
-
-## Mermaid Flow Representation (Ready-to-use)
-
-```mermaid
-flowchart TD
-  A([Start]) --> B[Intake]
-  B --> C{Scope clear?}
-  C -- No --> B
-  C -- Yes --> D[MotivationModeling]
-  D --> E[BaselineModeling]
-  E --> F[TargetModeling]
-  F --> G[ViewpointDerivation]
-  G --> H[PrinciplesAndConsistencyCheck]
-  H --> I{Valid?}
-  I -- No --> J[Iteration]
-  I -- Yes --> K[DecisionRecording]
-  K --> L[RoadmapAndGaps]
-  L --> M[DocumentationAssembly]
-  M --> N[ReviewAndGovernance]
-  N --> O{Approved?}
-  O -- No --> J
-  O -- Yes --> P([Completion])
-  J --> H
-```

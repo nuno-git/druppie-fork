@@ -662,13 +662,13 @@
                 "description": "Het brein van de architectuur (Semantic Kernel). Gebruikt LLMs vanuit foundry of eigen datacenter om intentie te bepalen en taken te plannen.",
                 "steps": [
                     "Ontvangen van gebruikersvraag.",
-                    "Analyseren van intentie (Planner).",
+                    "Analyseren van intentie (Router & Planner).",
                     "Raadplegen van geheugen en context.",
                     "Aansturen van downstream agents."
                 ],
                 "design": {
-                    "components": ["Semantic Kernel", "Planner", "Memory", "RAG", "Safety Filter"],
-                    "dataFlow": ["Input -> Safety -> Planner -> Execution -> Output"]
+                    "components": ["Semantic Kernel", "Router", "Planner", "Memory", "RAG", "Safety Filter"],
+                    "dataFlow": ["Input -> Router -> Safety -> Planner -> Execution -> Output"]
                 },
                 "prompts": {
                     "research": "Ontwerp orchestratie logica en planner strategie.",
@@ -1161,7 +1161,8 @@
                                         </div>
                                         <!-- Bouwblokken van de Agent -->
                                         <div class="grid grid-cols-2 gap-2">
-                                            <div id="inner-planner" class="internal-block">Planner (Logic)</div>
+                                            <div id="inner-router" class="internal-block">Router</div>
+                                            <div id="inner-planner" class="internal-block">Planner</div>
                                             <div id="inner-memory" class="internal-block">Memory (Context)</div>
                                             <div id="inner-rag" class="internal-block">RAG (Knowledge)</div>
                                             <div id="inner-safety"
@@ -1724,10 +1725,16 @@
                             // 2. Orchestration
                             moveCard('col-spec');
 
+
                             // NEW: CHECK BUILDING BLOCKS
                             highlight('comp-blocks', 'blue');
                             logTerminal("Registry: Checking for existing capabilities...", "info");
                             await sleep(800);
+
+                            highlight('inner-router', 'blue', true);
+                            logTerminal("Semantic Kernel: Router step invoked", "info");
+                            logTerminal("Router detected route: 'InformationRetrieval'", "success");
+                            await sleep(500);
 
                             highlight('inner-planner', 'blue', true);
                             logTerminal("Semantic Kernel: Planning step invoked", "info");
@@ -1773,6 +1780,12 @@
                             highlight('comp-blocks', 'blue');
                             logTerminal("Registry: No matching building block found for SQL Water Data access.", "info");
                             await sleep(800);
+
+                            highlight('inner-router', 'blue', true);
+                            logTerminal("Semantic Kernel: Router step invoked", "info");
+                            logTerminal("Router detected route: 'InformationRetrieval'", "success");
+                            await sleep(500);
+
 
                             highlight('inner-planner', 'blue', true);
                             logTerminal("Planner: Detected intent 'NewApplicationScaffold'", "success");

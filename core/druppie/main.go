@@ -100,11 +100,13 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 			return nil, nil, nil, nil, nil, nil, fmt.Errorf("registry path error: %w", err)
 		}
 
-		fmt.Printf("Loading registry from: %s\n", rootDir)
 		reg, err := registry.LoadRegistry(rootDir)
 		if err != nil {
 			return nil, nil, nil, nil, nil, nil, fmt.Errorf("registry load error: %w", err)
 		}
+		stats := reg.Stats()
+		fmt.Printf("Loading registry (%d Blocks, %d Skills, %d MCP, %d Agents) from: %s\n",
+			stats["building_blocks"], stats["skills"], stats["mcp_servers"], stats["agents"], rootDir)
 
 		// Initialize Store (Central .druppie dir for all persistence)
 		storeDir := filepath.Join(rootDir, ".druppie")
@@ -142,7 +144,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 			return nil, nil, nil, nil, nil, nil, fmt.Errorf("llm init error: %w", err)
 		}
 
-		r := router.NewRouter(llmManager, druppieStore, debug)
+		r := router.NewRouter(llmManager, druppieStore, reg, debug)
 		p := planner.NewPlanner(llmManager, reg, druppieStore, debug)
 
 		iamProv, err := iam.NewProvider(cfg.IAM, rootDir)
@@ -460,7 +462,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						}
 
 						// 2. Analyze Intent
-						intent, rawRouterResp, err := routerService.Analyze(ctx, effectivePrompt)
+						intent, _, err := routerService.Analyze(ctx, planID, effectivePrompt)
 						if err != nil {
 							tm.OutputChan <- fmt.Sprintf("[%s] Router failed: %v", planID, err)
 							// Update pending plan to failed
@@ -570,8 +572,8 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 
 							tm.OutputChan <- fmt.Sprintf("[%s] Plan created. Starting task...", planID)
 
-							// Log router step
-							_ = plannerService.Store.LogInteraction(currentPlan.ID, "Router", req.Prompt, rawRouterResp)
+							// Log router step - MOVED TO ROUTER INTERNALLY
+							// _ = plannerService.Store.LogInteraction(currentPlan.ID, "Router", req.Prompt, rawRouterResp)
 
 							// Save updated plan
 							_ = plannerService.Store.SavePlan(currentPlan)
@@ -581,13 +583,14 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						} else {
 							tm.OutputChan <- fmt.Sprintf("[%s] Request handled by Router (no plan needed).", planID)
 
-							// Log to plan-specific log so UI sees it
-							_ = plannerService.Store.LogInteraction(planID, "Router", effectivePrompt, rawRouterResp)
+							// Log to plan-specific log so UI sees it - MOVED TO ROUTER INTERNALLY
+							// _ = plannerService.Store.LogInteraction(planID, "Router", effectivePrompt, rawRouterResp)
 
 							// Determine result to show
 							resultText := intent.Answer
 							if resultText == "" {
-								resultText = rawRouterResp
+								// Fallback to the summary/prompt if no direct answer
+								resultText = intent.Prompt
 							}
 
 							// Output the response to the console
@@ -975,13 +978,24 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						id = "plan-" + id
 					}
 
-					// Stop the task via TaskManager
-					tm.StopTask(id)
+					// Stop the task via TaskManager but mark as finished/completed per user request
+					tm.FinishTask(id)
 
-					// Force update plan status to stopped
+					// Force update plan status to cancelled.
+					// Note: Finishtask runs async cancellation which also updates the plan.
+					// But we update here specifically to handle cases where the task wasn't running in memory.
 					plan, err := plannerService.Store.GetPlan(id)
 					if err == nil {
-						plan.Status = "stopped"
+						plan.Status = "cancelled"
+						// Also mark pending steps as cancelled here to handle non-running tasks
+						// or ensure consistency if TaskManager didn't catch it.
+						for i := range plan.Steps {
+							s := &plan.Steps[i]
+							if s.Status == "pending" || s.Status == "running" || s.Status == "waiting_input" {
+								s.Status = "cancelled"
+								s.Result = "Cancelled by user"
+							}
+						}
 						_ = plannerService.Store.SavePlan(plan)
 					}
 
@@ -1301,10 +1315,6 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
 			}
-			stats := reg.Stats()
-			fmt.Printf("Loaded: %d Building Blocks, %d Skills, %d MCP Servers, %d Agents\n",
-				stats["building_blocks"], stats["skills"], stats["mcp_servers"], stats["agents"])
-
 			// Admin has all access
 			adminGroups := []string{"root", "admin"}
 
@@ -1523,7 +1533,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 					// If not handled by task, treat as new Router Request
 					if !strings.HasPrefix(input, "/") {
 						fmt.Println("[Router - Analyzing]")
-						intent, rawRouterResp, err := router.Analyze(ctx, input)
+						intent, rawRouterResp, err := router.Analyze(ctx, "", input)
 						if err != nil {
 							fmt.Printf("[Error] Router failed: %v\n> ", err)
 							continue
@@ -1650,7 +1660,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 			// Initialize TaskManager early to unify output
 			tm := NewTaskManager(planner, buildEngine)
 
-			intent, rawRouterResp, err := router.Analyze(ctx, effectivePrompt)
+			intent, rawRouterResp, err := router.Analyze(ctx, planID, effectivePrompt)
 			if err != nil {
 				fmt.Printf("Router failed: %v\n", err)
 				os.Exit(1)
@@ -1763,6 +1773,69 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		},
 	}
 
+	var resumeCmd = &cobra.Command{
+		Use:   "resume [plan-id]",
+		Short: "Resume a specific plan",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			_, _, _, planner, buildEngine, iamProv, err := setup(cmd)
+			if err != nil {
+				fmt.Printf("Startup failed: %v\n", err)
+				os.Exit(1)
+			}
+
+			ctx := getAuthContext(context.Background(), iamProv, demo)
+			if user, _ := iam.GetUserFromContext(ctx); user == nil {
+				fmt.Println("You need to login first.")
+				loginCmd.Run(cmd, args)
+				if lp, ok := iamProv.(*iam.LocalProvider); ok {
+					_ = lp.ReloadSessions()
+				}
+				ctx = getAuthContext(context.Background(), iamProv, demo)
+				if user, _ := iam.GetUserFromContext(ctx); user == nil {
+					fmt.Println("Login failed or cancelled.")
+					os.Exit(1)
+				}
+			}
+
+			planID := args[0]
+			if !strings.HasPrefix(planID, "plan-") {
+				planID = "plan-" + planID
+			}
+
+			plan, err := planner.Store.GetPlan(planID)
+			if err != nil {
+				fmt.Printf("Plan %s not found\n", planID)
+				os.Exit(1)
+			}
+
+			plan.Status = "running"
+			_ = planner.Store.SavePlan(plan)
+
+			tm := NewTaskManager(planner, buildEngine)
+			task := tm.StartTask(ctx, plan)
+			fmt.Printf("Resuming plan %s...\n", plan.ID)
+
+			done := false
+			for !done {
+				select {
+				case log := <-tm.OutputChan:
+					fmt.Println(log)
+				case <-time.After(500 * time.Millisecond):
+					if task.Status == TaskStatusCompleted || task.Status == TaskStatusError || task.Status == TaskStatusCancelled {
+						fmt.Printf("Plan finished: %s\n", task.Status)
+						done = true
+					}
+					if task.Status == TaskStatusWaitingInput {
+						fmt.Println("Waiting for input... (Interaction in CLI resume not fully supported yet, use chat/UI)")
+						// Simple sleep to avoid busy loop spam
+						time.Sleep(2 * time.Second)
+					}
+				}
+			}
+		},
+	}
+
 	rootCmd.PersistentFlags().StringVar(&planID, "plan-id", "", "ID of an existing plan to resume or manage")
 	rootCmd.PersistentFlags().StringVar(&llmProviderOverride, "llm-provider", "", "Override default LLM provider")
 	rootCmd.PersistentFlags().StringVar(&buildProviderOverride, "build-provider", "", "Override default Build provider")
@@ -1774,6 +1847,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 	rootCmd.AddCommand(logoutCmd)
 	rootCmd.AddCommand(chatCmd)
 	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(resumeCmd)
 	rootCmd.AddCommand(serveCmd)
 
 	// Default to server mode

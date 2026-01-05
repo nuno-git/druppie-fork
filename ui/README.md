@@ -21,9 +21,12 @@ De UI is volledig geoptimaliseerd voor mobiel gebruik als een **Progressive Web 
     *   Statussen: *Pending*, *Waiting for Input*, *Running*, *Completed*.
     *   Inzicht in welke agent (b.v. Architect, Developer) aan welke taak werkt.
 
-3.  **Human-in-the-Loop**: 
     *   **Plan Review**: Goedkeuren, aanpassen of afwijzen van door AI gegenereerde implementatieplannen.
     *   **Feedback**: Geef sturing tijdens het proces.
+    *   **Task Controls**: 
+        *   **Cancel**: Stop een taak of plan direct ("Cancel Task/Plan").
+        *   **Resume**: Hervat een gestopt of gecrasht plan ("Resume").
+        *   **Visual Status**: Geannuleerde taken worden rood gemarkeerd voor duidelijkheid.
 
 4.  **Tools & Files**: 
     *   File Upload functionaliteit voor context.

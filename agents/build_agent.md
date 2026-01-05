@@ -9,6 +9,14 @@ skills: ["build_code"]
 subagents: []
 tools: []
 priority: 9.0
+workflow: |
+  graph TD
+      A[Start] --> B{Action is build_code?}
+      B -- Yes --> C[Parse Params]
+      C --> D[Trigger Docker Build]
+      D --> E[Collect Artifacts]
+      E --> F[Return Build ID]
+      B -- No --> G[End]
 ---
 
 ## Overview
@@ -36,16 +44,4 @@ When asked to build, you should output a plan step with action "build_code" and 
     "repo_url": ".druppie/plans/${PLAN_ID}/src"
   }
 }
-```
-
-## Workflow
-
-```mermaid
-graph TD
-    A[Start] --> B{Action is build_code?}
-    B -- Yes --> C[Parse Params]
-    C --> D[Trigger Docker Build]
-    D --> E[Collect Artifacts]
-    E --> F[Return Build ID]
-    B -- No --> G[End]
 ```

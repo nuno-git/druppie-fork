@@ -9,6 +9,13 @@ skills: ["create_code", "modify_code"]
 subagents: []
 tools: []
 priority: 10.0
+workflow: | 
+  graph TD
+      A[Start] --> B{Action is create_code?}
+      B -- Yes --> C[Validate File Paths]
+      C --> D[Write Content to Disk]
+      D --> E[Return Success]
+      B -- No --> F[End]
 ---
 
 ## Overview
@@ -38,15 +45,4 @@ Creates or overwrites files with provided content.
     }
   }
 }
-```
-
-## Workflow
-
-```mermaid
-graph TD
-    A[Start] --> B{Action is create_code?}
-    B -- Yes --> C[Validate File Paths]
-    C --> D[Write Content to Disk]
-    D --> E[Return Success]
-    B -- No --> F[End]
 ```

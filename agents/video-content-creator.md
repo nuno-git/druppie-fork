@@ -17,7 +17,7 @@ workflow: |
     
     state Intent {
       direction LR
-      state "Task: Create Video Intent\nSkill: ask_questions" as CreateIntent
+      state "Task: Create Video Intent\nSkill: content-review" as CreateIntent
       [*] --> CreateIntent
       CreateIntent --> CreateIntent: Refine Intent
       CreateIntent --> [*]: Approved Intent

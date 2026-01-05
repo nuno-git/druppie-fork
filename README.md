@@ -23,7 +23,11 @@ De locale installatie is gemaakt met GOLang je can een locale build gebruiken me
 
 ## 🚀 Snel Starten met het Platform
 
-De makkelijkste manier om te beginnen is via de **Druppie CLI** ```./script/druppie.sh``` of mocht je reeds een locale build gemaakt hebben dan gebruik je ```./core/druppie cli```
+De makkelijkste manier om te beginnen is via de **Druppie CLI** ```./script/druppie.sh``` of mocht je reeds een locale build gemaakt hebben dan gebruik je ```./druppie``` (of ```go run ./druppie``` voor dev mode).
+
+### Nieuw: Task Management
+- **Resume Plans**: Stopped of gecrashte plannen kunnen nu hervat worden via de UI ("Resume Task") of CLI: `go run ./druppie resume <plan-id>`.
+- **User Control**: Expliciete 'Cancel' en 'Review' stappen zorgen voor meer controle over de AI workflow.
 
  ![Druppie CLI](./druppie_cli.png)
 

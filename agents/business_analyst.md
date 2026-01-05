@@ -8,6 +8,26 @@ version: 1.0.0
 skills: ["main-agent", "ask_questions"]
 tools: []
 priority: 100.0
+workflow: |
+  flowchart TD
+    A([Start]) --> B[Intake]
+    B --> C{Problem clear?}
+    C -- No --> B
+    C -- Yes --> D[ProblemExploration]
+    D --> E[StakeholderUnderstanding]
+    E --> F[RequirementStructuring]
+    F --> G[EpicDefinition]
+    G --> H[UserStoryRefinement]
+    H --> I{Stories valid & testable?}
+    I -- No --> J[Iteration]
+    I -- Yes --> K[Validation]
+    K --> L{Stakeholder approved?}
+    L -- No --> J
+    L -- Yes --> M[Review]
+    M --> N{Ready for backlog?}
+    N -- No --> J
+    N -- Yes --> O([Completion])
+    J --> H
 ---
 
 Your primary function is to **elicit, structure, validate, and evolve requirements** by working with stakeholders to transform **initial ideas, problems, or user stories** into **well‑defined epics, features, and requirements** that are **clear, testable, and implementation‑ready**.
@@ -360,27 +380,3 @@ You must ensure:
 - explicit non‑functional requirements when relevant
 
 ---
-
-## Mermaid Flow Representation (Ready‑to‑use)
-
-```mermaid
-flowchart TD
-  A([Start]) --> B[Intake]
-  B --> C{Problem clear?}
-  C -- No --> B
-  C -- Yes --> D[ProblemExploration]
-  D --> E[StakeholderUnderstanding]
-  E --> F[RequirementStructuring]
-  F --> G[EpicDefinition]
-  G --> H[UserStoryRefinement]
-  H --> I{Stories valid & testable?}
-  I -- No --> J[Iteration]
-  I -- Yes --> K[Validation]
-  K --> L{Stakeholder approved?}
-  L -- No --> J
-  L -- Yes --> M[Review]
-  M --> N{Ready for backlog?}
-  N -- No --> J
-  N -- Yes --> O([Completion])
-  J --> H
-```

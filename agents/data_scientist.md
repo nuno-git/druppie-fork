@@ -8,6 +8,33 @@ auth_group: ["datalab"]
 skills: ["python", "mermaid", "sub-agent"]
 tools: []
 priority: 5.0
+workflow: |
+  flowchart TD
+    A([Start]) --> B[ProblemFraming]
+    B --> C{Criteria measurable?}
+    C -- No --> B
+    C -- Yes --> D[DataUnderstanding]
+    D --> E{Data OK & schema defined?}
+    E -- No --> ITR[Iteration]
+    E -- Yes --> F[Planning]
+    F --> G{Plan approved?}
+    G -- No --> F
+    G -- Yes --> H[Scaffolding]
+    H --> I[Implementation]
+    I --> J[Validation]
+    J --> K{Tests + metrics OK?}
+    K -- No --> ITR
+    ITR --> J
+    K -- Yes --> L[Packaging]
+    L --> M{Artifacts reproducible?}
+    M -- No --> ITR
+    M -- Yes --> N[DeploymentPrep]
+    N --> O{Deploy prep OK?}
+    O -- No --> ITR
+    O -- Yes --> P[Review]
+    P --> Q{Accepted?}
+    Q -- No --> ITR
+    Q -- Yes --> R([Completion])
 ---
 
 Your primary function is to **design, implement, validate, and operationalize Python-based data science solutions** by transforming **human intent, structured specifications, and existing codebases/data assets** into **reproducible, testable, and production-ready data science artifacts**.
@@ -459,34 +486,3 @@ Outputs:
 Terminal state.
 
 ---
-
-## Mermaid Flow Representation (ready-to-use)
-
-```mermaid
-flowchart TD
-  A([Start]) --> B[ProblemFraming]
-  B --> C{Criteria measurable?}
-  C -- No --> B
-  C -- Yes --> D[DataUnderstanding]
-  D --> E{Data OK & schema defined?}
-  E -- No --> ITR[Iteration]
-  E -- Yes --> F[Planning]
-  F --> G{Plan approved?}
-  G -- No --> F
-  G -- Yes --> H[Scaffolding]
-  H --> I[Implementation]
-  I --> J[Validation]
-  J --> K{Tests + metrics OK?}
-  K -- No --> ITR
-  ITR --> J
-  K -- Yes --> L[Packaging]
-  L --> M{Artifacts reproducible?}
-  M -- No --> ITR
-  M -- Yes --> N[DeploymentPrep]
-  N --> O{Deploy prep OK?}
-  O -- No --> ITR
-  O -- Yes --> P[Review]
-  P --> Q{Accepted?}
-  Q -- No --> ITR
-  Q -- Yes --> R([Completion])
-```

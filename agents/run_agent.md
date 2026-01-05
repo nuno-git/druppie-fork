@@ -9,6 +9,15 @@ skills: ["run_code"]
 subagents: []
 tools: []
 priority: 9.0
+workflow: |
+  graph TD
+      A[Start] --> B{Action is run_code?}
+      B -- Yes --> C[Locate Build]
+      C --> D[Pull Image]
+      D --> E[Run Container]
+      E --> F[Stream Logs]
+      F --> G[End]
+      B -- No --> H[End]
 ---
 
 ## Overview
@@ -39,17 +48,4 @@ Example: Use `node app.js` or `npm start`. If the file is in a subdirectory, inc
   },
   "depends_on": [PREVIOUS_BUILD_STEP_ID]
 }
-```
-
-## Workflow
-
-```mermaid
-graph TD
-    A[Start] --> B{Action is run_code?}
-    B -- Yes --> C[Locate Build]
-    C --> D[Pull Image]
-    D --> E[Run Container]
-    E --> F[Stream Logs]
-    F --> G[End]
-    B -- No --> H[End]
 ```

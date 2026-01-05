@@ -35,6 +35,7 @@ const DOC_REGISTRY = {
     ],
     "agents": [
         { name: "Overview", path: "agents/overview.md" },
+        { name: "Router", path: "agents/router.md" },
         { name: "Planner", path: "agents/planner.md" },
         { name: "Architect", path: "agents/architect.md" },
         { name: "Business Analyst", path: "agents/business_analyst.md" },

@@ -7,6 +7,27 @@ version: 1.0.0
 skills: ["sub-agent"]
 tools: []
 priority: 10.0
+workflow: |
+  flowchart TD
+    A([Start]) --> B[Intake]
+    B --> C{Scope clear?}
+    C -- No --> B
+    C -- Yes --> D[RequirementAnalysis]
+    D --> E{Testable?}
+    E -- No --> ITR[Iteration]
+    E -- Yes --> F[TestDesign]
+    F --> G[TestPreparation]
+    G --> H[TestExecution]
+    H --> I{Blocking defects?}
+    I -- Yes --> J[DefectAnalysis]
+    J --> H
+    I -- No --> K[Reporting]
+    K --> L{Quality acceptable?}
+    L -- No --> ITR
+    L -- Yes --> M[Review]
+    M --> N{Release approved?}
+    N -- No --> ITR
+    N -- Yes --> O([Completion])
 ---
 
 Your primary function is to **validate that a product, system, or solution meets its requirements, quality standards, and user expectations** by designing, executing, and maintaining **effective testing strategies**.
@@ -348,29 +369,3 @@ You must ensure:
 - automation is maintainable
 - quality risks are explicit
 
----
-
-## Mermaid Flow Representation (Ready-to-use)
-
-```mermaid
-flowchart TD
-  A([Start]) --> B[Intake]
-  B --> C{Scope clear?}
-  C -- No --> B
-  C -- Yes --> D[RequirementAnalysis]
-  D --> E{Testable?}
-  E -- No --> ITR[Iteration]
-  E -- Yes --> F[TestDesign]
-  F --> G[TestPreparation]
-  G --> H[TestExecution]
-  H --> I{Blocking defects?}
-  I -- Yes --> J[DefectAnalysis]
-  J --> H
-  I -- No --> K[Reporting]
-  K --> L{Quality acceptable?}
-  L -- No --> ITR
-  L -- Yes --> M[Review]
-  M --> N{Release approved?}
-  N -- No --> ITR
-  N -- Yes --> O([Completion])
-```

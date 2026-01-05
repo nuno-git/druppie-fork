@@ -377,7 +377,7 @@ Output JSON: { "needs_clarification": true, "question": "..." } OR { "needs_clar
 			wc.AppendStep(model.Step{
 				ID:      stepID,
 				AgentID: "video-content-creator",
-				Action:  "ask_question", // Change action name? Or keep refine_intent? Let's switch to ask_question for clarity
+				Action:  "ask_questions",
 				Status:  "waiting_input",
 				Result:  question,
 			})
@@ -387,6 +387,14 @@ Output JSON: { "needs_clarification": true, "question": "..." } OR { "needs_clar
 			case <-wc.Ctx.Done():
 				return ProjectIntent{}, wc.Ctx.Err()
 			case input := <-wc.InputChan:
+				// Mark the question step as completed with the answer
+				wc.AppendStep(model.Step{
+					ID:      stepID,
+					AgentID: "video-content-creator",
+					Action:  "ask_questions",
+					Status:  "completed",
+					Result:  fmt.Sprintf("Question: %s\nAnswer: %s", question, input),
+				})
 				prompt = prompt + " | Clarification: " + input
 				wc.UpdateStatus("Running")
 				continue
@@ -399,18 +407,59 @@ Output JSON: { "needs_clarification": true, "question": "..." } OR { "needs_clar
 		intent.Language, _ = raw["language"].(string)
 		intent.Parameters = raw
 
+		// Final Review Step (Enforce content-review)
 		wc.OutputChan <- fmt.Sprintf("\n🧠 [Intent] Analysis:\n - **Language**: %s\n - **Prompt**: %s\n", intent.Language, intent.RefinedPrompt)
+		wc.OutputChan <- "Options: 'ok' or '/accept' to proceed | provide feedback to refine further"
 
 		wc.AppendStep(model.Step{
 			ID:      stepID,
 			AgentID: "video-content-creator",
-			Action:  "refine_intent",
-			Status:  "completed",
-			Result:  "Intent finalized",
-			Params:  map[string]interface{}{"refined": intent.RefinedPrompt, "language": intent.Language},
+			Action:  "content-review", // Matches user request for skill: content-review
+			Status:  "waiting_input",
+			Result:  fmt.Sprintf("Proposed Intent:\n%s", intent.RefinedPrompt),
 		})
 
-		return intent, nil
+		wc.UpdateStatus("Waiting Input")
+		select {
+		case <-wc.Ctx.Done():
+			return ProjectIntent{}, wc.Ctx.Err()
+		case input := <-wc.InputChan:
+			wc.UpdateStatus("Running")
+			if input == "/stop" {
+				return ProjectIntent{}, fmt.Errorf("user stopped at intent review")
+			}
+			if input == "/accept" || input == "ok" || input == "" || strings.EqualFold(input, "accept") {
+				wc.AppendStep(model.Step{
+					ID:      stepID,
+					AgentID: "video-content-creator",
+					Action:  "content-review",
+					Status:  "completed",
+					Result:  "Intent Approved",
+				})
+				// Finalize
+				wc.AppendStep(model.Step{
+					ID:      stepID + 1, // New step for final record
+					AgentID: "video-content-creator",
+					Action:  "refine_intent",
+					Status:  "completed",
+					Result:  "Intent finalized",
+					Params:  map[string]interface{}{"refined": intent.RefinedPrompt, "language": intent.Language},
+				})
+				return intent, nil
+			}
+
+			// Feedback received
+			wc.OutputChan <- fmt.Sprintf("🔄 [Intent] Feedback: %s. Refining...", input)
+			wc.AppendStep(model.Step{
+				ID:      stepID,
+				AgentID: "video-content-creator",
+				Action:  "content-review",
+				Status:  "rejected",
+				Result:  fmt.Sprintf("Rejected: %s", input),
+			})
+			prompt = prompt + " | Feedback: " + input
+			continue
+		}
 	}
 }
 
