@@ -1361,53 +1361,44 @@
             // Hide logout button in demo mode
             const logoutBtn = document.getElementById('logout-btn');
             if (logoutBtn) logoutBtn.style.display = 'none';
-
-            if (state.stateInterval) clearInterval(state.stateInterval);
-            state.stateInterval = setInterval(updatePlanSelector, 5000);
-            updatePlanSelector();
-            fetchVersion();
-            return;
-        }
-
-        // Try recover user
-        const storedUser = localStorage.getItem('druppie_user');
-        if (storedUser) {
-            try { state.user = JSON.parse(storedUser); } catch (e) { }
-        }
-
-        if (state.token) {
-            // Optimistic success, hide login
-            document.getElementById('login-overlay').style.display = 'none';
-
-            // Check for plan_id in URL parameter (e.g., from code editor)
-            const urlParams = new URLSearchParams(window.location.search);
-            const planIdParam = urlParams.get('plan_id');
-
-            // Start things - await updatePlanSelector if we need to switch to a specific plan
-            if (planIdParam) {
-                await updatePlanSelector();
-                // Set the dropdown value and trigger change event to load the plan
-                // Use setTimeout to avoid interfering with initial page interactions
-                setTimeout(() => {
-                    const selector = document.getElementById('plan-selector');
-                    if (selector && selector.value !== planIdParam) {
-                        selector.value = planIdParam;
-                        // Trigger the onchange event to load the plan with proper bubbling
-                        const event = new Event('change', { bubbles: true });
-                        selector.dispatchEvent(event);
-                    }
-                }, 100);
-                // Clean up URL (remove parameter)
-                window.history.replaceState({}, '', '/ui/index.html');
-            } else {
-                updatePlanSelector();
+        } else {
+            // Try recover user
+            const storedUser = localStorage.getItem('druppie_user');
+            if (storedUser) {
+                try { state.user = JSON.parse(storedUser); } catch (e) { }
             }
 
-            state.stateInterval = setInterval(updatePlanSelector, 5000);
-            fetchVersion();
+            if (!state.token) {
+                showLogin();
+                return;
+            }
+            // Optimistic success, hide login
+            document.getElementById('login-overlay').style.display = 'none';
+        }
+
+        // Start things
+        fetchVersion();
+        state.stateInterval = setInterval(updatePlanSelector, 5000);
+
+        // Check for plan_id in URL parameter (e.g., from code editor)
+        const urlParams = new URLSearchParams(window.location.search);
+        const planIdParam = urlParams.get('plan_id');
+
+        if (planIdParam) {
+            await updatePlanSelector();
+            setTimeout(() => {
+                const selector = document.getElementById('plan-selector');
+                if (selector && selector.value !== planIdParam) {
+                    selector.value = planIdParam;
+                    const event = new Event('change', { bubbles: true });
+                    selector.dispatchEvent(event);
+                }
+            }, 100);
+            // Clean up URL (remove parameter) keeping current path
+            const newUrl = window.location.pathname;
+            window.history.replaceState({}, '', newUrl);
         } else {
-            // Show login
-            showLogin();
+            updatePlanSelector();
         }
     }
 

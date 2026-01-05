@@ -90,13 +90,15 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 			os.Setenv("IAM_PROVIDER", "demo")
 		}
 
-		// Check if we are in 'core' and need to move up to project root
-		cwd, _ := os.Getwd()
-		if filepath.Base(cwd) == "core" {
-			_ = os.Chdir("..")
+		// Ensure we are working from the project root (handles Chdir)
+		if err := ensureProjectRoot(); err != nil {
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("root detection error: %w", err)
 		}
 
 		rootDir, err := findProjectRoot()
+		if err != nil {
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("registry path error: %w", err)
+		}
 
 		fmt.Printf("Loading registry from: %s\n", rootDir)
 		reg, err := registry.LoadRegistry(rootDir)
@@ -680,11 +682,17 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						return
 					}
 
+					// Debug logging for plan listing
+					fmt.Printf("[API] Listing plans. Raw count from store: %d\n", len(plans))
+
 					// Filter plans by creator (if user is authenticated)
 					if user, ok := iam.GetUserFromContext(r.Context()); ok {
+						fmt.Printf("[API] Filtering plans for user: %s (ID: %s, Groups: %v)\n", user.Username, user.ID, user.Groups)
+
 						// If user is 'demo' user (ID 'demo-user'), show everything
 						if user.ID == "demo-user" {
 							// No filtering needed
+							fmt.Println("[API] User is demo-user, showing all plans.")
 						} else {
 							// Check if user is admin (optional, for now strictly filtering per request)
 							// Iterate and filter
@@ -694,30 +702,35 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 								// 1. It has no creator (legacy/demo/public)
 								// 2. User is the creator
 								// 3. User is in one of the allowed groups
-								if p.CreatorID == "" || p.CreatorID == user.Username {
-									filtered = append(filtered, p)
-									continue
-								}
-
-								// Check groups
 								allowed := false
-								for _, allowedGroup := range p.AllowedGroups {
-									for _, userGroup := range user.Groups {
-										if allowedGroup == userGroup {
-											allowed = true
+								if p.CreatorID == "" || p.CreatorID == user.Username {
+									allowed = true
+								} else {
+									// Check groups
+									for _, allowedGroup := range p.AllowedGroups {
+										for _, userGroup := range user.Groups {
+											if allowedGroup == userGroup {
+												allowed = true
+												break
+											}
+										}
+										if allowed {
 											break
 										}
 									}
-									if allowed {
-										break
-									}
 								}
+
 								if allowed {
 									filtered = append(filtered, p)
+								} else {
+									fmt.Printf("[API] Hiding plan %s (Creator: %s, Allowed: %v) from user %s\n", p.ID, p.CreatorID, p.AllowedGroups, user.Username)
 								}
 							}
 							plans = filtered
+							fmt.Printf("[API] Plans after filtering: %d\n", len(plans))
 						}
+					} else {
+						fmt.Println("[API] No user in context, showing all plans (Auth bypassed or not required?)")
 					}
 
 					// Update plan statuses based on actual task states
@@ -779,8 +792,9 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						// No active task - check if plan says running but task is gone (Zombie State)
 						if plan.Status == "running" || plan.Status == "waiting_input" {
 							plan.Status = "stopped"
-							// Fix persistence
-							_ = plannerService.Store.SavePlan(plan)
+							// We DON'T auto-save to disk here to allow user to see it was once running
+							// and explicitly resume or manage it.
+							// _ = plannerService.Store.SavePlan(plan)
 						}
 					}
 					tm.mu.Unlock()

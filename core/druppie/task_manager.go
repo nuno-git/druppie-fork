@@ -751,15 +751,15 @@ func (tm *TaskManager) runTaskLoop(task *Task) {
 			tm.mu.Unlock()
 			// 1. Identify which step to apply input to
 			activeStepIdx := -1
-			if activeStep != nil {
-				// Find index of activeStep in our local plan copy
-				for i := range task.Plan.Steps {
-					if &task.Plan.Steps[i] == activeStep {
-						activeStepIdx = i
-						break
-					}
+			// Find index of activeStep in our local plan copy
+			for i := range task.Plan.Steps {
+				if &task.Plan.Steps[i] == activeStep {
+					activeStepIdx = i
+					break
 				}
-			} else if len(batchIndices) > 0 {
+			}
+
+			if activeStepIdx == -1 && len(batchIndices) > 0 {
 				activeStepIdx = batchIndices[0]
 			}
 

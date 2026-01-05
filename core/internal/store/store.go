@@ -105,13 +105,21 @@ func (s *FileStore) ListPlans() ([]model.ExecutionPlan, error) {
 	var plans []model.ExecutionPlan
 	for _, entry := range entries {
 		if entry.IsDir() {
-			data, err := os.ReadFile(filepath.Join(plansDir, entry.Name(), "plan.json"))
-			if err == nil {
-				var p model.ExecutionPlan
-				if json.Unmarshal(data, &p) == nil {
-					plans = append(plans, p)
+			planFile := filepath.Join(plansDir, entry.Name(), "plan.json")
+			data, err := os.ReadFile(planFile)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					fmt.Printf("[Store] Error reading plan %s: %v\n", entry.Name(), err)
 				}
+				continue
 			}
+
+			var p model.ExecutionPlan
+			if err := json.Unmarshal(data, &p); err != nil {
+				fmt.Printf("[Store] Error unmarshaling plan %s: %v\n", entry.Name(), err)
+				continue
+			}
+			plans = append(plans, p)
 		}
 	}
 	return plans, nil
