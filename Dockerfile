@@ -35,11 +35,19 @@ RUN /app/druppie generate
 # Run Stage
 FROM python:3.11-slim-bookworm
 
-# Install basic tools needed by agents
+# Install basic tools and runtimes needed by agents
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
+    ca-certificates \
+    gnupg \
+    build-essential \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && curl -fsSL https://go.dev/dl/go1.21.6.linux-amd64.tar.gz | tar -C /usr/local -xzf - \
     && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/usr/local/go/bin:${PATH}"
 
 WORKDIR /app
 
