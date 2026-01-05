@@ -682,17 +682,12 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						return
 					}
 
-					// Debug logging for plan listing
-					fmt.Printf("[API] Listing plans. Raw count from store: %d\n", len(plans))
-
 					// Filter plans by creator (if user is authenticated)
 					if user, ok := iam.GetUserFromContext(r.Context()); ok {
-						fmt.Printf("[API] Filtering plans for user: %s (ID: %s, Groups: %v)\n", user.Username, user.ID, user.Groups)
 
 						// If user is 'demo' user (ID 'demo-user'), show everything
 						if user.ID == "demo-user" {
 							// No filtering needed
-							fmt.Println("[API] User is demo-user, showing all plans.")
 						} else {
 							// Check if user is admin (optional, for now strictly filtering per request)
 							// Iterate and filter
@@ -722,15 +717,10 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 
 								if allowed {
 									filtered = append(filtered, p)
-								} else {
-									fmt.Printf("[API] Hiding plan %s (Creator: %s, Allowed: %v) from user %s\n", p.ID, p.CreatorID, p.AllowedGroups, user.Username)
 								}
 							}
 							plans = filtered
-							fmt.Printf("[API] Plans after filtering: %d\n", len(plans))
 						}
-					} else {
-						fmt.Println("[API] No user in context, showing all plans (Auth bypassed or not required?)")
 					}
 
 					// Update plan statuses based on actual task states
