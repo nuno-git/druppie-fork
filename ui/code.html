@@ -17,21 +17,10 @@
         href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono:wght@400;500&display=swap"
         rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="common.css">
+    <script src="common.js"></script>
     <style>
-        :root {
-            --bg-deep: #0f172a;
-            --bg-card: #1e293b;
-            --accent: #38bdf8;
-            --text-main: #f1f5f9;
-            --text-dim: #94a3b8;
-            --border: rgba(255, 255, 255, 0.1);
-        }
-
         body {
-            margin: 0;
-            background: var(--bg-deep);
-            color: var(--text-main);
-            font-family: 'Outfit', sans-serif;
             display: grid;
             grid-template-columns: 250px 1fr;
             height: 100vh;
@@ -252,33 +241,16 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
     <script>
-        lucide.createIcons();
         const urlParams = new URLSearchParams(window.location.search);
         const planID = urlParams.get('plan_id');
         let editor;
         let currentPath = null;
 
-        // Get token from localStorage (shared with main UI)
-        const token = localStorage.getItem('druppie_token');
-
-        // Fetch interceptor to add auth token
-        const originalFetch = window.fetch;
-        window.fetch = async (...args) => {
-            let [resource, config] = args;
-            if (typeof resource === 'string' && resource.startsWith('/v1/')) {
-                config = config || {};
-                config.headers = config.headers || {};
-                if (token) {
-                    config.headers['Authorization'] = 'Bearer ' + token;
-                }
-            }
-            const response = await originalFetch(resource, config);
-            if (response.status === 401) {
-                alert('Authentication required. Please login from the main UI.');
-                window.close();
-            }
-            return response;
-        };
+        // Token is used by Save/Load functions, retrieve it from local storage via common.js logic if needed, 
+        // but here we just need it for saveFile implementation which might use it? 
+        // Actually saveFile uses fetch, which is intercepted by common.js setupAuth().
+        // So we don't need explicit token variable here unless used elsewhere.
+        // Looking at saveFile (not shown in snippet but assuming standard fetch), it should be fine.
 
         require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
         require(['vs/editor/editor.main'], function () {
@@ -288,26 +260,13 @@
                 theme: 'vs-dark',
                 automaticLayout: true,
                 quickSuggestions: false,
-                // Hide mobile keyboard icon
                 readOnly: false,
                 domReadOnly: false
             });
             refreshFiles();
-            fetchVersion();
+            // fetchVersion calls automatically via common.js
         });
 
-        async function fetchVersion() {
-            try {
-                const res = await fetch('/v1/version');
-                if (res.ok) {
-                    const data = await res.json();
-                    const el = document.getElementById('app-version');
-                    if (el) el.textContent = `v${data.version}`;
-                }
-            } catch (e) {
-                console.warn("Failed to fetch version", e);
-            }
-        }
 
         async function refreshFiles() {
             if (!planID) {

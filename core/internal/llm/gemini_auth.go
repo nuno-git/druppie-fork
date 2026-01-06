@@ -15,7 +15,7 @@ import (
 )
 
 // getGeminiClientWithAuth handles the OAuth2 flow to get an authenticated HTTP client
-func getGeminiClientWithAuth(ctx context.Context, model string, projectID, clientID, clientSecret string) (*http.Client, string, error) {
+func getGeminiClientWithAuth(ctx context.Context, projectID, clientID, clientSecret string) (*http.Client, string, error) {
 	// 1. Ensure Project ID is set (ask first, as requested)
 	if projectID == "" {
 		fmt.Printf("\n--- Gemini Setup ---\n")

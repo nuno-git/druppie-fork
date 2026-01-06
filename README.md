@@ -29,6 +29,12 @@ De makkelijkste manier om te beginnen is via de **Druppie CLI** ```./script/drup
 - **Resume Plans**: Stopped of gecrashte plannen kunnen nu hervat worden via de UI ("Resume Task") of CLI: `go run ./druppie resume <plan-id>`.
 - **User Control**: Expliciete 'Cancel' en 'Review' stappen zorgen voor meer controle over de AI workflow.
 
+### Nieuw: MCP Support (Model Context Protocol)
+Integratie met externe en lokale tools via MCP.
+- **Connect**: Gebruik `go run ./core/druppie mcp add <name> <url>` om servers te koppelen.
+- **Templates**: Automatische, plan-specifieke servers (bijv. filesystem access voor `./.druppie/plans/<plan-id>`) via templates in de `mcp/` directory.
+- **CLI Management**: `mcp list`, `mcp add`, `mcp del`.
+
  ![Druppie CLI](./druppie_cli.png)
 
 Dit interactieve menu geeft toegang tot:

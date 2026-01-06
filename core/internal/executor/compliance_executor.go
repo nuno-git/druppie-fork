@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/sjhoeksma/druppie/core/internal/model"
 )
@@ -15,8 +16,6 @@ func (e *ComplianceExecutor) CanHandle(action string) bool {
 }
 
 func (e *ComplianceExecutor) Execute(ctx context.Context, step model.Step, outputChan chan<- string) error {
-	outputChan <- fmt.Sprintf("ComplianceExecutor: Processing %s...", step.Action)
-
 	switch step.Action {
 	case "compliance_check":
 		// Simple validation log
@@ -26,7 +25,7 @@ func (e *ComplianceExecutor) Execute(ctx context.Context, step model.Step, outpu
 		}
 		access, _ := step.Params["access_level"].(string)
 
-		if region == "us-east-1" && access == "public" {
+		if region == "us-east-1" && strings.ToLower(access) == "public" {
 			outputChan <- "RESULT_CONSOLE_OUTPUT=[VIOLATION] Data Residency: US Region with Public Access detected."
 		} else {
 			outputChan <- "RESULT_CONSOLE_OUTPUT=Compliance Check Passed."

@@ -21,6 +21,7 @@
         rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="common.js"></script>
 
     <style>
         :root {
@@ -374,17 +375,7 @@
                 if (urlParams.has('view')) app.state.view = urlParams.get('view');
 
                 // Fetch Version
-                // Fetch Version
-                fetch('/v1/version')
-                    .then(r => {
-                        if (!r.ok) throw new Error(r.statusText);
-                        return r.json();
-                    })
-                    .then(d => {
-                        const el = document.getElementById('app-version');
-                        if (el) el.innerText = 'v' + d.version;
-                    })
-                    .catch(e => console.error('Version fetch failed:', e));
+                // Fetch Version handled by common.js
 
                 // Load User
                 const storedUser = localStorage.getItem('druppie_user');
@@ -491,7 +482,7 @@
                     const body = JSON.parse(json); // Validate JSON
                     const res = await fetch('/v1/config', {
                         method: 'PUT',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + app.state.token },
+                        headers: { 'Content-Type': 'application/json' },
                         body: json
                     });
                     if (res.ok) alert('Config Saved!');
@@ -571,9 +562,9 @@
                     location.reload();
                 } catch { document.getElementById('login-error').classList.remove('hidden'); }
             },
-            logout: async () => { await fetch('/v1/iam/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + app.state.token } }); localStorage.removeItem('druppie_token'); localStorage.removeItem('druppie_user'); location.reload(); },
-            deleteUser: async (u) => { if (confirm("Delete user " + u + "?")) { await fetch(`/v1/iam/users/${u}`, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + app.state.token } }); app.fetchData(); } },
-            deleteGroup: async (id) => { if (confirm("Delete group " + id + "?")) { await fetch(`/v1/iam/groups/${id}`, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + app.state.token } }); app.fetchData(); } },
+            logout: async () => { await fetch('/v1/iam/logout', { method: 'POST', headers: {} }); localStorage.removeItem('druppie_token'); localStorage.removeItem('druppie_user'); location.reload(); },
+            deleteUser: async (u) => { if (confirm("Delete user " + u + "?")) { await fetch(`/v1/iam/users/${u}`, { method: 'DELETE', headers: {} }); app.fetchData(); } },
+            deleteGroup: async (id) => { if (confirm("Delete group " + id + "?")) { await fetch(`/v1/iam/groups/${id}`, { method: 'DELETE', headers: {} }); app.fetchData(); } },
 
             // Enhanced Modals
             modalUser: (username = null) => {
@@ -605,7 +596,7 @@
                 const method = username ? 'PUT' : 'POST';
                 const url = username ? `/v1/iam/users/${username}` : '/v1/iam/users';
 
-                await fetch(url, { method: method, headers: { 'Authorization': 'Bearer ' + app.state.token, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+                await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
                 document.getElementById('modal-wrapper').classList.add('hidden');
                 app.fetchData();
             },
@@ -645,7 +636,7 @@
                 // 1. Save Group
                 const method = id ? 'PUT' : 'POST';
                 const url = id ? `/v1/iam/groups/${id}` : '/v1/iam/groups';
-                const res = await fetch(url, { method: method, headers: { 'Authorization': 'Bearer ' + app.state.token }, body: JSON.stringify(data) });
+                const res = await fetch(url, { method: method, headers: {}, body: JSON.stringify(data) });
                 if (!res.ok) return alert("Error saving group");
 
                 // 2. Handle Members Update (Only on Edit and if updated)
@@ -662,7 +653,7 @@
                         const u = app.state.users.find(u => u.username === username);
                         if (u) {
                             const newGroups = [...(u.groups || []), id]; // Add group
-                            updates.push(fetch(`/v1/iam/users/${username}`, { method: 'PUT', headers: { 'Authorization': 'Bearer ' + app.state.token }, body: JSON.stringify({ ...u, groups: newGroups }) }));
+                            updates.push(fetch(`/v1/iam/users/${username}`, { method: 'PUT', headers: {}, body: JSON.stringify({ ...u, groups: newGroups }) }));
                         }
                     });
                     // Remove
@@ -670,7 +661,7 @@
                         const u = app.state.users.find(u => u.username === username);
                         if (u) {
                             const newGroups = (u.groups || []).filter(g => g !== id); // Remove group
-                            updates.push(fetch(`/v1/iam/users/${username}`, { method: 'PUT', headers: { 'Authorization': 'Bearer ' + app.state.token }, body: JSON.stringify({ ...u, groups: newGroups }) }));
+                            updates.push(fetch(`/v1/iam/users/${username}`, { method: 'PUT', headers: {}, body: JSON.stringify({ ...u, groups: newGroups }) }));
                         }
                     });
 

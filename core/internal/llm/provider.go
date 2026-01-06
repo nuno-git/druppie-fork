@@ -25,12 +25,25 @@ type Provider interface {
 type Manager struct {
 	defaultProvider Provider
 	providers       map[string]Provider
+	timeout         time.Duration
+	retries         int
 }
 
 // NewManager initializes the LLM manager with the given configuration
 func NewManager(ctx context.Context, cfg config.LLMConfig) (*Manager, error) {
+	timeout := 120 * time.Second
+	if cfg.TimeoutSeconds > 0 {
+		timeout = time.Duration(cfg.TimeoutSeconds) * time.Second
+	}
+	retries := 3
+	if cfg.Retries > 0 {
+		retries = cfg.Retries
+	}
+
 	mgr := &Manager{
 		providers: make(map[string]Provider),
+		timeout:   timeout,
+		retries:   retries,
 	}
 
 	// Helper to create a provider based on type and details
@@ -56,7 +69,7 @@ func NewManager(ctx context.Context, cfg config.LLMConfig) (*Manager, error) {
 				}
 				// Use OAuth2 Flow
 				fmt.Println("No API key found. Attempting OAuth2 login...")
-				client, finalProjectID, err := getGeminiClientWithAuth(ctx, model, pCfg.ProjectID, pCfg.ClientID, pCfg.ClientSecret)
+				client, finalProjectID, err := getGeminiClientWithAuth(ctx, pCfg.ProjectID, pCfg.ClientID, pCfg.ClientSecret)
 				if err != nil {
 					return nil, fmt.Errorf("failed to authenticate gemini: %w", err)
 				}
@@ -151,13 +164,19 @@ func (m *Manager) Generate(ctx context.Context, prompt string, systemPrompt stri
 		return "", fmt.Errorf("no default provider configured")
 	}
 
+	// Use configured retries
+	maxRetries := m.retries
+	if maxRetries <= 0 {
+		maxRetries = 1
+	}
+
 	var lastErr error
-	for i := 0; i < MaxRetries; i++ {
+	for i := 0; i < maxRetries; i++ {
 		// Create a context with timeout for this specific attempt
-		attemptCtx, cancel := context.WithTimeout(ctx, GlobalTimeout)
+		attemptCtx, cancel := context.WithTimeout(ctx, m.timeout)
 
 		if i > 0 {
-			fmt.Printf("[LLM] Retry attempt %d/%d...\n", i+1, MaxRetries)
+			fmt.Printf("[LLM] Retry attempt %d/%d...\n", i+1, maxRetries)
 		}
 
 		resp, err := m.defaultProvider.Generate(attemptCtx, prompt, systemPrompt)
@@ -177,7 +196,7 @@ func (m *Manager) Generate(ctx context.Context, prompt string, systemPrompt stri
 		case <-time.After(RetryDelay):
 		}
 	}
-	return "", fmt.Errorf("llm generate failed after %d attempts: %w", MaxRetries, lastErr)
+	return "", fmt.Errorf("llm generate failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // Close closes all providers

@@ -1,5 +1,7 @@
 llm:
     default_provider: ollama
+    timeout_seconds: 120
+    retries: 3
     providers:
       gemini:
         type: gemini
@@ -41,5 +43,6 @@ iam: # ProviderOptions: local, keycloak, demo
 
 approval_groups:
     security: ["ciso", "group-admin"]
-    legal: ["dpo", "group-admin"]
+    legal: ["legal", "group-admin"]
     compliance: ["compliance","group-admin"]
+    privacy: ["privacy","group-admin"]

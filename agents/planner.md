@@ -58,12 +58,14 @@ Strategies:
    - **STOP Condition**: When the lead agent reaches the terminal state (`[*]`), you **MUST** return an empty JSON array `[]` to signal completion.
    - **Anti-Pattern**: Do NOT generate steps like "orchestration", "quality-check", or "summary" after the final state. If the workflow is done, STOP.
 
-61. **Compliance Workflow**:
-   - If generating a step for `compliance` -> `audit_request`, you MUST set `"status": "requires_approval"` (instead of pending) and `"assigned_group": "compliance"`. This ensures the step pauses for valid approval.
+7. **Compliance First Policy (MANDATORY)**:
+   - **For Infrastructure/Deployment**: If the goal involves deploying resources (e.g. AWS, Database, Cloud), Step 1 **MUST** always be `compliance_check` (agent: `compliance`).
+   - **Pre-Approval**: If the request involves sensitive data, public access, or specific regions (us-east-1), Step 2 **MUST** be `audit_request` (agent: `compliance`).
+   - **Constraint**: You MUST generate the FULL, END-TO-END plan NOW. Do NOT pause generation. Schedule architectural-design and infrastructure steps immediately as Step 3, 4, etc., making Step 3 explicitly `depends_on` the `audit_request` (Step 2). Even if audit requires approval, you MUST plan the subsequent steps.
+   - For `audit_request`, YOU MUST set `"status": "requires_approval"` and `"assigned_group": "compliance"`.
    - For `compliance_check`, ALWAYS use standard parameter names: `region` (NOT `deployment_region` or `target_region`) and `access_level`.
-   - If the request involves sensitive data or public access, schedule a blocking `audit_request` IMMEDIATELY after the `compliance_check` step (Step 2), before any infrastructure provisioning.
 
-7. **Structure Rules**:
+8. **Structure Rules**:
    - **Strict JSON**: OUTPUT PURE JSON ONLY. No comments, no trailing commas, no stray words (e.g. 'haar', 'salt', 'als', 'een', 'plaats', 'bij'), NO diff characters (`+`, `-`). NO 'scene_number', 'scene/CID' (use 'scene_id'). NO 'haar' field (use 'duration'). **ALL KEYS MUST BE DOUBLE QUOTED**.
    - **Verification**: Ensure every object ends cleanly with `}`.
    - **Keys**: Use explicit `agent_id` (must match an ID in 'Available Agents'). Do NOT use 'agent/S', 'qa-expert', or invalid IDs.

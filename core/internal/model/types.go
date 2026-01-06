@@ -73,11 +73,20 @@ type ExecutionPlan struct {
 
 // MCPServer represents an external tool server
 type MCPServer struct {
-	ID         string   `json:"id" yaml:"id"`
-	Name       string   `json:"name" yaml:"name"`
-	URL        string   `json:"url" yaml:"url"`
-	Transport  string   `json:"transport" yaml:"transport"` // sse, stdio
-	AuthGroups []string `json:"auth_groups,omitempty" yaml:"auth_groups,omitempty"`
+	ID         string           `json:"id" yaml:"id"`
+	Name       string           `json:"name" yaml:"name"`
+	URL        string           `json:"url,omitempty" yaml:"url,omitempty"`
+	Command    string           `json:"command,omitempty" yaml:"command,omitempty"`
+	Args       []string         `json:"args,omitempty" yaml:"args,omitempty"`
+	Transport  string           `json:"transport" yaml:"transport"` // sse, stdio
+	Tools      []ToolDefinition `json:"tools,omitempty" yaml:"tools,omitempty"`
+	AuthGroups []string         `json:"auth_groups,omitempty" yaml:"auth_groups,omitempty"`
+}
+
+// ToolDefinition allows advertising tools in the MCP template
+type ToolDefinition struct {
+	Name        string `json:"name" yaml:"name"`
+	Description string `json:"description" yaml:"description"`
 }
 
 // AgentDefinition represents a temple for spawning agents

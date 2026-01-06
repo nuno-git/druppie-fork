@@ -54,6 +54,8 @@ type BuildProviderConfig struct {
 
 type LLMConfig struct {
 	DefaultProvider string                    `yaml:"default_provider" json:"default_provider"` // "gemini", "ollama", "lmstudio"
+	TimeoutSeconds  int                       `yaml:"timeout_seconds,omitempty" json:"timeout_seconds,omitempty"`
+	Retries         int                       `yaml:"retries,omitempty" json:"retries,omitempty"`
 	Providers       map[string]ProviderConfig `yaml:"providers" json:"providers"`
 }
 
@@ -86,6 +88,8 @@ func NewManager(s store.Store) (*Manager, error) {
 		config: &Config{
 			LLM: LLMConfig{
 				DefaultProvider: "ollama",
+				TimeoutSeconds:  120,
+				Retries:         3,
 				Providers: map[string]ProviderConfig{
 					"ollama": {Type: "ollama", Model: "qwen3:8b", URL: "http://localhost:11434"},
 				},

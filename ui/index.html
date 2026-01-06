@@ -20,20 +20,10 @@
         href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono:wght@400;500&display=swap"
         rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="common.css">
+    <script src="common.js"></script>
     <style>
-        :root {
-            --bg-deep: #0f172a;
-            --bg-card: #1e293b;
-            --accent: #38bdf8;
-            --accent-glow: rgba(56, 189, 248, 0.3);
-            --text-main: #f1f5f9;
-            --text-dim: #94a3b8;
-            --success: #22c55e;
-            --running: #f59e0b;
-            --pending: #64748b;
-            --glass: rgba(255, 255, 255, 0.03);
-            --glass-border: rgba(255, 255, 255, 0.1);
-        }
+        /* :root variables moved to common.css */
 
         * {
             margin: 0;
@@ -515,6 +505,11 @@
         .task-card.status-cancelled {
             opacity: 0.7;
             border-left: 3px solid #ef4444;
+        }
+
+        .task-card.status-skipped {
+            opacity: 0.5;
+            border-left: 3px solid #64748b;
         }
 
         .task-header {
@@ -1576,7 +1571,7 @@
 
     async function checkConfig() {
         try {
-            const res = await originalFetch('/info');
+            const res = await fetch('/info');
             if (!res.ok) return false;
             const info = await res.json();
 
@@ -1665,7 +1660,7 @@
 
     async function handleLogout() {
         try {
-            await originalFetch('/v1/iam/logout', {
+            await fetch('/v1/iam/logout', {
                 method: 'POST',
                 headers: { 'Authorization': 'Bearer ' + state.token }
             });
@@ -1675,13 +1670,14 @@
         localStorage.removeItem('druppie_user');
         location.reload();
     }
+    window.onAuthFailure = handleLogout;
 
     document.getElementById('login-form').onsubmit = async (e) => {
         e.preventDefault();
         const u = document.getElementById('login-username').value;
         const p = document.getElementById('login-password').value;
         try {
-            const res = await originalFetch('/v1/iam/login', {
+            const res = await fetch('/v1/iam/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username: u, password: p })
@@ -1701,25 +1697,7 @@
         }
     };
 
-    // --- Fetch Interceptor ---
-    const originalFetch = window.fetch;
-    window.fetch = async (...args) => {
-        let [resource, config] = args;
-        if (typeof resource === 'string' && resource.startsWith('/v1/') && !resource.includes('/iam/login')) {
-            config = config || {};
-            config.headers = config.headers || {};
-            if (state.token) {
-                config.headers['Authorization'] = 'Bearer ' + state.token;
-            }
-        }
-
-        const response = await originalFetch(resource, config);
-
-        if (response.status === 401 && typeof resource === 'string' && !resource.includes('/iam/login') && !resource.includes('/iam/logout')) {
-            handleLogout();
-        }
-        return response;
-    };
+    // Auth interceptor moved to common.js
 
     // --- End Auth Logic ---
 
@@ -2249,7 +2227,7 @@
     }
 
     async function updatePlan() {
-        if (!state.currentPlanId) return;
+        if (!state.currentPlanId || !state.token) return;
         try {
             const resp = await fetch(`/v1/plans/${state.currentPlanId}`);
             if (!resp.ok) return;
@@ -2356,8 +2334,15 @@
                 if (waitingStep) {
                     label = waitingStep.action.replace(/_/g, ' ');
                     label = label.charAt(0).toUpperCase() + label.slice(1);
+
                     if (waitingStep.result) {
                         content = waitingStep.result;
+                    } else if (waitingStep.params) {
+                        if (waitingStep.params.justification) {
+                            content = "Justification: " + waitingStep.params.justification;
+                        } else if (waitingStep.params.reason) {
+                            content = "Reason: " + waitingStep.params.reason;
+                        }
                     }
                 }
 
@@ -2422,6 +2407,7 @@
     }
 
     async function updateLogs() {
+        if (!state.currentPlanId || !state.token) return;
         if (!state.currentPlanId) return;
         try {
             const resp = await fetch(`/v1/logs/${state.currentPlanId}`);
@@ -2451,6 +2437,7 @@
         } catch (e) { }
     }
 
+    let lastAutoScrollSignature = '';
     function renderPlan(plan) {
         plan.steps = plan.steps || [];
         // Update Kanban background based on plan state
@@ -2575,44 +2562,53 @@
         // 1. Scroll on new plan (placeholder)
         // 2. Scroll on active plan progress
         // 3. STOP scroll if plan is completed/stopped/failed
+        // Auto-scroll logic: Only scroll if state changed
+        let lastStep = null;
+        if (plan.steps.length > 0) lastStep = plan.steps[plan.steps.length - 1];
+
+        const currentSignature = `${plan.plan_id}-${plan.status}-${lastStep ? lastStep.step_id : '0'}-${lastStep ? lastStep.status : 'none'}`;
+
         let scrollTarget = null;
 
-        if (['completed', 'failed'].includes(plan.status)) {
-            // Do not auto-scroll
-        } else if (plan.steps.length === 0) {
-            // New Plan Placeholder Case
-            if (plan.status === 'running') {
-                scrollTarget = elements.cols.running.querySelector('.col-cards');
-            } else {
-                scrollTarget = elements.cols.pending.querySelector('.col-cards');
-            }
-        } else {
-            // Existing Steps Case
-            const lastStep = plan.steps[plan.steps.length - 1];
-            if (lastStep.status === 'waiting_input') {
-                scrollTarget = elements.cols.interaction.querySelector('.col-cards');
-            } else if (lastStep.status === 'running') {
-                scrollTarget = elements.cols.running.querySelector('.col-cards');
-            } else if (['completed', 'failed', 'stopped', 'error', 'cancelled'].includes(lastStep.status)) {
-                scrollTarget = elements.cols.completed.querySelector('.col-cards');
-            } else {
-                scrollTarget = elements.cols.pending.querySelector('.col-cards');
-            }
-        }
-
-        if (scrollTarget) {
-            requestAnimationFrame(() => {
-                // Vertical scroll of the card list
-                if (scrollTarget.scrollHeight > scrollTarget.clientHeight) {
-                    scrollTarget.scrollTop = scrollTarget.scrollHeight;
+        if (currentSignature !== lastAutoScrollSignature) {
+            if (['completed', 'failed'].includes(plan.status)) {
+                // Do not auto-scroll
+            } else if (plan.steps.length === 0) {
+                // New Plan Placeholder Case
+                if (plan.status === 'running') {
+                    scrollTarget = elements.cols.running.querySelector('.col-cards');
+                } else {
+                    scrollTarget = elements.cols.pending.querySelector('.col-cards');
                 }
-
-                // Horizontal scroll of the entire Kanban board (for Mobile/Overflow)
-                const col = scrollTarget.parentElement;
-                if (col) {
-                    col.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+            } else {
+                // Existing Steps Case
+                // Use the same logic as before to find target column
+                if (lastStep.status === 'waiting_input') {
+                    scrollTarget = elements.cols.interaction.querySelector('.col-cards');
+                } else if (lastStep.status === 'running') {
+                    scrollTarget = elements.cols.running.querySelector('.col-cards');
+                } else if (['completed', 'failed', 'stopped', 'error', 'cancelled', 'skipped'].includes(lastStep.status)) {
+                    scrollTarget = elements.cols.completed.querySelector('.col-cards');
+                } else {
+                    scrollTarget = elements.cols.pending.querySelector('.col-cards');
                 }
-            });
+            }
+
+            if (scrollTarget) {
+                lastAutoScrollSignature = currentSignature;
+                requestAnimationFrame(() => {
+                    // Vertical scroll of the card list
+                    if (scrollTarget.scrollHeight > scrollTarget.clientHeight) {
+                        scrollTarget.scrollTop = scrollTarget.scrollHeight;
+                    }
+
+                    // Horizontal scroll of the entire Kanban board
+                    const col = scrollTarget.parentElement;
+                    if (col) {
+                        col.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+                    }
+                });
+            }
         }
     }
 
@@ -2886,6 +2882,7 @@
 
     // --- Task & Notification Logic ---
     async function checkTasks() {
+        if (!state.token) return;
         try {
             const res = await fetch('/v1/tasks');
             if (res.status === 401 || !res.ok) return;

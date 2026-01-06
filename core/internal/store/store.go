@@ -27,6 +27,10 @@ type Store interface {
 	// Config (raw bytes to avoid cycle, manager handles marshaling)
 	SaveConfig(data []byte) error
 	LoadConfig() ([]byte, error)
+
+	// MCP Servers
+	SaveMCPServers(data []byte) error
+	LoadMCPServers() ([]byte, error)
 }
 
 // FileStore implements Store using local file system.
@@ -220,6 +224,29 @@ func (s *FileStore) LoadConfig() ([]byte, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err // Let caller handle not found
+	}
+	return data, nil
+}
+
+func (s *FileStore) SaveMCPServers(data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	filename := filepath.Join(s.baseDir, "mcp_servers.json")
+	if err := os.WriteFile(filename, data, 0644); err != nil {
+		return fmt.Errorf("failed to write mcp servers file: %w", err)
+	}
+	return nil
+}
+
+func (s *FileStore) LoadMCPServers() ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	filename := filepath.Join(s.baseDir, "mcp_servers.json")
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
 	}
 	return data, nil
 }

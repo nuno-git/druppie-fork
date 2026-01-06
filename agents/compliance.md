@@ -35,7 +35,7 @@ Use this action to validate a user request or a proposed plan step.
    - You MUST populate the `stakeholders` parameter based on the violation type:
    - **Security/Infrastructure** (Region, Access, Firewall): `["security"]`
    - **Legal/Contract** (Terms, Licensing): `["legal"]`
-   - **Data Privacy** (GDPR, PII): `["data-privacy"]`
+   - **Data Privacy** (GDPR, PII): `["privacy"]`
    - **Default**: `["compliance"]`
 
 ### Guidelines

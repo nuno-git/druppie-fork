@@ -11,28 +11,31 @@ import (
 
 	"github.com/sjhoeksma/druppie/core/internal/iam"
 	"github.com/sjhoeksma/druppie/core/internal/llm"
+	"github.com/sjhoeksma/druppie/core/internal/mcp"
 	"github.com/sjhoeksma/druppie/core/internal/model"
 	"github.com/sjhoeksma/druppie/core/internal/registry"
 	"github.com/sjhoeksma/druppie/core/internal/store"
 )
 
 type Planner struct {
-	llm      llm.Provider
-	Registry *registry.Registry
-	Store    store.Store
-	Debug    bool
+	llm        llm.Provider
+	Registry   *registry.Registry
+	Store      store.Store
+	Debug      bool
+	MCPManager *mcp.Manager
 }
 
 func (p *Planner) GetLLM() llm.Provider {
 	return p.llm
 }
 
-func NewPlanner(llm llm.Provider, reg *registry.Registry, store store.Store, debug bool) *Planner {
+func NewPlanner(llm llm.Provider, reg *registry.Registry, store store.Store, mcpMgr *mcp.Manager, debug bool) *Planner {
 	return &Planner{
-		llm:      llm,
-		Registry: reg,
-		Store:    store,
-		Debug:    debug,
+		llm:        llm,
+		Registry:   reg,
+		Store:      store,
+		MCPManager: mcpMgr,
+		Debug:      debug,
 	}
 }
 
@@ -132,6 +135,26 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 		blockNames = append(blockNames, b.Name)
 	}
 
+	// Add MCP Tools from Registry (Templates & Static Definitions)
+	// This allows the planner to see tools from servers that aren't running yet (like plan-scoped templates).
+	mcpServers := p.Registry.ListMCPServers(userGroups)
+	for _, s := range mcpServers {
+		for _, t := range s.Tools {
+			blockNames = append(blockNames, fmt.Sprintf("%s (%s)", t.Name, t.Description))
+		}
+	}
+
+	// Add MCP Tools from Running Servers (Dynamic Discovery)
+	if p.MCPManager != nil {
+		mcpTools := p.MCPManager.ListAllTools()
+		for _, t := range mcpTools {
+			// Avoid duplicates if possible?
+			// For now, listing again is harmless or we can dedup.
+			// Simple dedup by checking suffix? Or just append.
+			blockNames = append(blockNames, fmt.Sprintf("%s (%s)", t.Name, t.Description))
+		}
+	}
+
 	allAgents := p.Registry.ListAgents(userGroups)
 
 	// Filter Agents
@@ -213,17 +236,10 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 		}
 
 		var err error
-		if p.Debug {
-			fmt.Printf("[Planner] Generating Plan (Attempt %d)...\n", attempt+1)
-		}
 		resp, err = p.llm.Generate(ctx, "Generate plan data", sysPrompt)
 		if err != nil {
 			return model.ExecutionPlan{}, err
 		}
-		if p.Debug {
-			fmt.Println("[Planner] Plan Generated. Parsing...")
-		}
-
 		// 3. Parse Response
 		cleanResp := p.cleanJSONResponse(resp)
 
@@ -292,25 +308,6 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 		}
 	}
 
-	// Final check
-	if validationErr != nil {
-		fmt.Printf("[Planner] Validation failed after retries: %v\n", validationErr)
-		// Fallback: Inject a placeholder script to prevent crash
-		for i := range steps {
-			if strings.Contains(steps[i].Action, "content-review") {
-				steps[i].Params["av_script"] = []map[string]interface{}{
-					{
-						"scene_id":      1,
-						"audio_text":    "Placeholder Scene 1 (Auto-injected due to generation failure)",
-						"visual_prompt": "Placeholder Visual",
-						"duration":      5,
-					},
-				}
-				fmt.Printf("[Planner] INJECTED PLACEHOLDER AV_SCRIPT for Step %d\n", steps[i].ID)
-			}
-		}
-	}
-
 	// 4. Construct Plan
 	if planID == "" {
 		planID = fmt.Sprintf("plan-%d", time.Now().Unix())
@@ -320,10 +317,8 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 	if u, ok := iam.GetUserFromContext(ctx); ok {
 		creatorID = u.ID
 	}
-
 	plan := model.ExecutionPlan{
-		// Use a UUID or timestamp.
-		// Note: The Caller (main.go) dictates the ID in the async flow, but for synchronous creation we generate one.
+		// ...
 		ID:             planID,
 		CreatorID:      creatorID,
 		Intent:         intent,
@@ -333,7 +328,6 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 	}
 
 	// Persistent Logging
-	// NOTE: Plan is NOT saved here - caller is responsible for saving with correct ID
 	if p.Store != nil {
 		planJSON, _ := json.MarshalIndent(plan, "", "  ")
 		_ = p.Store.LogInteraction(plan.ID, "Planner Create",
@@ -398,9 +392,6 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 		lastStep := completedSteps[len(completedSteps)-1]
 		if lastStep.Action == "expand_loop" {
 			// Perform Micro-Expansion logic internally
-			if p.Debug {
-				fmt.Printf("[Planner] Auto-expanding loop for step %d\n", lastStep.ID)
-			}
 			newSteps, err := p.expandLoop(lastStep, completedSteps, plan.Steps)
 			if err == nil {
 				// Append and Return immediately -> SKIP LLM
@@ -518,7 +509,8 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 			"2. STATUS CHECK: Review 'Current Steps'. If 'content-review' is pending, WAITING for user feedback. If 'scene-creator' is pending, WAITING for execution.\n"+
 			"3. GENERATE: Provide NEXT steps (starting from id %d). Follow the Strategies defined above.\n"+
 			"4. AVOID LOOPS: If the last completed step was an interactive agent (e.g. business-analyst) and the result was a confirmation/answer, DO NOT immediately schedule the same agent for the same task. Proceed to execution or the next phase.\n"+
-			"5. OUTPUT: Return a JSON array of Step objects.",
+			"5. COMPLETION CHECK: If the 'current steps' have successfully achieved the 'Goal', you MUST return an empty JSON array `[]`. This will stop the plan.\n"+
+			"6. OUTPUT: Return a JSON array of Step objects.",
 		string(stepsJSON),
 		plan.Files,
 		feedback,
@@ -559,13 +551,8 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 			if err3 := json.Unmarshal([]byte(cleanResp), &single); err3 == nil {
 				if single.Action != "" {
 					parsingSteps = []ParsingStep{single}
-				} else if p.Debug {
-					fmt.Printf("[Planner] Single object parsed but Action is empty. Struct: %+v. RAW JSON: %s\n", single, cleanResp)
 				}
 			} else {
-				if p.Debug {
-					fmt.Printf("[Planner] Single object parse failed: %v\n", err3)
-				}
 				// Attempt 4: Error Object
 				var errorResp struct {
 					Error string `json:"error"`
@@ -614,10 +601,6 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 		}
 
 		newSteps = append(newSteps, s)
-	}
-
-	if len(newSteps) == 0 && p.Debug {
-		// fmt.Printf("[Planner] No new steps generated. Raw response:\n%s\n", resp)
 	}
 
 	// Adjust IDs using existing startID

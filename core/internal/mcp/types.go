@@ -47,3 +47,24 @@ type ToolContent struct {
 	Text string `json:"text,omitempty"`
 	// Add other fields as needed
 }
+
+// InitializeRequestParams
+type InitializeRequestParams struct {
+	ProtocolVersion string          `json:"protocolVersion"`
+	Capabilities    json.RawMessage `json:"capabilities"`
+	ClientInfo      ClientInfo      `json:"clientInfo"`
+}
+
+type ClientInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+type InitializeResult struct {
+	ProtocolVersion string          `json:"protocolVersion"`
+	Capabilities    json.RawMessage `json:"capabilities"`
+	ServerInfo      struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	} `json:"serverInfo"`
+}

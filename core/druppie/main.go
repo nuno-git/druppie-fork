@@ -19,6 +19,7 @@ import (
 	"github.com/sjhoeksma/druppie/core/internal/converter"
 	"github.com/sjhoeksma/druppie/core/internal/iam"
 	"github.com/sjhoeksma/druppie/core/internal/llm"
+	"github.com/sjhoeksma/druppie/core/internal/mcp"
 	"github.com/sjhoeksma/druppie/core/internal/model"
 	"github.com/sjhoeksma/druppie/core/internal/planner"
 	"github.com/sjhoeksma/druppie/core/internal/registry"
@@ -83,8 +84,9 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 	rootCmd.AddCommand(newCliCmd())
 
 	// Helper to bootstrap dependencies
+	// Helper to bootstrap dependencies
 	// Returns ConfigManager to allow updates, and Builder Engine
-	setup := func(_ *cobra.Command) (*config.Manager, *registry.Registry, *router.Router, *planner.Planner, builder.BuildEngine, iam.Provider, error) {
+	setup := func(_ *cobra.Command) (*config.Manager, *registry.Registry, *router.Router, *planner.Planner, *mcp.Manager, builder.BuildEngine, iam.Provider, error) {
 		// If demo flag is set, force IAM provider to demo via env var (handled by config manager loadEnv)
 		if demo {
 			os.Setenv("IAM_PROVIDER", "demo")
@@ -92,17 +94,17 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 
 		// Ensure we are working from the project root (handles Chdir)
 		if err := ensureProjectRoot(); err != nil {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("root detection error: %w", err)
+			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("root detection error: %w", err)
 		}
 
 		rootDir, err := findProjectRoot()
 		if err != nil {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("registry path error: %w", err)
+			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("registry path error: %w", err)
 		}
 
 		reg, err := registry.LoadRegistry(rootDir)
 		if err != nil {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("registry load error: %w", err)
+			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("registry load error: %w", err)
 		}
 		stats := reg.Stats()
 		fmt.Printf("Loading registry (%d Blocks, %d Skills, %d MCP, %d Agents, %d Compliance) from: %s\n",
@@ -112,13 +114,13 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		storeDir := filepath.Join(rootDir, ".druppie")
 		druppieStore, err := store.NewFileStore(storeDir)
 		if err != nil {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("store init error: %w", err)
+			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("store init error: %w", err)
 		}
 
 		// Load Configuration from Store
 		cfgMgr, err := config.NewManager(druppieStore)
 		if err != nil {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("config load error: %w", err)
+			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("config load error: %w", err)
 		}
 		cfg := cfgMgr.Get()
 
@@ -135,36 +137,39 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		// Initialize Build Engine
 		buildEngine, err := builder.NewEngine(cfg.Build)
 		if err != nil {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("builder init error: %w", err)
+			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("builder init error: %w", err)
 		}
 
 		// Initialize LLM with Config
 		llmManager, err := llm.NewManager(context.Background(), cfg.LLM)
 		if err != nil {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("llm init error: %w", err)
+			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("llm init error: %w", err)
 		}
 
+		// Initialize MCP Manager
+		mcpManager := mcp.NewManager(context.Background(), druppieStore, reg)
+
 		r := router.NewRouter(llmManager, druppieStore, reg, debug)
-		p := planner.NewPlanner(llmManager, reg, druppieStore, debug)
+		p := planner.NewPlanner(llmManager, reg, druppieStore, mcpManager, debug)
 
 		iamProv, err := iam.NewProvider(cfg.IAM, rootDir)
 		if err != nil {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("iam init error: %w", err)
+			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("iam init error: %w", err)
 		}
 
-		return cfgMgr, reg, r, p, buildEngine, iamProv, nil
+		return cfgMgr, reg, r, p, mcpManager, buildEngine, iamProv, nil
 	}
 
 	var serveCmd = &cobra.Command{
 		Use:   "serve",
 		Short: "Start the Druppie API Server",
 		Run: func(cmd *cobra.Command, args []string) {
-			cfgMgr, reg, routerService, plannerService, buildEngine, iamProvider, err := setup(cmd)
+			cfgMgr, reg, routerService, plannerService, mcpManager, buildEngine, iamProvider, err := setup(cmd)
 			if err != nil {
 				fmt.Printf("Startup Error: %v\n", err)
 				os.Exit(1)
 			}
-			tm := NewTaskManager(plannerService, buildEngine)
+			tm := NewTaskManager(plannerService, mcpManager, buildEngine)
 			cfg := cfgMgr.Get()
 
 			// Start Cleanup Routine
@@ -654,6 +659,45 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						return
 					}
 					json.NewEncoder(w).Encode(map[string]string{"build_id": id})
+				})
+
+				// MCP Endpoints
+				r.Route("/mcp", func(r chi.Router) {
+					manager := tm.MCPManager
+
+					r.Get("/servers", func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						json.NewEncoder(w).Encode(manager.GetServers())
+					})
+
+					r.Post("/servers", func(w http.ResponseWriter, r *http.Request) {
+						var req struct {
+							Name string `json:"name"`
+							URL  string `json:"url"`
+						}
+						if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+							http.Error(w, "Invalid body", http.StatusBadRequest)
+							return
+						}
+
+						// Basic validation
+						if req.Name == "" || req.URL == "" {
+							http.Error(w, "Name and URL required", http.StatusBadRequest)
+							return
+						}
+
+						// Connect
+						if err := manager.AddServer(r.Context(), req.Name, req.URL); err != nil {
+							http.Error(w, fmt.Sprintf("Failed to add server: %v", err), http.StatusInternalServerError)
+							return
+						}
+						w.WriteHeader(http.StatusCreated)
+					})
+
+					r.Get("/tools", func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Set("Content-Type", "application/json")
+						json.NewEncoder(w).Encode(manager.ListAllTools())
+					})
 				})
 
 				// Tasks/Approvals Endpoint
@@ -1367,7 +1411,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		Use:   "registry",
 		Short: "Dump the loaded registry",
 		Run: func(cmd *cobra.Command, args []string) {
-			_, reg, _, _, _, _, err := setup(cmd)
+			_, reg, _, _, _, _, _, err := setup(cmd)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
@@ -1409,7 +1453,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		Use:   "login",
 		Short: "Login to local provider",
 		Run: func(cmd *cobra.Command, args []string) {
-			_, _, _, _, _, iamProv, err := setup(cmd)
+			_, _, _, _, _, _, iamProv, err := setup(cmd)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
@@ -1455,7 +1499,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 			// First clean up server side if possible
 			// We need setup to get the provider
 			// Ignoring errors here since logout should be best-effort on local cleanup
-			_, _, _, _, _, iamProv, _ := setup(cmd)
+			_, _, _, _, _, _, iamProv, _ := setup(cmd)
 
 			if localProv, ok := iamProv.(*iam.LocalProvider); ok {
 				token, _ := iam.LoadClientToken()
@@ -1477,7 +1521,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		Use:   "chat",
 		Short: "Start interactive chat",
 		Run: func(cmd *cobra.Command, args []string) {
-			cfgMgr, _, router, planner, buildEngine, iamProv, err := setup(cmd)
+			cfgMgr, _, router, planner, mcpManager, buildEngine, iamProv, err := setup(cmd)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
@@ -1503,7 +1547,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 			}
 
 			// Initialize TaskManager
-			tm = NewTaskManager(planner, buildEngine)
+			tm = NewTaskManager(planner, mcpManager, buildEngine)
 
 			fmt.Println("--- Druppie Chat (Async) ---")
 			fmt.Printf("LLM Provider: %s\n", cfg.LLM.DefaultProvider)
@@ -1638,7 +1682,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		Short:   "Run a plan for a given prompt",
 		Args:    cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			_, _, router, planner, buildEngine, iamProv, err := setup(cmd)
+			_, _, router, planner, mcpMgr, buildEngine, iamProv, err := setup(cmd)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
@@ -1724,7 +1768,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 			}
 
 			// Initialize TaskManager early to unify output
-			tm := NewTaskManager(planner, buildEngine)
+			tm := NewTaskManager(planner, mcpMgr, buildEngine)
 
 			intent, rawRouterResp, err := router.Analyze(ctx, planID, effectivePrompt)
 			if err != nil {
@@ -1885,7 +1929,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		Short: "Resume a specific plan",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			_, _, _, planner, buildEngine, iamProv, err := setup(cmd)
+			_, _, _, planner, mcpMgr, buildEngine, iamProv, err := setup(cmd)
 			if err != nil {
 				fmt.Printf("Startup failed: %v\n", err)
 				os.Exit(1)
@@ -1919,7 +1963,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 			plan.Status = "running"
 			_ = planner.Store.SavePlan(plan)
 
-			tm := NewTaskManager(planner, buildEngine)
+			tm := NewTaskManager(planner, mcpMgr, buildEngine)
 			task := tm.StartTask(ctx, plan)
 			fmt.Printf("Resuming plan %s...\n", plan.ID)
 
@@ -1943,6 +1987,83 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		},
 	}
 
+	// MCP CLI Commands
+	var mcpCmd = &cobra.Command{
+		Use:   "mcp",
+		Short: "Manage MCP Server integrations",
+	}
+
+	var mcpListCmd = &cobra.Command{
+		Use:   "list",
+		Short: "List configured MCP servers",
+		Run: func(cmd *cobra.Command, args []string) {
+			_, _, _, _, mcpMgr, _, _, err := setup(cmd)
+			if err != nil {
+				fmt.Printf("Startup failed: %v\n", err)
+				os.Exit(1)
+			}
+			servers := mcpMgr.GetServers()
+			if len(servers) == 0 {
+				fmt.Println("No MCP servers configured.")
+				return
+			}
+			fmt.Println("Configured MCP Servers:")
+			for _, s := range servers {
+				typeStr := ""
+				if s.Type != "" {
+					typeStr = fmt.Sprintf(" [%s]", s.Type)
+				}
+				fmt.Printf("- %s (%s)%s\n", s.Name, s.URL, typeStr)
+			}
+		},
+	}
+
+	var mcpAddCmd = &cobra.Command{
+		Use:   "add [name] [url]",
+		Short: "Add a new MCP server",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			_, _, _, _, mcpMgr, _, _, err := setup(cmd)
+			if err != nil {
+				fmt.Printf("Startup failed: %v\n", err)
+				os.Exit(1)
+			}
+			name := args[0]
+			url := args[1]
+			ctx := context.Background()
+			fmt.Printf("Connecting to %s (%s)...\n", name, url)
+			if err := mcpMgr.AddServer(ctx, name, url); err != nil {
+				fmt.Printf("Error adding server: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Server '%s' added successfully.\n", name)
+		},
+	}
+
+	var mcpDelCmd = &cobra.Command{
+		Use:   "del [name]",
+		Short: "Remove an MCP server",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			_, _, _, _, mcpMgr, _, _, err := setup(cmd)
+			if err != nil {
+				fmt.Printf("Startup failed: %v\n", err)
+				os.Exit(1)
+			}
+			name := args[0]
+			ctx := context.Background()
+			if err := mcpMgr.RemoveServer(ctx, name); err != nil {
+				fmt.Printf("Error removing server: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Server '%s' removed.\n", name)
+		},
+	}
+
+	mcpCmd.AddCommand(mcpListCmd)
+	mcpCmd.AddCommand(mcpAddCmd)
+	mcpCmd.AddCommand(mcpDelCmd)
+
 	rootCmd.PersistentFlags().StringVar(&planID, "plan-id", "", "ID of an existing plan to resume or manage")
 	rootCmd.PersistentFlags().StringVar(&llmProviderOverride, "llm-provider", "", "Override default LLM provider")
 	rootCmd.PersistentFlags().StringVar(&buildProviderOverride, "build-provider", "", "Override default Build provider")
@@ -1956,6 +2077,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 	runCmd.Flags().BoolVar(&autoPilot, "auto-pilot", false, "Enable auto-pilot (auto-approval) mode")
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(resumeCmd)
+	rootCmd.AddCommand(mcpCmd)
 	rootCmd.AddCommand(serveCmd)
 
 	// Default to server mode
