@@ -132,6 +132,7 @@ const DOC_REGISTRY = {
         { name: "FO: Exoten Detectie", path: "design/exoten_detectie.md" },
         { name: "FO: AI Video Workflow", path: "design/ai_video_workflow.md" },
         { name: "FO: Drone Planner", path: "design/drone_planner.md" },
+        { name: "SPEC: Druppie", path: "design/druppie_spec.md" },
     ],
     "scripts": [
         { name: "Overview", path: "script/overview.md" },

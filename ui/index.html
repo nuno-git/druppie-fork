@@ -2409,6 +2409,7 @@
     async function updateLogs() {
         if (!state.currentPlanId || !state.token) return;
         if (!state.currentPlanId) return;
+        if (!state.currentPlanId) return;
         try {
             const resp = await fetch(`/v1/logs/${state.currentPlanId}`);
             if (!resp.ok) return;
@@ -2882,7 +2883,7 @@
 
     // --- Task & Notification Logic ---
     async function checkTasks() {
-        if (!state.token) return;
+        // if (!state.token) return; // Allow running without token in bypass mode
         try {
             const res = await fetch('/v1/tasks');
             if (res.status === 401 || !res.ok) return;
