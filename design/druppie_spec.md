@@ -63,45 +63,37 @@ Druppie is an **enterprise-grade Spec-Driven AI platform** with **Human-in-the-L
 
 ### 2.1 System Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    HTTP REST API Server                      │
-│                   (Chi Router - Port 80)                     │
-└─────────────────────────────────────────────────────────────┘
-                            │
-        ┌───────────────────┼───────────────────┐
-        │                   │                   │
-        ▼                   ▼                   ▼
-┌──────────────┐    ┌──────────────┐   ┌──────────────┐
-│  IAM         │    │   Router     │   │  Task        │
-│  Provider    │    │   Service    │   │  Manager     │
-└──────────────┘    └──────────────┘   └──────────────┘
-        │                   │                   │
-        │                   ▼                   │
-        │           ┌──────────────┐            │
-        │           │   Planner    │            │
-        │           │   Service    │            │
-        │           └──────────────┘            │
-        │                   │                   │
-        │                   ▼                   │
-        │           ┌──────────────┐            │
-        └──────────▶│   Registry   │◀───────────┘
-                    │   (Loader)   │
-                    └──────────────┘
-                            │
-        ┌───────────────────┼───────────────────┐
-        │                   │                   │
-        ▼                   ▼                   ▼
-┌──────────────┐    ┌──────────────┐   ┌──────────────┐
-│  LLM         │    │   MCP        │   │  Builder     │
-│  Manager     │    │   Manager    │   │  Engine      │
-└──────────────┘    └──────────────┘   └──────────────┘
-        │                   │                   │
-        ▼                   ▼                   ▼
-┌──────────────┐    ┌──────────────┐   ┌──────────────┐
-│  Store       │    │  Executor    │   │  Workflow    │
-│  (FileStore) │    │  Dispatcher  │   │  Manager     │
-└──────────────┘    └──────────────┘   └──────────────┘
+```mermaid
+graph TD
+    API[HTTP REST API Server<br>Chi Router - Port 80]
+    IAM[IAM Provider]
+    Router[Router Service]
+    TM[Task Manager]
+    Planner[Planner Service]
+    Registry[Registry<br>Loader]
+    LLM[LLM Manager]
+    MCP[MCP Manager]
+    Builder[Builder Engine]
+    Store[Store<br>FileStore]
+    Executor[Executor Dispatcher]
+    Workflow[Workflow Manager]
+    Memory[Memory Manager<br>RAG/Vector]
+
+    API --> IAM
+    API --> Router
+    API --> TM
+    Router --> Planner
+    Planner --> Registry
+    TM --> Registry
+    Registry --> LLM
+    Registry --> MCP
+    Registry --> Builder
+    Registry --> Memory
+    LLM --> Store
+    MCP --> Executor
+    Builder --> Workflow
+    Planner --> Memory
+    LLM --> Memory
 ```
 
 ### 2.2 Design Patterns
@@ -139,43 +131,29 @@ All services receive their dependencies via constructor injection:
 
 ### 2.3 Component Relationships
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        User Request                          │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-                            ▼
-                    ┌──────────────┐
-                    │   Router     │───────┐
-                    │  (Analyze)   │       │
-                    └──────────────┘       │
-                            │              │
-                            ▼              ▼
-                ┌─────────────────┐  ┌──────────┐
-                │    Planner      │  │   LLM    │
-                │ (CreatePlan)    │◀─│ Manager  │
-                └─────────────────┘  └──────────┘
-                            │              ▲
-                            ▼              │
-                ┌─────────────────┐       │
-                │  Task Manager   │───────┘
-                │ (StartTask)     │
-                └─────────────────┘
-                            │
-                ┌───────────┴───────────┐
-                │                       │
-                ▼                       ▼
-        ┌──────────────┐       ┌──────────────┐
-        │  Executor    │       │  Workflow    │
-        │  Dispatcher  │       │  Engine      │
-        └──────────────┘       └──────────────┘
-                │                       │
-                └───────────┬───────────┘
-                            ▼
-                    ┌──────────────┐
-                    │    Store     │
-                    │ (SavePlan)   │
-                    └──────────────┘
+```mermaid
+graph TD
+    User[User Request] --> Router[Router<br>Analyze]
+    
+    subgraph Core Services
+        Router --> Planner
+        Router --> LLM
+        Planner[Planner<br>CreatePlan] <--> LLM[LLM Manager]
+        Planner --> TM[Task Manager<br>StartTask]
+        Planner <--> Memory[Memory Manager]
+        LLM <--> Memory
+    end
+    
+    subgraph Execution
+        TM --> Executor[Executor<br>Dispatcher]
+        TM --> Workflow[Workflow<br>Engine]
+    end
+    
+    subgraph Persistence
+        Executor --> Store[Store<br>SavePlan]
+        Workflow --> Store
+        Memory --> Store
+    end
 ```
 
 ### 2.4 Data Flow
@@ -200,16 +178,33 @@ All services receive their dependencies via constructor injection:
 
 #### 2.4.2 Execution Step Flow
 
-```
-pending → isReady? → running → Execute → completed
-                                    ↓
-                               failed/error
-                                    ↓
-                             waiting_input
-                                    ↓
-                            User provides input
-                                    ↓
-                                  retry
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> isReady
+    state isReady <<choice>>
+    
+    isReady --> running: Yes
+    isReady --> pending: No
+    
+    running --> Execute
+    
+    state Execute {
+        [*] --> Executing
+        Executing --> Success
+        Executing --> Failure
+        Executing --> Suspend
+    }
+    
+    Execute --> completed: Success
+    Execute --> failed_error: Failure
+    Execute --> waiting_input: Suspend
+    
+    waiting_input --> retry: User Input
+    retry --> running
+    
+    completed --> [*]
+    failed_error --> [*]
 ```
 
 ---
@@ -461,6 +456,39 @@ type StoredGroup struct {
 
 **Default Admin**: username=`admin`, password=`admin`, groups=`["group-admin"]`
 
+#### 3.1.10 Memory & Context
+
+**Purpose**: Optimizing LLM context window usage
+
+```go
+type MemoryType string
+
+const (
+    MemoryShortTerm MemoryType = "short_term" // In-context sliding window within execution
+    MemoryLongTerm  MemoryType = "long_term"  // Vector/semantic search across plans
+)
+
+type HistoryEntry struct {
+    Timestamp time.Time `json:"timestamp"`
+    Role      string    `json:"role"`    // user, ai, system
+    Content   string    `json:"content"` // Full text
+    Summary   string    `json:"summary,omitempty"` // Compressed/summarized version
+    Tokens    int       `json:"tokens"`
+    PlanID    string    `json:"plan_id"`
+}
+
+type MemoryContext struct {
+    MaxTokens    int            `json:"max_tokens"`
+    Recent Turns []HistoryEntry `json:"recent_turns"`
+    RelevantFacts []string      `json:"relevant_facts"` // Retrived from long term memory
+}
+```
+
+**Strategy**:
+- **Sliding Window**: Keep last N turns full fidelity
+- **Summarization**: Summarize older turns into consolidated "facts"
+- **Vector Search**: Retrieve relevant past plan segments when context needed
+
 ### 3.2 Configuration Models
 
 #### 3.2.1 Config
@@ -473,8 +501,16 @@ type Config struct {
     Server         ServerConfig         `yaml:"server"`
     Build          BuildConfig          `yaml:"build"`
     Git            GitConfig            `yaml:"git"`
+    Git            GitConfig            `yaml:"git"`
     IAM            IAMConfig            `yaml:"iam"`
+    Memory         MemoryConfig         `yaml:"memory"`
     ApprovalGroups map[string][]string  `yaml:"approval_groups"`
+}
+
+type MemoryConfig struct {
+    MaxWindowTokens int  `yaml:"max_window_tokens"` // e.g. 128000
+    SummarizeAfter  int  `yaml:"summarize_after"`   // Turn count
+    VectorStorePath string `yaml:"vector_store_path"`
 }
 
 type LLMConfig struct {
@@ -2629,72 +2665,61 @@ type PluginConverter struct {
 
 ### 6.1 Intent Analysis Workflow
 
-```
-User Input
-    ↓
-Router.Analyze()
-    ↓
-LLM Classification
-    ↓
-Intent{action, category, language}
-    ↓
-Decision:
-    ├─ general_chat → Return Answer
-    └─ other → Continue to Planning
+```mermaid
+graph TD
+    User[User Input] --> Router[Router.Analyze]
+    Router --> LLM[LLM Classification]
+    LLM --> Intent[Intent<br>action, category, language]
+    Intent -- general_chat --> Answer[Return Answer]
+    Intent -- other --> Planning[Continue to Planning]
 ```
 
 ### 6.2 Plan Generation Workflow
 
-```
-Intent
-    ↓
-Planner.CreatePlan()
-    ↓
-1. Load Registry (Blocks, Skills, Agents, MCP)
-    ↓
-2. Filter by User Groups
-    ↓
-3. Select Relevant Agents (LLM)
-    ↓
-4. Expand to Sub-Agents
-    ↓
-5. Sort by Priority
-    ↓
-6. Build Context (Goal, Tools, Agents)
-    ↓
-7. Generate Steps (LLM)
-    ↓
-8. Validate Steps
-    ↓
-9. Create ExecutionPlan
-    ↓
-10. Save to Store
-    ↓
-Return Plan
+```mermaid
+graph TD
+    Intent --> Planner[Planner.CreatePlan]
+    Planner --> Load[1. Load Registry<br>Blocks, Skills, Agents, MCP]
+    Load --> Filter[2. Filter by User Groups]
+    Filter --> Select[3. Select Relevant Agents<br>LLM]
+    Select --> Expand[4. Expand to Sub-Agents]
+    Expand --> Sort[5. Sort by Priority]
+    Sort --> Context[6. Build Context<br>Goal, Tools, Agents]
+    Context --> Gen[7. Generate Steps<br>LLM]
+    Gen --> Validate[8. Validate Steps]
+    Validate --> Create[9. Create ExecutionPlan]
+    Create --> Save[10. Save to Store]
+    Save --> Return[Return Plan]
 ```
 
 ### 6.3 Step Execution Workflow
 
-```
-TaskManager.StartTask()
-    ↓
-runTaskLoop() [goroutine]
-    ↓
-Loop:
-    ├─ Check Cancellation
-    ├─ Check for Native Workflow Override
-    ├─ Load Plan from Store
-    ├─ Find Runnable Steps (dependencies satisfied)
-    ├─ Identify Interactive Steps
-    ├─ Execute Batch in Parallel
-    │   ├─ Dispatcher.GetExecutor()
-    │   ├─ Executor.Execute()
-    │   └─ Update Step Status
-    ├─ Wait for User Input (if interactive)
-    │   ├─ Validate User Permissions (for audit)
-    │   ├─ Apply Input to Step
-    │   └─ Planner.UpdatePlan()
-    └─ Repeat until All Steps Completed
+```mermaid
+graph TD
+    Start[TaskManager.StartTask] --> Loop[runTaskLoop<br>goroutine]
+    
+    subgraph Execution Loop
+        Loop --> CheckCancel[Check Cancellation]
+        CheckCancel --> Override[Check Native Workflow Override]
+        Override --> Load[Load Plan from Store]
+        Load --> Find[Find Runnable Steps]
+        Find --> Interactive{Is Interactive?}
+        
+        Interactive -- No --> Parallel[Execute Batch in Parallel]
+        Parallel --> Dispatch[Dispatcher.GetExecutor]
+        Dispatch --> Exec[Executor.Execute]
+        Exec --> Status[Update Step Status]
+        
+        Interactive -- Yes --> Wait[Wait for User Input]
+        Wait --> Perms[Validate User Permissions]
+        Perms --> Apply[Apply Input to Step]
+        Apply --> Replan[Planner.UpdatePlan]
+        Replan --> Repeat
+        Status --> Repeat
+        
+        Repeat{All Done?} -- No --> Loop
+        Repeat -- Yes --> End
+    end
 ```
 
 ### 6.4 Dependency Resolution Algorithm
@@ -4166,6 +4191,914 @@ golang.org/x/term v0.38.0
 - How to use chat interface
 - How to create agents
 - How to add building blocks
+
+## 8. Implementation Phases
+
+### MVP (Minimum Viable Product)
+
+**Goal:** Functional autonomous planning and execution system with basic capabilities
+
+#### EPIC 1: Foundation & Configuration
+**Story 1.1:** Project Setup and Structure
+- Initialize Go module with proper directory structure
+- Set up core/, internal/, and cmd/ packages
+- Create go.mod with all dependencies
+- **Acceptance:** `go build` succeeds without errors
+
+**Story 1.2:** Configuration Management System
+- Implement Config types with YAML support
+- Create Manager with thread-safe read/write
+- Add environment variable overrides
+- Implement sanitization for API exposure
+- **Dependencies:** None
+- **Data Models:** Config, LLMConfig, BuildConfig, IAMConfig, ServerConfig
+- **Acceptance:** Load/save config from `.druppie/config.yaml`, sanitize secrets
+
+**Story 1.3:** File Store Implementation
+- Implement Store interface
+- Create FileStore with mutex protection
+- Add plan CRUD operations
+- Add log management
+- Add config persistence
+- **Dependencies:** Story 1.2
+- **Data Models:** ExecutionPlan, Step, Intent
+- **Acceptance:** Plans persist across restarts, logs append correctly
+
+---
+
+#### EPIC 2: Data Models & Registry
+**Story 2.1:** Core Type Definitions
+- Define BuildingBlock, Skill, AgentDefinition types
+- Define Intent, Step, ExecutionPlan types
+- Define MCPServer, ComplianceRule types
+- Add JSON/YAML struct tags
+- **Dependencies:** None
+- **Acceptance:** Types marshal/unmarshal correctly
+
+**Story 2.2:** Registry System
+- Implement Registry struct with maps
+- Create thread-safe accessors
+- Add RBAC filtering logic
+- Implement stats reporting
+- **Dependencies:** Story 2.1
+- **Data Models:** Registry
+- **Acceptance:** Concurrent access safe, filtering works
+
+**Story 2.3:** Markdown Registry Loader
+- Parse YAML frontmatter from markdown files
+- Scan directories (blocks/, skills/, agents/, mcp/, compliance/)
+- Populate Registry from files
+- Handle parsing errors gracefully
+- **Dependencies:** Story 2.2
+- **Data Models:** All registry types
+- **Acceptance:** Load 10+ files without errors, validate frontmatter
+
+---
+
+#### EPIC 3: IAM & Authentication
+**Story 3.1:** IAM Provider Interface
+- Define Provider interface
+- Create User and StoredUser types
+- Implement context helpers
+- **Dependencies:** None
+- **Data Models:** User, StoredUser, StoredGroup
+- **Acceptance:** Interface defined, compiles
+
+**Story 3.2:** Local IAM Provider
+- Implement file-based user storage
+- Add bcrypt password hashing
+- Create session token management
+- Implement middleware for auth
+- Create default admin user
+- **Dependencies:** Story 3.1, Story 1.3
+- **API:** POST /iam/login, POST /iam/logout
+- **Acceptance:** Login succeeds, tokens work, middleware blocks unauthenticated requests
+
+**Story 3.3:** User & Group Management API
+- Implement CRUD endpoints for users
+- Implement CRUD endpoints for groups
+- Add admin-only middleware
+- Validate permissions
+- **Dependencies:** Story 3.2
+- **API:** GET/POST/PUT/DELETE /iam/users, /iam/groups
+- **Acceptance:** Admin can manage users/groups, non-admin gets 403
+
+**Story 3.4:** Demo IAM Provider
+- Implement no-auth provider
+- Auto-create demo user with admin groups
+- **Dependencies:** Story 3.1
+- **Acceptance:** Demo mode allows all access
+
+---
+
+#### EPIC 4: LLM Integration
+**Story 4.1:** LLM Provider Interface
+- Define Provider interface
+- Create Manager with provider map
+- Implement retry logic
+- Add timeout handling
+- **Dependencies:** Story 1.2
+- **Data Models:** LLMConfig, ProviderConfig
+- **Acceptance:** Interface works, timeout enforced
+
+**Story 4.2:** Ollama Provider
+- Implement HTTP client for Ollama API
+- Handle JSON request/response
+- Add error handling
+- **Dependencies:** Story 4.1
+- **Acceptance:** Generate text from Ollama, handle errors
+
+**Story 4.3:** Gemini Provider (API Key)
+- Integrate google/generative-ai-go SDK
+- Implement API key authentication
+- Handle streaming responses
+- **Dependencies:** Story 4.1
+- **Acceptance:** Generate text from Gemini, handle rate limits
+
+**Story 4.4:** OpenRouter Provider
+- Implement HTTP client for OpenRouter
+- Add API key header
+- Handle OpenAI-format responses
+- **Dependencies:** Story 4.1
+- **Acceptance:** Generate text from free model
+
+---
+
+#### EPIC 5: Router & Intent Analysis
+**Story 5.1:** Router Agent Implementation
+- Load system prompt from agents/router.md
+- Call LLM with user input
+- Parse JSON response into Intent
+- Handle errors and retries
+- **Dependencies:** Story 4.1, Story 2.2, Story 1.3
+- **Data Models:** Intent
+- **Acceptance:** Intent extracted correctly for sample prompts
+
+**Story 5.2:** Router API Endpoint
+- Implement POST /v1/chat/completions
+- Handle prompt + optional plan_id
+- Call Router.Analyze
+- Return Intent immediately
+- **Dependencies:** Story 5.1, Story 3.2
+- **API:** POST /v1/chat/completions
+- **Acceptance:** API returns Intent, async processing works
+
+---
+
+#### EPIC 6: Planner & Plan Generation
+**Story 6.1:** Basic Planner Implementation
+- Implement CreatePlan method
+- Load agents from registry
+- Build prompt with templates
+- Call LLM for step generation
+- Parse JSON response
+- **Dependencies:** Story 4.1, Story 2.2, Story 1.3
+- **Data Models:** ExecutionPlan, Step
+- **Acceptance:** Generate plan with 3-5 steps for simple prompt
+
+**Story 6.2:** Agent Selection Logic
+- Implement selectRelevantAgents method
+- Query LLM with agent list
+- Parse agent ID array
+- Expand to include sub-agents
+- Fallback to all agents on error
+- **Dependencies:** Story 6.1
+- **Acceptance:** Select 2-3 agents for specific task, handle hallucination
+
+**Story 6.3:** JSON Cleaning & Validation
+- Implement cleanJSONResponse method
+- Remove markdown blocks
+- Fix unclosed brackets
+- Sanitize control characters
+- Retry on parse error (3 attempts)
+- **Dependencies:** Story 6.1
+- **Acceptance:** Clean malformed JSON, retry succeeds
+
+**Story 6.4:** Plan Refinement (UpdatePlan)
+- Implement UpdatePlan method
+- Build history context
+- Mark completed steps
+- Generate next steps via LLM
+- Append and adjust IDs
+- **Dependencies:** Story 6.1
+- **Acceptance:** Refine plan with user feedback, generate 2-3 new steps
+
+---
+
+#### EPIC 7: Execution Engine
+**Story 7.1:** Task Manager Structure
+- Define TaskManager and Task structs
+- Implement StartTask, StopTask methods
+- Create output channel for streaming
+- **Dependencies:** Story 1.3
+- **Data Models:** Task, TaskStatus
+- **Acceptance:** Start/stop tasks, channels work
+
+**Story 7.2:** Task Execution Loop
+- Implement runTaskLoop goroutine
+- Load plan from store
+- Iterate through steps
+- Check dependencies
+- Execute ready steps
+- Update status
+- **Dependencies:** Story 7.1
+- **Acceptance:** Execute 3-step plan sequentially
+
+**Story 7.3:** Dependency Resolution
+- Check DependsOn array
+- Verify all prerequisite steps completed
+- Skip if not ready
+- Allow parallel execution
+- **Dependencies:** Story 7.2
+- **Acceptance:** Execute independent steps in parallel, respect dependencies
+
+**Story 7.4:** Interactive Step Handling
+- Detect waiting_input status
+- Block on InputChan
+- Capture user response
+- Call Planner.UpdatePlan
+- Continue execution
+- **Dependencies:** Story 7.2, Story 6.4
+- **Acceptance:** Pause for input, resume with feedback
+
+---
+
+#### EPIC 8: Executors
+**Story 8.1:** Executor Interface & Dispatcher
+- Define Executor interface
+- Create Dispatcher with executor list
+- Implement routing logic
+- Add fallback handling
+- **Dependencies:** Story 2.1
+- **Acceptance:** Route to correct executor, handle unknown actions
+
+**Story 8.2:** Developer Executor
+- Implement DeveloperExecutor
+- Handle create_code action
+- Parse files param (map or list)
+- Write files to .druppie/plans/{id}/src/
+- **Dependencies:** Story 8.1
+- **Data Models:** Step with files param
+- **Acceptance:** Create 5 files in src/ directory
+
+**Story 8.3:** Build Executor
+- Implement BuildExecutor
+- Integrate with BuildEngine
+- Trigger build with params
+- Log output
+- **Dependencies:** Story 8.1
+- **Acceptance:** Trigger build, capture success/failure
+
+**Story 8.4:** Run Executor
+- Implement RunExecutor
+- Detect runtime (go, npm, python)
+- Execute start command
+- Stream output
+- **Dependencies:** Story 8.1
+- **Acceptance:** Run Go program, capture output
+
+---
+
+#### EPIC 9: API Server
+**Story 9.1:** Chi Router Setup
+- Initialize chi.Router
+- Add middleware (logging, recovery, CORS)
+- Define route structure
+- **Dependencies:** Story 3.2
+- **Acceptance:** Server starts on port 8080
+
+**Story 9.2:** Plan Management Endpoints
+- Implement GET /v1/plans
+- Implement GET /v1/plans/{id}
+- Implement DELETE /v1/plans/{id}
+- Implement POST /v1/plans/{id}/resume
+- Implement POST /v1/plans/{id}/stop
+- **Dependencies:** Story 9.1, Story 7.1, Story 1.3
+- **API:** Plan CRUD operations
+- **Acceptance:** List plans, get details, delete, resume
+
+**Story 9.3:** Task Interaction Endpoints
+- Implement POST /v1/tasks/{id}/message
+- Handle special commands (/stop, /accept)
+- Send input to TaskManager
+- **Dependencies:** Story 9.2, Story 7.4
+- **API:** POST /v1/tasks/{id}/message
+- **Acceptance:** Send user input, plan resumes
+
+**Story 9.4:** Logs & Monitoring Endpoints
+- Implement GET /v1/logs/{id}
+- Implement GET /v1/tasks (approval list)
+- Filter by assigned_group
+- **Dependencies:** Story 9.1, Story 1.3
+- **API:** GET /v1/logs/{id}, GET /v1/tasks
+- **Acceptance:** Stream logs, show pending approvals
+
+**Story 9.5:** Registry Endpoints
+- Implement GET /v1/registry
+- Implement GET /v1/agents
+- Implement GET /v1/skills
+- Apply RBAC filtering
+- **Dependencies:** Story 9.1, Story 2.2
+- **API:** Registry read endpoints
+- **Acceptance:** Return filtered results based on user groups
+
+**Story 9.6:** Config Endpoints
+- Implement GET /v1/config
+- Implement PUT /v1/config
+- Sanitize secrets on GET
+- Persist on PUT
+- **Dependencies:** Story 9.1, Story 1.2
+- **API:** GET/PUT /v1/config
+- **Acceptance:** View/update config, secrets hidden
+
+---
+
+#### EPIC 10: Web UI Integration
+**Story 10.1:** Static File Serving
+- Serve UI files from ui/ directory
+- Detect root directory (./ui or ../ui)
+- Handle index.html, CSS, JS
+- **Dependencies:** Story 9.1
+- **Acceptance:** Open http://localhost:8080, UI loads
+
+**Story 10.2:** File Management Endpoints
+- Implement GET /v1/plans/{id}/files
+- Implement GET/PUT /v1/plans/{id}/files/content
+- Prevent path traversal
+- **Dependencies:** Story 9.2
+- **API:** File read/write endpoints
+- **Acceptance:** View and edit generated files
+
+**Story 10.3:** File Upload Endpoint
+- Implement POST /v1/plans/{id}/files
+- Handle multipart form data
+- Save to .druppie/plans/{id}/files/
+- Limit file size (50 MB)
+- **Dependencies:** Story 10.2
+- **API:** POST /v1/plans/{id}/files
+- **Acceptance:** Upload files up to 50 MB
+
+---
+
+#### EPIC 11: CLI Commands
+**Story 11.1:** Cobra CLI Setup
+- Initialize root command
+- Add subcommands (serve, registry, chat, run)
+- Define global flags
+- **Dependencies:** None
+- **Acceptance:** Help text displays, commands parse
+
+**Story 11.2:** Serve Command
+- Implement serve command
+- Initialize all components
+- Start HTTP server
+- Handle graceful shutdown
+- **Dependencies:** Story 9.1
+- **Acceptance:** `./druppie serve` starts server
+
+**Story 11.3:** Chat Command
+- Implement interactive CLI chat
+- Authenticate user
+- Send prompts to API
+- Stream output
+- Handle special commands
+- **Dependencies:** Story 11.1, Story 3.2, Story 5.2
+- **Acceptance:** Interactive chat works, output streams
+
+**Story 11.4:** Registry Command
+- Implement registry dump command
+- List all capabilities
+- Show admin view (all items)
+- **Dependencies:** Story 11.1, Story 2.2
+- **Acceptance:** List blocks, agents, skills, MCP servers
+
+**Story 11.5:** Login/Logout Commands
+- Implement login command
+- Prompt for username/password (no echo)
+- Save token to ~/.druppie/token
+- Implement logout command
+- **Dependencies:** Story 11.1, Story 3.2
+- **Acceptance:** Login succeeds, token saved, logout clears token
+
+---
+
+#### MVP Testing & Validation
+**Story 11.6:** End-to-End Test
+- Create test plan: "Create a Go REST API"
+- Verify intent analysis
+- Verify plan generation (5-7 steps)
+- Execute plan (create code, build)
+- View generated files
+- **Dependencies:** All MVP stories
+- **Acceptance:** Complete workflow succeeds
+
+---
+
+### Phase 2: Advanced Features
+
+#### EPIC 12: MCP Integration
+**Story 12.1:** MCP Client Implementation
+- Implement JSON-RPC 2.0 client
+- Handle stdio transport
+- Implement SSE transport
+- Add handshake logic (initialize, initialized)
+- **Dependencies:** Story 2.1
+- **Data Models:** MCPServer, Tool
+- **Acceptance:** Connect to server, complete handshake
+
+**Story 12.2:** MCP Manager
+- Implement Manager with server registry
+- Add/remove server methods
+- Tool discovery (tools/list)
+- Tool execution (tools/call)
+- **Dependencies:** Story 12.1
+- **Acceptance:** List tools from 2 servers, execute tool
+
+**Story 12.3:** MCP Executor
+- Implement MCPExecutor
+- Normalize params (alias mapping)
+- Convert relative to absolute paths
+- Call Manager.ExecuteTool
+- Process result content
+- **Dependencies:** Story 12.2, Story 8.1
+- **Acceptance:** Execute filesystem tool (read_file, write_file)
+
+**Story 12.4:** MCP API Endpoints
+- Implement GET /v1/mcp/servers
+- Implement POST /v1/mcp/servers
+- Implement GET /v1/mcp/tools
+- **Dependencies:** Story 12.2, Story 9.1
+- **API:** MCP management endpoints
+- **Acceptance:** Add server via API, list tools
+
+**Story 12.5:** Template Expansion
+- Implement ${PLAN_ID} substitution
+- Auto-create plan-specific MCP servers
+- Example: Filesystem server for plan directory
+- **Dependencies:** Story 12.2
+- **Acceptance:** Plan gets dedicated filesystem access
+
+---
+
+#### EPIC 13: Build Engines
+**Story 13.1:** BuildEngine Interface
+- Define interface with TriggerBuild, GetBuildStatus
+- Create factory function
+- **Dependencies:** Story 1.2
+- **Acceptance:** Interface defined
+
+**Story 13.2:** Local Build Engine
+- Implement LocalClient
+- Detect build system (Dockerfile, go.mod, package.json, etc.)
+- Execute native commands (go build, npm install)
+- Capture output
+- **Dependencies:** Story 13.1
+- **Acceptance:** Build Go project, npm project locally
+
+**Story 13.3:** Docker Build Engine
+- Implement DockerClient
+- Check for Dockerfile
+- Execute docker build
+- Tag image with build ID
+- **Dependencies:** Story 13.1
+- **Acceptance:** Build Docker image, return tag
+
+**Story 13.4:** Tekton Build Engine
+- Implement TektonClient
+- Create Kubernetes client
+- Generate PipelineRun YAML
+- Submit to cluster
+- Poll for completion
+- **Dependencies:** Story 13.1
+- **Acceptance:** Create PipelineRun, wait for success (requires K8s cluster)
+
+---
+
+#### EPIC 14: Compliance System
+**Story 14.1:** Compliance Rule Types
+- Define ComplianceRule type
+- Add Rego policy field
+- Implement loader from compliance/ directory
+- **Dependencies:** Story 2.1, Story 2.2
+- **Data Models:** ComplianceRule
+- **Acceptance:** Load 5 compliance rules
+
+**Story 14.2:** Compliance Executor
+- Implement ComplianceExecutor
+- Handle compliance_check action
+- Extract params (region, access_level, data_types)
+- Evaluate Rego policies (stub or OPA integration)
+- Return violations/recommendations
+- **Dependencies:** Story 14.1, Story 8.1
+- **Acceptance:** Check policy, return violations
+
+**Story 14.3:** Audit Request Flow
+- Handle audit_request action
+- Set status to requires_approval
+- Set assigned_group from config
+- Block until approval
+- Log approval decision
+- **Dependencies:** Story 14.2, Story 7.4
+- **Acceptance:** Pause for approval, continue after /accept
+
+**Story 14.4:** Compliance-First Planning
+- Update Planner logic
+- Detect infrastructure/deployment goals
+- Insert compliance_check and audit_request as Step 1-2
+- Make dependent steps explicit
+- **Dependencies:** Story 14.3, Story 6.1
+- **Acceptance:** Deploy goal generates compliance steps first
+
+---
+
+#### EPIC 15: Multi-Agent Workflows
+**Story 15.1:** Sub-Agent Support
+- Expand agent selection to include sub-agents
+- Build orchestration hierarchy
+- Filter recursive loops
+- **Dependencies:** Story 6.2
+- **Acceptance:** Select architect → includes sub-agents
+
+**Story 15.2:** Workflow Parsing (Mermaid)
+- Parse Mermaid state diagrams
+- Extract states and transitions
+- Identify macro nodes (MACRO_EXPAND_LOOP)
+- **Dependencies:** Story 6.1
+- **Acceptance:** Parse 3 workflows, identify states
+
+**Story 15.3:** Loop Expansion Logic
+- Implement expander.go
+- Handle expand_loop action
+- Iterate over array param
+- Create N steps (one per element)
+- Adjust dependencies
+- **Dependencies:** Story 15.2, Story 6.4
+- **Acceptance:** Expand 5-element array into 5 steps
+
+**Story 15.4:** Workflow-Driven Planning
+- Update Planner to interpret workflows
+- Match current state to diagram
+- Generate next steps based on transitions
+- Enforce stage gating
+- **Dependencies:** Story 15.2, Story 6.1
+- **Acceptance:** Follow 4-state workflow correctly
+
+---
+
+#### EPIC 16: Content Creation Executors
+**Story 16.1:** Video Creator Executor
+- Implement VideoCreatorExecutor
+- Handle video-merge, video-render actions
+- Integrate with ComfyUI or FFmpeg
+- Combine scenes into final video
+- **Dependencies:** Story 8.1
+- **Acceptance:** Merge 3 video scenes
+
+**Story 16.2:** Scene Creator Executor
+- Implement SceneCreatorExecutor
+- Handle scene-creator action
+- Generate image/video for single scene
+- Save to plan directory
+- **Dependencies:** Story 8.1
+- **Acceptance:** Generate 1 scene from prompt
+
+**Story 16.3:** Audio Creator Executor
+- Implement AudioCreatorExecutor
+- Handle text-to-speech action
+- Integrate with Google TTS or ElevenLabs
+- Save audio file
+- **Dependencies:** Story 8.1
+- **Acceptance:** Generate speech from text
+
+**Story 16.4:** Image Creator Executor
+- Implement ImageCreatorExecutor
+- Handle image-generation action
+- Integrate with Stable Diffusion or DALL-E
+- **Dependencies:** Story 8.1
+- **Acceptance:** Generate image from prompt
+
+---
+
+#### EPIC 17: Advanced Planning Features
+**Story 17.1:** Plan Sharing & Access Control
+- Implement allowed_groups field
+- Filter plans by creator and groups
+- Implement group management endpoints
+- **Dependencies:** Story 3.3, Story 9.2
+- **API:** POST/DELETE /v1/plans/{id}/groups/{group}
+- **Acceptance:** Share plan with group, verify access
+
+**Story 17.2:** Plan Resume After Crash
+- Detect zombie plans (running but no task in memory)
+- Auto-resume on user access
+- Restore context from logs
+- **Dependencies:** Story 7.2, Story 9.2
+- **Acceptance:** Restart server, resume plan
+
+**Story 17.3:** Plan Cleanup Job
+- Implement background goroutine
+- Delete plans older than N days (config.cleanup_days)
+- Run daily
+- **Dependencies:** Story 1.3, Story 1.2
+- **Acceptance:** Delete plans after 7 days
+
+**Story 17.4:** Build Artifact Promotion
+- Implement POST /v1/plans/{id}/builds/{buildID}/promote
+- Extract metadata from build
+- Generate building block markdown
+- Register in registry
+- **Dependencies:** Story 13.2, Story 2.2
+- **API:** POST promotion endpoint
+- **Acceptance:** Promote build to block, appears in registry
+
+---
+
+### Phase 3: Enterprise Features
+
+#### EPIC 18: Keycloak IAM Integration
+**Story 18.1:** Keycloak Provider Implementation
+- Implement OAuth2/OIDC flow
+- Token validation
+- User info endpoint
+- **Dependencies:** Story 3.1
+- **Acceptance:** Login via Keycloak, get user
+
+**Story 18.2:** Group Sync
+- Fetch groups from Keycloak
+- Map to internal group IDs
+- Update on token refresh
+- **Dependencies:** Story 18.1
+- **Acceptance:** User groups match Keycloak
+
+---
+
+#### EPIC 19: Git Integration
+**Story 19.1:** Gitea Client
+- Implement HTTP client for Gitea API
+- Repository CRUD
+- Push/pull operations
+- **Dependencies:** Story 1.2
+- **Acceptance:** Create repo, push code
+
+**Story 19.2:** GitHub/GitLab Clients
+- Implement clients for GitHub, GitLab
+- Unified interface
+- **Dependencies:** Story 19.1
+- **Acceptance:** Works with all 3 providers
+
+**Story 19.3:** Code Versioning in Plans
+- Auto-commit generated code to Git
+- Tag with plan ID
+- Link in plan metadata
+- **Dependencies:** Story 19.1, Story 8.2
+- **Acceptance:** Generated code in Git repo
+
+---
+
+#### EPIC 20: Advanced LLM Features
+**Story 20.1:** Gemini OAuth2 Provider
+- Implement full OAuth2 flow
+- Token caching and refresh
+- Cloud Code API integration
+- **Dependencies:** Story 4.3
+- **Acceptance:** Authenticate without API key
+
+**Story 20.2:** LM Studio Provider
+- Implement OpenAI-compatible client
+- Handle local models
+- **Dependencies:** Story 4.1
+- **Acceptance:** Generate with LM Studio
+
+**Story 20.3:** Agent-Specific LLM Providers
+- Parse provider/model fields from agent definitions
+- Override default provider per agent
+- **Dependencies:** Story 6.1, Story 4.1
+- **Acceptance:** Use Gemini for planner, Ollama for developer
+
+**Story 20.4:** Streaming Responses
+- Implement SSE for real-time output
+- Stream LLM tokens to UI
+- **Dependencies:** Story 9.1
+- **Acceptance:** See LLM response as it generates
+
+---
+
+#### EPIC 21: Observability
+**Story 21.1:** Structured Logging
+- Implement structured logger (zerolog or zap)
+- Add log levels
+- Include context (plan ID, user, agent)
+- **Dependencies:** Story 7.1
+- **Acceptance:** Logs in JSON format
+
+**Story 21.2:** Metrics Exporter
+- Expose Prometheus metrics
+- Track plan counts, execution times, errors
+- **Dependencies:** Story 9.1
+- **Acceptance:** Scrape /metrics endpoint
+
+**Story 21.3:** Tracing Integration
+- Add OpenTelemetry support
+- Trace request flows
+- Export to Jaeger/Tempo
+- **Dependencies:** Story 21.1
+- **Acceptance:** View trace for complete plan execution
+
+---
+
+#### EPIC 22: UI Enhancements
+**Story 22.1:** Real-Time Updates (WebSocket)
+- Implement WebSocket endpoint
+- Push plan updates to connected clients
+- **Dependencies:** Story 9.1
+- **Acceptance:** UI updates without polling
+
+**Story 22.2:** Code Editor Integration
+- Embed Monaco Editor or similar
+- Syntax highlighting for generated code
+- **Dependencies:** Story 10.2
+- **Acceptance:** Edit Go code in browser
+
+**Story 22.3:** Kanban Board View
+- Visualize plans as Kanban cards
+- Drag-and-drop to change status
+- **Dependencies:** Story 22.1
+- **Acceptance:** Move plan from Running to Completed
+
+---
+
+#### EPIC 23: Memory System & Optimization
+**Story 23.1:** Short Term Memory Manager
+- Implement in-memory sliding window for active plan chat
+- Track token count per message
+- Prune oldest messages when limit reached
+- Preserver "System" messages
+- **Dependencies:** Story 3.1.10, Story 6.4
+- **Acceptance:** Chat remains within token limit
+
+**Story 23.2:** Long Term Memory Implementation (Vector)
+- Integrate basic vector store (e.g. slight/chroma-go or file-based)
+- Embed plan results and summaries upon completion
+- **Dependencies:** Story 23.1
+- **Acceptance:** Plan summaries stored as vectors
+
+**Story 23.3:** Context Retrieval
+- Query vector store during "CreatePlan" to find similar past plans
+- Inject relevant past successes/failures into Planner context
+- **Dependencies:** Story 23.2, Story 6.1
+- **Acceptance:** Planner creates better plans based on past history
+
+---
+
+## 9. Migration Notes
+
+### From Existing Druppie to GoLang Recreation
+
+**Data Migration:**
+1. Export existing plans from `.druppie/plans/` (already compatible)
+2. Convert user/group data if using different format
+3. Migrate config.yaml (should be compatible)
+
+**API Compatibility:**
+- New GoLang API is compatible with existing Web UI
+- Endpoints match original implementation
+- WebSocket/SSE additions are new features
+
+**Breaking Changes:**
+- None - API is backward compatible
+- Internal package structure different but external API same
+
+---
+
+## 10. Testing Strategy
+
+### Unit Tests
+- Test each component in isolation
+- Mock external dependencies (LLM, Store, Registry)
+- Aim for 80%+ coverage
+
+### Integration Tests
+- Test API endpoints with real database
+- Use test fixtures for registry files
+- Mock LLM responses for predictability
+
+### End-to-End Tests
+- Full workflow tests (user prompt → plan → execution → result)
+- Use demo mode for auth bypass
+- Verify files created, logs generated, status updated
+
+### Performance Tests
+- Concurrent plan execution (10+ plans)
+- Large plan handling (100+ steps)
+- LLM timeout and retry behavior
+
+---
+
+## 11. Deployment Considerations
+
+### Docker Deployment
+```dockerfile
+FROM golang:1.24-alpine AS builder
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o druppie ./druppie
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /app
+COPY --from=builder /build/druppie .
+COPY --from=builder /build/ui ./ui
+COPY --from=builder /build/blocks ./blocks
+COPY --from=builder /build/skills ./skills
+COPY --from=builder /build/agents ./agents
+COPY --from=builder /build/mcp ./mcp
+COPY --from=builder /build/compliance ./compliance
+COPY --from=builder /build/core/config_default.yaml ./core/
+EXPOSE 8080
+CMD ["./druppie", "serve"]
+```
+
+### Kubernetes Deployment
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: druppie
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: druppie
+  template:
+    metadata:
+      labels:
+        app: druppie
+    spec:
+      containers:
+      - name: druppie
+        image: druppie:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: druppie-secrets
+              key: gemini-api-key
+        volumeMounts:
+        - name: data
+          mountPath: /app/.druppie
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: druppie-data
+```
+
+### Environment Variables
+```bash
+# LLM Configuration
+GEMINI_API_KEY=your-key
+IAM_PROVIDER=local
+PORT=8080
+
+# Optional
+CLEANUP_DAYS=7
+```
+
+---
+
+## 12. Security Considerations
+
+### Authentication
+- bcrypt password hashing (cost 10)
+- Secure token generation (crypto/rand)
+- Token-based sessions with timeout
+- HTTPS recommended for production
+
+### Authorization
+- RBAC with group-based access control
+- Plan-level access control
+- API endpoint protection via middleware
+
+### Input Validation
+- Path traversal prevention (filepath.Clean)
+- JSON schema validation
+- File size limits (50 MB)
+- SQL injection not applicable (no SQL)
+
+### Secrets Management
+- Config sanitization for API exposure
+- Secrets should use Kubernetes Secrets or Vault
+- Never log sensitive data
+
+### Audit Trail
+- Complete interaction logs
+- User actions tracked with username
+- Compliance approval records
+
+---
 
 **Dependencies**: All phases
 

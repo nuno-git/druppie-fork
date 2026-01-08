@@ -41,19 +41,37 @@ De Vaarkaart benadrukt dat digitale transformatie niet alleen over techniek gaat
 
 
 ## We zijn goed op weg
-![Slide Image](story/images/image11.png) <!-- Placeholder, mapping might be off -->
-
+![Slide Image](story/images/image11.png)  
 Binnen de technologie onderscheiden we verschillende bouwblokken die voortdurend onderling samenwerken en communiceren. Gezamenlijk leveren ze de diensten en digitalisering op. Waar tot nu toe in deze routekaart vooral de kansen van digitalisering zijn belicht, kent het ook significante risico’s. We zijn en willen een betrouwbaar waterschap blijven dat goed omgaat met de gegevens van haar burgers en bedrijven. Daarom zorgen we er continu voor de digitale weerbaarheid op orde is, zoals tegen hackers en randsomeware. En naarmate we meer digitaliseren zullen algoritmes en kunstmatige intelligentie steeds meer worden toegepast. Dat vraagt naast informatieveiligheid om continue alertheid voor privacy en ethiek. Zodat de kansen van digitalisering verzilverd kunnen worden terwijl de risico’s tot een minimum beperkt worden.​
 
 Bij het gebruik van algoritmes en kunstmatige intelligentie willen we voorkomen dat er informatie gegeneerd wordt die tegen ethische grenzen aanzitten of er zelfs over heen gaan. Daarom is het een van onze prioriteiten om een ethische AI omgeving te creëren, waarbinnen digitale ontwikkelingen to bloei kunnen komen. Ook aspecten als inclusie, toegankelijkheid voor iedereen, ‘de menselijke maat’ en digital violence zijn onderdeel van de ethische afwegingen. 
 
 ## Van visie naar uitvoering
-![Slide Image](story/images/image12.png) <!-- Placeholder, mapping might be off -->
+![Slide Image](story/images/image12.png) 
 
 Digitale transformatie is niet een gewoon project, maar een verandertraject met impact op de gehele organisatie. Uit de praktijk blijkt dan ook als digitale transformatie wordt aangestuurd als een regulier project dat de implementatie moeizaam gaat of mislukt. Daarom is er gekozen voor een meer natuurlijk proces van Leren, Experimenteren en Verbeteren. Om te zorgen dat we de goede dingen kunnen en gaan doen is het noodzakelijk dat er van boven af wordt gestuurd. De stuurgroep is er om de richting en scope te bepalen wat eerst en wat later, maar ook te zorgen dat de juiste middelen en voorwaarden er zijn om te kunnen leren, experimenteren en verbeteren. Een kleine support groep zorgt ervoor dat de randvoorwaarden voor de teams of medewerkers zijn ingevuld voor dat de proces verandering (Minimal Viable Change) wordt gestart en begeleid de groep tijdens de verandering. Het team is verantwoordelijk voor de realisatie van de verandering en dat deze geborgd wordt binnen de dag dagelijkse werkzaamheden. Mocht het nodig zijn een nieuwe oplossing te creëren (Minimal Viable Product) dat zorgt het support team de ondersteuning. De teamleider is verantwoordelijk voor het definiëren van het minimale product en voor de aansturing van realisatie.  
 
 Het is essentieel om duidelijke processen te hebben tijdens een digitale transformatie omdat dit de ruggengraat vormt voor een succesvolle overgang. Duidelijke processen zorgen voor consistentie en efficiëntie, verminderen de kans op fouten en misverstanden, en stellen teams in staat om proactief te handelen in plaats van reactief. Ze bieden een gestructureerd kader waarbinnen teams kunnen innoveren en experimenteren, terwijl ze toch binnen de grenzen van de bedrijfsstrategie blijven. Bovendien helpen duidelijke processen bij het managen van veranderingen en het minimaliseren van weerstand tegen nieuwe technologieën en werkwijzen, wat cruciaal is voor het behalen van de beoogde digitale transformatiedoelstellingen. Daarom kiezen wij er ook voor om voor die teams waar er digitale mogelijkheden liggen eerst de processen in kaart te brengen voordat we de transformatie starten. 
 
+
+## Verschillende Perspectieven
+![Slide Image](story/images/image16.png) 
+ 
+ Elke laag vertegenwoordigt een ander perspectief in een gelaagde architectuur die het fundament vormt voor een veilig, compliant en innovatief AI assistent, van strategisch bestuur tot dagelijkse interactie en van databeheer tot gecontroleerde AI-omgeving. ​
+
+Wat Druppie uniek maakt, is het gebruik van meerdere avatars: elk avatar staat voor een specifieke AI-expert met eigen vaardigheden en kennis, direct gekoppeld aan menselijke expertise binnen het waterschap. Zo brengen we de kracht van de mens — zoals juridische kennis, security, data-analyse en ontwikkeling — rechtstreeks over naar de AI-wereld. Wanneer een gebruiker een vraag stelt, schakelt Druppie automatisch de juiste avatar in, zodat elke taak wordt uitgevoerd door de meest geschikte digitale expert. ​
+
+- De gebruiker avatar: Stelt de vraag en krijgt het antwoord.
+- De kennis avatar: Stelt zijn eigen kennisbronnen voor de AI ter beschikking.
+- Juridische avatar: waarborgt naleving van wet- en regelgeving. 
+- Security avatar: zorgt voor veiligheid en privacy. 
+- Data avatar: beheert en ontsluit data. 
+- Ontwikkelaar avatar: bouwt en test oplossingen. 
+- Architect avatar: bewaakt de technische structuur.
+
+Deze aanpak zorgt ervoor dat Druppie niet alleen slimme oplossingen biedt, maar dat dit altijd gebeurt binnen de kaders van veiligheid, transparantie en betrouwbaarheid. De mens blijft altijd in control: elke AI-avatar werkt samen met de gebruiker en experts, zodat de digitale transformatie verantwoord en uitlegbaar verloopt. ​
+
+Kortom, Druppie verbindt de menselijke kennis en vaardigheden met de kracht van AI, waardoor we als organisatie slimmer, veiliger en innovatiever kunnen werken.
 
 ## Digitale Innovatie Bouwer
 ![Slide Image](story/images/image15.png) 

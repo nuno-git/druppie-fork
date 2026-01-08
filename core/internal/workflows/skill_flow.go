@@ -16,7 +16,7 @@ func (w *SkillExecutionWorkflow) Run(wc *WorkflowContext, initialPrompt string) 
 	wc.OutputChan <- fmt.Sprintf("⚙️ [SkillWorkflow] Starting Skill Execution for: %s", initialPrompt)
 
 	// 1. Analyze Intent to identify the skill/action
-	action, params, err := w.analyzeSkillIntent(wc, initialPrompt)
+	action, params, usage, err := w.analyzeSkillIntent(wc, initialPrompt)
 	if err != nil {
 		return err
 	}
@@ -26,12 +26,13 @@ func (w *SkillExecutionWorkflow) Run(wc *WorkflowContext, initialPrompt string) 
 	// 2. Execute Skill via Dispatcher
 	// We wrap this in a loop to allow for retry logic if needed, but for now single pass
 
-	// Create step for tracking
+	// Create step for tracking, attaching the analysis usage
 	stepID := wc.AppendStep(model.Step{
 		AgentID: "skill-executor",
 		Action:  action,
 		Status:  "running",
 		Params:  params,
+		Usage:   &usage,
 	})
 
 	executor, err := wc.Dispatcher.GetExecutor(action)
@@ -42,6 +43,7 @@ func (w *SkillExecutionWorkflow) Run(wc *WorkflowContext, initialPrompt string) 
 			Action:  action,
 			Status:  "failed",
 			Result:  fmt.Sprintf("No executor found: %v", err),
+			Usage:   &usage,
 		})
 		return err
 	}
@@ -86,12 +88,13 @@ func (w *SkillExecutionWorkflow) Run(wc *WorkflowContext, initialPrompt string) 
 		Status:  "completed",
 		Params:  params,
 		Result:  capturedResult,
+		Usage:   &usage, // Ensure usage persists in final state
 	})
 
 	return nil
 }
 
-func (w *SkillExecutionWorkflow) analyzeSkillIntent(wc *WorkflowContext, prompt string) (string, map[string]interface{}, error) {
+func (w *SkillExecutionWorkflow) analyzeSkillIntent(wc *WorkflowContext, prompt string) (string, map[string]interface{}, model.TokenUsage, error) {
 	// Simple analysis: Ask LLM to extract action and params
 	// This makes it generic for any skill supported by the system
 
@@ -105,9 +108,13 @@ Output JSON: { "action": "action_name", "params": { "key": "value" } }`
 		}
 	}
 
-	resp, err := wc.LLM.Generate(wc.Ctx, "Analyze Skill", sysPrompt+"\nRequest: "+prompt)
+	resp, usage, err := wc.LLM.Generate(wc.Ctx, "Analyze Skill", sysPrompt+"\nRequest: "+prompt)
+	if wc.UpdateTokenUsage != nil {
+		wc.UpdateTokenUsage(usage)
+	}
+
 	if err != nil {
-		return "", nil, err
+		return "", nil, usage, err
 	}
 
 	// Clean JSON
@@ -125,8 +132,8 @@ Output JSON: { "action": "action_name", "params": { "key": "value" } }`
 	}
 
 	if err := json.Unmarshal([]byte(clean), &raw); err != nil {
-		return "", nil, fmt.Errorf("failed to parse skill intent: %w", err)
+		return "", nil, usage, fmt.Errorf("failed to parse skill intent: %w", err)
 	}
 
-	return raw.Action, raw.Params, nil
+	return raw.Action, raw.Params, usage, nil
 }

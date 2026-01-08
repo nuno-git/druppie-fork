@@ -8,34 +8,46 @@ import (
 	"sort"
 	"strings"
 	"time"
+"gopkg.in/yaml.v3"
 
 	"github.com/sjhoeksma/druppie/core/internal/iam"
 	"github.com/sjhoeksma/druppie/core/internal/llm"
 	"github.com/sjhoeksma/druppie/core/internal/mcp"
+	"github.com/sjhoeksma/druppie/core/internal/memory"
 	"github.com/sjhoeksma/druppie/core/internal/model"
 	"github.com/sjhoeksma/druppie/core/internal/registry"
 	"github.com/sjhoeksma/druppie/core/internal/store"
 )
 
 type Planner struct {
-	llm        llm.Provider
-	Registry   *registry.Registry
-	Store      store.Store
-	Debug      bool
-	MCPManager *mcp.Manager
+	llm               llm.Provider
+	Registry          *registry.Registry
+	Store             store.Store
+	Debug             bool
+	MCPManager        *mcp.Manager
+	Memory            *memory.Manager
+	MaxAgentSelection int
 }
 
 func (p *Planner) GetLLM() llm.Provider {
 	return p.llm
 }
 
-func NewPlanner(llm llm.Provider, reg *registry.Registry, store store.Store, mcpMgr *mcp.Manager, debug bool) *Planner {
+func NewPlanner(llm llm.Provider, reg *registry.Registry, store store.Store, mcpMgr *mcp.Manager, memMgr *memory.Manager, maxAgentSelection int, debug bool) *Planner {
+	if memMgr == nil {
+		memMgr = memory.NewManager(12000, store)
+	}
+	if maxAgentSelection <= 0 {
+		maxAgentSelection = 3 // Default safety
+	}
 	return &Planner{
-		llm:        llm,
-		Registry:   reg,
-		Store:      store,
-		MCPManager: mcpMgr,
-		Debug:      debug,
+		llm:               llm,
+		Registry:          reg,
+		Store:             store,
+		MCPManager:        mcpMgr,
+		Memory:            memMgr,
+		MaxAgentSelection: maxAgentSelection,
+		Debug:             debug,
 	}
 }
 
@@ -89,17 +101,37 @@ func (p *Planner) cleanJSONResponse(resp string) string {
 	return clean
 }
 
-func (p *Planner) selectRelevantAgents(ctx context.Context, intent model.Intent, agents []model.AgentDefinition) []string {
+func (p *Planner) selectRelevantAgents(ctx context.Context, intent model.Intent, agents []model.AgentDefinition, planID string) ([]string, model.TokenUsage) {
 	var detailedList []string
 	for _, a := range agents {
+		// Include ID and Description, maybe Skills?
 		detailedList = append(detailedList, fmt.Sprintf("%s: %s", a.ID, a.Description))
 	}
-	prompt := fmt.Sprintf("Goal: %s\nAvailable Agents:\n%v\n\nTask: Return exactly one JSON array of strings containing Agent IDs. Be extremely restrictive.\nGuidelines:\n- For video content, use 'video-content-creator' ONLY (it replaces business-analyst).\n- For research/data tasks, use 'data-scientist'.\n- For infrastructure/ops, use 'infrastructure-engineer'.\n- For compliance/policy/verification, use 'compliance'.\n- For architecture, use 'architect'.\n- For other VAGUE goals, include 'business-analyst'.\nExample: [\"video-content-creator\"]", intent.Prompt, detailedList)
+	// Prompt asks for sorted list by relevance
+	prompt := fmt.Sprintf(`Goal: %s
 
-	resp, err := p.llm.Generate(ctx, "Select Agents", prompt)
+Available Agents:
+%v
+
+Task: Select the most relevant agents for this goal.
+Rules:
+1. Return exactly one JSON array of strings containing Agent IDs.
+2. Sort the array by relevance (most relevant first).
+3. Be extremely restrictive. prefer single specialized agent over multiple.
+4. Guidelines:
+   - Video content -> 'video-content-creator'
+   - Research/Data -> 'data-scientist'
+   - Infrastructure/Ops -> 'infrastructure-engineer'
+   - Compliance/Policy -> 'compliance'
+   - Architecture -> 'architect'
+   - General/Ambiguous -> 'business-analyst'
+
+Example: ["business-analyst"]`, intent.Prompt, detailedList)
+
+	resp, usage, err := p.llm.Generate(ctx, "Select Agents", prompt)
 	if err != nil {
 		fmt.Printf("[Planner] Agent selection failed: %v\n", err)
-		return nil
+		return nil, model.TokenUsage{}
 	}
 
 	clean := p.cleanJSONResponse(resp)
@@ -115,10 +147,21 @@ func (p *Planner) selectRelevantAgents(ctx context.Context, intent model.Intent,
 			if p.Debug {
 				fmt.Printf("[Planner] Failed to parse agent selection: %v. Raw: %s\n", err, resp)
 			}
-			return nil
+			return nil, usage
 		}
 	}
-	return selected
+
+	// Limit selection based on config
+	if len(selected) > p.MaxAgentSelection {
+		selected = selected[:p.MaxAgentSelection]
+	}
+
+	// Log interaction for visibility
+	if p.Store != nil {
+		_ = p.Store.LogInteraction(planID, "Planner", "Agent Selection", fmt.Sprintf("Goal: %s\nSelected: %v\n(Limited to Top %d)", intent.Prompt, selected, p.MaxAgentSelection))
+	}
+
+	return selected, usage
 }
 
 func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID string) (model.ExecutionPlan, error) {
@@ -158,7 +201,10 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 	allAgents := p.Registry.ListAgents(userGroups)
 
 	// Filter Agents
-	selectedIDs := p.selectRelevantAgents(ctx, intent, allAgents)
+	selectedIDs, usageAgents := p.selectRelevantAgents(ctx, intent, allAgents, planID)
+
+	// Usage tracking
+	totalUsage := usageAgents
 
 	// Expand Selection with Sub-Agents
 	selectedSet := make(map[string]bool)
@@ -199,10 +245,29 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 	agentList := make([]string, 0, len(activeAgents))
 	for _, a := range activeAgents {
 		sortedIDs = append(sortedIDs, a.ID)
-		agentList = append(agentList, fmt.Sprintf(
-			"ID: %s\n  Name: %s\n  Type: %s\n  Condition: %s\n  Sub-Agents: %v\n  Skills: %v\n  Priority: %.1f\n  Description: %s\n  Workflow:\n%s\n  Directives & Structure:\n%s",
-			a.ID, a.Name, a.Type, a.Condition, a.SubAgents, a.Skills, a.Priority, a.Description, a.Workflow, a.Instructions,
-		))
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("ID: %s\n", a.ID))
+		sb.WriteString(fmt.Sprintf("  Name: %s\n", a.Name))
+		sb.WriteString(fmt.Sprintf("  Type: %s\n", a.Type))
+		if a.Condition != "" {
+			sb.WriteString(fmt.Sprintf("  Condition: %s\n", a.Condition))
+		}
+		if len(a.SubAgents) > 0 {
+			sb.WriteString(fmt.Sprintf("  Sub-Agents: %v\n", a.SubAgents))
+		}
+		if len(a.Skills) > 0 {
+			sb.WriteString(fmt.Sprintf("  Skills: %v\n", a.Skills))
+		}
+		sb.WriteString(fmt.Sprintf("  Priority: %.1f\n", a.Priority))
+		sb.WriteString(fmt.Sprintf("  Description: %s\n", a.Description))
+		if a.Workflow != "" {
+			sb.WriteString(fmt.Sprintf("  Workflow:\n%s\n", a.Workflow))
+		}
+		if a.Instructions != "" {
+			sb.WriteString(fmt.Sprintf("  Directives:\n%s", a.Instructions))
+		}
+		agentList = append(agentList, sb.String())
 	}
 	//fmt.Printf("[Planner - Agents] %v\n", sortedIDs)
 
@@ -221,6 +286,11 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 		"%tools%", fmt.Sprintf("%v", blockNames),
 		"%agents%", fmt.Sprintf("%v", agentList),
 	)
+
+	if p.Store != nil {
+		_ = p.Store.LogInteraction(planID, "Planner", "Context Assembly", fmt.Sprintf("Selected Tools/Blocks: %v", blockNames))
+	}
+
 	sysPrompt := replacer.Replace(sysTemplate)
 
 	var steps []model.Step
@@ -236,10 +306,17 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 		}
 
 		var err error
-		resp, err = p.llm.Generate(ctx, "Generate plan data", sysPrompt)
+		var usage model.TokenUsage
+		resp, usage, err = p.llm.Generate(ctx, "Generate plan data", sysPrompt)
 		if err != nil {
 			return model.ExecutionPlan{}, err
 		}
+
+		// Accumulate usage
+		totalUsage.PromptTokens += usage.PromptTokens
+		totalUsage.CompletionTokens += usage.CompletionTokens
+		totalUsage.TotalTokens += usage.TotalTokens
+
 		// 3. Parse Response
 		cleanResp := p.cleanJSONResponse(resp)
 
@@ -313,6 +390,11 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 		planID = fmt.Sprintf("plan-%d", time.Now().Unix())
 	}
 
+	// Initialize Memory Context
+	if p.Memory != nil {
+		p.Memory.AddEntry(planID, "user", fmt.Sprintf("Goal: %s\nAction: %s", intent.Prompt, intent.Action))
+	}
+
 	creatorID := ""
 	if u, ok := iam.GetUserFromContext(ctx); ok {
 		creatorID = u.ID
@@ -325,20 +407,28 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 		Status:         "created",
 		Steps:          steps,
 		SelectedAgents: selectedIDs,
+		TotalUsage:     totalUsage,
 	}
 
 	// Persistent Logging
 	if p.Store != nil {
 		planJSON, _ := json.MarshalIndent(plan, "", "  ")
 		_ = p.Store.LogInteraction(plan.ID, "Planner Create",
-			fmt.Sprintf("--- PROMPT ---\n%s\n--- END PROMPT ---", sysPrompt),
-			fmt.Sprintf("--- RESPONSE ---\n%s\n--- END RESPONSE ---\n\nRESULTING PLAN:\n%s", resp, string(planJSON)))
+fmt.Sprintf("--- PROMPT ---\n%s\n--- END PROMPT ---", sysPrompt),
+fmt.Sprintf("--- RESPONSE ---\n%s\n--- END RESPONSE ---\n\nRESULTING PLAN:\n%s", resp, string(planJSON)))
+	}
+
+	// Assign initial usage to the "generate_plan" step if it exists
+	for i := range plan.Steps {
+		if plan.Steps[i].Action == "generate_plan" {
+			plan.Steps[i].Usage = &totalUsage
+			break
+		}
 	}
 
 	return plan, nil
-}
 
-// UpdatePlan updates an existing plan based on user feedback or answers.
+}// UpdatePlan updates an existing plan based on user feedback or answers.
 func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, feedback string) (*model.ExecutionPlan, error) {
 	// 0. Handle Feedback
 	// Find the first non-completed step that matches the feedback category and mark it as completed
@@ -454,11 +544,28 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 	for _, a := range activeAgents {
 		sortedIDs = append(sortedIDs, a.ID)
 
-		// Create the detailed description string for the prompt
-		updatedAgentList = append(updatedAgentList, fmt.Sprintf(
-			"ID: %s\n  Name: %s\n  Type: %s\n  Condition: %s\n  Sub-Agents: %v\n  Skills: %v\n  Priority: %.1f\n  Description: %s\n  Workflow:\n%s",
-			a.ID, a.Name, a.Type, a.Condition, a.SubAgents, a.Skills, a.Priority, a.Description, a.Workflow,
-		))
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("ID: %s\n", a.ID))
+		sb.WriteString(fmt.Sprintf("  Name: %s\n", a.Name))
+		sb.WriteString(fmt.Sprintf("  Type: %s\n", a.Type))
+		if a.Condition != "" {
+			sb.WriteString(fmt.Sprintf("  Condition: %s\n", a.Condition))
+		}
+		if len(a.SubAgents) > 0 {
+			sb.WriteString(fmt.Sprintf("  Sub-Agents: %v\n", a.SubAgents))
+		}
+		if len(a.Skills) > 0 {
+			sb.WriteString(fmt.Sprintf("  Skills: %v\n", a.Skills))
+		}
+		sb.WriteString(fmt.Sprintf("  Priority: %.1f\n", a.Priority))
+		sb.WriteString(fmt.Sprintf("  Description: %s\n", a.Description))
+		if a.Workflow != "" {
+			sb.WriteString(fmt.Sprintf("  Workflow:\n%s\n", a.Workflow))
+		}
+		if a.Instructions != "" {
+			sb.WriteString(fmt.Sprintf("  Directives:\n%s", a.Instructions))
+		}
+		updatedAgentList = append(updatedAgentList, sb.String())
 	}
 	// Backward compatibility link if needed, or just use updatedAgentList in prompt
 	// agentList := updatedAgentList
@@ -499,11 +606,24 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 	}
 
 	stepsJSON, _ := json.MarshalIndent(plan.Steps, "", "  ")
+
+	// Manage Memory
+	if p.Memory != nil && feedback != "" {
+		p.Memory.AddEntry(plan.ID, "user", feedback)
+	}
+
+	chatHistory := ""
+	if p.Memory != nil {
+		chatHistory = p.Memory.GetContext(plan.ID)
+	} else {
+		chatHistory = "User Feedback: " + feedback
+	}
+
 	taskPrompt := fmt.Sprintf(
 		"--- HISTORY & PROGRESS ---\n"+
 			"Current Steps (with results): %s\n"+
 			"Uploaded Files: %v\n"+
-			"Latest User Input: %s\n\n"+
+			"Conversation History:\n%s\n\n"+
 			"--- TASK ---\n"+
 			"1. REPLAN: Review 'Objective' and 'Current Steps'. If a step has a 'result', that info is now known.\n"+
 			"2. STATUS CHECK: Review 'Current Steps'. If 'content-review' is pending, WAITING for user feedback. If 'scene-creator' is pending, WAITING for execution.\n"+
@@ -513,16 +633,21 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 			"6. OUTPUT: Return a JSON array of Step objects.",
 		string(stepsJSON),
 		plan.Files,
-		feedback,
+		chatHistory,
 		startID+1, // Start ID for new steps
 	)
 
 	fullPrompt := baseSystemPrompt + "\n\n" + taskPrompt
 
-	resp, err := p.llm.Generate(ctx, "Refine Plan", fullPrompt)
+	resp, usage, err := p.llm.Generate(ctx, "Refine Plan", fullPrompt)
 	if err != nil {
 		return nil, err
 	}
+
+	// Accumulate Usage
+	plan.TotalUsage.PromptTokens += usage.PromptTokens
+	plan.TotalUsage.CompletionTokens += usage.CompletionTokens
+	plan.TotalUsage.TotalTokens += usage.TotalTokens
 
 	// 3. Parse and Append
 	cleanResp := p.cleanJSONResponse(resp)
@@ -679,4 +804,36 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 	}
 
 	return plan, nil
+}
+
+// updatePlanCost calculates and updates the cost for a plan based on current LLM pricing
+func (p *Planner) updatePlanCost(plan *model.ExecutionPlan) {
+	if plan == nil || p.Store == nil {
+		return
+	}
+
+	// Get current config
+	cfgBytes, err := p.Store.LoadConfig()
+	if err != nil {
+		return // Silently fail if config not available
+	}
+
+	var cfg struct {
+		LLM struct {
+			DefaultProvider string
+			Providers       map[string]struct {
+				PricePerPromptToken     float64 `yaml:"price_per_prompt_token"`
+				PricePerCompletionToken float64 `yaml:"price_per_completion_token"`
+			}
+		}
+	}
+	
+	if err := yaml.Unmarshal(cfgBytes, &cfg); err != nil {
+		return
+	}
+
+	// Get pricing for the default provider
+	if providerCfg, ok := cfg.LLM.Providers[cfg.LLM.DefaultProvider]; ok {
+		plan.CalculateCost(providerCfg.PricePerPromptToken, providerCfg.PricePerCompletionToken)
+	}
 }

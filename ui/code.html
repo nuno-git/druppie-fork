@@ -51,15 +51,16 @@
         }
 
         .file-item {
-            padding: 0.5rem;
+            padding: 0.25rem 0.5rem;
             cursor: pointer;
             border-radius: 0.25rem;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             display: flex;
             align-items: center;
             gap: 0.5rem;
             color: var(--text-dim);
             word-break: break-word;
+            white-space: nowrap;
         }
 
         .file-item:hover {
@@ -70,6 +71,10 @@
         .file-item.active {
             background: rgba(56, 189, 248, 0.1);
             color: var(--accent);
+        }
+
+        .folder-item {
+            font-weight: 600;
         }
 
         #editor-container {
@@ -246,12 +251,6 @@
         let editor;
         let currentPath = null;
 
-        // Token is used by Save/Load functions, retrieve it from local storage via common.js logic if needed, 
-        // but here we just need it for saveFile implementation which might use it? 
-        // Actually saveFile uses fetch, which is intercepted by common.js setupAuth().
-        // So we don't need explicit token variable here unless used elsewhere.
-        // Looking at saveFile (not shown in snippet but assuming standard fetch), it should be fine.
-
         require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
         require(['vs/editor/editor.main'], function () {
             editor = monaco.editor.create(document.getElementById('monaco'), {
@@ -264,9 +263,18 @@
                 domReadOnly: false
             });
             refreshFiles();
-            // fetchVersion calls automatically via common.js
         });
 
+
+        // Auth Failure Handler (called by common.js)
+        window.onAuthFailure = function () {
+            const container = document.getElementById('file-tree');
+            container.innerHTML = `
+                <div style="padding:1rem;color:var(--text-dim);font-size:0.9rem;text-align:center;">
+                    <div style="margin-bottom:0.5rem;">Authentication Required</div>
+                    <button class="btn" style="font-size:0.8rem;" onclick="window.location.href='/ui/index.html'">Login</button>
+                </div>`;
+        };
 
         async function refreshFiles() {
             if (!planID) {
@@ -276,10 +284,17 @@
             try {
                 // List files API
                 const res = await fetch(`/v1/plans/${planID}/files`);
+
+                if (!res.ok) {
+                    if (res.status === 401) return; // Handled by onAuthFailure/interceptor
+                    throw new Error(`Server returned ${res.status}`);
+                }
+
                 const files = await res.json();
                 renderTree(files);
             } catch (e) {
                 console.error(e);
+                document.getElementById('file-tree').innerHTML = '<div style="padding:1rem;">Failed to load files</div>';
             }
         }
 
@@ -287,15 +302,96 @@
             const container = document.getElementById('file-tree');
             container.innerHTML = '';
 
-            // Allow files to be list of strings or objects. Assume list of relative paths.
-            files.forEach(f => {
-                const div = document.createElement('div');
-                div.className = 'file-item';
-                div.innerHTML = `<i data-lucide="file" style="width:16px;"></i> ${f}`;
-                div.onclick = () => loadFile(f);
-                container.appendChild(div);
-            });
+            if (!files || files.length === 0) {
+                container.innerHTML = '<div style="padding:1rem;color:var(--text-dim);font-size:0.9rem;">No files found in plan directory.</div>';
+                return;
+            }
+
+            files.sort();
+
+            const tree = buildFileTree(files);
+            const treeRoot = document.createElement('div');
+            treeRoot.className = 'tree-root';
+
+            // Render the tree
+            renderRecursive(treeRoot, tree, '');
+            container.appendChild(treeRoot);
+
             lucide.createIcons();
+        }
+
+        function buildFileTree(files) {
+            const root = {};
+            files.forEach(path => {
+                const parts = path.split('/');
+                let current = root;
+                parts.forEach((part, index) => {
+                    if (!current[part]) {
+                        current[part] = index === parts.length - 1 ? null : {}; // null indicates file, object indicates folder
+                    }
+                    current = current[part];
+                });
+            });
+            return root;
+        }
+
+        function renderRecursive(container, node, currentPath) {
+            // Sort: folders first, then files
+            const entries = Object.keys(node).sort((a, b) => {
+                const aIsFolder = node[a] !== null;
+                const bIsFolder = node[b] !== null;
+                if (aIsFolder && !bIsFolder) return -1;
+                if (!aIsFolder && bIsFolder) return 1;
+                return a.localeCompare(b);
+            });
+
+            entries.forEach(key => {
+                const isFolder = node[key] !== null;
+                const fullPath = currentPath ? `${currentPath}/${key}` : key;
+
+                const itemDiv = document.createElement('div');
+                itemDiv.style.marginLeft = '0.5rem'; // Indent for children
+
+                const contentDiv = document.createElement('div');
+                contentDiv.className = isFolder ? 'folder-item file-item' : 'file-item';
+                contentDiv.style.display = 'flex';
+                contentDiv.style.alignItems = 'center';
+                contentDiv.style.gap = '6px';
+
+                if (isFolder) {
+                    contentDiv.innerHTML = `<i data-lucide="folder" style="width:14px; color:var(--text-dim);"></i> <span>${key}</span>`;
+
+                    const childrenContainer = document.createElement('div');
+                    childrenContainer.style.display = 'block'; // Open by default
+                    childrenContainer.style.borderLeft = '1px solid rgba(255,255,255,0.05)';
+                    childrenContainer.style.marginLeft = '4px';
+
+                    // Toggle
+                    contentDiv.onclick = (e) => {
+                        e.stopPropagation();
+                        if (childrenContainer.style.display === 'none') {
+                            childrenContainer.style.display = 'block';
+                            // Start icon update logic if feasible (e.g. swap svg)
+                        } else {
+                            childrenContainer.style.display = 'none';
+                        }
+                    };
+
+                    renderRecursive(childrenContainer, node[key], fullPath);
+
+                    itemDiv.appendChild(contentDiv);
+                    itemDiv.appendChild(childrenContainer);
+                } else {
+                    contentDiv.innerHTML = `<i data-lucide="file" style="width:14px; opacity:0.7;"></i> <span>${key}</span>`;
+                    contentDiv.onclick = (e) => {
+                        e.stopPropagation();
+                        loadFile(fullPath);
+                    };
+                    itemDiv.appendChild(contentDiv);
+                }
+
+                container.appendChild(itemDiv);
+            });
         }
 
 
@@ -303,6 +399,7 @@
             if (!currentPath) return;
             const content = editor.getValue();
             try {
+                // Ensure query param path is encoded
                 await fetch(`/v1/plans/${planID}/files/content?path=${encodeURIComponent(currentPath)}`, {
                     method: 'PUT',
                     body: content
@@ -330,6 +427,9 @@
         function loadFile(path) {
             currentPath = path;
             document.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
+            // Highlight the clicked one is hard with recursive gen without IDs. 
+            // We can rely on css :active or re-implement selection logic later.
+
             document.getElementById('current-file').innerText = path;
 
             // Close sidebar on mobile
@@ -351,7 +451,9 @@
                         if (path.endsWith('.html')) lang = 'html';
                         if (path.endsWith('.json')) lang = 'json';
                         if (path.endsWith('.md')) lang = 'markdown';
-                        if (path.endsWith('.yaml')) lang = 'yaml';
+                        if (path.endsWith('.yaml') || path.endsWith('.yml')) lang = 'yaml';
+                        if (path.endsWith('.css')) lang = 'css';
+                        if (path.endsWith('.sh')) lang = 'shell';
                         monaco.editor.setModelLanguage(editor.getModel(), lang);
                     })
                     .catch(e => {

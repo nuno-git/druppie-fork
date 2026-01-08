@@ -16,7 +16,18 @@ type Config struct {
 	Build          BuildConfig         `yaml:"build" json:"build"`
 	Git            GitConfig           `yaml:"git" json:"git"`
 	IAM            IAMConfig           `yaml:"iam" json:"iam"`
+	Memory         MemoryConfig        `yaml:"memory" json:"memory"`
+	Planner        PlannerConfig       `yaml:"planner" json:"planner"`
 	ApprovalGroups map[string][]string `yaml:"approval_groups" json:"approval_groups"`
+}
+
+type PlannerConfig struct {
+	MaxAgentSelection int `yaml:"max_agent_selection" json:"max_agent_selection"`
+}
+
+type MemoryConfig struct {
+	MaxWindowTokens int `yaml:"max_window_tokens" json:"max_window_tokens"` // e.g. 128000
+	SummarizeAfter  int `yaml:"summarize_after" json:"summarize_after"`     // Turn count
 }
 
 type IAMConfig struct {
@@ -59,16 +70,18 @@ type LLMConfig struct {
 	Providers       map[string]ProviderConfig `yaml:"providers" json:"providers"`
 }
 
-type ProviderConfig struct {
-	Type         string `yaml:"type" json:"type"` // "gemini", "ollama", "lmstudio"
-	APIKey       string `yaml:"api_key,omitempty" json:"api_key,omitempty"`
-	Model        string `yaml:"model,omitempty" json:"model,omitempty"` // Default model for this provider
-	URL          string `yaml:"url,omitempty" json:"url,omitempty"`     // For local LLMs
-	ProjectID    string `yaml:"project_id,omitempty" json:"project_id,omitempty"`
-	ClientID     string `yaml:"client_id,omitempty" json:"client_id,omitempty"`
-	ClientSecret string `yaml:"client_secret,omitempty" json:"client_secret,omitempty"`
-}
 
+type ProviderConfig struct {
+	Type                     string  `yaml:"type" json:"type"` // "gemini", "ollama", "lmstudio"
+	APIKey                   string  `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	Model                    string  `yaml:"model,omitempty" json:"model,omitempty"` // Default model for this provider
+	URL                      string  `yaml:"url,omitempty" json:"url,omitempty"`     // For local LLMs
+	ProjectID                string  `yaml:"project_id,omitempty" json:"project_id,omitempty"`
+	ClientID                 string  `yaml:"client_id,omitempty" json:"client_id,omitempty"`
+	ClientSecret             string  `yaml:"client_secret,omitempty" json:"client_secret,omitempty"`
+	PricePerPromptToken      float64 `yaml:"price_per_prompt_token,omitempty" json:"price_per_prompt_token,omitempty"`           // € per 1M tokens
+	PricePerCompletionToken  float64 `yaml:"price_per_completion_token,omitempty" json:"price_per_completion_token,omitempty"` // € per 1M tokens
+}
 type ServerConfig struct {
 	Port        string `yaml:"port" json:"port"`
 	CleanupDays int    `yaml:"cleanup_days" json:"cleanup_days"`
@@ -81,6 +94,7 @@ type Manager struct {
 	store  store.Store
 }
 
+
 // NewManager creates a new config manager and loads the config from store
 func NewManager(s store.Store) (*Manager, error) {
 	mgr := &Manager{
@@ -91,7 +105,19 @@ func NewManager(s store.Store) (*Manager, error) {
 				TimeoutSeconds:  120,
 				Retries:         3,
 				Providers: map[string]ProviderConfig{
-					"ollama": {Type: "ollama", Model: "qwen3:8b", URL: "http://localhost:11434"},
+					"ollama": {
+						Type:                     "ollama",
+						Model:                    "qwen3:8b",
+						URL:                      "http://localhost:11434",
+						PricePerPromptToken:      0.0,  // Free for local models
+						PricePerCompletionToken:  0.0,
+					},
+					"gemini": {
+						Type:                     "gemini",
+						Model:                    "gemini-2.0-flash-exp",
+						PricePerPromptToken:      0.075, // €0.075 per 1M input tokens
+						PricePerCompletionToken:  0.30,  // €0.30 per 1M output tokens
+					},
 				},
 			},
 			Server: ServerConfig{
@@ -118,6 +144,13 @@ func NewManager(s store.Store) (*Manager, error) {
 			IAM: IAMConfig{
 				Provider: "local",
 			},
+			Memory: MemoryConfig{
+				MaxWindowTokens: 12000,
+				SummarizeAfter:  20,
+			},
+			Planner: PlannerConfig{
+				MaxAgentSelection: 3,
+			},
 		},
 	}
 
@@ -134,7 +167,6 @@ func NewManager(s store.Store) (*Manager, error) {
 
 	return mgr, nil
 }
-
 // Load reads the config from store
 func (m *Manager) Load() error {
 	m.mu.Lock()

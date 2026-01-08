@@ -3,12 +3,12 @@ package executor
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/sjhoeksma/druppie/core/internal/mcp"
 	"github.com/sjhoeksma/druppie/core/internal/model"
+	"github.com/sjhoeksma/druppie/core/internal/paths"
 )
 
 // MCPExecutor handles execution of tools provided by MCP servers
@@ -55,13 +55,18 @@ func (e *MCPExecutor) Execute(ctx context.Context, step model.Step, outputChan c
 				}
 
 				if planID != "" {
-					cwd, _ := os.Getwd()
-					// Adjust for running from core/cmd vs root
-					if strings.HasSuffix(cwd, "core") {
-						cwd = filepath.Dir(cwd)
-					}
 					// Construction: .druppie/plans/<id>
-					absPath := filepath.Join(cwd, ".druppie", "plans", planID, pathVal)
+					planRoot, _ := paths.ResolvePath(".druppie", "plans", planID)
+					absPath := filepath.Join(planRoot, pathVal)
+
+					// Security Check: Prevent directory traversal
+					// Ensure the resulting path is still within the planRoot
+					cleanRoot := filepath.Clean(planRoot)
+					cleanPath := filepath.Clean(absPath)
+					if !strings.HasPrefix(cleanPath, cleanRoot) {
+						return fmt.Errorf("security violation: path %s escapes plan execution directory %s", pathVal, planID)
+					}
+
 					step.Params["path"] = absPath
 				}
 			}

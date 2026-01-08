@@ -12,12 +12,13 @@ import (
 
 	"github.com/google/generative-ai-go/genai"
 	"github.com/sjhoeksma/druppie/core/internal/config"
+	"github.com/sjhoeksma/druppie/core/internal/model"
 	"google.golang.org/api/option"
 )
 
 // Provider defines the interface for an LLM
 type Provider interface {
-	Generate(ctx context.Context, prompt string, systemPrompt string) (string, error)
+	Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error)
 	Close() error
 }
 
@@ -159,9 +160,9 @@ const (
 )
 
 // Generate uses the default provider with retry and timeout logic
-func (m *Manager) Generate(ctx context.Context, prompt string, systemPrompt string) (string, error) {
+func (m *Manager) Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
 	if m.defaultProvider == nil {
-		return "", fmt.Errorf("no default provider configured")
+		return "", model.TokenUsage{}, fmt.Errorf("no default provider configured")
 	}
 
 	// Use configured retries
@@ -179,11 +180,11 @@ func (m *Manager) Generate(ctx context.Context, prompt string, systemPrompt stri
 			fmt.Printf("[LLM] Retry attempt %d/%d...\n", i+1, maxRetries)
 		}
 
-		resp, err := m.defaultProvider.Generate(attemptCtx, prompt, systemPrompt)
+		resp, usage, err := m.defaultProvider.Generate(attemptCtx, prompt, systemPrompt)
 		cancel() // Ensure we release the timeout resources immediately
 
 		if err == nil {
-			return resp, nil
+			return resp, usage, nil
 		}
 
 		lastErr = err
@@ -192,11 +193,11 @@ func (m *Manager) Generate(ctx context.Context, prompt string, systemPrompt stri
 		// Wait before retry, listening for parent context cancellation
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", model.TokenUsage{}, ctx.Err()
 		case <-time.After(RetryDelay):
 		}
 	}
-	return "", fmt.Errorf("llm generate failed after %d attempts: %w", maxRetries, lastErr)
+	return "", model.TokenUsage{}, fmt.Errorf("llm generate failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // Close closes all providers
@@ -224,19 +225,19 @@ type GeminiProvider struct {
 	model       string
 }
 
-func (p *GeminiProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, error) {
+func (p *GeminiProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
 	// Case 1: Standard API Key usage
 	if p.genaiClient != nil {
-		model := p.genaiClient.GenerativeModel(p.model)
+		modelVal := p.genaiClient.GenerativeModel(p.model)
 		if systemPrompt != "" {
-			model.SystemInstruction = genai.NewUserContent(genai.Text(systemPrompt))
+			modelVal.SystemInstruction = genai.NewUserContent(genai.Text(systemPrompt))
 		}
-		resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+		resp, err := modelVal.GenerateContent(ctx, genai.Text(prompt))
 		if err != nil {
-			return "", fmt.Errorf("gemini generation failed: %w", err)
+			return "", model.TokenUsage{}, fmt.Errorf("gemini generation failed: %w", err)
 		}
 		if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-			return "", fmt.Errorf("no response candidates")
+			return "", model.TokenUsage{}, fmt.Errorf("no response candidates")
 		}
 		var sb strings.Builder
 		for _, part := range resp.Candidates[0].Content.Parts {
@@ -244,7 +245,15 @@ func (p *GeminiProvider) Generate(ctx context.Context, prompt string, systemProm
 				sb.WriteString(string(txt))
 			}
 		}
-		return cleanResponse(sb.String()), nil
+
+		usage := model.TokenUsage{}
+		if resp.UsageMetadata != nil {
+			usage.PromptTokens = int(resp.UsageMetadata.PromptTokenCount)
+			usage.CompletionTokens = int(resp.UsageMetadata.CandidatesTokenCount)
+			usage.TotalTokens = int(resp.UsageMetadata.TotalTokenCount)
+		}
+
+		return cleanResponse(sb.String()), usage, nil
 	}
 
 	// Case 2: Custom Cloud Code API (OAuth) usage
@@ -385,12 +394,12 @@ func (p *GeminiProvider) Generate(ctx context.Context, prompt string, systemProm
 
 		jsonBody, err := json.Marshal(reqBody)
 		if err != nil {
-			return "", err
+			return "", model.TokenUsage{}, err
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
 		if err != nil {
-			return "", err
+			return "", model.TokenUsage{}, err
 		}
 
 		// Headers from Opencode
@@ -402,14 +411,14 @@ func (p *GeminiProvider) Generate(ctx context.Context, prompt string, systemProm
 
 		resp, err := p.httpClient.Do(req)
 		if err != nil {
-			return "", fmt.Errorf("request failed: %w", err)
+			return "", model.TokenUsage{}, fmt.Errorf("request failed: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			// Log full details for debugging 500s
-			return "", fmt.Errorf("llm generation failed: %s\nURL: %s\nBody Sent: %s\nResponse: %s",
+			return "", model.TokenUsage{}, fmt.Errorf("llm generation failed: %s\nURL: %s\nBody Sent: %s\nResponse: %s",
 				resp.Status, url, string(jsonBody), string(body))
 		}
 
@@ -425,16 +434,17 @@ func (p *GeminiProvider) Generate(ctx context.Context, prompt string, systemProm
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return "", fmt.Errorf("failed to decode response: %w", err)
+			return "", model.TokenUsage{}, fmt.Errorf("failed to decode response: %w", err)
 		}
 
 		if len(result.Candidates) > 0 && len(result.Candidates[0].Content.Parts) > 0 {
-			return cleanResponse(result.Candidates[0].Content.Parts[0].Text), nil
+			// For internal API, usage might differ, for now return empty
+			return cleanResponse(result.Candidates[0].Content.Parts[0].Text), model.TokenUsage{}, nil
 		}
-		return "", fmt.Errorf("empty response from llm")
+		return "", model.TokenUsage{}, fmt.Errorf("empty response from llm")
 	}
 
-	return "", fmt.Errorf("provider not initialized correctly")
+	return "", model.TokenUsage{}, fmt.Errorf("provider not initialized correctly")
 }
 
 func (p *GeminiProvider) Close() error {
@@ -451,7 +461,7 @@ type OllamaProvider struct {
 	BaseURL string
 }
 
-func (p *OllamaProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, error) {
+func (p *OllamaProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
 	url := fmt.Sprintf("%s/api/generate", p.BaseURL)
 
 	// Ollama API payload
@@ -465,34 +475,34 @@ func (p *OllamaProvider) Generate(ctx context.Context, prompt string, systemProm
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return "", model.TokenUsage{}, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
 	if err != nil {
-		return "", err
+		return "", model.TokenUsage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("ollama request failed: %w", err)
+		return "", model.TokenUsage{}, fmt.Errorf("ollama request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("ollama error %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", model.TokenUsage{}, fmt.Errorf("ollama error %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var result struct {
 		Response string `json:"response"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode ollama response: %w", err)
+		return "", model.TokenUsage{}, fmt.Errorf("failed to decode ollama response: %w", err)
 	}
 
-	return cleanResponse(result.Response), nil
+	return cleanResponse(result.Response), model.TokenUsage{}, nil
 }
 
 func (p *OllamaProvider) Close() error {
@@ -506,7 +516,7 @@ type LMStudioProvider struct {
 	BaseURL string
 }
 
-func (p *LMStudioProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, error) {
+func (p *LMStudioProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
 	url := fmt.Sprintf("%s/chat/completions", p.BaseURL)
 
 	payload := map[string]interface{}{
@@ -526,24 +536,24 @@ func (p *LMStudioProvider) Generate(ctx context.Context, prompt string, systemPr
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return "", model.TokenUsage{}, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
 	if err != nil {
-		return "", err
+		return "", model.TokenUsage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("lmstudio request failed: %w", err)
+		return "", model.TokenUsage{}, fmt.Errorf("lmstudio request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("lmstudio error %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", model.TokenUsage{}, fmt.Errorf("lmstudio error %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	// OpenAI format response
@@ -553,17 +563,29 @@ func (p *LMStudioProvider) Generate(ctx context.Context, prompt string, systemPr
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode lmstudio response: %w", err)
+		return "", model.TokenUsage{}, fmt.Errorf("failed to decode lmstudio response: %w", err)
 	}
 
 	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("no content from lmstudio")
+		return "", model.TokenUsage{}, fmt.Errorf("no content from lmstudio")
 	}
 
-	return cleanResponse(result.Choices[0].Message.Content), nil
+	// Capture usage if available
+	usage := model.TokenUsage{
+		PromptTokens:     result.Usage.PromptTokens,
+		CompletionTokens: result.Usage.CompletionTokens,
+		TotalTokens:      result.Usage.TotalTokens,
+	}
+
+	return cleanResponse(result.Choices[0].Message.Content), usage, nil
 }
 
 func (p *LMStudioProvider) Close() error {
@@ -577,7 +599,7 @@ type OpenRouterProvider struct {
 	APIKey string
 }
 
-func (p *OpenRouterProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, error) {
+func (p *OpenRouterProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
 	url := "https://openrouter.ai/api/v1/chat/completions"
 
 	payload := map[string]interface{}{
@@ -591,12 +613,12 @@ func (p *OpenRouterProvider) Generate(ctx context.Context, prompt string, system
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return "", model.TokenUsage{}, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
 	if err != nil {
-		return "", err
+		return "", model.TokenUsage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if p.APIKey != "" {
@@ -607,13 +629,13 @@ func (p *OpenRouterProvider) Generate(ctx context.Context, prompt string, system
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("openrouter request failed: %w", err)
+		return "", model.TokenUsage{}, fmt.Errorf("openrouter request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("openrouter error %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", model.TokenUsage{}, fmt.Errorf("openrouter error %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	// OpenAI format response
@@ -623,17 +645,28 @@ func (p *OpenRouterProvider) Generate(ctx context.Context, prompt string, system
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("failed to decode openrouter response: %w", err)
+		return "", model.TokenUsage{}, fmt.Errorf("failed to decode openrouter response: %w", err)
 	}
 
 	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("no content from openrouter")
+		return "", model.TokenUsage{}, fmt.Errorf("no content from openrouter")
 	}
 
-	return cleanResponse(result.Choices[0].Message.Content), nil
+	usage := model.TokenUsage{
+		PromptTokens:     result.Usage.PromptTokens,
+		CompletionTokens: result.Usage.CompletionTokens,
+		TotalTokens:      result.Usage.TotalTokens,
+	}
+
+	return cleanResponse(result.Choices[0].Message.Content), usage, nil
 }
 
 func (p *OpenRouterProvider) Close() error {

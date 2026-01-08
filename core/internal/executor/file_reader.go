@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sjhoeksma/druppie/core/internal/model"
+	"github.com/sjhoeksma/druppie/core/internal/paths"
 )
 
 type FileReaderExecutor struct{}
@@ -42,11 +43,7 @@ func (e *FileReaderExecutor) Execute(ctx context.Context, step model.Step, outpu
 	filename := fmt.Sprintf("%v", fileNameRaw)
 
 	// Determine Root
-	rootDir, _ := os.Getwd()
-	// Adjust for running from core/cmd vs root
-	if strings.HasSuffix(rootDir, "core") {
-		rootDir = filepath.Dir(rootDir)
-	}
+	rootDir, _ := paths.FindProjectRoot()
 
 	// Resolve Path
 	var finalPath string

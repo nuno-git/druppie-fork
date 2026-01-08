@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/sjhoeksma/druppie/core/internal/model"
+	"github.com/sjhoeksma/druppie/core/internal/paths"
 )
 
 // DeveloperExecutor handles "create_code" and "modify_code" actions
@@ -29,9 +30,8 @@ func (e *DeveloperExecutor) Execute(ctx context.Context, step model.Step, output
 	}
 
 	// Determine Project Root (mimic other executors)
-	cwd, _ := os.Getwd()
 	// Default to .druppie/plans/<plan-id>/src
-	projectRoot := filepath.Join(cwd, ".druppie", "plans", planID, "src")
+	projectRoot, _ := paths.ResolvePath(".druppie", "plans", planID, "src")
 
 	// Ensure root exists
 	if err := os.MkdirAll(projectRoot, 0755); err != nil {

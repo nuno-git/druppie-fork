@@ -19,6 +19,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/sjhoeksma/druppie/core/internal/builder"
 	"github.com/sjhoeksma/druppie/core/internal/model"
+	"github.com/sjhoeksma/druppie/core/internal/paths"
 )
 
 // RunExecutor handles "run_code" actions
@@ -60,17 +61,11 @@ func (e *RunExecutor) Execute(ctx context.Context, step model.Step, outputChan c
 
 	// If we have buildID, we need to find where it is.
 	// This implies we know the project root.
-	// HACK: We need PROJECT_ROOT to resolve ".druppie/plans/..."
-	// We can guess it from working dir or passed context.
-	// Since we are running in the 'druppie' binary, CWD is often project root.
-	cwd, _ := os.Getwd()
-
-	// Construct path to build artifacts
 	// .druppie/plans/<plan-id>/builds/<build-id>
 	// But how do we know plan-id if not passed? We inject `_plan_id`.
 
 	var artifactPath string
-	buildsDir := filepath.Join(cwd, ".druppie", "plans", planID, "builds")
+	buildsDir, _ := paths.ResolvePath(".druppie", "plans", planID, "builds")
 
 	if planID != "" {
 		if buildID != "" {
@@ -117,7 +112,7 @@ func (e *RunExecutor) Execute(ctx context.Context, step model.Step, outputChan c
 
 		if artifactPath == "" {
 			// LAST RESORT: Try the source directory
-			srcDir := filepath.Join(cwd, ".druppie", "plans", planID, "src")
+			srcDir, _ := paths.ResolvePath(".druppie", "plans", planID, "src")
 			if entries, err := os.ReadDir(srcDir); err == nil && len(entries) > 0 {
 				artifactPath = srcDir
 				outputChan <- "No build artifacts found. Falling back to source directory for execution."

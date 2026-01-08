@@ -40,7 +40,7 @@ Use "language" code to detect the user's input language.
 IMPORTANT: The "prompt" field MUST be in the correct language as detected in "language" code. Do NOT translate it to English.
 Output ONLY valid JSON.`
 
-func (r *Router) Analyze(ctx context.Context, planID string, input string) (model.Intent, string, error) {
+func (r *Router) Analyze(ctx context.Context, planID string, input string) (model.Intent, string, model.TokenUsage, error) {
 	// Try to load prompt from Registry
 	sysPrompt := defaultSystemPrompt
 	if r.registry != nil {
@@ -49,9 +49,9 @@ func (r *Router) Analyze(ctx context.Context, planID string, input string) (mode
 		}
 	}
 
-	resp, err := r.llm.Generate(ctx, input, sysPrompt)
+	resp, usage, err := r.llm.Generate(ctx, input, sysPrompt)
 	if err != nil {
-		return model.Intent{}, "", fmt.Errorf("llm generation failed: %w", err)
+		return model.Intent{}, "", model.TokenUsage{}, fmt.Errorf("llm generation failed: %w", err)
 	}
 
 	// Persistent Logging "Like Planner"
@@ -78,7 +78,7 @@ func (r *Router) Analyze(ctx context.Context, planID string, input string) (mode
 	}
 
 	if err := json.Unmarshal([]byte(resp), &raw); err != nil {
-		return model.Intent{}, resp, fmt.Errorf("failed to parse router response: %w. Raw: %s", err, resp)
+		return model.Intent{}, resp, usage, fmt.Errorf("failed to parse router response: %w. Raw: %s", err, resp)
 	}
 
 	intent := model.Intent{
@@ -102,5 +102,5 @@ func (r *Router) Analyze(ctx context.Context, planID string, input string) (mode
 		intent.Prompt = intent.InitialPrompt
 	}
 
-	return intent, resp, nil
+	return intent, resp, usage, nil
 }

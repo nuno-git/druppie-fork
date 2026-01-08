@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/sjhoeksma/druppie/core/internal/builder"
+	"github.com/sjhoeksma/druppie/core/internal/llm"
 	"github.com/sjhoeksma/druppie/core/internal/mcp"
 )
 
@@ -12,7 +13,12 @@ type Dispatcher struct {
 	executors []Executor
 }
 
-func NewDispatcher(buildEngine builder.BuildEngine, mcpManager *mcp.Manager) *Dispatcher {
+func NewDispatcher(buildEngine builder.BuildEngine, mcpManager *mcp.Manager, llmProvider llm.Provider) *Dispatcher {
+	stdCtx := &StandardContext{
+		MCPManager:      mcpManager,
+		StandardActions: &StandardActions{},
+	}
+
 	return &Dispatcher{
 		executors: []Executor{
 			&MCPExecutor{Manager: mcpManager}, // Check MCP tools first? Or specific executors first?
@@ -22,12 +28,14 @@ func NewDispatcher(buildEngine builder.BuildEngine, mcpManager *mcp.Manager) *Di
 
 			&AudioCreatorExecutor{},
 			&VideoCreatorExecutor{},
-			&ImageCreatorExecutor{},              // Start valid Image Executor
-			&FileReaderExecutor{},                // File Reader
-			&DeveloperExecutor{},                 // Developer (Code Creator)
-			&BuildExecutor{Builder: buildEngine}, // Helper for building code
-			&RunExecutor{Builder: buildEngine},   // Helper for running code
-			&ComplianceExecutor{},                // Compliance/Approval Handler
+			&ImageCreatorExecutor{},               // Start valid Image Executor
+			&FileReaderExecutor{},                 // File Reader
+			&DeveloperExecutor{},                  // Developer (Code Creator)
+			&BuildExecutor{Builder: buildEngine},  // Helper for building code
+			&RunExecutor{Builder: buildEngine},    // Helper for running code
+			&ComplianceExecutor{LLM: llmProvider}, // Compliance/Approval Handler
+			&StandardExecutor{StdCtx: stdCtx},     // Standard/Infra Handler (Replaces InfrastructureExecutor)
+			&ArchitectExecutor{LLM: llmProvider},  // Architect Handler
 			// Legacy/Fallback last
 			&SceneCreatorExecutor{},
 		},

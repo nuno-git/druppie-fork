@@ -19,6 +19,7 @@ type WorkflowContext struct {
 	OutputChan        chan<- string
 	InputChan         <-chan string
 	UpdateStatus      func(status string)
+	UpdateTokenUsage  func(usage model.TokenUsage)
 	AppendStep        func(step model.Step) int // Callback to add a executed step to the plan log
 	FindCompletedStep func(action string, paramKey string, paramValue interface{}) *model.Step
 	GetAgent          func(id string) (model.AgentDefinition, error)

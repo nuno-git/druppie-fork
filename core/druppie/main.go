@@ -20,7 +20,9 @@ import (
 	"github.com/sjhoeksma/druppie/core/internal/iam"
 	"github.com/sjhoeksma/druppie/core/internal/llm"
 	"github.com/sjhoeksma/druppie/core/internal/mcp"
+	"github.com/sjhoeksma/druppie/core/internal/memory"
 	"github.com/sjhoeksma/druppie/core/internal/model"
+	"github.com/sjhoeksma/druppie/core/internal/paths"
 	"github.com/sjhoeksma/druppie/core/internal/planner"
 	"github.com/sjhoeksma/druppie/core/internal/registry"
 	"github.com/sjhoeksma/druppie/core/internal/router"
@@ -93,11 +95,11 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		}
 
 		// Ensure we are working from the project root (handles Chdir)
-		if err := ensureProjectRoot(); err != nil {
+		if err := paths.EnsureProjectRoot(); err != nil {
 			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("root detection error: %w", err)
 		}
 
-		rootDir, err := findProjectRoot()
+		rootDir, err := paths.FindProjectRoot()
 		if err != nil {
 			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("registry path error: %w", err)
 		}
@@ -149,8 +151,11 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 		// Initialize MCP Manager
 		mcpManager := mcp.NewManager(context.Background(), druppieStore, reg)
 
+		// Initialize Memory Manager
+		memManager := memory.NewManager(cfg.Memory.MaxWindowTokens, druppieStore)
+
 		r := router.NewRouter(llmManager, druppieStore, reg, debug)
-		p := planner.NewPlanner(llmManager, reg, druppieStore, mcpManager, debug)
+		p := planner.NewPlanner(llmManager, reg, druppieStore, mcpManager, memManager, cfg.Planner.MaxAgentSelection, debug)
 
 		iamProv, err := iam.NewProvider(cfg.IAM, rootDir)
 		if err != nil {
@@ -174,9 +179,8 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 
 			// Start Cleanup Routine
 			go func() {
-				rootDir, _ := findProjectRoot()
-				if rootDir != "" {
-					storeDir := filepath.Join(rootDir, ".druppie")
+				storeDir, err := paths.ResolvePath(".druppie")
+				if err == nil {
 					cleanupDays := cfg.Server.CleanupDays
 					if cleanupDays <= 0 {
 						cleanupDays = 7 // Default fallback if config missing
@@ -285,13 +289,35 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 
 			// UI Route
 			r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
-				root, _ := findProjectRoot()
-				http.ServeFile(w, r, filepath.Join(root, "ui", "admin.html"))
+				path, _ := paths.ResolvePath("ui", "admin.html")
+				http.ServeFile(w, r, path)
 			})
 
 			r.Get("/code", func(w http.ResponseWriter, r *http.Request) {
-				root, _ := findProjectRoot()
-				http.ServeFile(w, r, filepath.Join(root, "ui", "code.html"))
+				path, _ := paths.ResolvePath("ui", "code.html")
+				http.ServeFile(w, r, path)
+			})
+
+			// Static assets for UI
+			r.Get("/common.css", func(w http.ResponseWriter, r *http.Request) {
+				path, _ := paths.ResolvePath("ui", "common.css")
+				w.Header().Set("Content-Type", "text/css")
+				http.ServeFile(w, r, path)
+			})
+			r.Get("/common.js", func(w http.ResponseWriter, r *http.Request) {
+				path, _ := paths.ResolvePath("ui", "common.js")
+				w.Header().Set("Content-Type", "application/javascript")
+				http.ServeFile(w, r, path)
+			})
+			r.Get("/druppie_logo.svg", func(w http.ResponseWriter, r *http.Request) {
+				path, _ := paths.ResolvePath("druppie_logo.svg")
+				w.Header().Set("Content-Type", "image/svg+xml")
+				http.ServeFile(w, r, path)
+			})
+			r.Get("/druppie_logo.png", func(w http.ResponseWriter, r *http.Request) {
+				path, _ := paths.ResolvePath("druppie_logo.png")
+				w.Header().Set("Content-Type", "image/png")
+				http.ServeFile(w, r, path)
 			})
 
 			// Public System Info
@@ -422,6 +448,11 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						return
 					}
 
+					// Log User Input to Memory
+					if plannerService.Memory != nil {
+						plannerService.Memory.AddEntry(planID, "user", req.Prompt)
+					}
+
 					// Return plan ID immediately to UI
 					w.Header().Set("Content-Type", "application/json")
 					json.NewEncoder(w).Encode(map[string]interface{}{
@@ -445,36 +476,47 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						effectivePrompt := req.Prompt
 						if !isNewPlan {
 							//tm.OutputChan <- fmt.Sprintf("[DEBUG] Loading plan %s. Steps found: %d", planID, len(currentPlan.Steps))
-							// 1. Build Context
-							history := ""
-							// Exclude the last step (current request) which was already appended
-							priorSteps := currentPlan.Steps[:len(currentPlan.Steps)-1]
+							// 1. Build Context obtained from Memory
+							if plannerService.Memory != nil {
+								effectivePrompt = plannerService.Memory.GetContext(planID) + "\nRequest: " + req.Prompt
+							} else {
+								// Legacy simplistic history fallback (optional, but Memory should be available)
+								// ... keeping logic simple, relying on Memory primarily
+								history := ""
+								// Exclude the last step (current request) which was already appended
+								priorSteps := currentPlan.Steps[:len(currentPlan.Steps)-1]
 
-							startIdx := 0
-							if len(priorSteps) > 20 {
-								startIdx = len(priorSteps) - 20
-							}
-							for _, s := range priorSteps[startIdx:] {
-								switch s.Action {
-								case "user_query":
-									history += fmt.Sprintf("User: %s\n", s.Result)
-								case "general_chat":
-									history += fmt.Sprintf("AI: %s\n", s.Result)
+								startIdx := 0
+								if len(priorSteps) > 20 {
+									startIdx = len(priorSteps) - 20
 								}
+								for _, s := range priorSteps[startIdx:] {
+									switch s.Action {
+									case "user_query":
+										history += fmt.Sprintf("User: %s\n", s.Result)
+									case "general_chat":
+										history += fmt.Sprintf("AI: %s\n", s.Result)
+									}
+								}
+								effectivePrompt = fmt.Sprintf("History:\n%s\nRequest: %s", history, req.Prompt)
 							}
-							effectivePrompt = fmt.Sprintf("History:\n%s\nRequest: %s", history, req.Prompt)
-							//tm.OutputChan <- fmt.Sprintf("[DEBUG] Constructed History: %s", history)
 						}
 
 						// 2. Analyze Intent
-						intent, _, err := routerService.Analyze(ctx, planID, effectivePrompt)
+						intent, _, usage, err := routerService.Analyze(ctx, planID, effectivePrompt)
 						if err != nil {
 							tm.OutputChan <- fmt.Sprintf("[%s] Router failed: %v", planID, err)
 							// Update pending plan to failed
 							currentPlan.Status = "stopped"
-							_ = plannerService.Store.SavePlan(currentPlan)
+							cfg := cfgMgr.Get(); if providerCfg, ok := cfg.LLM.Providers[cfg.LLM.DefaultProvider]; ok { currentPlan.CalculateCost(providerCfg.PricePerPromptToken, providerCfg.PricePerCompletionToken) }; _ = plannerService.Store.SavePlan(currentPlan)
 							return
 						}
+
+						// Update Usage
+						currentPlan.TotalUsage.PromptTokens += usage.PromptTokens
+						currentPlan.TotalUsage.CompletionTokens += usage.CompletionTokens
+						currentPlan.TotalUsage.TotalTokens += usage.TotalTokens
+						cfg := cfgMgr.Get(); if providerCfg, ok := cfg.LLM.Providers[cfg.LLM.DefaultProvider]; ok { currentPlan.CalculateCost(providerCfg.PricePerPromptToken, providerCfg.PricePerCompletionToken) }; _ = plannerService.Store.SavePlan(currentPlan) // Checkpoint usage immediately
 
 						tm.OutputChan <- fmt.Sprintf("[%s] Intent: %s", planID, intent.Action)
 
@@ -490,8 +532,9 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						for i, s := range currentPlan.Steps {
 							if s.Action == "user_query" && s.Status == "running" {
 								currentPlan.Steps[i].Status = "completed"
+								currentPlan.Steps[i].Usage = &usage // Assign usage to specific step
 								///currentPlan.Status = "running" //We are now running
-								_ = plannerService.Store.SavePlan(currentPlan)
+								cfg := cfgMgr.Get(); if providerCfg, ok := cfg.LLM.Providers[cfg.LLM.DefaultProvider]; ok { currentPlan.CalculateCost(providerCfg.PricePerPromptToken, providerCfg.PricePerCompletionToken) }; _ = plannerService.Store.SavePlan(currentPlan)
 							}
 						}
 
@@ -540,7 +583,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 								Result:  "Designing execution plan...",
 							}
 							currentPlan.Steps = append(currentPlan.Steps, genPlanStep)
-							_ = plannerService.Store.SavePlan(currentPlan)
+							cfg := cfgMgr.Get(); if providerCfg, ok := cfg.LLM.Providers[cfg.LLM.DefaultProvider]; ok { currentPlan.CalculateCost(providerCfg.PricePerPromptToken, providerCfg.PricePerCompletionToken) }; _ = plannerService.Store.SavePlan(currentPlan)
 							tm.OutputChan <- fmt.Sprintf("[%s] Generating Plan...", planID)
 
 							fullPlan, err := plannerService.CreatePlan(ctx, intent, planID)
@@ -550,15 +593,31 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 								// Mark generate_plan as failed
 								currentPlan.Steps[len(currentPlan.Steps)-1].Status = "failed"
 								currentPlan.Steps[len(currentPlan.Steps)-1].Result = fmt.Sprintf("Failed: %v", err)
-								_ = plannerService.Store.SavePlan(currentPlan)
+								cfg := cfgMgr.Get(); if providerCfg, ok := cfg.LLM.Providers[cfg.LLM.DefaultProvider]; ok { currentPlan.CalculateCost(providerCfg.PricePerPromptToken, providerCfg.PricePerCompletionToken) }; _ = plannerService.Store.SavePlan(currentPlan)
 								return
 							}
+
 
 							// Mark generate_plan as completed
 							currentPlan.Steps[len(currentPlan.Steps)-1].Status = "completed"
 							currentPlan.Steps[len(currentPlan.Steps)-1].Result = "Plan generated."
+							
+							// Assign planner usage to this step
+							plannerUsage := fullPlan.TotalUsage
+							currentPlan.Steps[len(currentPlan.Steps)-1].Usage = &plannerUsage
 
 							// MERGE new steps into current plan
+					// Add planner usage to currentPlan TotalUsage
+					currentPlan.TotalUsage.PromptTokens += plannerUsage.PromptTokens
+					currentPlan.TotalUsage.CompletionTokens += plannerUsage.CompletionTokens
+					currentPlan.TotalUsage.TotalTokens += plannerUsage.TotalTokens
+
+					// Calculate cost based on current LLM provider pricing
+					cfg = cfgMgr.Get()
+					if providerCfg, ok := cfg.LLM.Providers[cfg.LLM.DefaultProvider]; ok {
+						currentPlan.CalculateCost(providerCfg.PricePerPromptToken, providerCfg.PricePerCompletionToken)
+					}
+
 							nextID := currentPlan.Steps[len(currentPlan.Steps)-1].ID + 1
 							for i := range fullPlan.Steps {
 								fullPlan.Steps[i].ID = nextID + i
@@ -581,7 +640,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 							// _ = plannerService.Store.LogInteraction(currentPlan.ID, "Router", req.Prompt, rawRouterResp)
 
 							// Save updated plan
-							_ = plannerService.Store.SavePlan(currentPlan)
+							cfg = cfgMgr.Get(); if providerCfg, ok := cfg.LLM.Providers[cfg.LLM.DefaultProvider]; ok { currentPlan.CalculateCost(providerCfg.PricePerPromptToken, providerCfg.PricePerCompletionToken) }; _ = plannerService.Store.SavePlan(currentPlan)
 
 							// START THE TASK
 							tm.StartTask(ctx, currentPlan)
@@ -601,6 +660,11 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 							// Output the response to the console
 							tm.OutputChan <- fmt.Sprintf("[%s] Response: %s", planID, resultText)
 
+							// Log AI Response to Memory
+							if plannerService.Memory != nil {
+								plannerService.Memory.AddEntry(planID, "assistant", resultText)
+							}
+
 							// Update plan status to completed and store the answer as a step
 							currentPlan.Status = "completed"
 
@@ -616,7 +680,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 								Status:  "completed",
 								Result:  resultText,
 							})
-							_ = plannerService.Store.SavePlan(currentPlan)
+							cfg := cfgMgr.Get(); if providerCfg, ok := cfg.LLM.Providers[cfg.LLM.DefaultProvider]; ok { currentPlan.CalculateCost(providerCfg.PricePerPromptToken, providerCfg.PricePerCompletionToken) }; _ = plannerService.Store.SavePlan(currentPlan)
 						}
 					}()
 				})
@@ -904,11 +968,12 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						id = "plan-" + id
 					}
 
-					// Find plan dir: .druppie/plans/<id>/src (source code only)
-					root, _ := findProjectRoot()
-					planDir := filepath.Join(root, ".druppie", "plans", id, "src")
+					// Find plan dir: .druppie/plans/<id> (root of plan)
+					// Find plan dir: .druppie/plans/<id> (root of plan)
+					root, _ := paths.FindProjectRoot()
+					planDir := filepath.Join(root, ".druppie", "plans", id)
 
-					var files []string
+					var files = []string{} // Initialize as empty slice to ensure JSON [] vs null
 					// Walk relative
 					err := filepath.Walk(planDir, func(path string, info os.FileInfo, err error) error {
 						if err != nil {
@@ -943,8 +1008,8 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						return
 					}
 
-					root, _ := findProjectRoot()
-					planDir := filepath.Join(root, ".druppie", "plans", id, "src")
+					root, _ := paths.FindProjectRoot()
+					planDir := filepath.Join(root, ".druppie", "plans", id)
 					absPath := filepath.Join(planDir, pathParam)
 
 					// Security check
@@ -969,8 +1034,8 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						return
 					}
 
-					root, _ := findProjectRoot()
-					planDir := filepath.Join(root, ".druppie", "plans", id, "src")
+					root, _ := paths.FindProjectRoot()
+					planDir := filepath.Join(root, ".druppie", "plans", id)
 					absPath := filepath.Join(planDir, pathParam)
 
 					// Security check
@@ -1011,7 +1076,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						return
 					}
 
-					root, _ := findProjectRoot()
+					root, _ := paths.FindProjectRoot()
 					conv := converter.NewPluginConverter(reg, root)
 
 					if err := conv.ConvertBuildToBlock(id, buildID, req.Name, req.Description); err != nil {
@@ -1187,7 +1252,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 					}
 					defer file.Close()
 
-					rootDir, _ := findProjectRoot()
+					rootDir, _ := paths.FindProjectRoot()
 					if rootDir == "" {
 						http.Error(w, "Project root not found", http.StatusInternalServerError)
 						return
@@ -1638,7 +1703,7 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 					// If not handled by task, treat as new Router Request
 					if !strings.HasPrefix(input, "/") {
 						fmt.Println("[Router - Analyzing]")
-						intent, rawRouterResp, err := router.Analyze(ctx, "", input)
+						intent, rawRouterResp, _, err := router.Analyze(ctx, "", input)
 						if err != nil {
 							fmt.Printf("[Error] Router failed: %v\n> ", err)
 							continue
@@ -1767,10 +1832,9 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 				//fmt.Printf("[DEBUG] Constructed History Steps: %d\n", len(currentPlan.Steps))
 			}
 
-			// Initialize TaskManager early to unify output
 			tm := NewTaskManager(planner, mcpMgr, buildEngine)
 
-			intent, rawRouterResp, err := router.Analyze(ctx, planID, effectivePrompt)
+			intent, rawRouterResp, _, err := router.Analyze(ctx, planID, effectivePrompt)
 			if err != nil {
 				fmt.Printf("Router failed: %v\n", err)
 				os.Exit(1)

@@ -1214,6 +1214,34 @@
             font-family: 'JetBrains Mono';
             font-size: 0.65rem;
         }
+
+        #stats-bar {
+            width: 100%;
+            padding: 0.5rem 2rem;
+            border-bottom: 1px solid var(--glass-border);
+            background: rgba(0, 0, 0, 0.2);
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 2rem;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            font-weight: 500;
+            flex-shrink: 0;
+            display: none;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .stat-value {
+            color: var(--accent);
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }
     </style>
 </head>
 
@@ -1409,7 +1437,7 @@
                 <i data-lucide="trash-2" size="14"></i>
             </button>
 
-            <button onclick="openCodeEditor()" title="Open Code Editor" style="
+            <button onclick="openCodeEditor()" title="Plan Files" style="
                     background: var(--glass-bg);
                     border: 1px solid var(--glass-border);
                     border-radius: 0.5rem;
@@ -1460,6 +1488,7 @@
 </aside>
 
 <main id="main-view">
+
     <div id="kanban-container">
         <div class="kanban-col" id="col-pending">
             <div class="col-header">
@@ -1521,6 +1550,19 @@
     </div>
 
     <div id="process-tab" class="tab-content">
+        <div id="stats-bar">
+            <div class="stat-item">
+                <i data-lucide="cpu" size="14"></i>
+                <span>Tokens</span>
+                <span>Prompt: <span id="stat-prompt" class="stat-value">0</span></span>
+            </div>
+            <div class="stat-item">
+                <span>Completion: <span id="stat-completion" class="stat-value">0</span></span>
+            </div>
+            <div class="stat-item">
+                <span>Total: <span id="stat-total" class="stat-value">0</span></span>
+            </div>
+        </div>
         <div id="step-log">
             <div class="message">Maak een plan...</div>
         </div>
@@ -2174,8 +2216,30 @@
                 }
                 break;
 
+            case '/usage':
+                if (!state.currentPlanId) {
+                    addChatMessage('ai', '⚠️ Geen actief plan.');
+                    break;
+                }
+                try {
+                    const resp = await fetch(`/v1/plans/${state.currentPlanId}`);
+                    if (!resp.ok) throw new Error('Failed to fetch plan');
+                    const plan = await resp.json();
+
+                    if (plan.total_usage) {
+                        const u = plan.total_usage;
+                        const costLine = plan.total_cost ? `\n• Cost: €${plan.total_cost.toFixed(4)}` : ''; const msg = `📊 Token Usage:\n• Prompt: ${u.prompt_tokens.toLocaleString()}\n• Completion: ${u.completion_tokens.toLocaleString()}\n• Total: ${u.total_tokens.toLocaleString()}${costLine}`;
+                        addChatMessage('ai', msg);
+                    } else {
+                        addChatMessage('ai', 'ℹ️ No token usage data available for this plan.');
+                    }
+                } catch (e) {
+                    addChatMessage('ai', `❌ Fout: ${e.message}`);
+                }
+                break;
+
             default:
-                addChatMessage('ai', `❓ Onbekend commando: ${command}\n\nBeschikbare commando's:\n• /list - Toon alle plannen\n• /stop - Stop huidige plan\n• /switch <plan-id> - Verander naar een ander plan\n• /del <plan-id> - Verwijder een plan\n• /resume <plan-id> - Hervat een gestopt plan\n• /add_group <group> - Voeg toegangsgroep toe\n• /remove_group <group> - Verwijder toegangsgroep\n• /list_groups - Toon toegangsgroepen`);
+                addChatMessage('ai', `❓ Onbekend commando: ${command}\n\nBeschikbare commando's:\n• /list - Toon alle plannen\n• /usage - Toon token usage\n• /stop - Stop huidige plan\n• /switch <plan-id> - Verander naar een ander plan\n• /del <plan-id> - Verwijder een plan\n• /resume <plan-id> - Hervat een gestopt plan\n• /add_group <group> - Voeg toegangsgroep toe\n• /remove_group <group> - Verwijder toegangsgroep\n• /list_groups - Toon toegangsgroepen`);
         }
     }
 
@@ -2442,6 +2506,17 @@
 
     let lastAutoScrollSignature = '';
     function renderPlan(plan) {
+        // Update stats bar
+        const statsBar = document.getElementById('stats-bar');
+        if (plan.total_usage && plan.total_usage.total_tokens > 0) {
+            statsBar.style.display = 'flex';
+            document.getElementById('stat-prompt').textContent = plan.total_usage.prompt_tokens.toLocaleString();
+            document.getElementById('stat-completion').textContent = plan.total_usage.completion_tokens.toLocaleString();
+            const totalText = plan.total_usage.total_tokens.toLocaleString(); const costText = plan.total_cost ? ` (€${plan.total_cost.toFixed(4)})` : ''; document.getElementById('stat-total').textContent = totalText + costText;
+        } else {
+            statsBar.style.display = 'none';
+        }
+
         plan.steps = plan.steps || [];
         // Update Kanban background based on plan state
         const kanbanContainer = document.getElementById('kanban-container');
@@ -2521,6 +2596,11 @@
             if (step.status === 'cancelled') statusIcon = 'x-circle';
             if (step.status === 'waiting_input') statusIcon = 'alert-circle';
 
+            let usageHtml = '';
+            if (step.usage && step.usage.total_tokens > 0) {
+                usageHtml = `<span style="display:flex;align-items:center;gap:3px;margin-left:auto;"><i data-lucide="cpu" size="10"></i> ${step.usage.total_tokens}</span>`;
+            }
+
             card.innerHTML = `
                     <div class="task-header">
                         <span class="task-agent">${step.agent_id}</span>
@@ -2529,7 +2609,8 @@
                     <div class="task-action">${step.action}</div>
                     <div class="task-meta">
                          <i data-lucide="${statusIcon}" size="12"></i>
-                         ${step.status}
+                         <span>${step.status}</span>
+                         ${usageHtml}
                     </div>
                 `;
 
@@ -2632,7 +2713,8 @@
                     <div class="step-log-header">
                         <span class="tag-agent">[${s.agent_id}]</span>
                         <span class="tag-action">${s.action}</span>
-                        <span style="margin-left:auto; color: ${s.status === 'waiting_input' ? 'var(--accent)' : ((s.status === 'rejected' || s.status === 'cancelled') ? '#ef4444' : 'inherit')}">${s.status}</span>
+                        ${s.usage && s.usage.total_tokens > 0 ? `<span style="margin-left: auto; margin-right: 1rem; color: var(--text-dim); font-size: 0.75rem; display: flex; align-items: center; gap: 4px;"><i data-lucide="cpu" size="6"></i> ${s.usage.total_tokens.toLocaleString()}</span>` : ''}
+                        <span style="${(!s.usage || s.usage.total_tokens <= 0) ? 'margin-left:auto;' : ''} color: ${s.status === 'waiting_input' ? 'var(--accent)' : ((s.status === 'rejected' || s.status === 'cancelled') ? '#ef4444' : 'inherit')}">${s.status}</span>
                     </div>
                     ${s.result ? `<div class="step-log-content">${s.result}</div>` : ''}
                 `;

@@ -45,6 +45,13 @@ type Intent struct {
 	Answer        string `json:"answer,omitempty"`       // Direct answer if action is general_chat
 }
 
+// TokenUsage tracks LLM token consumption
+type TokenUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 // Step represents a single unit of work in a plan
 type Step struct {
 	ID            int                    `json:"step_id"`
@@ -57,20 +64,23 @@ type Step struct {
 	DependsOn     []int                  `json:"depends_on,omitempty"`     // List of step IDs that must complete before this step starts
 	AssignedGroup string                 `json:"assigned_group,omitempty"` // The group (e.g. "compliance") that must approve this step
 	ApprovedBy    string                 `json:"approved_by,omitempty"`    // The user/agent that approved this step
+	Usage         *TokenUsage            `json:"usage,omitempty"`          // Token usage for this step
 }
 
 // ExecutionPlan represents a sequence of steps to fulfill an intent
 type ExecutionPlan struct {
-	ID             string   `json:"plan_id"`
-	CreatorID      string   `json:"creator_id,omitempty"`
-	Intent         Intent   `json:"intent"`
-	Status         string   `json:"status"`
-	Steps          []Step   `json:"steps"`
-	SelectedAgents []string `json:"selected_agents"`
-	Files          []string `json:"files,omitempty"`
-	AllowedGroups  []string `json:"allowed_groups,omitempty"`
-}
 
+	ID             string     `json:"plan_id"`
+	CreatorID      string     `json:"creator_id,omitempty"`
+	Intent         Intent     `json:"intent"`
+	Status         string     `json:"status"`
+	Steps          []Step     `json:"steps"`
+	SelectedAgents []string   `json:"selected_agents"`
+	Files          []string   `json:"files,omitempty"`
+	AllowedGroups  []string   `json:"allowed_groups,omitempty"`
+	TotalUsage     TokenUsage `json:"total_usage,omitempty"`
+	TotalCost      float64    `json:"total_cost,omitempty"` // Total cost in euros
+}
 // MCPServer represents an external tool server
 type MCPServer struct {
 	ID         string           `json:"id" yaml:"id"`

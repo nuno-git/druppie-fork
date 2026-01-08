@@ -31,6 +31,10 @@ type Store interface {
 	// MCP Servers
 	SaveMCPServers(data []byte) error
 	LoadMCPServers() ([]byte, error)
+
+	// Memory Persistence
+	SaveMemory(planID string, data []byte) error
+	LoadMemory(planID string) ([]byte, error)
 }
 
 // FileStore implements Store using local file system.
@@ -247,6 +251,35 @@ func (s *FileStore) LoadMCPServers() ([]byte, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err
+	}
+	return data, nil
+}
+
+func (s *FileStore) SaveMemory(planID string, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Ensure directory exists
+	planDir := filepath.Join(s.baseDir, "plans", planID)
+	if err := os.MkdirAll(planDir, 0755); err != nil {
+		return fmt.Errorf("failed to create plan directory: %w", err)
+	}
+
+	filename := filepath.Join(planDir, "memory.json")
+	if err := os.WriteFile(filename, data, 0644); err != nil {
+		return fmt.Errorf("failed to write memory file: %w", err)
+	}
+	return nil
+}
+
+func (s *FileStore) LoadMemory(planID string) ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	filename := filepath.Join(s.baseDir, "plans", planID, "memory.json")
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err // Let caller handle not found
 	}
 	return data, nil
 }

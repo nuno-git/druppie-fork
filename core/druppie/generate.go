@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/sjhoeksma/druppie/core/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -34,7 +35,7 @@ type IndexItem struct {
 func generateSearchIndex() error {
 	fmt.Println("Building search index...")
 
-	if err := ensureProjectRoot(); err != nil {
+	if err := paths.EnsureProjectRoot(); err != nil {
 		fmt.Printf("Warning: %v. Using current directory.\n", err)
 	}
 

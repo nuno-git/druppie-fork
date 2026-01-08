@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/sjhoeksma/druppie/core/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -23,7 +24,7 @@ func newCliCmd() *cobra.Command {
 
 func runCli(args []string) error {
 	// Ensure we are in the project root to find druppie.sh
-	if err := ensureProjectRoot(); err != nil {
+	if err := paths.EnsureProjectRoot(); err != nil {
 		return fmt.Errorf("could not find project root containing druppie.sh: %w", err)
 	}
 

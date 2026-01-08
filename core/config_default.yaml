@@ -10,14 +10,20 @@ llm:
         project_id: "" # (string, NOT number)
         client_id: ""
         client_secret: ""
+        price_per_prompt_token: 0.150    #  per 1M input tokens
+        price_per_completion_token: 1.20  #  per 1M output tokens
       ollama:
         type: ollama
         model: qwen3:8b
         url: http://localhost:11434
+        price_per_prompt_token: 0.150    #  per 1M input tokens
+        price_per_completion_token: 1.20  #  per 1M output tokens
       openrouter:
         type: openrouter
         model: google/gemini-2.0-flash-exp:free
         api_key: ""
+        price_per_prompt_token: 0.150    #  per 1M input tokens
+        price_per_completion_token: 1.20  #  per 1M output tokens
     
 server:
     port: "80"
@@ -40,6 +46,13 @@ git:
     token: ""
 iam: # ProviderOptions: local, keycloak, demo
     provider: local
+
+memory:
+    max_window_tokens: 12000
+    summarize_after: 20
+
+planner:
+    max_agent_selection: 5
 
 approval_groups:
     security: ["ciso", "group-admin"]

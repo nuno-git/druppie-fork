@@ -1,4 +1,4 @@
-package main
+package paths
 
 import (
 	"fmt"
@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 )
 
-// findProjectRoot looks for markers like .druppie, blocks, doc_registry.js, or druppie.sh
-func findProjectRoot() (string, error) {
+// FindProjectRoot looks for markers like .druppie, blocks, doc_registry.js, or druppie.sh
+func FindProjectRoot() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -35,9 +35,9 @@ func findProjectRoot() (string, error) {
 	}
 }
 
-// ensureProjectRoot finds the root and changes the current working directory to it
-func ensureProjectRoot() error {
-	root, err := findProjectRoot()
+// EnsureProjectRoot finds the root and changes the current working directory to it
+func EnsureProjectRoot() error {
+	root, err := FindProjectRoot()
 	if err != nil {
 		return err
 	}
@@ -49,4 +49,13 @@ func ensureProjectRoot() error {
 		}
 	}
 	return nil
+}
+
+// ResolvePath returns the absolute path joined with the project root.
+func ResolvePath(elem ...string) (string, error) {
+	root, err := FindProjectRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(append([]string{root}, elem...)...), nil
 }

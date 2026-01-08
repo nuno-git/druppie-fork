@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -46,16 +47,31 @@ func (e *BuildExecutor) Execute(ctx context.Context, step model.Step, outputChan
 		planID = p
 	}
 
-	if repoURL == "" || repoURL == "." || repoURL == "./" {
-		if planID != "" {
-			// Auto-correct to plan's workspace convention
-			// We assume files are in the root of the plan dir or 'src'
-			// Let's try planDir first.
-			// Path: .druppie/plans/<plan-id>/src
-			repoURL = fmt.Sprintf(".druppie/plans/%s/src", planID)
+	if planID != "" {
+		basePath := fmt.Sprintf(".druppie/plans/%s/src", planID)
+
+		if repoURL == "" || repoURL == "." || repoURL == "./" {
+			repoURL = basePath
 		} else {
-			return fmt.Errorf("missing required param 'repo_url' or 'path'")
+			// If not absolute, try joining with base path
+			// We prioritize the structure inside 'src'
+			joinedPath := filepath.Join(basePath, repoURL)
+
+			// Use the joined path if it exists, or if the raw path doesn't look like a valid existing path
+			if _, err := os.Stat(joinedPath); err == nil {
+				repoURL = joinedPath
+			} else {
+				// Fallback: Check if repoURL was already a valid path (e.g. absolute or correctly relative)
+				if _, err := os.Stat(repoURL); err == nil {
+					// Use as is
+				} else {
+					// Default to the joined path so the error message makes sense relative to src
+					repoURL = joinedPath
+				}
+			}
 		}
+	} else if repoURL == "" {
+		return fmt.Errorf("missing required param 'repo_url' or 'path'")
 	}
 
 	// Check if source directory exists and is not empty
