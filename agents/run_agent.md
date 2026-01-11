@@ -1,8 +1,8 @@
 ---
-id: run-agent
+id: run_agent
 name: "Run Agent"
 description: "Specialized agent for running built artifacts or code in a sandboxed environment."
-type: execution-agent
+type: execution_agent
 version: 1.0.0
 native: true
 skills: ["run_code"]

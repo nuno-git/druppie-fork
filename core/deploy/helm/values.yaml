@@ -44,15 +44,39 @@ autoscaling:
   maxReplicas: 100
   targetCPUUtilizationPercentage: 80
 
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 1Gi
+
+# Application Configuration (config.yaml)
+config:
+  server:
+    port: "8080"
+  iam:
+    provider: local
+  llm:
+    default_provider: gemini
+    providers:
+      gemini:
+        type: gemini
+        model: gemini-1.5-pro
+        price_per_prompt_token: 2.000    # per 1M input tokens
+        price_per_completion_token: 12.00  #  per 1M output tokens
+        # api_key via env
+  build:
+    default_provider: tekton
+    providers:
+      tekton:
+        type: tekton
+        namespace: default
+  approval_groups:
+    security: ["ciso", "group-admin"]
+    legal: ["legal", "group-admin"]
+    compliance: ["compliance","group-admin"]
+    privacy: ["privacy","group-admin"]
+
 env:
   GEMINI_API_KEY: "change-me"
-  # Optional: Override via env vars if not using config.yaml mount
-  # DRUPPIE_GIT_PROVIDER: "gitea"
-  # DRUPPIE_GIT_URL: "http://gitea-http.gitea.svc.cluster.local:3000"
-
-git:
-  provider: "gitea"
-  url: "http://gitea-http.gitea.svc.cluster.local:3000"
-  user: "druppie"
-  tokenSecretName: "gitea-token" # Name of K8s secret containing the token
 

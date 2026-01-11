@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/sjhoeksma/druppie/core/internal/executor"
 	"github.com/sjhoeksma/druppie/core/internal/llm"
@@ -51,4 +52,41 @@ func (m *Manager) Register(w Workflow) {
 func (m *Manager) GetWorkflow(name string) (Workflow, bool) {
 	w, ok := m.workflows[name]
 	return w, ok
+}
+
+// CallLLM executes a generation request and returns the response and specific usage (as pointer).
+// It does NOT update the global plan usage automatically; the caller must attach it to a Step or call UpdateTokenUsage.
+// opts[0] (optional) specifies the provider name (e.g. "gemini", "ollama").
+func (wc *WorkflowContext) CallLLM(prompt string, systemPrompt string, opts ...string) (string, *model.TokenUsage, error) {
+	providerName := ""
+	if len(opts) > 0 {
+		providerName = opts[0]
+	}
+
+	if providerName != "" {
+		if mgr, ok := wc.LLM.(*llm.Manager); ok {
+			resp, usage, err := mgr.GenerateWithProvider(wc.Ctx, providerName, prompt, systemPrompt)
+			if wc.Store != nil {
+				_ = wc.Store.LogInteraction(wc.PlanID, "Workflow ("+systemPrompt+") ["+providerName+"]",
+					fmt.Sprintf("--- PROMPT ---\n%s\n--- END PROMPT ---", prompt),
+					fmt.Sprintf("--- RESPONSE ---\n%s\n--- END RESPONSE ---", resp))
+			}
+			if err != nil {
+				return "", nil, err
+			}
+			return resp, &usage, nil
+		}
+		return "", nil, fmt.Errorf("provider selection '%s' failed: underlying LLM is not a Manager", providerName)
+	}
+
+	resp, usage, err := wc.LLM.Generate(wc.Ctx, prompt, systemPrompt)
+	if wc.Store != nil {
+		_ = wc.Store.LogInteraction(wc.PlanID, "Workflow ("+systemPrompt+")",
+			fmt.Sprintf("--- PROMPT ---\n%s\n--- END PROMPT ---", prompt),
+			fmt.Sprintf("--- RESPONSE ---\n%s\n--- END RESPONSE ---", resp))
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	return resp, &usage, nil
 }

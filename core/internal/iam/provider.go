@@ -61,6 +61,7 @@ type contextKey string
 const userContextKey contextKey = "iam_user"
 
 // NewProvider creates the IAM provider
+// NewProvider creates the IAM provider
 func NewProvider(cfg config.IAMConfig, baseDir string) (Provider, error) {
 	switch strings.ToLower(cfg.Provider) {
 	case "keycloak":

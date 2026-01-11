@@ -34,7 +34,7 @@ func (e *StandardExecutor) CanHandle(action string) bool {
 
 	// 2. Check if MCP Manager has a tool for this action
 	if e.StdCtx != nil && e.StdCtx.MCPManager != nil {
-		if _, found := e.StdCtx.MCPManager.GetServerForTool(action); found {
+		if _, found := e.StdCtx.MCPManager.GetToolServer(action); found {
 			return true
 		}
 	}
@@ -112,7 +112,7 @@ func ExecuteStandardAction(e interface{}, stdCtx *StandardContext, ctx context.C
 
 	// 3. Check MCP / Dynamic Tools
 	if stdCtx != nil && stdCtx.MCPManager != nil {
-		_, found := stdCtx.MCPManager.GetServerForTool(step.Action)
+		_, found := stdCtx.MCPManager.GetToolServer(step.Action)
 		if found {
 			res, err := stdCtx.MCPManager.ExecuteTool(ctx, step.Action, step.Params)
 			if err != nil {

@@ -26,8 +26,9 @@ llm:
         price_per_completion_token: 1.20  #  per 1M output tokens
     
 server:
-    port: "80"
+#    port: "80" Moved to general
 build:
+# ... keep build ...
     default_provider: docker
     providers:
       tekton:
@@ -44,18 +45,52 @@ git:
     url: ""
     user: ""
     token: ""
+    
 iam: # ProviderOptions: local, keycloak, demo
     provider: local
 
-memory:
-    max_window_tokens: 12000
-    summarize_after: 20
-
-planner:
-    max_agent_selection: 5
+# memory: Moved to general
+# planner: Moved to general
 
 approval_groups:
     security: ["ciso", "group-admin"]
     legal: ["legal", "group-admin"]
     compliance: ["compliance","group-admin"]
     privacy: ["privacy","group-admin"]
+
+general:
+    max_unattended_cost: 1.0 # Pause task if cost since last interaction exceeds this amount (Euros)
+    internal_costs:
+        create_repo: 0.05
+        modify_code: 0.05
+        build_code: 0.02
+        run_code: 0.01
+        read_file: 0.005
+        analyze_file: 0.01
+        create_project: 0.01
+        coding: 0.05
+        validation: 0.01
+        deployment: 0.05
+        verification: 0.01
+        ensure_availability: 0.01
+        check_block_status: 0.005
+    server_port: "8080"
+    max_agent_selections: 5
+    memory:
+        max_window_tokens: 12000
+        summarize_after: 20
+
+scheduled_jobs:
+  - name: "Standard Cleanup"
+    type: "cleanup"
+    schedule: "@daily"
+    params:
+      days: "7"
+
+  # Example LLM Job (Uncomment to use)
+  # - name: "Nightly Analysis"
+  #   type: "llm"
+  #   schedule: "0 2 * * *" # Every day at 2 AM
+  #   params:
+  #     plan_id: "analysis_job"
+  #     prompt: "Analyze logs and update summary"

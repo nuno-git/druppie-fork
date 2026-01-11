@@ -1,7 +1,7 @@
 ---
-id: skill-executor
+id: skill_executor
 name: "Skill Dispatcher"
-type: sub-agent
+type: sub_agent
 description: "A generic agent that executes individual skills like text-to-speech, read_file, etc. based on user request."
 native: true
 version: 1.0.0
@@ -9,7 +9,7 @@ priority: 50.0
 prompts:
   analyze_skill: |
     You are a Skill Dispatcher. Analyze the user request and map it to a specific system action.
-    Available Actions likely include: "text-to-speech", "image-generation", "video-generation", "read_file", "write_file", "search_web".
+    Available Actions likely include: "text_to_speech", "image_generation", "video_generation", "read_file", "write_file", "search_web".
     Output JSON: { "action": "action_name", "params": { "key": "value" } }
 auth_groups: []
 ---

@@ -8,7 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
-"gopkg.in/yaml.v3"
+
+	"reflect"
 
 	"github.com/sjhoeksma/druppie/core/internal/iam"
 	"github.com/sjhoeksma/druppie/core/internal/llm"
@@ -53,6 +54,8 @@ func NewPlanner(llm llm.Provider, reg *registry.Registry, store store.Store, mcp
 
 func (p *Planner) cleanJSONResponse(resp string) string {
 	clean := strings.TrimSpace(resp)
+
+	// 1. Extract from Markdown Code Blocks if present
 	if start := strings.Index(clean, "```"); start != -1 {
 		if newline := strings.Index(clean[start:], "\n"); newline != -1 {
 			start += newline + 1
@@ -62,42 +65,34 @@ func (p *Planner) cleanJSONResponse(resp string) string {
 		end := strings.LastIndex(clean, "```")
 		if end > start {
 			clean = clean[start:end]
-		} else {
-			clean = clean[start:]
 		}
 	}
-	clean = strings.TrimSpace(clean)
 
-	// Sanitize: Replace literal control characters (newlines, tabs) with spaces to ensure valid JSON parsing
-	// because LLMs often fail to escape them inside strings.
-	// We accept the minor loss of formatting in text fields in exchange for structural validity.
-	clean = strings.ReplaceAll(clean, "\n", " ")
-	clean = strings.ReplaceAll(clean, "\r", " ")
-	clean = strings.ReplaceAll(clean, "\t", " ")
+	// 2. Scan for Outermost Brackets (Array or Object) to ignore chatty prefixes/suffixes
+	startArr := strings.Index(clean, "[")
+	startObj := strings.Index(clean, "{")
 
-	// Robustly close brackets and braces
-	depthMap := map[rune]int{'{': 0, '[': 0}
-	for _, r := range clean {
-		switch r {
-		case '{':
-			depthMap['{']++
-		case '}':
-			depthMap['{']--
-		case '[':
-			depthMap['[']++
-		case ']':
-			depthMap['[']--
-		}
+	var start, end int
+	// Determine if we are looking for Array or Object start
+	if startArr != -1 && (startObj == -1 || startArr < startObj) {
+		start = startArr
+		end = strings.LastIndex(clean, "]")
+	} else if startObj != -1 {
+		start = startObj
+		end = strings.LastIndex(clean, "}")
+	} else {
+		// No brackets found, return original trimmed (likely will Assert Error later)
+		return clean
 	}
-	// Append missing closers in reverse order? Simple check:
-	for depthMap['['] > 0 {
-		clean += "]"
-		depthMap['[']--
+
+	if end > start {
+		clean = clean[start : end+1]
 	}
-	for depthMap['{'] > 0 {
-		clean += "}"
-		depthMap['{']--
-	}
+
+	// 3. REMOVED Destructive Newline Replacement
+	// We trust the LLM/Template to produce valid JSON-escaped strings for code content.
+	// Replacing \n with space corrupts 'create_repo' file contents.
+
 	return clean
 }
 
@@ -117,16 +112,17 @@ Task: Select the most relevant agents for this goal.
 Rules:
 1. Return exactly one JSON array of strings containing Agent IDs.
 2. Sort the array by relevance (most relevant first).
-3. Be extremely restrictive. prefer single specialized agent over multiple.
+3. Select ALL agents necessary for the complete workflow.
+   - **CRITICAL**: If the goal involves writing source code, building software, or technical implementation of apps, YOU MUST INCLUDE 'developer'.
 4. Guidelines:
-   - Video content -> 'video-content-creator'
-   - Research/Data -> 'data-scientist'
-   - Infrastructure/Ops -> 'infrastructure-engineer'
+   - Video projects -> 'video_content_creator' (This agent handles its own sub-agents like audio/image).
+   - Research/Data -> 'data_scientist'
+   - Infrastructure/Ops -> 'infrastructure_engineer'
    - Compliance/Policy -> 'compliance'
    - Architecture -> 'architect'
-   - General/Ambiguous -> 'business-analyst'
+   - General/Ambiguous -> 'business_analyst' (Skip if a specialized agent like 'video_content_creator' is selected).
 
-Example: ["business-analyst"]`, intent.Prompt, detailedList)
+Example: ["business_analyst"]`, intent.Prompt, detailedList)
 
 	resp, usage, err := p.llm.Generate(ctx, "Select Agents", prompt)
 	if err != nil {
@@ -158,7 +154,9 @@ Example: ["business-analyst"]`, intent.Prompt, detailedList)
 
 	// Log interaction for visibility
 	if p.Store != nil {
-		_ = p.Store.LogInteraction(planID, "Planner", "Agent Selection", fmt.Sprintf("Goal: %s\nSelected: %v\n(Limited to Top %d)", intent.Prompt, selected, p.MaxAgentSelection))
+		_ = p.Store.LogInteraction(planID, "Agent Selection",
+			fmt.Sprintf("--- PROMPT ---\n%s\n--- END PROMPT ---", prompt),
+			fmt.Sprintf("--- RESPONSE ---\n%s\n--- END RESPONSE ---\n\nGoal: %s\nSelected: %v\n(Limited to Top %d)", resp, intent.Prompt, selected, p.MaxAgentSelection))
 	}
 
 	return selected, usage
@@ -172,10 +170,16 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 	}
 
 	// 1. Gather Context from Registry
-	blocks := p.Registry.ListBuildingBlocks(userGroups)
+	// Optimization: Only include Registry Building Blocks (Infrastructure/Services) if the intent requires orchestration or infrastructure.
+	// For simple 'create_project' code tasks, we reduce token usage by skipping irrelevant blocks.
+	var blocks []model.BuildingBlock
+	if intent.Action == "orchestrate_complex" || intent.Category == "infrastructure" || intent.Action == "query_registry" {
+		blocks = p.Registry.ListBuildingBlocks(userGroups)
+	}
+
 	blockNames := make([]string, 0, len(blocks))
 	for _, b := range blocks {
-		blockNames = append(blockNames, b.Name)
+		blockNames = append(blockNames, fmt.Sprintf("%s (%s)", b.Name, b.Description))
 	}
 
 	// Add MCP Tools from Registry (Templates & Static Definitions)
@@ -189,12 +193,45 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 
 	// Add MCP Tools from Running Servers (Dynamic Discovery)
 	if p.MCPManager != nil {
+		// --- AUTH CHECK ---
+		authorizedMap := make(map[string]bool)
+		allRegistryMap := make(map[string]bool)
+
+		// ListMCPServers filters by groups
+		for _, s := range p.Registry.ListMCPServers(userGroups) {
+			authorizedMap[s.Name] = true
+		}
+		// ListAllMCPServers returns everything
+		for _, s := range p.Registry.ListAllMCPServers() {
+			allRegistryMap[s.Name] = true
+		}
+
 		mcpTools := p.MCPManager.ListAllTools()
 		for _, t := range mcpTools {
-			// Avoid duplicates if possible?
-			// For now, listing again is harmless or we can dedup.
-			// Simple dedup by checking suffix? Or just append.
-			blockNames = append(blockNames, fmt.Sprintf("%s (%s)", t.Name, t.Description))
+			// Find server for tool to create Namespaced Name
+			srv, _ := p.MCPManager.GetToolServer(t.Name)
+
+			// Check Access
+			if allRegistryMap[srv] {
+				// If it is a Registry-managed server, it MUST be authorized
+				if !authorizedMap[srv] {
+					continue // Restricted
+				}
+			}
+			// If not in RegistryMap, it is Dynamic -> Allowed by default logic
+
+			// Format schema for Planner (JSON)
+			schemaBytes, _ := json.Marshal(t.InputSchema)
+			schemaStr := string(schemaBytes)
+			// Truncate schema if too long
+			if len(schemaStr) > 200 {
+				schemaStr = schemaStr[:200] + "..."
+			}
+
+			// Format: server__tool (Description) Args: schema
+			// Using namespaced name ensures uniqueness
+			namespaced := fmt.Sprintf("%s__%s", srv, t.Name)
+			blockNames = append(blockNames, fmt.Sprintf("%s (%s) Args: %s", namespaced, t.Description, schemaStr))
 		}
 	}
 
@@ -264,6 +301,9 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 		if a.Workflow != "" {
 			sb.WriteString(fmt.Sprintf("  Workflow:\n%s\n", a.Workflow))
 		}
+		// Optimization: Do NOT include full Agent Instructions/Directives here.
+		// The Planner only needs Workflow, Skills, and Description to make decisions.
+		// Detailed templates (e.g. in Developer agent) differ from Planner logic and waste tokens.
 		if a.Instructions != "" {
 			sb.WriteString(fmt.Sprintf("  Directives:\n%s", a.Instructions))
 		}
@@ -272,6 +312,65 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 	//fmt.Printf("[Planner - Agents] %v\n", sortedIDs)
 
 	// 2. Prompt LLM
+	// Filter Tools based on User Request ("select the onces which are linked to the agents selected")
+	requiredTools := make(map[string]bool)
+	for _, a := range activeAgents {
+		for _, t := range a.Tools {
+			requiredTools[t] = true
+		}
+	}
+
+	// Rebuild blockNames filtered
+	if len(requiredTools) > 0 {
+		filteredBlockNames := make([]string, 0)
+
+		// Filter Building Blocks
+		for _, b := range blocks {
+			if requiredTools[b.ID] || requiredTools["*"] {
+				filteredBlockNames = append(filteredBlockNames, fmt.Sprintf("%s (%s)", b.Name, b.Description))
+			}
+		}
+
+		// Filter MCP Tools
+		// Check against Server ID AND Tool Name to be safe
+		for _, s := range mcpServers {
+			serverMatch := requiredTools[s.ID]
+			for _, t := range s.Tools {
+				if serverMatch || requiredTools[t.Name] || requiredTools["*"] {
+					filteredBlockNames = append(filteredBlockNames, fmt.Sprintf("%s (%s)", t.Name, t.Description))
+				}
+			}
+		}
+
+		// Also check dynamic MCPs (Running Servers)
+		// We need to re-scan p.MCPManager.ListTools if needed,
+		// but 'blockNames' currently only includes static Registry definitions + dynamic discovery from earlier lines.
+		// The earlier dynamic discovery loop (lines 192-239) appended to 'blockNames'.
+		// Since we are Overwriting 'blockNames' (or rather replacing it), we need to capture ALL sources.
+
+		// ISSUE: 'blocks' and 'mcpServers' (static) are available variables.
+		// But dynamic tools were added to 'blockNames' loop around line 210. We lost the source objects effectively unless we re-fetch.
+
+		// Simpler approach: Filter 'blockNames' strings?
+		// No, strings are formatted "Name (Desc)". Parsing back is fragile.
+
+		// Re-run Dynamic Logic here
+		if p.MCPManager != nil {
+			_, cancel := context.WithTimeout(ctx, 2*time.Second)
+			allTools := p.MCPManager.ListAllTools()
+			cancel()
+
+			for _, tool := range allTools {
+				// Check if tool allowed
+				// Tool struct has Name. ServerID? Not easily accessible here maybe.
+				if requiredTools[tool.Name] || requiredTools["*"] {
+					filteredBlockNames = append(filteredBlockNames, fmt.Sprintf("%s (%s)", tool.Name, tool.Description))
+				}
+			}
+		}
+
+		blockNames = filteredBlockNames
+	}
 	sysTemplate := ""
 	if plannerAgent, err := p.Registry.GetAgent("planner"); err == nil && plannerAgent.Instructions != "" {
 		sysTemplate = plannerAgent.Instructions
@@ -283,16 +382,20 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 		"%goal%", intent.Prompt,
 		"%action%", intent.Action,
 		"%language%", intent.Language,
-		"%tools%", fmt.Sprintf("%v", blockNames),
-		"%agents%", fmt.Sprintf("%v", agentList),
+		"%tools%", fmt.Sprintf("--- AVAILABLE TOOLS & BLOCKS ---\n%v\n--- END TOOLS ---", blockNames),
+		"%agents%", fmt.Sprintf("--- AVAILABLE AGENT DEFINITIONS ---\n%v\n--- END AGENTS ---", agentList),
 	)
 
 	if p.Store != nil {
-		_ = p.Store.LogInteraction(planID, "Planner", "Context Assembly", fmt.Sprintf("Selected Tools/Blocks: %v", blockNames))
+		reqTools := make([]string, 0, len(requiredTools))
+		for k := range requiredTools {
+			reqTools = append(reqTools, k)
+		}
+		_ = p.Store.LogInteraction(planID, "Planner", "Context Assembly",
+			fmt.Sprintf("Built context for plan %s.\nIncluded Agents: %v\nRequested Tools: %v\nFound Tools/Blocks: %v", planID, sortedIDs, reqTools, blockNames))
 	}
 
 	sysPrompt := replacer.Replace(sysTemplate)
-
 	var steps []model.Step
 	var validationErr error
 	var resp string
@@ -343,7 +446,15 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 
 		// Ensure all steps have a status and normalized params
 		validationErr = nil // Reset
+		idMap := make(map[int]int)
 		for i := range steps {
+			// Enforce valid, sequential ID and map original ID
+			originalID := steps[i].ID
+			steps[i].ID = i + 1
+			if originalID != 0 {
+				idMap[originalID] = steps[i].ID
+			}
+
 			if steps[i].Status == "" {
 				steps[i].Status = "pending"
 			}
@@ -360,9 +471,84 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 				}
 			}
 
+			// Ensure Params initialized and Language injected
+			if steps[i].Params == nil {
+				steps[i].Params = make(map[string]interface{})
+			}
+			if _, ok := steps[i].Params["language"]; !ok {
+				steps[i].Params["language"] = intent.Language
+			}
+
+			// Resolve Dependencies (String -> Int) - Ported from UpdatePlan
+			if steps[i].DependsOnRaw != nil {
+				resolveDep := func(dep interface{}) {
+					if idFloat, ok := dep.(float64); ok {
+						oldID := int(idFloat)
+						if newID, matches := idMap[oldID]; matches {
+							steps[i].DependsOn = append(steps[i].DependsOn, newID)
+						} else {
+							steps[i].DependsOn = append(steps[i].DependsOn, oldID)
+						}
+					} else if depStr, ok := dep.(string); ok {
+						depStr = strings.ReplaceAll(depStr, "-", "_")
+						for j := i - 1; j >= 0; j-- {
+							targetAction := strings.ReplaceAll(steps[j].Action, "-", "_") // Normalize
+							checkStr := depStr
+							if strings.Contains(depStr, ":") {
+								parts := strings.SplitN(depStr, ":", 2)
+								if len(parts) == 2 {
+									checkStr = parts[1]
+								}
+							}
+							if strings.EqualFold(targetAction, checkStr) {
+								steps[i].DependsOn = append(steps[i].DependsOn, steps[j].ID)
+								break
+							}
+						}
+					}
+				}
+
+				switch v := steps[i].DependsOnRaw.(type) {
+				case []interface{}:
+					for _, d := range v {
+						resolveDep(d)
+					}
+				case string:
+					resolveDep(v)
+				case float64:
+					resolveDep(v)
+				}
+			}
+
+			// Fallback: If no dependencies defined, enforce sequential execution within the batch
+			if len(steps[i].DependsOn) == 0 && i > 0 {
+				// Debug Log
+				fmt.Printf("[Planner Create TRACER] Fallback triggered for Step %d -> %d\n", steps[i].ID, steps[i-1].ID)
+				steps[i].DependsOn = append(steps[i].DependsOn, steps[i-1].ID)
+			}
+
 			// CRITICAL VALIDATION: Content Review MUST have av_script
 			action := strings.ToLower(steps[i].Action)
-			if action == "content-review" || action == "draft-scenes" || action == "draft_scenes" {
+			// Action is normalized to snake_case in CreatePlan parsing, but here we process raw steps from slice
+			// Wait, parsing happens AFTER validation in the current file flow?
+			// No, CreatePlan -> Generate -> Unwrap -> newSteps loop.
+			// This block (lines 400-500) seems to be inside CreatePlan loop?
+			// Wait, CreatePlan calls Generate.
+			// Snippet 4136 showed parsing logic at line 900.
+			// Snippet 4197 shows validation at 460?
+			// Is 460 inside CreatePlan?
+			// CreatePlan in Snippet 4133 lines 700+.
+			// Validation seems to be inside a loop RETRYING generation (lines 600-900?).
+			// If this loops over `steps`, `steps` are `ParsingStep`.
+			// `ParsingStep` `Action` is RAW from LLM.
+			// So normalization to snake_case hasn't happened yet if it happens at line 930.
+
+			// Ah, I should normalize `steps[i].Action` HERE too if I want consistency.
+			// Or check both. But user wants code to be standard.
+			// I'll normalize `action` variable.
+			action = strings.ReplaceAll(action, "-", "_")
+
+			if action == "content_review" || action == "draft_scenes" {
 				if _, ok := steps[i].Params["av_script"]; !ok {
 					// Check aliases again just in case (redundant but safe)
 					found := false
@@ -373,7 +559,7 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 						}
 					}
 					if !found {
-						validationErr = fmt.Errorf("step %d (content-review) is MISSING required param 'av_script'. Params found: %v", steps[i].ID, steps[i].Params)
+						validationErr = fmt.Errorf("step %d (content_review) is MISSING required param 'av_script'. Params found: %v", steps[i].ID, steps[i].Params)
 						break
 					}
 				}
@@ -408,14 +594,15 @@ func (p *Planner) CreatePlan(ctx context.Context, intent model.Intent, planID st
 		Steps:          steps,
 		SelectedAgents: selectedIDs,
 		TotalUsage:     totalUsage,
+		PlanningUsage:  totalUsage, // Initial plan generation counts as planning usage
 	}
 
 	// Persistent Logging
 	if p.Store != nil {
 		planJSON, _ := json.MarshalIndent(plan, "", "  ")
 		_ = p.Store.LogInteraction(plan.ID, "Planner Create",
-fmt.Sprintf("--- PROMPT ---\n%s\n--- END PROMPT ---", sysPrompt),
-fmt.Sprintf("--- RESPONSE ---\n%s\n--- END RESPONSE ---\n\nRESULTING PLAN:\n%s", resp, string(planJSON)))
+			fmt.Sprintf("--- PROMPT ---\n%s\n--- END PROMPT ---", sysPrompt),
+			fmt.Sprintf("--- RESPONSE ---\n%s\n--- END RESPONSE ---\n\nRESULTING PLAN:\n%s", resp, string(planJSON)))
 	}
 
 	// Assign initial usage to the "generate_plan" step if it exists
@@ -428,7 +615,7 @@ fmt.Sprintf("--- RESPONSE ---\n%s\n--- END RESPONSE ---\n\nRESULTING PLAN:\n%s",
 
 	return plan, nil
 
-}// UpdatePlan updates an existing plan based on user feedback or answers.
+} // UpdatePlan updates an existing plan based on user feedback or answers.
 func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, feedback string) (*model.ExecutionPlan, error) {
 	// 0. Handle Feedback
 	// Find the first non-completed step that matches the feedback category and mark it as completed
@@ -437,7 +624,7 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 		// If it was already completed (by TaskManager /accept logic), just ensure the result is set if empty
 		if status == "completed" {
 			action := plan.Steps[i].Action
-			if action == "ask_questions" || action == "copywriting" || action == "video-design" || action == "content-review" || action == "draft_scenes" {
+			if action == "ask_questions" || action == "copywriting" || action == "video_design" || action == "content_review" || action == "draft_scenes" || action == "review_and_governance" || action == "review_governance" || action == "audit_request" {
 				if plan.Steps[i].Result == "" {
 					plan.Steps[i].Result = feedback
 				}
@@ -448,7 +635,7 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 		if status == "pending" || status == "waiting_input" || status == "running" {
 			// If it's a question or content creation step, mark it as completed
 			action := plan.Steps[i].Action
-			if action == "ask_questions" || action == "copywriting" || action == "video-design" || action == "content-review" || action == "draft_scenes" {
+			if action == "ask_questions" || action == "copywriting" || action == "video_design" || action == "content_review" || action == "draft_scenes" || action == "review_and_governance" || action == "review_governance" || action == "audit_request" {
 				plan.Steps[i].Status = "completed"
 				plan.Steps[i].Result = feedback
 				break
@@ -457,20 +644,21 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 	}
 
 	// 1. Construct Effective Goal (Context)
-	effectiveGoal := plan.Intent.InitialPrompt
+	// ONLY update Intent.Prompt if explicit 'refine_intent' step occurred (User Request)
 	for _, s := range plan.Steps {
-		if s.Result != "" {
-			effectiveGoal += fmt.Sprintf("\n- %s", s.Result)
+		if s.Action == "refine_intent" && s.Status == "completed" && s.Result != "" {
+			// Start fresh from Initial if explicitly refining? Or append?
+			// User said "add it to the intent". Usually refinement clarifies/replaces.
+			// Safeguard: If result is huge, maybe truncate? But for intent we want query.
+			plan.Intent.Prompt = s.Result
 		}
 	}
-	// Update the active prompt to reflect the full gathered context
-	plan.Intent.Prompt = effectiveGoal
 
 	// Truncate pending steps: we want the LLM to redefine the future of the plan
 	// based on the new information/feedback.
 	var completedSteps []model.Step
 	for _, s := range plan.Steps {
-		if s.Status == "completed" {
+		if s.Status == "completed" || (s.Status == "running" && s.Action == "replanning") {
 			completedSteps = append(completedSteps, s)
 		}
 	}
@@ -562,6 +750,7 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 		if a.Workflow != "" {
 			sb.WriteString(fmt.Sprintf("  Workflow:\n%s\n", a.Workflow))
 		}
+		// Optimization: Instructions removed from context
 		if a.Instructions != "" {
 			sb.WriteString(fmt.Sprintf("  Directives:\n%s", a.Instructions))
 		}
@@ -570,10 +759,33 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 	// Backward compatibility link if needed, or just use updatedAgentList in prompt
 	// agentList := updatedAgentList
 
-	// --- AUTO-STOP LOGIC REMOVED ---
-	// Previously, this stopped planning if scene count matched script length.
-	// This prevented post-production steps (Merge/Final Review) from being scheduled.
-	// We now let the LLM decide when to stop based on the workflow state.
+	// --- AUTO-STOP LOGIC (OPTIMIZATION) ---
+	// If the workflow reaches a definitive terminal state, stop immediately to save tokens.
+	if len(completedSteps) > 0 {
+		var lastStep *model.Step
+		// Find last meaningful step (ignore replanning)
+		for i := len(completedSteps) - 1; i >= 0; i-- {
+			if completedSteps[i].Action != "replanning" {
+				lastStep = &completedSteps[i]
+				break
+			}
+		}
+
+		if lastStep != nil {
+			// Hard Stop for 'promote_plugin' (Terminal action for Plugin workflow)
+			if lastStep.Action == "promote_plugin" ||
+				lastStep.Action == "run_code" ||
+				lastStep.Action == "tool_usage" ||
+				lastStep.Action == "image_generation" ||
+				lastStep.Action == "video_generation" ||
+				lastStep.Action == "text_to_speech" {
+				if p.Store != nil {
+					_ = p.Store.LogInteraction(plan.ID, "Planner", "Auto-Stop", "Detected terminal action. Stopping plan.")
+				}
+				return plan, nil
+			}
+		}
+	}
 	// --------------------------------
 
 	// Load System Prompt from Agent Definition
@@ -591,12 +803,50 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 		blockNames = append(blockNames, b.Name)
 	}
 
+	// Add Dynamic MCP Tools to UpdatePlan Context (Previously Missing)
+	if p.MCPManager != nil {
+		// --- AUTH CHECK ---
+		authorizedMap := make(map[string]bool)
+		allRegistryMap := make(map[string]bool)
+
+		// ListMCPServers filters by groups
+		for _, s := range p.Registry.ListMCPServers(userGroups) {
+			authorizedMap[s.Name] = true
+		}
+		// ListAllMCPServers returns everything
+		for _, s := range p.Registry.ListAllMCPServers() {
+			allRegistryMap[s.Name] = true
+		}
+
+		mcpTools := p.MCPManager.ListAllTools()
+		for _, t := range mcpTools {
+			srv, _ := p.MCPManager.GetToolServer(t.Name)
+
+			// Check Access
+			if allRegistryMap[srv] {
+				// If it is a Registry-managed server, it MUST be authorized
+				if !authorizedMap[srv] {
+					continue // Restricted
+				}
+			}
+			// If not in RegistryMap, it is Dynamic -> Allowed by default logic
+
+			schemaBytes, _ := json.Marshal(t.InputSchema)
+			schemaStr := string(schemaBytes)
+			if len(schemaStr) > 200 {
+				schemaStr = schemaStr[:200] + "..."
+			}
+			namespaced := fmt.Sprintf("%s__%s", srv, t.Name)
+			blockNames = append(blockNames, fmt.Sprintf("%s (%s) Args: %s", namespaced, t.Description, schemaStr))
+		}
+	}
+
 	replacer := strings.NewReplacer(
 		"%goal%", plan.Intent.Prompt,
 		"%action%", plan.Intent.Action,
 		"%language%", plan.Intent.Language,
-		"%tools%", fmt.Sprintf("%v", blockNames),
-		"%agents%", fmt.Sprintf("%v", updatedAgentList),
+		"%tools%", fmt.Sprintf("--- AVAILABLE TOOLS & BLOCKS ---\n%v\n--- END TOOLS ---", blockNames),
+		"%agents%", fmt.Sprintf("--- AVAILABLE AGENT DEFINITIONS ---\n%v\n--- END AGENTS ---", updatedAgentList),
 	)
 	baseSystemPrompt := replacer.Replace(sysTemplate)
 
@@ -605,7 +855,33 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 		startID = plan.Steps[len(plan.Steps)-1].ID
 	}
 
-	stepsJSON, _ := json.MarshalIndent(plan.Steps, "", "  ")
+	// Optimization: Minify Steps for History (Exclude Usage, Truncate Result)
+	type MinifiedStep struct {
+		StepID    int                    `json:"step_id"`
+		AgentID   string                 `json:"agent_id"`
+		Action    string                 `json:"action"`
+		Params    map[string]interface{} `json:"params,omitempty"`
+		Result    string                 `json:"result,omitempty"`
+		Status    string                 `json:"status"`
+		DependsOn []int                  `json:"depends_on,omitempty"`
+	}
+	minSteps := make([]MinifiedStep, len(plan.Steps))
+	for i, s := range plan.Steps {
+		res := s.Result
+		if len(res) > 500 {
+			res = res[:500] + "... (truncated)"
+		}
+		minSteps[i] = MinifiedStep{
+			StepID:    s.ID,
+			AgentID:   s.AgentID,
+			Action:    s.Action,
+			Params:    s.Params,
+			Result:    res,
+			Status:    s.Status,
+			DependsOn: s.DependsOn,
+		}
+	}
+	stepsJSON, _ := json.MarshalIndent(minSteps, "", "  ")
 
 	// Manage Memory
 	if p.Memory != nil && feedback != "" {
@@ -630,24 +906,66 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 			"3. GENERATE: Provide NEXT steps (starting from id %d). Follow the Strategies defined above.\n"+
 			"4. AVOID LOOPS: If the last completed step was an interactive agent (e.g. business-analyst) and the result was a confirmation/answer, DO NOT immediately schedule the same agent for the same task. Proceed to execution or the next phase.\n"+
 			"5. COMPLETION CHECK: If the 'current steps' have successfully achieved the 'Goal', you MUST return an empty JSON array `[]`. This will stop the plan.\n"+
-			"6. OUTPUT: Return a JSON array of Step objects.",
+			"6. LANGUAGE: Ensure all generated content/parameters use the user's language: %s. NO ENGLISH when not requested.\n"+
+			"7. OUTPUT: Return a JSON array of Step objects.",
 		string(stepsJSON),
 		plan.Files,
 		chatHistory,
-		startID+1, // Start ID for new steps
+		startID+1,            // Start ID for new steps
+		plan.Intent.Language, // Inject Language
 	)
 
 	fullPrompt := baseSystemPrompt + "\n\n" + taskPrompt
 
+	// Add a temporary replanning step to show in Kanban
+	replanID := 1
+	if len(plan.Steps) > 0 {
+		replanID = plan.Steps[len(plan.Steps)-1].ID + 1
+	}
+	replanStep := model.Step{
+		ID:      replanID,
+		AgentID: "planner",
+		Action:  "replanning",
+		Status:  "running",
+		Result:  "Replanning based on feedback...",
+	}
+	plan.Steps = append(plan.Steps, replanStep)
+	// Persist so UI sees "Running"
+	_ = p.Store.SavePlan(*plan)
+
 	resp, usage, err := p.llm.Generate(ctx, "Refine Plan", fullPrompt)
 	if err != nil {
+		// Mark replan step as failed
+		for i := len(plan.Steps) - 1; i >= 0; i-- {
+			if plan.Steps[i].Action == "replanning" && plan.Steps[i].Status == "running" {
+				plan.Steps[i].Status = "failed"
+				plan.Steps[i].Result = fmt.Sprintf("Error: %v", err)
+				break
+			}
+		}
+		_ = p.Store.SavePlan(*plan)
 		return nil, err
 	}
 
-	// Accumulate Usage
+	// Accumulate Usage in both TotalUsage and PlanningUsage
 	plan.TotalUsage.PromptTokens += usage.PromptTokens
 	plan.TotalUsage.CompletionTokens += usage.CompletionTokens
 	plan.TotalUsage.TotalTokens += usage.TotalTokens
+	plan.TotalUsage.EstimatedCost += usage.EstimatedCost
+
+	plan.PlanningUsage.PromptTokens += usage.PromptTokens
+	plan.PlanningUsage.CompletionTokens += usage.CompletionTokens
+	plan.PlanningUsage.TotalTokens += usage.TotalTokens
+	plan.PlanningUsage.EstimatedCost += usage.EstimatedCost
+
+	// Attribute usage to the replanning step
+	for i := range plan.Steps {
+		if plan.Steps[i].Action == "replanning" && plan.Steps[i].Status == "running" {
+			plan.Steps[i].Status = "completed"
+			plan.Steps[i].Usage = &usage
+			break
+		}
+	}
 
 	// 3. Parse and Append
 	cleanResp := p.cleanJSONResponse(resp)
@@ -696,8 +1014,43 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 		s := model.Step{
 			ID:      ps.StepID,
 			AgentID: ps.AgentID,
-			Action:  ps.Action,
+			Action:  strings.ReplaceAll(ps.Action, "-", "_"),
 			Params:  ps.Params,
+		}
+
+		// --- LOOP PREVENTION (Strict) ---
+		// Check against LAST completed/running step in history (plan.Steps) to prevent immediate stutter/loop
+		// We iterate backwards to find the most recent relevant step
+		isDuplicate := false
+		if len(plan.Steps) > 0 {
+			// Check against the last few steps (window of 3)
+			limit := len(plan.Steps) - 3
+			if limit < 0 {
+				limit = 0
+			}
+			for k := len(plan.Steps) - 1; k >= limit; k-- {
+				oldStep := plan.Steps[k]
+				// Skip 'replanning' steps in history comparison
+				if oldStep.Action == "replanning" {
+					continue
+				}
+
+				if oldStep.AgentID == s.AgentID && oldStep.Action == s.Action {
+					// Deep Compare Params
+					// Note: JSON unmarshal might produce different types (float64 vs int), but let's assume standard unmarshal
+					if reflect.DeepEqual(s.Params, oldStep.Params) {
+						isDuplicate = true
+						if p.Debug {
+							fmt.Printf("[Planner] Dropping Loop Duplicate: Step %s:%s (Matches Step %d)\n", s.AgentID, s.Action, oldStep.ID)
+						}
+						break
+					}
+				}
+			}
+		}
+
+		if isDuplicate {
+			continue // Skip adding this step
 		}
 
 		// Normalize 'av_script' aliases
@@ -712,16 +1065,40 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 			}
 		}
 
-		// Resolve Dependencies
-		if ps.DependsOnRaw != nil {
-			if arr, ok := ps.DependsOnRaw.([]interface{}); ok {
-				for _, item := range arr {
-					if f, ok := item.(float64); ok {
-						s.DependsOn = append(s.DependsOn, int(f))
+		// Inject Language if missing (General Fix)
+		if s.Params == nil {
+			s.Params = make(map[string]interface{})
+		}
+		if _, ok := s.Params["language"]; !ok {
+			s.Params["language"] = plan.Intent.Language
+		}
+
+		// Preserve raw dependencies for later resolution
+		s.DependsOnRaw = ps.DependsOnRaw
+
+		// --- Duplicate Audit Prevention (User Request) ---
+		if s.Action == "audit_request" {
+			auditSatisfied := false
+			// Check history
+			for _, prev := range plan.Steps {
+				if prev.Action == "audit_request" && (prev.Status == "completed" || prev.Status == "requires_approval") {
+					auditSatisfied = true
+					break
+				}
+			}
+			// Check current batch
+			if !auditSatisfied {
+				for _, pending := range newSteps {
+					if pending.Action == "audit_request" {
+						auditSatisfied = true // Already added one in this batch
+						break
 					}
 				}
-			} else if f, ok := ps.DependsOnRaw.(float64); ok {
-				s.DependsOn = append(s.DependsOn, int(f))
+			}
+
+			if auditSatisfied {
+				// SKIP this duplicate audit
+				continue
 			}
 		}
 
@@ -729,7 +1106,15 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 	}
 
 	// Adjust IDs using existing startID
-	// startID is already calculated above
+	// Recalculate startID based on current plan state (including replanning step)
+	// Recalculate startID based on current plan state (including replanning step)
+	isReplanningSequence := false
+	if len(plan.Steps) > 0 {
+		startID = plan.Steps[len(plan.Steps)-1].ID
+		if plan.Steps[len(plan.Steps)-1].Action == "replanning" {
+			isReplanningSequence = true
+		}
+	}
 
 	for i := range newSteps {
 		newSteps[i].ID = startID + i + 1
@@ -756,24 +1141,78 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 		}
 
 		// Resolve Dependencies (String -> Int)
-		ps := parsingSteps[i]
-		if ps.DependsOnRaw != nil {
+		if newSteps[i].DependsOnRaw != nil {
 			// Helper to resolve one dependency item
 			resolveDep := func(dep interface{}) {
+				var resolvedID int
+				found := false
+
 				if idFloat, ok := dep.(float64); ok {
-					newSteps[i].DependsOn = append(newSteps[i].DependsOn, int(idFloat))
+					resolvedID = int(idFloat)
+					found = true
 				} else if depStr, ok := dep.(string); ok {
+					// Normalize dependency string (replace - with _)
+					depStr = strings.ReplaceAll(depStr, "-", "_")
+
 					// Look for matching action in *newly created* steps (preceding this one)
-					for j := 0; j < i; j++ {
-						if newSteps[j].Action == depStr {
-							newSteps[i].DependsOn = append(newSteps[i].DependsOn, newSteps[j].ID)
+					for j := i - 1; j >= 0; j-- {
+						targetAction := newSteps[j].Action
+						checkStr := depStr
+						if strings.Contains(depStr, ":") {
+							parts := strings.SplitN(depStr, ":", 2)
+							if len(parts) == 2 {
+								checkStr = parts[1]
+							}
+						}
+
+						if strings.EqualFold(targetAction, checkStr) {
+							resolvedID = newSteps[j].ID
+							found = true
 							break
 						}
 					}
+
+					// If not found in new steps, search HISTORY (plan.Steps)
+					if !found && len(plan.Steps) > 0 {
+						for k := len(plan.Steps) - 1; k >= 0; k-- {
+							targetAction := plan.Steps[k].Action
+							targetAction = strings.ReplaceAll(targetAction, "-", "_")
+
+							checkStr := depStr
+							if strings.Contains(depStr, ":") {
+								parts := strings.SplitN(depStr, ":", 2)
+								if len(parts) == 2 {
+									checkStr = parts[1]
+								}
+							}
+
+							if strings.EqualFold(targetAction, checkStr) {
+								resolvedID = plan.Steps[k].ID
+								found = true
+								if p.Debug {
+									fmt.Printf("[Planner] Resolved dependency '%s' to History Step %d\n", depStr, plan.Steps[k].ID)
+								}
+								break
+							}
+						}
+					}
+				}
+
+				if found {
+					// Apply Shift: If we are in a replanning sequence and the dependency points to the step
+					// immediately preceding the replanner (startID - 1), shift it to the replanner (startID).
+					// This ensures the new plan links to the replanning event, not just the old history.
+					if isReplanningSequence && resolvedID == startID-1 {
+						resolvedID = startID
+					}
+					for j, d := range newSteps[i].DependsOn {
+						newSteps[i].DependsOn[j] = d + 1
+					}
+					//newSteps[i].DependsOn = append(newSteps[i].DependsOn, resolvedID)
 				}
 			}
 
-			switch v := ps.DependsOnRaw.(type) {
+			switch v := newSteps[i].DependsOnRaw.(type) {
 			case []interface{}:
 				for _, d := range v {
 					resolveDep(d)
@@ -784,17 +1223,41 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 				resolveDep(v)
 			}
 		}
+		// Fallback: If no dependencies defined, enforce sequential execution within the batch
+		if len(newSteps[i].DependsOn) == 0 && i > 0 {
+			newSteps[i].DependsOn = append(newSteps[i].DependsOn, newSteps[i-1].ID)
+		}
+
+		// Enforce Sequential Execution for SAME AGENT
+		// If the current step belongs to the same agent as the previous step,
+		// and no dependency on the previous step exists, add it.
+		// This prevents agents from racing with themselves (e.g. Architect Intake vs Motivation).
+		if i > 0 && newSteps[i].AgentID == newSteps[i-1].AgentID {
+			hasDep := false
+			prevID := newSteps[i-1].ID
+			for _, d := range newSteps[i].DependsOn {
+				if d == prevID {
+					hasDep = true
+					break
+				}
+			}
+			if !hasDep {
+				newSteps[i].DependsOn = append(newSteps[i].DependsOn, prevID)
+			}
+		}
+
 	}
 
 	// Filter out duplicate steps (LLMGuard)
-	// Filter out duplicate steps (LLMGuard)
-	// DISABLED: We trust the Planner/Agent logic to avoid loops, or we WANT loops (e.g. rejection -> retry).
 	filteredSteps := newSteps
 
 	// Append
 	plan.Steps = append(plan.Steps, filteredSteps...)
 
 	// Save to Store
+	// Calculate cost before saving
+	p.updatePlanCost(plan)
+
 	if p.Store != nil {
 		_ = p.Store.SavePlan(*plan)
 		planJSON, _ := json.MarshalIndent(plan, "", "  ")
@@ -812,28 +1275,6 @@ func (p *Planner) updatePlanCost(plan *model.ExecutionPlan) {
 		return
 	}
 
-	// Get current config
-	cfgBytes, err := p.Store.LoadConfig()
-	if err != nil {
-		return // Silently fail if config not available
-	}
-
-	var cfg struct {
-		LLM struct {
-			DefaultProvider string
-			Providers       map[string]struct {
-				PricePerPromptToken     float64 `yaml:"price_per_prompt_token"`
-				PricePerCompletionToken float64 `yaml:"price_per_completion_token"`
-			}
-		}
-	}
-	
-	if err := yaml.Unmarshal(cfgBytes, &cfg); err != nil {
-		return
-	}
-
-	// Get pricing for the default provider
-	if providerCfg, ok := cfg.LLM.Providers[cfg.LLM.DefaultProvider]; ok {
-		plan.CalculateCost(providerCfg.PricePerPromptToken, providerCfg.PricePerCompletionToken)
-	}
+	// CalculateCost now aggregates individual step costs
+	plan.CalculateCost()
 }

@@ -3,6 +3,7 @@ package workflows
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/sjhoeksma/druppie/core/internal/model"
@@ -10,7 +11,7 @@ import (
 
 type SkillExecutionWorkflow struct{}
 
-func (w *SkillExecutionWorkflow) Name() string { return "skill-executor" }
+func (w *SkillExecutionWorkflow) Name() string { return "skill_executor" }
 
 func (w *SkillExecutionWorkflow) Run(wc *WorkflowContext, initialPrompt string) error {
 	wc.OutputChan <- fmt.Sprintf("⚙️ [SkillWorkflow] Starting Skill Execution for: %s", initialPrompt)
@@ -28,7 +29,7 @@ func (w *SkillExecutionWorkflow) Run(wc *WorkflowContext, initialPrompt string) 
 
 	// Create step for tracking, attaching the analysis usage
 	stepID := wc.AppendStep(model.Step{
-		AgentID: "skill-executor",
+		AgentID: "skill_executor",
 		Action:  action,
 		Status:  "running",
 		Params:  params,
@@ -39,7 +40,7 @@ func (w *SkillExecutionWorkflow) Run(wc *WorkflowContext, initialPrompt string) 
 	if err != nil {
 		wc.AppendStep(model.Step{
 			ID:      stepID,
-			AgentID: "skill-executor",
+			AgentID: "skill_executor",
 			Action:  action,
 			Status:  "failed",
 			Result:  fmt.Sprintf("No executor found: %v", err),
@@ -62,7 +63,7 @@ func (w *SkillExecutionWorkflow) Run(wc *WorkflowContext, initialPrompt string) 
 		_ = executor.Execute(wc.Ctx, model.Step{
 			Action:  action,
 			Params:  params,
-			AgentID: "skill-executor",
+			AgentID: "skill_executor",
 		}, execChan)
 	}()
 
@@ -71,7 +72,35 @@ func (w *SkillExecutionWorkflow) Run(wc *WorkflowContext, initialPrompt string) 
 		wc.OutputChan <- fmt.Sprintf("  %s", msg)
 
 		// Capture structured results
-		if strings.HasPrefix(msg, "RESULT_") {
+		if strings.HasPrefix(msg, "RESULT_TOKEN_USAGE=") {
+			parts := strings.Split(strings.TrimPrefix(msg, "RESULT_TOKEN_USAGE="), ",")
+			if len(parts) >= 3 {
+				// Parse
+				pt, _ := strconv.Atoi(parts[0])
+				ct, _ := strconv.Atoi(parts[1])
+				tt, _ := strconv.Atoi(parts[2])
+				cost := 0.0
+				if len(parts) >= 4 {
+					cost, _ = strconv.ParseFloat(parts[3], 64)
+				}
+
+				// Accumulate
+				usage.PromptTokens += pt
+				usage.CompletionTokens += ct
+				usage.TotalTokens += tt
+				usage.EstimatedCost += cost
+
+				// Update global
+				if wc.UpdateTokenUsage != nil {
+					wc.UpdateTokenUsage(model.TokenUsage{
+						PromptTokens:     pt,
+						CompletionTokens: ct,
+						TotalTokens:      tt,
+						EstimatedCost:    cost,
+					})
+				}
+			}
+		} else if strings.HasPrefix(msg, "RESULT_") {
 			if capturedResult != "" {
 				capturedResult += "\n"
 			}
@@ -83,7 +112,7 @@ func (w *SkillExecutionWorkflow) Run(wc *WorkflowContext, initialPrompt string) 
 
 	wc.AppendStep(model.Step{
 		ID:      stepID,
-		AgentID: "skill-executor",
+		AgentID: "skill_executor",
 		Action:  action,
 		Status:  "completed",
 		Params:  params,
@@ -99,10 +128,10 @@ func (w *SkillExecutionWorkflow) analyzeSkillIntent(wc *WorkflowContext, prompt 
 	// This makes it generic for any skill supported by the system
 
 	sysPrompt := `You are a Skill Dispatcher. Analyze the user request and map it to a specific system action.
-Available Actions likely include: "text-to-speech", "image-generation", "video-generation", "read_file", "write_file", "search_web".
+Available Actions likely include: "text_to_speech", "image_generation", "video_generation", "read_file", "write_file", "search_web".
 Output JSON: { "action": "action_name", "params": { "key": "value" } }`
 
-	if agent, err := wc.GetAgent("skill-executor"); err == nil {
+	if agent, err := wc.GetAgent("skill_executor"); err == nil {
 		if p, ok := agent.Prompts["analyze_skill"]; ok && p != "" {
 			sysPrompt = p
 		}

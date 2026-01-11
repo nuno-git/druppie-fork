@@ -14,8 +14,8 @@ func (p *Planner) expandLoop(triggerStep model.Step, history []model.Step, curre
 	// 1. Extract Params from Trigger Step
 	// Expected:
 	//   iterator_key: "av_script" (Where to look for the array)
-	//   target_agent: "audio-creator"
-	//   target_action: "text-to-speech"
+	//   target_agent: "audio_creator"
+	//   target_action: "text_to_speech"
 	//   param_mapping: {"audio_text": "audio_text", "scene_id": "scene_id"} logic: target_param -> source_item_key
 
 	iteratorKey, _ := triggerStep.Params["iterator_key"].(string)
@@ -25,6 +25,10 @@ func (p *Planner) expandLoop(triggerStep model.Step, history []model.Step, curre
 
 	targetAgent, _ := triggerStep.Params["target_agent"].(string)
 	targetAction, _ := triggerStep.Params["target_action"].(string)
+
+	// Normalize to snake_case
+	targetAgent = strings.ReplaceAll(strings.ToLower(targetAgent), "-", "_")
+	targetAction = strings.ReplaceAll(strings.ToLower(targetAction), "-", "_")
 
 	if targetAgent == "" || targetAction == "" {
 		return nil, fmt.Errorf("expand_loop requires target_agent and target_action")
@@ -151,12 +155,54 @@ func (p *Planner) expandLoop(triggerStep model.Step, history []model.Step, curre
 
 		// Specific handling for Video Generation dependencies
 		// If we are generating video, we might need audio/image files from PREVIOUS expansion results.
-		// Since we handle audio/image/video in distinct phases, we assume the file naming convention holds:
-		// "audio_scene_{id}.mp3"
 		if strings.Contains(targetAction, "video") {
 			sid := newStep.Params["scene_id"]
-			newStep.Params["audio_file"] = fmt.Sprintf("audio_scene_%v.mp3", sid)
-			newStep.Params["image_file"] = fmt.Sprintf("image_scene_%v.png", sid)
+
+			// 1. Try to find actual Audio File from history
+			audioFile := fmt.Sprintf("audio_scene_%v.mp3", sid) // Default if nothing found
+			for _, h := range history {
+				// Match audio creator and same scene_id
+				if h.Status == "completed" && (h.AgentID == "audio_creator" || h.Action == "text_to_speech") {
+					if fmt.Sprintf("%v", h.Params["scene_id"]) == fmt.Sprintf("%v", sid) {
+						// Extract from result string (e.g. "AUDIO_FILE: audio_scene_1.wav")
+						if strings.Contains(h.Result, "AUDIO_FILE:") {
+							lines := strings.Split(h.Result, "\n")
+							for _, line := range lines {
+								if strings.HasPrefix(line, "AUDIO_FILE:") {
+									audioFile = strings.TrimSpace(strings.TrimPrefix(line, "AUDIO_FILE:"))
+									break
+								}
+							}
+						} else if val, ok := h.Params["audio_file"].(string); ok {
+							audioFile = val
+						}
+						break
+					}
+				}
+			}
+			newStep.Params["audio_file"] = audioFile
+
+			// 2. Try to find actual Image File from history
+			imageFile := fmt.Sprintf("image_scene_%v.png", sid) // Default
+			for _, h := range history {
+				if h.Status == "completed" && (h.AgentID == "image_creator" || h.Action == "image_generation") {
+					if fmt.Sprintf("%v", h.Params["scene_id"]) == fmt.Sprintf("%v", sid) {
+						if strings.Contains(h.Result, "IMAGE_FILE:") {
+							lines := strings.Split(h.Result, "\n")
+							for _, line := range lines {
+								if strings.HasPrefix(line, "IMAGE_FILE:") {
+									imageFile = strings.TrimSpace(strings.TrimPrefix(line, "IMAGE_FILE:"))
+									break
+								}
+							}
+						} else if val, ok := h.Params["image_file"].(string); ok {
+							imageFile = val
+						}
+						break
+					}
+				}
+			}
+			newStep.Params["image_file"] = imageFile
 		}
 
 		newSteps = append(newSteps, newStep)

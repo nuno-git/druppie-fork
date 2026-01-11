@@ -15,19 +15,26 @@ type SceneCreatorExecutor struct{}
 
 func (e *SceneCreatorExecutor) CanHandle(action string) bool {
 	action = strings.ToLower(action)
-	// Explicitly exclude the Lead Agent actions (Video Content Creator) to prevent it from running generation simulation
-	if action == "video-content-creator" ||
+	if action == "expand_loop" {
+		return true
+	}
+	// Explicitly exclude the Lead Agent actions to prevent it from running generation simulation
+	if action == "video_content_creator" ||
 		action == "draft_scenes" ||
-		action == "draftscenes" ||
-		action == "content-review" {
+		action == "content_review" {
 		return false
 	}
 	return strings.Contains(action, "video") ||
 		strings.Contains(action, "scene") ||
-		action == "scene-creator"
+		action == "scene_creator"
 }
 
 func (e *SceneCreatorExecutor) Execute(ctx context.Context, step model.Step, outputChan chan<- string) error {
+	if step.Action == "expand_loop" {
+		outputChan <- "Loop expansion handling (Metadata Step) - Completed."
+		return nil
+	}
+
 	// Determine Scene ID (from params or step ID)
 	sceneID := fmt.Sprintf("%d", step.ID) // Default
 	if sid, ok := step.Params["scene_id"]; ok {

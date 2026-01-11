@@ -1,8 +1,8 @@
 ---
-id: mcp-agent
+id: mcp_agent
 name: MCP Specialist
 description: An agent specialized in using external tools via MCP.
-type: execution-agent
+type: execution_agent
 priority: 1.0
 skills:
   - tool_usage

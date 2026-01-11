@@ -16,7 +16,6 @@ import (
 func LoadRegistry(rootDir string) (*Registry, error) {
 	reg := NewRegistry()
 
-	// 1. Load Building Blocks (blocks -> mapped to BuildingBlocks)
 	err := walkAndLoad(filepath.Join(rootDir, "blocks"), []string{".md"}, func(path string, fm []byte, body []byte) error {
 		var block model.BuildingBlock
 		if err := yaml.Unmarshal(fm, &block); err != nil {
@@ -25,6 +24,7 @@ func LoadRegistry(rootDir string) (*Registry, error) {
 		// Fallback ID if missing
 		if block.ID == "" {
 			block.ID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			block.ID = strings.ReplaceAll(block.ID, "-", "_")
 		}
 		reg.mu.Lock()
 		reg.BuildingBlocks[block.ID] = block
@@ -47,6 +47,7 @@ func LoadRegistry(rootDir string) (*Registry, error) {
 		}
 		if skill.ID == "" {
 			skill.ID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			skill.ID = strings.ReplaceAll(skill.ID, "-", "_")
 		}
 
 		// Use body as SystemPrompt if available and not set in FM
@@ -78,6 +79,7 @@ func LoadRegistry(rootDir string) (*Registry, error) {
 		}
 		if agent.ID == "" {
 			agent.ID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			agent.ID = strings.ReplaceAll(agent.ID, "-", "_")
 		}
 
 		// Use body as Instructions if available
@@ -111,6 +113,7 @@ func LoadRegistry(rootDir string) (*Registry, error) {
 		}
 		if mcp.ID == "" {
 			mcp.ID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			mcp.ID = strings.ReplaceAll(mcp.ID, "-", "_")
 		}
 		reg.mu.Lock()
 		reg.MCPServers[mcp.ID] = mcp
@@ -129,6 +132,7 @@ func LoadRegistry(rootDir string) (*Registry, error) {
 		}
 		if rule.ID == "" {
 			rule.ID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			rule.ID = strings.ReplaceAll(rule.ID, "-", "_")
 		}
 
 		// Use body as description extension or policy details if needed
@@ -145,6 +149,41 @@ func LoadRegistry(rootDir string) (*Registry, error) {
 	})
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("error loading compliance: %w", err)
+	}
+
+	// 6. Load Plugins (MCP definitions from .druppie/plugins/*/mcp.md)
+	pluginsDir := filepath.Join(rootDir, ".druppie", "plugins")
+	err = walkAndLoad(pluginsDir, []string{".md"}, func(path string, fm []byte, body []byte) error {
+		// Only load mcp.md files
+		if filepath.Base(path) != "mcp.md" {
+			return nil
+		}
+
+		var mcp model.MCPServer
+		if err := yaml.Unmarshal(fm, &mcp); err != nil {
+			return fmt.Errorf("failed to parse plugin mcp %s: %w", path, err)
+		}
+
+		// Fallback ID to parent directory name if missing
+		if mcp.ID == "" {
+			mcp.ID = filepath.Base(filepath.Dir(path))
+			mcp.ID = strings.ReplaceAll(mcp.ID, "-", "_")
+		}
+
+		// Force category to plugin
+		mcp.Category = "plugin"
+
+		reg.mu.Lock()
+		reg.MCPServers[mcp.ID] = mcp
+		reg.mu.Unlock()
+		return nil
+	})
+	// Ignore if plugins dir doesn't exist, but report actual errors
+	if err != nil && !os.IsNotExist(err) {
+		// Log warning rather than fail?
+		// fmt.Printf("Warning: error loading plugins: %v\n", err)
+		// For now, consistent with others:
+		return nil, fmt.Errorf("error loading plugins: %w", err)
 	}
 
 	return reg, nil

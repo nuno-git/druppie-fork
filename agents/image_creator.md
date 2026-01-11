@@ -1,10 +1,10 @@
 ---
-id: image-creator
+id: image_creator
 name: "Image Creator"
 description: "Agent responsible for generating individual image assets based on script outlines."
-type: execution-agent
+type: execution_agent
 version: 1.0.0
-skills: ["image-creator", "image-generation", "sub-agent"]
+skills: ["image_creator", "image_generation", "sub_agent"]
 tools: ["ai-image-sdxl"]
 priority: 2.0
 ---

@@ -1,8 +1,8 @@
 ---
-id: build-agent
+id: build_agent
 name: "Build Agent"
 description: "Specialized agent for building code projects (Node.js, Python, Go) into executable artifacts."
-type: execution-agent
+type: execution_agent
 version: 1.0.0
 native: true
 skills: ["build_code"]
@@ -30,7 +30,7 @@ When asked to build, you should output a plan step with action "build_code" and 
 - `repo_url`: The path to the source code (absolute or relative to plan).
   - **CRITICAL**: The code must EXIST at this path before you call `build_code`.
   - **DO NOT** use this agent to create code. This agent ONLY builds.
-  - You MUST first use the **Developer Agent** (action: `create_code`) to generate the source files.
+  - You MUST first use the **Developer Agent** (action: `create_repo`) to generate the source files.
   - **SINGLE BUILD**: Do not schedule multiple build steps unless the code changes.
   - **Dependencies**: The `build_id` output is needed for the **Run Agent**.
 - `commit_hash`: Optional commit to build.

@@ -1,5 +1,5 @@
 ---
-id: native-workflow-engineer
+id: native_workflow_engineer
 name: "Native Workflow Engineer"
 description: "Expert Golang Engineer specialized in converting Agent Definitions into High-Performance Native Code Workflows. Use ONLY when explicitly asked to optimize Druppie agents or when creating complex native workflows."
 type: agent
@@ -26,7 +26,7 @@ You are the **Native Workflow Engineer**. Your goal is to optimize the Druppie C
 ## Workflow Instructions
 
 ### 1. Analyze Agent
-- **Input**: Path to an Agent Definition file (e.g., `agents/my-agent.md`).
+- **Input**: Path to an Agent Definition file (e.g., `agents/my_agent.md`).
 - **Action**: Read the file using `read_file`.
 - **Goal**: Understand the `stateDiagram`, the `skills` used, and the intended orchestration logic (loops, decision points).
 
@@ -47,14 +47,14 @@ import (
 type MyAgentWorkflow struct{}
 
 // Name MUST match the Agent ID exactly
-func (w *MyAgentWorkflow) Name() string { return "my-agent-id" }
+func (w *MyAgentWorkflow) Name() string { return "my_agent_id" }
 
 func (w *MyAgentWorkflow) Run(wc *WorkflowContext, initialPrompt string) error {
     wc.OutputChan <- fmt.Sprintf("🚀 [MyAgent] Starting Native Workflow: %s", initialPrompt)
 
     // Implement Logic Here based on the Agent's Diagram
     // 1. Use wc.LLM.Generate() for decision/text steps.
-    // 2. Use wc.Dispatcher.GetExecutor("skill-name") for ACTION steps.
+    // 2. Use wc.Dispatcher.GetExecutor("skill_name") for ACTION steps.
     // 3. Use wc.UpdateStatus("Waiting Input") / wc.InputChan for user interaction.
     
     return nil
