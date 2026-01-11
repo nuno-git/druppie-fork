@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sjhoeksma/druppie/core/internal/logging"
 	"github.com/sjhoeksma/druppie/core/internal/model"
 )
 
@@ -18,6 +19,7 @@ type Store interface {
 	GetPlan(id string) (model.ExecutionPlan, error)
 	ListPlans() ([]model.ExecutionPlan, error)
 	DeletePlan(id string) error
+	CleanupOldPlans(days int) (int, error)
 
 	// Interaction Logging
 	LogInteraction(planID string, tag string, input string, output string) error
@@ -107,6 +109,9 @@ func (s *FileStore) ListPlans() ([]model.ExecutionPlan, error) {
 	plansDir := filepath.Join(s.baseDir, "plans")
 	entries, err := os.ReadDir(plansDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []model.ExecutionPlan{}, nil
+		}
 		return nil, fmt.Errorf("failed to list plans: %w", err)
 	}
 
@@ -146,67 +151,49 @@ func (s *FileStore) DeletePlan(id string) error {
 	return nil
 }
 
-func (s *FileStore) LogInteraction(planID string, tag string, input string, output string) error {
+func (s *FileStore) CleanupOldPlans(days int) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if planID == "" {
-		return nil
-	}
-
-	// plans/<id>/logs/execution.log
-	logDir := filepath.Join(s.baseDir, "plans", planID, "logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return err
-	}
-	path := filepath.Join(logDir, "execution.log")
-
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	plansDir := filepath.Join(s.baseDir, "plans")
+	entries, err := os.ReadDir(plansDir)
 	if err != nil {
-		return err
+		return 0, fmt.Errorf("failed to read plans dir: %w", err)
 	}
-	defer f.Close()
 
-	timestamp := time.Now().Format(time.RFC3339)
-	entry := fmt.Sprintf("--- [%s] %s ---\nINPUT:\n%s\nOUTPUT:\n%s\n\n", tag, timestamp, input, output)
-	_, err = f.WriteString(entry)
-	return err
+	cutoff := time.Now().AddDate(0, 0, -days)
+	count := 0
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			planPath := filepath.Join(plansDir, entry.Name(), "plan.json")
+			info, err := os.Stat(planPath)
+			if err == nil && info.ModTime().Before(cutoff) {
+				id := entry.Name()
+				// Delete dir directly since we have lock
+				dirPath := filepath.Join(plansDir, id)
+				if err := os.RemoveAll(dirPath); err == nil {
+					count++
+					fmt.Printf("[Store] Deleted old plan: %s (Age: %s)\n", id, time.Since(info.ModTime()))
+				} else {
+					fmt.Printf("[Store] Failed to delete plan %s: %v\n", id, err)
+				}
+			}
+		}
+	}
+	return count, nil
+}
+
+func (s *FileStore) LogInteraction(planID string, tag string, input string, output string) error {
+	return logging.LogInteraction(planID, tag, input, output)
 }
 
 func (s *FileStore) AppendRawLog(planID string, message string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if planID == "" {
-		return fmt.Errorf("planID is empty")
-	}
-
-	logDir := filepath.Join(s.baseDir, "plans", planID, "logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return err
-	}
-	path := filepath.Join(logDir, "execution.log")
-
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	_, err = f.WriteString(message + "\n")
-	return err
+	return logging.AppendRawLog(planID, message)
 }
 
 func (s *FileStore) GetLogs(id string) (string, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	path := filepath.Join(s.baseDir, "plans", id, "logs", "execution.log")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return logging.GetLogs(id)
 }
 
 func (s *FileStore) SaveConfig(data []byte) error {

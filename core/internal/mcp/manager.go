@@ -12,11 +12,12 @@ import (
 )
 
 type ServerConfig struct {
-	Name    string   `json:"name"`
-	URL     string   `json:"url,omitempty"`
-	Command string   `json:"command,omitempty"`
-	Args    []string `json:"args,omitempty"`
-	Type    string   `json:"type,omitempty"` // "dynamic" or "static"
+	Name     string   `json:"name"`
+	URL      string   `json:"url,omitempty"`
+	Command  string   `json:"command,omitempty"`
+	Args     []string `json:"args,omitempty"`
+	Type     string   `json:"type,omitempty"`     // "dynamic" or "static"
+	Category string   `json:"category,omitempty"` // "mcp" or "plugin"
 }
 
 // Manager handles multiple MCP servers and tool routing
@@ -166,6 +167,11 @@ func (m *Manager) connectServer(ctx context.Context, cfg ServerConfig) error {
 // AddServer registers a new MCP server (HTTP only for CLI convenience)
 func (m *Manager) AddServer(ctx context.Context, name, url string) error {
 	cfg := ServerConfig{Name: name, URL: url}
+	return m.AddServerConfig(ctx, cfg)
+}
+
+// AddServerConfig registers a new MCP server with full configuration
+func (m *Manager) AddServerConfig(ctx context.Context, cfg ServerConfig) error {
 	// First connect
 	if err := m.connectServer(ctx, cfg); err != nil {
 		return fmt.Errorf("failed to connect: %w", err)
@@ -175,8 +181,9 @@ func (m *Manager) AddServer(ctx context.Context, name, url string) error {
 	m.mu.Lock()
 	//Check dupes
 	found := false
-	for _, c := range m.ServerConfigs {
-		if c.Name == name {
+	for i, c := range m.ServerConfigs {
+		if c.Name == cfg.Name {
+			m.ServerConfigs[i] = cfg // Update existing
 			found = true
 			break
 		}
@@ -238,7 +245,11 @@ func (m *Manager) refreshToolsLocked(ctx context.Context) error {
 			continue
 		}
 		for _, tool := range tools {
+			// Register raw name (last write wins)
 			m.tools[tool.Name] = name
+			// Register namespaced name (server__tool) for uniqueness
+			namespaced := fmt.Sprintf("%s__%s", name, tool.Name)
+			m.tools[namespaced] = name
 			m.cachedTools = append(m.cachedTools, tool)
 		}
 	}
@@ -255,7 +266,7 @@ func (m *Manager) ListAllTools() []Tool {
 }
 
 // GetToolServer finds which server hosts the tool
-func (m *Manager) GetServerForTool(toolName string) (string, bool) {
+func (m *Manager) GetToolServer(toolName string) (string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	server, ok := m.tools[toolName]
@@ -273,17 +284,22 @@ func (m *Manager) ExecuteTool(ctx context.Context, toolName string, args map[str
 		return nil, fmt.Errorf("tool not found: %s", toolName)
 	}
 
-	return client.CallTool(ctx, toolName, args)
+	// Strip namespace if present
+	realToolName := toolName
+	if strings.HasPrefix(toolName, serverName+"__") {
+		realToolName = strings.TrimPrefix(toolName, serverName+"__")
+	}
+
+	return client.CallTool(ctx, realToolName, args)
 }
 
 // GetServers returns list of configs
-// GetServers returns list of configs (both dynamic and static)
+// GetServers returns a list of all server configs (dynamic + static)
 func (m *Manager) GetServers() []ServerConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Start with dynamic configs
-	result := make([]ServerConfig, 0, len(m.ServerConfigs))
+	result := []ServerConfig{}
 	seen := make(map[string]bool)
 
 	for _, cfg := range m.ServerConfigs {
@@ -300,11 +316,12 @@ func (m *Manager) GetServers() []ServerConfig {
 				continue
 			}
 			result = append(result, ServerConfig{
-				Name:    mcpModel.Name,
-				URL:     mcpModel.URL,
-				Command: mcpModel.Command,
-				Args:    mcpModel.Args,
-				Type:    "static",
+				Name:     mcpModel.Name,
+				URL:      mcpModel.URL,
+				Command:  mcpModel.Command,
+				Args:     mcpModel.Args,
+				Type:     "static",
+				Category: mcpModel.Category,
 			})
 		}
 	}

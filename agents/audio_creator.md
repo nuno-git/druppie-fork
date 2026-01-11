@@ -1,11 +1,11 @@
 ---
-id: audio-creator
+id: audio_creator
 name: "Audio Creator"
 description: "Agent responsible for generating voiceovers and sound effects from a text script."
-type: execution-agent
+type: execution_agent
 condition: "Run WHEN an 'av_script' (with 'audio_text') is available, AND audio files have not been generated yet."
 version: 1.0.0
-skills: ["text-to-speech", "audio-engineering", "voice-selection"]
+skills: ["text_to_speech", "audio_engineering", "voice_selection"]
 tools: ["ai-text-to-speech"]
 priority: 5.0
 ---

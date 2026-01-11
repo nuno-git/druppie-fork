@@ -1,7 +1,7 @@
 ---
 id: router
 name: "Router"
-type: system-agent
+type: system_agent
 description: "System agent responsible for analyzing user intent and routing to the appropriate specialist or action."
 native: true
 version: 1.0.0

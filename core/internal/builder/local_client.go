@@ -29,7 +29,7 @@ func NewLocalClient(workingDir string) (*LocalClient, error) {
 }
 
 // TriggerBuild executes a local build script or command
-func (c *LocalClient) TriggerBuild(ctx context.Context, repoURL string, commitHash string, logPath string, logWriter io.Writer) (string, error) {
+func (c *LocalClient) TriggerBuild(ctx context.Context, repoURL string, commitHash string, logWriter io.Writer) (string, error) {
 	// 1. Validate Input (Sandbox Check)
 	targetDir := repoURL
 	if !filepath.IsAbs(targetDir) {
@@ -81,9 +81,6 @@ func (c *LocalClient) TriggerBuild(ctx context.Context, repoURL string, commitHa
 		// Run build in outputDir
 		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", script)
 		cmd.Dir = outputDir // Point to outputDir now
-		// Important: we need to set cmd.Dir later, but here we set our intention.
-		// However, below we have `cmd.Dir = targetDir`. outputDir is more correct for this flow.
-		// We will set a flag `useOutputDirAsCwd` or just override it below.
 
 	} else if _, err := os.Stat(filepath.Join(targetDir, "go.mod")); err == nil {
 		// Golang
@@ -93,20 +90,8 @@ func (c *LocalClient) TriggerBuild(ctx context.Context, repoURL string, commitHa
 		cmd = exec.CommandContext(ctx, "go", "build", "-o", appPath, ".")
 
 	} else if _, err := os.Stat(filepath.Join(targetDir, "requirements.txt")); err == nil {
-		// Python
-		fmt.Printf("[LocalBuilder] Detected Python project in %s\n", targetDir)
-		cmd = exec.CommandContext(ctx, "cp", "-r", ".", outputDir)
-
-	} else if _, err := os.Stat(filepath.Join(targetDir, "requirements.txt")); err == nil {
 		// Python with requirements
 		fmt.Printf("[LocalBuilder] Detected Python project (requirements.txt) in %s\n", targetDir)
-		// Copy source to output
-		cmd = exec.CommandContext(ctx, "cp", "-R", ".", outputDir)
-		// Usually we would pip install to a venv, but for creating artifact, copying is enough.
-		// RunExecutor will install deps.
-		// But wait, cmd is executed below. `cp` is executed below.
-		// NOTE: logic flow here is slightly mixed between immediate cp and deferred cmd.
-		// Correct flow: Set cmd to copy. Or run copy immediately and set cmd to echo.
 		copyCmd := exec.CommandContext(ctx, "cp", "-R", ".", outputDir)
 		copyCmd.Dir = targetDir
 		if err := copyCmd.Run(); err != nil {
@@ -122,7 +107,6 @@ func (c *LocalClient) TriggerBuild(ctx context.Context, repoURL string, commitHa
 
 		if len(filesJS) > 0 {
 			fmt.Printf("[LocalBuilder] Detected standalone JS files in %s\n", targetDir)
-			// Copy to output
 			copyCmd := exec.CommandContext(ctx, "cp", "-R", ".", outputDir)
 			copyCmd.Dir = targetDir
 			if err := copyCmd.Run(); err != nil {
@@ -132,7 +116,6 @@ func (c *LocalClient) TriggerBuild(ctx context.Context, repoURL string, commitHa
 			cmd.Dir = outputDir
 		} else if len(filesPy) > 0 {
 			fmt.Printf("[LocalBuilder] Detected standalone Python files in %s\n", targetDir)
-			// Copy to output
 			copyCmd := exec.CommandContext(ctx, "cp", "-R", ".", outputDir)
 			copyCmd.Dir = targetDir
 			if err := copyCmd.Run(); err != nil {
@@ -160,35 +143,10 @@ func (c *LocalClient) TriggerBuild(ctx context.Context, repoURL string, commitHa
 		cmd.Dir = targetDir
 	}
 
-	// Determine Log Output
-	var logFile *os.File
-	var err error
-	if logPath != "" {
-		if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
-			return "", err
-		}
-		logFile, err = os.Create(logPath)
-		if err != nil {
-			return "", err
-		}
-	} else {
-		// Just a dummy file or fallback
-	}
-
-	// Prepare Writers
-	var writers []io.Writer
-	//writers = append(writers, os.Stdout)
-	if logFile != nil {
-		writers = append(writers, logFile)
-		defer logFile.Close()
-	}
 	if logWriter != nil {
-		writers = append(writers, logWriter)
+		cmd.Stdout = logWriter
+		cmd.Stderr = logWriter
 	}
-
-	multiWriter := io.MultiWriter(writers...)
-	cmd.Stdout = multiWriter
-	cmd.Stderr = multiWriter
 
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("build failed: %w", err)

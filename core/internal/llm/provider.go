@@ -63,7 +63,12 @@ func NewManager(ctx context.Context, cfg config.LLMConfig) (*Manager, error) {
 				if err != nil {
 					return nil, err
 				}
-				return &GeminiProvider{genaiClient: client, model: model}, nil
+				return &GeminiProvider{
+					genaiClient:             client,
+					model:                   model,
+					PricePerPromptToken:     pCfg.PricePerPromptToken,
+					PricePerCompletionToken: pCfg.PricePerCompletionToken,
+				}, nil
 			} else {
 				if pCfg.ProjectID == "" && pCfg.ClientID == "" {
 					return nil, fmt.Errorf("gemini config incomplete (missing api_key or project_id/client_id)")
@@ -74,7 +79,13 @@ func NewManager(ctx context.Context, cfg config.LLMConfig) (*Manager, error) {
 				if err != nil {
 					return nil, fmt.Errorf("failed to authenticate gemini: %w", err)
 				}
-				return &GeminiProvider{httpClient: client, projectID: finalProjectID, model: model}, nil
+				return &GeminiProvider{
+					httpClient:              client,
+					projectID:               finalProjectID,
+					model:                   model,
+					PricePerPromptToken:     pCfg.PricePerPromptToken,
+					PricePerCompletionToken: pCfg.PricePerCompletionToken,
+				}, nil
 			}
 		case "ollama":
 			model := pCfg.Model
@@ -85,13 +96,23 @@ func NewManager(ctx context.Context, cfg config.LLMConfig) (*Manager, error) {
 			if pCfg.URL != "" {
 				baseURL = pCfg.URL
 			}
-			return &OllamaProvider{Model: model, BaseURL: baseURL}, nil
+			return &OllamaProvider{
+				Model:                   model,
+				BaseURL:                 baseURL,
+				PricePerPromptToken:     pCfg.PricePerPromptToken,
+				PricePerCompletionToken: pCfg.PricePerCompletionToken,
+			}, nil
 		case "lmstudio":
 			baseURL := "http://localhost:1234/v1"
 			if pCfg.URL != "" {
 				baseURL = pCfg.URL
 			}
-			return &LMStudioProvider{Model: pCfg.Model, BaseURL: baseURL}, nil
+			return &LMStudioProvider{
+				Model:                   pCfg.Model,
+				BaseURL:                 baseURL,
+				PricePerPromptToken:     pCfg.PricePerPromptToken,
+				PricePerCompletionToken: pCfg.PricePerCompletionToken,
+			}, nil
 		case "openrouter":
 			model := pCfg.Model
 			if model == "" {
@@ -101,7 +122,19 @@ func NewManager(ctx context.Context, cfg config.LLMConfig) (*Manager, error) {
 				Model:  model,
 				APIKey: pCfg.APIKey,
 			}, nil
-
+		case "sherpa-onnx":
+			// Language from configuration or default to EN
+			lang := "en"
+			if strings.Contains(strings.ToLower(pCfg.Model), "dutch") || strings.Contains(strings.ToLower(pCfg.Model), "nl") {
+				lang = "nl"
+			}
+			return NewSherpaTTSProvider(lang, pCfg.Model, pCfg.PricePerWord)
+		case "stable-diffusion":
+			// Use BaseURL field from config which maps to APIURL usually?
+			// Config struct has APIURL? Let's check config struct in next step if needed,
+			// but usually provider config has generic fields.
+			// provider.go uses pCfg.APIURL for OpenAI, so we assume BaseURL is passed there.
+			return NewStableDiffusionProvider(pCfg.URL, pCfg.Model, pCfg.PricePerRequest, mgr), nil
 		default:
 			return nil, fmt.Errorf("unknown provider type: %s", pCfg.Type)
 		}
@@ -164,7 +197,19 @@ func (m *Manager) Generate(ctx context.Context, prompt string, systemPrompt stri
 	if m.defaultProvider == nil {
 		return "", model.TokenUsage{}, fmt.Errorf("no default provider configured")
 	}
+	return m.generateWithRetry(ctx, m.defaultProvider, prompt, systemPrompt)
+}
 
+// GenerateWithProvider uses a specific provider with retry and timeout logic
+func (m *Manager) GenerateWithProvider(ctx context.Context, providerName string, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
+	p, err := m.GetProvider(providerName)
+	if err != nil {
+		return "", model.TokenUsage{}, err
+	}
+	return m.generateWithRetry(ctx, p, prompt, systemPrompt)
+}
+
+func (m *Manager) generateWithRetry(ctx context.Context, p Provider, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
 	// Use configured retries
 	maxRetries := m.retries
 	if maxRetries <= 0 {
@@ -180,11 +225,16 @@ func (m *Manager) Generate(ctx context.Context, prompt string, systemPrompt stri
 			fmt.Printf("[LLM] Retry attempt %d/%d...\n", i+1, maxRetries)
 		}
 
-		resp, usage, err := m.defaultProvider.Generate(attemptCtx, prompt, systemPrompt)
+		resp, usage, err := p.Generate(attemptCtx, prompt, systemPrompt)
 		cancel() // Ensure we release the timeout resources immediately
 
 		if err == nil {
 			return resp, usage, nil
+		}
+
+		// Check if parent context was canceled (User stopped)
+		if ctx.Err() != nil {
+			return "", model.TokenUsage{}, ctx.Err()
 		}
 
 		lastErr = err
@@ -219,10 +269,12 @@ func (m *Manager) GetProvider(name string) (Provider, error) {
 // --- Gemini Provider ---
 
 type GeminiProvider struct {
-	genaiClient *genai.Client // For API Key
-	httpClient  *http.Client  // For OAuth
-	projectID   string
-	model       string
+	genaiClient             *genai.Client // For API Key
+	httpClient              *http.Client  // For OAuth
+	projectID               string
+	model                   string
+	PricePerPromptToken     float64
+	PricePerCompletionToken float64
 }
 
 func (p *GeminiProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
@@ -251,6 +303,9 @@ func (p *GeminiProvider) Generate(ctx context.Context, prompt string, systemProm
 			usage.PromptTokens = int(resp.UsageMetadata.PromptTokenCount)
 			usage.CompletionTokens = int(resp.UsageMetadata.CandidatesTokenCount)
 			usage.TotalTokens = int(resp.UsageMetadata.TotalTokenCount)
+
+			usage.EstimatedCost = (float64(usage.PromptTokens)/1000000.0)*p.PricePerPromptToken +
+				(float64(usage.CompletionTokens)/1000000.0)*p.PricePerCompletionToken
 		}
 
 		return cleanResponse(sb.String()), usage, nil
@@ -457,8 +512,10 @@ func (p *GeminiProvider) Close() error {
 // --- Ollama Provider ---
 
 type OllamaProvider struct {
-	Model   string
-	BaseURL string
+	Model                   string
+	BaseURL                 string
+	PricePerPromptToken     float64
+	PricePerCompletionToken float64
 }
 
 func (p *OllamaProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
@@ -512,8 +569,10 @@ func (p *OllamaProvider) Close() error {
 // --- LM Studio Provider (OpenAI Compatible) ---
 
 type LMStudioProvider struct {
-	Model   string
-	BaseURL string
+	Model                   string
+	BaseURL                 string
+	PricePerPromptToken     float64
+	PricePerCompletionToken float64
 }
 
 func (p *LMStudioProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
@@ -584,6 +643,8 @@ func (p *LMStudioProvider) Generate(ctx context.Context, prompt string, systemPr
 		CompletionTokens: result.Usage.CompletionTokens,
 		TotalTokens:      result.Usage.TotalTokens,
 	}
+	usage.EstimatedCost = (float64(usage.PromptTokens)/1000000.0)*p.PricePerPromptToken +
+		(float64(usage.CompletionTokens)/1000000.0)*p.PricePerCompletionToken
 
 	return cleanResponse(result.Choices[0].Message.Content), usage, nil
 }

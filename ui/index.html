@@ -500,6 +500,8 @@
 
         .task-card.status-pending {
             border-left: 3px solid var(--pending);
+            background: transparent;
+            opacity: 0.6;
         }
 
         .task-card.status-cancelled {
@@ -1242,6 +1244,15 @@
             font-weight: 600;
             font-family: 'JetBrains Mono', monospace;
         }
+
+        @media (max-width: 768px) {
+            #stats-bar {
+                padding: 0.5rem 0.5rem;
+                gap: 0.5rem;
+                justify-content: space-between;
+                font-size: 0.7rem;
+            }
+        }
     </style>
 </head>
 
@@ -1527,13 +1538,13 @@
 
 <div id="bottom-panel" class="collapsed">
     <div class="tab-strip">
-        <div id="tab-btn-system" class="tab-btn active" onclick="switchTab('system')">
+        <div id="tab-btn-process" class="tab-btn active" onclick="switchTab('process')">
+            <i data-lucide="activity" size="14"></i>
+            Planner - Usage
+        </div>
+        <div id="tab-btn-system" class="tab-btn" onclick="switchTab('system')">
             <i data-lucide="terminal" size="14"></i>
             System Console
-        </div>
-        <div id="tab-btn-process" class="tab-btn" onclick="switchTab('process')">
-            <i data-lucide="activity" size="14"></i>
-            Planner - Agents
         </div>
         <div style="flex: 1;"></div>
         <button id="toggle-console-btn" onclick="toggleConsole()"
@@ -1543,13 +1554,7 @@
         </button>
     </div>
 
-    <div id="system-tab" class="tab-content active">
-        <div id="log-content">
-            <div class="log-entry info">Verbinding actief. Wacht op taken...</div>
-        </div>
-    </div>
-
-    <div id="process-tab" class="tab-content">
+    <div id="process-tab" class="tab-content active">
         <div id="stats-bar">
             <div class="stat-item">
                 <i data-lucide="cpu" size="14"></i>
@@ -1560,11 +1565,20 @@
                 <span>Completion: <span id="stat-completion" class="stat-value">0</span></span>
             </div>
             <div class="stat-item">
+                <span>Internal: <span id="stat-planner" class="stat-value">0</span></span>
+            </div>
+            <div class="stat-item">
                 <span>Total: <span id="stat-total" class="stat-value">0</span></span>
             </div>
         </div>
         <div id="step-log">
             <div class="message">Maak een plan...</div>
+        </div>
+    </div>
+
+    <div id="system-tab" class="tab-content">
+        <div id="log-content">
+            <div class="log-entry info">Verbinding actief. Wacht op taken...</div>
         </div>
     </div>
 </div>
@@ -1600,7 +1614,8 @@
         shownStepIds: new Set(),
         token: localStorage.getItem('druppie_token'),
         user: null,
-        isDemo: false
+        isDemo: false,
+        lastUserPrompt: null
     };
 
     function openCodeEditor() {
@@ -1785,6 +1800,11 @@
         try {
             const resp = await fetch('/v1/plans');
             if (resp.status === 401) return; // Handled by interceptor
+            if (resp.status === 500) {
+                const selector = elements.planSelector;
+                selector.innerHTML = '<option value="">Fout bij laden plannen (500)</option>';
+                return;
+            }
             if (!resp.ok) return;
 
             const plans = await resp.json();
@@ -1930,6 +1950,7 @@
     async function sendMessage() {
         const prompt = elements.prompt.value.trim();
         if (!prompt) return;
+        state.lastUserPrompt = prompt;
 
         addChatMessage('user', prompt);
         elements.prompt.value = '';
@@ -2296,6 +2317,20 @@
         if (!state.currentPlanId || (!state.token && !state.isDemo)) return;
         try {
             const resp = await fetch(`/v1/plans/${state.currentPlanId}`);
+            if (resp.status === 404) {
+                // Plan deleted or invalid
+                addChatMessage('ai', `❌ Plan ${state.currentPlanId} niet gevonden (404). Monitor gestopt.`);
+                state.currentPlanId = null;
+                if (state.pollingInterval) clearInterval(state.pollingInterval);
+
+                // Clear UI
+                elements.systemLogs.innerHTML = '';
+                elements.stepLogs.innerHTML = '';
+
+                // Refresh list to remove the invalid plan
+                updatePlanSelector();
+                return;
+            }
             if (!resp.ok) return;
             const plan = await resp.json();
 
@@ -2318,6 +2353,12 @@
                     if (s.action === 'user_query' && s.result) {
                         role = 'user';
                         msg = s.result;
+                        // Dedup Logic: If matches recently sent prompt, skip rendering
+                        if (state.lastUserPrompt && msg === state.lastUserPrompt) {
+                            state.shownStepIds.add(s.step_id);
+                            state.lastUserPrompt = null; // Clear matches
+                            msg = null; // Don't render
+                        }
                     } else if ((s.action === 'general_chat' || s.agent_id === 'router') && s.result) {
                         msg = s.result;
                     } else {
@@ -2510,12 +2551,23 @@
         const statsBar = document.getElementById('stats-bar');
         if (plan.total_usage && plan.total_usage.total_tokens > 0) {
             statsBar.style.display = 'flex';
-            document.getElementById('stat-prompt').textContent = plan.total_usage.prompt_tokens.toLocaleString();
-            document.getElementById('stat-completion').textContent = plan.total_usage.completion_tokens.toLocaleString();
-            const totalText = plan.total_usage.total_tokens.toLocaleString(); const costText = plan.total_cost ? ` (€${plan.total_cost.toFixed(4)})` : ''; document.getElementById('stat-total').textContent = totalText + costText;
+            if (plan.planning_usage && plan.planning_usage.total_tokens > 0) {
+                document.getElementById('stat-prompt').textContent = (plan.total_usage.prompt_tokens - plan.planning_usage.prompt_tokens).toLocaleString();
+                document.getElementById('stat-completion').textContent = (plan.total_usage.completion_tokens - plan.planning_usage.completion_tokens).toLocaleString();
+                document.getElementById('stat-planner').textContent = (plan.planning_usage.total_tokens).toLocaleString();
+            } else {
+                document.getElementById('stat-prompt').textContent = plan.total_usage.prompt_tokens.toLocaleString();
+                document.getElementById('stat-completion').textContent = plan.total_usage.completion_tokens.toLocaleString();
+                document.getElementById('stat-planner').textContent = "0";
+            }
+            const totalText = plan.total_usage.total_tokens.toLocaleString();
+            const costText = plan.total_cost ? ` (€${plan.total_cost.toFixed(4)})` : '';
+            document.getElementById('stat-total').textContent = totalText + costText;
         } else {
             statsBar.style.display = 'none';
         }
+
+
 
         plan.steps = plan.steps || [];
         // Update Kanban background based on plan state
@@ -2575,9 +2627,7 @@
         plan.steps.forEach(step => {
             // Skip planner-generated placeholder steps that haven't been executed
             // Show all steps including pending
-            if (step.status === 'pending' && !step.result) {
-                return;
-            }
+            // Removed 'pending' && '!step.result' check to allow future steps to be visualized
 
             // Hide rejected steps from Kanban
             if (step.status === 'rejected') {
@@ -2598,7 +2648,7 @@
 
             let usageHtml = '';
             if (step.usage && step.usage.total_tokens > 0) {
-                usageHtml = `<span style="display:flex;align-items:center;gap:3px;margin-left:auto;"><i data-lucide="cpu" size="10"></i> ${step.usage.total_tokens}</span>`;
+                usageHtml = `<span style="display:flex;align-items:center;gap:3px;margin-left:auto;"${step.usage.total_tokens}</span>`;
             }
 
             card.innerHTML = `
@@ -2647,8 +2697,14 @@
         // 2. Scroll on active plan progress
         // 3. STOP scroll if plan is completed/stopped/failed
         // Auto-scroll logic: Only scroll if state changed
-        let lastStep = null;
-        if (plan.steps.length > 0) lastStep = plan.steps[plan.steps.length - 1];
+        // Prioritize: Waiting Input > Running > Last Non-Pending > First Step
+        let lastStep = plan.steps.find(s => s.status === 'waiting_input');
+        if (!lastStep) lastStep = plan.steps.find(s => s.status === 'running');
+        if (!lastStep) {
+            const executed = plan.steps.filter(s => s.status !== 'pending');
+            if (executed.length > 0) lastStep = executed[executed.length - 1];
+        }
+        if (!lastStep && plan.steps.length > 0) lastStep = plan.steps[0];
 
         const currentSignature = `${plan.plan_id}-${plan.status}-${lastStep ? lastStep.step_id : '0'}-${lastStep ? lastStep.status : 'none'}`;
 
@@ -2713,8 +2769,8 @@
                     <div class="step-log-header">
                         <span class="tag-agent">[${s.agent_id}]</span>
                         <span class="tag-action">${s.action}</span>
-                        ${s.usage && s.usage.total_tokens > 0 ? `<span style="margin-left: auto; margin-right: 1rem; color: var(--text-dim); font-size: 0.75rem; display: flex; align-items: center; gap: 4px;"><i data-lucide="cpu" size="6"></i> ${s.usage.total_tokens.toLocaleString()}</span>` : ''}
-                        <span style="${(!s.usage || s.usage.total_tokens <= 0) ? 'margin-left:auto;' : ''} color: ${s.status === 'waiting_input' ? 'var(--accent)' : ((s.status === 'rejected' || s.status === 'cancelled') ? '#ef4444' : 'inherit')}">${s.status}</span>
+                        ${s.usage && (s.usage.total_tokens > 0 || s.usage.estimated_cost > 0) ? `<span style="margin-left: auto; margin-right: 1rem; color: var(--text-dim); font-size: 0.75rem; display: flex; align-items: center; gap: 4px;">${s.usage.total_tokens ? s.usage.total_tokens.toLocaleString() : ''} ${s.usage.estimated_cost > 0 ? `&nbsp;(€${s.usage.estimated_cost.toFixed(4)})` : ''}</span>` : ''}
+                        <span style="${(!s.usage || (s.usage.total_tokens <= 0 && (!s.usage.estimated_cost || s.usage.estimated_cost <= 0))) ? 'margin-left:auto;' : ''} color: ${s.status === 'waiting_input' ? 'var(--accent)' : ((s.status === 'rejected' || s.status === 'cancelled') ? '#ef4444' : 'inherit')}">${s.status}</span>
                     </div>
                     ${s.result ? `<div class="step-log-content">${s.result}</div>` : ''}
                 `;
@@ -2839,7 +2895,7 @@
                 `;
         }
         // 2. Resume for Stopped/Failed Plans (Global Resume) - Prioritize this if plan is halted
-        else if (step.status === 'pending' || plan.status === 'stopped' || plan.status === 'failed' || plan.status === 'error') {
+        else if (step.status === 'pending' && (plan.status === 'stopped' || plan.status === 'failed' || plan.status === 'error')) {
             // For stopped/failed plans, allow Resume OR Cancel
             footerHTML = `
                     <div class="modal-actions">
@@ -2852,7 +2908,7 @@
                     </div>
                 `;
         } // 3. Resume for Stopped/Failed Plans (Global Resume) - Prioritize this if plan is halted
-        else if (step.status === 'cancelled' || plan.status === 'stopped' || plan.status === 'failed' || plan.status === 'error') {
+        else if (step.status === 'cancelled' && (plan.status === 'stopped' || plan.status === 'failed' || plan.status === 'error')) {
             // For stopped/failed plans, allow Resume OR Cancel
             footerHTML = `
                     <div class="modal-actions">

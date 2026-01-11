@@ -29,22 +29,32 @@ func (e *ComplianceExecutor) Execute(ctx context.Context, step model.Step, outpu
 			}
 			access, _ := step.Params["access_level"].(string)
 
-			prompt := fmt.Sprintf(`You are a Compliance Officer. Analyze the following deployment configuration for compliance violations:
+			language, _ := step.Params["language"].(string)
+			if language == "" {
+				language = "English" // Default
+			}
 
+			// Construct System Prompt (Persona + Rules + Output Format)
+			systemPrompt := fmt.Sprintf(`You are a Compliance Officer. Your goal is to analyze deployment configurations for violations of:
+- Data residency (EU data stay in EU)
+- Public access to sensitive data (PII)
+- Regulatory frameworks (GDPR, HIPAA, NIS2)
+
+instructions:
+1. Provide the output in %s.
+2. If violations found: Start with "[VIOLATION]" followed by the description in %s.
+3. If compliant: Output "Compliance Check Passed." in %s.
+
+Output format example:
+"[VIOLATION] <Localized Description>"`, language, language, language)
+
+			// Construct User Prompt (Specific Task Data)
+			userPrompt := fmt.Sprintf(`Analyze this configuration:
 Region: %s
 Access Level: %s
-Additional Context: %v
+Additional Context: %v`, region, access, step.Params)
 
-Check for:
-- Data residency requirements (EU data must stay in EU, healthcare data restrictions)
-- Public access to sensitive data
-- Regulatory compliance (GDPR, HIPAA, etc.)
-
-Output format:
-If violations found: "[VIOLATION] <description>"
-If compliant: "Compliance Check Passed."`, region, access, step.Params)
-
-			result, usage, err := e.LLM.Generate(ctx, "Compliance Check", prompt)
+			result, usage, err := e.LLM.Generate(ctx, userPrompt, systemPrompt)
 			if err != nil {
 				outputChan <- fmt.Sprintf("LLM compliance check failed: %v. Using rule-based fallback.", err)
 				return e.executeRuleBasedCheck(step, outputChan)
@@ -53,8 +63,8 @@ If compliant: "Compliance Check Passed."`, region, access, step.Params)
 			outputChan <- fmt.Sprintf("RESULT_CONSOLE_OUTPUT=%s", strings.TrimSpace(result))
 
 			// Report usage
-			if usage.TotalTokens > 0 {
-				outputChan <- fmt.Sprintf("RESULT_TOKEN_USAGE=%d,%d,%d", usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens)
+			if usage.TotalTokens > 0 || usage.EstimatedCost > 0 {
+				outputChan <- fmt.Sprintf("RESULT_TOKEN_USAGE=%d,%d,%d,%.5f", usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens, usage.EstimatedCost)
 			}
 
 			return nil
@@ -69,6 +79,9 @@ If compliant: "Compliance Check Passed."`, region, access, step.Params)
 
 	case "audit_request":
 		justification, _ := step.Params["justification"].(string)
+		if justification == "" {
+			justification, _ = step.Params["reason"].(string)
+		}
 		outputChan <- fmt.Sprintf("RESULT_CONSOLE_OUTPUT=[AUDIT] Approval Required for: %s", justification)
 		return fmt.Errorf("Approval Required from Compliance Group. Please review plan and type '/approve' or '/reject'.")
 	}

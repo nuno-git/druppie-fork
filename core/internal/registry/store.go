@@ -107,7 +107,7 @@ func (r *Registry) ListAgents(userGroups []string) []model.AgentDefinition {
 
 	list := make([]model.AgentDefinition, 0, len(r.Agents))
 	for _, v := range r.Agents {
-		if v.Type == "system-agent" {
+		if v.Type == "system_agent" {
 			continue
 		}
 		if hasAccess(v.AuthGroups, userGroups) {
@@ -150,11 +150,46 @@ func (r *Registry) Stats() map[string]int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	// Count MCP vs Plugins
+	mcpCount := 0
+	pluginCount := 0
+	for _, s := range r.MCPServers {
+		if s.Category == "plugin" {
+			pluginCount++
+		} else {
+			mcpCount++
+		}
+	}
+
 	return map[string]int{
 		"building_blocks":  len(r.BuildingBlocks),
 		"skills":           len(r.Skills),
-		"mcp_servers":      len(r.MCPServers),
+		"mcp_servers":      mcpCount,
+		"plugins":          pluginCount,
 		"agents":           len(r.Agents),
 		"compliance_rules": len(r.Compliance),
 	}
+}
+
+// GetMCPServer retrieves an MCP server definition by ID
+func (r *Registry) GetMCPServer(id string) (model.MCPServer, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if val, ok := r.MCPServers[id]; ok {
+		return val, nil
+	}
+	return model.MCPServer{}, fmt.Errorf("mcp server %s not found", id)
+}
+
+// ListAllMCPServers returns all MCP servers without filtering
+func (r *Registry) ListAllMCPServers() []model.MCPServer {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	list := make([]model.MCPServer, 0, len(r.MCPServers))
+	for _, v := range r.MCPServers {
+		list = append(list, v)
+	}
+	return list
 }

@@ -1,6 +1,6 @@
 ---
-id: plan-fs-template
-name: plan-fs-template
+id: fs-template
+name: fs-template
 command: npx
 args:
   - "-y"

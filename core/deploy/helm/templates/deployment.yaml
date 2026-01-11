@@ -38,22 +38,26 @@ spec:
               containerPort: 8080
               protocol: TCP
           env:
-            - name: GEMINI_API_KEY
-              value: {{ .Values.env.GEMINI_API_KEY | quote }}
-            {{- if .Values.git.tokenSecretName }}
-            - name: GIT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.git.tokenSecretName }}
-                  key: token
+            {{- range $key, $val := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
             {{- end }}
           volumeMounts:
             - name: config
               mountPath: /app/config.yaml
               subPath: config.yaml
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: /app/.druppie
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
         - name: config
           configMap:
             name: {{ include "druppie.fullname" . }}-config
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "druppie.fullname" . }}-data
+        {{- end }}

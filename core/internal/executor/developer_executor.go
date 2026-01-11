@@ -10,11 +10,11 @@ import (
 	"github.com/sjhoeksma/druppie/core/internal/paths"
 )
 
-// DeveloperExecutor handles "create_code" and "modify_code" actions
+// DeveloperExecutor handles "create_repo" and "modify_code" actions
 type DeveloperExecutor struct{}
 
 func (e *DeveloperExecutor) CanHandle(action string) bool {
-	return action == "create_code" || action == "modify_code"
+	return action == "create_repo" || action == "modify_code"
 }
 
 func (e *DeveloperExecutor) Execute(ctx context.Context, step model.Step, outputChan chan<- string) error {
@@ -38,7 +38,12 @@ func (e *DeveloperExecutor) Execute(ctx context.Context, step model.Step, output
 		return fmt.Errorf("failed to create project root: %w", err)
 	}
 
-	if step.Action == "create_code" {
+	if step.Action == "create_repo" {
+		// Check for common mistake: using 'template' instead of 'files'
+		if template, ok := step.Params["template"].(string); ok {
+			return fmt.Errorf("invalid parameter 'template': %s. The developer agent requires actual code content in the 'files' parameter, not template names. Please provide the full code content for each file", template)
+		}
+
 		var fileMap map[string]interface{}
 
 		if f, ok := step.Params["files"].(map[string]interface{}); ok {
@@ -55,6 +60,26 @@ func (e *DeveloperExecutor) Execute(ctx context.Context, step model.Step, output
 					}
 				}
 			}
+		}
+
+		if len(fileMap) == 0 {
+			return fmt.Errorf("missing required parameter 'files' with code content. The developer agent needs actual code, not template references")
+		}
+
+		// LOGIC: Auto-Create go.mod if missing for Go projects (Reliability Fix)
+		hasGoFiles := false
+		hasGoMod := false
+		for path := range fileMap {
+			if filepath.Ext(path) == ".go" {
+				hasGoFiles = true
+			}
+			if filepath.Base(path) == "go.mod" {
+				hasGoMod = true
+			}
+		}
+		if hasGoFiles && !hasGoMod {
+			fileMap["go.mod"] = "module main\n\ngo 1.20"
+			outputChan <- "[developer] Auto-created 'go.mod' (Defensive Fix)"
 		}
 
 		for path, content := range fileMap {

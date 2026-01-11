@@ -17,6 +17,8 @@
         href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono:wght@400;500&display=swap"
         rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <link rel="stylesheet" href="common.css">
     <script src="common.js"></script>
     <style>
@@ -33,8 +35,12 @@
             display: flex;
             flex-direction: column;
             transition: transform 0.3s ease;
+            height: 100%;
+            min-height: 0;
+            overflow: hidden;
         }
 
+        /* ... existing sidebar ... */
         .sidebar-header {
             padding: 0.6rem 1rem;
             border-bottom: 1px solid var(--border);
@@ -42,6 +48,121 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+        }
+
+        /* Markdown Preview Styles */
+        #markdown-preview {
+            display: none;
+            flex: 1;
+            overflow-y: auto;
+            padding: 2rem;
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-deep);
+            line-height: 1.6;
+        }
+
+        #markdown-preview h1,
+        #markdown-preview h2,
+        #markdown-preview h3 {
+            margin-top: 1.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--accent);
+        }
+
+        #markdown-preview p {
+            margin-bottom: 1rem;
+        }
+
+        #markdown-preview pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            margin-bottom: 1rem;
+        }
+
+        #markdown-preview code {
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 0.2rem 0.4rem;
+            border-radius: 0.2rem;
+            font-size: 0.85em;
+        }
+
+        #markdown-preview pre code {
+            background: transparent;
+            padding: 0;
+            font-size: 0.9em;
+        }
+
+        #markdown-preview ul,
+        #markdown-preview ol {
+            margin-left: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        #markdown-preview blockquote {
+            border-left: 4px solid var(--accent);
+            padding-left: 1rem;
+            color: var(--text-dim);
+            margin-bottom: 1rem;
+        }
+
+        #markdown-preview table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1rem;
+            font-size: 0.9em;
+        }
+
+        #markdown-preview th,
+        #markdown-preview td {
+            border: 1px solid var(--border);
+            padding: 0.5rem 0.75rem;
+            text-align: left;
+        }
+
+        #markdown-preview th {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        #markdown-preview tr:nth-child(even) {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        #markdown-preview tr:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        /* ... rest of styles ... */
+        #media-player {
+            display: none;
+            flex: 1;
+            overflow: auto;
+            padding: 1rem;
+            background: var(--bg-deep);
+            color: var(--text-main);
+            scrollbar-width: thin;
+        }
+
+        #media-player audio {
+            width: 100%;
+            max-width: 500px;
+            display: block;
+            margin: 2rem auto;
+        }
+
+        #media-player img,
+        #media-player video {
+            max-width: 100%;
+            height: auto;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            display: block;
+            margin: auto;
         }
 
         #file-tree {
@@ -81,6 +202,8 @@
             position: relative;
             display: flex;
             flex-direction: column;
+            height: 100%;
+            overflow: hidden;
         }
 
         #editor-header {
@@ -233,7 +356,14 @@
         <div id="editor-header">
             <button id="menu-toggle" onclick="toggleSidebar()"><i data-lucide="menu" style="width:20px;"></i></button>
             <span id="current-file">No file selected</span>
-            <div style="display:flex; gap:0.5rem;">
+
+            <!-- Toggle View Button for Markdown -->
+            <button id="toggle-view-btn" class="btn btn-secondary" onclick="toggleView()"
+                style="display:none; margin-right:auto; margin-left:1rem; padding:0.25rem 0.5rem; font-size:0.8rem;">
+                <i data-lucide="eye" style="width:14px; margin-right:4px;"></i> Preview
+            </button>
+
+            <div style="display:flex; gap:0.5rem; margin-left:auto;">
                 <button class="btn" style="background:#22c55e;" onclick="saveFile()"><span
                         class="btn-text">Save</span><i data-lucide="save" style="width:16px;"></i></button>
                 <button class="btn btn-secondary"
@@ -242,6 +372,8 @@
             </div>
         </div>
         <div id="monaco"></div>
+        <div id="markdown-preview"></div>
+        <div id="media-player"></div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
@@ -250,6 +382,9 @@
         const planID = urlParams.get('plan_id');
         let editor;
         let currentPath = null;
+        let isMarkdown = false;
+        let isPreviewMode = false;
+        let fileContent = '';
 
         require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
         require(['vs/editor/editor.main'], function () {
@@ -263,38 +398,51 @@
                 domReadOnly: false
             });
             refreshFiles();
+            setInterval(() => refreshFiles(true), 5000);
         });
 
 
         // Auth Failure Handler (called by common.js)
         window.onAuthFailure = function () {
-            const container = document.getElementById('file-tree');
-            container.innerHTML = `
-                <div style="padding:1rem;color:var(--text-dim);font-size:0.9rem;text-align:center;">
-                    <div style="margin-bottom:0.5rem;">Authentication Required</div>
-                    <button class="btn" style="font-size:0.8rem;" onclick="window.location.href='/ui/index.html'">Login</button>
-                </div>`;
+            // ... existing ...
         };
 
-        async function refreshFiles() {
+        // ... existing refreshFiles and tree logic ...
+        // State for file tree
+        let lastFilesHash = '';
+        const collapsedPaths = new Set();
+
+        async function refreshFiles(silent = false) {
             if (!planID) {
-                document.getElementById('file-tree').innerText = 'No Plan ID provided';
+                if (!silent) document.getElementById('file-tree').innerText = 'No Plan ID provided';
                 return;
             }
             try {
-                // List files API
                 const res = await fetch(`/v1/plans/${planID}/files`);
-
                 if (!res.ok) {
-                    if (res.status === 401) return; // Handled by onAuthFailure/interceptor
+                    if (res.status === 401) return;
                     throw new Error(`Server returned ${res.status}`);
                 }
-
                 const files = await res.json();
-                renderTree(files);
+
+                // Sort for determinism (by path)
+                files.sort((a, b) => a.path.localeCompare(b.path));
+                const currentHash = JSON.stringify(files);
+
+                if (currentHash !== lastFilesHash) {
+                    lastFilesHash = currentHash;
+                    // Save Scroll
+                    const container = document.getElementById('file-tree');
+                    const savedScroll = container ? container.scrollTop : 0;
+
+                    renderTree(files);
+
+                    // Restore Scroll
+                    if (container) container.scrollTop = savedScroll;
+                }
             } catch (e) {
                 console.error(e);
-                document.getElementById('file-tree').innerHTML = '<div style="padding:1rem;">Failed to load files</div>';
+                if (!silent) document.getElementById('file-tree').innerHTML = '<div style="padding:1rem;">Failed to load files</div>';
             }
         }
 
@@ -322,12 +470,16 @@
 
         function buildFileTree(files) {
             const root = {};
-            files.forEach(path => {
-                const parts = path.split('/');
+            files.forEach(file => { // file is now {path, mod_time}
+                const parts = file.path.split('/');
                 let current = root;
                 parts.forEach((part, index) => {
                     if (!current[part]) {
-                        current[part] = index === parts.length - 1 ? null : {}; // null indicates file, object indicates folder
+                        if (index === parts.length - 1) {
+                            current[part] = { _isFile: true, ...file };
+                        } else {
+                            current[part] = {};
+                        }
                     }
                     current = current[part];
                 });
@@ -335,19 +487,28 @@
             return root;
         }
 
-        function renderRecursive(container, node, currentPath) {
-            // Sort: folders first, then files
+        function renderRecursive(container, node, parentPath) {
+            // Sort: folders first (Alpha), then files (Oldest First)
             const entries = Object.keys(node).sort((a, b) => {
-                const aIsFolder = node[a] !== null;
-                const bIsFolder = node[b] !== null;
-                if (aIsFolder && !bIsFolder) return -1;
-                if (!aIsFolder && bIsFolder) return 1;
-                return a.localeCompare(b);
+                const itemA = node[a];
+                const itemB = node[b];
+                const isFolderA = !itemA._isFile;
+                const isFolderB = !itemB._isFile;
+
+                if (isFolderA && !isFolderB) return -1;
+                if (!isFolderA && isFolderB) return 1;
+
+                if (isFolderA) { // Both folders
+                    return a.localeCompare(b);
+                }
+                // Both Files: Sort by Creation/Mod Time
+                return (itemA.mod_time || 0) - (itemB.mod_time || 0);
             });
 
             entries.forEach(key => {
-                const isFolder = node[key] !== null;
-                const fullPath = currentPath ? `${currentPath}/${key}` : key;
+                const item = node[key];
+                const isFolder = !item._isFile;
+                const fullPath = parentPath ? `${parentPath}/${key}` : key;
 
                 const itemDiv = document.createElement('div');
                 itemDiv.style.marginLeft = '0.5rem'; // Indent for children
@@ -358,11 +519,23 @@
                 contentDiv.style.alignItems = 'center';
                 contentDiv.style.gap = '6px';
 
+                // Highlight active file
+                if (!isFolder && currentPath && fullPath === currentPath) {
+                    contentDiv.classList.add('active');
+                }
+
                 if (isFolder) {
                     contentDiv.innerHTML = `<i data-lucide="folder" style="width:14px; color:var(--text-dim);"></i> <span>${key}</span>`;
 
                     const childrenContainer = document.createElement('div');
-                    childrenContainer.style.display = 'block'; // Open by default
+
+                    // Restore collapsed state (default open)
+                    if (collapsedPaths.has(fullPath)) {
+                        childrenContainer.style.display = 'none';
+                    } else {
+                        childrenContainer.style.display = 'block';
+                    }
+
                     childrenContainer.style.borderLeft = '1px solid rgba(255,255,255,0.05)';
                     childrenContainer.style.marginLeft = '4px';
 
@@ -371,9 +544,10 @@
                         e.stopPropagation();
                         if (childrenContainer.style.display === 'none') {
                             childrenContainer.style.display = 'block';
-                            // Start icon update logic if feasible (e.g. swap svg)
+                            collapsedPaths.delete(fullPath);
                         } else {
                             childrenContainer.style.display = 'none';
+                            collapsedPaths.add(fullPath);
                         }
                     };
 
@@ -394,67 +568,45 @@
             });
         }
 
-
-        async function saveFile() {
-            if (!currentPath) return;
-            const content = editor.getValue();
-            try {
-                // Ensure query param path is encoded
-                await fetch(`/v1/plans/${planID}/files/content?path=${encodeURIComponent(currentPath)}`, {
-                    method: 'PUT',
-                    body: content
-                });
-                // Flash success
-                const btn = document.querySelector('button[onclick="saveFile()"]');
-                const originalContent = btn.innerHTML;
-                btn.innerHTML = '<span class="btn-text">Saved!</span><i data-lucide="check" style="width:16px;"></i>';
-                lucide.createIcons();
-                setTimeout(() => {
-                    btn.innerHTML = originalContent;
-                    lucide.createIcons();
-                }, 2000);
-            } catch (e) {
-                alert('Failed to save');
-            }
-        }
-
-        function toggleSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            sidebar.classList.toggle('open');
-        }
-
-        // Close sidebar on file selection (mobile)
         function loadFile(path) {
             currentPath = path;
             document.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
-            // Highlight the clicked one is hard with recursive gen without IDs. 
-            // We can rely on css :active or re-implement selection logic later.
-
             document.getElementById('current-file').innerText = path;
 
-            // Close sidebar on mobile
             if (window.innerWidth <= 768) {
                 document.getElementById('sidebar').classList.remove('open');
+            }
+
+            // Check for Media
+            if (path.endsWith('.mp3') || path.endsWith('.wav') || path.endsWith('.mp4') || path.endsWith('.ogg') || path.endsWith('.webm') ||
+                path.endsWith('.png') || path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.gif') || path.endsWith('.webp')) {
+                showMedia(path);
+                return;
+            }
+
+            // Markdown Logic
+            isMarkdown = path.endsWith('.md');
+            isPreviewMode = isMarkdown; // Default to viewer for MD
+
+            const toggleBtn = document.getElementById('toggle-view-btn');
+            if (isMarkdown) {
+                toggleBtn.style.display = 'inline-flex';
+                updateToggleBtn();
+            } else {
+                toggleBtn.style.display = 'none';
+                isPreviewMode = false;
             }
 
             try {
                 fetch(`/v1/plans/${planID}/files/content?path=${encodeURIComponent(path)}`)
                     .then(res => res.text())
                     .then(content => {
-                        editor.setValue(content);
-
-                        // Detect language
-                        let lang = 'plaintext';
-                        if (path.endsWith('.js')) lang = 'javascript';
-                        if (path.endsWith('.py')) lang = 'python';
-                        if (path.endsWith('.go')) lang = 'go';
-                        if (path.endsWith('.html')) lang = 'html';
-                        if (path.endsWith('.json')) lang = 'json';
-                        if (path.endsWith('.md')) lang = 'markdown';
-                        if (path.endsWith('.yaml') || path.endsWith('.yml')) lang = 'yaml';
-                        if (path.endsWith('.css')) lang = 'css';
-                        if (path.endsWith('.sh')) lang = 'shell';
-                        monaco.editor.setModelLanguage(editor.getModel(), lang);
+                        fileContent = content;
+                        if (isMarkdown && isPreviewMode) {
+                            showPreview(content);
+                        } else {
+                            showEditor(content, path);
+                        }
                     })
                     .catch(e => {
                         editor.setValue('Error loading file');
@@ -464,8 +616,152 @@
             }
         }
 
+        function toggleView() {
+            if (!isMarkdown) return;
+
+            // Sync content from editor if switching TO preview
+            if (!isPreviewMode) {
+                fileContent = editor.getValue();
+            }
+
+            isPreviewMode = !isPreviewMode;
+            updateToggleBtn();
+
+            if (isPreviewMode) {
+                showPreview(fileContent);
+            } else {
+                showEditor(fileContent, currentPath);
+            }
+        }
+
+        function updateToggleBtn() {
+            const btn = document.getElementById('toggle-view-btn');
+            if (isPreviewMode) {
+                btn.innerHTML = '<i data-lucide="code" style="width:14px; margin-right:4px;"></i> Code';
+                btn.title = "Switch to Code Editor";
+            } else {
+                btn.innerHTML = '<i data-lucide="eye" style="width:14px; margin-right:4px;"></i> Preview';
+                btn.title = "Switch to Preview";
+            }
+            lucide.createIcons();
+        }
+
+        function showPreview(content) {
+            document.getElementById('monaco').style.display = 'none';
+            document.getElementById('media-player').style.display = 'none';
+            const preview = document.getElementById('markdown-preview');
+            preview.style.display = 'block';
+
+            // Parse Markdown
+            if (typeof marked !== 'undefined') {
+                preview.innerHTML = marked.parse(content);
+
+                // Render Mermaid Diagrams
+                if (typeof mermaid !== 'undefined') {
+                    const blocks = preview.querySelectorAll('pre code.language-mermaid');
+                    const mermaidNodes = [];
+
+                    blocks.forEach(block => {
+                        const div = document.createElement('div');
+                        div.className = 'mermaid';
+                        div.textContent = block.textContent;
+
+                        const pre = block.parentElement;
+                        if (pre && pre.tagName === 'PRE') {
+                            pre.replaceWith(div);
+                            mermaidNodes.push(div);
+                        }
+                    });
+
+                    if (mermaidNodes.length > 0) {
+                        mermaid.run({
+                            nodes: mermaidNodes
+                        }).catch(e => console.error('Mermaid error:', e));
+                    }
+                }
+            } else {
+                preview.innerHTML = '<div style="padding:1rem;">Marked.js not loaded</div>';
+            }
+        }
+
+        function showEditor(content, path) {
+            document.getElementById('markdown-preview').style.display = 'none';
+            document.getElementById('media-player').style.display = 'none';
+            document.getElementById('monaco').style.display = 'block';
+            editor.setValue(content);
+
+            // Detect language
+            let lang = 'plaintext';
+            if (path) {
+                if (path.endsWith('.js')) lang = 'javascript';
+                if (path.endsWith('.py')) lang = 'python';
+                if (path.endsWith('.go')) lang = 'go';
+                if (path.endsWith('.html')) lang = 'html';
+                if (path.endsWith('.json')) lang = 'json';
+                if (path.endsWith('.md')) lang = 'markdown';
+                if (path.endsWith('.yaml') || path.endsWith('.yml')) lang = 'yaml';
+                if (path.endsWith('.css')) lang = 'css';
+                if (path.endsWith('.sh')) lang = 'shell';
+            }
+            monaco.editor.setModelLanguage(editor.getModel(), lang);
+        }
+
+        async function showMedia(path) {
+            document.getElementById('markdown-preview').style.display = 'none';
+            document.getElementById('monaco').style.display = 'none';
+            const mediaDiv = document.getElementById('media-player');
+            mediaDiv.style.display = 'block'; // Change to block to support scrollable children
+            mediaDiv.innerHTML = '<div style="color:var(--text-dim);">Loading media...</div>';
+
+            const url = `/v1/plans/${planID}/files/content?path=${encodeURIComponent(path)}`;
+
+            try {
+                // Fetch as blob
+                const res = await fetch(url);
+                if (res.status === 401) {
+                    mediaDiv.innerHTML = '<div style="color:var(--accent);">⚠️ Authentication Required.</div>';
+                    return;
+                }
+                if (!res.ok) {
+                    throw new Error(`Status ${res.status}`);
+                }
+
+                const blob = await res.blob();
+                const objectURL = URL.createObjectURL(blob);
+
+                mediaDiv.innerHTML = '';
+
+                if (path.endsWith('.mp3') || path.endsWith('.wav') || path.endsWith('.ogg')) {
+                    const audio = document.createElement('audio');
+                    audio.controls = true;
+                    audio.src = objectURL;
+                    audio.autoplay = false;
+                    mediaDiv.appendChild(audio);
+                } else if (path.endsWith('.mp4') || path.endsWith('.webm')) {
+                    const video = document.createElement('video');
+                    video.controls = true;
+                    video.src = objectURL;
+                    video.autoplay = false;
+                    mediaDiv.appendChild(video);
+                } else if (path.endsWith('.png') || path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.gif') || path.endsWith('.webp')) {
+                    const img = document.createElement('img');
+                    img.src = objectURL;
+                    mediaDiv.appendChild(img);
+                }
+            } catch (e) {
+                console.error(e);
+                mediaDiv.innerHTML = `<div style="color:red;">Error: ${e.message}</div>`;
+            }
+
+            // Hide preview toggle
+            document.getElementById('toggle-view-btn').style.display = 'none';
+        }
+
         // Initialize icons after DOM updates
         lucide.createIcons();
+        if (typeof mermaid !== 'undefined') {
+            mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+        }
 
     </script>
 </body>

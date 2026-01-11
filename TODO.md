@@ -26,15 +26,24 @@
 - [x] Version number by checking git tags
 - [x] Cost management, tokens used by plan
 - [x] Build plane
-- [ ] Plugin system
+- [x] Plugin system
 - [ ] Git saving of plans
 - [x] Resume command
 - [x] MCP support
-- [ ] Optimize LLM context loading, remove headers
+- [x] Optimize LLM context loading, remove headers
 - [x] LLM Memory : https://medium.com/@sonitanishk2003/the-ultimate-guide-to-llm-memory-from-context-windows-to-advanced-agent-memory-systems-3ec106d2a345
 - [x] Deep rescearch the core of druppie to get new spec
 - [ ] Add background job processing
 - [x] Add common function for directory location
-- [ ] Add common function to call a tool script or mcp from an internal agent
-
+- [x] Add common function to call a tool script or mcp from an internal agent
+- [X] Fix:logFile, err = os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+- [x] Check if using provider in header
+- [x] Add in video_flow the steps to select provider, per prompt
+- [x] Planner next steps should have own task
+- [ ] Kanban also focus last completed task
+- [x] Cost by task
+- [x] SD pre processing
+- [ ] Paths for project libraries
+- [x] Feedback loop is not counting
+- [ ] A task to create repo and upload is using mcp server
 

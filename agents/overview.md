@@ -29,7 +29,7 @@ We distinguish between three main types of agents:
 | Agent | Description | Type | Native |
 | :--- | :--- | :--- | :--- |
 | **[Planner](./planner.md)** | System agent responsible for decomposing goals into actionable plans using available agents and tools. | System | ✅ |
-| **[Native Workflow Engineer](./native-converter.md)** | Auto-converts standard agents into high-performance Native Workflows. | System | ✅ |
+| **[Native Workflow Engineer](./native_converter.md)** | Auto-converts standard agents into high-performance Native Workflows. | System | ✅ |
 
 ### Specification & Design
 | Agent | Description | Type | Native |
@@ -40,15 +40,15 @@ We distinguish between three main types of agents:
 ### Content Production
 | Agent | Description | Type | Native |
 | :--- | :--- | :--- | :--- |
-| **[Video Content Creator](./video-content-creator.md)** | Lead Producer for video projects. Orchestrates Audio/Image/Video creation. | Spec/Native | ✅ |
-| **[Audio Creator](./audio-creator.md)** | Generates voiceovers and sound effects (TTS). | Exec | ❌ |
-| **[Image Creator](./image-creator.md)** | Generates visual assets for scenes. | Exec | ❌ |
-| **[Video Creator](./video-creator.md)** | Generates video clips from prompts and audio. | Exec | ❌ |
+| **[Video Content Creator](./video_content_creator.md)** | Lead Producer for video projects. Orchestrates Audio/Image/Video creation. | Spec/Native | ✅ |
+| **[Audio Creator](./audio_creator.md)** | Generates voiceovers and sound effects (TTS). | Exec | ❌ |
+| **[Image Creator](./image_creator.md)** | Generates visual assets for scenes. | Exec | ❌ |
+| **[Video Creator](./video_creator.md)** | Generates video clips from prompts and audio. | Exec | ❌ |
 
 ### Engineering & Quality
 | Agent | Description | Type | Native |
 | :--- | :--- | :--- | :--- |
-| **[Infrastructure Engineer](./infrastructure-engineer.md)** | k8s, Terraform, and GitOps provisioning. | Exec | ❌ |
+| **[Infrastructure Engineer](./infrastructure_engineer.md)** | k8s, Terraform, and GitOps provisioning. | Exec | ❌ |
 | **[Data Scientist](./data_scientist.md)** | Analysis, ML pipelines, and data processing. | Spec/Exec | ❌ |
 | **[Tester](./tester.md)** | Quality Assurance and validation strategies. | Exec | ❌ |
 

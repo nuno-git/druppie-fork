@@ -1,11 +1,11 @@
 ---
-id: video-creator
+id: video_creator
 name: "Video Creator"
 description: "Agent responsible for generating video assets aligned with audio duration and script content."
-type: execution-agent
-condition: "Run ONLY AFTER 'audio-creator' has finished and produced audio files/durations. You need the 'audio_duration' and 'visual_prompt' (from av_script)."
+type: execution_agent
+condition: "Run ONLY AFTER 'audio_creator' has finished and produced audio files/durations. You need the 'audio_duration' and 'visual_prompt' (from av_script)."
 version: 1.0.0
-skills: ["video-generation", "prompt-engineering", "visual-storytelling"]
+skills: ["video_generation", "prompt_engineering", "visual_storytelling"]
 tools: ["ai-video-comfyui"]
 priority: 4.0
 ---
