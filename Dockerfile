@@ -24,7 +24,7 @@ RUN if [ -d "../.git" ]; then \
     export GIT_VERSION=$VERSION; \
     fi && \
     echo "Building Version: $GIT_VERSION" && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.Version=$GIT_VERSION" -o /app/druppie ./druppie
+    GOOS=linux go build -ldflags="-s -w -X main.Version=$GIT_VERSION" -o /app/druppie ./druppie
 # Compress binary
 RUN upx --best --lzma /app/druppie
 
