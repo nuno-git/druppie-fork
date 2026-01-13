@@ -2249,8 +2249,13 @@
 
                     if (plan.total_usage) {
                         const u = plan.total_usage;
-                        const costLine = plan.total_cost ? `\n• Cost: €${plan.total_cost.toFixed(4)}` : ''; const msg = `📊 Token Usage:\n• Prompt: ${u.prompt_tokens.toLocaleString()}\n• Completion: ${u.completion_tokens.toLocaleString()}\n• Total: ${u.total_tokens.toLocaleString()}${costLine}`;
-                        addChatMessage('ai', msg);
+                        // Use new template system
+                        await addTemplateChatMessage('ai', 'usage.html', {
+                            prompt_tokens: u.prompt_tokens.toLocaleString(),
+                            completion_tokens: u.completion_tokens.toLocaleString(),
+                            total_tokens: u.total_tokens.toLocaleString(),
+                            cost: plan.total_cost ? plan.total_cost.toFixed(4) : '0.0000'
+                        });
                     } else {
                         addChatMessage('ai', 'ℹ️ No token usage data available for this plan.');
                     }
@@ -2276,12 +2281,35 @@
                 }
                 break;
 
+            case '/viewpoint':
+                // Demo for Viewpoint Derivation (Step 9 of specific plan)
+                try {
+                    const planId = 'plan-1768331589';
+                    addChatMessage('ai', '🔍 Loading viewpoint derivation example...');
+
+                    const resp = await fetch(`/v1/plans/${planId}`);
+                    if (!resp.ok) throw new Error(`Plan ${planId} not found`);
+                    const plan = await resp.json();
+
+                    // Find step with action 'viewpoint_derivation'
+                    const step = plan.steps.find(s => s.action === 'viewpoint_derivation');
+
+                    if (!step) {
+                        addChatMessage('ai', '❌ Step "viewpoint_derivation" not found in plan.');
+                    } else {
+                        await addTemplateChatMessage('ai', 'viewpoint_derivation.html', step.params);
+                    }
+                } catch (e) {
+                    addChatMessage('ai', `❌ Error: ${e.message}`);
+                }
+                break;
+
             case '/help':
-                addChatMessage('ai', `📚 Beschikbare commando's:\n• /help - Toon dit menu\n• /list - Toon alle plannen\n• /usage - Toon token usage\n• /reload - Herlaad registry (agents/skills)\n• /stop - Stop huidige plan\n• /switch <plan-id> - Verander naar een ander plan\n• /del <plan-id> - Verwijder een plan\n• /resume <plan-id> - Hervat een gestopt plan\n• /add_group <group> - Voeg toegangsgroep toe\n• /remove_group <group> - Verwijder toegangsgroep\n• /list_groups - Toon toegangsgroepen`);
+                addChatMessage('ai', `📚 Beschikbare commando's:\n• /help - Toon dit menu\n• /list - Toon alle plannen\n• /usage - Toon token usage\n• /reload - Herlaad registry (agents/skills)\n• /viewpoint - Demo viewpoint chat template\n• /stop - Stop huidige plan\n• /switch <plan-id> - Verander naar een ander plan\n• /del <plan-id> - Verwijder een plan\n• /resume <plan-id> - Hervat een gestopt plan\n• /add_group <group> - Voeg toegangsgroep toe\n• /remove_group <group> - Verwijder toegangsgroep\n• /list_groups - Toon toegangsgroepen`);
                 break;
 
             default:
-                addChatMessage('ai', `❓ Onbekend commando: ${command}\n\nBeschikbare commando's:\n• /help - Toon dit menu\n• /list - Toon alle plannen\n• /usage - Toon token usage\n• /reload - Herlaad registry (agents/skills)\n• /stop - Stop huidige plan\n• /switch <plan-id> - Verander naar een ander plan\n• /del <plan-id> - Verwijder een plan\n• /resume <plan-id> - Hervat een gestopt plan\n• /add_group <group> - Voeg toegangsgroep toe\n• /remove_group <group> - Verwijder toegangsgroep\n• /list_groups - Toon toegangsgroepen`);
+                addChatMessage('ai', `❓ Onbekend commando: ${command}\n\nBeschikbare commando's:\n• /help - Toon dit menu\n• /list - Toon alle plannen\n• /usage - Toon token usage\n• /reload - Herlaad registry (agents/skills)\n• /viewpoint - Demo viewpoint chat template\n• /stop - Stop huidige plan\n• /switch <plan-id> - Verander naar een ander plan\n• /del <plan-id> - Verwijder een plan\n• /resume <plan-id> - Hervat een gestopt plan\n• /add_group <group> - Voeg toegangsgroep toe\n• /remove_group <group> - Verwijder toegangsgroep\n• /list_groups - Toon toegangsgroepen`);
         }
     }
 
@@ -2304,6 +2332,56 @@
         }
     }
 
+    async function addTemplateChatMessage(role, templateName, data, silent = false) {
+        try {
+            const resp = await fetch(`/chat-templates/${templateName}`);
+            if (!resp.ok) {
+                if (silent) return false;
+                throw new Error(`Template not found: ${templateName}`);
+            }
+            const template = await resp.text();
+
+            const content = renderTemplate(template, data);
+            addChatMessage(role, content, true);
+            return true;
+        } catch (e) {
+            if (!silent) {
+                console.error('Failed to add template message:', e);
+                addChatMessage(role, `Error loading template: ${e.message}`);
+            }
+            return false;
+        }
+    }
+
+    function renderTemplate(template, data) {
+        let output = template;
+
+        // Loop: {{#key}} ... {{/key}}
+        output = output.replace(/\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, (match, key, inner) => {
+            const val = data[key];
+            if (Array.isArray(val)) {
+                return val.map(item => {
+                    // Merge item context with parent data for easy access
+                    let ctx = (typeof item === 'object' && item !== null) ? { ...data, ...item } : { ...data, '.': item };
+                    return renderTemplate(inner, ctx);
+                }).join('');
+            }
+            return '';
+        });
+
+        // Variable: {{key}}
+        output = output.replace(/\{\{([\w\.]+)\}\}/g, (match, key) => {
+            if (key === '.') return data['.'];
+
+            let val = data[key];
+            // Simple array joining
+            if (Array.isArray(val)) return val.join(', ');
+            return val !== undefined ? val : '';
+        });
+
+        return output;
+    }
+
     function addChatMessage(role, text, isHtml = false) {
         const div = document.createElement('div');
         div.className = `message ${role}`;
@@ -2317,9 +2395,29 @@
         return div; // Return element so it can be removed if needed
     }
 
-    function startMonitoring() {
+    async function startMonitoring() {
         if (state.pollingInterval) clearInterval(state.pollingInterval);
         state.currentPollingRate = 2000;
+        state.lastRenderedStepId = 0; // Reset chat sync
+
+        try {
+            const [chatResp, viewResp] = await Promise.all([
+                fetch('/v1/chat-templates'),
+                fetch('/v1/view-templates')
+            ]);
+
+            if (chatResp.ok) state.availableChatTemplates = await chatResp.json();
+            else state.availableChatTemplates = [];
+
+            if (viewResp.ok) state.availableViewTemplates = await viewResp.json();
+            else state.availableViewTemplates = [];
+
+        } catch (e) {
+            console.warn('Failed to load templates lists', e);
+            state.availableChatTemplates = [];
+            state.availableViewTemplates = [];
+        }
+
         updatePlan();
         updateLogs();
         setupPolling(state.currentPollingRate);
@@ -2334,59 +2432,87 @@
         }, rate);
     }
 
+    async function syncChatWithSteps(plan) {
+        if (state.lastRenderedStepId === undefined) state.lastRenderedStepId = 0;
+        const steps = plan.steps || [];
+
+        for (const step of steps) {
+            if (step.step_id > state.lastRenderedStepId && step.status === 'completed') {
+                const templateName = `${step.action}.html`;
+
+                // Only try to render if template exists
+                if (state.availableChatTemplates && state.availableChatTemplates.includes(templateName)) {
+                    const data = { ...step.params, ...step };
+                    await addTemplateChatMessage('ai', templateName, data, true);
+                }
+
+                state.lastRenderedStepId = step.step_id;
+            }
+        }
+    }
+
     async function updatePlan() {
         if (!state.currentPlanId || (!state.token && !state.isDemo)) return;
         try {
             const resp = await fetch(`/v1/plans/${state.currentPlanId}`);
             if (resp.status === 404) {
-                // Plan deleted or invalid
                 addChatMessage('ai', `❌ Plan ${state.currentPlanId} niet gevonden (404). Monitor gestopt.`);
                 state.currentPlanId = null;
                 if (state.pollingInterval) clearInterval(state.pollingInterval);
-
-                // Clear UI
                 elements.systemLogs.innerHTML = '';
                 elements.stepLogs.innerHTML = '';
-
-                // Refresh list to remove the invalid plan
                 updatePlanSelector();
                 return;
             }
             if (!resp.ok) return;
             const plan = await resp.json();
 
-            // Ensure steps exist
-            const steps = plan.steps || [];
-
-            // Generic Chat Result Logic using Set
+            // Generic Chat Result Logic
             state.shownStepIds = state.shownStepIds || new Set();
-
             // Process steps in order they appear in the plan
-            steps.forEach(s => {
+            let steps = plan.steps || [];
+
+            for (const s of steps) {
                 if (s.status === 'completed' && !state.shownStepIds.has(s.step_id)) {
+
+                    // 1. Check for Chat Template
+                    const templateName = `${s.action}.html`;
+                    if (state.availableChatTemplates && state.availableChatTemplates.includes(templateName)) {
+                        const data = {
+                            ...s.params, ...s,
+                            usage_tokens: (s.usage && s.usage.total_tokens) ? s.usage.total_tokens.toLocaleString() : '0',
+                            usage_cost: (s.usage && s.usage.estimated_cost) ? s.usage.estimated_cost.toFixed(4) : '0'
+                        };
+                        await addTemplateChatMessage('ai', templateName, data, true);
+                        state.shownStepIds.add(s.step_id);
+                        continue;
+                    }
+
+                    // 2. Generic Fallback
                     let msg = null;
                     let role = 'ai';
 
-                    if (s.agent_id === 'user' || s.action.startsWith('review_')) {
-                        role = 'user';
-                    }
+                    if (s.agent_id === 'user' || s.action.startsWith('review_')) role = 'user';
 
                     if (s.action === 'user_query' && s.result) {
                         role = 'user';
                         msg = s.result;
-                        // Dedup Logic: If matches recently sent prompt, skip rendering
                         if (state.lastUserPrompt && msg === state.lastUserPrompt) {
                             state.shownStepIds.add(s.step_id);
-                            state.lastUserPrompt = null; // Clear matches
-                            msg = null; // Don't render
+                            state.lastUserPrompt = null;
+                            msg = null;
                         }
+                    } else if (s.action === 'review_plan' && s.result) {
+                        msg = `✅ Plan goedgekeurd.`;
+                        if (s.result !== '/accept') msg = `Feedback: ${s.result}`;
+                    } else if (s.action === 'review_step' && s.result) {
+                        msg = `Feedback: ${s.result}`;
                     } else if ((s.action === 'general_chat' || s.agent_id === 'router') && s.result) {
                         msg = s.result;
                     } else {
-                        // Generic Step Display
+                        // Generic Display
                         let label = s.action.replace(/_/g, ' ');
                         label = label.charAt(0).toUpperCase() + label.slice(1);
-
                         let details = '';
 
                         if (s.result && s.result.startsWith('RESULT_')) {
@@ -2395,128 +2521,55 @@
                             const type = raw.includes('VIDEO') ? '🎬 Video' : raw.includes('IMAGE') ? '🎨 Image' : '✅ Result';
                             details = `<br><strong>${type}:</strong> ${file}`;
                         } else {
-                            // Params Display
                             if (s.params && Object.keys(s.params).length > 0) {
                                 const entries = Object.entries(s.params).filter(([k, v]) => v !== null && v !== undefined);
                                 if (entries.length > 0) {
                                     let listHtml = '<ul class="param-list">';
                                     entries.forEach(([k, v]) => {
-                                        let valStr = '';
-                                        if (Array.isArray(v) && v.length > 0 && typeof v[0] === 'object') {
-                                            // Format Array of Objects (like av_script)
-                                            valStr = v.map((item, idx) => {
-                                                let title = `Item ${idx + 1}`;
-                                                if (item.scene_id) title = `Scene ${item.scene_id}`;
-
-                                                let fields = Object.entries(item).map(([ik, iv]) => {
-                                                    // Recursive simple stringify for sub-fields if needed
-                                                    let displayVal = (typeof iv === 'object') ? JSON.stringify(iv) : String(iv);
-                                                    return `<div class="sub-row"><span class="key">${ik}:</span> <span class="sub-val">${displayVal}</span></div>`;
-                                                }).join('');
-
-                                                return `<div class="array-item"><div class="item-header">${title}</div>${fields}</div>`;
-                                            }).join('');
-                                            // For array items, we use a div for val to allow block display of items
-                                            listHtml += `<li><span class="key">${k}:</span> <div class="val" style="display:block">${valStr}</div></li>`;
-                                        } else if (typeof v === 'object') {
-                                            valStr = JSON.stringify(v, null, 2);
-                                            listHtml += `<li><span class="key">${k}:</span> <span class="val">${valStr}</span></li>`;
-                                        } else {
-                                            valStr = String(v);
-                                            listHtml += `<li><span class="key">${k}:</span> <span class="val">${valStr}</span></li>`;
-                                        }
+                                        let valStr = (typeof v === 'object') ? JSON.stringify(v) : String(v);
+                                        listHtml += `<li><span class="key">${k}:</span> <span class="val">${valStr}</span></li>`;
                                     });
                                     listHtml += '</ul>';
-
                                     details += `<div class="param-box">${listHtml}</div>`;
                                 }
                             }
-
-                            // Result Display (if not Approved/Completed redundancy)
-                            if (s.result && s.result !== 'Approved' && s.result !== 'Approved by user' && s.result !== 'completed') {
-                                details += `<br><span class="text-dim">Result: ${s.result}</span>`;
-                            }
                         }
-
                         msg = `✅ <strong>${label}</strong> completed.${details}`;
                     }
 
-                    if (msg) {
-                        addChatMessage(role, msg, true);
-                    }
-
+                    if (msg) addChatMessage(role, msg, true);
                     state.shownStepIds.add(s.step_id);
                 }
-            });
+            }
 
-            renderPlan(plan);
+            renderKanban(plan);
             renderStepList(plan);
+            // removed syncChatWithSteps call
 
+            // Waiting Input Logic
             if (plan.status === 'waiting_input' && !state.isWaitingForInput) {
                 state.isWaitingForInput = true;
                 const waitingStep = plan.steps.find(s => s.status === 'waiting_input' || (s.status === 'running' && plan.status === 'waiting_input'));
 
+                let content = 'Task is waiting for your input.';
                 let label = 'Task';
-                let content = 'Task is waiting for your input. Use buttons on Kanban or type feedback.';
 
                 if (waitingStep) {
                     label = waitingStep.action.replace(/_/g, ' ');
                     label = label.charAt(0).toUpperCase() + label.slice(1);
-
-                    if (waitingStep.result) {
-                        content = waitingStep.result;
-                    } else if (waitingStep.params) {
-                        if (waitingStep.params.justification) {
-                            content = "Justification: " + waitingStep.params.justification;
-                        } else if (waitingStep.params.reason) {
-                            content = "Reason: " + waitingStep.params.reason;
-                        }
+                    if (waitingStep.result) content = waitingStep.result;
+                    else if (waitingStep.params) {
+                        if (waitingStep.params.justification) content = "Justification: " + waitingStep.params.justification;
+                        else if (waitingStep.params.reason) content = "Reason: " + waitingStep.params.reason;
                     }
                 }
 
-                // Format content (lists to param-list, text to divs)
-                const formatContentToHtml = (text) => {
-                    if (!text) return '';
-                    const lines = text.split('\n');
-                    let html = '';
-                    let inList = false;
-                    let listHtml = '';
+                addChatMessage('ai', `✍️ <strong>${label}</strong>: ${content}`, true);
 
-                    lines.forEach(line => {
-                        const trimmed = line.trim();
-                        if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-                            if (!inList) {
-                                inList = true;
-                                listHtml = '<ul class="param-list">';
-                            }
-                            const content = trimmed.substring(2);
-                            let liContent = '';
-                            if (content.includes(': ')) {
-                                const [k, ...rest] = content.split(': ');
-                                const v = rest.join(': ');
-                                liContent = `<span class="key">${k}:</span> <span class="val">${v}</span>`;
-                            } else {
-                                liContent = `<span class="val">${content}</span>`;
-                            }
-                            listHtml += `<li>${liContent}</li>`;
-                        } else {
-                            if (inList) {
-                                inList = false;
-                                listHtml += '</ul>';
-                                html += listHtml;
-                            }
-                            if (trimmed.length > 0) html += `<div>${line}</div>`;
-                        }
-                    });
-
-                    if (inList) {
-                        html += listHtml + '</ul>';
-                    }
-                    return html || text;
-                };
-
-                const msg = `❓ <strong>${label}</strong> waiting for your input.<br><div class="param-box">${formatContentToHtml(content)}</div>`;
-                addChatMessage('ai', msg, true);
+                // Show modal if needed
+                if (!document.getElementById('step-modal').classList.contains('active') && waitingStep) {
+                    openStepModal(waitingStep, plan);
+                }
             } else if (plan.status !== 'waiting_input') {
                 state.isWaitingForInput = false;
             }
@@ -2531,8 +2584,52 @@
             if (state.currentPollingRate !== desiredRate) {
                 setupPolling(desiredRate);
             }
-        } catch (e) { }
+        } catch (e) {
+            console.error('Update loop error:', e);
+        }
     }
+
+    // Format content (lists to param-list, text to divs)
+    const formatContentToHtml = (text) => {
+        if (!text) return '';
+        const lines = text.split('\n');
+        let html = '';
+        let inList = false;
+        let listHtml = '';
+
+        lines.forEach(line => {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+                if (!inList) {
+                    inList = true;
+                    listHtml = '<ul class="param-list">';
+                }
+                const content = trimmed.substring(2);
+                let liContent = '';
+                if (content.includes(': ')) {
+                    const [k, ...rest] = content.split(': ');
+                    const v = rest.join(': ');
+                    liContent = `<span class="key">${k}:</span> <span class="val">${v}</span>`;
+                } else {
+                    liContent = `<span class="val">${content}</span>`;
+                }
+                listHtml += `<li>${liContent}</li>`;
+            } else {
+                if (inList) {
+                    inList = false;
+                    listHtml += '</ul>';
+                    html += listHtml;
+                }
+                if (trimmed.length > 0) html += `<div>${line}</div>`;
+            }
+        });
+
+        if (inList) {
+            html += listHtml + '</ul>';
+        }
+        return html || text;
+    };
+
 
     async function updateLogs() {
         if (!state.currentPlanId || (!state.token && !state.isDemo)) return;
@@ -2567,7 +2664,7 @@
     }
 
     let lastAutoScrollSignature = '';
-    function renderPlan(plan) {
+    function renderKanban(plan) {
         // Update stats bar
         const statsBar = document.getElementById('stats-bar');
         if (plan.total_usage && plan.total_usage.total_tokens > 0) {
@@ -2844,30 +2941,30 @@
 
         // Try to load custom view
         let customViewContent = null;
-        try {
-            const viewName = `${step.action}.html`;
-            const resp = await fetch(`/views/${viewName}`);
-            if (resp.ok) {
-                const template = await resp.text();
-                // Simple template replacement
-                customViewContent = template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-                    if (key === 'result') return step.result || '';
-                    if (key === 'status') return step.status || '';
-                    if (key === 'agent_id') return step.agent_id || '';
-                    if (key === 'step_id') return step.step_id || '';
-                    if (key === 'action') return step.action || '';
-                    if (key === 'intent_prompt') return (plan.intent && (plan.intent.prompt || plan.intent.initial_prompt)) || '';
-                    if (key === 'intent_action') return (plan.intent && plan.intent.action) || '';
-                    if (key === 'idx') return step.step_id;
-                    if (key === 'plan_id') return plan.plan_id;
-                    if (key === 'usage_tokens') return (step.usage && step.usage.total_tokens) ? step.usage.total_tokens.toLocaleString() : '0';
-                    if (key === 'usage_cost') return (step.usage && step.usage.estimated_cost) ? step.usage.estimated_cost.toFixed(4) : '0';
-                    if (key === 'params') return step.params ? JSON.stringify(step.params, null, 2) : '';
-                    return match;
-                });
+        const viewName = `${step.action}.html`;
+
+        if (state.availableViewTemplates && state.availableViewTemplates.includes(viewName)) {
+            try {
+                const resp = await fetch(`/views/${viewName}`);
+                if (resp.ok) {
+                    const template = await resp.text();
+                    // Prepare context for renderTemplate
+                    const data = {
+                        ...step.params,
+                        ...step,
+                        plan_id: plan.plan_id,
+                        intent_prompt: (plan.intent && (plan.intent.prompt || plan.intent.initial_prompt)) || '',
+                        intent_action: (plan.intent && plan.intent.action) || '',
+                        usage_tokens: (step.usage && step.usage.total_tokens) ? step.usage.total_tokens.toLocaleString() : '0',
+                        usage_cost: (step.usage && step.usage.estimated_cost) ? step.usage.estimated_cost.toFixed(4) : '0',
+                        params_json: step.params ? JSON.stringify(step.params, null, 2) : ''
+                    };
+
+                    customViewContent = renderTemplate(template, data);
+                }
+            } catch (e) {
+                console.warn('Custom view load failed', e);
             }
-        } catch (e) {
-            console.warn('Custom view load failed', e);
         }
 
         let bodyHTML = '';

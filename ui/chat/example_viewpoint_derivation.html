@@ -1,0 +1,35 @@
+<div
+    style="background: rgba(0, 0, 0, 0.25); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; font-family: 'Inter', sans-serif;">
+    <div
+        style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--glass-border); padding-bottom: 8px;">
+        <div
+            style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; font-weight: 600;">
+            ARCHITECT</div>
+        <div style="color: #e2e8f0; font-weight: 600;">Viewpoint Derivation</div>
+    </div>
+
+    <div style="font-size: 0.9em; color: #cbd5e1; margin-bottom: 12px;">
+        Derived <strong>{{viewpoints.length}} architectural viewpoints</strong> for the system:
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+        {{#viewpoints}}
+        <div
+            style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px; padding: 10px;">
+            <div style="color: #fca5a5; font-weight: 600; font-size: 0.95em; margin-bottom: 6px;">{{name}}</div>
+
+            <div style="display: grid; grid-template-columns: 80px 1fr; gap: 4px; font-size: 0.85em;">
+                <div style="color: #94a3b8;">Stakeholders:</div>
+                <div style="color: #e2e8f0;">{{stakeholders}}</div>
+
+                <div style="color: #94a3b8;">Concerns:</div>
+                <div style="color: #e2e8f0; font-style: italic;">{{concerns}}</div>
+
+                <div style="color: #94a3b8;">Elements:</div>
+                <div style="color: #60a5fa; font-family: 'JetBrains Mono', monospace; font-size: 0.9em;">{{elements}}
+                </div>
+            </div>
+        </div>
+        {{/viewpoints}}
+    </div>
+</div>
