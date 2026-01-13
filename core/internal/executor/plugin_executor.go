@@ -411,10 +411,11 @@ func (e *PluginExecutor) testPlugin(ctx context.Context, step model.Step, planID
 	outputChan <- fmt.Sprintf("[plugin-converter] Test Results: %d passed, %d failed", passedTests, failedTests)
 
 	if failedTests > 0 {
+		outputChan <- fmt.Sprintf("RESULT_CONSOLE_OUTPUT=Test Results: %d passed, %d failed", passedTests, failedTests)
 		return fmt.Errorf("plugin tests failed: %d/%d tests failed", failedTests, len(testCases))
 	}
 
-	outputChan <- "[plugin-converter] ✅ All tests passed!"
+	outputChan <- "RESULT_CONSOLE_OUTPUT=✅ All tests passed!"
 
 	return nil
 }

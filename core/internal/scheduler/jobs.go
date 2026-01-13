@@ -65,3 +65,26 @@ func (j *LLMJob) Run(ctx context.Context) error {
 	}
 	return j.ExecuteFunc(ctx, j.PlanID, j.Prompt)
 }
+
+// RegistryReloadJob reloads the registry
+type RegistryReloadJob struct {
+	JobName      string
+	CronSchedule string
+	ExecuteFunc  func(ctx context.Context) error
+}
+
+func (j *RegistryReloadJob) Name() string {
+	return j.JobName
+}
+
+func (j *RegistryReloadJob) Schedule() string {
+	return j.CronSchedule
+}
+
+func (j *RegistryReloadJob) Run(ctx context.Context) error {
+	if j.ExecuteFunc == nil {
+		return fmt.Errorf("no execution function defined")
+	}
+	fmt.Println("[Scheduler] Reloading Registry...")
+	return j.ExecuteFunc(ctx)
+}

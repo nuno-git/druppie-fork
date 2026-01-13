@@ -2,6 +2,7 @@
 id: orchestration
 name: "Orchestration"
 description: "Capability to manage complex workflows, schedule dependencies, and direct other agents."
+type: skill
 version: 1.0.0
 ---
 

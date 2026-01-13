@@ -21,6 +21,9 @@ func (e *MCPExecutor) CanHandle(action string) bool {
 	if e.Manager == nil {
 		return false
 	}
+	if action == "tool_usage" {
+		return true
+	}
 	// Direct tool name match
 	_, ok := e.Manager.GetToolServer(action)
 	return ok
@@ -28,6 +31,30 @@ func (e *MCPExecutor) CanHandle(action string) bool {
 
 // Execute calls the tool via the MCP Manager
 func (e *MCPExecutor) Execute(ctx context.Context, step model.Step, outputChan chan<- string) error {
+	// Handle generic "tool_usage" action
+	if step.Action == "tool_usage" {
+		toolName, ok := step.Params["tool"].(string)
+		if !ok {
+			toolName, ok = step.Params["tool_name"].(string)
+		}
+		if !ok {
+			return fmt.Errorf("action is 'tool_usage' but no 'tool' or 'tool_name' parameter provided")
+		}
+
+		// Update step action to the actual tool
+		step.Action = toolName
+		outputChan <- fmt.Sprintf("[mcp] Unwrapped tool_usage -> %s", toolName)
+
+		// Rescope params: prefer "arguments" or "args", otherwise usage remaining params
+		if args, ok := step.Params["arguments"].(map[string]interface{}); ok {
+			step.Params = args
+		} else if args, ok := step.Params["args"].(map[string]interface{}); ok {
+			step.Params = args
+		}
+		// If neither, we assume the top-level params (minus 'tool') are the args,
+		// but cleaning them is safer to do in the normalization block below.
+	}
+
 	// Identify Server
 	serverName, _ := e.Manager.GetToolServer(step.Action)
 	if serverName == "" {

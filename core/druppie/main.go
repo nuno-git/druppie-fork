@@ -179,6 +179,30 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 			tm := NewTaskManager(plannerService, mcpManager, buildEngine)
 			cfg := cfgMgr.Get()
 
+			// Reset any "running" plans to "pending" to handle unclean shutdowns
+			plans, err := plannerService.Store.ListPlans()
+			if err == nil {
+				for _, p := range plans {
+					modified := false
+					if p.Status == "running" {
+						p.Status = "pending"
+						modified = true
+					}
+					for i, s := range p.Steps {
+						if s.Status == "running" {
+							p.Steps[i].Status = "pending"
+							modified = true
+						}
+					}
+					if modified {
+						fmt.Printf("Resetting interrupted plan %s to pending state.\n", p.ID)
+						_ = plannerService.Store.SavePlan(p)
+					}
+				}
+			} else {
+				fmt.Printf("Warning: Failed to list plans for cleanup: %v\n", err)
+			}
+
 			// Start Cleanup Routine
 			// ---------------------------------------------------------
 			// Scheduler Implementation
@@ -208,6 +232,18 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						CronSchedule: jobCfg.Schedule,
 						ExecuteFunc: func(ctx context.Context, planID, prompt string) error {
 							return tm.SubmitInput(ctx, planID, prompt)
+						},
+					})
+				case "registry_reload":
+					sched.AddJob(&scheduler.RegistryReloadJob{
+						JobName:      jobCfg.Name,
+						CronSchedule: jobCfg.Schedule,
+						ExecuteFunc: func(ctx context.Context) error {
+							rootDir, err := paths.FindProjectRoot()
+							if err != nil {
+								return fmt.Errorf("failed to find project root: %w", err)
+							}
+							return reg.Load(rootDir)
 						},
 					})
 				}
@@ -322,6 +358,18 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 				http.ServeFile(w, r, path)
 			})
 
+			// Serve View Templates
+			r.Get("/views/*", func(w http.ResponseWriter, r *http.Request) {
+				fileName := chi.URLParam(r, "*")
+				path, _ := paths.ResolvePath("ui", "views", fileName)
+				// Basic security check to prevent directory traversal
+				if strings.Contains(fileName, "..") {
+					http.Error(w, "Invalid path", http.StatusBadRequest)
+					return
+				}
+				http.ServeFile(w, r, path)
+			})
+
 			// Public System Info
 			r.Get("/info", func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -401,6 +449,26 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 					}
 					blocks := reg.ListBuildingBlocks(groups)
 					json.NewEncoder(w).Encode(blocks)
+				})
+
+				// Reload Registry Endpoint
+				r.Post("/registry/reload", func(w http.ResponseWriter, r *http.Request) {
+					rootDir, err := paths.FindProjectRoot()
+					if err != nil {
+						http.Error(w, "Failed to find project root", http.StatusInternalServerError)
+						return
+					}
+
+					if err := reg.Load(rootDir); err != nil {
+						http.Error(w, fmt.Sprintf("Reload failed: %v", err), http.StatusInternalServerError)
+						return
+					}
+
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"message": "Registry reloaded successfully",
+						"stats":   reg.Stats(),
+					})
 				})
 
 				// Chat / Intent Endpoint

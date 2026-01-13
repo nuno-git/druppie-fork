@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
+	"github.com/sjhoeksma/druppie/core/internal/paths"
 	"github.com/sjhoeksma/druppie/core/internal/registry"
 	"github.com/sjhoeksma/druppie/core/internal/store"
 )
@@ -202,7 +204,9 @@ func (m *Manager) RemoveServer(ctx context.Context, name string) error {
 	defer m.mu.Unlock()
 
 	if _, ok := m.servers[name]; !ok {
-		return fmt.Errorf("server not found: %s", name)
+		// Check if it's in config even if not loaded?
+		// Fall through to clean config and files
+		// return fmt.Errorf("server not found: %s", name)
 	}
 
 	delete(m.servers, name)
@@ -221,7 +225,7 @@ func (m *Manager) RemoveServer(ctx context.Context, name string) error {
 		fmt.Printf("Warning: failed to refresh tools after removal: %v\n", err)
 	}
 
-	// Save
+	// Save Config
 	if m.store != nil {
 		data, err := json.MarshalIndent(m.ServerConfigs, "", "  ")
 		if err == nil {
@@ -230,6 +234,22 @@ func (m *Manager) RemoveServer(ctx context.Context, name string) error {
 			}
 		}
 	}
+
+	// Delete Plugin Directory if it exists
+	// Check .druppie/plugins/<name> ONLY. Do not delete from core/plugins (promoted plugins).
+	pluginPathsToTry := []string{".druppie"}
+	for _, base := range pluginPathsToTry {
+		p, err := paths.ResolvePath(base, "plugins", name)
+		if err == nil {
+			if _, err := os.Stat(p); err == nil {
+				fmt.Printf("Removing plugin directory: %s\n", p)
+				if err := os.RemoveAll(p); err != nil {
+					fmt.Printf("Warning: failed to remove plugin dir %s: %v\n", p, err)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 

@@ -56,9 +56,10 @@
             flex: 1;
             overflow-y: auto;
             padding: 2rem;
-            color: var(--text-main);
+            color: #334155;
+            /* Slate 700 */
             font-family: 'Outfit', sans-serif;
-            background: var(--bg-deep);
+            background: #ffffff;
             line-height: 1.6;
         }
 
@@ -67,7 +68,13 @@
         #markdown-preview h3 {
             margin-top: 1.5rem;
             margin-bottom: 0.5rem;
-            color: var(--accent);
+            color: #0f172a;
+            /* Slate 900 */
+        }
+
+        #markdown-preview h1 {
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 0.5rem;
         }
 
         #markdown-preview p {
@@ -75,16 +82,20 @@
         }
 
         #markdown-preview pre {
-            background: rgba(0, 0, 0, 0.3);
+            background: #f1f5f9;
+            /* Slate 100 */
             padding: 1rem;
             border-radius: 0.5rem;
             overflow-x: auto;
             margin-bottom: 1rem;
+            border: 1px solid #e2e8f0;
         }
 
         #markdown-preview code {
             font-family: 'JetBrains Mono', monospace;
-            background: rgba(255, 255, 255, 0.1);
+            background: #f1f5f9;
+            color: #be185d;
+            /* Pink 700 */
             padding: 0.2rem 0.4rem;
             border-radius: 0.2rem;
             font-size: 0.85em;
@@ -94,6 +105,7 @@
             background: transparent;
             padding: 0;
             font-size: 0.9em;
+            color: #334155;
         }
 
         #markdown-preview ul,
@@ -105,8 +117,12 @@
         #markdown-preview blockquote {
             border-left: 4px solid var(--accent);
             padding-left: 1rem;
-            color: var(--text-dim);
+            color: #64748b;
+            /* Slate 500 */
             margin-bottom: 1rem;
+            font-style: italic;
+            background: #f8fafc;
+            padding: 0.5rem 1rem;
         }
 
         #markdown-preview table {
@@ -118,23 +134,23 @@
 
         #markdown-preview th,
         #markdown-preview td {
-            border: 1px solid var(--border);
+            border: 1px solid #e2e8f0;
             padding: 0.5rem 0.75rem;
             text-align: left;
         }
 
         #markdown-preview th {
-            background: rgba(255, 255, 255, 0.08);
-            color: var(--accent);
+            background: #f8fafc;
+            color: #0f172a;
             font-weight: 600;
         }
 
         #markdown-preview tr:nth-child(even) {
-            background: rgba(255, 255, 255, 0.03);
+            background: #f8fafc;
         }
 
         #markdown-preview tr:hover {
-            background: rgba(255, 255, 255, 0.05);
+            background: #f1f5f9;
         }
 
         /* ... rest of styles ... */

@@ -128,7 +128,23 @@ func NewManager(ctx context.Context, cfg config.LLMConfig) (*Manager, error) {
 			if strings.Contains(strings.ToLower(pCfg.Model), "dutch") || strings.Contains(strings.ToLower(pCfg.Model), "nl") {
 				lang = "nl"
 			}
-			return NewSherpaTTSProvider(lang, pCfg.Model, pCfg.PricePerWord)
+			return NewSherpaTTSProvider(pCfg.URL, lang, pCfg.Model, pCfg.PricePerWord)
+		case "z.ai", "zai":
+			model := pCfg.Model
+			if model == "" {
+				model = "glm-4"
+			}
+			baseURL := "https://api.z.ai/api/paas/v4"
+			if pCfg.URL != "" {
+				baseURL = pCfg.URL
+			}
+			return &ZAIProvider{
+				Model:                   model,
+				BaseURL:                 baseURL,
+				APIKey:                  pCfg.APIKey,
+				PricePerPromptToken:     pCfg.PricePerPromptToken,
+				PricePerCompletionToken: pCfg.PricePerCompletionToken,
+			}, nil
 		case "stable-diffusion":
 			// Use BaseURL field from config which maps to APIURL usually?
 			// Config struct has APIURL? Let's check config struct in next step if needed,
@@ -755,4 +771,91 @@ func cleanResponse(text string) string {
 		text = strings.TrimSuffix(text, "```")
 	}
 	return strings.TrimSpace(text)
+}
+
+// --- Z.AI Provider ---
+
+type ZAIProvider struct {
+	Model                   string
+	BaseURL                 string
+	APIKey                  string
+	PricePerPromptToken     float64
+	PricePerCompletionToken float64
+}
+
+func (p *ZAIProvider) Generate(ctx context.Context, prompt string, systemPrompt string) (string, model.TokenUsage, error) {
+	// OpenAI compatible endpoint construction
+	// If BaseURL is "https://api.z.ai/api/paas/v4", we append "/chat/completions"
+	url := fmt.Sprintf("%s/chat/completions", strings.TrimSuffix(p.BaseURL, "/"))
+
+	payload := map[string]interface{}{
+		"messages": []map[string]string{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": prompt},
+		},
+		"model":       p.Model,
+		"temperature": 0.7,
+		"stream":      false,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", model.TokenUsage{}, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		return "", model.TokenUsage{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if p.APIKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", p.APIKey))
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", model.TokenUsage{}, fmt.Errorf("z.ai request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", model.TokenUsage{}, fmt.Errorf("z.ai error %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// OpenAI format response
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", model.TokenUsage{}, fmt.Errorf("failed to decode z.ai response: %w", err)
+	}
+
+	if len(result.Choices) == 0 {
+		return "", model.TokenUsage{}, fmt.Errorf("no content from z.ai")
+	}
+
+	usage := model.TokenUsage{
+		PromptTokens:     result.Usage.PromptTokens,
+		CompletionTokens: result.Usage.CompletionTokens,
+		TotalTokens:      result.Usage.TotalTokens,
+	}
+	usage.EstimatedCost = (float64(usage.PromptTokens)/1000000.0)*p.PricePerPromptToken +
+		(float64(usage.CompletionTokens)/1000000.0)*p.PricePerCompletionToken
+
+	return cleanResponse(result.Choices[0].Message.Content), usage, nil
+}
+
+func (p *ZAIProvider) Close() error {
+	return nil
 }

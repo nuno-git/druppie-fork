@@ -49,6 +49,7 @@ type Skill struct {
 	ID           string   `json:"id" yaml:"id"`
 	Name         string   `json:"name" yaml:"name"`
 	Description  string   `json:"description" yaml:"description"`
+	Type         string   `json:"type,omitempty" yaml:"type,omitempty"`
 	SystemPrompt string   `json:"system_prompt" yaml:"system_prompt"`
 	AllowedTools []string `json:"allowed_tools" yaml:"allowed_tools"`
 	AuthGroups   []string `json:"auth_groups,omitempty" yaml:"auth_groups,omitempty"`
@@ -212,6 +213,7 @@ type AgentDefinition struct {
 	Workflow     string            `json:"workflow" yaml:"workflow"`                   // Mermaid diagram or text workflow
 	Prompts      map[string]string `json:"prompts,omitempty" yaml:"prompts,omitempty"` // Specific prompts for native workflows
 	Priority     float64           `json:"priority" yaml:"priority"`
+	FinalActions []string          `json:"final_actions" yaml:"final_actions"` // Actions that trigger an immediate stop of the plan
 	AuthGroups   []string          `json:"auth_groups,omitempty" yaml:"auth_groups,omitempty"`
 }
 

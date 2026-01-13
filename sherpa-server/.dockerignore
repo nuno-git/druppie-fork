@@ -1,0 +1,6 @@
+# Ignore models directory to prevent build context bloat
+models/
+*.tar.bz2
+*.onnx
+.git
+.DS_Store

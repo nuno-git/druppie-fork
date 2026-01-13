@@ -92,6 +92,11 @@ func (e *DeveloperExecutor) Execute(ctx context.Context, step model.Step, output
 			// Clean path to prevent traversal escape
 			cleanPath := filepath.Clean(path)
 
+			// Sanitize Markdown files (Mermaid fixes)
+			if filepath.Ext(cleanPath) == ".md" {
+				strContent = SanitizeAndFixMarkdown(strContent)
+			}
+
 			if cleanPath == "." || cleanPath == "/" {
 				continue
 			}

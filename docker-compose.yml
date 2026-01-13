@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  druppie:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: druppie:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - SHERPA_SERVER_URL=http://sherpa-server:8081
+    volumes:
+      - ./.druppie:/app/.druppie
+    depends_on:
+      - sherpa-server
+
+  sherpa-server:
+    build:
+      context: ./sherpa-server
+      dockerfile: Dockerfile
+    image: druppie-sherpa:latest
+    ports:
+      - "8081:8081"
+    volumes:
+      - sherpa-models:/app/models
+
+volumes:
+  sherpa-models:

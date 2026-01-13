@@ -15,7 +15,22 @@ import (
 // LoadRegistry scans the given root directory and populates a new Registry
 func LoadRegistry(rootDir string) (*Registry, error) {
 	reg := NewRegistry()
+	if err := reg.Load(rootDir); err != nil {
+		return nil, err
+	}
+	return reg, nil
+}
 
+// Load scans the given root directory and updates the Registry atomically
+func (r *Registry) Load(rootDir string) error {
+	// Initialize temporary maps
+	blocks := make(map[string]model.BuildingBlock)
+	skills := make(map[string]model.Skill)
+	agents := make(map[string]model.AgentDefinition)
+	mcps := make(map[string]model.MCPServer)
+	comp := make(map[string]model.ComplianceRule)
+
+	// 1. Load Building Blocks
 	err := walkAndLoad(filepath.Join(rootDir, "blocks"), []string{".md"}, func(path string, fm []byte, body []byte) error {
 		var block model.BuildingBlock
 		if err := yaml.Unmarshal(fm, &block); err != nil {
@@ -26,17 +41,11 @@ func LoadRegistry(rootDir string) (*Registry, error) {
 			block.ID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 			block.ID = strings.ReplaceAll(block.ID, "-", "_")
 		}
-		reg.mu.Lock()
-		reg.BuildingBlocks[block.ID] = block
-		reg.mu.Unlock()
+		blocks[block.ID] = block
 		return nil
 	})
-	if err != nil {
-		// Just log warning instead of failing hard? For now fail hard to ensure correctness
-		// But directory might not exist yet
-		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("error loading building blocks: %w", err)
-		}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("error loading building blocks: %w", err)
 	}
 
 	// 2. Load Skills
@@ -61,14 +70,11 @@ func LoadRegistry(rootDir string) (*Registry, error) {
 				}
 			}
 		}
-
-		reg.mu.Lock()
-		reg.Skills[skill.ID] = skill
-		reg.mu.Unlock()
+		skills[skill.ID] = skill
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("error loading skills: %w", err)
+		return fmt.Errorf("error loading skills: %w", err)
 	}
 
 	// 3. Load Agents
@@ -89,20 +95,15 @@ func LoadRegistry(rootDir string) (*Registry, error) {
 				if agent.Instructions == "" {
 					agent.Instructions = cleanBody
 				} else {
-					// Check if body already contains what FM had?
-					// Assume appending.
 					agent.Instructions = agent.Instructions + "\n\n" + cleanBody
 				}
 			}
 		}
-
-		reg.mu.Lock()
-		reg.Agents[agent.ID] = agent
-		reg.mu.Unlock()
+		agents[agent.ID] = agent
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("error loading agents: %w", err)
+		return fmt.Errorf("error loading agents: %w", err)
 	}
 
 	// 4. Load MCP
@@ -115,13 +116,11 @@ func LoadRegistry(rootDir string) (*Registry, error) {
 			mcp.ID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 			mcp.ID = strings.ReplaceAll(mcp.ID, "-", "_")
 		}
-		reg.mu.Lock()
-		reg.MCPServers[mcp.ID] = mcp
-		reg.mu.Unlock()
+		mcps[mcp.ID] = mcp
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("error loading mcp: %w", err)
+		return fmt.Errorf("error loading mcp: %w", err)
 	}
 
 	// 5. Load Compliance Policies
@@ -135,20 +134,14 @@ func LoadRegistry(rootDir string) (*Registry, error) {
 			rule.ID = strings.ReplaceAll(rule.ID, "-", "_")
 		}
 
-		// Use body as description extension or policy details if needed
-		// For now, we assume rego_policy might be in FM or body?
-		// If body is present and rego_policy is empty, maybe treat body as text policy?
 		if len(body) > 0 && rule.RegoPolicy == "" {
 			rule.RegoPolicy = string(body)
 		}
-
-		reg.mu.Lock()
-		reg.Compliance[rule.ID] = rule
-		reg.mu.Unlock()
+		comp[rule.ID] = rule
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("error loading compliance: %w", err)
+		return fmt.Errorf("error loading compliance: %w", err)
 	}
 
 	// 6. Load Plugins (MCP definitions from .druppie/plugins/*/mcp.md)
@@ -172,21 +165,24 @@ func LoadRegistry(rootDir string) (*Registry, error) {
 
 		// Force category to plugin
 		mcp.Category = "plugin"
-
-		reg.mu.Lock()
-		reg.MCPServers[mcp.ID] = mcp
-		reg.mu.Unlock()
+		mcps[mcp.ID] = mcp
 		return nil
 	})
 	// Ignore if plugins dir doesn't exist, but report actual errors
 	if err != nil && !os.IsNotExist(err) {
-		// Log warning rather than fail?
-		// fmt.Printf("Warning: error loading plugins: %v\n", err)
-		// For now, consistent with others:
-		return nil, fmt.Errorf("error loading plugins: %w", err)
+		return fmt.Errorf("error loading plugins: %w", err)
 	}
 
-	return reg, nil
+	// Atomic Update
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.BuildingBlocks = blocks
+	r.Skills = skills
+	r.Agents = agents
+	r.MCPServers = mcps
+	r.Compliance = comp
+
+	return nil
 }
 
 // walkAndLoad walks a directory, finding files with allowed extensions, extracting data, and calling the handler.

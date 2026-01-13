@@ -7,6 +7,12 @@ import (
 	"github.com/sjhoeksma/druppie/core/internal/model"
 )
 
+// RegistryInterface defines the interface for accessing registry items
+type RegistryInterface interface {
+	GetSkill(id string) (model.Skill, error)
+	GetAgent(id string) (model.AgentDefinition, error)
+}
+
 // Registry acts as the in-memory database for all system capabilities
 type Registry struct {
 	mu             sync.RWMutex

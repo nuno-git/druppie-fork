@@ -710,9 +710,14 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 	}
 
 	var activeAgents []model.AgentDefinition
+	uniqueAgentIDs := make(map[string]bool) // Prevent duplicates in active list
+
 	for _, a := range allRegistryAgents {
 		if allowedMap[a.ID] {
-			activeAgents = append(activeAgents, a)
+			if !uniqueAgentIDs[a.ID] {
+				activeAgents = append(activeAgents, a)
+				uniqueAgentIDs[a.ID] = true
+			}
 		}
 	}
 	// Fallback: If map is empty (legacy plan?), use all
@@ -742,9 +747,14 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 		if len(a.SubAgents) > 0 {
 			sb.WriteString(fmt.Sprintf("  Sub-Agents: %v\n", a.SubAgents))
 		}
+		// Only list skills if they are NOT in the Skills registry (i.e. simple string skills)
+		// Or if we want to be explicit.
+		// Use p.Registry.GetSkill check?
+		// Better: Provide full list of skills, but maybe just names if they are standard.
 		if len(a.Skills) > 0 {
 			sb.WriteString(fmt.Sprintf("  Skills: %v\n", a.Skills))
 		}
+
 		sb.WriteString(fmt.Sprintf("  Priority: %.1f\n", a.Priority))
 		sb.WriteString(fmt.Sprintf("  Description: %s\n", a.Description))
 		if a.Workflow != "" {
@@ -772,17 +782,20 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 		}
 
 		if lastStep != nil {
-			// Hard Stop for 'promote_plugin' (Terminal action for Plugin workflow)
-			if lastStep.Action == "promote_plugin" ||
-				lastStep.Action == "run_code" ||
-				lastStep.Action == "tool_usage" ||
-				lastStep.Action == "image_generation" ||
-				lastStep.Action == "video_generation" ||
-				lastStep.Action == "text_to_speech" {
-				if p.Store != nil {
-					_ = p.Store.LogInteraction(plan.ID, "Planner", "Auto-Stop", "Detected terminal action. Stopping plan.")
+			// Load Planner Agent Definition to get Configured Final Actions
+			if plannerAgent, err := p.Registry.GetAgent("planner"); err == nil {
+				for _, finalAction := range plannerAgent.FinalActions {
+					// Normalize for comparison
+					finalAction = strings.ReplaceAll(strings.ToLower(finalAction), "-", "_")
+					checkAction := strings.ReplaceAll(strings.ToLower(lastStep.Action), "-", "_")
+
+					if checkAction == finalAction {
+						if p.Store != nil {
+							_ = p.Store.LogInteraction(plan.ID, "Planner", "Auto-Stop", fmt.Sprintf("Detected final action '%s' (configured in planner.md). Stopping plan.", finalAction))
+						}
+						return plan, nil
+					}
 				}
-				return plan, nil
 			}
 		}
 	}
@@ -920,7 +933,7 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 	// Add a temporary replanning step to show in Kanban
 	replanID := 1
 	if len(plan.Steps) > 0 {
-		replanID = plan.Steps[len(plan.Steps)-1].ID + 1
+		replanID = plan.Steps[len(plan.Steps)-1].ID //Same ID as last step
 	}
 	replanStep := model.Step{
 		ID:      replanID,
@@ -1031,9 +1044,6 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 			for k := len(plan.Steps) - 1; k >= limit; k-- {
 				oldStep := plan.Steps[k]
 				// Skip 'replanning' steps in history comparison
-				if oldStep.Action == "replanning" {
-					continue
-				}
 
 				if oldStep.AgentID == s.AgentID && oldStep.Action == s.Action {
 					// Deep Compare Params
@@ -1108,13 +1118,6 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 	// Adjust IDs using existing startID
 	// Recalculate startID based on current plan state (including replanning step)
 	// Recalculate startID based on current plan state (including replanning step)
-	isReplanningSequence := false
-	if len(plan.Steps) > 0 {
-		startID = plan.Steps[len(plan.Steps)-1].ID
-		if plan.Steps[len(plan.Steps)-1].Action == "replanning" {
-			isReplanningSequence = true
-		}
-	}
 
 	for i := range newSteps {
 		newSteps[i].ID = startID + i + 1
@@ -1199,16 +1202,13 @@ func (p *Planner) UpdatePlan(ctx context.Context, plan *model.ExecutionPlan, fee
 				}
 
 				if found {
-					// Apply Shift: If we are in a replanning sequence and the dependency points to the step
-					// immediately preceding the replanner (startID - 1), shift it to the replanner (startID).
-					// This ensures the new plan links to the replanning event, not just the old history.
-					if isReplanningSequence && resolvedID == startID-1 {
-						resolvedID = startID
-					}
-					for j, d := range newSteps[i].DependsOn {
-						newSteps[i].DependsOn[j] = d + 1
-					}
-					//newSteps[i].DependsOn = append(newSteps[i].DependsOn, resolvedID)
+					// // Apply Shift: If we are in a replanning sequence and the dependency points to the step
+					// // immediately preceding the replanner (startID - 1), shift it to the replanner (startID).
+					// // This ensures the new plan links to the replanning event, not just the old history.
+					// if isReplanningSequence && resolvedID == startID-1 {
+					// 	resolvedID = startID
+					// }
+					newSteps[i].DependsOn = append(newSteps[i].DependsOn, resolvedID)
 				}
 			}
 

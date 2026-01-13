@@ -2258,7 +2258,7 @@
 
             // MCP Specific Details - Enhanced Display
             let mcpDetails = '';
-            if (data.command || data.transport || data.args || data.tools) {
+            if (data.command || data.transport || (data.args && data.args.length > 0) || (data.tools && data.tools.length > 0)) {
                 const commandHtml = data.command ? `
                     <div class="flex items-start text-xs mb-2">
                         <span class="font-bold text-slate-600 w-24 flex-shrink-0 uppercase text-[10px] tracking-wider">Command:</span>
@@ -2301,18 +2301,20 @@
                         </div>
                     </div>` : '';
 
-                mcpDetails = `
-                    <div class="mt-3 mb-3 p-3 bg-white rounded-lg border-2 border-purple-200 shadow-sm">
-                        <div class="flex items-center gap-2 mb-3 pb-2 border-b border-purple-100">
-                            <i data-lucide="plug" class="w-4 h-4 text-purple-600"></i>
-                            <h3 class="text-xs font-bold text-purple-900 uppercase tracking-wider">MCP Configuration</h3>
+                if (commandHtml || argsHtml || transportHtml || toolsHtml) {
+                    mcpDetails = `
+                        <div class="mt-3 mb-3 p-3 bg-white rounded-lg border-2 border-purple-200 shadow-sm">
+                            <div class="flex items-center gap-2 mb-3 pb-2 border-b border-purple-100">
+                                <i data-lucide="plug" class="w-4 h-4 text-purple-600"></i>
+                                <h3 class="text-xs font-bold text-purple-900 uppercase tracking-wider">MCP Configuration</h3>
+                            </div>
+                            ${commandHtml}
+                            ${argsHtml}
+                            ${transportHtml}
+                            ${toolsHtml}
                         </div>
-                        ${commandHtml}
-                        ${argsHtml}
-                        ${transportHtml}
-                        ${toolsHtml}
-                    </div>
-                `;
+                    `;
+                }
             }
 
             // Explicit Prompts & Workflow Handling
@@ -2378,7 +2380,7 @@
                 let valueHtml = v;
 
                 if (Array.isArray(v)) {
-                    if (k === 'skills' || k === 'subagents' || k === 'sub_agents' || k === 'capabilities') {
+                    if (k === 'skills' || k === 'subagents' || k === 'sub_agents' || k === 'capabilities' || k === 'final_actions') {
                         valueHtml = `<div class="flex flex-wrap gap-1 mt-0.5">` +
                             v.map(item => `<span class="bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0.5 rounded border border-slate-300">${item}</span>`).join('') +
                             `</div>`;

@@ -13,25 +13,29 @@ import (
 	"github.com/sjhoeksma/druppie/core/internal/registry"
 )
 
-// BusinessAnalystExecutor handles business analysis tasks
-type BusinessAnalystExecutor struct {
+// DataScientistExecutor handles data science tasks
+type DataScientistExecutor struct {
 	LLM      llm.Provider
 	Registry *registry.Registry
 }
 
-func (e *BusinessAnalystExecutor) CanHandle(action string) bool {
-	return action == "problem_exploration" ||
-		action == "stakeholder_understanding" ||
-		action == "requirement_structuring" ||
-		action == "epic_definition" ||
-		action == "user_story_refinement" ||
-		action == "validation" ||
-		action == "review" // Business Analyst review
+func (e *DataScientistExecutor) CanHandle(action string) bool {
+	action = strings.ToLower(action)
+	return action == "data_scientist" ||
+		action == "problem_framing" ||
+		action == "data_understanding" ||
+		action == "ds_planning" ||
+		action == "scaffolding" ||
+		action == "ds_implementation" ||
+		action == "ds_validation" ||
+		action == "packaging" ||
+		action == "deployment_prep" ||
+		action == "ds_review"
 }
 
-func (e *BusinessAnalystExecutor) Execute(ctx context.Context, step model.Step, outputChan chan<- string) error {
+func (e *DataScientistExecutor) Execute(ctx context.Context, step model.Step, outputChan chan<- string) error {
 	action := step.Action
-	outputChan <- fmt.Sprintf("BusinessAnalystExecutor: Executing '%s'...", action)
+	outputChan <- fmt.Sprintf("DataScientistExecutor: Executing '%s'...", action)
 
 	// Extract planID
 	planID := ""
@@ -47,7 +51,7 @@ func (e *BusinessAnalystExecutor) Execute(ctx context.Context, step model.Step, 
 	var result string
 	var usage model.TokenUsage
 
-	// Use LLM for analysis tasks
+	// Use LLM for DS tasks
 	if e.LLM != nil {
 		language := ""
 		if l, ok := step.Params["language"].(string); ok {
@@ -58,8 +62,14 @@ func (e *BusinessAnalystExecutor) Execute(ctx context.Context, step model.Step, 
 		var providerName string
 		var agentInstructions string
 
-		if e.Registry != nil && step.AgentID != "" {
-			if agent, err := e.Registry.GetAgent(step.AgentID); err == nil {
+		// Default to 'data_scientist' agent if not specified
+		agentID := step.AgentID
+		if agentID == "" {
+			agentID = "data_scientist"
+		}
+
+		if e.Registry != nil {
+			if agent, err := e.Registry.GetAgent(agentID); err == nil {
 				if agent.Provider != "" {
 					providerName = agent.Provider
 				}
@@ -70,33 +80,37 @@ func (e *BusinessAnalystExecutor) Execute(ctx context.Context, step model.Step, 
 		}
 
 		// Construct System Prompt (Hierarchical: Action Prompt > Agent Instructions > Default)
-		defaultPrompt := "You are a Senior Business Analyst. Analyze the request and provide structured requirements, stories, or validation reports in Markdown format."
+		defaultPrompt := "You are a Senior Data Scientist. Design and implement Python-based data science solutions."
 		if agentInstructions != "" {
 			defaultPrompt = agentInstructions
 		}
-		systemPrompt := GetActionPrompt(e.Registry, step.AgentID, action, defaultPrompt)
+
+		// Use generic GetActionPrompt to load from agent definition
+		systemPrompt := GetActionPrompt(e.Registry, agentID, action, defaultPrompt)
 
 		// Lookup and Append Skill Instructions (Action + Agent Skills)
-		skillInstructions := GetCompositeSkillInstructions(e.Registry, step.AgentID, step.Action)
+		skillInstructions := GetCompositeSkillInstructions(e.Registry, agentID, step.Action)
 
 		if skillInstructions != "" {
 			systemPrompt += skillInstructions
 		}
 
-		// FINAL LANGUAGE ENFORCEMENT: Override English bias
+		// FINAL LANGUAGE ENFORCEMENT
 		if language != "" {
-			systemPrompt += fmt.Sprintf("\n\n### LANGUAGE REQUIREMENT\n**CRITICAL**: The entire response (narrative, labels, notes) MUST be in **%s**.\nDo NOT translate technical terms if they are standard in English (e.g. AWS, Kubernetes), but all explanations must be in %s.", language, language)
+			systemPrompt += fmt.Sprintf("\n\n### LANGUAGE REQUIREMENT\n**CRITICAL**: The entire response (narrative, labels, notes) MUST be in **%s**.\nDo NOT translate technical terms if they are standard in English (e.g. Python, Pandas, AWS), but all explanations must be in %s.", language, language)
 		}
 
 		// Construct User Prompt with Context
 		userPrompt := fmt.Sprintf("Task: %s\n\nContext: %v", action, step.Params)
 
-		// Context Loading: Load previous architectural/analysis files (Session Handling via Filesystem)
+		// Context Loading: Load previous files (Session Handling via Filesystem)
 		filesDir, _ := paths.ResolvePath(".druppie", "plans", planID, "files")
 		if files, err := os.ReadDir(filesDir); err == nil {
 			var fileContext strings.Builder
 			fileContext.WriteString("\n\n--- EXISTING ARTIFACTS ---\n")
 			count := 0
+			// Load top 5 most recent files? Or all? Usually all relevant ones.
+			// For simplicity, we load .md files to understand flow.
 			for _, f := range files {
 				if strings.HasSuffix(f.Name(), ".md") {
 					content, _ := os.ReadFile(filepath.Join(filesDir, f.Name()))
@@ -106,7 +120,7 @@ func (e *BusinessAnalystExecutor) Execute(ctx context.Context, step model.Step, 
 			}
 			if count > 0 {
 				userPrompt += fileContext.String()
-				outputChan <- fmt.Sprintf("BusinessAnalystExecutor: Loaded %d existing artifacts into context.", count)
+				outputChan <- fmt.Sprintf("DataScientistExecutor: Loaded %d existing artifacts into context.", count)
 			}
 		}
 
@@ -118,7 +132,6 @@ func (e *BusinessAnalystExecutor) Execute(ctx context.Context, step model.Step, 
 		outputChan <- fmt.Sprintf("LLM Prompt Length: %d chars.", len(userPrompt))
 
 		var err error
-
 		if providerName != "" {
 			if mgr, ok := e.LLM.(*llm.Manager); ok {
 				result, usage, err = mgr.GenerateWithProvider(ctx, providerName, userPrompt, systemPrompt)
@@ -128,6 +141,7 @@ func (e *BusinessAnalystExecutor) Execute(ctx context.Context, step model.Step, 
 		} else {
 			result, usage, err = e.LLM.Generate(ctx, userPrompt, systemPrompt)
 		}
+
 		if err != nil {
 			outputChan <- fmt.Sprintf("LLM generation failed: %v. Using fallback.", err)
 			result = e.getFallbackResult(action)
@@ -167,6 +181,6 @@ func (e *BusinessAnalystExecutor) Execute(ctx context.Context, step model.Step, 
 	return nil
 }
 
-func (e *BusinessAnalystExecutor) getFallbackResult(action string) string {
-	return fmt.Sprintf("# Analysis Output for %s\n\nTask completed successfully.", action)
+func (e *DataScientistExecutor) getFallbackResult(action string) string {
+	return fmt.Sprintf("# Data Science Output for %s\n\nTask completed successfully.", action)
 }

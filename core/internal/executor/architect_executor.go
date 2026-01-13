@@ -62,6 +62,7 @@ func (e *ArchitectExecutor) Execute(ctx context.Context, step model.Step, output
 		// Lookup Provider and Instructions if AgentID is known
 		var providerName string
 		var agentInstructions string
+		var skillInstructions string
 
 		if e.Registry != nil && step.AgentID != "" {
 			if agent, err := e.Registry.GetAgent(step.AgentID); err == nil {
@@ -74,16 +75,38 @@ func (e *ArchitectExecutor) Execute(ctx context.Context, step model.Step, output
 			}
 		}
 
-		// Construct System Prompt
-		systemPrompt := "You are an Enterprise Architect. Provide a structured architectural output in Markdown format."
-
-		// Use Agent Instructions if available (User Request)
+		// Construct System Prompt (Hierarchical: Action Prompt > Agent Instructions > Default)
+		defaultPrompt := "You are an Enterprise Architect. Provide a structured architectural output in Markdown format."
 		if agentInstructions != "" {
-			systemPrompt = agentInstructions
+			defaultPrompt = agentInstructions
+		}
+		// lookup named action prompt in agent definition
+		systemPrompt := GetActionPrompt(e.Registry, step.AgentID, action, defaultPrompt)
+
+		// Lookup and Append Skill Instructions (Action + Agent Skills)
+		// Optimize Context: Only load heavy Mermaid skill for visualization-heavy actions
+		// This prevents the LLM from being biased towards outputting ONLY diagrams for text-heavy tasks (e.g. Intake, Review).
+		excludedSkills := []string{}
+		isVisualAction := strings.Contains(action, "modeling") || strings.Contains(action, "viewpoint") || strings.Contains(action, "design")
+		if !isVisualAction {
+			excludedSkills = append(excludedSkills, "mermaid")
 		}
 
+		// Lookup and Append Skill Instructions (Action + Agent Skills)
+		skillInstructions = GetCompositeSkillInstructionsWithFilter(e.Registry, step.AgentID, action, excludedSkills)
+		if skillInstructions != "" {
+			systemPrompt += skillInstructions
+		}
+
+		// CRITICAL: Reinforce Agent Persona after Skill Injection
+		systemPrompt += "\n\n### FINAL INSTRUCTION\nYou are an **ARCHITECT** first, and a diagrammer second.\n" +
+			"1. **MANDATORY**: You MUST provide detailed narrative documentation, rationale, and analysis.\n" +
+			"2. **PROHIBITED**: You MUST NOT output a diagram without 500+ words of accompanying text explaining it.\n" +
+			"3. **RELATIONSHIP**: Diagrams are visual aids to support your text, not the output itself."
+
+		// FINAL LANGUAGE ENFORCEMENT: This MUST be the very last instruction to override any English biases in the prompt.
 		if language != "" {
-			systemPrompt = fmt.Sprintf("IMPORTANT: You MUST write in %s language.\n%s", language, systemPrompt)
+			systemPrompt += fmt.Sprintf("\n\n### LANGUAGE REQUIREMENT\n**CRITICAL**: The entire response (narrative, labels, notes) MUST be in **%s**.\nDo NOT translate technical terms if they are standard in English (e.g. AWS, Kubernetes), but all explanations must be in %s.", language, language)
 		}
 
 		// Construct User Prompt with Context
@@ -134,6 +157,11 @@ func (e *ArchitectExecutor) Execute(ctx context.Context, step model.Step, output
 	} else {
 		result = e.getFallbackResult(action)
 	}
+
+	// Sanitize Output: Ensure Markdown Code Block for Mermaid
+	// If the output starts with "mermaid" but doesn't have backticks, fix it.
+	// Also fix common syntax errors (concatenated tokens).
+	result = SanitizeAndFixMarkdown(result)
 
 	// Write to File
 	safeAction := strings.ReplaceAll(step.Action, "/", "-")

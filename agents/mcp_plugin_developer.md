@@ -1,6 +1,7 @@
 ---
 id: mcp_plugin_developer
 name: "MCP Plugin Developer"
+provider: "developer"
 description: "Expert agent for CREATING, testing, and promoting MCP (Model Context Protocol) plugins. Use this agent for ALL MCP plugin tasks, including writing the code from scratch."
 type: execution_agent
 version: 2.1.0

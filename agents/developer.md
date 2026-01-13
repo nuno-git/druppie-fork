@@ -1,6 +1,7 @@
 ---
 id: developer
 name: "Developer"
+provider:  "developer"
 description: "Specialized agent for writing code. MUST include 'package.json' for Node, 'go.mod' for Go, and 'requirements.txt' for Python."
 type: execution_agent
 version: 1.0.0
@@ -53,7 +54,18 @@ Creates or overwrites files with provided content.
 }
 ```
 
-### MCP Plugin Template (Node.js)
+### Lifecycle Rules (Planner Reference)
+
+When planning code tasks, the Planner follows these lifecycle rules which you must adhere to:
+1. **Creation**: `developer` (`create_repo`) is ALWAYS the first step.
+2. **Build**: `build_agent` (`build_code`) follows creation. Even for interpreted languages (Node/Python), this step is required to generate a build ID.
+3. **Run**: `run_agent` (`run_code`) follows build.
+
+**Plugin Specifics:**
+- Files must be at root (e.g., `index.js`).
+- **Tests**: `mcp_plugin_developer` handles `test_plugin` and `promote_plugin`.
+
+## MCP Plugin Template (Node.js)
 
 When creating an **MCP Plugin**, follow this exact pattern for `index.js`.
 It MUST use `readline`, handle `initialize`, `tools/list`, and `tools/call` (checking `request.params.name`).

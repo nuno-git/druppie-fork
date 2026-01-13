@@ -108,12 +108,23 @@ To run the Druppie Core server (including UI and backend logic) using Docker in 
     ```
 
 2.  **Run the container**:
+
+Local build:
     ```bash
     docker run -d \
       -p 8080:80 \
       -v $(pwd)/.druppie:/app/.druppie \
       --name druppie-server \
       druppie
+    ```
+
+ Using prebuild image: 
+    ```bash
+    docker run -d \
+      -p 8080:80 \
+      -v $(pwd)/.druppie:/app/.druppie \
+      --name druppie-server \
+      3pidev/druppie
     ```
 
     *   **Port 8080**: Access the Portal at `http://localhost:8080` and UI at `http://localhost:8080/ui/`.

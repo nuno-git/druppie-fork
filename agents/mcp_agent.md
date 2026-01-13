@@ -1,11 +1,11 @@
 ---
 id: mcp_agent
 name: MCP Specialist
+provider: "developer"
 description: An agent specialized in using external tools via MCP.
 type: execution_agent
 priority: 1.0
-skills:
-  - tool_usage
+skills: [tool_usage]
 ---
 
 # MCP Specialist

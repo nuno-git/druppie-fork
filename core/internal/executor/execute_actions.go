@@ -246,6 +246,12 @@ func (s *StandardActions) ActionCoding(ctx context.Context, step model.Step, out
 		if cleanPath == "." || cleanPath == "/" {
 			continue
 		}
+
+		// Sanitize Markdown files (Mermaid fixes)
+		if filepath.Ext(cleanPath) == ".md" {
+			strContent = SanitizeAndFixMarkdown(strContent)
+		}
+
 		fullPath := filepath.Join(projectRoot, cleanPath)
 
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {

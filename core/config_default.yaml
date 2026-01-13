@@ -24,6 +24,17 @@ llm:
         api_key: ""
         price_per_prompt_token: 0.150    #  per 1M input tokens
         price_per_completion_token: 1.20  #  per 1M output tokens
+      zai:
+        type: "z.ai"
+        api_key: "your-z-ai-key"
+        model: "glm-4" # Optional
+      audio_creator:
+        type: sherpa-onnx
+        #model: en-amy      # This sets the Voice to "en-amy" and infers Language "en"
+        model: nl-nathalie  # nl-nathalie nl-pim nl-ronnie
+        price_per_prompt_token: 0
+        price_per_completion_token: 0
+        price_per_word: 0.001 # 0.1 cent per word
     
 server:
 #    port: "80" Moved to general
@@ -75,6 +86,7 @@ general:
         ensure_availability: 0.01
         check_block_status: 0.005
     server_port: "8080"
+    cleanup_days: 7
     max_agent_selections: 5
     memory:
         max_window_tokens: 12000
@@ -86,6 +98,10 @@ scheduled_jobs:
     schedule: "@daily"
     params:
       days: "7"
+
+  - name: "Registry Auto-Reload"
+    type: "registry_reload"
+    schedule: "@hourly"
 
   # Example LLM Job (Uncomment to use)
   # - name: "Nightly Analysis"

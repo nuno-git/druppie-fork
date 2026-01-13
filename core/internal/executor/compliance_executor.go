@@ -7,11 +7,13 @@ import (
 
 	"github.com/sjhoeksma/druppie/core/internal/llm"
 	"github.com/sjhoeksma/druppie/core/internal/model"
+	"github.com/sjhoeksma/druppie/core/internal/registry"
 )
 
 // ComplianceExecutor handles compliance agent actions
 type ComplianceExecutor struct {
-	LLM llm.Provider
+	LLM      llm.Provider
+	Registry *registry.Registry
 }
 
 func (e *ComplianceExecutor) CanHandle(action string) bool {
@@ -34,8 +36,8 @@ func (e *ComplianceExecutor) Execute(ctx context.Context, step model.Step, outpu
 				language = "English" // Default
 			}
 
-			// Construct System Prompt (Persona + Rules + Output Format)
-			systemPrompt := fmt.Sprintf(`You are a Compliance Officer. Your goal is to analyze deployment configurations for violations of:
+			// Construct System Prompt (Hierarchical)
+			basePrompt := fmt.Sprintf(`You are a Compliance Officer. Your goal is to analyze deployment configurations for violations of:
 - Data residency (EU data stay in EU)
 - Public access to sensitive data (PII)
 - Regulatory frameworks (GDPR, HIPAA, NIS2)
@@ -47,6 +49,23 @@ instructions:
 
 Output format example:
 "[VIOLATION] <Localized Description>"`, language, language, language)
+
+			// 2. Lookup Agent Instructions (Override Base)
+			defaultPrompt := basePrompt
+			if e.Registry != nil && step.AgentID != "" {
+				if agent, err := e.Registry.GetAgent(step.AgentID); err == nil && agent.Instructions != "" {
+					defaultPrompt = fmt.Sprintf("IMPORTANT: You MUST write in %s language.\n%s", language, agent.Instructions)
+				}
+			}
+			systemPrompt := GetActionPrompt(e.Registry, step.AgentID, step.Action, defaultPrompt)
+
+			// 3. Lookup Skill Instructions (Append)
+			// 3. Lookup Skill Instructions (Action + Agent Skills)
+			skillInstructions := GetCompositeSkillInstructions(e.Registry, step.AgentID, step.Action)
+
+			if skillInstructions != "" {
+				systemPrompt += skillInstructions
+			}
 
 			// Construct User Prompt (Specific Task Data)
 			userPrompt := fmt.Sprintf(`Analyze this configuration:
