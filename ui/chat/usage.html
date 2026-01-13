@@ -1,0 +1,17 @@
+<div
+    style="background: rgba(0, 0, 0, 0.2); border: 1px solid var(--glass-border); border-radius: 8px; padding: 10px; font-family: 'Inter', sans-serif;">
+    <div style="font-weight: 600; color: #e2e8f0; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+        📊 Token Usage
+    </div>
+    <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 0.9em; color: #94a3b8;">
+        <span>Prompt:</span> <span
+            style="text-align: right; color: #cbd5e1; font-family: 'JetBrains Mono', monospace;">{{prompt_tokens}}</span>
+        <span>Completion:</span> <span
+            style="text-align: right; color: #cbd5e1; font-family: 'JetBrains Mono', monospace;">{{completion_tokens}}</span>
+        <div style="grid-column: 1 / -1; height: 1px; background: var(--glass-border); margin: 4px 0;"></div>
+        <span style="font-weight: 600; color: #e2e8f0;">Total:</span> <span
+            style="text-align: right; font-weight: 600; color: #e2e8f0; font-family: 'JetBrains Mono', monospace;">{{total_tokens}}</span>
+        <span>Cost:</span> <span
+            style="text-align: right; color: #86efac; font-family: 'JetBrains Mono', monospace;">€{{cost}}</span>
+    </div>
+</div>

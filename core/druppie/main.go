@@ -370,6 +370,18 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 				http.ServeFile(w, r, path)
 			})
 
+			// Serve Chat Templates
+			r.Get("/chat-templates/*", func(w http.ResponseWriter, r *http.Request) {
+				fileName := chi.URLParam(r, "*")
+				path, _ := paths.ResolvePath("ui", "chat", fileName)
+				// Basic security check to prevent directory traversal
+				if strings.Contains(fileName, "..") {
+					http.Error(w, "Invalid path", http.StatusBadRequest)
+					return
+				}
+				http.ServeFile(w, r, path)
+			})
+
 			// Public System Info
 			r.Get("/info", func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -1332,6 +1344,49 @@ Use global flags like --plan-id to resume existing planning tasks or --llm-provi
 						return
 					}
 					w.WriteHeader(http.StatusOK)
+				})
+
+				r.Get("/chat-templates", func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					dir, err := paths.ResolvePath("ui", "chat")
+					if err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+					entries, err := os.ReadDir(dir)
+					if err != nil {
+						// If dir doesn't exist, just return empty list
+						json.NewEncoder(w).Encode([]string{})
+						return
+					}
+					var templates []string
+					for _, e := range entries {
+						if !e.IsDir() && strings.HasSuffix(e.Name(), ".html") {
+							templates = append(templates, e.Name())
+						}
+					}
+					json.NewEncoder(w).Encode(templates)
+				})
+
+				r.Get("/view-templates", func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					dir, err := paths.ResolvePath("ui", "views")
+					if err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+					entries, err := os.ReadDir(dir)
+					if err != nil {
+						json.NewEncoder(w).Encode([]string{})
+						return
+					}
+					var templates []string
+					for _, e := range entries {
+						if !e.IsDir() && strings.HasSuffix(e.Name(), ".html") {
+							templates = append(templates, e.Name())
+						}
+					}
+					json.NewEncoder(w).Encode(templates)
 				})
 
 				r.Get("/plans/{id}/groups", func(w http.ResponseWriter, r *http.Request) {
