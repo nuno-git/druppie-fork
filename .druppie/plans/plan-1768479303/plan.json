@@ -1,0 +1,33 @@
+{
+  "plan_id": "plan-1768479303",
+  "creator_id": "admin",
+  "intent": {
+    "initial_prompt": "PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.",
+    "prompt": "PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.",
+    "action": "",
+    "category": "",
+    "language": ""
+  },
+  "status": "stopped",
+  "steps": [
+    {
+      "step_id": 1,
+      "agent_id": "user",
+      "action": "user_query",
+      "params": null,
+      "result": "PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.",
+      "status": "pending"
+    }
+  ],
+  "selected_agents": null,
+  "total_usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "planning_usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  }
+}

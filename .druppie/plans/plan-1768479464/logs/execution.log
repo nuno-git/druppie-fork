@@ -1,0 +1,904 @@
+[plan-1768479464] Analyzing request...
+--- [Router Analyze] 2026-01-15T12:18:09Z ---
+INPUT:
+--- PROMPT ---
+You are the Router Agent of the Druppie Platform.
+Your job is to analyze the User's input and determine their Intent.
+
+You must output a JSON object adhering to this schema:
+```json
+{
+  "initial_prompt": "The user's original input string",
+  "prompt": "Constructed summary of what the user wants in the user's original language",
+  "action": "create_project | update_project | query_registry | orchestrate_complex | general_chat",
+  "category": "infrastructure | service | search | create content | unknown",
+  "content_type": "video | blog | code | image | audio | ... (optional)",
+  "language": "en | nl | fr | de",
+  "answer": "If action is general_chat, provide the direct answer to the user's question here. Otherwise null."
+}
+```
+
+### Guidelines
+* Ensure the `action` is one of the allowed values.
+* **Orchestration Rules**:
+    * If the user asks to **Check**, **Validate**, **Audit**, or **Verify** a design or compliance, use `orchestrate_complex`.
+    * If the request involves **multiple steps** or **agents**, use `orchestrate_complex`.
+    * If the user wants to **create**, **deploy**, or **build** something, use `create_project`.
+* Use `language` code to detect the user's input language.
+* **IMPORTANT**: The `prompt` field MUST be in the correct language as detected in `language` code. Do NOT translate it to English.
+* Output **ONLY** valid JSON.
+--- END PROMPT ---
+--- INPUT ---
+PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.
+--- END INPUT ---
+OUTPUT:
+--- RESPONSE ---
+{
+  "initial_prompt": "PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.",
+  "prompt": "Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.",
+  "action": "create_project",
+  "category": "service",
+  "content_type": "code",
+  "language": "en",
+  "answer": null
+}
+--- END RESPONSE ---
+
+[plan-1768479464] Intent: create_project
+[plan-1768479464] Generating Plan...
+--- [Agent Selection] 2026-01-15T12:19:35Z ---
+INPUT:
+--- PROMPT ---
+Goal: PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.
+
+Available Agents:
+[build_agent: Specialized agent for building code projects (Node.js, Python, Go) into executable artifacts. mcp_plugin_developer: Expert agent for CREATING, testing, and promoting MCP (Model Context Protocol) plugins. Use this agent for ALL MCP plugin tasks, including writing the code from scratch. tester: QA and testing strategies. Ensures validation and verification. audio_creator: Agent responsible for generating voiceovers and sound effects from a text script. business_analyst: Specialized in eliciting and structuring requirements. developer: Specialized agent for writing code. MUST include 'package.json' for Node, 'go.mod' for Go, and 'requirements.txt' for Python. infrastructure_engineer: Agent responsible for provisioning, deploying, and maintaining infrastructure and applications on Kubernetes. architect: Primary architecture agent for designing complex enterprise systems and solution architectures. Use for multi-service or high-level design tasks. image_creator: Agent responsible for generating individual image assets based on script outlines. native_workflow_engineer: Expert Golang Engineer specialized in converting Agent Definitions into High-Performance Native Code Workflows. Use ONLY when explicitly asked to optimize Druppie agents or when creating complex native workflows. registry_expert: Expert agent for examining the native Druppie registry to find existing components (Agents, MCPs, Skills, Blocks) that match a user request. compliance: Responsible for validating intent and actions against corporate policies (BIO, NIS2, GDPR). data_scientist: Expert in Python data science solution design and implementation. mcp_agent: An agent specialized in using external tools via MCP. run_agent: Specialized agent for running built artifacts or code in a sandboxed environment. skill_executor: A generic agent that executes individual skills like text-to-speech, read_file, etc. based on user request. video_content_creator: Lead agent for Video production. Handles orchestration, scripting, and quality control. video_creator: Agent responsible for generating video assets aligned with audio duration and script content.]
+
+Task: Select the most relevant agents for this goal.
+Rules:
+1. Return exactly one JSON array of strings containing Agent IDs.
+2. Sort the array by relevance (most relevant first).
+3. Select ALL agents necessary for the complete workflow.
+   - **CRITICAL**: If the goal involves writing source code, building software, or technical implementation of apps, YOU MUST INCLUDE 'developer'.
+4. Guidelines:
+   - Video projects -> 'video_content_creator' (This agent handles its own sub-agents like audio/image).
+   - Research/Data -> 'data_scientist'
+   - Infrastructure/Ops -> 'infrastructure_engineer'
+   - Compliance/Policy -> 'compliance'
+   - Architecture -> 'architect'
+   - General/Ambiguous -> 'business_analyst' (Skip if a specialized agent like 'video_content_creator' is selected).
+
+Example: ["business_analyst"]
+--- END PROMPT ---
+OUTPUT:
+--- RESPONSE ---
+["mcp_plugin_developer", "developer"]
+--- END RESPONSE ---
+
+Goal: PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.
+Selected: [mcp_plugin_developer developer]
+(Limited to Top 5)
+
+--- [Planner] 2026-01-15T12:19:35Z ---
+INPUT:
+Context Assembly
+OUTPUT:
+Built context for plan plan-1768479464.
+Included Agents: [mcp_plugin_developer developer]
+Requested Tools: []
+Found Tools/Blocks: [read_file (Read contents of a file) write_file (Write content to a file) list_directory (List files in a directory) create_directory (Create a new directory) move_file (Move or rename a file) read_file (Read contents of a plugin file) write_file (Write content to a plugin file) list_directory (List files in the plugin directory) execute_plugin (Execute the plugin for testing)]
+
+--- [Planner Create] 2026-01-15T12:20:50Z ---
+INPUT:
+--- PROMPT ---
+You are a Planner Agent.
+
+- **Goal**: PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.
+- **Action**: create_project
+- **CRITICAL**: Content params MUST be in language %en%.
+- **Context**:
+  - **Tools**: --- AVAILABLE TOOLS & BLOCKS ---
+[read_file (Read contents of a file) write_file (Write content to a file) list_directory (List files in a directory) create_directory (Create a new directory) move_file (Move or rename a file) read_file (Read contents of a plugin file) write_file (Write content to a plugin file) list_directory (List files in the plugin directory) execute_plugin (Execute the plugin for testing)]
+--- END TOOLS ---
+  - **Agents**: --- AVAILABLE AGENT DEFINITIONS ---
+[ID: mcp_plugin_developer
+  Name: MCP Plugin Developer
+  Type: execution_agent
+  Skills: [create_repo build_code test_plugin promote_plugin]
+  Priority: 100.0
+  Description: Expert agent for CREATING, testing, and promoting MCP (Model Context Protocol) plugins. Use this agent for ALL MCP plugin tasks, including writing the code from scratch.
+  Workflow:
+stateDiagram
+  direction TB
+  state "Create Plugin Code" as Create
+  state "Build Plugin" as Build
+  state "Test via MCP" as Test
+  state "Promote to Core" as Promote
+  
+  [*] --> Create
+  Create --> Build
+  Build --> Test
+  Test --> Promote: Approved
+  Test --> Create: Failed
+  Promote --> [*]
+
+  Directives:
+## Overview
+
+You are the **MCP Plugin Developer**. Your responsibility is to **CREATE**, build, test, and publish MCP plugins.
+You are the AUTHORITY on the MCP protocol in this system.
+
+## Workflow
+
+### 1. Create Plugin Code (`create_repo`)
+
+**Action**: `create_repo`
+**Agent**: `mcp_plugin_developer` (YOU must do this, not the generic developer)
+
+Generate the plugin code. You **MUST** create the following files:
+*   `package.json` (Required)
+*   `index.js` (Required)
+*   `mcp.md` (Required)
+*   `test.md` (Required)
+
+**Dependencies**: Do NOT use external SDKs (like `@mcp/core`) unless installed. Use **Vanilla Node.js** + `readline` (Standard Stdio).
+
+**PLANNER INSTRUCTIONS**:
+*   **Params**: You MUST provide the `files` map with `package.json`, `index.js`, `mcp.md`, and `test.md`.
+*   **Language**: **NODE.JS ONLY**. Do not create `.py` files.
+*   **Content**: Populate `index.js` with the actual logic (using `readline`). Do NOT output placeholders like "logic goes here".
+
+**Example Params**:
+```json
+{
+  "files": {
+    "package.json": "{\"name\": \"my-plugin\", ...}",
+    "index.js": "#!/usr/bin/env node\nconst readline = require('readline');...",
+    "mcp.md": "---\n...",
+    "test.md": "# Tests..."
+  },
+  "repo_name": "my-plugin"
+}
+```
+
+**Required Files:**
+```
+src/
+  index.js             # Main converter logic (MCP server)
+  package.json         # Dependencies and MCP server config
+  README.md            # Documentation
+  test.md              # Test cases and usage examples
+  mcp.md               # MCP server definition
+```
+
+**index.js Template (JSON-RPC via Readline):**
+```javascript
+#!/usr/bin/env node
+const readline = require('readline');
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false
+});
+
+rl.on('line', (line) => {
+  if (!line.trim()) return;
+  try {
+    const request = JSON.parse(line);
+    let response;
+
+    if (request.method === 'initialize') {
+      response = { jsonrpc: '2.0', id: request.id, result: { capabilities: { tools: {} } } };
+    } else if (request.method === 'tools/list') {
+      response = { jsonrpc: '2.0', id: request.id, result: { tools: [
+          // TODO: Define your tools here
+          // { name: "my_tool", description: "..." }
+      ] } };
+    } else if (request.method === 'tools/call') {
+      const toolName = request.params.name;
+      // TODO: Implement tool logic
+      if (toolName === 'my_tool') {
+         // Logic...
+         const result = "success";
+         response = {
+           jsonrpc: '2.0',
+           id: request.id,
+           result: { content: [{ type: "text", text: String(result) }] }
+         };
+      } else {
+        response = { jsonrpc: '2.0', id: request.id, error: { code: -32601, message: "Tool not found" } };
+      }
+    }
+    
+    if (response) console.log(JSON.stringify(response));
+  } catch (e) {
+    console.log(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: "Parse error" } }));
+  }
+});
+```
+
+**mcp.md Template:**
+```markdown
+---
+id: my_plugin
+name: my_plugin
+command: node
+args:
+  - ./.druppie/plugins/my_plugin/index.js
+transport: stdio
+tools:
+  - name: my_tool
+    description: Description of tool
+---
+# My Plugin
+
+Description here.
+
+## Usage Strategies
+...
+```
+
+**IMPORTANT RULES**:
+1. **ADAPT THE CODE**: Do NOT use the "add" or "calculator" example unless the user explicitly asked for a calculator.
+2. **IMPLEMENT LOGIC**: Replace the `// TODO` sections with actual logic relevant to the user's request.
+3. **TEST MATCHING**: Ensure `test.md` tests the ACTUAL tools you defined in `index.js`, not the example tools.
+
+**package.json Template:**
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "bin": {
+    "my-plugin": "./index.js"
+  },
+  "scripts": {
+    "build": "echo \"no build needed\""
+  }
+}
+```
+
+**mcp.md Template:**
+```markdown
+---
+id: my_converter
+name: my_converter
+command: node
+args:
+  - "./.druppie/plugins/my_plugin/index.js"
+transport: stdio
+tools:
+  - name: convert_data
+    description: Converts data from one format to another
+---
+# My Converter
+
+Description of what this plugin does.
+
+## Tools
+
+### convert_data
+Detailed description of the tool and its parameters.
+```
+
+**test.md Template:**
+```markdown
+# My Converter Tests
+
+## Test Case 1: Basic Conversion
+Input: ...
+Expected Output: ...
+
+## Test Case 2: Edge Case
+Input: ...
+Expected Output: ...
+```
+
+### 2. Build Converter (`build_code`)
+
+Build the converter using the standard build process. This creates artifacts in:
+`.druppie/plans/<plan-id>/builds/<build-id>/`
+
+### 3. Test via MCP (`test_plugin`)
+
+**Action**: `test_plugin`
+
+**PLANNER INSTRUCTIONS**:
+*   **Params**:
+    *   `build_id`: Use variable `${BUILD_ID}` (from previous step result).
+    *   `test_cases`: Array of objects `{ "tool": "name", "input": {...}, "expected": {...} }`.
+    *   **Do NOT** use `input` or `tool_name` at the top level.
+
+**Example Params**:
+```json
+{
+  "build_id": "${BUILD_ID}",
+  "test_cases": [
+    {
+      "tool": "add",
+      "input": { "a": 1, "b": 2 },
+      "expected": { "result": "3" }
+    }
+  ]
+}
+```
+
+**Parameters:**
+- `build_id`: The build ID to test
+- `test_cases`: Array of test scenarios (optional - if empty, only structure validation is performed)
+
+The system will:
+1. Validate the plugin structure (package.json, entry point)
+2. Install dependencies if needed (`npm install --production`)
+3. Start an ephemeral MCP server from the build
+4. Initialize the MCP connection
+5. Execute each test case against the plugin
+6. Report pass/fail results
+7. Shut down the MCP server
+
+**Test Case Format:**
+```json
+{
+  "tool": "tool_name",           // Required: Name of the MCP tool to test
+  "input": {                     // Required: Input arguments for the tool
+    "param1": "value1",
+    "param2": "value2"
+  },
+  "expected": {                  // Optional: Expected result (if omitted, just checks for success)
+    "result": "expected_value"
+  }
+}
+```
+
+**Example:**
+```json
+{
+  "action": "test_plugin",
+  "params": {
+    "build_id": "build-123456",
+    "test_cases": [
+      {
+        "tool": "convert_data",
+        "input": {
+          "format": "json",
+          "data": "{\"key\": \"value\"}"
+        },
+        "expected": {
+          "content": [
+            {
+              "type": "text",
+              "text": "key: value"
+            }
+          ]
+        }
+      },
+      {
+        "tool": "validate_data",
+        "input": {
+          "data": "test"
+        }
+        // No expected - just verify the tool executes without error
+      }
+    ]
+  }
+}
+```
+
+**Output:**
+- ✅ Plugin structure validated
+- ✅ Dependencies installed (if needed)
+- ✅ MCP server started
+- ✅ MCP connection initialized
+- `[test-1]` Testing tool: convert_data
+- `[test-1]` ✅ PASS
+- `[test-2]` Testing tool: validate_data
+- `[test-2]` ✅ PASS (result received)
+- Test Results: 2 passed, 0 failed
+- ✅ All tests passed!
+
+### 4. Promote to Core (`promote_plugin`)
+
+**Action**: `promote_plugin`
+
+**Parameters:**
+- `build_id`: The build ID to promote
+- `plugin_name`: Name for the plugin (will be sanitized)
+- `description`: Plugin description
+- `auth_groups`: Optional list of groups that can use this plugin
+
+**Example:**
+```json
+{
+  "action": "promote_plugin",
+  "params": {
+    "build_id": "build_123456",
+    "plugin_name": "json_to_yaml_converter",
+    "description": "Converts JSON data to YAML format",
+    "auth_groups": ["developers", "admin"]
+  }
+}
+```
+
+This will:
+1. Copy the build artifacts to `core/plugins/<plugin-name>/`
+2. Create an MCP server definition in `mcp/<plugin-name>.md`
+3. Register the plugin in the MCP registry
+4. Make it available system-wide
+
+## Best Practices
+
+1. **Naming**: Use snake_case for plugin names (e.g., `json_converter`, `data_transformer`)
+2. **Documentation**: Always include a README.md explaining what the plugin does
+3. **Testing**: Test thoroughly before promoting - promoted plugins are available to all users
+4. **Security**: Consider auth_groups carefully - restrict sensitive converters
+5. **Dependencies**: Keep dependencies minimal and well-maintained
+
+## Example Complete Workflow
+
+```json
+[
+  {
+    "step_id": 1,
+    "agent_id": "developer",
+    "action": "create_repo",
+    "params": {
+      "files": {
+      "files": {
+        "index.js": "#!/usr/bin/env node\n// Converter code here",
+        "package.json": "{...}"
+      }
+      }
+    }
+  },
+  {
+    "step_id": 2,
+    "agent_id": "build_agent",
+    "action": "build_code",
+    "params": {
+      "repo_url": ".druppie/plans/${PLAN_ID}/src"
+    }
+  },
+  {
+    "step_id": 3,
+    "agent_id": "mcp_plugin_developer",
+    "action": "test_plugin",
+    "params": {
+      "build_id": "${BUILD_ID}",
+      "test_cases": [...]
+    }
+  },
+  {
+    "step_id": 4,
+    "agent_id": "mcp_plugin_developer",
+    "action": "promote_plugin",
+    "params": {
+      "build_id": "${BUILD_ID}",
+      "plugin_name": "my_converter",
+      "description": "My awesome converter"
+    }
+  }
+]
+```
+
+## Notes
+
+- Plugins are Node.js based and use the MCP SDK
+- Once promoted, plugins are persistent and available across all plans
+- To update a plugin, create a new version and promote with the same name (overwrites)
+- Promoted plugins are stored in `core/plugins/` and registered in `mcp/` ID: developer
+  Name: Developer
+  Type: execution_agent
+  Skills: [create_repo modify_code]
+  Priority: 10.0
+  Description: Specialized agent for writing code. MUST include 'package.json' for Node, 'go.mod' for Go, and 'requirements.txt' for Python.
+  Workflow:
+graph TD
+    A[Start] --> B{Action is create_repo?}
+    B -- Yes --> C[Validate File Paths]
+    C --> D[Write Content to Disk]
+    D --> E[Return Success]
+    B -- No --> F[End]
+
+  Directives:
+## Overview
+
+You are the Developer Agent. Your responsibility is to CREATE and MODIFY source code files.
+You are the bridge between requirements and the Build Agent. You must generate valid code structures.
+
+## Capabilities
+
+When asked to "create a script", "write code", "make an app", "maak code", "schrijf code", or "maak een applicatie", use the following action:
+
+### `create_repo`
+Creates or overwrites files with provided content.
+
+**Parameters:**
+- `files`: A dictionary/map of files to create, where keys are filenames (relative to project root) and values are **the actual code content as strings**.
+  - **CRITICAL**: You MUST provide the FULL CODE CONTENT for each file. Do NOT use template names or references.
+  - **WRONG**: `"template": "nodejs-hello-world"` ❌
+  - **CORRECT**: `"files": {"app.js": "console.log('Hello')"}` ✅
+  - **TIP**: For Node.js projects, always include a `"build"` script in `package.json` (e.g., `"build": "echo no build needed"` if simple).
+  - **TIP**: For Go projects, always include a `go.mod` file (e.g., `"go.mod": "module main\n\ngo 1.20"`).
+
+**IMPORTANT**: You do NOT execute or test code. You only write it. For execution, rely on `run_agent` or `plugin-converter`.
+
+**Example:**
+```json
+{
+  "action": "create_repo",
+  "params": {
+    "files": {
+      "app.js": "console.log('Hello World');",
+      "package.json": "{\"name\": \"hello\", \"scripts\": {\"start\": \"node app.js\"}}"
+    }
+  }
+}
+```
+
+### Lifecycle Rules (Planner Reference)
+
+When planning code tasks, the Planner follows these lifecycle rules which you must adhere to:
+1. **Creation**: `developer` (`create_repo`) is ALWAYS the first step.
+2. **Build**: `build_agent` (`build_code`) follows creation. Even for interpreted languages (Node/Python), this step is required to generate a build ID.
+3. **Run**: `run_agent` (`run_code`) follows build.
+
+**Plugin Specifics:**
+- Files must be at root (e.g., `index.js`).
+- **Tests**: `mcp_plugin_developer` handles `test_plugin` and `promote_plugin`.
+
+## MCP Plugin Template (Node.js)
+
+When creating an **MCP Plugin**, follow this exact pattern for `index.js`.
+It MUST use `readline`, handle `initialize`, `tools/list`, and `tools/call` (checking `request.params.name`).
+
+```javascript
+#!/usr/bin/env node
+const readline = require('readline');
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false
+});
+
+rl.on('line', (line) => {
+  if (!line.trim()) return;
+  try {
+    const request = JSON.parse(line);
+    let response;
+
+    // 1. Initialize
+    if (request.method === 'initialize') {
+      response = {
+        jsonrpc: '2.0',
+        id: request.id,
+        result: {
+          protocolVersion: '2024-11-05',
+          capabilities: { tools: {} },
+          serverInfo: { name: 'my-plugin', version: '1.0.0' }
+        }
+      };
+    
+    // 2. List Tools
+    } else if (request.method === 'tools/list') {
+      response = {
+        jsonrpc: '2.0',
+        id: request.id,
+        result: {
+          tools: [{
+            name: "add", // Tool Name
+            description: "Adds two numbers",
+            inputSchema: {
+              type: "object",
+              properties: { a: { type: "number" }, b: { type: "number" } },
+              required: ["a", "b"]
+            }
+          }]
+        }
+      };
+
+    // 3. Call Tool
+    } else if (request.method === 'tools/call') {
+      const toolName = request.params.name; // MUST use 'name', not 'tool'
+      const args = request.params.arguments || {};
+
+      if (toolName === 'add') {
+        const result = Number(args.a) + Number(args.b);
+        response = {
+          jsonrpc: '2.0',
+          id: request.id,
+          result: { content: [{ type: "text", text: String(result) }] } // MUST use content array
+        };
+      } else {
+        response = { jsonrpc: '2.0', id: request.id, error: { code: -32601, message: "Tool not found" } };
+      }
+    }
+
+    if (response) console.log(JSON.stringify(response));
+
+  } catch (e) {
+    console.log(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: "Parse error or Internal error" } }));
+  }
+});
+```
+
+**mcp.md Template (for Registry):**
+You MUST create this file so the Planner knows how to use the plugin.
+
+```markdown
+---
+id: my-plugin
+name: my-plugin
+command: node
+args:
+  - ./.druppie/plugins/my-plugin/index.js # MUST start with ./.druppie/plugins/... (No quotes)
+transport: stdio
+tools:
+  - name: add
+    description: Adds two numbers
+---
+# My Plugin
+
+Description here.
+
+### add
+Description...
+
+## Usage Strategies
+Provide examples of WHEN to use this tool.
+- "When user asks to X..."
+```]
+--- END AGENTS ---
+
+### Strategy
+1. **Reuse**: Check 'Available Tools'. Use existing Blocks/Tools over building new ones.
+2. **Availability**: Before using a Service Block, schedule `infrastructure_engineer` -> `ensure_availability`.
+3. **Workflow-Driven (MANDATORY)**:
+   - If an Agent has a `Workflow` (Mermaid), EXECUTE IT EXACTLY.
+   - **Macro Node**: `state "MACRO_EXPAND_LOOP..."` -> Schedule `action: "expand_loop"`.
+   - **Transition**: Follow diagram arrows. Do not invent steps.
+   - **Data Flow**: Pass outputs of state A as params to state B.
+
+### Execution Policy
+Refer to specific Agent descriptions for their lifecycle rules:
+- **Compliance**: See `compliance` agent for Audit/Check rules.
+- **Code/Plugins**: See `developer` agent for `create_repo` -> `build` -> `run` lifecycle.
+
+### Structure Rules
+Output **STRICT JSON ARRAY**. No comments.
+
+**Schema**:
+```json
+{
+  "step_id": 1,
+  "agent_id": "agent_name",
+  "action": "action_name",
+  "params": { ... },
+  "depends_on": [ "previous_action" ]
+}
+```
+
+**Constraints**:
+- **Keys**: `agent_id` must match available agents.
+- **Paths**: Use `${PLAN_ID}` for dynamic paths.
+- **Language**:
+  - `agent_id`, `action`, JSON keys: **ENGLISH**.
+  - `params` text (questions, descriptions): **USER LANGUAGE** (en).
+- **Dependencies**: Every step must have `depends_on`. First step is `[]`.
+
+**Example**:
+```json
+[
+  { "step_id": 1, "agent_id": "architect", "action": "intake", "params": {"topic": "AI"}, "depends_on": [] },
+  { "step_id": 2, "agent_id": "architect", "action": "design", "params": {"style": "modern"}, "depends_on": ["intake"] }
+]
+```
+--- END PROMPT ---
+OUTPUT:
+--- RESPONSE ---
+[
+  {
+    "step_id": 1,
+    "agent_id": "mcp_plugin_developer",
+    "action": "create_repo",
+    "params": {
+      "files": {
+        "index.js": "#!/usr/bin/env node\nconst readline = require('readline');\n\nconst rl = readline.createInterface({\n  input: process.stdin,\n  output: process.stdout,\n  terminal: false\n});\n\nrl.on('line', (line) => {\n  if (!line.trim()) return;\n  try {\n    const request = JSON.parse(line);\n    let response;\n\n    if (request.method === 'initialize') {\n      response = {\n        jsonrpc: '2.0',\n        id: request.id,\n        result: {\n          protocolVersion: '2024-11-05',\n          capabilities: { tools: {} },\n          serverInfo: { name: 'calc-mcp', version: '1.0.0' }\n        }\n      };\n    } else if (request.method === 'tools/list') {\n      response = {\n        jsonrpc: '2.0',\n        id: request.id,\n        result: {\n          tools: [{\n            name: \"add\",\n            description: \"Adds two numbers (a, b) and returns the sum\",\n            inputSchema: {\n              type: \"object\",\n              properties: {\n                a: { type: \"number\", description: \"The first number\" },\n                b: { type: \"number\", description: \"The second number\" }\n              },\n              required: [\"a\", \"b\"]\n            }\n          }]\n        }\n      };\n    } else if (request.method === 'tools/call') {\n      const toolName = request.params.name;\n      const args = request.params.arguments || {};\n\n      if (toolName === 'add') {\n        const sum = Number(args.a) + Number(args.b);\n        response = {\n          jsonrpc: '2.0',\n          id: request.id,\n          result: { content: [{ type: \"text\", text: String(sum) }] }\n        };\n      } else {\n        response = { jsonrpc: '2.0', id: request.id, error: { code: -32601, message: \"Tool not found\" } };\n      }\n    }\n\n    if (response) console.log(JSON.stringify(response));\n  } catch (e) {\n    console.log(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: \"Parse error\" } }));\n  }\n});",
+        "package.json": "{\n  \"name\": \"calc-mcp\",\n  \"version\": \"1.0.0\",\n  \"bin\": {\n    \"calc-mcp\": \"./index.js\"\n  },\n  \"scripts\": {\n    \"build\": \"echo \\\"no build needed\\\"\"\n  }\n}",
+        "mcp.md": "---\nid: calc_mcp\nname: calc_mcp\ncommand: node\nargs:\n  - ./.druppie/plugins/calc-mcp/index.js\ntransport: stdio\ntools:\n  - name: add\n    description: Adds two numbers together\n---\n# Calc MCP\n\nA simple calculator plugin that adds two numbers.",
+        "test.md": "# Calc MCP Tests\n\n## Test Case 1: Basic Addition\nTool: add\nInput: { \"a\": 5, \"b\": 10 }\nExpected Output: \"15\"\n\n## Test Case 2: Negative Numbers\nTool: add\nInput: { \"a\": -5, \"b\": 3 }\nExpected Output: \"-2\"\n\n## Test Case 3: Decimals\nTool: add\nInput: { \"a\": 2.5, \"b\": 3.5 }\nExpected Output: \"6\"",
+        "README.md": "# Calc MCP\n\nThis plugin provides a simple addition tool via the Model Context Protocol."
+      },
+      "repo_name": "calc-mcp"
+    },
+    "depends_on": []
+  },
+  {
+    "step_id": 2,
+    "agent_id": "mcp_plugin_developer",
+    "action": "build_code",
+    "params": {
+      "repo_url": ".druppie/plans/${PLAN_ID}/src/calc-mcp"
+    },
+    "depends_on": ["create_repo"]
+  },
+  {
+    "step_id": 3,
+    "agent_id": "mcp_plugin_developer",
+    "action": "test_plugin",
+    "params": {
+      "build_id": "${BUILD_ID}",
+      "test_cases": [
+        {
+          "tool": "add",
+          "input": { "a": 10, "b": 25 },
+          "expected": { "content": [{ "type": "text", "text": "35" }] }
+        },
+        {
+          "tool": "add",
+          "input": { "a": -5, "b": 5 },
+          "expected": { "content": [{ "type": "text", "text": "0" }] }
+        }
+      ]
+    },
+    "depends_on": ["build_code"]
+  },
+  {
+    "step_id": 4,
+    "agent_id": "mcp_plugin_developer",
+    "action": "promote_plugin",
+    "params": {
+      "build_id": "${BUILD_ID}",
+      "plugin_name": "calc-mcp",
+      "description": "A simple MCP calculator plugin that sums two numbers."
+    },
+    "depends_on": ["test_plugin"]
+  }
+]
+--- END RESPONSE ---
+
+RESULTING PLAN:
+{
+  "plan_id": "plan-1768479464",
+  "creator_id": "user-admin",
+  "intent": {
+    "initial_prompt": "PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.",
+    "prompt": "PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.",
+    "action": "create_project",
+    "category": "service",
+    "content_type": "code",
+    "language": "en"
+  },
+  "status": "created",
+  "steps": [
+    {
+      "step_id": 1,
+      "agent_id": "mcp_plugin_developer",
+      "action": "create_repo",
+      "params": {
+        "files": {
+          "README.md": "# Calc MCP\n\nThis plugin provides a simple addition tool via the Model Context Protocol.",
+          "index.js": "#!/usr/bin/env node\nconst readline = require('readline');\n\nconst rl = readline.createInterface({\n  input: process.stdin,\n  output: process.stdout,\n  terminal: false\n});\n\nrl.on('line', (line) =\u003e {\n  if (!line.trim()) return;\n  try {\n    const request = JSON.parse(line);\n    let response;\n\n    if (request.method === 'initialize') {\n      response = {\n        jsonrpc: '2.0',\n        id: request.id,\n        result: {\n          protocolVersion: '2024-11-05',\n          capabilities: { tools: {} },\n          serverInfo: { name: 'calc-mcp', version: '1.0.0' }\n        }\n      };\n    } else if (request.method === 'tools/list') {\n      response = {\n        jsonrpc: '2.0',\n        id: request.id,\n        result: {\n          tools: [{\n            name: \"add\",\n            description: \"Adds two numbers (a, b) and returns the sum\",\n            inputSchema: {\n              type: \"object\",\n              properties: {\n                a: { type: \"number\", description: \"The first number\" },\n                b: { type: \"number\", description: \"The second number\" }\n              },\n              required: [\"a\", \"b\"]\n            }\n          }]\n        }\n      };\n    } else if (request.method === 'tools/call') {\n      const toolName = request.params.name;\n      const args = request.params.arguments || {};\n\n      if (toolName === 'add') {\n        const sum = Number(args.a) + Number(args.b);\n        response = {\n          jsonrpc: '2.0',\n          id: request.id,\n          result: { content: [{ type: \"text\", text: String(sum) }] }\n        };\n      } else {\n        response = { jsonrpc: '2.0', id: request.id, error: { code: -32601, message: \"Tool not found\" } };\n      }\n    }\n\n    if (response) console.log(JSON.stringify(response));\n  } catch (e) {\n    console.log(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: \"Parse error\" } }));\n  }\n});",
+          "mcp.md": "---\nid: calc_mcp\nname: calc_mcp\ncommand: node\nargs:\n  - ./.druppie/plugins/calc-mcp/index.js\ntransport: stdio\ntools:\n  - name: add\n    description: Adds two numbers together\n---\n# Calc MCP\n\nA simple calculator plugin that adds two numbers.",
+          "package.json": "{\n  \"name\": \"calc-mcp\",\n  \"version\": \"1.0.0\",\n  \"bin\": {\n    \"calc-mcp\": \"./index.js\"\n  },\n  \"scripts\": {\n    \"build\": \"echo \\\"no build needed\\\"\"\n  }\n}",
+          "test.md": "# Calc MCP Tests\n\n## Test Case 1: Basic Addition\nTool: add\nInput: { \"a\": 5, \"b\": 10 }\nExpected Output: \"15\"\n\n## Test Case 2: Negative Numbers\nTool: add\nInput: { \"a\": -5, \"b\": 3 }\nExpected Output: \"-2\"\n\n## Test Case 3: Decimals\nTool: add\nInput: { \"a\": 2.5, \"b\": 3.5 }\nExpected Output: \"6\""
+        },
+        "language": "en",
+        "repo_name": "calc-mcp"
+      },
+      "status": "pending"
+    },
+    {
+      "step_id": 2,
+      "agent_id": "mcp_plugin_developer",
+      "action": "build_code",
+      "params": {
+        "language": "en",
+        "repo_url": ".druppie/plans/${PLAN_ID}/src/calc-mcp"
+      },
+      "status": "pending",
+      "depends_on": [
+        1
+      ]
+    },
+    {
+      "step_id": 3,
+      "agent_id": "mcp_plugin_developer",
+      "action": "test_plugin",
+      "params": {
+        "build_id": "${BUILD_ID}",
+        "language": "en",
+        "test_cases": [
+          {
+            "expected": {
+              "content": [
+                {
+                  "text": "35",
+                  "type": "text"
+                }
+              ]
+            },
+            "input": {
+              "a": 10,
+              "b": 25
+            },
+            "tool": "add"
+          },
+          {
+            "expected": {
+              "content": [
+                {
+                  "text": "0",
+                  "type": "text"
+                }
+              ]
+            },
+            "input": {
+              "a": -5,
+              "b": 5
+            },
+            "tool": "add"
+          }
+        ]
+      },
+      "status": "pending",
+      "depends_on": [
+        2
+      ]
+    },
+    {
+      "step_id": 4,
+      "agent_id": "mcp_plugin_developer",
+      "action": "promote_plugin",
+      "params": {
+        "build_id": "${BUILD_ID}",
+        "description": "A simple MCP calculator plugin that sums two numbers.",
+        "language": "en",
+        "plugin_name": "calc-mcp"
+      },
+      "status": "pending",
+      "depends_on": [
+        3
+      ]
+    }
+  ],
+  "selected_agents": [
+    "mcp_plugin_developer",
+    "developer"
+  ],
+  "total_usage": {
+    "prompt_tokens": 5279,
+    "completion_tokens": 7773,
+    "total_tokens": 13052,
+    "estimated_cost": 0.005346299999999999
+  },
+  "planning_usage": {
+    "prompt_tokens": 5279,
+    "completion_tokens": 7773,
+    "total_tokens": 13052,
+    "estimated_cost": 0.005346299999999999
+  }
+}
+
+[plan-1768479464] Plan created. Starting task...
+[Task Manager] Started task plan-1768479464
+[plan-1768479464] Executing Step 3: create_repo (mcp_plugin_developer)
+[plan-1768479464] Executing Step 4: build_code (mcp_plugin_developer)
+[plan-1768479464] Step 4 Failed: source directory '/app/.druppie/plans/plan-1768479464/src/.druppie/plans/plan-1768479464/src/calc-mcp' does not exist. You must call 'create_repo' before 'build_code'
+[plan-1768479464] Step 4 paused on error. Waiting for user input...
+[plan-1768479464] Step 4 Paused/Failed: build_code
+[plan-1768479464] Status updated to RUNNING (Input received)
+[plan-1768479464] Executing Step 5: test_plugin (mcp_plugin_developer)
+[plan-1768479464] Step 5 Failed: build directory not found: /app/.druppie/plans/plan-1768479464/builds/${BUILD_ID}
+[plan-1768479464] Step 5 paused on error. Waiting for user input...
+[plan-1768479464] Step 5 Paused/Failed: test_plugin
+[plan-1768479464] Status updated to RUNNING (Input received)
+[plan-1768479464] Executing Step 6: promote_plugin (mcp_plugin_developer)
+--- [Planner] 2026-01-15T12:27:38Z ---
+INPUT:
+Auto-Stop
+OUTPUT:
+Detected final action 'promote_plugin' (configured in planner.md). Stopping plan.
+
+[plan-1768479464] Determining next steps...
+[plan-1768479464] All steps completed.

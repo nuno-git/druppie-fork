@@ -1,0 +1,11 @@
+[
+  {
+    "id": "user-admin",
+    "username": "admin",
+    "password_hash": "$2a$10$XEeeHI9QqRvPD.6V0b4iGOn8vSjfaTJPQmw6GhGhPJmsL1KUmw91e",
+    "email": "admin@druppie.local",
+    "groups": [
+      "group-admin"
+    ]
+  }
+]

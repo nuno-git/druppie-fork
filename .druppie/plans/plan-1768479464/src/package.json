@@ -1,0 +1,10 @@
+{
+  "name": "calc-mcp",
+  "version": "1.0.0",
+  "bin": {
+    "calc-mcp": "./index.js"
+  },
+  "scripts": {
+    "build": "echo \"no build needed\""
+  }
+}

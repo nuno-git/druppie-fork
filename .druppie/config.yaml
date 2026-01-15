@@ -1,0 +1,115 @@
+llm:
+    default_provider: zai
+    timeout_seconds: 120
+    retries: 3
+    providers:
+      gemini:
+        type: gemini
+        model: gemini-2.5-flash
+        api_key: ""
+        project_id: "" # (string, NOT number)
+        client_id: ""
+        client_secret: ""
+        price_per_prompt_token: 0.150    #  per 1M input tokens
+        price_per_completion_token: 1.20  #  per 1M output tokens
+      ollama:
+        type: ollama
+        model: qwen3:8b
+        url: http://localhost:11434
+        price_per_prompt_token: 0.150    #  per 1M input tokens
+        price_per_completion_token: 1.20  #  per 1M output tokens
+      openrouter:
+        type: openrouter
+        model: google/gemini-2.0-flash-exp:free
+        api_key: ""
+        price_per_prompt_token: 0.150    #  per 1M input tokens
+        price_per_completion_token: 1.20  #  per 1M output tokens
+      zai:
+        type: zai
+        model: GLM-4.7
+        url: https://api.z.ai/api/coding/paas/v4  # Default Z.AI API endpoint
+        api_key: "2635ecf9728544c1a489c8cac887ed2a.RI4gU9uWbiLYNWJq"  # Add your Z.AI API key here
+        price_per_prompt_token: 0.150    #  per 1M input tokens
+        price_per_completion_token: 1.20  #  per 1M output tokens
+      audio_creator:
+        type: sherpa-onnx
+        #model: en-amy      # This sets the Voice to "en-amy" and infers Language "en"
+        model: nl-nathalie  # nl-nathalie nl-pim nl-ronnie
+        price_per_prompt_token: 0
+        price_per_completion_token: 0
+        price_per_word: 0.001 # 0.1 cent per word
+    
+server:
+#    port: "80" Moved to general
+build:
+# ... keep build ...
+    default_provider: local
+    providers:
+      tekton:
+        type: tekton
+        namespace: default
+      local:
+        type: local
+        working_dir: .
+      docker:
+        type: docker
+        working_dir: .
+git:
+    provider: ""
+    url: ""
+    user: ""
+    token: ""
+    
+iam: # ProviderOptions: local, keycloak, demo
+    provider: local
+
+# memory: Moved to general
+# planner: Moved to general
+
+approval_groups:
+    security: ["ciso", "group-admin"]
+    legal: ["legal", "group-admin"]
+    compliance: ["compliance","group-admin"]
+    privacy: ["privacy","group-admin"]
+
+general:
+    max_unattended_cost: 1.0 # Pause task if cost since last interaction exceeds this amount (Euros)
+    internal_costs:
+        create_repo: 0.05
+        modify_code: 0.05
+        build_code: 0.02
+        run_code: 0.01
+        read_file: 0.005
+        analyze_file: 0.01
+        create_project: 0.01
+        coding: 0.05
+        validation: 0.01
+        deployment: 0.05
+        verification: 0.01
+        ensure_availability: 0.01
+        check_block_status: 0.005
+    server_port: "8080"
+    cleanup_days: 7
+    max_agent_selections: 5
+    memory:
+        max_window_tokens: 12000
+        summarize_after: 20
+
+scheduled_jobs:
+  - name: "Standard Cleanup"
+    type: "cleanup"
+    schedule: "@daily"
+    params:
+      days: "7"
+
+  - name: "Registry Auto-Reload"
+    type: "registry_reload"
+    schedule: "@hourly"
+
+  # Example LLM Job (Uncomment to use)
+  # - name: "Nightly Analysis"
+  #   type: "llm"
+  #   schedule: "0 2 * * *" # Every day at 2 AM
+  #   params:
+  #     plan_id: "analysis_job"
+  #     prompt: "Analyze logs and update summary"

@@ -1,0 +1,33 @@
+{
+  "plan_id": "plan-1768479363",
+  "creator_id": "admin",
+  "intent": {
+    "initial_prompt": "test",
+    "prompt": "test",
+    "action": "",
+    "category": "",
+    "language": ""
+  },
+  "status": "stopped",
+  "steps": [
+    {
+      "step_id": 1,
+      "agent_id": "user",
+      "action": "user_query",
+      "params": null,
+      "result": "test",
+      "status": "pending"
+    }
+  ],
+  "selected_agents": null,
+  "total_usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "planning_usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  }
+}

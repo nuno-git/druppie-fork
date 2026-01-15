@@ -1,0 +1,8 @@
+id: calc-mcp
+name: calc-mcp
+description: A simple MCP calculator plugin that sums two numbers.
+type: tool
+capabilities: []
+inputs: []
+outputs: []
+git_repo: ""

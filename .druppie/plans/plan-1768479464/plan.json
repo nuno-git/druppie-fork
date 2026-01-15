@@ -1,0 +1,169 @@
+{
+  "plan_id": "plan-1768479464",
+  "creator_id": "admin",
+  "intent": {
+    "initial_prompt": "PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.",
+    "prompt": "PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.",
+    "action": "create_project",
+    "category": "service",
+    "content_type": "code",
+    "language": "en"
+  },
+  "status": "completed",
+  "steps": [
+    {
+      "step_id": 1,
+      "agent_id": "user",
+      "action": "user_query",
+      "params": null,
+      "result": "PLUGIN:Create a new MCP plugin named 'calc-mcp' with an 'add' tool that sums two numbers (a, b). Test and promote it.",
+      "status": "completed",
+      "usage": {
+        "prompt_tokens": 368,
+        "completion_tokens": 1714,
+        "total_tokens": 2082,
+        "estimated_cost": 0.002112
+      }
+    },
+    {
+      "step_id": 2,
+      "agent_id": "planner",
+      "action": "generate_plan",
+      "params": null,
+      "result": "Plan generated.",
+      "status": "completed",
+      "usage": {
+        "prompt_tokens": 5279,
+        "completion_tokens": 7773,
+        "total_tokens": 13052,
+        "estimated_cost": 0.005346299999999999
+      }
+    },
+    {
+      "step_id": 3,
+      "agent_id": "mcp_plugin_developer",
+      "action": "create_repo",
+      "params": {
+        "files": {
+          "README.md": "# Calc MCP\n\nThis plugin provides a simple addition tool via the Model Context Protocol.",
+          "index.js": "#!/usr/bin/env node\nconst readline = require('readline');\n\nconst rl = readline.createInterface({\n  input: process.stdin,\n  output: process.stdout,\n  terminal: false\n});\n\nrl.on('line', (line) =\u003e {\n  if (!line.trim()) return;\n  try {\n    const request = JSON.parse(line);\n    let response;\n\n    if (request.method === 'initialize') {\n      response = {\n        jsonrpc: '2.0',\n        id: request.id,\n        result: {\n          protocolVersion: '2024-11-05',\n          capabilities: { tools: {} },\n          serverInfo: { name: 'calc-mcp', version: '1.0.0' }\n        }\n      };\n    } else if (request.method === 'tools/list') {\n      response = {\n        jsonrpc: '2.0',\n        id: request.id,\n        result: {\n          tools: [{\n            name: \"add\",\n            description: \"Adds two numbers (a, b) and returns the sum\",\n            inputSchema: {\n              type: \"object\",\n              properties: {\n                a: { type: \"number\", description: \"The first number\" },\n                b: { type: \"number\", description: \"The second number\" }\n              },\n              required: [\"a\", \"b\"]\n            }\n          }]\n        }\n      };\n    } else if (request.method === 'tools/call') {\n      const toolName = request.params.name;\n      const args = request.params.arguments || {};\n\n      if (toolName === 'add') {\n        const sum = Number(args.a) + Number(args.b);\n        response = {\n          jsonrpc: '2.0',\n          id: request.id,\n          result: { content: [{ type: \"text\", text: String(sum) }] }\n        };\n      } else {\n        response = { jsonrpc: '2.0', id: request.id, error: { code: -32601, message: \"Tool not found\" } };\n      }\n    }\n\n    if (response) console.log(JSON.stringify(response));\n  } catch (e) {\n    console.log(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: \"Parse error\" } }));\n  }\n});",
+          "mcp.md": "---\nid: calc_mcp\nname: calc_mcp\ncommand: node\nargs:\n  - ./.druppie/plugins/calc-mcp/index.js\ntransport: stdio\ntools:\n  - name: add\n    description: Adds two numbers together\n---\n# Calc MCP\n\nA simple calculator plugin that adds two numbers.",
+          "package.json": "{\n  \"name\": \"calc-mcp\",\n  \"version\": \"1.0.0\",\n  \"bin\": {\n    \"calc-mcp\": \"./index.js\"\n  },\n  \"scripts\": {\n    \"build\": \"echo \\\"no build needed\\\"\"\n  }\n}",
+          "test.md": "# Calc MCP Tests\n\n## Test Case 1: Basic Addition\nTool: add\nInput: { \"a\": 5, \"b\": 10 }\nExpected Output: \"15\"\n\n## Test Case 2: Negative Numbers\nTool: add\nInput: { \"a\": -5, \"b\": 3 }\nExpected Output: \"-2\"\n\n## Test Case 3: Decimals\nTool: add\nInput: { \"a\": 2.5, \"b\": 3.5 }\nExpected Output: \"6\""
+        },
+        "language": "en",
+        "plan_id": "plan-1768479464",
+        "repo_name": "calc-mcp"
+      },
+      "status": "completed",
+      "usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "estimated_cost": 0.05
+      }
+    },
+    {
+      "step_id": 4,
+      "agent_id": "mcp_plugin_developer",
+      "action": "build_code",
+      "params": {
+        "language": "en",
+        "plan_id": "plan-1768479464",
+        "repo_url": ".druppie/plans/plan-1768479464/src/calc-mcp"
+      },
+      "result": "/accept",
+      "error": "source directory '/app/.druppie/plans/plan-1768479464/src/.druppie/plans/plan-1768479464/src/calc-mcp' does not exist. You must call 'create_repo' before 'build_code'",
+      "status": "completed",
+      "depends_on": [
+        3
+      ]
+    },
+    {
+      "step_id": 5,
+      "agent_id": "mcp_plugin_developer",
+      "action": "test_plugin",
+      "params": {
+        "build_id": "${BUILD_ID}",
+        "language": "en",
+        "plan_id": "plan-1768479464",
+        "test_cases": [
+          {
+            "expected": {
+              "content": [
+                {
+                  "text": "35",
+                  "type": "text"
+                }
+              ]
+            },
+            "input": {
+              "a": 10,
+              "b": 25
+            },
+            "tool": "add"
+          },
+          {
+            "expected": {
+              "content": [
+                {
+                  "text": "0",
+                  "type": "text"
+                }
+              ]
+            },
+            "input": {
+              "a": -5,
+              "b": 5
+            },
+            "tool": "add"
+          }
+        ]
+      },
+      "result": "/accept",
+      "error": "build directory not found: /app/.druppie/plans/plan-1768479464/builds/${BUILD_ID}",
+      "status": "completed",
+      "depends_on": [
+        4
+      ]
+    },
+    {
+      "step_id": 6,
+      "agent_id": "mcp_plugin_developer",
+      "action": "promote_plugin",
+      "params": {
+        "build_id": "${BUILD_ID}",
+        "description": "A simple MCP calculator plugin that sums two numbers.",
+        "language": "en",
+        "plan_id": "plan-1768479464",
+        "plugin_name": "calc-mcp"
+      },
+      "status": "completed",
+      "depends_on": [
+        5
+      ],
+      "usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0
+      }
+    }
+  ],
+  "selected_agents": [
+    "mcp_plugin_developer",
+    "developer"
+  ],
+  "total_usage": {
+    "prompt_tokens": 5647,
+    "completion_tokens": 9487,
+    "total_tokens": 15134,
+    "estimated_cost": 0.057458300000000004
+  },
+  "planning_usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "total_cost": 0.057458300000000004,
+  "last_interaction_total_cost": 0.057458300000000004
+}

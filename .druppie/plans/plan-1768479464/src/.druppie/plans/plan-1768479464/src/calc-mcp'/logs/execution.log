@@ -1,0 +1,1 @@
+Message: Error: source directory '/app/.druppie/plans/plan-1768479464/src/.druppie/plans/plan-1768479464/src/calc-mcp' does not exist. You must call 'create_repo' before 'build_code'

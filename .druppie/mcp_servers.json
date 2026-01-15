@@ -1,0 +1,11 @@
+[
+  {
+    "name": "calc-mcp",
+    "command": "node",
+    "args": [
+      "./.druppie/plugins/calc-mcp/index.js"
+    ],
+    "type": "dynamic",
+    "category": "plugin"
+  }
+]
