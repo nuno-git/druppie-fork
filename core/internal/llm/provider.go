@@ -132,9 +132,9 @@ func NewManager(ctx context.Context, cfg config.LLMConfig) (*Manager, error) {
 		case "z.ai", "zai":
 			model := pCfg.Model
 			if model == "" {
-				model = "glm-4"
+				model = "GLM-4.7"
 			}
-			baseURL := "https://api.z.ai/api/paas/v4"
+			baseURL := "https://api.z.ai/api/coding/paas/v4"
 			if pCfg.URL != "" {
 				baseURL = pCfg.URL
 			}
