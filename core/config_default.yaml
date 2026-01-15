@@ -27,7 +27,7 @@ llm:
       zai:
         type: "z.ai"
         api_key: "your-z-ai-key"
-        model: "glm-4" # Optional
+        model: "GLM-4.7" # Optional
       audio_creator:
         type: sherpa-onnx
         #model: en-amy      # This sets the Voice to "en-amy" and infers Language "en"
