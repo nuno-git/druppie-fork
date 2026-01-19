@@ -5,7 +5,7 @@ id: filesystem
 name: Filesystem
 description: File system operations (read, write, move, delete)
 transport: stdio
-command: python
+command: python3
 args:
   - -m
   - druppie.mcp.servers.filesystem

@@ -1,6 +1,6 @@
 """Core data models for Druppie Governance Platform.
 
-These models support the AI team in building solutions for end users.
+Simplified architecture with autonomous agents and predefined workflows.
 """
 
 from datetime import datetime
@@ -13,16 +13,14 @@ from pydantic import BaseModel, Field
 # --- Enums ---
 
 
-class StepStatus(str, Enum):
-    """Status of a step in an execution plan."""
+class TaskStatus(str, Enum):
+    """Status of a task assigned to an agent."""
 
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
-    WAITING_INPUT = "waiting_input"
-    SKIPPED = "skipped"
-    CANCELLED = "cancelled"
+    BLOCKED = "blocked"  # Waiting on dependency
 
 
 class PlanStatus(str, Enum):
@@ -32,8 +30,6 @@ class PlanStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
-    WAITING_INPUT = "waiting_input"
 
 
 class AgentType(str, Enum):
@@ -45,12 +41,10 @@ class AgentType(str, Enum):
 
 
 class IntentAction(str, Enum):
-    """Possible actions from intent analysis."""
+    """Possible actions from intent analysis - simplified to 3 options."""
 
     CREATE_PROJECT = "create_project"
     UPDATE_PROJECT = "update_project"
-    QUERY_REGISTRY = "query_registry"
-    ORCHESTRATE_COMPLEX = "orchestrate_complex"
     GENERAL_CHAT = "general_chat"
 
 
@@ -79,184 +73,162 @@ class TokenUsage(BaseModel):
 class Intent(BaseModel):
     """Analyzed user intent from the Router.
 
-    The Router analyzes user input and produces this structured intent
-    that the Planner uses to generate an execution plan.
+    The Router analyzes user input and classifies it as one of 3 actions:
+    - CREATE_PROJECT: Build something new
+    - UPDATE_PROJECT: Modify existing project
+    - GENERAL_CHAT: Answer questions, no action needed
     """
 
     initial_prompt: str  # Original user input
     prompt: str  # Summarized intent
     action: IntentAction = IntentAction.GENERAL_CHAT
-    category: str = "unknown"  # infrastructure, service, search, create_content
-    content_type: str | None = None  # video, blog, code, image, audio
     language: str = "en"
     answer: str | None = None  # Direct answer if general_chat
 
-    # Additional context extracted
-    entities: dict[str, Any] = Field(default_factory=dict)
+    # Clarification support
+    clarification_needed: bool = False
+    clarification_question: str | None = None
+
+    # Project context extracted from the prompt
+    project_context: dict[str, Any] = Field(default_factory=dict)
+    # e.g., {"repo_url": "...", "project_name": "...", "task_description": "..."}
 
 
 # --- Agent Definition ---
 
 
 class AgentDefinition(BaseModel):
-    """Definition of an agent that can execute steps.
+    """Definition of an autonomous agent.
 
-    Agents are specialized roles that the AI team uses to build solutions.
-    Examples: developer, architect, business_analyst, compliance
+    Agents receive natural language tasks and use MCPs to complete them.
+    They decide when they're done and report results back.
     """
 
     id: str
     name: str
     type: AgentType = AgentType.EXECUTION_AGENT
     description: str = ""
-    instructions: str = ""  # System prompt for this agent
+    system_prompt: str = ""  # Instructions for the agent
+
+    # MCP servers this agent can use (references MCP registry IDs)
+    mcps: list[str] = Field(default_factory=list)
 
     # LLM configuration
     provider: str | None = None  # Override default LLM provider
     model: str | None = None  # Override default model
 
-    # Capabilities
-    skills: list[str] = Field(default_factory=list)  # Actions this agent can perform
-    tools: list[str] = Field(default_factory=list)  # MCP tools this agent can use
-
-    # Orchestration
-    sub_agents: list[str] = Field(default_factory=list)  # Agents this orchestrates
-    workflow: str | None = None  # Mermaid diagram of agent workflow
-
-    # Prioritization
-    priority: float = 1.0
-
-    # Special actions
-    final_actions: list[str] = Field(default_factory=list)  # Actions that end the plan
+    # Execution limits
+    max_iterations: int = 10  # Max tool calls before stopping
 
     # Access control
     auth_groups: list[str] = Field(default_factory=list)
 
 
-# --- Step ---
+# --- Agent Task & Result ---
 
 
-class Step(BaseModel):
-    """A single step in an execution plan.
+class AgentResult(BaseModel):
+    """Result from an autonomous agent execution."""
 
-    Steps are created by the Planner and executed by Executors.
-    Each step is assigned to an agent and has a specific action.
+    success: bool
+    summary: str  # What the agent accomplished (or why it failed)
+    artifacts: list[str] = Field(default_factory=list)  # Paths to created files
+    data: dict[str, Any] = Field(default_factory=dict)  # Structured output
+    error: str | None = None
+    token_usage: TokenUsage = Field(default_factory=TokenUsage)
+
+
+class AgentTask(BaseModel):
+    """A task assigned to an autonomous agent.
+
+    Unlike old Steps with specific actions, tasks are natural language
+    descriptions that agents interpret and execute autonomously.
     """
 
-    id: int  # Sequential ID within the plan
-    agent_id: str  # Which agent executes this step
-    action: str  # Action to perform (e.g., "create_repo", "compliance_check")
-    params: dict[str, Any] = Field(default_factory=dict)
+    id: str  # Unique task ID
+    agent_id: str  # Which agent executes this task
+    description: str  # Natural language description of what to do
+
+    # Dependencies for parallel execution
+    depends_on: list[str] = Field(default_factory=list)  # Task IDs
+
+    # Context from previous tasks or workflow
+    context: dict[str, Any] = Field(default_factory=dict)
 
     # Status tracking
-    status: StepStatus = StepStatus.PENDING
-    result: Any | None = None
-    error: str | None = None
-
-    # Dependencies
-    depends_on: list[int] = Field(default_factory=list)  # Step IDs this depends on
-
-    # Human-in-the-loop
-    requires_approval: bool = False
-    assigned_group: str | None = None
-    approved_by: str | None = None
-
-    # Token usage for this step
-    usage: TokenUsage = Field(default_factory=TokenUsage)
+    status: TaskStatus = TaskStatus.PENDING
+    result: AgentResult | None = None
 
     # Timestamps
     started_at: datetime | None = None
     completed_at: datetime | None = None
 
 
-# --- Execution Plan ---
+# --- Workflow Step ---
 
 
-class Plan(BaseModel):
-    """An execution plan created from user intent.
+class WorkflowStepType(str, Enum):
+    """Type of workflow step."""
 
-    The Planner creates plans from analyzed intent.
-    The Task Manager executes plans step by step.
+    MCP = "mcp"  # Direct MCP tool call
+    AGENT = "agent"  # Agent task execution
+    CONDITION = "condition"  # Conditional branching
+
+
+class WorkflowStep(BaseModel):
+    """A step in a predefined workflow.
+
+    Workflows are sequences of steps that can be:
+    - MCP calls (direct tool invocation)
+    - Agent tasks (autonomous execution)
+    - Conditional branches
     """
 
     id: str
     name: str
-    description: str | None = None
+    type: WorkflowStepType = WorkflowStepType.AGENT
 
-    # Status
-    status: PlanStatus = PlanStatus.PENDING
+    # For MCP steps
+    mcp_tool: str | None = None  # e.g., "git.clone"
+    params: dict[str, str] = Field(default_factory=dict)  # Template with {var}
 
-    # Intent that created this plan
-    intent: Intent | None = None
+    # For Agent steps
+    agent_id: str | None = None
+    task_template: str | None = None  # Template for task description
 
-    # Steps to execute
-    steps: list[Step] = Field(default_factory=list)
+    # Flow control
+    on_success: str | None = None  # Next step ID
+    on_failure: str | None = None  # Failure handler step ID
 
-    # Agents selected for this plan
-    selected_agents: list[str] = Field(default_factory=list)
-
-    # Context
-    input_data: dict[str, Any] = Field(default_factory=dict)
-    output_data: dict[str, Any] = Field(default_factory=dict)
-
-    # Project context (if creating/updating a project)
-    project_id: str | None = None
-    project_path: str | None = None
-
-    # Token usage totals
-    total_usage: TokenUsage = Field(default_factory=TokenUsage)
-
-    # Metadata
-    created_by: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-    # Feedback
-    feedback: list["FeedbackItem"] = Field(default_factory=list)
-
-
-# --- Feedback ---
-
-
-class FeedbackItem(BaseModel):
-    """Feedback from users on plan execution."""
-
-    id: str
-    step_id: int | None = None
-    feedback_type: str  # "correct", "incorrect", "partial"
-    comment: str | None = None
-    expected_output: dict[str, Any] | None = None
-    created_by: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Retry logic
+    retry_count: int = 0
+    max_retries: int = 3
 
 
 # --- Workflow Definition ---
 
 
 class WorkflowDefinition(BaseModel):
-    """Definition of a reusable workflow.
+    """Definition of a predefined workflow.
 
-    Workflows can be scheduled or triggered manually.
-    They create Plans for each execution.
+    Workflows are sequences of steps for complex operations like:
+    - Coding: clone → branch → TDD → code → push → build → e2e
+    - Deployment: build → test → deploy → verify
     """
 
     id: str
     name: str
-    description: str | None = None
-    version: str = "1.0.0"
+    description: str = ""
 
-    # Status for governance
-    status: str = "draft"  # draft, review, approved, production, deprecated
+    # Keywords that help the planner select this workflow
+    trigger_keywords: list[str] = Field(default_factory=list)
 
-    # Trigger configuration
-    schedule: str | None = None  # Cron expression
-    trigger_type: str = "manual"  # manual, schedule, webhook
+    # MCP servers required by this workflow
+    required_mcps: list[str] = Field(default_factory=list)
 
-    # The graph definition (LangGraph compatible)
-    graph_definition: dict[str, Any] = Field(default_factory=dict)
-
-    # MCP tools this workflow needs
-    required_tools: list[str] = Field(default_factory=list)
+    # Step definitions
+    entry_point: str  # ID of the first step
+    steps: dict[str, WorkflowStep] = Field(default_factory=dict)
 
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -270,8 +242,11 @@ class WorkflowRun(BaseModel):
     workflow_id: str
     status: str = "running"  # running, completed, failed
 
-    # All plans created during this run
-    plan_ids: list[str] = Field(default_factory=list)
+    # Context data accumulated during the run
+    context: dict[str, Any] = Field(default_factory=dict)
+
+    # Current step being executed
+    current_step_id: str | None = None
 
     # Input that triggered the run
     trigger_input: dict[str, Any] = Field(default_factory=dict)
@@ -279,6 +254,56 @@ class WorkflowRun(BaseModel):
     # Timestamps
     started_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = None
+
+
+# --- Plan ---
+
+
+class PlanType(str, Enum):
+    """Type of plan execution."""
+
+    WORKFLOW = "workflow"  # Execute a predefined workflow
+    AGENTS = "agents"  # Execute agent tasks directly
+
+
+class Plan(BaseModel):
+    """An execution plan created from user intent.
+
+    Plans can be either:
+    - Workflow-based: Execute a predefined workflow
+    - Agent-based: Execute agent tasks directly
+    """
+
+    id: str
+    name: str
+    description: str | None = None
+
+    # What type of plan
+    plan_type: PlanType = PlanType.AGENTS
+
+    # Status
+    status: PlanStatus = PlanStatus.PENDING
+
+    # Intent that created this plan
+    intent: Intent | None = None
+
+    # For workflow-based plans
+    workflow_id: str | None = None
+    workflow_run: WorkflowRun | None = None
+
+    # For agent-based plans
+    tasks: list[AgentTask] = Field(default_factory=list)
+
+    # Project context
+    project_context: dict[str, Any] = Field(default_factory=dict)
+
+    # Token usage totals
+    total_usage: TokenUsage = Field(default_factory=TokenUsage)
+
+    # Metadata
+    created_by: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # --- Chat Message ---
@@ -309,7 +334,3 @@ class ChatCompletionResponse(BaseModel):
     content: str
     intent: Intent | None = None
     status: str  # "completed", "planning", "executing"
-
-
-# Update forward references
-Plan.model_rebuild()
