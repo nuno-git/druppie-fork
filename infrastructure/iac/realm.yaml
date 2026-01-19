@@ -1,0 +1,170 @@
+# Druppie Governance Platform - Keycloak Realm Configuration
+
+realm: druppie
+displayName: Druppie Governance Platform
+displayNameHtml: "<b>Druppie</b> Governance Platform"
+enabled: true
+
+# Login settings
+registrationAllowed: false
+resetPasswordAllowed: true
+rememberMe: true
+loginWithEmailAllowed: true
+duplicateEmailsAllowed: false
+
+# Token settings
+accessTokenLifespan: 3600
+ssoSessionIdleTimeout: 1800
+ssoSessionMaxLifespan: 36000
+
+# Brute force protection
+bruteForceProtected: true
+permanentLockout: false
+maxFailureWaitSeconds: 900
+minimumQuickLoginWaitSeconds: 60
+waitIncrementSeconds: 60
+quickLoginCheckMilliSeconds: 1000
+maxDeltaTimeSeconds: 43200
+failureFactor: 5
+
+# Password policy
+passwordPolicy: "length(8) and upperCase(1) and lowerCase(1) and digits(1)"
+
+# SMTP settings (configure for production)
+smtpServer:
+  host: ""
+  port: ""
+  from: ""
+  auth: false
+
+# Default roles for new users
+defaultRoles:
+  - viewer
+
+# Roles
+roles:
+  realm:
+    - name: admin
+      description: Platform administrator with full access
+      composite: true
+      composites:
+        realm:
+          - developer
+          - architect
+          - infra-engineer
+          - product-owner
+          - compliance-officer
+
+    - name: developer
+      description: Software developer - can create/modify code
+
+    - name: architect
+      description: System architect - can approve technical designs
+
+    - name: infra-engineer
+      description: Infrastructure engineer - can approve deployments
+
+    - name: product-owner
+      description: Product owner - can approve features
+
+    - name: compliance-officer
+      description: Compliance officer - can approve regulatory changes
+
+    - name: viewer
+      description: Read-only access
+
+# Client scopes
+clientScopes:
+  - name: druppie-roles
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "true"
+    protocolMappers:
+      - name: realm-roles
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-realm-role-mapper
+        consentRequired: false
+        config:
+          multivalued: "true"
+          userinfo.token.claim: "true"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          claim.name: "realm_access.roles"
+          jsonType.label: "String"
+
+  - name: mcp-permissions
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+    protocolMappers:
+      - name: mcp-permissions-mapper
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-attribute-mapper
+        config:
+          userinfo.token.claim: "true"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          claim.name: "mcp_permissions"
+          jsonType.label: "JSON"
+
+# Clients
+clients:
+  - clientId: druppie-frontend
+    name: Druppie Frontend
+    description: Druppie Web Application
+    enabled: true
+    publicClient: true
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: true
+    serviceAccountsEnabled: false
+    protocol: openid-connect
+    rootUrl: http://localhost:5173
+    baseUrl: /
+    redirectUris:
+      - http://localhost:5173/*
+    webOrigins:
+      - http://localhost:5173
+    defaultClientScopes:
+      - web-origins
+      - profile
+      - roles
+      - email
+      - druppie-roles
+      - mcp-permissions
+
+  - clientId: druppie-backend
+    name: Druppie Backend API
+    description: Druppie Backend Service
+    enabled: true
+    publicClient: false
+    standardFlowEnabled: false
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: true
+    serviceAccountsEnabled: true
+    protocol: openid-connect
+    secret: ${KEYCLOAK_CLIENT_SECRET}
+    defaultClientScopes:
+      - profile
+      - roles
+      - email
+      - druppie-roles
+      - mcp-permissions
+
+  - clientId: gitea
+    name: Gitea Git Server
+    description: Gitea OAuth2 Integration
+    enabled: true
+    publicClient: false
+    standardFlowEnabled: true
+    implicitFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    protocol: openid-connect
+    rootUrl: http://localhost:3000
+    redirectUris:
+      - http://localhost:3000/user/oauth2/keycloak/callback
+    webOrigins:
+      - http://localhost:3000
+    secret: ${GITEA_CLIENT_SECRET}

@@ -1,0 +1,259 @@
+# Druppie Governance Platform - Users & Roles Configuration
+# This file defines users, roles, and MCP permissions
+
+# =============================================================================
+# REALM ROLES (Governance Roles)
+# =============================================================================
+roles:
+  # Core governance roles
+  - name: admin
+    description: Platform administrator with full access
+    composite: true
+    composites:
+      - developer
+      - architect
+      - infra-engineer
+      - product-owner
+      - compliance-officer
+
+  - name: developer
+    description: Software developer - can create/modify code
+    mcpPermissions:
+      - filesystem.read
+      - filesystem.write
+      - shell.run
+      - git.clone
+      - git.commit
+      - git.push
+
+  - name: architect
+    description: System architect - can approve technical designs
+    mcpPermissions:
+      - filesystem.read
+      - filesystem.write
+      - shell.run
+      - git.*
+      - docker.build
+
+  - name: infra-engineer
+    description: Infrastructure engineer - can approve deployments
+    mcpPermissions:
+      - docker.*
+      - shell.run
+      - git.*
+
+  - name: product-owner
+    description: Product owner - can approve features and priorities
+    mcpPermissions:
+      - filesystem.read
+      - git.read
+
+  - name: compliance-officer
+    description: Compliance officer - can approve regulatory changes
+    mcpPermissions:
+      - filesystem.read
+
+  - name: viewer
+    description: Read-only access to view plans and status
+    mcpPermissions: []
+
+# =============================================================================
+# APPROVAL WORKFLOWS
+# =============================================================================
+approvalWorkflows:
+  # Deployment requires infra engineer approval
+  deployment:
+    name: Deployment Approval
+    description: Deploy code to production
+    requiredApprovals:
+      - role: infra-engineer
+        count: 1
+      - role: product-owner
+        count: 1
+    mcpTools:
+      - docker.deploy
+      - docker.run
+
+  # Code changes require developer + architect approval
+  codeChange:
+    name: Code Change Approval
+    description: Merge code changes to main branch
+    requiredApprovals:
+      - role: developer
+        count: 1
+      - role: architect
+        count: 1
+        optional: true
+    mcpTools:
+      - git.push
+      - git.merge
+
+  # Compliance changes require compliance officer
+  complianceChange:
+    name: Compliance Change Approval
+    description: Changes affecting compliance/regulatory
+    requiredApprovals:
+      - role: compliance-officer
+        count: 1
+    mcpTools:
+      - filesystem.write
+
+# =============================================================================
+# MCP PERMISSION LEVELS
+# =============================================================================
+mcpPermissionLevels:
+  # Auto-approve: Tool runs immediately without approval
+  auto:
+    - filesystem.read
+    - git.status
+    - git.log
+    - git.diff
+    - docker.ps
+    - docker.logs
+
+  # User-approve: User who triggered must approve (confirmation)
+  userApprove:
+    - filesystem.write
+    - shell.run
+    - git.commit
+
+  # Role-approve: Specific role must approve
+  roleApprove:
+    - git.push
+    - git.merge
+    - docker.build
+    - docker.run
+    - docker.deploy
+
+# =============================================================================
+# DEFAULT PASSWORD
+# =============================================================================
+defaultPassword: "changeme123"
+
+# =============================================================================
+# USERS
+# =============================================================================
+users:
+  # Admin user
+  - username: admin
+    email: admin@druppie.local
+    firstName: Admin
+    lastName: User
+    enabled: true
+    emailVerified: true
+    password: "admin123"
+    realmRoles:
+      - admin
+
+  # Infrastructure Engineer
+  - username: infra
+    email: infra@druppie.local
+    firstName: Infrastructure
+    lastName: Engineer
+    enabled: true
+    emailVerified: true
+    password: "infra123"
+    realmRoles:
+      - infra-engineer
+
+  # Senior Architect
+  - username: architect
+    email: architect@druppie.local
+    firstName: System
+    lastName: Architect
+    enabled: true
+    emailVerified: true
+    password: "arch123"
+    realmRoles:
+      - architect
+      - developer
+
+  # Senior Developer
+  - username: seniordev
+    email: seniordev@druppie.local
+    firstName: Senior
+    lastName: Developer
+    enabled: true
+    emailVerified: true
+    password: "dev123"
+    realmRoles:
+      - developer
+
+  # Junior Developer
+  - username: juniordev
+    email: juniordev@druppie.local
+    firstName: Junior
+    lastName: Developer
+    enabled: true
+    emailVerified: true
+    password: "dev123"
+    realmRoles:
+      - developer
+
+  # Product Owner
+  - username: productowner
+    email: po@druppie.local
+    firstName: Product
+    lastName: Owner
+    enabled: true
+    emailVerified: true
+    password: "po123"
+    realmRoles:
+      - product-owner
+
+  # Compliance Officer
+  - username: compliance
+    email: compliance@druppie.local
+    firstName: Compliance
+    lastName: Officer
+    enabled: true
+    emailVerified: true
+    password: "comp123"
+    realmRoles:
+      - compliance-officer
+
+  # Viewer / Stakeholder
+  - username: viewer
+    email: viewer@druppie.local
+    firstName: Stake
+    lastName: Holder
+    enabled: true
+    emailVerified: true
+    realmRoles:
+      - viewer
+
+# =============================================================================
+# CLIENT APPLICATIONS
+# =============================================================================
+clients:
+  - clientId: druppie-frontend
+    name: Druppie Frontend
+    description: Druppie Web Application
+    publicClient: true
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: true
+    rootUrl: http://localhost:5173
+    redirectUris:
+      - http://localhost:5173/*
+      - http://${EXTERNAL_HOST}:5173/*
+    webOrigins:
+      - http://localhost:5173
+      - http://${EXTERNAL_HOST}:5173
+
+  - clientId: druppie-backend
+    name: Druppie Backend API
+    description: Druppie Backend Service
+    publicClient: false
+    standardFlowEnabled: false
+    serviceAccountsEnabled: true
+    directAccessGrantsEnabled: true
+
+  - clientId: gitea
+    name: Gitea Git Server
+    description: Gitea OAuth2 Integration
+    publicClient: false
+    standardFlowEnabled: true
+    rootUrl: http://localhost:3000
+    redirectUris:
+      - http://localhost:3000/*
+      - http://${EXTERNAL_HOST}:3000/*
