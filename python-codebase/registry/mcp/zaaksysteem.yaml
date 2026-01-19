@@ -1,0 +1,83 @@
+# Zaaksysteem MCP Server
+# Mock case management system integration
+
+id: zaaksysteem
+name: Zaaksysteem
+description: Case management system integration (mock)
+transport: stdio
+command: python
+args:
+  - -m
+  - druppie.mcp.servers.zaaksysteem
+
+tools:
+  - name: create_case
+    description: Create a new case in the case management system
+    input_schema:
+      type: object
+      properties:
+        case_type:
+          type: string
+          description: Type of case (e.g., "Watervergunning")
+        title:
+          type: string
+          description: Case title
+        metadata:
+          type: object
+          description: Additional metadata
+        confidential:
+          type: boolean
+          default: false
+          description: Whether the case contains sensitive data
+      required:
+        - case_type
+        - title
+
+  - name: upload_document
+    description: Upload a document to an existing case
+    input_schema:
+      type: object
+      properties:
+        case_id:
+          type: string
+          description: The case ID
+        document_path:
+          type: string
+          description: Path to the document
+        document_type:
+          type: string
+          description: Type of document
+      required:
+        - case_id
+        - document_path
+
+  - name: update_metadata
+    description: Update case metadata
+    input_schema:
+      type: object
+      properties:
+        case_id:
+          type: string
+          description: The case ID
+        metadata:
+          type: object
+          description: Metadata to update
+      required:
+        - case_id
+        - metadata
+
+  - name: search_cases
+    description: Search for existing cases
+    input_schema:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Search query
+        case_type:
+          type: string
+          description: Filter by case type
+        limit:
+          type: integer
+          default: 10
+          description: Maximum results

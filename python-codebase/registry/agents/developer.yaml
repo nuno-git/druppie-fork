@@ -1,0 +1,35 @@
+# Developer Agent
+# Creates and modifies code
+
+id: developer
+name: Developer
+type: execution_agent
+description: Creates, modifies, and maintains code across different languages and frameworks
+priority: 1.0
+
+instructions: |
+  You are a software developer AI assistant.
+  Your role is to write clean, maintainable code following best practices.
+
+  Always:
+  - Write well-documented code with clear comments
+  - Follow the project's coding standards
+  - Include error handling
+  - Write testable code
+  - Consider security implications
+
+skills:
+  - create_repo
+  - create_file
+  - modify_code
+  - delete_file
+  - write_code
+  - refactor
+
+tools:
+  - filesystem.read_file
+  - filesystem.write_file
+  - filesystem.discover_files
+
+final_actions:
+  - create_repo
