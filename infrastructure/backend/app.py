@@ -517,8 +517,13 @@ def get_workspace_file():
 
     workspace = Path(os.getenv("WORKSPACE_PATH", "/app/workspace"))
     file_path = request.args.get("path", "")
+    plan_id = request.args.get("plan_id", "")
 
-    target = workspace / file_path
+    # If plan_id provided, prepend it to path
+    if plan_id:
+        target = workspace / plan_id / file_path
+    else:
+        target = workspace / file_path
 
     if not target.exists():
         return jsonify({"error": "File not found"}), 404
@@ -531,6 +536,32 @@ def get_workspace_file():
         return jsonify({"path": file_path, "content": content})
     except UnicodeDecodeError:
         return jsonify({"path": file_path, "binary": True})
+
+
+@app.route("/api/workspace/download", methods=["GET"])
+@auth_required
+def download_workspace_file():
+    """Download a workspace file."""
+    from pathlib import Path
+    from flask import send_file
+
+    workspace = Path(os.getenv("WORKSPACE_PATH", "/app/workspace"))
+    file_path = request.args.get("path", "")
+    plan_id = request.args.get("plan_id", "")
+
+    # If plan_id provided, prepend it to path
+    if plan_id:
+        target = workspace / plan_id / file_path
+    else:
+        target = workspace / file_path
+
+    if not target.exists():
+        return jsonify({"error": "File not found"}), 404
+
+    if not str(target.resolve()).startswith(str(workspace.resolve())):
+        return jsonify({"error": "Access denied"}), 403
+
+    return send_file(target, as_attachment=True, download_name=target.name)
 
 
 # =============================================================================
