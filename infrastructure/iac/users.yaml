@@ -128,7 +128,7 @@ mcpPermissionLevels:
 # =============================================================================
 # DEFAULT PASSWORD
 # =============================================================================
-defaultPassword: "changeme123"
+defaultPassword: "ChangeMe123!"
 
 # =============================================================================
 # USERS
@@ -141,7 +141,7 @@ users:
     lastName: User
     enabled: true
     emailVerified: true
-    password: "admin123"
+    password: "Admin123!"
     realmRoles:
       - admin
 
@@ -152,7 +152,7 @@ users:
     lastName: Engineer
     enabled: true
     emailVerified: true
-    password: "infra123"
+    password: "Infra123!"
     realmRoles:
       - infra-engineer
 
@@ -163,7 +163,7 @@ users:
     lastName: Architect
     enabled: true
     emailVerified: true
-    password: "arch123"
+    password: "Architect123!"
     realmRoles:
       - architect
       - developer
@@ -175,7 +175,7 @@ users:
     lastName: Developer
     enabled: true
     emailVerified: true
-    password: "dev123"
+    password: "Developer123!"
     realmRoles:
       - developer
 
@@ -186,7 +186,7 @@ users:
     lastName: Developer
     enabled: true
     emailVerified: true
-    password: "dev123"
+    password: "Developer123!"
     realmRoles:
       - developer
 
@@ -197,7 +197,7 @@ users:
     lastName: Owner
     enabled: true
     emailVerified: true
-    password: "po123"
+    password: "Product123!"
     realmRoles:
       - product-owner
 
@@ -208,7 +208,7 @@ users:
     lastName: Officer
     enabled: true
     emailVerified: true
-    password: "comp123"
+    password: "Compliance123!"
     realmRoles:
       - compliance-officer
 

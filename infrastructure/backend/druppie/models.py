@@ -5,10 +5,16 @@ from datetime import datetime
 from typing import Any, Optional
 
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import JSON, ARRAY, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON, String
 
 db = SQLAlchemy()
+
+
+# SQLite-compatible JSON array representation
+# Store arrays as JSON strings in SQLite
+def ArrayType():
+    """Return JSON type for array storage (SQLite compatible)."""
+    return JSON
 
 
 class Plan(db.Model):
@@ -26,8 +32,8 @@ class Plan(db.Model):
     created_by = db.Column(String(36))
     created_by_username = db.Column(String(255))
 
-    # Role assignments
-    assigned_roles = db.Column(ARRAY(String), default=list)
+    # Role assignments (stored as JSON for SQLite compatibility)
+    assigned_roles = db.Column(JSON, default=list)
 
     # Workflow info
     workflow_id = db.Column(String(100))
@@ -188,8 +194,8 @@ class MCPPermission(db.Model):
     permission_level = db.Column(String(50), default="role_approve")  # auto, user_approve, role_approve
     required_role = db.Column(String(100))
 
-    # Allowed roles (if permission_level is auto)
-    allowed_roles = db.Column(ARRAY(String), default=list)
+    # Allowed roles (if permission_level is auto) - stored as JSON for SQLite compatibility
+    allowed_roles = db.Column(JSON, default=list)
 
     # Risk level
     risk_level = db.Column(String(50), default="medium")  # low, medium, high, critical

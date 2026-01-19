@@ -1,14 +1,26 @@
 """Keycloak authentication module."""
 
-import base64
+import os
 from functools import wraps
 from typing import Optional
 
 import jwt
+from jwt import PyJWKClient
 import requests
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 from flask import current_app, g, jsonify, request
+
+
+# Development mode user for bypassing Keycloak
+DEV_USER = {
+    "sub": "dev-user-001",
+    "preferred_username": "developer",
+    "email": "developer@localhost",
+    "given_name": "Dev",
+    "family_name": "User",
+    "realm_access": {
+        "roles": ["admin", "developer", "architect", "devops"]
+    }
+}
 
 
 class KeycloakAuth:
@@ -16,7 +28,7 @@ class KeycloakAuth:
 
     def __init__(self, app=None):
         self.app = app
-        self._public_key_cache = {}
+        self._jwk_client = None
 
         if app:
             self.init_app(app)
@@ -56,47 +68,21 @@ class KeycloakAuth:
         except Exception:
             return False
 
-    def get_public_key(self) -> str:
-        """Get the public key from Keycloak with caching."""
-        if "key" not in self._public_key_cache:
-            try:
-                response = requests.get(self.certs_url, timeout=10)
-                response.raise_for_status()
-                keys = response.json()
-
-                for key in keys.get("keys", []):
-                    if key.get("kty") == "RSA":
-                        # Extract modulus and exponent
-                        n = int.from_bytes(
-                            base64.urlsafe_b64decode(key["n"] + "=="), "big"
-                        )
-                        e = int.from_bytes(
-                            base64.urlsafe_b64decode(key["e"] + "=="), "big"
-                        )
-
-                        # Create RSA public key
-                        public_key = rsa.RSAPublicNumbers(e, n).public_key()
-                        pem = public_key.public_bytes(
-                            encoding=serialization.Encoding.PEM,
-                            format=serialization.PublicFormat.SubjectPublicKeyInfo,
-                        )
-
-                        self._public_key_cache["key"] = pem.decode("utf-8")
-                        break
-
-            except Exception as e:
-                raise Exception(f"Failed to fetch Keycloak public key: {e}")
-
-        return self._public_key_cache.get("key")
+    def get_jwk_client(self) -> PyJWKClient:
+        """Get or create the JWK client for fetching signing keys."""
+        if self._jwk_client is None:
+            self._jwk_client = PyJWKClient(self.certs_url)
+        return self._jwk_client
 
     def decode_token(self, token: str) -> Optional[dict]:
         """Decode and verify a JWT token."""
         try:
-            public_key = self.get_public_key()
+            jwk_client = self.get_jwk_client()
+            signing_key = jwk_client.get_signing_key_from_jwt(token)
 
             decoded = jwt.decode(
                 token,
-                public_key,
+                signing_key.key,
                 algorithms=["RS256"],
                 issuer=self.issuer,
                 options={"verify_aud": False},
@@ -107,6 +93,8 @@ class KeycloakAuth:
         except jwt.ExpiredSignatureError:
             return None
         except jwt.InvalidTokenError:
+            return None
+        except Exception:
             return None
 
     def get_token_from_request(self) -> Optional[str]:
@@ -136,6 +124,12 @@ def auth_required(f):
 
     @wraps(f)
     def decorated(*args, **kwargs):
+        # Check for development mode bypass
+        dev_mode = current_app.config.get("DEV_MODE", False)
+        if dev_mode:
+            g.user = DEV_USER
+            return f(*args, **kwargs)
+
         auth = get_auth()
 
         token = auth.get_token_from_request()

@@ -10,11 +10,14 @@ class Config:
     # Secret key
     SECRET_KEY = os.getenv("SECRET_KEY", os.urandom(32).hex())
 
-    # Database
+    # Database - Use SQLite for local development
     SQLALCHEMY_DATABASE_URI = os.getenv(
-        "DATABASE_URL", "postgresql://druppie:druppie_secret@localhost:5432/druppie"
+        "DATABASE_URL", "sqlite:///druppie.db"
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    # Development mode - skip Keycloak auth
+    DEV_MODE = os.getenv("DEV_MODE", "true").lower() == "true"
 
     # Redis
     REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")

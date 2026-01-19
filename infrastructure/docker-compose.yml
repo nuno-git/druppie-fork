@@ -199,11 +199,11 @@ services:
 
       # App Config
       FLASK_ENV: ${FLASK_ENV:-development}
+      DEV_MODE: "false"
       CORS_ORIGINS: http://localhost:5173,http://${EXTERNAL_HOST:-localhost}:5173
       WORKSPACE_PATH: /app/workspace
     volumes:
       - druppie_workspace:/app/workspace
-      - ./backend:/app:ro
     ports:
       - "8000:8000"
     depends_on:

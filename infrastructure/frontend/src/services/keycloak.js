@@ -20,11 +20,18 @@ export const initKeycloak = async () => {
   keycloakInstance = new Keycloak(keycloakConfig)
 
   try {
-    const authenticated = await keycloakInstance.init({
+    // Add timeout for Keycloak init
+    const initPromise = keycloakInstance.init({
       onLoad: 'check-sso',
       silentCheckSsoRedirectUri: window.location.origin + '/silent-check-sso.html',
       checkLoginIframe: false,
     })
+
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Keycloak init timeout')), 10000)
+    })
+
+    const authenticated = await Promise.race([initPromise, timeoutPromise])
 
     if (!authenticated) {
       console.log('User is not authenticated')
@@ -41,7 +48,8 @@ export const initKeycloak = async () => {
     return keycloakInstance
   } catch (error) {
     console.error('Keycloak initialization failed:', error)
-    throw error
+    // Return a mock keycloak that allows showing login button
+    return { authenticated: false }
   }
 }
 
