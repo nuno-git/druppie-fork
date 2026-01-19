@@ -11,17 +11,20 @@ This script:
 import os
 import sys
 import time
+import subprocess
 import requests
 
 # Configuration
 GITEA_URL = os.getenv("GITEA_URL", "http://localhost:3000")
-GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "druppie-admin")
-GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "admin123")
-GITEA_ADMIN_EMAIL = os.getenv("GITEA_ADMIN_EMAIL", "admin@druppie.local")
+GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
+GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "GiteaAdmin123")
+GITEA_ADMIN_EMAIL = os.getenv("GITEA_ADMIN_EMAIL", "gitea@druppie.local")
 
 KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://localhost:8080")
-KEYCLOAK_REALM = "druppie"
-GITEA_CLIENT_SECRET = os.getenv("GITEA_CLIENT_SECRET", "")
+KEYCLOAK_INTERNAL_URL = os.getenv("KEYCLOAK_INTERNAL_URL", "http://keycloak:8080")
+KEYCLOAK_REALM = os.getenv("KEYCLOAK_REALM", "druppie")
+KEYCLOAK_ADMIN = os.getenv("KEYCLOAK_ADMIN", "admin")
+KEYCLOAK_ADMIN_PASSWORD = os.getenv("KEYCLOAK_ADMIN_PASSWORD", "admin_password")
 
 EXTERNAL_HOST = os.getenv("EXTERNAL_HOST", "localhost")
 
@@ -47,199 +50,173 @@ def wait_for_gitea():
     return False
 
 
+def run_gitea_cli(args: list) -> tuple[bool, str, str]:
+    """Run Gitea CLI command inside container as git user."""
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "-u", "git", "druppie-gitea", "gitea"] + args,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result.returncode == 0, result.stdout, result.stderr
+    except Exception as e:
+        return False, "", str(e)
+
+
 def create_admin_user():
     """Create admin user using Gitea CLI inside container."""
     print("\n[STEP 1] Creating admin user...")
 
-    import subprocess
-
     # Check if user exists first
-    try:
-        result = subprocess.run(
-            [
-                "docker",
-                "exec",
-                "druppie-gitea",
-                "gitea",
-                "admin",
-                "user",
-                "list",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+    success, stdout, stderr = run_gitea_cli(["admin", "user", "list"])
 
-        if GITEA_ADMIN_USER in result.stdout:
-            print(f"  [OK] Admin user '{GITEA_ADMIN_USER}' already exists")
-            return True
-
-    except Exception as e:
-        print(f"  [WARN] Could not check existing users: {e}")
+    if success and GITEA_ADMIN_USER in stdout:
+        print(f"  [OK] Admin user '{GITEA_ADMIN_USER}' already exists")
+        return True
 
     # Create admin user
-    try:
-        result = subprocess.run(
-            [
-                "docker",
-                "exec",
-                "druppie-gitea",
-                "gitea",
-                "admin",
-                "user",
-                "create",
-                "--username",
-                GITEA_ADMIN_USER,
-                "--password",
-                GITEA_ADMIN_PASSWORD,
-                "--email",
-                GITEA_ADMIN_EMAIL,
-                "--admin",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+    success, stdout, stderr = run_gitea_cli([
+        "admin", "user", "create",
+        "--username", GITEA_ADMIN_USER,
+        "--password", GITEA_ADMIN_PASSWORD,
+        "--email", GITEA_ADMIN_EMAIL,
+        "--admin",
+    ])
 
-        if result.returncode == 0:
-            print(f"  [OK] Created admin user '{GITEA_ADMIN_USER}'")
-            return True
-        else:
-            if "already exists" in result.stderr.lower() or "already exists" in result.stdout.lower():
-                print(f"  [OK] Admin user '{GITEA_ADMIN_USER}' already exists")
-                return True
-            print(f"  [ERROR] Failed to create admin user: {result.stderr}")
-            return False
-
-    except Exception as e:
-        print(f"  [ERROR] Failed to create admin user: {e}")
+    if success:
+        print(f"  [OK] Created admin user '{GITEA_ADMIN_USER}'")
+        return True
+    elif "already exists" in stderr.lower() or "already exists" in stdout.lower():
+        print(f"  [OK] Admin user '{GITEA_ADMIN_USER}' already exists")
+        return True
+    else:
+        print(f"  [ERROR] Failed to create admin user: {stderr}")
         return False
 
 
-def get_admin_token():
-    """Get or create admin access token."""
-    print("\n[STEP 2] Getting admin access token...")
+def get_keycloak_client_secret():
+    """Get Gitea client secret from Keycloak."""
+    print("\n[STEP 2] Getting Keycloak client secret for Gitea...")
 
-    # Try to create a new token
-    session = requests.Session()
-
-    # Login first to get session
-    login_url = f"{GITEA_URL}/user/login"
-    response = session.get(login_url)
-
-    # Extract CSRF token from form
-    import re
-
-    csrf_match = re.search(r'name="_csrf"\s+value="([^"]+)"', response.text)
-    if not csrf_match:
-        print("  [WARN] Could not find CSRF token")
-        return None
-
-    csrf_token = csrf_match.group(1)
-
-    # Login
-    login_data = {
-        "_csrf": csrf_token,
-        "user_name": GITEA_ADMIN_USER,
-        "password": GITEA_ADMIN_PASSWORD,
+    # Authenticate with Keycloak admin
+    token_url = f"{KEYCLOAK_URL}/realms/master/protocol/openid-connect/token"
+    data = {
+        "grant_type": "password",
+        "client_id": "admin-cli",
+        "username": KEYCLOAK_ADMIN,
+        "password": KEYCLOAK_ADMIN_PASSWORD,
     }
 
-    response = session.post(login_url, data=login_data, allow_redirects=False)
-
-    if response.status_code not in [200, 302, 303]:
-        print(f"  [WARN] Login failed: {response.status_code}")
+    try:
+        response = requests.post(token_url, data=data, timeout=10)
+        response.raise_for_status()
+        token = response.json()["access_token"]
+        print("  [OK] Authenticated with Keycloak")
+    except Exception as e:
+        print(f"  [ERROR] Failed to authenticate with Keycloak: {e}")
         return None
 
-    # Create access token via API
-    token_url = f"{GITEA_URL}/api/v1/users/{GITEA_ADMIN_USER}/tokens"
-
-    # Get new CSRF token after login
-    settings_response = session.get(f"{GITEA_URL}/user/settings/applications")
-    csrf_match = re.search(r'name="_csrf"\s+value="([^"]+)"', settings_response.text)
-
-    if csrf_match:
-        csrf_token = csrf_match.group(1)
-
-    # Use basic auth for token creation
-    auth = (GITEA_ADMIN_USER, GITEA_ADMIN_PASSWORD)
-
-    token_data = {
-        "name": "druppie-setup-token",
-        "scopes": ["write:admin", "write:organization", "write:repository", "write:user"],
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
     }
 
-    response = requests.post(token_url, json=token_data, auth=auth)
+    # Get Gitea client
+    clients_url = f"{KEYCLOAK_URL}/admin/realms/{KEYCLOAK_REALM}/clients"
+    response = requests.get(clients_url, headers=headers, params={"clientId": "gitea"})
 
-    if response.status_code == 201:
-        token = response.json().get("sha1", "")
-        print(f"  [OK] Created access token")
-        return token
-    elif response.status_code == 422:  # Token already exists
-        print(f"  [INFO] Token already exists, trying to use basic auth")
-        return None
-    else:
-        print(f"  [WARN] Could not create token: {response.status_code}")
+    if response.status_code != 200:
+        print(f"  [ERROR] Failed to get clients: {response.text}")
         return None
 
+    clients = response.json()
+    if not clients:
+        print("  [ERROR] Gitea client not found in Keycloak")
+        return None
 
-def configure_oauth2(token: str = None):
-    """Configure Keycloak OAuth2 provider."""
-    print("\n[STEP 3] Configuring OAuth2 with Keycloak...")
+    client_id = clients[0]["id"]
 
-    if not GITEA_CLIENT_SECRET:
-        print("  [WARN] GITEA_CLIENT_SECRET not set, skipping OAuth2 configuration")
-        return
-
-    # Use basic auth if no token
-    auth = (GITEA_ADMIN_USER, GITEA_ADMIN_PASSWORD) if not token else None
-    headers = {"Authorization": f"token {token}"} if token else {}
-
-    # Check existing OAuth2 sources
-    sources_url = f"{GITEA_URL}/api/v1/admin/auths"
-    response = requests.get(sources_url, auth=auth, headers=headers)
+    # Get client secret
+    secret_url = f"{KEYCLOAK_URL}/admin/realms/{KEYCLOAK_REALM}/clients/{client_id}/client-secret"
+    response = requests.get(secret_url, headers=headers)
 
     if response.status_code == 200:
-        for source in response.json():
-            if source.get("name") == "keycloak":
-                print("  [OK] Keycloak OAuth2 already configured")
-                return
+        secret = response.json().get("value")
+        if secret:
+            print(f"  [OK] Got Gitea client secret")
+            return secret
 
-    # Configure OAuth2
-    oauth2_config = {
-        "type": 6,  # OAuth2
-        "name": "keycloak",
-        "is_active": True,
-        "oauth2_config": {
-            "provider": "openidConnect",
-            "client_id": "gitea",
-            "client_secret": GITEA_CLIENT_SECRET,
-            "open_id_connect_auto_discovery_url": f"http://{EXTERNAL_HOST}:8080/realms/{KEYCLOAK_REALM}/.well-known/openid-configuration",
-            "icon_url": "",
-        },
-    }
+    # Generate new secret if none exists
+    response = requests.post(secret_url, headers=headers)
+    if response.status_code == 200:
+        secret = response.json().get("value")
+        print(f"  [OK] Generated new Gitea client secret")
+        return secret
 
-    response = requests.post(sources_url, json=oauth2_config, auth=auth, headers=headers)
+    print(f"  [ERROR] Failed to get/generate client secret: {response.text}")
+    return None
 
-    if response.status_code in [200, 201]:
+
+def configure_oauth2(client_secret: str):
+    """Configure Keycloak OAuth2 provider using Gitea CLI."""
+    print("\n[STEP 3] Configuring OAuth2 with Keycloak...")
+
+    if not client_secret:
+        print("  [SKIP] No client secret available")
+        return False
+
+    # Check if OAuth source already exists
+    success, stdout, stderr = run_gitea_cli(["admin", "auth", "list"])
+
+    if success and "Keycloak" in stdout:
+        print("  [OK] Keycloak OAuth2 already configured")
+        return True
+
+    # Add OAuth2 source using CLI
+    # Use internal Docker URL for server-to-server communication
+    discovery_url = f"{KEYCLOAK_INTERNAL_URL}/realms/{KEYCLOAK_REALM}/.well-known/openid-configuration"
+
+    success, stdout, stderr = run_gitea_cli([
+        "admin", "auth", "add-oauth",
+        "--name", "Keycloak",
+        "--provider", "openidConnect",
+        "--key", "gitea",
+        "--secret", client_secret,
+        "--auto-discover-url", discovery_url,
+        "--scopes", "openid profile email",
+    ])
+
+    if success:
         print("  [OK] Configured Keycloak OAuth2")
+        return True
+    elif "already exists" in stderr.lower():
+        print("  [OK] Keycloak OAuth2 already configured")
+        return True
     else:
-        print(f"  [WARN] Could not configure OAuth2: {response.status_code} - {response.text}")
+        print(f"  [ERROR] Failed to configure OAuth2: {stderr}")
+        return False
 
 
-def create_organization(token: str = None):
+def create_organization():
     """Create default Druppie organization."""
     print("\n[STEP 4] Creating default organization...")
 
-    auth = (GITEA_ADMIN_USER, GITEA_ADMIN_PASSWORD) if not token else None
-    headers = {"Authorization": f"token {token}"} if token else {}
+    # Use a session for proper auth handling
+    session = requests.Session()
+    session.auth = (GITEA_ADMIN_USER, GITEA_ADMIN_PASSWORD)
+    session.headers.update({"Content-Type": "application/json"})
 
     org_url = f"{GITEA_URL}/api/v1/orgs"
 
     # Check if org exists
-    response = requests.get(f"{org_url}/druppie", auth=auth, headers=headers)
-    if response.status_code == 200:
-        print("  [OK] Organization 'druppie' already exists")
-        return
+    try:
+        response = session.get(f"{org_url}/druppie", timeout=10)
+        if response.status_code == 200:
+            print("  [OK] Organization 'druppie' already exists")
+            return True
+    except Exception as e:
+        print(f"  [DEBUG] Check failed: {e}")
 
     # Create organization
     org_data = {
@@ -249,32 +226,46 @@ def create_organization(token: str = None):
         "visibility": "public",
     }
 
-    response = requests.post(org_url, json=org_data, auth=auth, headers=headers)
+    try:
+        response = session.post(org_url, json=org_data, timeout=10)
 
-    if response.status_code == 201:
-        print("  [OK] Created organization 'druppie'")
-    elif response.status_code == 422:
-        print("  [OK] Organization 'druppie' already exists")
-    else:
-        print(f"  [WARN] Could not create organization: {response.status_code}")
+        if response.status_code == 201:
+            print("  [OK] Created organization 'druppie'")
+            return True
+        elif response.status_code in [409, 422]:
+            print("  [OK] Organization 'druppie' already exists")
+            return True
+        else:
+            print(f"  [WARN] Could not create organization: {response.status_code} - {response.text[:100]}")
+            return False
+    except Exception as e:
+        print(f"  [WARN] Could not create organization: {e}")
+        return False
 
 
-def create_sample_repo(token: str = None):
+def create_sample_repo():
     """Create sample repository."""
     print("\n[STEP 5] Creating sample repository...")
 
-    auth = (GITEA_ADMIN_USER, GITEA_ADMIN_PASSWORD) if not token else None
-    headers = {"Authorization": f"token {token}"} if token else {}
-
-    repo_url = f"{GITEA_URL}/api/v1/orgs/druppie/repos"
+    # Use a session for proper auth handling
+    session = requests.Session()
+    session.auth = (GITEA_ADMIN_USER, GITEA_ADMIN_PASSWORD)
+    session.headers.update({"Content-Type": "application/json"})
 
     # Check if repo exists
-    response = requests.get(f"{GITEA_URL}/api/v1/repos/druppie/sample-project", auth=auth, headers=headers)
-    if response.status_code == 200:
-        print("  [OK] Repository 'sample-project' already exists")
-        return
+    try:
+        response = session.get(
+            f"{GITEA_URL}/api/v1/repos/druppie/sample-project",
+            timeout=10
+        )
+        if response.status_code == 200:
+            print("  [OK] Repository 'sample-project' already exists")
+            return True
+    except Exception as e:
+        print(f"  [DEBUG] Check failed: {e}")
 
     # Create repository
+    repo_url = f"{GITEA_URL}/api/v1/orgs/druppie/repos"
     repo_data = {
         "name": "sample-project",
         "description": "Sample project for Druppie governance",
@@ -283,14 +274,21 @@ def create_sample_repo(token: str = None):
         "readme": "Default",
     }
 
-    response = requests.post(repo_url, json=repo_data, auth=auth, headers=headers)
+    try:
+        response = session.post(repo_url, json=repo_data, timeout=10)
 
-    if response.status_code == 201:
-        print("  [OK] Created repository 'sample-project'")
-    elif response.status_code == 409:
-        print("  [OK] Repository 'sample-project' already exists")
-    else:
-        print(f"  [WARN] Could not create repository: {response.status_code}")
+        if response.status_code == 201:
+            print("  [OK] Created repository 'sample-project'")
+            return True
+        elif response.status_code in [409, 422]:
+            print("  [OK] Repository 'sample-project' already exists")
+            return True
+        else:
+            print(f"  [WARN] Could not create repository: {response.status_code} - {response.text[:100]}")
+            return False
+    except Exception as e:
+        print(f"  [WARN] Could not create repository: {e}")
+        return False
 
 
 def main():
@@ -302,15 +300,19 @@ def main():
         sys.exit(1)
 
     create_admin_user()
-    token = get_admin_token()
-    configure_oauth2(token)
-    create_organization(token)
-    create_sample_repo(token)
+    client_secret = get_keycloak_client_secret()
+    configure_oauth2(client_secret)
+    create_organization()
+    create_sample_repo()
 
     print("\n" + "=" * 60)
     print("[DONE] Gitea setup complete!")
     print(f"  URL: http://{EXTERNAL_HOST}:3000")
     print(f"  Admin: {GITEA_ADMIN_USER} / {GITEA_ADMIN_PASSWORD}")
+    print("")
+    print("  To login with Keycloak:")
+    print("    1. Click 'Sign in with Keycloak'")
+    print("    2. Use your Keycloak credentials (e.g., admin/Admin123!)")
     print("=" * 60)
 
 
