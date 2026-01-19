@@ -1,0 +1,267 @@
+/**
+ * Druppie Governance Platform - Main Application
+ */
+
+import React, { useEffect, useState } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
+import {
+  Home,
+  FileText,
+  CheckSquare,
+  Settings,
+  LogOut,
+  LogIn,
+  User,
+  Shield,
+  MessageSquare,
+  FolderOpen,
+} from 'lucide-react'
+
+import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole } from './services/keycloak'
+
+// Pages
+import Dashboard from './pages/Dashboard'
+import Plans from './pages/Plans'
+import Tasks from './pages/Tasks'
+import Chat from './pages/Chat'
+import Workspace from './pages/Workspace'
+
+// Auth context
+const AuthContext = React.createContext(null)
+
+export const useAuth = () => React.useContext(AuthContext)
+
+// Protected Route
+const ProtectedRoute = ({ children, requiredRole }) => {
+  const { authenticated, user } = useAuth()
+
+  if (!authenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold mb-4">Please log in to continue</h2>
+          <button
+            onClick={login}
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            <LogIn className="w-5 h-5 inline mr-2" />
+            Log In with Keycloak
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (requiredRole && !hasRole(requiredRole)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <Shield className="w-16 h-16 text-red-500 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold mb-2">Access Denied</h2>
+          <p className="text-gray-600">You need the "{requiredRole}" role to access this page.</p>
+        </div>
+      </div>
+    )
+  }
+
+  return children
+}
+
+// Navigation
+const Navigation = () => {
+  const { authenticated, user } = useAuth()
+  const location = useLocation()
+
+  const navItems = [
+    { path: '/', icon: Home, label: 'Dashboard' },
+    { path: '/chat', icon: MessageSquare, label: 'Chat' },
+    { path: '/plans', icon: FileText, label: 'Plans' },
+    { path: '/tasks', icon: CheckSquare, label: 'Approvals' },
+    { path: '/workspace', icon: FolderOpen, label: 'Workspace' },
+  ]
+
+  const isActive = (path) => location.pathname === path
+
+  return (
+    <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex justify-between h-16">
+          {/* Logo */}
+          <div className="flex items-center">
+            <Link to="/" className="flex items-center space-x-2">
+              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                <Shield className="w-5 h-5 text-white" />
+              </div>
+              <span className="text-xl font-bold text-gray-900">Druppie</span>
+            </Link>
+          </div>
+
+          {/* Navigation */}
+          <nav className="hidden md:flex items-center space-x-1">
+            {navItems.map(({ path, icon: Icon, label }) => (
+              <Link
+                key={path}
+                to={path}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  isActive(path)
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <Icon className="w-4 h-4 inline mr-1" />
+                {label}
+              </Link>
+            ))}
+          </nav>
+
+          {/* User Menu */}
+          <div className="flex items-center space-x-4">
+            {authenticated ? (
+              <>
+                <div className="hidden sm:flex items-center space-x-2">
+                  <User className="w-4 h-4 text-gray-500" />
+                  <span className="text-sm text-gray-700">{user?.username}</span>
+                  {user?.roles?.includes('admin') && (
+                    <span className="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded">
+                      Admin
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={logout}
+                  className="px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
+                >
+                  <LogOut className="w-4 h-4 inline mr-1" />
+                  Logout
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={login}
+                className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
+              >
+                <LogIn className="w-4 h-4 inline mr-1" />
+                Login
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </header>
+  )
+}
+
+// Main App
+function App() {
+  const [keycloakReady, setKeycloakReady] = useState(false)
+  const [authenticated, setAuthenticated] = useState(false)
+  const [user, setUser] = useState(null)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const kc = await initKeycloak()
+        setAuthenticated(kc.authenticated)
+        if (kc.authenticated) {
+          setUser(getUserInfo())
+        }
+        setKeycloakReady(true)
+      } catch (err) {
+        console.error('Failed to initialize Keycloak:', err)
+        setError('Failed to connect to authentication server')
+        setKeycloakReady(true) // Still show app, just not authenticated
+      }
+    }
+
+    init()
+  }, [])
+
+  if (!keycloakReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="text-red-500 mb-4">
+            <Shield className="w-16 h-16 mx-auto" />
+          </div>
+          <h2 className="text-xl font-bold mb-2">Authentication Error</h2>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <AuthContext.Provider value={{ authenticated, user }}>
+      <BrowserRouter>
+        <div className="min-h-screen bg-gray-50">
+          <Navigation />
+          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  <ProtectedRoute>
+                    <Dashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/chat"
+                element={
+                  <ProtectedRoute>
+                    <Chat />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/plans"
+                element={
+                  <ProtectedRoute>
+                    <Plans />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/tasks"
+                element={
+                  <ProtectedRoute>
+                    <Tasks />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/workspace"
+                element={
+                  <ProtectedRoute>
+                    <Workspace />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </main>
+        </div>
+      </BrowserRouter>
+    </AuthContext.Provider>
+  )
+}
+
+export default App

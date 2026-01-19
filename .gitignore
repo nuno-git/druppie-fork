@@ -7,3 +7,4 @@ core/druppie/druppie
 .secrets
 core/druppie_bin
 core/druppie-cli
+infrastructure/druppie-app/
