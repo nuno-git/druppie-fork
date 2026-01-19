@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from .models import db, Plan, Task, Approval
 from .mcp_permissions import MCPPermissionManager
+from .llm_service import LLMService
 
 
 class PlanService:
@@ -13,6 +14,7 @@ class PlanService:
 
     def __init__(self):
         self.mcp_manager = MCPPermissionManager()
+        self.llm_service = LLMService()
 
     def create_plan(
         self,
@@ -173,11 +175,19 @@ class PlanService:
 
     def _execute_task(self, task: Task) -> dict[str, Any]:
         """Execute a single task."""
-        # This is a placeholder - actual implementation would:
-        # 1. Call the MCP tool if mcp_tool is set
-        # 2. Run the agent if agent_id is set
-        # 3. Return the result
+        # Check if this is an app generation task
+        if task.mcp_tool == "generate_app" and task.mcp_arguments:
+            app_info = task.mcp_arguments.get("app_info", {})
+            result = self.llm_service.generate_app(task.plan_id, app_info)
+            return {
+                "executed": True,
+                "success": result.get("success", False),
+                "workspace": result.get("workspace"),
+                "files_created": result.get("files_created", []),
+                "app_info": result.get("app_info"),
+            }
 
+        # Default response for other task types
         return {
             "executed": True,
             "mcp_tool": task.mcp_tool,
@@ -233,11 +243,28 @@ class PlanService:
 
     def _analyze_intent(self, message: str) -> dict[str, Any]:
         """Analyze user message to determine intent."""
-        # Placeholder - actual implementation would use LLM
         message_lower = message.lower()
 
-        # Simple keyword matching for demo
-        if any(kw in message_lower for kw in ["deploy", "push", "release"]):
+        # Check if this is an app creation request
+        if any(kw in message_lower for kw in ["create", "build", "make"]):
+            # Use LLM service to analyze what app to build
+            app_info = self.llm_service.analyze_request(message)
+
+            return {
+                "type": "action",
+                "tasks": [
+                    {
+                        "name": f"Generate {app_info['name']}",
+                        "description": f"Creating {app_info['app_type']} application: {app_info['description']}",
+                        "agent_id": "developer",
+                        "mcp_tool": "generate_app",
+                        "mcp_arguments": {"app_info": app_info, "message": message},
+                    }
+                ],
+            }
+
+        # Check for deployment requests
+        elif any(kw in message_lower for kw in ["deploy", "push", "release"]):
             return {
                 "type": "action",
                 "tasks": [
@@ -245,20 +272,6 @@ class PlanService:
                         "name": "Deploy code",
                         "description": f"Deploy based on: {message}",
                         "mcp_tool": "docker.deploy",
-                        "mcp_arguments": {"message": message},
-                    }
-                ],
-            }
-
-        elif any(kw in message_lower for kw in ["create", "build", "make"]):
-            return {
-                "type": "action",
-                "tasks": [
-                    {
-                        "name": "Create code",
-                        "description": f"Create based on: {message}",
-                        "agent_id": "developer",
-                        "mcp_tool": "filesystem.write",
                         "mcp_arguments": {"message": message},
                     }
                 ],
