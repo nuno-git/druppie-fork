@@ -26,29 +26,61 @@ func findProjectRootOnce() {
 	}
 
 	for {
+		// Check for .druppie marker (primary)
 		if _, err := os.Stat(filepath.Join(cwd, ".druppie")); err == nil {
 			cachedRoot = cwd
 			return
 		}
+		// Check for core/go.mod as project indicator
+		if _, err := os.Stat(filepath.Join(cwd, "core", "go.mod")); err == nil {
+			ensureDruppieDir(cwd)
+			cachedRoot = cwd
+			return
+		}
+		// Check for ui/index.html as project indicator
+		if _, err := os.Stat(filepath.Join(cwd, "ui", "index.html")); err == nil {
+			ensureDruppieDir(cwd)
+			cachedRoot = cwd
+			return
+		}
+		// Legacy markers for backwards compatibility
 		if _, err := os.Stat(filepath.Join(cwd, "blocks")); err == nil {
+			ensureDruppieDir(cwd)
 			cachedRoot = cwd
 			return
 		}
 		if _, err := os.Stat(filepath.Join(cwd, "doc_registry.js")); err == nil {
-			cachedRoot = cwd
-			return
-		}
-		if _, err := os.Stat(filepath.Join(cwd, "script", "druppie.sh")); err == nil {
+			ensureDruppieDir(cwd)
 			cachedRoot = cwd
 			return
 		}
 
 		parent := filepath.Dir(cwd)
 		if parent == cwd {
-			cachedRootErr = fmt.Errorf("project root not found (searched for .druppie, blocks, doc_registry.js, druppie.sh)")
+			cachedRootErr = fmt.Errorf("project root not found (searched for .druppie, core/go.mod, ui/index.html)")
 			return
 		}
 		cwd = parent
+	}
+}
+
+// ensureDruppieDir creates the .druppie directory and default config if they don't exist
+func ensureDruppieDir(root string) {
+	druppieDir := filepath.Join(root, ".druppie")
+	if _, err := os.Stat(druppieDir); os.IsNotExist(err) {
+		os.MkdirAll(druppieDir, 0755)
+	}
+
+	// Check if config.yaml exists, if not copy from config_default.yaml
+	configPath := filepath.Join(druppieDir, "config.yaml")
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		defaultConfigPath := filepath.Join(root, "core", "config_default.yaml")
+		if defaultData, err := os.ReadFile(defaultConfigPath); err == nil {
+			if err := os.WriteFile(configPath, defaultData, 0644); err == nil {
+				fmt.Println("📋 Created config file at .druppie/config.yaml")
+				fmt.Println("⚠️  Please edit .druppie/config.yaml and add your API keys!")
+			}
+		}
 	}
 }
 
