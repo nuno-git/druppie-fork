@@ -1,0 +1,65 @@
+version: '3.8'
+
+# CPU-only version (no GPU required)
+services:
+  # Druppie Governance Platform
+  druppie:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    volumes:
+      - druppie-data:/app/.druppie
+      - ./registry:/app/registry:ro
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - druppie-network
+    restart: unless-stopped
+
+  # Ollama LLM Server (CPU mode)
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - druppie-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # Ollama model puller (runs once to download model)
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - druppie-network
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Pulling qwen2.5:7b model..."
+        ollama pull qwen2.5:7b
+        echo "Model ready!"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    restart: "no"
+
+volumes:
+  druppie-data:
+  ollama-data:
+
+networks:
+  druppie-network:
+    driver: bridge

@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Druppie - Governance AI Platform</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --secondary: #64748b;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --bg: #f8fafc;
+            --bg-card: #ffffff;
+            --text: #1e293b;
+            --text-light: #64748b;
+            --border: #e2e8f0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+
+        /* Header */
+        header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        header .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .logo svg {
+            width: 32px;
+            height: 32px;
+        }
+
+        nav {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        nav button {
+            padding: 0.5rem 1rem;
+            border: none;
+            background: transparent;
+            color: var(--text-light);
+            cursor: pointer;
+            border-radius: 0.5rem;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        nav button:hover {
+            background: var(--bg);
+        }
+
+        nav button.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        /* Main Layout */
+        main {
+            padding: 1.5rem 0;
+            min-height: calc(100vh - 70px);
+        }
+
+        .page {
+            display: none;
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border-radius: 0.75rem;
+            border: 1px solid var(--border);
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        /* Chat Page */
+        .chat-container {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 1.5rem;
+            height: calc(100vh - 140px);
+        }
+
+        @media (max-width: 1024px) {
+            .chat-container {
+                grid-template-columns: 1fr;
+            }
+            .sidebar {
+                display: none;
+            }
+        }
+
+        .chat-main {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            background: var(--bg-card);
+            border-radius: 0.75rem;
+            border: 1px solid var(--border);
+            margin-bottom: 1rem;
+        }
+
+        .message {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            border-radius: 0.75rem;
+            max-width: 85%;
+        }
+
+        .message.user {
+            background: var(--primary);
+            color: white;
+            margin-left: auto;
+        }
+
+        .message.assistant {
+            background: var(--bg);
+            border: 1px solid var(--border);
+        }
+
+        .message-content {
+            white-space: pre-wrap;
+        }
+
+        .message-meta {
+            font-size: 0.75rem;
+            opacity: 0.7;
+            margin-top: 0.5rem;
+        }
+
+        .chat-input-container {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            font-size: 1rem;
+            resize: none;
+            font-family: inherit;
+        }
+
+        .chat-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .send-btn {
+            padding: 1rem 1.5rem;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 0.75rem;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background 0.2s;
+        }
+
+        .send-btn:hover {
+            background: var(--primary-dark);
+        }
+
+        .send-btn:disabled {
+            background: var(--secondary);
+            cursor: not-allowed;
+        }
+
+        /* Sidebar */
+        .sidebar .card {
+            height: fit-content;
+        }
+
+        /* Status badges */
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .badge-success { background: #dcfce7; color: #166534; }
+        .badge-warning { background: #fef3c7; color: #92400e; }
+        .badge-danger { background: #fee2e2; color: #991b1b; }
+        .badge-info { background: #dbeafe; color: #1e40af; }
+        .badge-secondary { background: #f1f5f9; color: #475569; }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            font-weight: 600;
+            color: var(--text-light);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+        }
+
+        tr:hover {
+            background: var(--bg);
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        /* Grid layouts */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        /* Stats */
+        .stat-card {
+            text-align: center;
+            padding: 1.5rem;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .stat-label {
+            color: var(--text-light);
+            font-size: 0.9rem;
+        }
+
+        /* Agent cards */
+        .agent-card {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-start;
+        }
+
+        .agent-icon {
+            width: 48px;
+            height: 48px;
+            background: var(--primary);
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+        }
+
+        .agent-info h3 {
+            font-size: 1rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .agent-info p {
+            color: var(--text-light);
+            font-size: 0.85rem;
+        }
+
+        .agent-skills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+            margin-top: 0.5rem;
+        }
+
+        /* Plan details */
+        .plan-steps {
+            margin-top: 1rem;
+        }
+
+        .step-item {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.75rem;
+            border-left: 3px solid var(--border);
+            margin-left: 0.5rem;
+        }
+
+        .step-item.completed {
+            border-left-color: var(--success);
+        }
+
+        .step-item.running {
+            border-left-color: var(--warning);
+        }
+
+        .step-item.failed {
+            border-left-color: var(--danger);
+        }
+
+        .step-number {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-light);
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-light);
+        }
+
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        /* Task actions */
+        .task-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .grid-2, .grid-4 {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="logo">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
+                Druppie
+            </div>
+            <nav>
+                <button class="active" data-page="chat">Chat</button>
+                <button data-page="plans">Plans</button>
+                <button data-page="agents">Agents</button>
+                <button data-page="tasks">Tasks</button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- Chat Page -->
+        <div id="chat" class="page active">
+            <div class="chat-container">
+                <div class="chat-main">
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="message assistant">
+                            <div class="message-content">Hello! I'm Druppie, your AI governance assistant. I can help you:
+
+- Create projects and code
+- Design system architectures
+- Analyze business requirements
+- Check compliance
+
+What would you like to work on today?</div>
+                        </div>
+                    </div>
+                    <div class="chat-input-container">
+                        <textarea class="chat-input" id="chatInput" rows="2" placeholder="Type your message... (Shift+Enter for new line)"></textarea>
+                        <button class="send-btn" id="sendBtn">Send</button>
+                    </div>
+                </div>
+                <div class="sidebar">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Current Plan</span>
+                        </div>
+                        <div id="currentPlan">
+                            <p class="empty-state" style="padding: 1rem;">No active plan</p>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Available Agents</span>
+                        </div>
+                        <div id="sidebarAgents">
+                            <div class="loading">
+                                <div class="spinner"></div>
+                                Loading...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Plans Page -->
+        <div id="plans" class="page">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Execution Plans</span>
+                    <button class="btn btn-primary btn-sm" onclick="loadPlans()">Refresh</button>
+                </div>
+                <div id="plansList">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading plans...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Agents Page -->
+        <div id="agents" class="page">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Available Agents</span>
+                </div>
+            </div>
+            <div class="grid-2" id="agentsList">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    Loading agents...
+                </div>
+            </div>
+        </div>
+
+        <!-- Tasks Page -->
+        <div id="tasks" class="page">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Pending Approvals</span>
+                    <button class="btn btn-primary btn-sm" onclick="loadTasks()">Refresh</button>
+                </div>
+                <div id="tasksList">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        Loading tasks...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const API_BASE = '';
+        let currentPlanId = null;
+
+        // Navigation
+        document.querySelectorAll('nav button').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(btn.dataset.page).classList.add('active');
+
+                // Load data for the page
+                switch(btn.dataset.page) {
+                    case 'plans': loadPlans(); break;
+                    case 'agents': loadAgents(); break;
+                    case 'tasks': loadTasks(); break;
+                }
+            });
+        });
+
+        // Chat
+        const chatMessages = document.getElementById('chatMessages');
+        const chatInput = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('sendBtn');
+
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        sendBtn.addEventListener('click', sendMessage);
+
+        async function sendMessage() {
+            const content = chatInput.value.trim();
+            if (!content) return;
+
+            // Add user message
+            addMessage('user', content);
+            chatInput.value = '';
+            sendBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE}/v1/chat/completions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        messages: [{ role: 'user', content }],
+                        plan_id: currentPlanId
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.plan_id) {
+                    currentPlanId = data.plan_id;
+                    updateCurrentPlan(data);
+                }
+
+                addMessage('assistant', data.content, data.status);
+
+            } catch (error) {
+                addMessage('assistant', `Error: ${error.message}`, 'error');
+            } finally {
+                sendBtn.disabled = false;
+            }
+        }
+
+        function addMessage(role, content, status) {
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+
+            let statusBadge = '';
+            if (status) {
+                const badgeClass = {
+                    'completed': 'badge-success',
+                    'executing': 'badge-warning',
+                    'failed': 'badge-danger'
+                }[status] || 'badge-info';
+                statusBadge = `<span class="badge ${badgeClass}">${status}</span> `;
+            }
+
+            div.innerHTML = `
+                <div class="message-content">${escapeHtml(content)}</div>
+                <div class="message-meta">${statusBadge}${new Date().toLocaleTimeString()}</div>
+            `;
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function updateCurrentPlan(data) {
+            const container = document.getElementById('currentPlan');
+            if (data.intent) {
+                container.innerHTML = `
+                    <p><strong>Plan:</strong> ${data.plan_id}</p>
+                    <p><strong>Action:</strong> ${data.intent.action}</p>
+                    <p><strong>Status:</strong> <span class="badge badge-${data.status === 'executing' ? 'warning' : data.status === 'completed' ? 'success' : 'info'}">${data.status}</span></p>
+                    <p style="margin-top: 0.5rem;"><a href="#" onclick="viewPlan('${data.plan_id}')">View details</a></p>
+                `;
+            }
+        }
+
+        // Plans
+        async function loadPlans() {
+            const container = document.getElementById('plansList');
+            container.innerHTML = '<div class="loading"><div class="spinner"></div> Loading...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/v1/plans`);
+                const plans = await response.json();
+
+                if (plans.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No plans yet. Start a conversation to create one!</div>';
+                    return;
+                }
+
+                container.innerHTML = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Status</th>
+                                <th>Steps</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${plans.map(plan => `
+                                <tr>
+                                    <td><code>${plan.id}</code></td>
+                                    <td>${escapeHtml(plan.name)}</td>
+                                    <td><span class="badge badge-${getStatusBadge(plan.status)}">${plan.status}</span></td>
+                                    <td>${plan.steps ? plan.steps.length : 0}</td>
+                                    <td>${new Date(plan.created_at).toLocaleString()}</td>
+                                    <td>
+                                        <button class="btn btn-primary btn-sm" onclick="viewPlan('${plan.id}')">View</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } catch (error) {
+                container.innerHTML = `<div class="empty-state">Error loading plans: ${error.message}</div>`;
+            }
+        }
+
+        async function viewPlan(planId) {
+            try {
+                const response = await fetch(`${API_BASE}/v1/plans/${planId}`);
+                const plan = await response.json();
+
+                const modal = document.createElement('div');
+                modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;';
+                modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+                modal.innerHTML = `
+                    <div class="card" style="max-width:800px;max-height:80vh;overflow-y:auto;margin:1rem;">
+                        <div class="card-header">
+                            <span class="card-title">${escapeHtml(plan.name)}</span>
+                            <button class="btn btn-sm" onclick="this.closest('div[style]').remove()">Close</button>
+                        </div>
+                        <p><strong>ID:</strong> ${plan.id}</p>
+                        <p><strong>Status:</strong> <span class="badge badge-${getStatusBadge(plan.status)}">${plan.status}</span></p>
+                        ${plan.intent ? `<p><strong>Intent:</strong> ${plan.intent.action} - ${escapeHtml(plan.intent.prompt)}</p>` : ''}
+                        ${plan.selected_agents && plan.selected_agents.length ? `<p><strong>Agents:</strong> ${plan.selected_agents.join(', ')}</p>` : ''}
+
+                        <h4 style="margin-top:1rem;">Steps</h4>
+                        <div class="plan-steps">
+                            ${plan.steps && plan.steps.length ? plan.steps.map(step => `
+                                <div class="step-item ${step.status}">
+                                    <span class="step-number">${step.id}</span>
+                                    <div style="flex:1;">
+                                        <strong>[${step.agent_id}]</strong> ${step.action}
+                                        <span class="badge badge-${getStatusBadge(step.status)}">${step.status}</span>
+                                        ${step.error ? `<div style="color:var(--danger);font-size:0.85rem;">Error: ${escapeHtml(step.error)}</div>` : ''}
+                                    </div>
+                                </div>
+                            `).join('') : '<p>No steps</p>'}
+                        </div>
+                    </div>
+                `;
+
+                document.body.appendChild(modal);
+            } catch (error) {
+                alert('Error loading plan: ' + error.message);
+            }
+        }
+
+        // Agents
+        async function loadAgents() {
+            const container = document.getElementById('agentsList');
+            container.innerHTML = '<div class="loading"><div class="spinner"></div> Loading...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/v1/agents`);
+                const agents = await response.json();
+
+                container.innerHTML = agents.map(agent => `
+                    <div class="card">
+                        <div class="agent-card">
+                            <div class="agent-icon">${getAgentIcon(agent.id)}</div>
+                            <div class="agent-info">
+                                <h3>${escapeHtml(agent.name)}</h3>
+                                <p>${escapeHtml(agent.description)}</p>
+                                <div class="agent-skills">
+                                    <span class="badge badge-info">${agent.type}</span>
+                                    ${agent.skills.slice(0, 3).map(s => `<span class="badge badge-secondary">${s}</span>`).join('')}
+                                    ${agent.skills.length > 3 ? `<span class="badge badge-secondary">+${agent.skills.length - 3}</span>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+
+                // Also update sidebar
+                updateSidebarAgents(agents);
+
+            } catch (error) {
+                container.innerHTML = `<div class="empty-state">Error loading agents: ${error.message}</div>`;
+            }
+        }
+
+        function updateSidebarAgents(agents) {
+            const container = document.getElementById('sidebarAgents');
+            container.innerHTML = agents.map(agent => `
+                <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
+                    <span style="font-size:1.2rem;">${getAgentIcon(agent.id)}</span>
+                    <span>${agent.name}</span>
+                </div>
+            `).join('');
+        }
+
+        function getAgentIcon(agentId) {
+            const icons = {
+                'developer': '👨‍💻',
+                'architect': '🏗️',
+                'business_analyst': '📊',
+                'compliance': '✅'
+            };
+            return icons[agentId] || '🤖';
+        }
+
+        // Tasks
+        async function loadTasks() {
+            const container = document.getElementById('tasksList');
+            container.innerHTML = '<div class="loading"><div class="spinner"></div> Loading...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/v1/tasks`);
+                const tasks = await response.json();
+
+                if (tasks.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No pending approvals</div>';
+                    return;
+                }
+
+                container.innerHTML = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Plan</th>
+                                <th>Step</th>
+                                <th>Action</th>
+                                <th>Agent</th>
+                                <th>Assigned To</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${tasks.map(task => `
+                                <tr>
+                                    <td><code>${task.plan_id}</code></td>
+                                    <td>${task.step_id}</td>
+                                    <td>${task.action}</td>
+                                    <td>${task.agent_id}</td>
+                                    <td>${task.assigned_group || 'Any'}</td>
+                                    <td class="task-actions">
+                                        <button class="btn btn-success btn-sm" onclick="approveTask('${task.plan_id}', ${task.step_id})">Approve</button>
+                                        <button class="btn btn-danger btn-sm" onclick="rejectTask('${task.plan_id}', ${task.step_id})">Reject</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } catch (error) {
+                container.innerHTML = `<div class="empty-state">Error loading tasks: ${error.message}</div>`;
+            }
+        }
+
+        async function approveTask(planId, stepId) {
+            try {
+                await fetch(`${API_BASE}/v1/tasks/${planId}/${stepId}/approve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user: 'ui_user' })
+                });
+                loadTasks();
+            } catch (error) {
+                alert('Error approving task: ' + error.message);
+            }
+        }
+
+        async function rejectTask(planId, stepId) {
+            const reason = prompt('Reason for rejection:');
+            if (reason === null) return;
+
+            try {
+                await fetch(`${API_BASE}/v1/tasks/${planId}/${stepId}/reject`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user: 'ui_user', reason })
+                });
+                loadTasks();
+            } catch (error) {
+                alert('Error rejecting task: ' + error.message);
+            }
+        }
+
+        // Helpers
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function getStatusBadge(status) {
+            const map = {
+                'completed': 'success',
+                'running': 'warning',
+                'pending': 'info',
+                'failed': 'danger',
+                'waiting_input': 'warning',
+                'cancelled': 'secondary'
+            };
+            return map[status] || 'secondary';
+        }
+
+        // Initial load
+        loadAgents();
+    </script>
+</body>
+</html>
