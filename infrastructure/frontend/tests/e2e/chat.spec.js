@@ -4,6 +4,15 @@ import { test, expect } from '@playwright/test'
 const KEYCLOAK_URL = process.env.KEYCLOAK_URL || 'http://localhost:8080'
 const BASE_URL = process.env.BASE_URL || 'http://localhost:5173'
 
+// Test users with compliant passwords (from iac/users.yaml)
+const users = {
+  admin: { username: 'admin', password: 'Admin123!' },
+  developer: { username: 'seniordev', password: 'Developer123!' },
+  infra: { username: 'infra', password: 'Infra123!' },
+  productOwner: { username: 'productowner', password: 'Product123!' },
+  juniorDev: { username: 'juniordev', password: 'Developer123!' },  // Uses same password as seniordev
+}
+
 // Helper to login
 async function login(page, username, password) {
   await page.goto('/')
@@ -18,7 +27,7 @@ async function login(page, username, password) {
 test.describe('Chat and Plan Creation', () => {
   test.beforeEach(async ({ page }) => {
     // Login as developer for most tests
-    await login(page, 'seniordev', 'dev123')
+    await login(page, users.developer.username, users.developer.password)
   })
 
   test('can send a chat message', async ({ page }) => {
@@ -70,7 +79,7 @@ test.describe('Chat and Plan Creation', () => {
 test.describe('Deployment Approval Workflow', () => {
   test('deployment request creates pending approval for infra-engineer', async ({ page }) => {
     // Login as developer
-    await login(page, 'seniordev', 'dev123')
+    await login(page, users.developer.username, users.developer.password)
 
     // Go to chat and request deployment
     await page.getByRole('link', { name: /chat/i }).click()
@@ -88,10 +97,10 @@ test.describe('Deployment Approval Workflow', () => {
 
   test('infra-engineer can see and approve deployment tasks', async ({ page }) => {
     // Login as infra engineer
-    await login(page, 'infra', 'infra123')
+    await login(page, users.infra.username, users.infra.password)
 
-    // Navigate to approvals
-    await page.getByRole('link', { name: /approvals/i }).click()
+    // Navigate to approvals (use exact name to avoid matching "Pending Approvals")
+    await page.getByRole('link', { name: 'Approvals', exact: true }).click()
 
     // Should see approvals page
     await expect(page.getByText(/pending approvals/i)).toBeVisible()
@@ -108,9 +117,9 @@ test.describe('Deployment Approval Workflow', () => {
   })
 
   test('developer cannot approve deployment tasks', async ({ page }) => {
-    await login(page, 'seniordev', 'dev123')
+    await login(page, users.developer.username, users.developer.password)
 
-    await page.getByRole('link', { name: /approvals/i }).click()
+    await page.getByRole('link', { name: 'Approvals', exact: true }).click()
 
     // Should see message about role requirements for deployment tasks
     // If there are deployment tasks, should see "You need the infra-engineer role"
@@ -131,7 +140,7 @@ test.describe('Multi-user Approval Flow', () => {
     const infraPage = await infraContext.newPage()
 
     // Developer creates a deployment request
-    await login(developerPage, 'seniordev', 'dev123')
+    await login(developerPage, users.developer.username, users.developer.password)
     await developerPage.getByRole('link', { name: /chat/i }).click()
 
     const input = developerPage.getByPlaceholder(/type your message/i)
@@ -140,8 +149,8 @@ test.describe('Multi-user Approval Flow', () => {
     await developerPage.waitForTimeout(3000)
 
     // Infra engineer logs in and checks approvals
-    await login(infraPage, 'infra', 'infra123')
-    await infraPage.getByRole('link', { name: /approvals/i }).click()
+    await login(infraPage, users.infra.username, users.infra.password)
+    await infraPage.getByRole('link', { name: 'Approvals', exact: true }).click()
 
     // Should see the pending approval
     await expect(infraPage.getByText(/pending approvals/i)).toBeVisible()
@@ -155,5 +164,59 @@ test.describe('Multi-user Approval Flow', () => {
     // Cleanup
     await developerContext.close()
     await infraContext.close()
+  })
+})
+
+test.describe('App Creation E2E', () => {
+  test('junior dev can create a todo app and see files created', async ({ page }) => {
+    // Login as junior dev (simulating user's scenario)
+    await login(page, users.juniorDev.username, users.juniorDev.password)
+
+    // Navigate to chat
+    await page.getByRole('link', { name: /chat/i }).click()
+
+    // Should see welcome message
+    await expect(page.getByText(/I'm Druppie/i)).toBeVisible({ timeout: 10000 })
+
+    // Request to create a todo app
+    const input = page.getByPlaceholder(/type your message/i)
+    await input.fill('Create a todo app')
+    await input.press('Enter')
+
+    // Should see user message
+    await expect(page.getByText('Create a todo app')).toBeVisible()
+
+    // Wait for response that includes success indicators
+    // The response should mention files created, not just "completed"
+    await expect(
+      page.getByText(/files_created|executed|completed/i)
+    ).toBeVisible({ timeout: 30000 })
+
+    // Navigate to workspace to see created files
+    await page.getByRole('link', { name: /workspace/i }).click()
+
+    // Should show workspace page with heading
+    await expect(page.getByRole('heading', { name: /workspace/i })).toBeVisible()
+
+    // Should show projects section
+    await expect(page.getByText(/projects/i)).toBeVisible()
+  })
+
+  test('can create a calculator app', async ({ page }) => {
+    await login(page, users.developer.username, users.developer.password)
+
+    await page.getByRole('link', { name: /chat/i }).click()
+    await expect(page.getByText(/I'm Druppie/i)).toBeVisible({ timeout: 10000 })
+
+    const input = page.getByPlaceholder(/type your message/i)
+    await input.fill('Build me a calculator')
+    await input.press('Enter')
+
+    await expect(page.getByText('Build me a calculator')).toBeVisible()
+
+    // Wait for successful response
+    await expect(
+      page.getByText(/executed|completed|calculator/i)
+    ).toBeVisible({ timeout: 30000 })
   })
 })
