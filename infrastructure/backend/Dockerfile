@@ -22,14 +22,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create workspace directory
-RUN mkdir -p /app/workspace
-
-# Create non-root user
-RUN useradd -m -u 1000 druppie && \
-    chown -R druppie:druppie /app
-USER druppie
-
 # Expose port
 EXPOSE 8000
 

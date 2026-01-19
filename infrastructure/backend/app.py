@@ -53,6 +53,10 @@ socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode="gevent")
 # Initialize database
 db.init_app(app)
 
+# Create database tables on app startup
+with app.app_context():
+    db.create_all()
+
 # Initialize services
 keycloak_auth = KeycloakAuth(app)
 mcp_manager = MCPPermissionManager()
@@ -174,14 +178,18 @@ def list_plans():
         plans = Plan.query.order_by(Plan.created_at.desc()).limit(100).all()
     else:
         user_id = user.get("sub")
-        plans = (
-            Plan.query.filter(
-                (Plan.created_by == user_id) | (Plan.assigned_roles.overlap(roles))
-            )
-            .order_by(Plan.created_at.desc())
-            .limit(100)
-            .all()
-        )
+        # For SQLite compatibility, fetch all and filter in Python
+        # (PostgreSQL ARRAY overlap not available)
+        all_plans = Plan.query.order_by(Plan.created_at.desc()).limit(500).all()
+        plans = []
+        for plan in all_plans:
+            if plan.created_by == user_id:
+                plans.append(plan)
+            elif plan.assigned_roles:
+                if any(r in plan.assigned_roles for r in roles):
+                    plans.append(plan)
+            if len(plans) >= 100:
+                break
 
     return jsonify([plan.to_dict() for plan in plans])
 
