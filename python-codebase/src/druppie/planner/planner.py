@@ -1,26 +1,32 @@
 """Planner for generating execution plans.
 
-The Planner takes analyzed intent and generates a step-by-step execution plan.
-It selects appropriate agents and creates steps with proper dependencies.
+The Planner takes analyzed intent and decides:
+- Which workflow to use (for complex tasks like creating projects)
+- OR which agents to assign tasks to (for simpler tasks)
+
+It does NOT create detailed action steps - agents decide that themselves.
 """
 
 import json
-import structlog
+import re
+import uuid
 from datetime import datetime
-from typing import Any
 
-from langchain_core.messages import SystemMessage, HumanMessage
+import structlog
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from druppie.core.models import (
+    AgentDefinition,
+    AgentTask,
     Intent,
     IntentAction,
     Plan,
     PlanStatus,
-    Step,
-    StepStatus,
-    AgentDefinition,
+    PlanType,
+    TaskStatus,
     TokenUsage,
+    WorkflowDefinition,
 )
 
 logger = structlog.get_logger()
@@ -29,95 +35,108 @@ logger = structlog.get_logger()
 def create_planner_prompt(
     intent: Intent,
     agents: list[AgentDefinition],
-    available_tools: list[str],
+    workflows: list[WorkflowDefinition],
 ) -> str:
     """Create the system prompt for plan generation."""
 
+    # Format agent descriptions
     agent_descriptions = []
     for agent in agents:
-        skills_str = ", ".join(agent.skills) if agent.skills else "general"
-        tools_str = ", ".join(agent.tools) if agent.tools else "none"
+        mcps_str = ", ".join(agent.mcps) if agent.mcps else "none"
         agent_descriptions.append(
-            f"- {agent.id}: {agent.name}\n"
-            f"  Type: {agent.type.value}\n"
-            f"  Description: {agent.description}\n"
-            f"  Skills: {skills_str}\n"
-            f"  Tools: {tools_str}"
+            f"- {agent.id}: {agent.description} (MCPs: {mcps_str})"
         )
+    agents_section = (
+        "\n".join(agent_descriptions) if agent_descriptions else "No agents available"
+    )
 
-    agents_section = "\n".join(agent_descriptions) if agent_descriptions else "No agents available"
-    tools_section = ", ".join(available_tools) if available_tools else "No tools available"
+    # Format workflow descriptions
+    workflow_descriptions = []
+    for wf in workflows:
+        keywords = ", ".join(wf.trigger_keywords) if wf.trigger_keywords else "none"
+        workflow_descriptions.append(
+            f"- {wf.id}: {wf.description} (keywords: {keywords})"
+        )
+    workflows_section = (
+        "\n".join(workflow_descriptions)
+        if workflow_descriptions
+        else "No workflows available"
+    )
 
-    return f"""You are a planning system for Druppie, a governance AI platform.
+    return f"""You are a planning system for Druppie, an AI governance platform.
 
-Your task is to create an execution plan based on the user's intent.
-The plan should consist of steps that will be executed by specialized agents.
+Based on the user's intent, decide whether to:
+1. Use a WORKFLOW (for complex, multi-step tasks like creating a new project)
+2. Assign AGENTS directly (for simpler tasks that need specific expertise)
+
+## Available Workflows:
+{workflows_section}
 
 ## Available Agents:
 {agents_section}
 
-## Available MCP Tools:
-{tools_section}
-
 ## User Intent:
 Action: {intent.action.value}
-Category: {intent.category}
 Request: {intent.prompt}
+Project Context: {json.dumps(intent.project_context)}
 
-## Instructions:
-1. Select the most appropriate agents for this task
-2. Create a sequence of steps that achieve the user's goal
-3. Each step should have:
-   - agent_id: which agent executes this step
-   - action: what action to perform (use agent skills)
-   - params: parameters for the action (see action-specific params below)
-   - depends_on: list of step IDs this step depends on (0-indexed)
-4. Ensure steps are ordered logically with proper dependencies
-5. Keep the plan focused and efficient
-
-## Action-Specific Parameters:
-- create_repo: {{"name": "project-name", "language": "python"}}
-- write_code: {{"description": "detailed description of what to implement", "language": "python", "framework": "flask/fastapi/etc"}}
-- create_user_stories: {{"feature": "feature description"}}
-- design_architecture: {{"requirements": ["list of requirements"]}}
+## Decision Rules:
+- For CREATE_PROJECT: Prefer using the coding_workflow if available
+- For UPDATE_PROJECT: Select specific agents with natural language tasks
+- For simple fixes: Just assign the developer agent
+- For design tasks: Assign the architect agent
 
 ## Response Format:
-Respond ONLY with valid JSON:
+If using a WORKFLOW:
 {{
+    "use_workflow": true,
+    "workflow_id": "coding_workflow",
     "name": "Short plan name",
-    "description": "Brief description of what the plan does",
-    "selected_agents": ["agent_id1", "agent_id2"],
-    "steps": [
+    "description": "What this plan will accomplish"
+}}
+
+If using AGENTS directly:
+{{
+    "use_workflow": false,
+    "name": "Short plan name",
+    "description": "What this plan will accomplish",
+    "tasks": [
         {{
             "agent_id": "developer",
-            "action": "create_repo",
-            "params": {{"name": "project-name", "language": "python"}},
+            "description": "Natural language description of what the agent should do",
             "depends_on": []
         }},
         {{
             "agent_id": "architect",
-            "action": "design_architecture",
-            "params": {{"requirements": ["..."]}}
-            "depends_on": [0]
+            "description": "Create architecture documentation for the project",
+            "depends_on": ["task_0"]
         }}
     ]
-}}"""
+}}
+
+IMPORTANT:
+- Task descriptions should be natural language, NOT specific actions
+- Agents will decide HOW to accomplish their tasks autonomously
+- Use depends_on with task IDs (task_0, task_1, etc.) for parallel execution control
+"""
 
 
 class Planner:
     """Generates execution plans from user intent.
 
-    The Planner:
-    1. Selects relevant agents based on the intent
-    2. Creates a sequence of steps with dependencies
-    3. Validates the plan structure
+    The Planner decides between:
+    - Using a predefined workflow (for complex tasks)
+    - Assigning agents directly (for simpler tasks)
+
+    It does NOT create detailed step-by-step actions.
+    Agents and workflows handle that autonomously.
     """
 
     def __init__(
         self,
         llm: BaseChatModel,
         agents: dict[str, AgentDefinition] | None = None,
-        max_agent_selection: int = 3,
+        workflows: dict[str, WorkflowDefinition] | None = None,
         max_retries: int = 3,
         debug: bool = False,
     ):
@@ -126,13 +145,13 @@ class Planner:
         Args:
             llm: LangChain chat model for plan generation
             agents: Dictionary of available agents by ID
-            max_agent_selection: Maximum number of agents to select
+            workflows: Dictionary of available workflows by ID
             max_retries: Maximum retries for plan generation
             debug: Enable debug logging
         """
         self.llm = llm
         self.agents = agents or {}
-        self.max_agent_selection = max_agent_selection
+        self.workflows = workflows or {}
         self.max_retries = max_retries
         self.debug = debug
         self.logger = logger.bind(component="planner")
@@ -141,83 +160,20 @@ class Planner:
         """Update the available agents."""
         self.agents = agents
 
-    async def select_agents(
-        self,
-        intent: Intent,
-        available_tools: list[str],
-    ) -> tuple[list[str], TokenUsage]:
-        """Select relevant agents for the intent.
-
-        Uses LLM to identify which agents are best suited for the task.
-        """
-        if not self.agents:
-            return [], TokenUsage()
-
-        agent_list = "\n".join(
-            f"- {a.id}: {a.name} - {a.description}"
-            for a in self.agents.values()
-        )
-
-        prompt = f"""Select the most relevant agents for this task.
-
-Available agents:
-{agent_list}
-
-User request: {intent.prompt}
-Action type: {intent.action.value}
-Category: {intent.category}
-
-Select up to {self.max_agent_selection} agents that should work on this task.
-Respond with ONLY a JSON array of agent IDs, e.g.: ["developer", "architect"]"""
-
-        messages = [
-            SystemMessage(content="You are an agent selection system. Select the best agents for the task."),
-            HumanMessage(content=prompt),
-        ]
-
-        try:
-            response = await self.llm.ainvoke(messages)
-            content = response.content
-
-            # Parse agent IDs
-            import re
-            json_match = re.search(r'\[[\s\S]*?\]', content)
-            if json_match:
-                agent_ids = json.loads(json_match.group())
-                # Validate agent IDs exist
-                agent_ids = [aid for aid in agent_ids if aid in self.agents]
-            else:
-                agent_ids = []
-
-            # Calculate token usage
-            usage = TokenUsage()
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                usage.prompt_tokens = response.usage_metadata.get("input_tokens", 0)
-                usage.completion_tokens = response.usage_metadata.get("output_tokens", 0)
-                usage.total_tokens = usage.prompt_tokens + usage.completion_tokens
-
-            self.logger.info("agents_selected", agent_ids=agent_ids)
-            return agent_ids, usage
-
-        except Exception as e:
-            self.logger.error("agent_selection_failed", error=str(e))
-            # Fallback: select developer agent if available
-            if "developer" in self.agents:
-                return ["developer"], TokenUsage()
-            return [], TokenUsage()
+    def set_workflows(self, workflows: dict[str, WorkflowDefinition]) -> None:
+        """Update the available workflows."""
+        self.workflows = workflows
 
     async def create_plan(
         self,
         plan_id: str,
         intent: Intent,
-        available_tools: list[str] | None = None,
     ) -> tuple[Plan, TokenUsage]:
         """Create an execution plan from the intent.
 
         Args:
             plan_id: Unique identifier for the plan
             intent: Analyzed user intent
-            available_tools: List of available MCP tools
 
         Returns:
             Tuple of (Plan, TokenUsage)
@@ -228,51 +184,15 @@ Respond with ONLY a JSON array of agent IDs, e.g.: ["developer", "architect"]"""
             action=intent.action.value,
         )
 
-        available_tools = available_tools or []
         total_usage = TokenUsage()
-
-        # Select relevant agents
-        selected_agent_ids, select_usage = await self.select_agents(intent, available_tools)
-        total_usage.add(select_usage)
-
-        if not selected_agent_ids:
-            # No agents selected - create minimal plan
-            return Plan(
-                id=plan_id,
-                name=f"Plan: {intent.prompt[:50]}",
-                description="No agents available for this task",
-                status=PlanStatus.FAILED,
-                intent=intent,
-                steps=[],
-                selected_agents=[],
-            ), total_usage
-
-        # Get selected agent definitions
-        selected_agents = [self.agents[aid] for aid in selected_agent_ids if aid in self.agents]
-
-        # Expand with sub-agents
-        all_agent_ids = set(selected_agent_ids)
-        for agent in selected_agents:
-            for sub_id in agent.sub_agents:
-                if sub_id in self.agents:
-                    all_agent_ids.add(sub_id)
-
-        all_agents = [self.agents[aid] for aid in all_agent_ids]
 
         # Generate the plan with retries
         plan = None
         for attempt in range(self.max_retries):
             try:
-                plan, gen_usage = await self._generate_plan(
-                    plan_id=plan_id,
-                    intent=intent,
-                    agents=all_agents,
-                    available_tools=available_tools,
-                )
+                plan, gen_usage = await self._generate_plan(plan_id, intent)
                 total_usage.add(gen_usage)
-
-                if plan.steps:
-                    break
+                break
 
             except Exception as e:
                 self.logger.warning(
@@ -281,18 +201,11 @@ Respond with ONLY a JSON array of agent IDs, e.g.: ["developer", "architect"]"""
                     error=str(e),
                 )
                 if attempt == self.max_retries - 1:
-                    raise
+                    # Create fallback plan
+                    plan = self._create_fallback_plan(plan_id, intent)
 
         if plan is None:
-            plan = Plan(
-                id=plan_id,
-                name=f"Plan: {intent.prompt[:50]}",
-                description="Failed to generate plan",
-                status=PlanStatus.FAILED,
-                intent=intent,
-                steps=[],
-                selected_agents=list(all_agent_ids),
-            )
+            plan = self._create_fallback_plan(plan_id, intent)
 
         plan.total_usage = total_usage
         return plan, total_usage
@@ -301,12 +214,14 @@ Respond with ONLY a JSON array of agent IDs, e.g.: ["developer", "architect"]"""
         self,
         plan_id: str,
         intent: Intent,
-        agents: list[AgentDefinition],
-        available_tools: list[str],
     ) -> tuple[Plan, TokenUsage]:
         """Internal method to generate plan using LLM."""
 
-        prompt = create_planner_prompt(intent, agents, available_tools)
+        prompt = create_planner_prompt(
+            intent=intent,
+            agents=list(self.agents.values()),
+            workflows=list(self.workflows.values()),
+        )
 
         messages = [
             SystemMessage(content=prompt),
@@ -317,39 +232,70 @@ Respond with ONLY a JSON array of agent IDs, e.g.: ["developer", "architect"]"""
         content = response.content
 
         # Parse the JSON response
-        import re
-        json_match = re.search(r'\{[\s\S]*\}', content)
+        json_match = re.search(r"\{[\s\S]*\}", content)
         if not json_match:
             raise ValueError("No JSON found in response")
 
         data = json.loads(json_match.group())
 
-        # Create steps from response
-        steps = []
-        for i, step_data in enumerate(data.get("steps", [])):
-            step = Step(
-                id=i,
-                agent_id=step_data.get("agent_id", "unknown"),
-                action=step_data.get("action", "unknown"),
-                params=step_data.get("params", {}),
-                depends_on=step_data.get("depends_on", []),
-                status=StepStatus.PENDING,
+        # Determine plan type
+        if data.get("use_workflow", False):
+            # Workflow-based plan
+            workflow_id = data.get("workflow_id")
+            if workflow_id not in self.workflows:
+                raise ValueError(f"Unknown workflow: {workflow_id}")
+
+            plan = Plan(
+                id=plan_id,
+                name=data.get("name", f"Plan: {intent.prompt[:50]}"),
+                description=data.get("description", ""),
+                plan_type=PlanType.WORKFLOW,
+                status=PlanStatus.PENDING,
+                intent=intent,
+                workflow_id=workflow_id,
+                project_context=intent.project_context,
+                created_at=datetime.utcnow(),
             )
-            steps.append(step)
 
-        # Validate dependencies
-        steps = self._validate_dependencies(steps)
+        else:
+            # Agent-based plan
+            tasks = []
+            for i, task_data in enumerate(data.get("tasks", [])):
+                task_id = f"task_{i}"
+                agent_id = task_data.get("agent_id", "developer")
 
-        plan = Plan(
-            id=plan_id,
-            name=data.get("name", f"Plan: {intent.prompt[:50]}"),
-            description=data.get("description", ""),
-            status=PlanStatus.PENDING,
-            intent=intent,
-            steps=steps,
-            selected_agents=data.get("selected_agents", []),
-            created_at=datetime.utcnow(),
-        )
+                # Validate agent exists
+                if agent_id not in self.agents:
+                    self.logger.warning(
+                        "unknown_agent_in_plan",
+                        agent_id=agent_id,
+                    )
+                    continue
+
+                # Convert depends_on from task names to task IDs
+                depends_on = task_data.get("depends_on", [])
+
+                task = AgentTask(
+                    id=task_id,
+                    agent_id=agent_id,
+                    description=task_data.get("description", "Complete the assigned task"),
+                    depends_on=depends_on,
+                    context=intent.project_context,
+                    status=TaskStatus.PENDING,
+                )
+                tasks.append(task)
+
+            plan = Plan(
+                id=plan_id,
+                name=data.get("name", f"Plan: {intent.prompt[:50]}"),
+                description=data.get("description", ""),
+                plan_type=PlanType.AGENTS,
+                status=PlanStatus.PENDING,
+                intent=intent,
+                tasks=tasks,
+                project_context=intent.project_context,
+                created_at=datetime.utcnow(),
+            )
 
         # Calculate token usage
         usage = TokenUsage()
@@ -361,84 +307,44 @@ Respond with ONLY a JSON array of agent IDs, e.g.: ["developer", "architect"]"""
         self.logger.info(
             "plan_generated",
             plan_id=plan_id,
-            num_steps=len(steps),
-            selected_agents=plan.selected_agents,
+            plan_type=plan.plan_type.value,
+            num_tasks=len(plan.tasks) if plan.plan_type == PlanType.AGENTS else 0,
+            workflow_id=plan.workflow_id if plan.plan_type == PlanType.WORKFLOW else None,
         )
 
         return plan, usage
 
-    def _validate_dependencies(self, steps: list[Step]) -> list[Step]:
-        """Validate and fix step dependencies.
+    def _create_fallback_plan(self, plan_id: str, intent: Intent) -> Plan:
+        """Create a simple fallback plan when LLM fails."""
+        self.logger.warning("creating_fallback_plan", plan_id=plan_id)
 
-        - Ensures dependencies reference valid step IDs
-        - Removes circular dependencies
-        - Ensures sequential execution within same agent
-        """
-        num_steps = len(steps)
+        # Default: assign developer agent for create/update actions
+        if intent.action in (IntentAction.CREATE_PROJECT, IntentAction.UPDATE_PROJECT):
+            task = AgentTask(
+                id="task_0",
+                agent_id="developer",
+                description=intent.prompt,
+                context=intent.project_context,
+                status=TaskStatus.PENDING,
+            )
+            return Plan(
+                id=plan_id,
+                name=f"Fallback Plan: {intent.prompt[:50]}",
+                description="Fallback plan - LLM planning failed",
+                plan_type=PlanType.AGENTS,
+                status=PlanStatus.PENDING,
+                intent=intent,
+                tasks=[task],
+                project_context=intent.project_context,
+            )
 
-        for step in steps:
-            # Filter out invalid dependencies
-            step.depends_on = [
-                dep for dep in step.depends_on
-                if 0 <= dep < num_steps and dep != step.id
-            ]
-
-        # Ensure sequential execution within same agent
-        agent_last_step: dict[str, int] = {}
-        for step in steps:
-            if step.agent_id in agent_last_step:
-                last_step_id = agent_last_step[step.agent_id]
-                if last_step_id not in step.depends_on:
-                    step.depends_on.append(last_step_id)
-            agent_last_step[step.agent_id] = step.id
-
-        return steps
-
-    async def update_plan(
-        self,
-        plan: Plan,
-        feedback: str,
-        available_tools: list[str] | None = None,
-    ) -> tuple[Plan, TokenUsage]:
-        """Update a plan based on feedback or new information.
-
-        Args:
-            plan: Existing plan to update
-            feedback: User feedback or new requirements
-            available_tools: Updated list of available tools
-
-        Returns:
-            Tuple of (updated Plan, TokenUsage)
-        """
-        self.logger.info("updating_plan", plan_id=plan.id, feedback=feedback[:100])
-
-        # Create a new intent incorporating the feedback
-        updated_intent = Intent(
-            initial_prompt=plan.intent.initial_prompt if plan.intent else "",
-            prompt=f"{plan.intent.prompt if plan.intent else ''}\n\nUpdate: {feedback}",
-            action=plan.intent.action if plan.intent else IntentAction.UPDATE_PROJECT,
-            category=plan.intent.category if plan.intent else "unknown",
-            language=plan.intent.language if plan.intent else "en",
+        # For general chat, no tasks needed
+        return Plan(
+            id=plan_id,
+            name="General Response",
+            description="No action required",
+            plan_type=PlanType.AGENTS,
+            status=PlanStatus.COMPLETED,
+            intent=intent,
+            tasks=[],
         )
-
-        # Generate updated plan
-        new_plan, usage = await self.create_plan(
-            plan_id=plan.id,
-            intent=updated_intent,
-            available_tools=available_tools,
-        )
-
-        # Preserve completed steps
-        completed_steps = [s for s in plan.steps if s.status == StepStatus.COMPLETED]
-        if completed_steps:
-            # Merge: keep completed steps, add new pending steps
-            max_completed_id = max(s.id for s in completed_steps)
-            for new_step in new_plan.steps:
-                new_step.id = max_completed_id + new_step.id + 1
-                new_step.depends_on = [
-                    d + max_completed_id + 1 for d in new_step.depends_on
-                ]
-
-            new_plan.steps = completed_steps + new_plan.steps
-
-        return new_plan, usage

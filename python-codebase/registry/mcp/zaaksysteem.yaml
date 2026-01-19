@@ -5,7 +5,7 @@ id: zaaksysteem
 name: Zaaksysteem
 description: Case management system integration (mock)
 transport: stdio
-command: python
+command: python3
 args:
   - -m
   - druppie.mcp.servers.zaaksysteem

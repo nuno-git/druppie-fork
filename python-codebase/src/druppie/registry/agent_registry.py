@@ -4,10 +4,9 @@ Loads agent definitions from YAML files and provides them to the Planner.
 """
 
 from pathlib import Path
-from typing import Any
 
-import yaml
 import structlog
+import yaml
 
 from druppie.core.models import AgentDefinition, AgentType
 
@@ -103,14 +102,19 @@ class AgentRegistry:
         """List agents of a specific type."""
         return [a for a in self._agents.values() if a.type == agent_type]
 
-    def get_agents_for_skills(self, skills: list[str]) -> list[AgentDefinition]:
-        """Get agents that have any of the specified skills."""
-        result = []
-        for agent in self._agents.values():
-            if any(skill in agent.skills for skill in skills):
-                result.append(agent)
-        return result
+    def get_agents_with_mcp(self, mcp_id: str) -> list[AgentDefinition]:
+        """Get agents that have access to a specific MCP server."""
+        return [a for a in self._agents.values() if mcp_id in a.mcps]
 
     def as_dict(self) -> dict[str, AgentDefinition]:
         """Get all agents as a dictionary."""
         return dict(self._agents)
+
+    def get_agent_descriptions(self) -> str:
+        """Get formatted descriptions of all agents for LLM prompts."""
+        lines = []
+        for agent in self._agents.values():
+            lines.append(f"- {agent.id}: {agent.description}")
+            if agent.mcps:
+                lines.append(f"  MCPs: {', '.join(agent.mcps)}")
+        return "\n".join(lines)

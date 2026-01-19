@@ -1,14 +1,15 @@
 """Router for analyzing user intent.
 
 The Router is the first component that processes user input.
-It determines what the user wants and routes to the appropriate handler.
+It classifies intent as one of 3 actions and extracts project context.
 """
 
 import json
-import structlog
+import re
 
-from langchain_core.messages import SystemMessage, HumanMessage
+import structlog
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from druppie.core.models import Intent, IntentAction, TokenUsage
 
@@ -17,32 +18,47 @@ logger = structlog.get_logger()
 
 ROUTER_SYSTEM_PROMPT = """You are an intent analysis system for Druppie, a governance AI platform.
 
-Analyze the user's request and classify it into one of these actions:
-- create_project: User wants to create something new (code, document, design, etc.)
-- update_project: User wants to modify or update an existing project
-- query_registry: User wants to search or query available capabilities
-- orchestrate_complex: User wants to coordinate multiple agents for a complex task
-- general_chat: User is asking a general question or having a conversation
+Analyze the user's request and classify it into ONE of these three actions:
 
-Also determine:
-- category: infrastructure, service, search, create_content, or unknown
-- content_type: code, document, video, image, audio, or null
-- language: detected language code (en, nl, de, fr, etc.)
+1. create_project: User wants to BUILD something NEW
+   - Create a new application, website, service, tool
+   - Build a new feature from scratch
+   - Start a new project
 
-If the action is "general_chat", provide a helpful direct answer.
+2. update_project: User wants to MODIFY something EXISTING
+   - Fix a bug in existing code
+   - Update or improve existing features
+   - Refactor existing code
+   - Add to an existing project
 
-Respond ONLY with valid JSON in this exact format:
+3. general_chat: User is asking a question or having a conversation
+   - Asking how something works
+   - Requesting explanations
+   - General questions not requiring code changes
+
+If the request is unclear and you need more information to proceed, set clarification_needed to true.
+
+Extract relevant project context like:
+- repo_url: Git repository URL if mentioned
+- project_name: Name of the project if mentioned
+- task_description: Clear description of what needs to be done
+- technologies: Any mentioned technologies, languages, frameworks
+
+For general_chat, provide a helpful direct answer.
+
+Respond ONLY with valid JSON:
 {
-    "action": "create_project|update_project|query_registry|orchestrate_complex|general_chat",
-    "category": "infrastructure|service|search|create_content|unknown",
-    "content_type": "code|document|video|image|audio|null",
+    "action": "create_project|update_project|general_chat",
     "language": "en",
     "prompt": "Summarized intent in user's language",
+    "clarification_needed": false,
+    "clarification_question": null,
     "answer": "Direct answer if general_chat, otherwise null",
-    "entities": {
-        "project_name": "optional",
-        "technologies": ["optional", "list"],
-        "requirements": ["optional", "list"]
+    "project_context": {
+        "repo_url": "optional git url",
+        "project_name": "optional name",
+        "task_description": "what needs to be done",
+        "technologies": ["optional", "list"]
     }
 }"""
 
@@ -51,7 +67,10 @@ class Router:
     """Analyzes user intent and routes to appropriate handlers.
 
     The Router uses an LLM to understand what the user wants and
-    produces a structured Intent that the Planner can use.
+    produces a structured Intent with one of 3 actions:
+    - CREATE_PROJECT: Build something new
+    - UPDATE_PROJECT: Modify existing project
+    - GENERAL_CHAT: Answer questions
     """
 
     def __init__(self, llm: BaseChatModel, debug: bool = False):
@@ -65,7 +84,9 @@ class Router:
         self.debug = debug
         self.logger = logger.bind(component="router")
 
-    async def analyze(self, user_input: str, plan_id: str | None = None) -> tuple[Intent, TokenUsage]:
+    async def analyze(
+        self, user_input: str, plan_id: str | None = None
+    ) -> tuple[Intent, TokenUsage]:
         """Analyze user input and determine intent.
 
         Args:
@@ -75,7 +96,9 @@ class Router:
         Returns:
             Tuple of (Intent, TokenUsage)
         """
-        self.logger.info("analyzing_intent", input_length=len(user_input), plan_id=plan_id)
+        self.logger.info(
+            "analyzing_intent", input_length=len(user_input), plan_id=plan_id
+        )
 
         messages = [
             SystemMessage(content=ROUTER_SYSTEM_PROMPT),
@@ -87,44 +110,26 @@ class Router:
             content = response.content
 
             # Parse the JSON response
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError:
-                # Try to extract JSON from response
-                import re
-                json_match = re.search(r'\{[\s\S]*\}', content)
-                if json_match:
-                    data = json.loads(json_match.group())
-                else:
-                    # Default to general chat
-                    data = {
-                        "action": "general_chat",
-                        "category": "unknown",
-                        "content_type": None,
-                        "language": "en",
-                        "prompt": user_input,
-                        "answer": content,
-                        "entities": {},
-                    }
+            data = self._parse_json_response(content, user_input)
 
             # Map action string to enum
             action_map = {
                 "create_project": IntentAction.CREATE_PROJECT,
                 "update_project": IntentAction.UPDATE_PROJECT,
-                "query_registry": IntentAction.QUERY_REGISTRY,
-                "orchestrate_complex": IntentAction.ORCHESTRATE_COMPLEX,
                 "general_chat": IntentAction.GENERAL_CHAT,
             }
 
             intent = Intent(
                 initial_prompt=user_input,
                 prompt=data.get("prompt", user_input),
-                action=action_map.get(data.get("action", "general_chat"), IntentAction.GENERAL_CHAT),
-                category=data.get("category", "unknown"),
-                content_type=data.get("content_type"),
+                action=action_map.get(
+                    data.get("action", "general_chat"), IntentAction.GENERAL_CHAT
+                ),
                 language=data.get("language", "en"),
                 answer=data.get("answer"),
-                entities=data.get("entities", {}),
+                clarification_needed=data.get("clarification_needed", False),
+                clarification_question=data.get("clarification_question"),
+                project_context=data.get("project_context") or {},
             )
 
             # Calculate token usage
@@ -137,8 +142,8 @@ class Router:
             self.logger.info(
                 "intent_analyzed",
                 action=intent.action.value,
-                category=intent.category,
                 language=intent.language,
+                clarification_needed=intent.clarification_needed,
             )
 
             return intent, usage
@@ -146,12 +151,35 @@ class Router:
         except Exception as e:
             self.logger.error("intent_analysis_failed", error=str(e))
             # Return a default general_chat intent on error
-            return Intent(
-                initial_prompt=user_input,
-                prompt=user_input,
-                action=IntentAction.GENERAL_CHAT,
-                answer=f"I encountered an error analyzing your request: {e}",
-            ), TokenUsage()
+            return (
+                Intent(
+                    initial_prompt=user_input,
+                    prompt=user_input,
+                    action=IntentAction.GENERAL_CHAT,
+                    answer=f"I encountered an error analyzing your request: {e}",
+                    project_context={},
+                ),
+                TokenUsage(),
+            )
+
+    def _parse_json_response(self, content: str, user_input: str) -> dict:
+        """Parse JSON from LLM response, with fallback."""
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            # Try to extract JSON from response
+            json_match = re.search(r"\{[\s\S]*\}", content)
+            if json_match:
+                return json.loads(json_match.group())
+            else:
+                # Default to general chat
+                return {
+                    "action": "general_chat",
+                    "language": "en",
+                    "prompt": user_input,
+                    "answer": content,
+                    "project_context": {},
+                }
 
     def is_direct_response(self, intent: Intent) -> bool:
         """Check if the intent should be handled with a direct response.
@@ -159,3 +187,7 @@ class Router:
         Returns True for general_chat actions that don't need planning.
         """
         return intent.action == IntentAction.GENERAL_CHAT and intent.answer is not None
+
+    def needs_clarification(self, intent: Intent) -> bool:
+        """Check if the intent needs clarification from the user."""
+        return intent.clarification_needed and intent.clarification_question is not None

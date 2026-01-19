@@ -1,0 +1,161 @@
+# Git MCP Server
+# Provides git version control operations
+
+id: git
+name: Git
+description: Git version control operations
+transport: stdio
+command: python3
+args:
+  - -m
+  - druppie.mcp.servers.git
+
+tools:
+  - name: clone
+    description: Clone a git repository
+    input_schema:
+      type: object
+      properties:
+        repo_url:
+          type: string
+          description: Repository URL to clone
+        path:
+          type: string
+          description: Local path to clone to
+        branch:
+          type: string
+          description: Branch to checkout (optional)
+      required:
+        - repo_url
+        - path
+
+  - name: init
+    description: Initialize a new git repository
+    input_schema:
+      type: object
+      properties:
+        path:
+          type: string
+          description: Path to initialize repository in
+      required:
+        - path
+
+  - name: checkout
+    description: Checkout or create a branch
+    input_schema:
+      type: object
+      properties:
+        branch:
+          type: string
+          description: Branch name
+        create:
+          type: boolean
+          description: Create the branch if it doesn't exist
+          default: false
+        path:
+          type: string
+          description: Repository path (optional)
+      required:
+        - branch
+
+  - name: commit
+    description: Commit staged changes
+    input_schema:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Commit message
+        path:
+          type: string
+          description: Repository path (optional)
+      required:
+        - message
+
+  - name: push
+    description: Push commits to remote
+    input_schema:
+      type: object
+      properties:
+        remote:
+          type: string
+          description: Remote name
+          default: origin
+        branch:
+          type: string
+          description: Branch to push
+        message:
+          type: string
+          description: Commit message (will commit first if provided)
+        path:
+          type: string
+          description: Repository path (optional)
+      required:
+        - branch
+
+  - name: pull
+    description: Pull from remote
+    input_schema:
+      type: object
+      properties:
+        remote:
+          type: string
+          description: Remote name
+          default: origin
+        branch:
+          type: string
+          description: Branch to pull
+        path:
+          type: string
+          description: Repository path (optional)
+
+  - name: status
+    description: Get repository status
+    input_schema:
+      type: object
+      properties:
+        path:
+          type: string
+          description: Repository path (optional)
+
+  - name: add
+    description: Add files to staging
+    input_schema:
+      type: object
+      properties:
+        files:
+          type: string
+          description: Files to add (default is all)
+          default: "."
+        path:
+          type: string
+          description: Repository path (optional)
+
+  - name: branch
+    description: List or manage branches
+    input_schema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Branch name (for create/delete)
+        delete:
+          type: boolean
+          description: Delete the branch
+          default: false
+        path:
+          type: string
+          description: Repository path (optional)
+
+  - name: log
+    description: Get commit log
+    input_schema:
+      type: object
+      properties:
+        count:
+          type: integer
+          description: Number of commits to show
+          default: 10
+        path:
+          type: string
+          description: Repository path (optional)

@@ -1,0 +1,57 @@
+# Shell MCP Server
+# Provides shell command execution
+
+id: shell
+name: Shell
+description: Execute shell commands
+transport: stdio
+command: python3
+args:
+  - -m
+  - druppie.mcp.servers.shell
+
+tools:
+  - name: run
+    description: Execute a shell command
+    input_schema:
+      type: object
+      properties:
+        command:
+          type: string
+          description: Command to execute
+        cwd:
+          type: string
+          description: Working directory
+        timeout:
+          type: integer
+          description: Timeout in seconds
+          default: 300
+        shell:
+          type: boolean
+          description: Run through shell
+          default: true
+        env:
+          type: object
+          description: Environment variables to set
+      required:
+        - command
+
+  - name: which
+    description: Find the path to a program
+    input_schema:
+      type: object
+      properties:
+        program:
+          type: string
+          description: Program name to find
+      required:
+        - program
+
+  - name: env
+    description: Get environment variables
+    input_schema:
+      type: object
+      properties:
+        var:
+          type: string
+          description: Specific variable to get (optional, returns all if not specified)

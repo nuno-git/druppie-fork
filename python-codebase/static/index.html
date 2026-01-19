@@ -470,6 +470,7 @@
             <nav>
                 <button class="active" data-page="chat">Chat</button>
                 <button data-page="plans">Plans</button>
+                <button data-page="workspace">Workspace</button>
                 <button data-page="agents">Agents</button>
                 <button data-page="tasks">Tasks</button>
             </nav>
@@ -568,6 +569,50 @@ What would you like to work on today?</div>
                 </div>
             </div>
         </div>
+
+        <!-- Workspace Page -->
+        <div id="workspace" class="page">
+            <div class="grid-2" style="grid-template-columns: 300px 1fr;">
+                <!-- Plan Selector Sidebar -->
+                <div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Projects</span>
+                            <button class="btn btn-sm" onclick="loadWorkspacePlans()">↻</button>
+                        </div>
+                        <div id="workspacePlanList">
+                            <div class="loading">
+                                <div class="spinner"></div>
+                                Loading...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Files Panel -->
+                <div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Files</span>
+                            <span id="currentPlanName" style="color: var(--text-light); font-size: 0.9rem;"></span>
+                        </div>
+                        <div id="workspaceBreadcrumb" style="margin-bottom: 1rem; padding: 0.5rem; background: var(--bg); border-radius: 0.5rem;">
+                            <a href="#" onclick="loadWorkspaceFiles('')">workspace</a>
+                        </div>
+                        <div id="workspaceList">
+                            <div class="empty-state">Select a project from the left to view files</div>
+                        </div>
+                    </div>
+                    <div class="card" id="filePreviewCard" style="display: none;">
+                        <div class="card-header">
+                            <span class="card-title" id="filePreviewName">File Preview</span>
+                            <button class="btn btn-sm" onclick="closeFilePreview()">Close</button>
+                        </div>
+                        <pre id="filePreviewContent" style="background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; max-height: 500px;"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>
 
     <script>
@@ -585,6 +630,7 @@ What would you like to work on today?</div>
                 // Load data for the page
                 switch(btn.dataset.page) {
                     case 'plans': loadPlans(); break;
+                    case 'workspace': loadWorkspace(); break;
                     case 'agents': loadAgents(); break;
                     case 'tasks': loadTasks(); break;
                 }
@@ -695,7 +741,7 @@ What would you like to work on today?</div>
                                 <th>ID</th>
                                 <th>Name</th>
                                 <th>Status</th>
-                                <th>Steps</th>
+                                <th>Type</th>
                                 <th>Created</th>
                                 <th>Actions</th>
                             </tr>
@@ -706,10 +752,11 @@ What would you like to work on today?</div>
                                     <td><code>${plan.id}</code></td>
                                     <td>${escapeHtml(plan.name)}</td>
                                     <td><span class="badge badge-${getStatusBadge(plan.status)}">${plan.status}</span></td>
-                                    <td>${plan.steps ? plan.steps.length : 0}</td>
+                                    <td><span class="badge badge-secondary">${plan.plan_type || 'agents'}</span></td>
                                     <td>${new Date(plan.created_at).toLocaleString()}</td>
-                                    <td>
+                                    <td style="display: flex; gap: 0.25rem;">
                                         <button class="btn btn-primary btn-sm" onclick="viewPlan('${plan.id}')">View</button>
+                                        <button class="btn btn-sm" onclick="goToWorkspace('${plan.id}')" title="View Files">📁</button>
                                     </td>
                                 </tr>
                             `).join('')}
@@ -781,8 +828,8 @@ What would you like to work on today?</div>
                                 <p>${escapeHtml(agent.description)}</p>
                                 <div class="agent-skills">
                                     <span class="badge badge-info">${agent.type}</span>
-                                    ${agent.skills.slice(0, 3).map(s => `<span class="badge badge-secondary">${s}</span>`).join('')}
-                                    ${agent.skills.length > 3 ? `<span class="badge badge-secondary">+${agent.skills.length - 3}</span>` : ''}
+                                    ${(agent.mcps || []).slice(0, 3).map(s => `<span class="badge badge-secondary">${s}</span>`).join('')}
+                                    ${(agent.mcps || []).length > 3 ? `<span class="badge badge-secondary">+${agent.mcps.length - 3}</span>` : ''}
                                 </div>
                             </div>
                         </div>
@@ -892,6 +939,214 @@ What would you like to work on today?</div>
             } catch (error) {
                 alert('Error rejecting task: ' + error.message);
             }
+        }
+
+        // Workspace
+        let currentWorkspacePath = '';
+        let currentWorkspacePlanId = null;
+
+        async function loadWorkspace(planId = null) {
+            currentWorkspacePlanId = planId;
+            await loadWorkspacePlans();
+            if (planId) {
+                await loadWorkspaceFiles('', planId);
+            }
+        }
+
+        async function loadWorkspacePlans() {
+            const container = document.getElementById('workspacePlanList');
+            container.innerHTML = '<div class="loading"><div class="spinner"></div> Loading...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/v1/workspace/plans`);
+                const plans = await response.json();
+
+                if (plans.length === 0) {
+                    container.innerHTML = '<div class="empty-state" style="padding: 1rem;">No projects yet</div>';
+                    return;
+                }
+
+                let html = '<div style="display: grid; gap: 0.5rem;">';
+                for (const plan of plans) {
+                    const isActive = plan.plan_id === currentWorkspacePlanId;
+                    const statusColor = plan.status === 'completed' ? 'var(--success)' :
+                                       plan.status === 'failed' ? 'var(--danger)' : 'var(--warning)';
+                    html += `
+                        <div style="padding: 0.75rem; background: ${isActive ? 'var(--primary)' : 'var(--bg)'};
+                                    color: ${isActive ? 'white' : 'inherit'}; border-radius: 0.5rem; cursor: pointer;"
+                             onclick="selectWorkspacePlan('${plan.plan_id}')">
+                            <div style="font-weight: 500; font-size: 0.9rem;">${escapeHtml(plan.project_name || plan.name)}</div>
+                            <div style="display: flex; justify-content: space-between; margin-top: 0.25rem; font-size: 0.8rem; opacity: 0.8;">
+                                <span style="color: ${isActive ? 'white' : statusColor};">${plan.status}</span>
+                                <span>${plan.file_count} files</span>
+                            </div>
+                        </div>
+                    `;
+                }
+                html += '</div>';
+                container.innerHTML = html;
+
+            } catch (error) {
+                container.innerHTML = `<div class="empty-state">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function selectWorkspacePlan(planId) {
+            currentWorkspacePlanId = planId;
+            await loadWorkspacePlans();  // Refresh to show selection
+            await loadWorkspaceFiles('', planId);
+        }
+
+        async function loadWorkspaceFiles(path = '', planId = null) {
+            planId = planId || currentWorkspacePlanId;
+            currentWorkspacePath = path;
+            const container = document.getElementById('workspaceList');
+            container.innerHTML = '<div class="loading"><div class="spinner"></div> Loading...</div>';
+
+            // Update breadcrumb
+            updateBreadcrumb(path);
+
+            try {
+                let url = `${API_BASE}/v1/workspace?path=${encodeURIComponent(path)}`;
+                if (planId) {
+                    url += `&plan_id=${encodeURIComponent(planId)}`;
+                }
+                const response = await fetch(url);
+                const data = await response.json();
+
+                // Update plan name display
+                const planNameEl = document.getElementById('currentPlanName');
+                if (data.plan) {
+                    planNameEl.textContent = `Project: ${data.plan.name}`;
+                } else {
+                    planNameEl.textContent = '';
+                }
+
+                if (data.directories.length === 0 && data.files.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <p>No files in this project yet.</p>
+                            <p style="font-size: 0.85rem; margin-top: 0.5rem;">
+                                Workspace: <code>${data.workspace}</code>
+                            </p>
+                        </div>`;
+                    return;
+                }
+
+                let html = '<div style="display: grid; gap: 0.5rem;">';
+
+                // Show directories first
+                for (const dir of data.directories) {
+                    html += `
+                        <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: var(--bg); border-radius: 0.5rem; cursor: pointer;" onclick="loadWorkspaceFiles('${dir.path}')">
+                            <span style="font-size: 1.5rem;">📁</span>
+                            <span style="flex: 1; font-weight: 500;">${escapeHtml(dir.name)}</span>
+                            <span class="badge badge-secondary">folder</span>
+                        </div>
+                    `;
+                }
+
+                // Show files
+                for (const file of data.files) {
+                    const icon = getFileIcon(file.name);
+                    const size = formatFileSize(file.size);
+                    // For file paths, we need to use the full path from project root
+                    const fullPath = planId ? `${data.plan?.project_name || ''}/${file.path}`.replace(/^\//, '') : file.path;
+                    html += `
+                        <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: var(--bg); border-radius: 0.5rem; cursor: pointer;" onclick="previewFile('${fullPath}')">
+                            <span style="font-size: 1.5rem;">${icon}</span>
+                            <span style="flex: 1;">${escapeHtml(file.name)}</span>
+                            <span style="color: var(--text-light); font-size: 0.85rem;">${size}</span>
+                            <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); downloadFile('${fullPath}')">Download</button>
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+                container.innerHTML = html;
+
+            } catch (error) {
+                container.innerHTML = `<div class="empty-state">Error loading workspace: ${error.message}</div>`;
+            }
+        }
+
+        function updateBreadcrumb(path) {
+            const container = document.getElementById('workspaceBreadcrumb');
+            let html = '<a href="#" onclick="loadWorkspaceFiles(\'\')">workspace</a>';
+
+            if (path) {
+                const parts = path.split('/');
+                let currentPath = '';
+                for (const part of parts) {
+                    currentPath += (currentPath ? '/' : '') + part;
+                    html += ` / <a href="#" onclick="loadWorkspaceFiles('${currentPath}')">${part}</a>`;
+                }
+            }
+
+            container.innerHTML = html;
+        }
+
+        async function previewFile(path) {
+            try {
+                const response = await fetch(`${API_BASE}/v1/workspace/file?path=${encodeURIComponent(path)}`);
+                const data = await response.json();
+
+                document.getElementById('filePreviewName').textContent = path.split('/').pop();
+                document.getElementById('filePreviewCard').style.display = 'block';
+
+                if (data.binary) {
+                    document.getElementById('filePreviewContent').textContent = '[Binary file - cannot preview]';
+                } else {
+                    document.getElementById('filePreviewContent').textContent = data.content;
+                }
+            } catch (error) {
+                alert('Error loading file: ' + error.message);
+            }
+        }
+
+        function closeFilePreview() {
+            document.getElementById('filePreviewCard').style.display = 'none';
+        }
+
+        function downloadFile(path) {
+            window.open(`${API_BASE}/v1/workspace/download?path=${encodeURIComponent(path)}`, '_blank');
+        }
+
+        function getFileIcon(filename) {
+            const ext = filename.split('.').pop().toLowerCase();
+            const icons = {
+                'py': '🐍',
+                'js': '📜',
+                'ts': '📘',
+                'html': '🌐',
+                'css': '🎨',
+                'json': '📋',
+                'md': '📝',
+                'txt': '📄',
+                'yaml': '⚙️',
+                'yml': '⚙️',
+                'sh': '💻',
+                'dockerfile': '🐳',
+                'go': '🔵',
+                'rs': '🦀',
+                'java': '☕',
+            };
+            return icons[ext] || '📄';
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        function goToWorkspace(planId) {
+            // Switch to workspace tab and load the plan
+            document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.querySelector('nav button[data-page="workspace"]').classList.add('active');
+            document.getElementById('workspace').classList.add('active');
+            loadWorkspace(planId);
         }
 
         // Helpers

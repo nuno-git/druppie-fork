@@ -1,0 +1,225 @@
+# Coding Workflow
+# Full development workflow with TDD, Docker build, and E2E testing
+#
+# Flow:
+# 1. Clone repo (or init new)
+# 2. Decide branch name (LLM)
+# 3. Create/checkout branch
+# 4. Write TDD tests
+# 5. Implement code
+# 6. Run tests
+# 7. If tests fail → fix → loop
+# 8. Push to remote
+# 9. Build Docker image
+# 10. Run E2E tests
+# 11. If E2E fail → fix → loop
+
+id: coding_workflow
+name: Coding Workflow
+description: Full development workflow with TDD, Docker build, and E2E testing
+
+trigger_keywords:
+  - "build me"
+  - "create a new"
+  - "develop"
+  - "new project"
+  - "create project"
+  - "make me"
+
+required_mcps:
+  - git
+  - shell
+  - docker
+  - filesystem
+
+entry_point: clone_repo
+
+steps:
+  clone_repo:
+    name: Clone or initialize repository
+    type: mcp
+    tool: git.clone
+    params:
+      repo_url: "{repo_url}"
+      path: "{workspace}/repo"
+    on_success: decide_branch
+    on_failure: init_new_repo
+
+  init_new_repo:
+    name: Initialize new repository
+    type: mcp
+    tool: git.init
+    params:
+      path: "{workspace}/repo"
+    on_success: decide_branch
+    on_failure: fail_handler
+
+  decide_branch:
+    name: Determine branch name based on task
+    type: agent
+    agent_id: developer
+    task: |
+      Based on this task description, determine an appropriate git branch name.
+      Task: {task_description}
+
+      Return a JSON object with the branch name:
+      {"branch_name": "feature/your-branch-name"}
+
+      Use conventional branch naming: feature/, bugfix/, hotfix/, etc.
+    on_success: checkout_branch
+    on_failure: fail_handler
+
+  checkout_branch:
+    name: Create and checkout branch
+    type: mcp
+    tool: git.checkout
+    params:
+      branch: "{step_decide_branch.data.branch_name}"
+      create: "true"
+    on_success: write_tests
+    on_failure: fail_handler
+
+  write_tests:
+    name: Write TDD tests first
+    type: agent
+    agent_id: developer
+    task: |
+      Write tests FIRST following TDD principles.
+
+      Task: {task_description}
+      Working directory: {workspace}/repo
+
+      Create test files that define the expected behavior.
+      The tests should initially fail (red phase of TDD).
+
+      Use appropriate test framework for the project.
+    on_success: implement_code
+    on_failure: fail_handler
+
+  implement_code:
+    name: Implement code to pass tests
+    type: agent
+    agent_id: developer
+    task: |
+      Implement the code to make the tests pass.
+
+      Task: {task_description}
+      Working directory: {workspace}/repo
+      Tests written: {step_write_tests.artifacts}
+
+      Write clean, maintainable code that passes all tests.
+    on_success: run_tests
+    on_failure: fail_handler
+
+  run_tests:
+    name: Run unit tests
+    type: mcp
+    tool: shell.run
+    params:
+      command: "cd {workspace}/repo && npm test || pytest || go test ./..."
+      timeout: "300"
+    on_success: push_code
+    on_failure: fix_tests
+    max_retries: 0
+
+  fix_tests:
+    name: Fix failing tests
+    type: agent
+    agent_id: developer
+    task: |
+      The tests are failing. Fix the code to make them pass.
+
+      Error output: {step_run_tests.error}
+      Working directory: {workspace}/repo
+
+      Analyze the errors and fix the code.
+    on_success: run_tests
+    on_failure: fail_handler
+    max_retries: 3
+
+  push_code:
+    name: Commit and push code to remote
+    type: mcp
+    tool: git.push
+    params:
+      remote: "origin"
+      branch: "{step_decide_branch.data.branch_name}"
+      message: "{task_description}"
+    on_success: docker_build
+    on_failure: fail_handler
+
+  docker_build:
+    name: Build Docker image
+    type: mcp
+    tool: docker.build
+    params:
+      path: "{workspace}/repo"
+      tag: "{project_name}:test"
+    on_success: docker_run
+    on_failure: fail_handler
+
+  docker_run:
+    name: Run application in Docker
+    type: mcp
+    tool: docker.run
+    params:
+      image: "{project_name}:test"
+      detach: "true"
+      port: "8080:8080"
+    on_success: e2e_tests
+    on_failure: fail_handler
+
+  e2e_tests:
+    name: Run E2E tests
+    type: mcp
+    tool: shell.run
+    params:
+      command: "cd {workspace}/repo && npm run test:e2e || pytest tests/e2e || echo 'No E2E tests found'"
+      timeout: "600"
+    on_success: complete
+    on_failure: fix_e2e
+    max_retries: 0
+
+  fix_e2e:
+    name: Fix E2E test failures
+    type: agent
+    agent_id: developer
+    task: |
+      The E2E tests are failing. Fix the issues.
+
+      Error output: {step_e2e_tests.error}
+      Working directory: {workspace}/repo
+
+      Analyze the E2E errors and fix the code or tests.
+    on_success: run_tests
+    on_failure: fail_handler
+    max_retries: 3
+
+  complete:
+    name: Workflow complete
+    type: agent
+    agent_id: developer
+    task: |
+      Summarize what was accomplished:
+      - Branch: {step_decide_branch.data.branch_name}
+      - Tests written: {step_write_tests.summary}
+      - Code implemented: {step_implement_code.summary}
+      - Docker image: {project_name}:test
+
+      Provide a brief summary of the completed work.
+    on_success: null
+
+  fail_handler:
+    name: Handle workflow failure
+    type: agent
+    agent_id: developer
+    task: |
+      The workflow has failed. Summarize what was accomplished and what went wrong.
+
+      Context: {context}
+
+      Provide a clear summary of:
+      1. What was completed successfully
+      2. What failed and why
+      3. Suggested next steps
+    on_success: null
