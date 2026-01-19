@@ -14,7 +14,7 @@ import {
   Eye,
   X,
 } from 'lucide-react'
-import { getWorkspaceFiles, getWorkspaceFile, getPlans } from '../services/api'
+import { getWorkspaceFiles, getWorkspaceFile, getWorkspaceDownloadUrl, getPlans } from '../services/api'
 
 const getFileIcon = (filename) => {
   const ext = filename.split('.').pop().toLowerCase()
@@ -26,10 +26,10 @@ const getFileIcon = (filename) => {
   return File
 }
 
-const FilePreview = ({ path, onClose }) => {
+const FilePreview = ({ path, planId, onClose }) => {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['file', path],
-    queryFn: () => getWorkspaceFile(path),
+    queryKey: ['file', path, planId],
+    queryFn: () => getWorkspaceFile(path, planId),
     enabled: !!path,
   })
 
@@ -69,6 +69,7 @@ const Workspace = () => {
   const [selectedPlan, setSelectedPlan] = useState(null)
   const [currentPath, setCurrentPath] = useState('')
   const [previewFile, setPreviewFile] = useState(null)
+  const [previewPlanId, setPreviewPlanId] = useState(null)
 
   const { data: plans = [] } = useQuery({
     queryKey: ['plans'],
@@ -224,14 +225,17 @@ const Workspace = () => {
 
                         <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
-                            onClick={() => setPreviewFile(filePath)}
+                            onClick={() => {
+                              setPreviewFile(filePath)
+                              setPreviewPlanId(selectedPlan)
+                            }}
                             className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded"
                             title="Preview"
                           >
                             <Eye className="w-4 h-4" />
                           </button>
                           <a
-                            href={`/api/workspace/download?path=${encodeURIComponent(filePath)}`}
+                            href={getWorkspaceDownloadUrl(filePath, selectedPlan)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="p-1.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded"
@@ -252,7 +256,14 @@ const Workspace = () => {
 
       {/* File Preview Modal */}
       {previewFile && (
-        <FilePreview path={previewFile} onClose={() => setPreviewFile(null)} />
+        <FilePreview
+          path={previewFile}
+          planId={previewPlanId}
+          onClose={() => {
+            setPreviewFile(null)
+            setPreviewPlanId(null)
+          }}
+        />
       )}
     </div>
   )

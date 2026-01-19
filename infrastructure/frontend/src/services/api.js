@@ -71,8 +71,17 @@ export const sendChat = (message, planId = null) =>
 // Workspace
 export const getWorkspaceFiles = (planId = null) =>
   request(`/api/workspace${planId ? `?plan_id=${planId}` : ''}`)
-export const getWorkspaceFile = (path) =>
-  request(`/api/workspace/file?path=${encodeURIComponent(path)}`)
+export const getWorkspaceFile = (path, planId = null) => {
+  const params = new URLSearchParams({ path })
+  if (planId) params.append('plan_id', planId)
+  return request(`/api/workspace/file?${params.toString()}`)
+}
+export const getWorkspaceDownloadUrl = (path, planId = null) => {
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+  const params = new URLSearchParams({ path })
+  if (planId) params.append('plan_id', planId)
+  return `${API_URL}/api/workspace/download?${params.toString()}`
+}
 
 // Health
 export const getHealth = () => request('/health')
