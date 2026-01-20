@@ -544,3 +544,69 @@ Next iteration could focus on:
 - Load pending approvals when opening existing conversations
 - WebSocket real-time updates for approval status changes
 - Performance optimizations for LLM calls
+
+---
+
+## Iteration 8 Summary
+
+### What Was Implemented
+
+1. **Pending Approvals Load for Existing Conversations** - Working
+   - When clicking on a conversation from history, pending approvals are now fetched
+   - Uses `getPlan(planId)` API to get full plan with tasks
+   - Extracts tasks with `status === 'pending_approval'`
+   - Maps to approval card format with all required fields
+   - Shows approval progress for MULTI approvals even in loaded conversations
+
+### Code Changes
+
+**frontend/src/pages/Chat.jsx**:
+- Added `getPlan` to imports from API service
+- Made `handleSelectPlan` async
+- Added fetch of full plan details when selecting a conversation
+- Extract pending approvals from tasks with `pending_approval` status
+- Include `pendingApprovals` in the reconstructed message
+
+### Test Results
+
+1. **Loading Existing Conversation**:
+   - Click on "Deploy my web app to production" conversation
+   - Approval card appears with current state:
+     - "Multi-Approval Required"
+     - "1 of 2 approvals"
+     - "Approved by: developer" (with checkmark)
+     - "Still needed: infra-engineer, product-owner"
+     - "Add Approval (2/2)" button
+
+### Commits Made (Iteration 8)
+
+1. Load pending approvals when opening existing conversations
+
+---
+
+## Status After Iteration 8
+
+All core functionality is working:
+- Authentication with Keycloak
+- Chat with LLM (Z.AI / GLM-4.7)
+- Router agent analyzes intent (including deploy_project)
+- Planner agent creates execution plans
+- Developer agent generates code
+- HITL question/answer flow
+- Project creation with Git push to Gitea
+- Build and run projects in Docker
+- ROLE approval workflow (deploy.staging)
+- MULTI approval workflow (deploy.production)
+- Deployment workflow triggered from chat
+- Inline approval UI in chat
+- Agent attribution badges
+- Enhanced progress indicators
+- MULTI approval progress display
+- Partial approval feedback
+- **Pending approvals in loaded conversations** (NEW)
+
+Next iteration could focus on:
+- Implement actual deployment infrastructure (currently simulated)
+- Hide approve button for users who already approved
+- WebSocket real-time updates for approval status changes
+- Performance optimizations for LLM calls

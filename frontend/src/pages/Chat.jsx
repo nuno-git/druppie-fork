@@ -34,7 +34,7 @@ import {
   Check,
   X,
 } from 'lucide-react'
-import { sendChat, getPlans, answerQuestion, approveTask, rejectTask } from '../services/api'
+import { sendChat, getPlans, getPlan, answerQuestion, approveTask, rejectTask } from '../services/api'
 import { useAuth } from '../App'
 
 // Icon mapping for workflow events
@@ -1555,7 +1555,7 @@ What would you like to build today?`,
     ])
   }
 
-  const handleSelectPlan = (plan) => {
+  const handleSelectPlan = async (plan) => {
     setCurrentPlanId(plan.id)
 
     // Load persisted workflow events and LLM calls from plan.result
@@ -1564,6 +1564,29 @@ What would you like to build today?`,
 
     // Load LLM calls into debug panel (mark them as 'llm' type)
     setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
+
+    // Fetch full plan details with tasks to get pending approvals
+    let pendingApprovals = []
+    try {
+      const fullPlan = await getPlan(plan.id)
+      if (fullPlan.tasks) {
+        pendingApprovals = fullPlan.tasks
+          .filter(task => task.status === 'pending_approval')
+          .map(task => ({
+            task_id: task.id,
+            task_name: task.name,
+            mcp_tool: task.mcp_tool,
+            required_role: task.required_role,
+            approval_type: task.approval_type,
+            required_roles: task.required_roles,
+            required_approvals: task.required_approvals || 1,
+            current_approvals: task.approvals?.filter(a => a.decision === 'approved').length || 0,
+            approved_by_roles: task.approvals?.filter(a => a.decision === 'approved').map(a => a.role) || [],
+          }))
+      }
+    } catch (err) {
+      console.error('Error fetching plan details:', err)
+    }
 
     // Reconstruct messages from plan
     const reconstructedMessages = []
@@ -1576,7 +1599,7 @@ What would you like to build today?`,
       })
     }
 
-    // Add a response based on plan result with workflow events
+    // Add a response based on plan result with workflow events and pending approvals
     const resultMessage = plan.result?.response || `Plan "${plan.name}" - Status: ${plan.status}`
     reconstructedMessages.push({
       role: 'assistant',
@@ -1584,6 +1607,7 @@ What would you like to build today?`,
       planId: plan.id,
       status: plan.status,
       workflowEvents: workflowEvents, // Include persisted workflow events
+      pendingApprovals: pendingApprovals, // Include current pending approvals
     })
 
     setMessages(reconstructedMessages.length > 0 ? reconstructedMessages : [
