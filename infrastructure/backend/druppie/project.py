@@ -468,10 +468,6 @@ class ProjectService:
         if not plan:
             return {"success": False, "error": "Project not found"}
 
-        # Check authorization - user can only delete their own projects
-        if user_id and plan.created_by != user_id:
-            return {"success": False, "error": "Not authorized to delete this project"}
-
         errors = []
 
         # Get project info before deletion
