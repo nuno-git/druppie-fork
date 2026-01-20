@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 
 import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole } from './services/keycloak'
+import { ToastProvider } from './components/Toast'
 
 // Pages
 import Dashboard from './pages/Dashboard'
@@ -206,48 +207,50 @@ function App() {
 
   return (
     <AuthContext.Provider value={{ authenticated, user }}>
-      <BrowserRouter>
-        <div className="min-h-screen bg-gray-50">
-          <Navigation />
-          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <Routes>
-              <Route
-                path="/"
-                element={
-                  <ProtectedRoute>
-                    <Dashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/chat"
-                element={
-                  <ProtectedRoute>
-                    <Chat />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/tasks"
-                element={
-                  <ProtectedRoute>
-                    <Tasks />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/projects"
-                element={
-                  <ProtectedRoute>
-                    <Projects />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </main>
-        </div>
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <div className="min-h-screen bg-gray-50">
+            <Navigation />
+            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+              <Routes>
+                <Route
+                  path="/"
+                  element={
+                    <ProtectedRoute>
+                      <Dashboard />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/chat"
+                  element={
+                    <ProtectedRoute>
+                      <Chat />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/tasks"
+                  element={
+                    <ProtectedRoute>
+                      <Tasks />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/projects"
+                  element={
+                    <ProtectedRoute>
+                      <Projects />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </main>
+          </div>
+        </BrowserRouter>
+      </ToastProvider>
     </AuthContext.Provider>
   )
 }
