@@ -610,3 +610,73 @@ Next iteration could focus on:
 - Hide approve button for users who already approved
 - WebSocket real-time updates for approval status changes
 - Performance optimizations for LLM calls
+
+---
+
+## Iteration 9 Summary
+
+### What Was Implemented
+
+1. **Hide Approve Button for Users Who Already Approved** - Working
+   - Backend now includes `approved_by_ids` in pending approvals response
+   - Tracks which user IDs have approved each task
+   - Frontend checks if `currentUserId` is in `approved_by_ids`
+   - Shows "You have approved" message instead of buttons when user already approved
+   - Message shows how many more approvals are needed
+
+### Code Changes
+
+**backend/druppie/plans.py** - `get_pending_approvals`:
+- Added `approved_by_ids` field tracking user IDs who approved
+- Extracts `approved_by` from each Approval record
+
+**frontend/src/pages/Chat.jsx**:
+- Added `currentUserId` prop to `ApprovalCard` component
+- Added `userHasApproved` check: `currentUserId && approvedByIds.includes(currentUserId)`
+- Conditional rendering: show green "You have approved" message vs approve/reject buttons
+- Updated `Message` component to pass `currentUserId` to `ApprovalCard`
+- Updated where `Message` is rendered to pass `user?.id` as `currentUserId`
+- Added `approved_by_ids` to `handleSelectPlan` for loaded conversations
+
+### Test Results
+
+1. **User Already Approved**:
+   - Open production deployment conversation where user (seniordev/developer) already approved
+   - Shows: "You have approved this task. Waiting for 1 more approval(s) from other roles."
+   - No approve/reject buttons visible
+   - Progress still shows "1 of 2 approvals" with approved roles
+
+### Commits Made (Iteration 9)
+
+1. `ece0965` - Hide approve button for users who already approved (Iteration 9)
+
+---
+
+## Status After Iteration 9
+
+All core functionality is working:
+- Authentication with Keycloak
+- Chat with LLM (Z.AI / GLM-4.7)
+- Router agent analyzes intent (including deploy_project)
+- Planner agent creates execution plans
+- Developer agent generates code
+- HITL question/answer flow
+- Project creation with Git push to Gitea
+- Build and run projects in Docker
+- ROLE approval workflow (deploy.staging)
+- MULTI approval workflow (deploy.production)
+- Deployment workflow triggered from chat
+- Inline approval UI in chat
+- Agent attribution badges
+- Enhanced progress indicators
+- MULTI approval progress display
+- Partial approval feedback
+- Pending approvals in loaded conversations
+- **Hide approve button when user already approved** (NEW)
+
+Next iteration could focus on:
+- Implement actual deployment infrastructure (currently simulated)
+- WebSocket real-time updates for approval status changes
+- Real-time notification when another user approves
+- Performance optimizations for LLM calls
+- More comprehensive E2E test coverage
