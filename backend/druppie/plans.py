@@ -29,7 +29,7 @@ from druppie.agents import AgentRuntime
 from druppie.workflows import WorkflowEngine, WorkflowRegistry
 from druppie.mcp import MCPClient, MCPRegistry
 from druppie.registry import AgentRegistry
-from druppie.llm import ChatZAI
+# LLMService handles provider selection (Z.AI or Ollama)
 from druppie.plan_execution_engine import PlanExecutionEngine
 
 logger = structlog.get_logger()
@@ -96,12 +96,8 @@ class PlanService:
         if not self._workflow_initialized:
             registry_path = os.getenv("REGISTRY_PATH", "/app/registry")
 
-            # Initialize LLM
-            self._llm = ChatZAI(
-                api_key=os.getenv("ZAI_API_KEY", ""),
-                model=os.getenv("ZAI_MODEL", "GLM-4.7"),
-                base_url=os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4"),
-            )
+            # Initialize LLM via LLMService (auto-selects provider)
+            self._llm = self.llm_service.get_llm()
 
             # Load registries
             self._agent_registry = AgentRegistry(registry_path)
