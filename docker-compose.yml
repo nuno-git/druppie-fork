@@ -1,8 +1,6 @@
 # Druppie Governance Platform - Unified Docker Compose
 # Services: Keycloak, Gitea, Redis, Druppie Backend, Druppie Frontend
 
-version: '3.9'
-
 services:
   # =============================================================================
   # DATABASE LAYER
