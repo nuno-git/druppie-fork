@@ -177,6 +177,19 @@ class ChatOrchestrator:
 
         event("Router Agent", f"Completed analysis", "success", {"action": intent_result.data.get("action", "unknown") if intent_result.data else "unknown"})
 
+        # Check if agent needs to ask a question (via ask_human tool)
+        if not intent_result.success and intent_result.data and intent_result.data.get("question"):
+            question = intent_result.data.get("question")
+            event("Router Agent", f"Needs clarification", "warning", {"question": question})
+            return {
+                "success": True,
+                "type": "question",
+                "question": question,
+                "response": question,
+                "intent": None,
+                "llm_calls": all_llm_calls,
+            }
+
         if not intent_result.success:
             return {
                 "success": False,
