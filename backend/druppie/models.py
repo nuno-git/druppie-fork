@@ -95,8 +95,10 @@ class Task(db.Model):
     mcp_arguments = db.Column(JSON)
 
     # Approval requirements
-    required_role = db.Column(String(100))  # Role required for approval
-    approval_type = db.Column(String(50))  # auto, user_approve, role_approve
+    required_role = db.Column(String(100))  # Role required for approval (single role mode)
+    approval_type = db.Column(String(50))  # auto, user_approve, role_approve, multi
+    required_roles = db.Column(JSON)  # List of roles that can approve (for multi approval)
+    required_approvals = db.Column(db.Integer, default=1)  # Number of approvals needed
 
     # User info
     created_by = db.Column(String(36))
@@ -127,6 +129,8 @@ class Task(db.Model):
             "mcp_arguments": self.mcp_arguments,
             "required_role": self.required_role,
             "approval_type": self.approval_type,
+            "required_roles": self.required_roles,
+            "required_approvals": self.required_approvals,
             "created_by": self.created_by,
             "result": self.result,
             "error": self.error,

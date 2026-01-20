@@ -153,3 +153,92 @@ Next iteration should focus on:
 2. Test approval flow from chat (when agent calls deploy tool)
 3. Improve UI responsiveness for answer submission
 4. Add E2E tests for approval workflows
+
+---
+
+## Iteration 4 Summary
+
+### What Was Tested
+
+1. **MULTI Approval Workflow** - Working correctly
+   - `deploy.production` requires 2 approvals from different roles
+   - Tested with seniordev (developer role) and infra (infra-engineer role)
+   - Task stays `pending_approval` until required number of approvals is met
+   - After 2 approvals, task status changes to `approved`
+
+2. **Approval Flow from Chat** - Partially tested
+   - Chat workflow is focused on code generation, not deployment
+   - Router agent asks clarifying questions correctly
+   - Deploy tools (`deploy.staging`, `deploy.production`) are defined but not integrated into chat workflow
+   - Gap identified: need agent/workflow path to trigger MCP tools with approval requirements
+
+### Bugs Fixed
+
+1. **Task Approved with Only 1 Approval**
+   - Cause: SQLAlchemy auto-flush was counting the new approval before commit
+   - Fix: Added explicit `db.session.flush()` before counting approvals
+
+2. **MULTI Tasks Shown to Wrong Users**
+   - Cause: `list_tasks` checked single `required_role` before `required_roles`
+   - Fix: Moved MULTI approval check before single role check with `continue`
+
+3. **Frontend Not Showing Approve Buttons for MULTI**
+   - Cause: `canApprove` only checked `task.required_role`, not `task.required_roles`
+   - Fix: Updated to check `required_roles.some(role => hasRole(role))` for MULTI type
+
+4. **Error Message Incorrect for MULTI Approval**
+   - Updated to show all required roles: "You need one of these roles to approve: developer, infra-engineer, product-owner"
+
+### Code Changes
+
+**backend/druppie/models.py**:
+- Added `required_roles` (JSON) field for MULTI approval
+- Added `required_approvals` (Integer) field to track how many approvals needed
+
+**backend/app.py** - `list_tasks` endpoint:
+- Check MULTI approval first (has priority over single role)
+- Filter out tasks user already approved
+- Only show MULTI tasks to users with matching roles
+
+**backend/app.py** - `approve_task` endpoint:
+- Added MULTI approval logic
+- Track multiple approvals, only mark as approved when required count is met
+- Added explicit `db.session.flush()` to fix count issue
+
+**backend/app.py** - `request_mcp_approval` endpoint:
+- Set `required_roles` and `required_approvals` for MULTI tasks
+
+**frontend/src/pages/Tasks.jsx**:
+- Updated `canApprove` to check `required_roles` for MULTI type
+- Updated error message to show all required roles for MULTI
+
+### Test Results
+
+- Created MULTI approval task via API: Working
+- First approval (seniordev/developer): Task stays pending_approval
+- Second approval (infra/infra-engineer): Task becomes approved
+- Frontend correctly shows Approve buttons for users with any required role
+- Tasks filtered out after user approves (prevents duplicate approvals)
+
+### Architecture Gap Identified
+
+The chat workflow doesn't have a path to trigger MCP tools like `deploy.production`:
+- Router agent focuses on project creation/updates
+- Planner creates code generation tasks
+- No agent/workflow step to execute deployment MCP tools
+- Future improvement needed: add deployment workflow that triggers approval flow
+
+### What's Working Well
+
+- MULTI approval workflow fully functional via API
+- Frontend correctly handles MULTI approval display
+- Role-based filtering works for both single and MULTI approval types
+- Question/answer flow works in chat (HITL for clarification)
+- Debug panel shows all LLM calls and workflow events
+
+### Next Steps
+
+1. Add deployment workflow that triggers MCP approval flow from chat
+2. Improve answer submission UI feedback
+3. Add E2E tests for MULTI approval workflows
+4. Consider inline approval UI in chat for triggered deploy actions
