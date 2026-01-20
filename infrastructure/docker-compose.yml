@@ -185,10 +185,6 @@ services:
       KEYCLOAK_CLIENT_ID: druppie-backend
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
 
-      # Gitea Integration
-      GITEA_URL: http://gitea:3000
-      GITEA_TOKEN: ${GITEA_TOKEN:-}
-
       # LLM Configuration
       LLM_PROVIDER: ${LLM_PROVIDER:-zai}
       ZAI_API_KEY: ${ZAI_API_KEY:-}
@@ -202,8 +198,23 @@ services:
       DEV_MODE: "false"
       CORS_ORIGINS: http://localhost:5173,http://${EXTERNAL_HOST:-localhost}:5173
       WORKSPACE_PATH: /app/workspace
+
+      # Builder Config (Docker-in-Docker)
+      PROJECTS_NETWORK: druppie-projects
+      HOST_PORT_START: "9001"
+      HOST_PORT_END: "9100"
+      EXTERNAL_HOST: ${EXTERNAL_HOST:-localhost}
+
+      # Gitea Config (for project repos)
+      GITEA_URL: http://${EXTERNAL_HOST:-localhost}:3000
+      GITEA_INTERNAL_URL: http://gitea:3000
+      GITEA_ADMIN_USER: gitea_admin
+      GITEA_ADMIN_PASSWORD: GiteaAdmin123
+      GITEA_ORG: druppie
     volumes:
       - druppie_workspace:/app/workspace
+      # Docker socket for building/running user projects
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8000:8000"
     depends_on:

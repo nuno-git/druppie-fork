@@ -83,6 +83,27 @@ export const getWorkspaceDownloadUrl = (path, planId = null) => {
   return `${API_URL}/api/workspace/download?${params.toString()}`
 }
 
+// Projects
+export const getProjects = () => request('/api/projects')
+export const getProject = (projectId) => request(`/api/projects/${projectId}`)
+export const buildProject = (projectId) =>
+  request(`/api/projects/${projectId}/build`, { method: 'POST' })
+export const runProject = (projectId) =>
+  request(`/api/projects/${projectId}/run`, { method: 'POST' })
+export const stopProject = (projectId) =>
+  request(`/api/projects/${projectId}/stop`, { method: 'POST' })
+export const getProjectStatus = (projectId) =>
+  request(`/api/apps/${projectId}/status`)
+
+// Running Apps
+export const getRunningApps = () => request('/api/apps/running')
+
+// MCP Registry
+export const getMCPRegistry = () => request('/api/mcp/registry')
+export const getMCPTools = () => request('/api/mcp/tools')
+export const getMCPTool = (toolId) => request(`/api/mcp/tools/${toolId}`)
+export const getMCPServers = () => request('/api/mcp/servers')
+
 // Health
 export const getHealth = () => request('/health')
 export const getStatus = () => request('/api/status')
