@@ -29,6 +29,12 @@ class GiteaMCPServer(MCPServerBase):
         self.register_tool("get_repo", self.get_repo)
         self.register_tool("create_file", self.create_file)
         self.register_tool("update_file", self.update_file)
+        self.register_tool("get_file", self.get_file)
+        self.register_tool("list_branches", self.list_branches)
+        self.register_tool("create_branch", self.create_branch)
+        self.register_tool("merge_branch", self.merge_branch)
+        self.register_tool("get_branch_diff", self.get_branch_diff)
+        self.register_tool("delete_branch", self.delete_branch)
 
     def _api_request(
         self,
@@ -169,6 +175,166 @@ class GiteaMCPServer(MCPServerBase):
                 "message": message,
                 "branch": branch,
             },
+        )
+
+    def get_file(
+        self,
+        repo: str,
+        path: str,
+        branch: str = "main",
+    ) -> dict[str, Any]:
+        """Get file contents and SHA from a repository."""
+        import base64
+
+        result = self._api_request(
+            "GET",
+            f"/repos/{self.org}/{repo}/contents/{path}?ref={branch}",
+        )
+
+        if result["success"] and "data" in result:
+            file_data = result["data"]
+            result["sha"] = file_data.get("sha")
+            result["name"] = file_data.get("name")
+            result["path"] = file_data.get("path")
+            result["size"] = file_data.get("size")
+            # Decode content from base64
+            if file_data.get("content"):
+                try:
+                    content = base64.b64decode(file_data["content"]).decode("utf-8")
+                    result["content"] = content
+                except Exception:
+                    result["content"] = None
+                    result["binary"] = True
+
+        return result
+
+    def list_branches(self, repo: str) -> dict[str, Any]:
+        """List all branches in a repository."""
+        result = self._api_request("GET", f"/repos/{self.org}/{repo}/branches")
+
+        if result["success"] and "data" in result:
+            branches = result["data"]
+            result["branches"] = [
+                {
+                    "name": b.get("name"),
+                    "commit_sha": b.get("commit", {}).get("id"),
+                    "commit_message": b.get("commit", {}).get("message"),
+                }
+                for b in branches
+            ]
+            result["count"] = len(branches)
+
+        return result
+
+    def create_branch(
+        self,
+        repo: str,
+        branch: str,
+        from_branch: str = "main",
+    ) -> dict[str, Any]:
+        """Create a new branch in a repository."""
+        return self._api_request(
+            "POST",
+            f"/repos/{self.org}/{repo}/branches",
+            json_data={
+                "new_branch_name": branch,
+                "old_branch_name": from_branch,
+            },
+        )
+
+    def merge_branch(
+        self,
+        repo: str,
+        head: str,
+        base: str = "main",
+        message: str = None,
+    ) -> dict[str, Any]:
+        """Merge a branch into another branch."""
+        if message is None:
+            message = f"Merge branch '{head}' into {base}"
+
+        # Gitea uses a different endpoint for merges via API
+        # We'll use the merge API endpoint
+        result = self._api_request(
+            "POST",
+            f"/repos/{self.org}/{repo}/merge-upstream",
+            json_data={
+                "base": base,
+                "head": f"{self.org}:{head}",
+            },
+        )
+
+        # If merge-upstream doesn't work, try manual merge via git operations
+        # by creating a temporary PR and merging it
+        if not result.get("success"):
+            # Alternative: Create a PR and merge it
+            pr_result = self._api_request(
+                "POST",
+                f"/repos/{self.org}/{repo}/pulls",
+                json_data={
+                    "title": message,
+                    "head": head,
+                    "base": base,
+                    "body": f"Automated merge of {head} into {base}",
+                },
+            )
+
+            if pr_result.get("success") and "data" in pr_result:
+                pr_number = pr_result["data"].get("number")
+                # Merge the PR
+                merge_result = self._api_request(
+                    "POST",
+                    f"/repos/{self.org}/{repo}/pulls/{pr_number}/merge",
+                    json_data={
+                        "Do": "merge",
+                        "MergeMessageField": message,
+                    },
+                )
+                return merge_result
+
+        return result
+
+    def get_branch_diff(
+        self,
+        repo: str,
+        head: str,
+        base: str = "main",
+    ) -> dict[str, Any]:
+        """Get the diff between two branches."""
+        result = self._api_request(
+            "GET",
+            f"/repos/{self.org}/{repo}/compare/{base}...{head}",
+        )
+
+        if result["success"] and "data" in result:
+            diff_data = result["data"]
+            result["total_commits"] = diff_data.get("total_commits", 0)
+            result["commits"] = [
+                {
+                    "sha": c.get("sha"),
+                    "message": c.get("commit", {}).get("message"),
+                    "author": c.get("commit", {}).get("author", {}).get("name"),
+                }
+                for c in diff_data.get("commits", [])
+            ]
+            result["files_changed"] = len(diff_data.get("files", []))
+            result["files"] = [
+                {
+                    "filename": f.get("filename"),
+                    "status": f.get("status"),
+                    "additions": f.get("additions"),
+                    "deletions": f.get("deletions"),
+                }
+                for f in diff_data.get("files", [])
+            ]
+
+        return result
+
+    def delete_branch(self, repo: str, branch: str) -> dict[str, Any]:
+        """Delete a branch from a repository."""
+        return self._api_request(
+            "DELETE",
+            f"/repos/{self.org}/{repo}/branches/{branch}",
         )
 
 

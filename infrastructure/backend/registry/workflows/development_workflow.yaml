@@ -1,0 +1,219 @@
+# Development Workflow - For New Projects
+# Full TDD-based development cycle with automated build and deploy
+
+id: development_workflow
+name: Development Workflow
+description: >
+  Complete development workflow for new projects using TDD methodology.
+  Creates repository, writes tests, implements code, reviews, builds,
+  and deploys to production with URL.
+
+trigger_keywords:
+  - "create new project"
+  - "build new app"
+  - "develop from scratch"
+
+required_mcps:
+  - filesystem
+  - gitea
+  - git
+  - shell
+  - docker
+
+entry_point: create_repository
+
+steps:
+  create_repository:
+    name: Create Gitea Repository
+    type: mcp
+    tool: gitea.create_repo
+    params:
+      name: "{project_name}"
+      description: "{project_description}"
+      auto_init: "true"
+    on_success: create_feature_branch
+    on_failure: fail_workflow
+
+  create_feature_branch:
+    name: Create Feature Branch
+    type: mcp
+    tool: gitea.create_branch
+    params:
+      repo: "{project_name}"
+      branch: "feature/initial-development"
+      from_branch: "main"
+    on_success: write_tests
+    on_failure: fail_workflow
+
+  write_tests:
+    name: Write Test Specifications
+    type: agent
+    agent_id: tdd_agent
+    task: |
+      Write comprehensive tests for the following project:
+
+      Project: {project_name}
+      Description: {project_description}
+      Type: {project_type}
+
+      Requirements:
+      1. Create a test file appropriate for the project type
+      2. Write tests that cover all main functionality
+      3. Include edge cases and error handling tests
+      4. Tests should FAIL initially (no implementation yet)
+
+      Write the tests to /workspace/{project_name}/tests/
+    on_success: implement_code
+    on_failure: fail_workflow
+
+  implement_code:
+    name: Implement Code
+    type: agent
+    agent_id: implementer_agent
+    task: |
+      Implement the code to make all tests pass:
+
+      Project: {project_name}
+      Description: {project_description}
+      Type: {project_type}
+
+      Requirements:
+      1. Read the tests in /workspace/{project_name}/tests/
+      2. Implement the minimum code to make tests pass
+      3. Follow best practices for {project_type}
+      4. Create appropriate project structure
+      5. Include Dockerfile for deployment
+
+      Write implementation to /workspace/{project_name}/
+    on_success: run_tests
+    on_failure: fail_workflow
+
+  run_tests:
+    name: Run Tests
+    type: mcp
+    tool: shell.run
+    params:
+      command: "cd /workspace/{project_name} && make test || npm test || pytest || python -m pytest"
+      timeout: "120"
+    on_success: code_review
+    on_failure: fix_code
+    max_retries: 3
+
+  fix_code:
+    name: Fix Failing Code
+    type: agent
+    agent_id: implementer_agent
+    task: |
+      Tests are failing. Fix the code:
+
+      Project: {project_name}
+      Test output: {step_run_tests.error}
+
+      Requirements:
+      1. Analyze the test failures
+      2. Fix the implementation
+      3. Ensure all tests pass
+    on_success: run_tests
+    on_failure: fail_workflow
+
+  code_review:
+    name: Code Review
+    type: agent
+    agent_id: reviewer_agent
+    task: |
+      Review the code for quality and best practices:
+
+      Project: {project_name}
+      Path: /workspace/{project_name}/
+
+      Check:
+      1. Code quality and readability
+      2. Security issues
+      3. Performance concerns
+      4. Documentation
+
+      Make minor fixes directly. Report major issues.
+    on_success: commit_and_push
+    on_failure: fail_workflow
+
+  commit_and_push:
+    name: Commit and Push Changes
+    type: agent
+    agent_id: git_agent
+    task: |
+      Commit and push all changes to the repository:
+
+      Project: {project_name}
+      Branch: feature/initial-development
+      Repo URL: http://gitea:3000/druppie/{project_name}.git
+
+      Steps:
+      1. Initialize git if needed
+      2. Add all files
+      3. Commit with message "feat: initial implementation"
+      4. Push to origin feature/initial-development
+    on_success: merge_to_main
+    on_failure: fail_workflow
+
+  merge_to_main:
+    name: Merge to Main
+    type: mcp
+    tool: gitea.merge_branch
+    params:
+      repo: "{project_name}"
+      head: "feature/initial-development"
+      base: "main"
+      message: "Merge initial development"
+    on_success: build_docker
+    on_failure: fail_workflow
+
+  build_docker:
+    name: Build Docker Image
+    type: mcp
+    tool: docker.build
+    params:
+      path: "/workspace/{project_name}"
+      tag: "druppie/{project_name}:latest"
+    on_success: deploy_production
+    on_failure: fail_workflow
+
+  deploy_production:
+    name: Deploy to Production
+    type: agent
+    agent_id: devops_agent
+    task: |
+      Deploy the application to production:
+
+      Project: {project_name}
+      Image: druppie/{project_name}:latest
+
+      Steps:
+      1. Stop any existing container named druppie-{project_name}
+      2. Run new container with port mapping (allocate from 9001-9049)
+      3. Verify the application is healthy
+      4. Return the deployment URL
+    on_success: complete
+    on_failure: fail_workflow
+
+  complete:
+    name: Complete
+    type: agent
+    agent_id: developer
+    task: |
+      Summarize what was built:
+      - Project: {project_name}
+      - Repository created
+      - Code implemented with TDD
+      - Deployed to production
+
+      Provide the final URLs and summary.
+    on_success: null
+
+  fail_workflow:
+    name: Workflow Failed
+    type: agent
+    agent_id: developer
+    task: |
+      The workflow has failed. Summarize what happened.
+      Context: {context}
+    on_success: null

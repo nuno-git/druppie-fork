@@ -220,10 +220,24 @@ CMD ["nginx", "-g", "daemon off;"]
         project_path: Path,
         app_type: str,
         host_port: int,
+        container_suffix: str = "",
     ) -> str:
-        """Generate docker-compose.yml for the project."""
-        container_name = f"druppie-app-{project_id[:8]}"
+        """Generate docker-compose.yml for the project.
+
+        Args:
+            project_id: The project ID
+            project_path: Path to project files
+            app_type: Type of application
+            host_port: Host port to expose
+            container_suffix: Optional suffix for container name (e.g., "preview")
+
+        Returns:
+            Docker Compose YAML content
+        """
+        suffix = f"-{container_suffix}" if container_suffix else ""
+        container_name = f"druppie-app-{project_id[:8]}{suffix}"
         internal_port = APP_INTERNAL_PORTS.get(app_type, 80)
+        is_preview = "preview" in container_suffix.lower() if container_suffix else False
 
         compose = f"""version: '3.8'
 
@@ -242,6 +256,7 @@ services:
       - "druppie.project_id={project_id}"
       - "druppie.app_type={app_type}"
       - "druppie.internal_port={internal_port}"
+      - "druppie.is_preview={str(is_preview).lower()}"
 
 networks:
   {PROJECTS_NETWORK}:
@@ -282,8 +297,22 @@ networks:
 
         return "static"
 
-    def build_project(self, project_id: str) -> dict[str, Any]:
-        """Build a project's Docker image."""
+    def build_project(
+        self,
+        project_id: str,
+        tag_suffix: str = "",
+        port_range: tuple[int, int] | None = None,
+    ) -> dict[str, Any]:
+        """Build a project's Docker image.
+
+        Args:
+            project_id: The project ID
+            tag_suffix: Optional suffix for the image tag (e.g., "-preview")
+            port_range: Optional custom port range (start, end)
+
+        Returns:
+            Dict with success status and build details
+        """
         project_path = WORKSPACE_PATH / project_id
 
         if not project_path.exists():
@@ -291,7 +320,7 @@ networks:
 
         # Detect app type
         app_type = self.detect_app_type(project_path)
-        logger.info("Detected app type", project_id=project_id, app_type=app_type)
+        logger.info("Detected app type", project_id=project_id, app_type=app_type, tag_suffix=tag_suffix)
 
         # Generate Dockerfile if not exists
         dockerfile_path = project_path / "Dockerfile"
@@ -300,19 +329,32 @@ networks:
             dockerfile_path.write_text(dockerfile)
             logger.info("Generated Dockerfile", project_id=project_id)
 
-        # Allocate port via registry (reuses existing port if already allocated)
-        port = self._port_registry.allocate_port(project_id)
+        # Determine port allocation key (separate for preview builds)
+        port_key = f"{project_id}{tag_suffix}" if tag_suffix else project_id
 
-        # Generate docker-compose.yml
-        compose = self.generate_docker_compose(project_id, project_path, app_type, port)
-        compose_path = project_path / "docker-compose.yml"
+        # Allocate port via registry (use custom range for preview builds)
+        if port_range:
+            port = self._allocate_port_in_range(port_key, port_range[0], port_range[1])
+        else:
+            port = self._port_registry.allocate_port(port_key)
+
+        # Generate docker-compose.yml (with suffix for preview)
+        compose_file = f"docker-compose{tag_suffix}.yml" if tag_suffix else "docker-compose.yml"
+        compose = self.generate_docker_compose(
+            project_id,
+            project_path,
+            app_type,
+            port,
+            container_suffix=tag_suffix.replace("-", "") if tag_suffix else "",
+        )
+        compose_path = project_path / compose_file
         compose_path.write_text(compose)
-        logger.info("Generated docker-compose.yml", project_id=project_id, port=port, app_type=app_type)
+        logger.info("Generated compose file", project_id=project_id, file=compose_file, port=port, app_type=app_type)
 
         # Build the image
         try:
             result = subprocess.run(
-                ["docker-compose", "build"],
+                ["docker-compose", "-f", compose_file, "build"],
                 cwd=project_path,
                 capture_output=True,
                 text=True,
@@ -326,11 +368,12 @@ networks:
                     "error": f"Build failed: {result.stderr}",
                 }
 
-            logger.info("Build successful", project_id=project_id)
+            logger.info("Build successful", project_id=project_id, tag_suffix=tag_suffix)
             return {
                 "success": True,
                 "app_type": app_type,
                 "port": port,
+                "compose_file": compose_file,
             }
 
         except subprocess.TimeoutExpired:
@@ -338,25 +381,64 @@ networks:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def run_project(self, project_id: str) -> dict[str, Any]:
-        """Run a project's Docker container."""
+    def _allocate_port_in_range(self, key: str, start: int, end: int) -> int:
+        """Allocate a port within a specific range."""
+        # Check if already allocated
+        if self._port_registry.redis:
+            existing = self._port_registry.redis.hget(self._port_registry._port_key, key)
+            if existing:
+                return int(existing)
+
+        # Find available port in range
+        for port in range(start, end):
+            if self._port_registry._is_port_available(port, key):
+                self._port_registry._reserve_port(port, key)
+                return port
+
+        raise RuntimeError(f"No available ports in range {start}-{end}")
+
+    def run_project(
+        self,
+        project_id: str,
+        container_suffix: str = "",
+        port_range: tuple[int, int] | None = None,
+    ) -> dict[str, Any]:
+        """Run a project's Docker container.
+
+        Args:
+            project_id: The project ID
+            container_suffix: Optional suffix for container name (e.g., "-preview")
+            port_range: Optional custom port range (start, end)
+
+        Returns:
+            Dict with success status and run details including URL
+        """
         project_path = WORKSPACE_PATH / project_id
 
         if not project_path.exists():
             return {"success": False, "error": "Project not found"}
 
+        # Determine compose file to use
+        tag_suffix = f"-{container_suffix}" if container_suffix else ""
+        compose_file = f"docker-compose{tag_suffix}.yml" if container_suffix else "docker-compose.yml"
+
         # Build first if needed
-        if not (project_path / "docker-compose.yml").exists():
-            build_result = self.build_project(project_id)
+        if not (project_path / compose_file).exists():
+            build_result = self.build_project(
+                project_id,
+                tag_suffix=tag_suffix,
+                port_range=port_range,
+            )
             if not build_result.get("success"):
                 return build_result
 
-        container_name = f"druppie-app-{project_id[:8]}"
+        suffix = f"-{container_suffix}" if container_suffix else ""
+        container_name = f"druppie-app-{project_id[:8]}{suffix}"
 
         # Start the container
         try:
             result = subprocess.run(
-                ["docker-compose", "up", "-d", "--build"],
+                ["docker-compose", "-f", compose_file, "up", "-d", "--build"],
                 cwd=project_path,
                 capture_output=True,
                 text=True,
@@ -394,8 +476,8 @@ networks:
                     "error": f"Container failed to start. Logs: {logs_result.stderr or logs_result.stdout}",
                 }
 
-            # Parse port from docker-compose.yml using YAML parser
-            compose_path = project_path / "docker-compose.yml"
+            # Parse port from compose file using YAML parser
+            compose_path = project_path / compose_file
             compose_content = compose_path.read_text()
             port = HOST_PORT_START  # Default
 
@@ -409,25 +491,28 @@ networks:
             except Exception as e:
                 logger.warning("Failed to parse port from compose", error=str(e))
                 # Fallback: get from port registry
-                registry_port = self._port_registry.get_project_port(project_id)
+                port_key = f"{project_id}{tag_suffix}" if tag_suffix else project_id
+                registry_port = self._port_registry.get_project_port(port_key)
                 if registry_port:
                     port = registry_port
 
-            # Register running app
+            # Register running app with appropriate key
+            app_key = f"{project_id}{suffix}" if suffix else project_id
             app = RunningApp(
                 project_id=project_id,
                 container_name=container_name,
                 port=port,
             )
-            self._running_apps[project_id] = app
+            self._running_apps[app_key] = app
 
-            logger.info("Container started and verified", project_id=project_id, url=app.url)
+            logger.info("Container started and verified", project_id=project_id, url=app.url, container_suffix=container_suffix)
 
             return {
                 "success": True,
                 "url": app.url,
                 "container_name": container_name,
                 "port": port,
+                "is_preview": bool(container_suffix),
             }
 
         except subprocess.TimeoutExpired:

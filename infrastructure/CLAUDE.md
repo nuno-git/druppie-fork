@@ -4,35 +4,197 @@
 
 Druppie is a governance platform for AI agents with MCP (Model Context Protocol) tool permissions, approval workflows, and project management integrated with Gitea.
 
-## Architecture
+## Architecture Philosophy
+
+**Clean Code Principles:**
+1. **Agents are the core abstraction** - All LLM interactions happen through defined agents
+2. **Agents are defined in YAML** - System prompts, MCP tools, and behavior in `registry/agents/`
+3. **Workflows orchestrate agents + MCPs** - Defined in `registry/workflows/`
+4. **LLM Service is pure** - Only provides chat capability, no business logic
+5. **Separation of concerns** - Parsing, execution, and LLM calls are separate
+
+## Core Architecture
 
 ```
-User Request -> Router (LLM) -> Intent Analysis -> Planner (LLM) -> Execution Plan
-                                                        |
-                                                        v
-                                              PlanExecutionEngine
-                                                   /        \
-                                           Workflows    AgentRuntime
-                                                        (parallel tasks)
+User Request
+     │
+     ▼
+┌─────────────────────────────────────────────────────────┐
+│                    Main Workflow                         │
+│  ┌─────────────┐    ┌──────────────┐    ┌────────────┐ │
+│  │   Router    │───▶│   Planner    │───▶│  Execute   │ │
+│  │   Agent     │    │    Agent     │    │  Tasks     │ │
+│  └─────────────┘    └──────────────┘    └────────────┘ │
+│        │                   │                   │        │
+│        ▼                   ▼                   ▼        │
+│   MCP: ask_question   Select workflow    Run agents/   │
+│   (if needed)         or agents          workflows     │
+└─────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│                    Agent Runtime                         │
+│  - Loads agent definition from YAML                      │
+│  - Executes agent with system prompt                     │
+│  - Agent can call MCP tools                              │
+└─────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│                    MCP Servers                           │
+│  filesystem │ git │ gitea │ docker │ shell              │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### Core Architecture Components (druppie/)
+## Key Components
 
-- **Router** (`router/router.py`): LangChain-based intent analysis, classifies user requests
-- **Planner** (`planner/planner.py`): Creates execution plans using LLM
-- **PlanExecutionEngine** (`plan_execution_engine.py`): Routes plans to WorkflowEngine or AgentRuntime
-- **AgentRuntime** (`agents/runtime.py`): Parallel execution of autonomous agents
-- **WorkflowEngine** (`workflows/engine.py`): Executes predefined workflow steps
-- **MCPClient** (`mcp/client.py`): Invokes MCP tools
-- **MCPRegistry** (`mcp/registry.py`): Loads MCP server definitions from YAML
+### 1. Agents (`registry/agents/*.yaml`)
 
-### Infrastructure Components
+Agents are AI actors with:
+- **System prompt**: Defines personality and capabilities
+- **MCP tools**: List of tools the agent can use
+- **Description**: What the agent does
 
-- **Backend** (`/backend`): Flask API with Keycloak auth, SQLAlchemy ORM
-- **Frontend** (`/frontend`): Vite + React with Keycloak OIDC
-- **Keycloak**: Identity provider with role-based access control
-- **Gitea**: Git server for project repositories
-- **Docker-in-Docker**: Building and running user projects
+```yaml
+# Example: registry/agents/router_agent.yaml
+id: router_agent
+name: Router Agent
+description: Analyzes user intent and routes to appropriate action
+system_prompt: |
+  You are an intent analysis system for Druppie.
+  Analyze requests and classify as: create_project, update_project, general_chat
+  ...
+mcps:
+  - interaction  # For asking clarifying questions
+output_schema:
+  type: object
+  properties:
+    action: { enum: [create_project, update_project, general_chat] }
+    ...
+```
+
+### 2. Workflows (`registry/workflows/*.yaml`)
+
+Workflows are sequences of:
+- **Agent tasks**: Execute an agent with a specific task
+- **MCP tool calls**: Direct tool invocations
+- **Conditionals**: Branch based on step results
+
+```yaml
+# Example: registry/workflows/main_workflow.yaml
+id: main_workflow
+name: Main Request Processing
+steps:
+  analyze_intent:
+    type: agent
+    agent_id: router_agent
+    on_success: plan_execution
+    on_clarification_needed: ask_user
+
+  plan_execution:
+    type: agent
+    agent_id: planner_agent
+    on_success: execute_plan
+```
+
+### 3. MCP Servers (`registry/mcp/*.yaml`)
+
+Tools available to agents:
+- **filesystem**: Read/write files
+- **git**: Version control operations
+- **gitea**: Repository management
+- **docker**: Build and run containers
+- **shell**: Execute commands
+- **interaction**: Ask user questions
+
+### 4. LLM Service (`druppie/llm_service.py`)
+
+**Pure LLM interaction - NO business logic:**
+```python
+class LLMService:
+    def chat(self, messages: list[dict], call_name: str = None) -> str:
+        """Send messages to LLM and return response."""
+        # Only LLM communication, no parsing
+```
+
+### 5. Agent Runtime (`druppie/agents/runtime.py`)
+
+Executes agents by:
+1. Loading agent definition from registry
+2. Building messages with system prompt
+3. Calling LLM service
+4. Parsing response according to output_schema
+5. Executing any MCP tool calls the agent makes
+
+### 6. Workflow Engine (`druppie/workflows/engine.py`)
+
+Executes workflows by:
+1. Loading workflow definition
+2. Running steps in order
+3. Handling success/failure transitions
+4. Passing context between steps
+
+## Directory Structure
+
+```
+backend/
+├── app.py                    # Flask API routes
+├── druppie/
+│   ├── llm_service.py        # PURE LLM chat (no prompts, no parsing)
+│   ├── agents/
+│   │   └── runtime.py        # Executes agents from YAML definitions
+│   ├── workflows/
+│   │   └── engine.py         # Executes workflows from YAML definitions
+│   ├── mcp/
+│   │   ├── client.py         # MCP tool invocation
+│   │   └── registry.py       # Loads MCP definitions
+│   ├── plans.py              # Plan/Task management (uses AgentRuntime)
+│   ├── project.py            # Project/Git operations
+│   └── builder.py            # Docker build/run
+├── registry/
+│   ├── agents/
+│   │   ├── router_agent.yaml      # Intent analysis
+│   │   ├── planner_agent.yaml     # Execution planning
+│   │   ├── code_generator.yaml    # Code generation
+│   │   ├── developer.yaml         # General development
+│   │   ├── tdd_agent.yaml         # Test-driven development
+│   │   ├── implementer_agent.yaml # Code implementation
+│   │   ├── reviewer_agent.yaml    # Code review
+│   │   ├── devops_agent.yaml      # Build/deploy
+│   │   └── git_agent.yaml         # Git operations
+│   ├── workflows/
+│   │   ├── main_workflow.yaml         # Main request processing
+│   │   ├── development_workflow.yaml  # New project creation
+│   │   └── update_workflow.yaml       # Existing project updates
+│   └── mcp/
+│       ├── filesystem.yaml
+│       ├── git.yaml
+│       ├── gitea.yaml
+│       ├── docker.yaml
+│       ├── shell.yaml
+│       └── interaction.yaml
+```
+
+## Request Flow
+
+1. **User sends message** → `POST /api/chat`
+
+2. **Main workflow starts** → `main_workflow.yaml`
+
+3. **Router Agent executes**:
+   - Analyzes intent
+   - Returns: `{ action, project_context, clarification_needed }`
+   - If `clarification_needed`, uses `interaction.ask_question` MCP tool
+
+4. **Planner Agent executes**:
+   - Based on intent, selects workflow or creates agent tasks
+   - Returns: `{ plan_type, workflow_id, tasks }`
+
+5. **Execution**:
+   - If workflow selected → WorkflowEngine runs it
+   - If agent tasks → AgentRuntime executes them in parallel
+
+6. **Results returned** to user
 
 ## Setup & Running
 
@@ -46,9 +208,6 @@ docker compose up -d
 # Rebuild backend after changes
 docker compose build druppie-backend && docker compose up -d druppie-backend
 
-# Rebuild frontend after changes
-docker compose build druppie-frontend && docker compose up -d druppie-frontend
-
 # View logs
 docker compose logs -f druppie-backend
 ```
@@ -60,43 +219,11 @@ docker compose logs -f druppie-backend
 | admin | Admin123! | admin (full access) |
 | architect | Architect123! | architect, developer |
 | seniordev | Developer123! | developer |
-| infra | Infra123! | infra-engineer |
+| juniordev | Junior123! | developer (limited) |
 
-## API Endpoints
+## LLM Configuration
 
-### Authentication
-All endpoints (except `/health`) require Bearer token from Keycloak.
-
-### Core Endpoints
-
-```bash
-# Get auth token
-curl -X POST "http://localhost:8080/realms/druppie/protocol/openid-connect/token" \
-  -d "grant_type=password&client_id=druppie-frontend&username=admin&password=Admin123!"
-
-# Chat (create project/ask questions)
-POST /api/chat
-{
-  "message": "Create a todo app with Flask"
-}
-
-# List projects
-GET /api/projects
-
-# Get project details
-GET /api/projects/<project_id>
-
-# Build project
-POST /api/projects/<project_id>/build
-
-# Run project
-POST /api/projects/<project_id>/run
-```
-
-## LLM Integration
-
-The system uses Z.AI GLM API (OpenAI-compatible). Configure in `.env`:
-
+Configure in `.env`:
 ```bash
 LLM_PROVIDER=zai
 ZAI_API_KEY=your_api_key
@@ -104,168 +231,60 @@ ZAI_MODEL=GLM-4.7
 ZAI_BASE_URL=https://api.z.ai/api/coding/paas/v4
 ```
 
-### LLM Router Flow
+## Adding New Agents
 
-1. User sends message via `/api/chat`
-2. Router analyzes intent (create_project, update_project, general_chat)
-3. If action needed, creates Plan with Tasks
-4. Tasks execute MCP tools (generate_app, docker.build, docker.run)
-5. Results returned with project URLs
-
-## Key Files
-
-### Backend
-
-- `app.py` - Flask routes and WebSocket handlers
-- `druppie/llm_service.py` - LLM integration, router prompts, code generation
-- `druppie/plans.py` - Plan/Task management, chat processing
-- `druppie/project.py` - Project service, Gitea integration
-- `druppie/builder.py` - Docker build/run service
-- `druppie/mcp_registry.py` - MCP tool registry and permissions
-- `druppie/auth.py` - Keycloak JWT authentication
-
-### Frontend
-
-- `src/pages/Chat.jsx` - Main chat interface
-- `src/pages/Projects.jsx` - Project listing and management
-- `src/context/AuthContext.jsx` - Keycloak authentication
-
-### Configuration
-
-- `iac/users.yaml` - Users, roles, MCP permissions, approval workflows
-- `docker-compose.yml` - All services configuration
-- `.env` - Environment variables (API keys, passwords)
-
-## Development Workflow
-
-1. **Making Backend Changes**:
-   ```bash
-   # Edit files in /backend
-   docker compose build druppie-backend
-   docker compose up -d druppie-backend
-   docker compose logs -f druppie-backend
-   ```
-
-2. **Making Frontend Changes**:
-   ```bash
-   # Edit files in /frontend
-   docker compose build druppie-frontend
-   docker compose up -d druppie-frontend
-   ```
-
-3. **Testing the Chat API**:
-   ```python
-   import requests
-
-   # Get token
-   token_resp = requests.post(
-       'http://localhost:8080/realms/druppie/protocol/openid-connect/token',
-       data={
-           'grant_type': 'password',
-           'client_id': 'druppie-frontend',
-           'username': 'admin',
-           'password': 'Admin123!',
-       }
-   )
-   token = token_resp.json()['access_token']
-
-   # Create project
-   resp = requests.post(
-       'http://localhost:8000/api/chat',
-       json={'message': 'Create a Flask todo app'},
-       headers={'Authorization': f'Bearer {token}'}
-   )
-   print(resp.json())
-   ```
-
-## MCP Tool Permissions
-
-Tools are controlled by role-based permissions defined in `iac/users.yaml`:
-
-- **Auto-approve**: `filesystem.read`, `git.status`, `git.log`
-- **User-approve**: `filesystem.write`, `shell.run`, `git.commit`
-- **Role-approve**: `git.push`, `docker.build`, `docker.run`, `docker.deploy`
-
-## Debugging
-
-```bash
-# Check all services
-docker compose ps
-
-# Backend logs
-docker compose logs -f druppie-backend
-
-# Keycloak logs
-docker compose logs -f keycloak
-
-# Gitea logs
-docker compose logs -f gitea
-
-# Check Gitea repos
-curl -u gitea_admin:GiteaAdmin123 http://localhost:3000/api/v1/orgs/druppie/repos
+1. Create YAML file in `registry/agents/`:
+```yaml
+id: my_agent
+name: My Agent
+description: What this agent does
+system_prompt: |
+  You are a specialized agent for...
+mcps:
+  - filesystem
+  - shell
+output_schema:
+  type: object
+  properties:
+    result: { type: string }
 ```
 
-## Common Issues
+2. Reference in workflows or planner
 
-1. **"Invalid user credentials"**: Run `python3 scripts/setup_keycloak.py` to reset passwords
-2. **"git: command not found"**: Rebuild backend (`docker compose build druppie-backend`)
-3. **Gitea repo not created**: Check backend logs for API errors
-4. **Frontend auth issues**: Clear browser storage, check Keycloak client config
+## Adding New Workflows
 
-## E2E Testing with Playwright (Standard)
+1. Create YAML file in `registry/workflows/`:
+```yaml
+id: my_workflow
+name: My Workflow
+entry_point: step_one
+steps:
+  step_one:
+    type: agent
+    agent_id: my_agent
+    task: "Perform the task"
+    on_success: step_two
+  step_two:
+    type: mcp
+    tool: git.commit
+    params:
+      message: "Done"
+```
 
-**IMPORTANT**: Always use Playwright MCP tools for end-to-end testing. Do NOT use curl or bash commands for testing the UI or API interactions.
+## E2E Testing with Playwright
 
-### Testing Workflow
+Always use Playwright MCP tools for testing. Navigate to `http://localhost:5173`, login, and test chat functionality.
 
-1. **Navigate to the app**:
-   ```
-   Use: mcp__plugin_playwright_playwright__browser_navigate
-   URL: http://localhost:5173
-   ```
+**IMPORTANT: Slow Server Warning**
+- The server can be slow to respond. Pages may take up to 60 seconds to load.
+- When waiting for page loads, use `browser_wait_for` with at least 15 seconds per wait.
+- Don't assume the page is broken if it shows "Loading..." - just wait longer.
+- LLM calls can take up to 3 minutes to complete - be patient!
 
-2. **Take a snapshot to see the page state**:
-   ```
-   Use: mcp__plugin_playwright_playwright__browser_snapshot
-   ```
+## Key Design Decisions
 
-3. **Login via Keycloak**:
-   - Navigate to login page
-   - Fill username/password fields using browser_type or browser_fill_form
-   - Click login button
-
-4. **Test chat functionality**:
-   - Navigate to Chat page
-   - Type a message in the chat input
-   - Submit and verify the response appears
-   - Check the Debug panel for LLM calls (router_agent, planning_agent)
-
-5. **Verify UI state**:
-   - Use browser_snapshot to get the current page state
-   - Check for expected elements, text, and data
-
-### Test Users for Playwright
-
-| Username | Password | Use Case |
-|----------|----------|----------|
-| admin | Admin123! | Full access testing |
-| architect | Architect123! | Role-based testing |
-| seniordev | Developer123! | Limited permissions |
-
-### Example: Test Chat with Router and Planner
-
-1. Navigate to `http://localhost:5173`
-2. Login as admin
-3. Go to Chat page
-4. Send message: "Create a simple counter app"
-5. Verify:
-   - Router Agent appears in Debug panel
-   - Planning Agent appears in Debug panel
-   - Execution plan is shown
-   - Response is generated
-
-## Git Workflow for Claude
-
-- Always commit and push changes after making modifications
-- Use descriptive commit messages
-- Group related changes into single commits
+1. **No hardcoded prompts in Python** - All prompts in YAML agents
+2. **LLM service is stateless** - Just sends messages, returns responses
+3. **Agents define their own output schema** - Runtime parses accordingly
+4. **Workflows are declarative** - No Python code, just YAML
+5. **MCP tools are the interface** - Agents interact with world through MCPs
