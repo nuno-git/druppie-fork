@@ -36,6 +36,15 @@ import {
 } from 'lucide-react'
 import { sendChat, getPlans, getPlan, answerQuestion, approveTask, rejectTask } from '../services/api'
 import { useAuth } from '../App'
+import {
+  initSocket,
+  joinPlanRoom,
+  joinApprovalsRoom,
+  onTaskApproved,
+  onTaskRejected,
+  onPlanUpdated,
+  disconnectSocket,
+} from '../services/socket'
 
 // Icon mapping for workflow events
 const getEventIcon = (eventType, status) => {
@@ -1252,6 +1261,105 @@ What would you like to build today?`,
       ])
     }
   }, [user, currentPlanId])
+
+  // Initialize WebSocket connection and join approval rooms
+  useEffect(() => {
+    if (!user?.roles) return
+
+    // Initialize socket connection
+    initSocket()
+
+    // Join approval rooms for user's roles
+    joinApprovalsRoom(user.roles)
+
+    // Cleanup on unmount
+    return () => {
+      disconnectSocket()
+    }
+  }, [user?.roles])
+
+  // Join plan room when currentPlanId changes
+  useEffect(() => {
+    if (currentPlanId) {
+      joinPlanRoom(currentPlanId)
+    }
+  }, [currentPlanId])
+
+  // Listen for real-time approval updates
+  useEffect(() => {
+    // Handler for task_approved events
+    const handleTaskApproved = (task) => {
+      console.log('[Socket] Task approved:', task)
+
+      // Update messages to refresh approval cards
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (!msg.pendingApprovals) return msg
+
+          // Update the approval in the message
+          const updatedApprovals = msg.pendingApprovals.map((approval) => {
+            if (approval.task_id === task.id) {
+              // Get updated approval info from task
+              const approvals = task.approvals || []
+              const approvedApprovals = approvals.filter(a => a.decision === 'approved')
+              return {
+                ...approval,
+                current_approvals: approvedApprovals.length,
+                approved_by_roles: approvedApprovals.map(a => a.approver_role || a.role).filter(Boolean),
+                approved_by_ids: approvedApprovals.map(a => a.approved_by || a.approver_id).filter(Boolean),
+                status: task.status,
+              }
+            }
+            return approval
+          })
+
+          // Remove fully approved tasks
+          const stillPendingApprovals = updatedApprovals.filter(
+            (a) => a.status !== 'approved' && a.status !== 'rejected'
+          )
+
+          return {
+            ...msg,
+            pendingApprovals: stillPendingApprovals,
+          }
+        })
+      )
+
+      // Invalidate plans query to refresh sidebar
+      queryClient.invalidateQueries({ queryKey: ['plans'] })
+    }
+
+    // Handler for task_rejected events
+    const handleTaskRejected = (task) => {
+      console.log('[Socket] Task rejected:', task)
+
+      // Remove rejected task from pending approvals
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (!msg.pendingApprovals) return msg
+
+          return {
+            ...msg,
+            pendingApprovals: msg.pendingApprovals.filter(
+              (approval) => approval.task_id !== task.id
+            ),
+          }
+        })
+      )
+
+      // Invalidate plans query to refresh sidebar
+      queryClient.invalidateQueries({ queryKey: ['plans'] })
+    }
+
+    // Subscribe to events
+    const unsubApproved = onTaskApproved(handleTaskApproved)
+    const unsubRejected = onTaskRejected(handleTaskRejected)
+
+    return () => {
+      unsubApproved()
+      unsubRejected()
+    }
+  }, [queryClient])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
