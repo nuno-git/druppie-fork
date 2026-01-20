@@ -127,11 +127,40 @@ def health():
 @app.route("/api/status", methods=["GET"])
 def status():
     """System status endpoint."""
+    from druppie.llm_service import llm_service
+
+    # Get LLM provider info
+    provider = llm_service.get_provider()
+    llm = llm_service.get_llm()
+
+    llm_info = {
+        "provider": provider,
+        "model": llm.model,
+        "configured": True,
+    }
+
+    # Check if LLM is actually reachable
+    if provider == "ollama":
+        try:
+            import httpx
+            resp = httpx.get(f"{llm.base_url}/api/tags", timeout=5.0)
+            llm_info["available"] = resp.status_code == 200
+            if resp.status_code == 200:
+                models = resp.json().get("models", [])
+                llm_info["available_models"] = [m.get("name") for m in models]
+        except Exception:
+            llm_info["available"] = False
+            llm_info["error"] = "Ollama not reachable. Run 'ollama serve' on host."
+    elif provider == "zai":
+        llm_info["available"] = bool(llm.api_key)
+        if not llm.api_key:
+            llm_info["error"] = "ZAI_API_KEY not configured"
+
     return jsonify(
         {
             "keycloak": keycloak_auth.is_available(),
             "database": True,  # TODO: Add actual check
-            "llm": True,  # TODO: Add actual check
+            "llm": llm_info,
         }
     )
 
