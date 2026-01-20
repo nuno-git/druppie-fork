@@ -4,6 +4,7 @@ Integrates the Router and Planner from the druppie architecture.
 """
 
 import asyncio
+import json
 import os
 import uuid
 from datetime import datetime
@@ -20,6 +21,8 @@ from druppie.llm import ChatZAI
 from druppie.router import Router
 from druppie.planner import Planner
 from druppie.core.models import IntentAction
+from druppie.registry import AgentRegistry
+from druppie.workflows import WorkflowRegistry
 
 
 class WorkflowEvent:
@@ -68,6 +71,11 @@ class PlanService:
         self._router = None
         self._planner = None
 
+        # Initialize registries for agents and workflows
+        self._agent_registry = None
+        self._workflow_registry = None
+        self._registries_loaded = False
+
         # Track LLM calls from the new architecture
         self._llm_calls: list[dict] = []
 
@@ -87,10 +95,45 @@ class PlanService:
             self._router = Router(llm=self._get_llm())
         return self._router
 
+    def _load_registries(self) -> None:
+        """Load agent and workflow registries from YAML files."""
+        if self._registries_loaded:
+            return
+
+        import structlog
+        logger = structlog.get_logger()
+
+        # Determine registry path
+        registry_path = os.getenv("REGISTRY_PATH", "/app/registry")
+
+        # Load agent registry
+        self._agent_registry = AgentRegistry(registry_path)
+        self._agent_registry.load()
+
+        # Load workflow registry
+        self._workflow_registry = WorkflowRegistry(registry_path)
+        self._workflow_registry.load()
+
+        logger.info(
+            "Registries loaded",
+            agents=len(self._agent_registry.list_agents()),
+            workflows=len(self._workflow_registry.list_workflows()),
+        )
+
+        self._registries_loaded = True
+
     def _get_planner(self) -> Planner:
         """Get or create the Planner instance."""
         if self._planner is None:
-            self._planner = Planner(llm=self._get_llm())
+            # Load registries first
+            self._load_registries()
+
+            # Create planner with agent and workflow definitions
+            self._planner = Planner(
+                llm=self._get_llm(),
+                agents=self._agent_registry.as_dict() if self._agent_registry else {},
+                workflows=self._workflow_registry.as_dict() if self._workflow_registry else {},
+            )
         return self._planner
 
     def _record_llm_call(
@@ -101,19 +144,36 @@ class PlanService:
         response: str,
         usage: dict | None = None,
         duration_ms: int | None = None,
+        plan_output: dict | None = None,
     ) -> None:
-        """Record an LLM call for debugging."""
+        """Record an LLM call for debugging.
+
+        Args:
+            name: Name of the agent/component making the call
+            model: Model name used
+            prompt: Input prompt
+            response: Response text
+            usage: Token usage dict
+            duration_ms: Call duration in milliseconds
+            plan_output: Structured plan output for planning_agent calls
+        """
         import time
-        self._llm_calls.append({
+        call_record = {
             "name": name,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "model": model,
             "request": {"messages": [{"role": "user", "content": prompt[:500] + "..." if len(prompt) > 500 else prompt}]},
-            "response": response[:1000] + "..." if len(response) > 1000 else response,
+            "response": response[:2000] + "..." if len(response) > 2000 else response,
             "usage": usage or {},
             "duration_ms": duration_ms,
             "status": "success",
-        })
+        }
+
+        # Include structured plan output for debugging visibility
+        if plan_output:
+            call_record["plan_output"] = plan_output
+
+        self._llm_calls.append(call_record)
 
     def get_llm_calls(self) -> list[dict]:
         """Get all recorded LLM calls."""
@@ -172,18 +232,36 @@ class PlanService:
 
                 duration_ms = int((time.time() - start_time) * 1000)
 
-                # Record the LLM call for debugging
+                # Build detailed plan output for debugging
+                plan_output = {
+                    "name": pydantic_plan.name,
+                    "description": pydantic_plan.description,
+                    "plan_type": pydantic_plan.plan_type.value,
+                    "workflow_id": pydantic_plan.workflow_id,
+                    "tasks": [
+                        {
+                            "id": task.id,
+                            "agent_id": task.agent_id,
+                            "description": task.description,
+                            "depends_on": task.depends_on,
+                        }
+                        for task in pydantic_plan.tasks
+                    ],
+                }
+
+                # Record the LLM call for debugging with full plan details
                 self._record_llm_call(
                     name="planning_agent",
                     model=os.getenv("ZAI_MODEL", "GLM-4.7"),
                     prompt=f"Create plan for: {intent.prompt}",
-                    response=f"Plan: {pydantic_plan.name}, Type: {pydantic_plan.plan_type.value}, Tasks: {len(pydantic_plan.tasks)}",
+                    response=json.dumps(plan_output, indent=2),
                     usage={
                         "prompt_tokens": usage.prompt_tokens,
                         "completion_tokens": usage.completion_tokens,
                         "total_tokens": usage.total_tokens,
                     },
                     duration_ms=duration_ms,
+                    plan_output=plan_output,  # Include structured plan data
                 )
 
                 # Convert to the expected format for display

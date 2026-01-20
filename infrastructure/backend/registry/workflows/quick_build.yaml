@@ -1,0 +1,112 @@
+# Quick Build Workflow
+# Simple workflow for quick code generation without git/docker
+#
+# Flow:
+# 1. Create project directory
+# 2. Write code
+# 3. Show results
+
+id: quick_build
+name: Quick Build
+description: Simple code generation workflow for quick projects
+
+trigger_keywords:
+  - "simple"
+  - "quick"
+  - "calculator"
+  - "script"
+  - "hello world"
+
+required_mcps:
+  - filesystem
+  - shell
+
+entry_point: setup_project
+
+steps:
+  setup_project:
+    name: Setup project directory
+    type: mcp
+    tool: shell.run
+    params:
+      command: "mkdir -p {workspace}/{project_name} && echo 'Directory created'"
+      cwd: "{workspace}"
+    on_success: write_code
+    on_failure: fail_handler
+
+  write_code:
+    name: Write the code
+    type: agent
+    agent_id: developer
+    task: |
+      Create the requested application.
+
+      Task: {task_description}
+      Project: {project_name}
+      Technologies: {technologies}
+      Working directory: {workspace}/{project_name}
+
+      IMPORTANT: You MUST use the filesystem MCP tools to create files:
+      - Use filesystem.write_file to create each file
+      - Create all necessary files (main code, tests, requirements, README)
+
+      After creating files, list what you created.
+    on_success: list_files
+    on_failure: fail_handler
+
+  list_files:
+    name: List created files
+    type: mcp
+    tool: shell.run
+    params:
+      command: "find {workspace}/{project_name} -type f | head -20"
+      timeout: "30"
+    on_success: run_code
+    on_failure: complete
+
+  run_code:
+    name: Test run the code
+    type: mcp
+    tool: shell.run
+    params:
+      command: |
+        cd {workspace}/{project_name} && \
+        if [ -f requirements.txt ]; then pip install -r requirements.txt 2>/dev/null; fi && \
+        if [ -f main.py ]; then python3 main.py; \
+        elif [ -f calculator.py ]; then python3 -c "from calculator import *; print('Calculator loaded successfully')"; \
+        elif [ -f index.js ]; then node index.js; \
+        else echo "Code created successfully"; fi
+      timeout: "30"
+    on_success: complete
+    on_failure: complete
+
+  complete:
+    name: Show completion summary
+    type: agent
+    agent_id: developer
+    task: |
+      Summarize what was created:
+      - Project: {project_name}
+      - Location: {workspace}/{project_name}
+      - Files: {step_list_files}
+
+      Provide:
+      1. List of files created
+      2. How to run the code
+      3. What the code does
+
+      Format as a clear summary for the user.
+    on_success: null
+
+  fail_handler:
+    name: Handle failure
+    type: agent
+    agent_id: developer
+    task: |
+      Something went wrong. Summarize what happened:
+      - What was attempted
+      - What failed
+      - Suggested next steps
+
+      Context: {context}
+    on_success: null

@@ -10,7 +10,7 @@ Druppie is a governance platform for AI agents with MCP (Model Context Protocol)
 User Request -> Router (LLM) -> Intent Analysis -> Planner (LLM) -> Execution Plan
                                                         |
                                                         v
-                                                  Orchestrator
+                                              PlanExecutionEngine
                                                    /        \
                                            Workflows    AgentRuntime
                                                         (parallel tasks)
@@ -20,7 +20,7 @@ User Request -> Router (LLM) -> Intent Analysis -> Planner (LLM) -> Execution Pl
 
 - **Router** (`router/router.py`): LangChain-based intent analysis, classifies user requests
 - **Planner** (`planner/planner.py`): Creates execution plans using LLM
-- **Orchestrator** (`orchestrator.py`): Routes plans to WorkflowEngine or AgentRuntime
+- **PlanExecutionEngine** (`plan_execution_engine.py`): Routes plans to WorkflowEngine or AgentRuntime
 - **AgentRuntime** (`agents/runtime.py`): Parallel execution of autonomous agents
 - **WorkflowEngine** (`workflows/engine.py`): Executes predefined workflow steps
 - **MCPClient** (`mcp/client.py`): Invokes MCP tools
