@@ -1114,65 +1114,72 @@ What would you like to build today?`,
   const answerMutation = useMutation({
     mutationFn: ({ questionId, answer }) => answerQuestion(questionId, answer),
     onSuccess: (data, variables) => {
-      // Remove the answered question from the message and add the answer as a user message
-      setMessages((prev) => {
-        const updated = prev.map(msg => {
-          if (msg.pendingQuestions) {
-            return {
-              ...msg,
-              pendingQuestions: msg.pendingQuestions.filter(q => q.id !== variables.questionId),
-            }
-          }
-          return msg
-        })
-
-        // Add the answer as a user message
-        const newMessages = [
-          ...updated,
-          { role: 'user', content: variables.answer },
-        ]
-
-        // If backend continued the conversation (status: answered_and_continued), add the response
-        if (data.status === 'answered_and_continued' && data.response) {
-          newMessages.push({
+      // If backend continued the conversation (status: answered_and_continued), add the response
+      if (data.status === 'answered_and_continued' && data.response) {
+        setMessages((prev) => [
+          ...prev,
+          {
             role: 'assistant',
             content: data.response,
             planId: data.plan_id,
             pendingApprovals: data.pending_approvals,
             pendingQuestions: data.pending_questions || [],
             workflowEvents: data.workflow_events || [],
-          })
+          },
+        ])
 
-          // Add LLM calls to debug panel
-          if (data.llm_calls && data.llm_calls.length > 0) {
-            setApiCalls((prevCalls) => [
-              ...prevCalls,
-              ...data.llm_calls.map(call => ({ type: 'llm', ...call })),
-            ])
-          }
+        // Add LLM calls to debug panel
+        if (data.llm_calls && data.llm_calls.length > 0) {
+          setApiCalls((prevCalls) => [
+            ...prevCalls,
+            ...data.llm_calls.map(call => ({ type: 'llm', ...call })),
+          ])
         }
-
-        return newMessages
-      })
+      }
 
       queryClient.invalidateQueries(['questions'])
       queryClient.invalidateQueries(['plans'])
       queryClient.invalidateQueries(['projects'])
       setCurrentStep(null)
     },
-    onError: (error) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: `Error answering question: ${error.message}`,
-        },
-      ])
+    onError: (error, variables) => {
+      // On error, restore the question and remove the optimistic user message
+      setMessages((prev) => {
+        // Find the original question from context (stored in variables)
+        const restoredMessages = prev.filter(msg => msg.role !== 'user' || msg.content !== variables.answer)
+        return [
+          ...restoredMessages,
+          {
+            role: 'assistant',
+            content: `Error answering question: ${error.message}`,
+          },
+        ]
+      })
       setCurrentStep(null)
     },
   })
 
   const handleAnswerQuestion = (questionId, answer) => {
+    // Optimistic update: immediately show feedback
+    setMessages((prev) => {
+      // Remove the question from pendingQuestions
+      const updated = prev.map(msg => {
+        if (msg.pendingQuestions) {
+          return {
+            ...msg,
+            pendingQuestions: msg.pendingQuestions.filter(q => q.id !== questionId),
+          }
+        }
+        return msg
+      })
+      // Add the user's answer as a message
+      return [...updated, { role: 'user', content: answer }]
+    })
+
+    // Show processing indicator
+    setCurrentStep('Processing your answer...')
+
+    // Make the API call
     answerMutation.mutate({ questionId, answer })
   }
 
