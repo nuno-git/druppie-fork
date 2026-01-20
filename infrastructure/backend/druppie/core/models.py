@@ -136,6 +136,7 @@ class AgentResult(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)  # Structured output
     error: str | None = None
     token_usage: TokenUsage = Field(default_factory=TokenUsage)
+    llm_calls: list[dict[str, Any]] = Field(default_factory=list)  # Detailed LLM call records for debugging
 
 
 class AgentTask(BaseModel):

@@ -65,6 +65,7 @@ class Agent:
         mcp_client: MCPClient,
         mcp_registry: MCPRegistry,
         llm: BaseChatModel,
+        emit_event: callable = None,
     ):
         """Initialize the Agent.
 
@@ -73,13 +74,18 @@ class Agent:
             mcp_client: Client for invoking MCP tools
             mcp_registry: Registry of available MCP servers
             llm: LangChain chat model
+            emit_event: Optional callback to emit real-time events
         """
         self.definition = definition
         self.mcp_client = mcp_client
         self.mcp_registry = mcp_registry
         self.llm = llm
+        self.emit_event = emit_event
         self.total_usage = TokenUsage()
         self.logger = logger.bind(agent_id=definition.id)
+
+        # Track all LLM calls with full details
+        self.llm_calls: list[dict] = []
 
         # Build tools from agent's MCP list
         self.tools = self._build_tools()
@@ -175,6 +181,72 @@ class Agent:
             ),
         ]
 
+    def _emit(self, event_type: str, title: str, description: str, status: str = "info", data: dict = None):
+        """Emit a real-time event if callback is provided."""
+        if self.emit_event:
+            import time
+            self.emit_event({
+                "event_type": event_type,
+                "title": title,
+                "description": description,
+                "status": status,
+                "data": data or {},
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "agent_id": self.definition.id,
+            })
+
+    def _record_llm_call(
+        self,
+        messages: list,
+        response: Any,
+        duration_ms: int,
+        iteration: int,
+        tool_calls: list = None,
+    ):
+        """Record an LLM call with full details for debugging."""
+        import time
+
+        # Extract content from response
+        content = getattr(response, "content", "") or ""
+
+        # Convert messages to serializable format
+        serialized_messages = []
+        for msg in messages:
+            msg_dict = {"role": type(msg).__name__.replace("Message", "").lower()}
+            if hasattr(msg, "content"):
+                msg_dict["content"] = msg.content
+            if hasattr(msg, "tool_call_id"):
+                msg_dict["tool_call_id"] = msg.tool_call_id
+            serialized_messages.append(msg_dict)
+
+        # Extract usage
+        usage = {}
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            usage = {
+                "prompt_tokens": response.usage_metadata.get("input_tokens", 0),
+                "completion_tokens": response.usage_metadata.get("output_tokens", 0),
+                "total_tokens": response.usage_metadata.get("input_tokens", 0) + response.usage_metadata.get("output_tokens", 0),
+            }
+
+        call_record = {
+            "name": f"{self.definition.id} (iteration {iteration})",
+            "agent_id": self.definition.id,
+            "iteration": iteration,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "model": getattr(self.llm, "model", "unknown"),
+            "duration_ms": duration_ms,
+            "status": "success",
+            "request": {"messages": serialized_messages},
+            "response": content[:2000] if content else "",
+            "tool_calls": [
+                {"name": tc.get("name"), "args": tc.get("args")}
+                for tc in (tool_calls or [])
+            ],
+            "usage": usage,
+        }
+
+        self.llm_calls.append(call_record)
+
     async def execute(
         self,
         task_description: str,
@@ -189,12 +261,23 @@ class Agent:
         Returns:
             AgentResult with success/failure and outputs
         """
+        import time as time_module
+
         context = context or {}
         self.total_usage = TokenUsage()
+        self.llm_calls = []  # Reset for this execution
 
         self.logger.info(
             "Starting task execution",
             task=task_description[:100],
+        )
+
+        self._emit(
+            "agent_started",
+            f"Agent: {self.definition.name}",
+            f"Starting task: {task_description[:80]}...",
+            "working",
+            {"agent_id": self.definition.id, "task": task_description[:200]},
         )
 
         # Build initial messages
@@ -209,16 +292,48 @@ class Agent:
         for iteration in range(self.definition.max_iterations):
             self.logger.debug(f"Agent iteration {iteration + 1}")
 
+            self._emit(
+                "llm_calling",
+                f"LLM Call: {self.definition.id}",
+                f"Iteration {iteration + 1}/{self.definition.max_iterations}",
+                "working",
+                {"agent_id": self.definition.id, "iteration": iteration + 1},
+            )
+
             try:
-                # Get LLM response
+                # Get LLM response with timing
+                start_time = time_module.time()
                 response = await self.llm_with_tools.ainvoke(messages)
+                duration_ms = int((time_module.time() - start_time) * 1000)
+
                 messages.append(response)
 
                 # Track usage
                 self._track_usage(response)
 
-                # Check for tool calls
+                # Get tool calls for recording
                 tool_calls = getattr(response, "tool_calls", [])
+
+                # Record this LLM call with full details
+                self._record_llm_call(
+                    messages=messages[:-1],  # Messages sent (excluding response)
+                    response=response,
+                    duration_ms=duration_ms,
+                    iteration=iteration + 1,
+                    tool_calls=tool_calls,
+                )
+
+                self._emit(
+                    "llm_response",
+                    f"LLM Response: {self.definition.id}",
+                    f"Got response in {duration_ms}ms" + (f" with {len(tool_calls)} tool call(s)" if tool_calls else ""),
+                    "success",
+                    {
+                        "agent_id": self.definition.id,
+                        "duration_ms": duration_ms,
+                        "tool_calls": [tc.get("name") for tc in tool_calls] if tool_calls else [],
+                    },
+                )
 
                 if not tool_calls:
                     # No tool calls - agent might be done or confused
@@ -226,18 +341,34 @@ class Agent:
                     content = getattr(response, "content", "")
                     if content:
                         self.logger.info("Agent finished without explicit done()")
+                        self._emit(
+                            "agent_completed",
+                            f"Agent: {self.definition.name}",
+                            "Completed (no explicit done call)",
+                            "success",
+                            {"agent_id": self.definition.id},
+                        )
                         return AgentResult(
                             success=True,
                             summary=content,
                             artifacts=artifacts,
                             token_usage=self.total_usage,
+                            llm_calls=self.llm_calls,
                         )
                     else:
+                        self._emit(
+                            "agent_error",
+                            f"Agent: {self.definition.name}",
+                            "No output or tool calls",
+                            "error",
+                            {"agent_id": self.definition.id},
+                        )
                         return AgentResult(
                             success=False,
                             summary="Agent stopped without calling done() or providing output",
                             error="No tool calls or content in response",
                             token_usage=self.total_usage,
+                            llm_calls=self.llm_calls,
                         )
 
                 # Execute tool calls
@@ -248,33 +379,66 @@ class Agent:
 
                     self.logger.debug(f"Executing tool: {tool_name}", args=tool_args)
 
+                    self._emit(
+                        "tool_executing",
+                        f"Tool: {tool_name}",
+                        f"Executing with args: {str(tool_args)[:100]}...",
+                        "working",
+                        {"agent_id": self.definition.id, "tool": tool_name, "args": tool_args},
+                    )
+
                     # Execute the tool
+                    tool_start = time_module.time()
                     result = await self._execute_tool(tool_name, tool_args)
+                    tool_duration = int((time_module.time() - tool_start) * 1000)
 
                     # Check for control commands
                     if result.startswith("__DONE__|"):
                         data = json.loads(result.split("|", 1)[1])
+                        self._emit(
+                            "agent_completed",
+                            f"Agent: {self.definition.name}",
+                            data.get("summary", "Task completed")[:100],
+                            "success",
+                            {"agent_id": self.definition.id, "summary": data.get("summary"), "data": data.get("data")},
+                        )
                         return AgentResult(
                             success=True,
                             summary=data.get("summary", "Task completed"),
                             artifacts=data.get("artifacts", []) + artifacts,
                             data=data.get("data", {}),
                             token_usage=self.total_usage,
+                            llm_calls=self.llm_calls,
                         )
 
                     if result.startswith("__FAIL__|"):
                         data = json.loads(result.split("|", 1)[1])
+                        self._emit(
+                            "agent_failed",
+                            f"Agent: {self.definition.name}",
+                            data.get("reason", "Task failed")[:100],
+                            "error",
+                            {"agent_id": self.definition.id, "reason": data.get("reason")},
+                        )
                         return AgentResult(
                             success=False,
                             summary=data.get("reason", "Task failed"),
                             error=data.get("reason"),
                             artifacts=artifacts,
                             token_usage=self.total_usage,
+                            llm_calls=self.llm_calls,
                         )
 
                     if result.startswith("__ASK_HUMAN__|"):
                         # For now, treat as needing intervention
                         data = json.loads(result.split("|", 1)[1])
+                        self._emit(
+                            "agent_question",
+                            f"Agent: {self.definition.name}",
+                            f"Needs input: {data.get('question', '')[:80]}",
+                            "warning",
+                            {"agent_id": self.definition.id, "question": data.get("question")},
+                        )
                         return AgentResult(
                             success=False,
                             summary=f"Need human input: {data.get('question')}",
@@ -282,7 +446,16 @@ class Agent:
                             data={"question": data.get("question")},
                             artifacts=artifacts,
                             token_usage=self.total_usage,
+                            llm_calls=self.llm_calls,
                         )
+
+                    self._emit(
+                        "tool_completed",
+                        f"Tool: {tool_name}",
+                        f"Completed in {tool_duration}ms",
+                        "success",
+                        {"agent_id": self.definition.id, "tool": tool_name, "duration_ms": tool_duration},
+                    )
 
                     # Add tool result to messages
                     messages.append(
@@ -298,6 +471,13 @@ class Agent:
 
             except Exception as e:
                 self.logger.error(f"Error in iteration {iteration + 1}: {e}")
+                self._emit(
+                    "agent_error",
+                    f"Agent: {self.definition.name}",
+                    f"Error: {str(e)[:100]}",
+                    "error",
+                    {"agent_id": self.definition.id, "error": str(e)},
+                )
                 # Continue to next iteration unless it's a critical error
                 if iteration == self.definition.max_iterations - 1:
                     return AgentResult(
@@ -306,16 +486,25 @@ class Agent:
                         error=str(e),
                         artifacts=artifacts,
                         token_usage=self.total_usage,
+                        llm_calls=self.llm_calls,
                     )
 
         # Max iterations reached
         self.logger.warning("Max iterations reached")
+        self._emit(
+            "agent_error",
+            f"Agent: {self.definition.name}",
+            f"Max iterations ({self.definition.max_iterations}) reached",
+            "error",
+            {"agent_id": self.definition.id},
+        )
         return AgentResult(
             success=False,
             summary=f"Max iterations ({self.definition.max_iterations}) reached",
             error="Max iterations exceeded",
             artifacts=artifacts,
             token_usage=self.total_usage,
+            llm_calls=self.llm_calls,
         )
 
     async def _execute_tool(

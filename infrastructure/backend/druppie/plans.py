@@ -1197,6 +1197,12 @@ class PlanService:
 
         # Handle chat responses (no plan needed)
         if result.get("type") == "chat":
+            # Collect LLM calls from orchestrator
+            orchestrator_llm_calls = result.get("llm_calls", [])
+            if orchestrator_llm_calls:
+                for call in orchestrator_llm_calls:
+                    self._llm_calls.append(call)
+
             intent = result.get("intent")
             if not intent:
                 from druppie.core.models import Intent
@@ -1210,6 +1216,12 @@ class PlanService:
 
         # Handle question responses
         if result.get("type") == "question":
+            # Collect LLM calls from orchestrator
+            orchestrator_llm_calls = result.get("llm_calls", [])
+            if orchestrator_llm_calls:
+                for call in orchestrator_llm_calls:
+                    self._llm_calls.append(call)
+
             intent = result.get("intent")
             app_info = {
                 "action": "ask_question",
@@ -1238,11 +1250,18 @@ class PlanService:
             "answer": intent.answer,
         }
 
-        # Record token usage if available
+        # Collect LLM calls from orchestrator (these are the detailed agent calls)
+        orchestrator_llm_calls = result.get("llm_calls", [])
+        if orchestrator_llm_calls:
+            # Add orchestrator LLM calls to our tracking
+            for call in orchestrator_llm_calls:
+                self._llm_calls.append(call)
+
+        # Also record a summary call if we have token usage
         total_usage = result.get("total_usage")
         if total_usage:
             self._record_llm_call(
-                name="orchestrator",
+                name="orchestrator_summary",
                 model=os.getenv("ZAI_MODEL", "GLM-4.7"),
                 prompt=message,
                 response=f"Action: {intent.action.value}, Plan: {plan.name if plan else 'None'}",

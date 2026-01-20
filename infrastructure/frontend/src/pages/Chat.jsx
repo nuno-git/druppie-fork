@@ -52,6 +52,7 @@ const getEventIcon = (eventType, status) => {
     case 'intent_detected':
       return <Brain {...iconProps} />
     case 'plan_creating':
+    case 'plan_ready':
     case 'task_created':
     case 'task_executing':
     case 'task_completed':
@@ -59,7 +60,20 @@ const getEventIcon = (eventType, status) => {
     case 'mcp_tool':
       return <Hammer {...iconProps} />
     case 'llm_generating':
+    case 'llm_calling':
+    case 'llm_response':
       return <Brain {...iconProps} />
+    case 'agent_started':
+    case 'agent_completed':
+      return <Bot {...iconProps} />
+    case 'agent_failed':
+    case 'agent_error':
+      return <XCircle {...iconProps} />
+    case 'agent_question':
+      return <HelpCircle {...iconProps} />
+    case 'tool_executing':
+    case 'tool_completed':
+      return <Hammer {...iconProps} />
     case 'files_created':
       return <FileCode {...iconProps} />
     case 'git_pushed':
@@ -118,14 +132,45 @@ const WorkflowEvent = ({ event }) => {
   const colors = getStatusColors(event.status)
   const iconBg = getIconBgColor(event.status)
 
+  // Check if this is an agent/LLM event for compact display
+  const isAgentEvent = event.event_type?.includes('agent_') || event.event_type?.includes('llm_') || event.event_type?.includes('tool_')
+
   return (
-    <div className={`flex items-start gap-3 p-3 rounded-lg border ${colors} mb-2`}>
-      <div className={`p-1.5 rounded-full ${iconBg} flex-shrink-0`}>
+    <div className={`flex items-start gap-2 p-2 rounded-lg border ${colors} mb-1 ${isAgentEvent ? 'text-xs' : ''}`}>
+      <div className={`p-1 rounded-full ${iconBg} flex-shrink-0`}>
         {getEventIcon(event.event_type, event.status)}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-sm">{event.title}</div>
-        <div className="text-xs opacity-80 mt-0.5">{event.description}</div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-medium text-sm">{event.title}</span>
+          {event.data?.agent_id && (
+            <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded">
+              {event.data.agent_id}
+            </span>
+          )}
+          {event.data?.duration_ms && (
+            <span className="text-xs text-gray-500">
+              {event.data.duration_ms}ms
+            </span>
+          )}
+        </div>
+        <div className="text-xs opacity-80 mt-0.5 truncate">{event.description}</div>
+        {event.data?.tool_calls && event.data.tool_calls.length > 0 && (
+          <div className="text-xs mt-1 flex flex-wrap gap-1">
+            {event.data.tool_calls.map((tc, i) => (
+              <span key={i} className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                {tc}
+              </span>
+            ))}
+          </div>
+        )}
+        {event.data?.tool && (
+          <div className="text-xs mt-1">
+            <span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">
+              {event.data.tool}
+            </span>
+          </div>
+        )}
         {event.data?.repo_url && (
           <a
             href={event.data.repo_url}
@@ -186,26 +231,52 @@ const processWorkflowEvents = (events) => {
   })
 }
 
-// Workflow Events Timeline (collapsible)
+// Workflow Events Timeline (collapsible) - Shows agent/LLM activity live
 const WorkflowTimeline = ({ events, isExpanded, onToggle }) => {
   if (!events || events.length === 0) return null
 
   // Process events to update statuses
   const processedEvents = processWorkflowEvents(events)
 
+  // Group events by agent for a cleaner view
+  const agentEvents = processedEvents.filter(e =>
+    e.event_type?.includes('agent_') || e.event_type?.includes('llm_') || e.event_type?.includes('tool_')
+  )
+  const otherEvents = processedEvents.filter(e =>
+    !e.event_type?.includes('agent_') && !e.event_type?.includes('llm_') && !e.event_type?.includes('tool_')
+  )
+
+  // Count LLM calls and agents
+  const llmCalls = processedEvents.filter(e => e.event_type === 'llm_response').length
+  const agentsRun = [...new Set(processedEvents.filter(e => e.data?.agent_id).map(e => e.data.agent_id))].length
+
   return (
     <div className="mt-3 border-t border-gray-100 pt-3">
       <button
         onClick={onToggle}
-        className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2"
+        className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2 w-full"
       >
         {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-        <span className="font-medium">Workflow Details</span>
-        <span className="text-xs bg-gray-100 px-2 py-0.5 rounded-full">{processedEvents.length} steps</span>
+        <span className="font-medium">Execution Log</span>
+        <div className="flex items-center gap-2 ml-auto">
+          {agentsRun > 0 && (
+            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <Bot className="w-3 h-3" />
+              {agentsRun} agent(s)
+            </span>
+          )}
+          {llmCalls > 0 && (
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <Brain className="w-3 h-3" />
+              {llmCalls} LLM call(s)
+            </span>
+          )}
+          <span className="text-xs bg-gray-100 px-2 py-0.5 rounded-full">{processedEvents.length} events</span>
+        </div>
       </button>
 
       {isExpanded && (
-        <div className="space-y-1 pl-2 border-l-2 border-gray-200 ml-2">
+        <div className="space-y-1 pl-2 border-l-2 border-blue-200 ml-2 max-h-96 overflow-y-auto">
           {processedEvents.map((event, index) => (
             <WorkflowEvent key={index} event={event} />
           ))}
@@ -630,6 +701,63 @@ const DebugPanel = ({ isOpen, onClose, apiCalls }) => {
                             </div>
                           ))}
                         </div>
+                      </div>
+                    )}
+
+                    {/* LLM-specific: Show Agent Info and Tool Calls */}
+                    {call.type === 'llm' && (call.agent_id || call.tool_calls?.length > 0 || call.usage) && (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        {/* Agent Info */}
+                        {call.agent_id && (
+                          <div className="bg-purple-100 rounded-lg p-3">
+                            <span className="text-xs font-medium text-purple-600 uppercase block mb-1">Agent</span>
+                            <div className="flex items-center gap-2">
+                              <Bot className="w-4 h-4 text-purple-600" />
+                              <span className="text-sm font-medium text-purple-900">{call.agent_id}</span>
+                              {call.iteration && (
+                                <span className="text-xs bg-purple-200 text-purple-700 px-1.5 py-0.5 rounded">
+                                  iter {call.iteration}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Token Usage */}
+                        {call.usage && (
+                          <div className="bg-blue-100 rounded-lg p-3">
+                            <span className="text-xs font-medium text-blue-600 uppercase block mb-1">Token Usage</span>
+                            <div className="text-sm space-y-1">
+                              <div className="flex justify-between">
+                                <span className="text-blue-600">Prompt:</span>
+                                <span className="font-mono text-blue-900">{call.usage.prompt_tokens || 0}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-blue-600">Completion:</span>
+                                <span className="font-mono text-blue-900">{call.usage.completion_tokens || 0}</span>
+                              </div>
+                              <div className="flex justify-between border-t border-blue-200 pt-1">
+                                <span className="text-blue-600 font-medium">Total:</span>
+                                <span className="font-mono font-medium text-blue-900">{call.usage.total_tokens || 0}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Tool Calls */}
+                        {call.tool_calls?.length > 0 && (
+                          <div className="bg-orange-100 rounded-lg p-3">
+                            <span className="text-xs font-medium text-orange-600 uppercase block mb-1">Tool Calls</span>
+                            <div className="space-y-1">
+                              {call.tool_calls.map((tc, tcIdx) => (
+                                <div key={tcIdx} className="flex items-center gap-2">
+                                  <Hammer className="w-3 h-3 text-orange-600" />
+                                  <span className="text-sm font-mono text-orange-900">{tc.name || tc}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 

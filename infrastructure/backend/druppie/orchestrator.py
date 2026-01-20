@@ -102,13 +102,8 @@ class ChatOrchestrator:
         # Initialize MCP client
         self._mcp_client = MCPClient(self._mcp_registry)
 
-        # Initialize agent runtime
-        self._agent_runtime = AgentRuntime(
-            mcp_client=self._mcp_client,
-            mcp_registry=self._mcp_registry,
-            agent_registry=self._agent_registry,
-            llm=self._llm,
-        )
+        # Agent runtime will be created per-call to pass emit_event
+        self._agent_runtime = None
 
         self._initialized = True
 
@@ -141,6 +136,7 @@ class ChatOrchestrator:
         self._ensure_initialized()
 
         total_usage = TokenUsage()
+        all_llm_calls = []
 
         def event(title: str, description: str, status: str = "info", data: dict = None):
             if emit_event:
@@ -152,6 +148,15 @@ class ChatOrchestrator:
                     "data": data or {},
                     "timestamp": datetime.utcnow().isoformat(),
                 })
+
+        # Create agent runtime with emit_event for this request
+        self._agent_runtime = AgentRuntime(
+            mcp_client=self._mcp_client,
+            mcp_registry=self._mcp_registry,
+            agent_registry=self._agent_registry,
+            llm=self._llm,
+            emit_event=emit_event,
+        )
 
         event("Processing your request", f"Analyzing: {message[:100]}...", "working")
 
@@ -166,11 +171,18 @@ class ChatOrchestrator:
         if intent_result.token_usage:
             total_usage.add(intent_result.token_usage)
 
+        # Collect LLM calls from router
+        if intent_result.llm_calls:
+            all_llm_calls.extend(intent_result.llm_calls)
+
+        event("Router Agent", f"Completed analysis", "success", {"action": intent_result.data.get("action", "unknown") if intent_result.data else "unknown"})
+
         if not intent_result.success:
             return {
                 "success": False,
                 "error": intent_result.error or "Router agent failed",
                 "response": f"I encountered an error: {intent_result.summary}",
+                "llm_calls": all_llm_calls,
             }
 
         # Parse intent from agent result
@@ -192,6 +204,7 @@ class ChatOrchestrator:
                 "question": intent.clarification_question,
                 "response": intent.clarification_question,
                 "intent": intent,
+                "llm_calls": all_llm_calls,
             }
 
         # Handle general chat (direct response)
@@ -201,6 +214,7 @@ class ChatOrchestrator:
                 "type": "chat",
                 "response": intent.answer or intent.prompt,
                 "intent": intent,
+                "llm_calls": all_llm_calls,
             }
 
         # Step 2: Planner Agent - Create execution plan
@@ -211,12 +225,19 @@ class ChatOrchestrator:
         if plan_result.token_usage:
             total_usage.add(plan_result.token_usage)
 
+        # Collect LLM calls from planner
+        if plan_result.llm_calls:
+            all_llm_calls.extend(plan_result.llm_calls)
+
+        event("Planner Agent", f"Plan created", "success", {"plan": plan_result.data.get("name", "unknown") if plan_result.data else "unknown"})
+
         if not plan_result.success:
             return {
                 "success": False,
                 "error": plan_result.error or "Planner agent failed",
                 "response": f"I couldn't create a plan: {plan_result.summary}",
                 "intent": intent,
+                "llm_calls": all_llm_calls,
             }
 
         # Parse plan from agent result
@@ -242,6 +263,7 @@ class ChatOrchestrator:
             "intent": intent,
             "plan": plan,
             "total_usage": total_usage,
+            "llm_calls": all_llm_calls,
         }
 
     async def _run_router_agent(
@@ -372,7 +394,7 @@ Call done() with your plan in the data field:
             answer=data.get("answer"),
             clarification_needed=clarification_needed,
             clarification_question=data.get("clarification_question") or data.get("prompt") if clarification_needed else None,
-            project_context=data.get("project_context", {}),
+            project_context=data.get("project_context") or {},  # Handle None explicitly
         )
 
     def _parse_plan(self, plan_id: str, intent: Intent, data: dict) -> Plan:
