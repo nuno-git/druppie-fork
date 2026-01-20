@@ -446,6 +446,7 @@ def chat():
 
     message = data.get("message", "")
     plan_id = data.get("plan_id")
+    conversation_history = data.get("conversation_history")  # List of {role, content, result_summary}
 
     if not message:
         return jsonify({"error": "Message required"}), 400
@@ -470,7 +471,9 @@ def chat():
 
     # Process through governance pipeline with event emission
     result = plan_service.process_chat(
-        plan, message, user, emit_event=emit_workflow_event
+        plan, message, user,
+        emit_event=emit_workflow_event,
+        conversation_history=conversation_history,
     )
 
     # Broadcast update

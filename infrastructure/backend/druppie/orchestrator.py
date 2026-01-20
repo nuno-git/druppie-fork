@@ -120,6 +120,7 @@ class ChatOrchestrator:
         user_projects: list[dict] | None = None,
         plan_id: str | None = None,
         emit_event: Callable[[dict], None] | None = None,
+        conversation_history: list[dict] | None = None,
     ) -> dict[str, Any]:
         """Process a user message through the agent pipeline.
 
@@ -129,6 +130,7 @@ class ChatOrchestrator:
             user_projects: List of user's existing projects for context
             plan_id: Optional plan ID for continuing conversations
             emit_event: Callback for emitting workflow events
+            conversation_history: Previous conversation messages for context
 
         Returns:
             Result dict with response, intent, plan, etc.
@@ -166,6 +168,7 @@ class ChatOrchestrator:
         intent_result = await self._run_router_agent(
             message=message,
             user_projects=user_projects or [],
+            conversation_history=conversation_history,
         )
 
         if intent_result.token_usage:
@@ -283,10 +286,11 @@ class ChatOrchestrator:
         self,
         message: str,
         user_projects: list[dict],
+        conversation_history: list[dict] | None = None,
     ) -> AgentResult:
         """Run the router agent to analyze intent.
 
-        Context (user_projects) is injected into the task description.
+        Context (user_projects and conversation_history) is injected into the task description.
         """
         # Build context string for user projects
         projects_context = ""
@@ -298,9 +302,21 @@ class ChatOrchestrator:
                     projects_context += f" - {proj['repo_url']}"
                 projects_context += "\n"
 
+        # Build conversation history context
+        history_context = ""
+        if conversation_history:
+            history_context = "\n\nCONVERSATION HISTORY (most recent exchanges):\n"
+            for entry in conversation_history[-10:]:  # Last 10 messages
+                role = entry.get("role", "unknown")
+                content = entry.get("content", "")[:300]  # Truncate long messages
+                history_context += f"[{role.upper()}]: {content}\n"
+                if entry.get("result_summary"):
+                    history_context += f"  → Result: {entry['result_summary'][:200]}\n"
+            history_context += "\nIMPORTANT: If the user's request refers to something from the conversation history (like 'add to it', 'update', 'now please', 'also add'), treat it as UPDATE_PROJECT for the recently created/mentioned project.\n"
+
         # Build task description with context
         task = f"""Analyze this user request and determine the intent.
-
+{history_context}
 USER REQUEST:
 {message}
 {projects_context}

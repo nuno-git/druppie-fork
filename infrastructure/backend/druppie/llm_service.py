@@ -141,6 +141,7 @@ class ChatZAI:
             cleaned_content = self._clean_response(content)
 
             call_record["response"] = cleaned_content
+            call_record["response_raw"] = content  # Raw unclean response for debugging
             call_record["status"] = "success"
             call_record["usage"] = data.get("usage", {})
             self.call_history.append(call_record)

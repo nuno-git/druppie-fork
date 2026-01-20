@@ -1002,6 +1002,7 @@ class PlanService:
         user: dict,
         current_project_id: str | None = None,
         emit_event: Callable[[dict], None] | None = None,
+        conversation_history: list[dict] | None = None,
     ) -> dict[str, Any]:
         """Process a chat message through the governance pipeline.
 
@@ -1011,6 +1012,7 @@ class PlanService:
             user: User dict with sub (id), realm_access, etc.
             current_project_id: Optional current project context
             emit_event: Optional callback to emit workflow events in real-time
+            conversation_history: Previous conversation messages for context
         """
         user_roles = user.get("realm_access", {}).get("roles", [])
         user_id = user.get("sub")
@@ -1048,6 +1050,7 @@ class PlanService:
             message,
             user_id=user_id,
             current_project_id=current_project_id,
+            conversation_history=conversation_history,
         )
 
         # Report what router detected
@@ -1305,6 +1308,7 @@ class PlanService:
         message: str,
         user_projects: list[dict] | None = None,
         plan_id: str | None = None,
+        conversation_history: list[dict] | None = None,
     ) -> tuple[Any, dict[str, Any], Any]:
         """Analyze user message using the ChatOrchestrator.
 
@@ -1314,6 +1318,7 @@ class PlanService:
             message: The user's message
             user_projects: List of user's existing projects for context
             plan_id: Optional plan ID for context
+            conversation_history: Previous conversation messages for context
 
         Returns:
             Tuple of (Intent, app_info dict, Plan or None)
@@ -1336,6 +1341,7 @@ class PlanService:
                             message=message,
                             user_projects=user_projects,
                             plan_id=plan_id,
+                            conversation_history=conversation_history,
                         )
                     ).result()
             else:
@@ -1344,6 +1350,7 @@ class PlanService:
                         message=message,
                         user_projects=user_projects,
                         plan_id=plan_id,
+                        conversation_history=conversation_history,
                     )
                 )
         except RuntimeError:
@@ -1352,6 +1359,7 @@ class PlanService:
                     message=message,
                     user_projects=user_projects,
                     plan_id=plan_id,
+                    conversation_history=conversation_history,
                 )
             )
 
@@ -1462,6 +1470,7 @@ class PlanService:
         message: str,
         user_id: str | None = None,
         current_project_id: str | None = None,
+        conversation_history: list[dict] | None = None,
     ) -> dict[str, Any]:
         """Analyze user message to determine intent using the ChatOrchestrator.
 
@@ -1471,6 +1480,7 @@ class PlanService:
             message: The user's message
             user_id: Optional user ID to fetch their existing projects
             current_project_id: Optional current project ID for context
+            conversation_history: Previous conversation messages for context
 
         Returns:
             Intent dict with type and tasks/response
@@ -1485,6 +1495,7 @@ class PlanService:
         intent, app_info, plan = self._analyze_intent_with_orchestrator(
             message=message,
             user_projects=existing_projects,
+            conversation_history=conversation_history,
         )
 
         # Store the plan for later use

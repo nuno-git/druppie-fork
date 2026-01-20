@@ -573,6 +573,7 @@ const ConversationSidebar = ({ plans, activePlanId, onSelectPlan, onNewChat }) =
 const DebugPanel = ({ isOpen, onClose, apiCalls }) => {
   const [copiedIndex, setCopiedIndex] = useState(null)
   const [expandedCalls, setExpandedCalls] = useState({})
+  const [allCopied, setAllCopied] = useState(false)
 
   const copyToClipboard = (text, index) => {
     navigator.clipboard.writeText(text)
@@ -580,8 +581,25 @@ const DebugPanel = ({ isOpen, onClose, apiCalls }) => {
     setTimeout(() => setCopiedIndex(null), 2000)
   }
 
+  const copyAllToClipboard = () => {
+    const fullData = JSON.stringify(apiCalls, null, 2)
+    navigator.clipboard.writeText(fullData)
+    setAllCopied(true)
+    setTimeout(() => setAllCopied(false), 2000)
+  }
+
   const toggleExpand = (index) => {
     setExpandedCalls(prev => ({ ...prev, [index]: !prev[index] }))
+  }
+
+  const expandAll = () => {
+    const allExpanded = {}
+    apiCalls?.forEach((_, index) => { allExpanded[index] = true })
+    setExpandedCalls(allExpanded)
+  }
+
+  const collapseAll = () => {
+    setExpandedCalls({})
   }
 
   if (!isOpen) return null
@@ -605,12 +623,37 @@ const DebugPanel = ({ isOpen, onClose, apiCalls }) => {
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <X className="w-5 h-5 text-gray-500" />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Action buttons */}
+            <button
+              onClick={expandAll}
+              className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              Expand All
+            </button>
+            <button
+              onClick={collapseAll}
+              className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              Collapse All
+            </button>
+            <button
+              onClick={copyAllToClipboard}
+              className="flex items-center gap-1 px-3 py-1.5 text-xs bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors"
+            >
+              {allCopied ? (
+                <><Check className="w-3 h-3" /> Copied All!</>
+              ) : (
+                <><Copy className="w-3 h-3" /> Copy All</>
+              )}
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors ml-2"
+            >
+              <X className="w-5 h-5 text-gray-500" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}
@@ -761,13 +804,37 @@ const DebugPanel = ({ isOpen, onClose, apiCalls }) => {
                       </div>
                     )}
 
-                    {/* LLM-specific: Show Response */}
+                    {/* LLM-specific: Show Agent Parsed Data (structured output from done() tool) */}
+                    {call.type === 'llm' && call.parsed_data && Object.keys(call.parsed_data).length > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-medium text-green-600 uppercase">
+                            Agent Output (done() data) {call.agent_summary && `- ${call.agent_summary.substring(0, 50)}`}
+                          </span>
+                          <button
+                            onClick={() => copyToClipboard(JSON.stringify(call.parsed_data, null, 2), `parsed-${index}`)}
+                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            {copiedIndex === `parsed-${index}` ? (
+                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
+                            ) : (
+                              <><Copy className="w-3 h-3" /> Copy</>
+                            )}
+                          </button>
+                        </div>
+                        <pre className="text-xs bg-green-900 text-green-200 p-3 rounded-lg overflow-x-auto max-h-96 whitespace-pre-wrap">
+                          {JSON.stringify(call.parsed_data, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* LLM-specific: Show Parsed/Cleaned Response */}
                     {call.type === 'llm' && call.response && (
                       <div>
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-medium text-purple-600 uppercase">LLM Response (Cleaned)</span>
+                          <span className="text-xs font-medium text-purple-600 uppercase">LLM Response Content</span>
                           <button
-                            onClick={() => copyToClipboard(call.response, `llmres-${index}`)}
+                            onClick={() => copyToClipboard(typeof call.response === 'string' ? call.response : JSON.stringify(call.response, null, 2), `llmres-${index}`)}
                             className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
                           >
                             {copiedIndex === `llmres-${index}` ? (
@@ -783,11 +850,33 @@ const DebugPanel = ({ isOpen, onClose, apiCalls }) => {
                       </div>
                     )}
 
-                    {/* LLM-specific: Show Raw Response */}
+                    {/* LLM-specific: Show Raw Unclean Content */}
+                    {call.type === 'llm' && call.response_raw && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-medium text-orange-600 uppercase">Raw LLM Output (unclean, includes think tags)</span>
+                          <button
+                            onClick={() => copyToClipboard(call.response_raw, `rawcontent-${index}`)}
+                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            {copiedIndex === `rawcontent-${index}` ? (
+                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
+                            ) : (
+                              <><Copy className="w-3 h-3" /> Copy</>
+                            )}
+                          </button>
+                        </div>
+                        <pre className="text-xs bg-gray-800 text-orange-300 p-3 rounded-lg overflow-x-auto max-h-96 whitespace-pre-wrap">
+                          {call.response_raw}
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* LLM-specific: Show Full API Response Object */}
                     {call.type === 'llm' && call.raw_response && (
                       <div>
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-medium text-purple-600 uppercase">Raw API Response</span>
+                          <span className="text-xs font-medium text-yellow-600 uppercase">Full API Response Object</span>
                           <button
                             onClick={() => copyToClipboard(JSON.stringify(call.raw_response, null, 2), `raw-${index}`)}
                             className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
@@ -935,13 +1024,18 @@ What would you like to build today?`,
   }, [messages])
 
   const chatMutation = useMutation({
-    mutationFn: async (message) => {
+    mutationFn: async ({ message, conversationHistory }) => {
       // Track the API call start time
       const startTime = Date.now()
-      const requestData = { message, plan_id: currentPlanId }
+
+      const requestData = {
+        message,
+        plan_id: currentPlanId,
+        conversation_history: conversationHistory.length > 0 ? conversationHistory : null,
+      }
 
       try {
-        const response = await sendChat(message, currentPlanId)
+        const response = await sendChat(message, currentPlanId, requestData.conversation_history)
 
         // Log API call for debugging (frontend call + backend LLM calls)
         const apiCallRecord = {
@@ -1090,8 +1184,25 @@ What would you like to build today?`,
     setInput('')
     setCurrentStep('Processing your request...')
 
+    // Build conversation history from CURRENT messages BEFORE adding the new one
+    // This ensures we capture previous exchanges, not the message being sent
+    const conversationHistory = messages
+      .filter((msg, idx) => idx > 0) // Skip the initial welcome message
+      .map((msg) => ({
+        role: msg.role,
+        content: msg.content?.substring(0, 500), // Truncate long messages
+        // Include key results for assistant messages
+        ...(msg.role === 'assistant' && msg.workflowEvents?.length > 0 && {
+          result_summary: msg.workflowEvents
+            .filter(e => e.status === 'success' && e.data)
+            .slice(-3) // Last 3 successful events
+            .map(e => `${e.title}: ${e.description?.substring(0, 100)}`)
+            .join('; ')
+        }),
+      }))
+
     setMessages((prev) => [...prev, { role: 'user', content: userMessage }])
-    chatMutation.mutate(userMessage)
+    chatMutation.mutate({ message: userMessage, conversationHistory })
   }
 
   const handleNewChat = () => {
