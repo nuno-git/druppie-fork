@@ -91,10 +91,11 @@ class ProjectService:
         self._session.headers.update({"Content-Type": "application/json"})
         self._ensured_users: set[str] = set()
 
-    def _ensure_gitea_user(self, username: str, email: str) -> str:
+    def _ensure_gitea_user(self, username: str, email: str) -> str | None:
         """Ensure a Gitea user exists for the given Keycloak username.
 
-        Creates the user if they don't exist. Returns the username.
+        Creates the user if they don't exist. Returns the username if successful,
+        or None if the username is reserved/cannot be used.
         """
         # Skip if already ensured this session
         if username in self._ensured_users:
@@ -126,10 +127,23 @@ class ProjectService:
 
             response = self._session.post(create_url, json=user_data, timeout=10)
 
-            if response.status_code in [201, 422]:  # 422 = user already exists
+            if response.status_code == 201:
                 self._ensured_users.add(username)
-                logger.info("Gitea user created/exists", username=username)
+                logger.info("Gitea user created", username=username)
                 return username
+
+            # Check if username is reserved
+            if response.status_code == 422:
+                response_text = response.text.lower()
+                if "reserved" in response_text:
+                    logger.warning("Username is reserved in Gitea, will use org repo",
+                                 username=username)
+                    return None  # Signal to use org repo instead
+                else:
+                    # 422 for other reason (maybe user exists) - try to use it
+                    self._ensured_users.add(username)
+                    logger.info("Gitea user may exist (422)", username=username)
+                    return username
 
             logger.error("Failed to create Gitea user",
                         username=username,
@@ -139,7 +153,7 @@ class ProjectService:
         except Exception as e:
             logger.error("Failed to ensure Gitea user", username=username, error=str(e))
 
-        return username
+        return None  # Return None to signal failure
 
     def create_project(
         self,
@@ -197,72 +211,74 @@ class ProjectService:
         repo_name = project.gitea_repo_name
 
         if username:
-            # Ensure the Gitea user exists
-            self._ensure_gitea_user(username, email or f"{username}@druppie.local")
+            # Ensure the Gitea user exists (returns None if username is reserved)
+            gitea_username = self._ensure_gitea_user(username, email or f"{username}@druppie.local")
 
-            # Check if repo already exists under user
-            check_url = f"{GITEA_INTERNAL_URL}/api/v1/repos/{username}/{repo_name}"
-            response = self._session.get(check_url, timeout=10)
+            if gitea_username is not None:
+                # Check if repo already exists under user
+                check_url = f"{GITEA_INTERNAL_URL}/api/v1/repos/{gitea_username}/{repo_name}"
+                response = self._session.get(check_url, timeout=10)
 
-            if response.status_code == 200:
-                logger.info("Repository already exists", repo=repo_name, owner=username)
-                return f"{GITEA_URL}/{username}/{repo_name}"
+                if response.status_code == 200:
+                    logger.info("Repository already exists", repo=repo_name, owner=gitea_username)
+                    return f"{GITEA_URL}/{gitea_username}/{repo_name}"
 
-            # Create private repository under user's account via admin API
-            create_url = f"{GITEA_INTERNAL_URL}/api/v1/admin/users/{username}/repos"
-            repo_data = {
-                "name": repo_name,
-                "description": project.description[:255] if project.description else "",
-                "private": True,  # Private repo for user
-                "auto_init": False,
-                "default_branch": "main",
-            }
+                # Create private repository under user's account via admin API
+                create_url = f"{GITEA_INTERNAL_URL}/api/v1/admin/users/{gitea_username}/repos"
+                repo_data = {
+                    "name": repo_name,
+                    "description": project.description[:255] if project.description else "",
+                    "private": True,  # Private repo for user
+                    "auto_init": False,
+                    "default_branch": "main",
+                }
 
-            response = self._session.post(create_url, json=repo_data, timeout=10)
+                response = self._session.post(create_url, json=repo_data, timeout=10)
 
-            if response.status_code in [201, 409]:
-                logger.info("Private repository created", repo=repo_name, owner=username)
-                return f"{GITEA_URL}/{username}/{repo_name}"
+                if response.status_code in [201, 409]:
+                    logger.info("Private repository created", repo=repo_name, owner=gitea_username)
+                    return f"{GITEA_URL}/{gitea_username}/{repo_name}"
 
-            logger.error("Failed to create user repository",
-                        repo=repo_name,
-                        owner=username,
-                        status=response.status_code,
-                        response=response.text[:200])
-            # Don't raise - fall through to return URL anyway
-            return f"{GITEA_URL}/{username}/{repo_name}"
+                logger.error("Failed to create user repository",
+                            repo=repo_name,
+                            owner=gitea_username,
+                            status=response.status_code,
+                            response=response.text[:200])
+                # Don't raise - fall through to org repo
 
-        else:
-            # Legacy: create under org (for backwards compatibility)
-            # Check if repo exists
-            check_url = f"{GITEA_INTERNAL_URL}/api/v1/repos/{GITEA_ORG}/{repo_name}"
-            response = self._session.get(check_url, timeout=10)
+            # Username is reserved or user creation failed - fall back to org repo
+            logger.info("Falling back to org repo", username=username)
 
-            if response.status_code == 200:
-                logger.info("Repository already exists", repo=repo_name)
-                return f"{GITEA_URL}/{GITEA_ORG}/{repo_name}"
+        # Create under org (default or fallback)
+        # Check if repo exists
+        check_url = f"{GITEA_INTERNAL_URL}/api/v1/repos/{GITEA_ORG}/{repo_name}"
+        response = self._session.get(check_url, timeout=10)
 
-            # Create repository under org
-            create_url = f"{GITEA_INTERNAL_URL}/api/v1/orgs/{GITEA_ORG}/repos"
-            repo_data = {
-                "name": repo_name,
-                "description": project.description[:255] if project.description else "",
-                "private": False,
-                "auto_init": False,
-                "default_branch": "main",
-            }
-
-            response = self._session.post(create_url, json=repo_data, timeout=10)
-
-            if response.status_code in [201, 409]:
-                logger.info("Repository created", repo=repo_name)
-                return f"{GITEA_URL}/{GITEA_ORG}/{repo_name}"
-
-            logger.error("Failed to create repository",
-                        repo=repo_name,
-                        status=response.status_code,
-                        response=response.text[:200])
+        if response.status_code == 200:
+            logger.info("Repository already exists in org", repo=repo_name)
             return f"{GITEA_URL}/{GITEA_ORG}/{repo_name}"
+
+        # Create repository under org
+        create_url = f"{GITEA_INTERNAL_URL}/api/v1/orgs/{GITEA_ORG}/repos"
+        repo_data = {
+            "name": repo_name,
+            "description": project.description[:255] if project.description else "",
+            "private": False,
+            "auto_init": False,
+            "default_branch": "main",
+        }
+
+        response = self._session.post(create_url, json=repo_data, timeout=10)
+
+        if response.status_code in [201, 409]:
+            logger.info("Repository created in org", repo=repo_name)
+            return f"{GITEA_URL}/{GITEA_ORG}/{repo_name}"
+
+        logger.error("Failed to create repository in org",
+                    repo=repo_name,
+                    status=response.status_code,
+                    response=response.text[:200])
+        return f"{GITEA_URL}/{GITEA_ORG}/{repo_name}"
 
     def _get_git_remote_url(self, project: Project) -> str:
         """Build git remote URL with embedded credentials for push access."""
