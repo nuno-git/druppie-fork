@@ -680,3 +680,86 @@ Next iteration could focus on:
 - Real-time notification when another user approves
 - Performance optimizations for LLM calls
 - More comprehensive E2E test coverage
+
+---
+
+## Iteration 10 Summary
+
+### What Was Implemented
+
+1. **WebSocket Real-time Approval Status Updates** - Working
+   - Created socket.js service using socket.io-client
+   - Socket connects on Chat page mount with user authentication
+   - Joins approval rooms for user's roles (receives task_approved, task_rejected events)
+   - Joins plan room when selecting a conversation (receives plan_updated events)
+   - Real-time updates to approval cards when another user approves/rejects
+
+### Code Changes
+
+**frontend/src/services/socket.js** (NEW):
+- `initSocket()` - Initialize socket connection with auth token
+- `joinPlanRoom(planId)` - Join room for plan-specific updates
+- `joinApprovalsRoom(roles)` - Join rooms for user's role-based approvals
+- `onTaskApproved(callback)` - Subscribe to task approval events
+- `onTaskRejected(callback)` - Subscribe to task rejection events
+- `onPlanUpdated(callback)` - Subscribe to plan update events
+- `disconnectSocket()` - Clean disconnect
+
+**frontend/src/pages/Chat.jsx**:
+- Import socket functions
+- Initialize socket on mount, join approval rooms for user's roles
+- Join plan room when currentPlanId changes
+- Handle `task_approved` events:
+  - Update approval card with new approval count and approver roles
+  - Remove fully approved tasks from pending approvals
+  - Invalidate plans query to refresh sidebar
+- Handle `task_rejected` events:
+  - Remove rejected task from pending approvals
+  - Invalidate plans query
+
+### Test Results
+
+1. **WebSocket Connection**:
+   - Console: `[Socket] Connected: DDVFX10V1W1E-V8qAAAB`
+   - Console: `[Socket] Server confirmed connection: {...}`
+   - Console: `[Socket] Joining approvals rooms for roles: [viewer, offline_access, developer...]`
+
+2. **Plan Room Join**:
+   - Console: `[Socket] Joining plan room: 42125766-b341-40b8-bc4a-c307c3e13028`
+   - Triggered when selecting a conversation
+
+### Commits Made (Iteration 10)
+
+1. `2ce0331` - Add WebSocket real-time approval status updates (Iteration 10)
+
+---
+
+## Status After Iteration 10
+
+All core functionality is working:
+- Authentication with Keycloak
+- Chat with LLM (Z.AI / GLM-4.7)
+- Router agent analyzes intent (including deploy_project)
+- Planner agent creates execution plans
+- Developer agent generates code
+- HITL question/answer flow
+- Project creation with Git push to Gitea
+- Build and run projects in Docker
+- ROLE approval workflow (deploy.staging)
+- MULTI approval workflow (deploy.production)
+- Deployment workflow triggered from chat
+- Inline approval UI in chat
+- Agent attribution badges
+- Enhanced progress indicators
+- MULTI approval progress display
+- Partial approval feedback
+- Pending approvals in loaded conversations
+- Hide approve button when user already approved
+- **WebSocket real-time approval updates** (NEW)
+
+Next iteration could focus on:
+- Implement actual deployment infrastructure (currently simulated)
+- Add toast notifications for real-time events
+- Performance optimizations for LLM calls
+- More comprehensive E2E test coverage
+- Add visual indication when another user is viewing the same conversation
