@@ -45,6 +45,7 @@ import {
   onPlanUpdated,
   disconnectSocket,
 } from '../services/socket'
+import { useToast } from '../components/Toast'
 
 // Icon mapping for workflow events
 const getEventIcon = (eventType, status) => {
@@ -1227,6 +1228,7 @@ const DebugPanel = ({ isOpen, onClose, apiCalls }) => {
 
 const Chat = () => {
   const { user } = useAuth()
+  const toast = useToast()
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [currentPlanId, setCurrentPlanId] = useState(null)
@@ -1291,6 +1293,27 @@ What would you like to build today?`,
     const handleTaskApproved = (task) => {
       console.log('[Socket] Task approved:', task)
 
+      // Get the latest approval (most recent one)
+      const approvals = task.approvals || []
+      const latestApproval = approvals[approvals.length - 1]
+      const approverRole = latestApproval?.approver_role || latestApproval?.role || 'unknown'
+      const approverId = latestApproval?.approved_by || latestApproval?.approver_id
+
+      // Show toast notification only if it's from another user
+      if (approverId && approverId !== user?.id) {
+        if (task.status === 'approved') {
+          toast.success(
+            'Task Fully Approved',
+            `"${task.name}" has been approved and will now execute.`
+          )
+        } else {
+          toast.info(
+            'New Approval Received',
+            `A ${approverRole} has approved "${task.name}".`
+          )
+        }
+      }
+
       // Update messages to refresh approval cards
       setMessages((prev) =>
         prev.map((msg) => {
@@ -1300,7 +1323,6 @@ What would you like to build today?`,
           const updatedApprovals = msg.pendingApprovals.map((approval) => {
             if (approval.task_id === task.id) {
               // Get updated approval info from task
-              const approvals = task.approvals || []
               const approvedApprovals = approvals.filter(a => a.decision === 'approved')
               return {
                 ...approval,
@@ -1333,6 +1355,19 @@ What would you like to build today?`,
     const handleTaskRejected = (task) => {
       console.log('[Socket] Task rejected:', task)
 
+      // Get rejection info
+      const rejectionApproval = (task.approvals || []).find(a => a.decision === 'rejected')
+      const rejectorRole = rejectionApproval?.approver_role || rejectionApproval?.role || 'someone'
+      const rejectorId = rejectionApproval?.approved_by || rejectionApproval?.approver_id
+
+      // Show toast notification only if it's from another user
+      if (rejectorId && rejectorId !== user?.id) {
+        toast.warning(
+          'Task Rejected',
+          `"${task.name}" has been rejected by a ${rejectorRole}.`
+        )
+      }
+
       // Remove rejected task from pending approvals
       setMessages((prev) =>
         prev.map((msg) => {
@@ -1359,7 +1394,7 @@ What would you like to build today?`,
       unsubApproved()
       unsubRejected()
     }
-  }, [queryClient])
+  }, [queryClient, user?.id, toast])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
