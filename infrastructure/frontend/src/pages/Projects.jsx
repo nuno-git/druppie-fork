@@ -23,8 +23,10 @@ import {
   Copy,
   Server,
   Trash2,
+  Hammer,
+  Loader2,
 } from 'lucide-react'
-import { getWorkspaceFiles, getWorkspaceFile, getWorkspaceDownloadUrl, getProjectStatus, getProjects, deleteProject } from '../services/api'
+import { getWorkspaceFiles, getWorkspaceFile, getWorkspaceDownloadUrl, getProjectStatus, getProjects, deleteProject, buildProject, runProject, stopProject } from '../services/api'
 
 const getFileIcon = (filename) => {
   const ext = filename.split('.').pop().toLowerCase()
@@ -314,8 +316,53 @@ const Projects = () => {
     },
   })
 
+  const buildMutation = useMutation({
+    mutationFn: buildProject,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projectStatus', selectedPlan] })
+      queryClient.invalidateQueries({ queryKey: ['allProjectStatuses'] })
+    },
+    onError: (error) => {
+      alert(`Build failed: ${error.message}`)
+    },
+  })
+
+  const runMutation = useMutation({
+    mutationFn: runProject,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projectStatus', selectedPlan] })
+      queryClient.invalidateQueries({ queryKey: ['allProjectStatuses'] })
+    },
+    onError: (error) => {
+      alert(`Failed to run: ${error.message}`)
+    },
+  })
+
+  const stopMutation = useMutation({
+    mutationFn: stopProject,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projectStatus', selectedPlan] })
+      queryClient.invalidateQueries({ queryKey: ['allProjectStatuses'] })
+    },
+    onError: (error) => {
+      alert(`Failed to stop: ${error.message}`)
+    },
+  })
+
   const handleDelete = (projectId) => {
     deleteMutation.mutate(projectId)
+  }
+
+  const handleBuild = (projectId) => {
+    buildMutation.mutate(projectId)
+  }
+
+  const handleRun = (projectId) => {
+    runMutation.mutate(projectId)
+  }
+
+  const handleStop = (projectId) => {
+    stopMutation.mutate(projectId)
   }
 
   const { data: workspace, isLoading } = useQuery({
@@ -502,22 +549,74 @@ const Projects = () => {
               </div>
             )}
 
-            {/* Project Status */}
-            {projectStatus && (
-              <div className="flex items-center space-x-4 text-sm text-gray-600">
-                <span className="flex items-center">
-                  <span className={`w-2 h-2 rounded-full mr-2 ${
-                    projectStatus.status === 'running' ? 'bg-green-500' :
-                    projectStatus.status === 'built' ? 'bg-blue-500' :
-                    'bg-gray-400'
-                  }`} />
-                  Status: {projectStatus.status}
-                </span>
-                {projectStatus.port && (
-                  <span>Port: {projectStatus.port}</span>
+            {/* Project Status and Actions */}
+            <div className="flex items-center justify-between">
+              {projectStatus && (
+                <div className="flex items-center space-x-4 text-sm text-gray-600">
+                  <span className="flex items-center">
+                    <span className={`w-2 h-2 rounded-full mr-2 ${
+                      projectStatus.status === 'running' ? 'bg-green-500' :
+                      projectStatus.status === 'built' ? 'bg-blue-500' :
+                      'bg-gray-400'
+                    }`} />
+                    Status: {projectStatus.status || 'not built'}
+                  </span>
+                  {projectStatus.port && (
+                    <span>Port: {projectStatus.port}</span>
+                  )}
+                </div>
+              )}
+              {!projectStatus && (
+                <div className="text-sm text-gray-500">Not built yet</div>
+              )}
+
+              {/* Build / Run / Stop Buttons */}
+              <div className="flex items-center space-x-2">
+                {/* Build Button */}
+                <button
+                  onClick={() => handleBuild(selectedPlan)}
+                  disabled={buildMutation.isPending}
+                  className="flex items-center px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {buildMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Hammer className="w-4 h-4 mr-2" />
+                  )}
+                  {buildMutation.isPending ? 'Building...' : 'Build'}
+                </button>
+
+                {/* Run / Stop Button */}
+                {projectStatus?.status === 'running' ? (
+                  <button
+                    onClick={() => handleStop(selectedPlan)}
+                    disabled={stopMutation.isPending}
+                    className="flex items-center px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {stopMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Square className="w-4 h-4 mr-2" />
+                    )}
+                    {stopMutation.isPending ? 'Stopping...' : 'Stop'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleRun(selectedPlan)}
+                    disabled={runMutation.isPending || projectStatus?.status !== 'built'}
+                    className="flex items-center px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title={projectStatus?.status !== 'built' ? 'Build first' : 'Run the app'}
+                  >
+                    {runMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4 mr-2" />
+                    )}
+                    {runMutation.isPending ? 'Starting...' : 'Run'}
+                  </button>
                 )}
               </div>
-            )}
+            </div>
           </div>
 
           {/* File Browser */}
