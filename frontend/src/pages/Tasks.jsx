@@ -14,7 +14,10 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   const [showReject, setShowReject] = useState(false)
   const { user } = useAuth()
 
-  const canApprove = hasRole(task.required_role)
+  // For MULTI approval, check if user has any of the required roles
+  const canApprove = task.approval_type === 'multi' && task.required_roles
+    ? task.required_roles.some(role => hasRole(role))
+    : hasRole(task.required_role)
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -121,7 +124,10 @@ const TaskCard = ({ task, onApprove, onReject }) => {
       ) : (
         <div className="flex items-center p-3 bg-gray-50 rounded-lg text-gray-600">
           <Shield className="w-5 h-5 mr-2" />
-          You need the "{task.required_role}" role to approve this task.
+          {task.approval_type === 'multi' && task.required_roles
+            ? `You need one of these roles to approve: ${task.required_roles.join(', ')}`
+            : `You need the "${task.required_role}" role to approve this task.`
+          }
         </div>
       )}
     </div>

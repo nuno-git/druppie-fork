@@ -287,16 +287,42 @@ def list_tasks():
     user = g.user
     roles = user.get("realm_access", {}).get("roles", [])
 
-    # Get tasks pending approval for user's roles
-    tasks = (
-        Task.query.filter(
-            Task.status == "pending_approval", Task.required_role.in_(roles)
-        )
+    # Get all pending approval tasks
+    all_pending_tasks = (
+        Task.query.filter(Task.status == "pending_approval")
         .order_by(Task.created_at.desc())
         .all()
     )
 
-    return jsonify([task.to_dict() for task in tasks])
+    # Filter tasks that the user can approve
+    tasks = []
+    user_sub = user.get("sub")
+
+    for task in all_pending_tasks:
+        # Admin can approve anything
+        if "admin" in roles:
+            tasks.append(task)
+            continue
+
+        # Check MULTI approval first (has priority over single role)
+        if task.approval_type == "multi" and task.required_roles:
+            if any(r in roles for r in task.required_roles):
+                # For MULTI, check if user hasn't already approved
+                existing_approval = Approval.query.filter_by(
+                    task_id=task.id,
+                    approved_by=user_sub,
+                    decision="approved"
+                ).first()
+                if not existing_approval:
+                    tasks.append(task)
+            continue
+
+        # Check single role approval
+        if task.required_role and task.required_role in roles:
+            tasks.append(task)
+            continue
+
+    return jsonify([task.to_dict(include_approvals=True) for task in tasks])
 
 
 @app.route("/api/tasks/<task_id>", methods=["GET"])
@@ -313,11 +339,33 @@ def approve_task(task_id):
     """Approve a task."""
     user = g.user
     task = Task.query.get_or_404(task_id)
+    user_roles = user.get("realm_access", {}).get("roles", [])
 
-    # Check if user's role can approve
-    roles = user.get("realm_access", {}).get("roles", [])
-    if task.required_role not in roles and "admin" not in roles:
-        return jsonify({"error": "You don't have permission to approve this task"}), 403
+    # For MULTI approval, check if user has one of the required roles
+    if task.approval_type == "multi":
+        required_roles = task.required_roles or []
+        can_approve = "admin" in user_roles or any(r in user_roles for r in required_roles)
+        if not can_approve:
+            return jsonify({"error": "You don't have permission to approve this task"}), 403
+
+        # Check if user already approved with the same role
+        existing_approvals = Approval.query.filter_by(task_id=task_id, decision="approved").all()
+        user_already_approved = any(a.approved_by == user.get("sub") for a in existing_approvals)
+        if user_already_approved:
+            return jsonify({"error": "You have already approved this task"}), 400
+
+        # Determine which role the user is approving with (first matching role)
+        approving_role = next((r for r in required_roles if r in user_roles), "admin")
+
+        # Check if this role has already approved
+        role_already_approved = any(a.role == approving_role for a in existing_approvals)
+        if role_already_approved and approving_role != "admin":
+            return jsonify({"error": f"Role '{approving_role}' has already approved this task"}), 400
+    else:
+        # Single role approval
+        if task.required_role not in user_roles and "admin" not in user_roles:
+            return jsonify({"error": "You don't have permission to approve this task"}), 403
+        approving_role = task.required_role
 
     # Create approval
     approval = Approval(
@@ -325,20 +373,40 @@ def approve_task(task_id):
         task_id=task_id,
         approved_by=user.get("sub"),
         approved_by_username=user.get("preferred_username"),
-        role=task.required_role,
+        role=approving_role,
         decision="approved",
-        comment=request.get_json().get("comment", ""),
+        comment=request.get_json().get("comment", "") if request.get_json() else "",
     )
 
     db.session.add(approval)
-    task.status = "approved"
+    db.session.flush()  # Ensure approval is written to DB before counting
+
+    # For MULTI approval, check if we have enough approvals
+    if task.approval_type == "multi":
+        required_count = task.required_approvals or 2  # Default to 2 for multi
+        current_approvals = Approval.query.filter_by(task_id=task_id, decision="approved").count()
+        if current_approvals >= required_count:
+            task.status = "approved"
+        else:
+            # Still pending more approvals - keep as pending_approval
+            pass  # Status already pending_approval
+    else:
+        task.status = "approved"
+
     db.session.commit()
 
+    # Include approval count in response for MULTI
+    response_data = {"status": task.status, "approval": approval.to_dict()}
+    if task.approval_type == "multi":
+        current_count = Approval.query.filter_by(task_id=task_id, decision="approved").count()
+        response_data["approvals_received"] = current_count
+        response_data["approvals_required"] = task.required_approvals or 2
+
     # Broadcast approval
-    socketio.emit("task_approved", task.to_dict(), room=f"approvals:{task.required_role}")
+    socketio.emit("task_approved", task.to_dict(include_approvals=True), room=f"approvals:{approving_role}")
     socketio.emit("plan_updated", task.plan.to_dict(), room=f"plan:{task.plan_id}")
 
-    return jsonify({"status": "approved", "approval": approval.to_dict()})
+    return jsonify(response_data)
 
 
 @app.route("/api/tasks/<task_id>/reject", methods=["POST"])
@@ -447,35 +515,62 @@ def request_mcp_approval():
     tool = mcp_registry.get_tool(tool_name)
     approval_type = tool.approval_type.value if tool else "role"
 
-    # Get required_role from tool's approval_roles (first one) or fallback to permission manager
+    # Handle different approval types
+    required_role = None
+    required_roles = None
+    required_approvals = 1
+
     if tool and tool.approval_roles:
-        required_role = tool.approval_roles[0]  # First role in the list can approve
+        if approval_type == "multi":
+            # MULTI approval: requires multiple approvers from different roles
+            required_roles = tool.approval_roles
+            required_approvals = 2  # Default: need 2 of the available roles
+            required_role = required_roles[0]  # For backwards compatibility
+        else:
+            # Single role approval
+            required_role = tool.approval_roles[0]
     else:
         required_role = mcp_manager.get_required_role(tool_name)
+
+    # Build task description
+    if approval_type == "multi":
+        description = f"Approval required from {required_approvals} of: {', '.join(required_roles)}"
+    else:
+        description = f"Approval required to execute {tool_name}"
 
     # Create approval request task
     task = Task(
         id=str(uuid.uuid4()),
         plan_id=plan_id,
         name=f"Approve MCP: {tool_name}",
-        description=f"Approval required to execute {tool_name}",
+        description=description,
         mcp_tool=tool_name,
         mcp_arguments=arguments,
         status="pending_approval",
         approval_type=approval_type,
         required_role=required_role,
+        required_roles=required_roles,
+        required_approvals=required_approvals,
         created_by=user.get("sub"),
     )
 
     db.session.add(task)
     db.session.commit()
 
-    # Broadcast approval request
-    socketio.emit(
-        "approval_requested",
-        task.to_dict(),
-        room=f"approvals:{task.required_role}",
-    )
+    # Broadcast approval request to all required roles
+    if approval_type == "multi" and required_roles:
+        for role in required_roles:
+            socketio.emit(
+                "approval_requested",
+                task.to_dict(),
+                room=f"approvals:{role}",
+            )
+    else:
+        socketio.emit(
+            "approval_requested",
+            task.to_dict(),
+            room=f"approvals:{task.required_role}",
+        )
 
     return jsonify(task.to_dict()), 201
 
