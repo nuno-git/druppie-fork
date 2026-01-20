@@ -216,7 +216,10 @@ Requirements:
 - Make it visually appealing with CSS
 - Include all necessary files to run the app
 - For web apps, use React with Vite OR plain HTML/CSS/JS
-- For Python apps, use Flask
+- For Python apps, use Flask with:
+  - app.run(host='0.0.0.0', port=5000, debug=True) - IMPORTANT for Docker
+  - Include requirements.txt with all dependencies
+  - Include a Dockerfile for containerization
 
 Generate ALL the files needed."""
 
