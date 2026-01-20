@@ -10,6 +10,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional, Callable
 
+import structlog
+
 from .models import db, Plan, Task, Approval, Question
 from .mcp_permissions import MCPPermissionManager
 from .llm_service import LLMService
@@ -20,6 +22,17 @@ from .builder import builder_service
 # Import the new orchestrator (handles routing + planning)
 from druppie.orchestrator import chat_orchestrator
 from druppie.core.models import IntentAction
+
+# Import workflow execution components
+from druppie.core.models import Plan as PydanticPlan, PlanType, PlanStatus
+from druppie.agents import AgentRuntime
+from druppie.workflows import WorkflowEngine, WorkflowRegistry
+from druppie.mcp import MCPClient, MCPRegistry
+from druppie.registry import AgentRegistry
+from druppie.llm import ChatZAI
+from druppie.plan_execution_engine import PlanExecutionEngine
+
+logger = structlog.get_logger()
 
 
 class WorkflowEvent:
@@ -57,6 +70,8 @@ class PlanService:
     Uses the ChatOrchestrator for:
     - Intent analysis (router agent)
     - Plan creation (planner agent)
+
+    Uses PlanExecutionEngine for workflow execution.
     """
 
     def __init__(self):
@@ -66,6 +81,70 @@ class PlanService:
 
         # Track LLM calls for debugging
         self._llm_calls: list[dict] = []
+
+        # Workflow execution components (lazy initialized)
+        self._workflow_initialized = False
+        self._llm = None
+        self._agent_registry = None
+        self._workflow_registry = None
+        self._mcp_registry = None
+        self._mcp_client = None
+        self._plan_execution_engine = None
+
+    def _ensure_workflow_initialized(self, emit_event: Callable | None = None) -> PlanExecutionEngine:
+        """Initialize workflow components lazily."""
+        if not self._workflow_initialized:
+            registry_path = os.getenv("REGISTRY_PATH", "/app/registry")
+
+            # Initialize LLM
+            self._llm = ChatZAI(
+                api_key=os.getenv("ZAI_API_KEY", ""),
+                model=os.getenv("ZAI_MODEL", "GLM-4.7"),
+                base_url=os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4"),
+            )
+
+            # Load registries
+            self._agent_registry = AgentRegistry(registry_path)
+            self._agent_registry.load()
+
+            self._workflow_registry = WorkflowRegistry(registry_path)
+            self._workflow_registry.load()
+
+            self._mcp_registry = MCPRegistry(registry_path)
+            self._mcp_registry.load()
+
+            # Initialize MCP client
+            self._mcp_client = MCPClient(self._mcp_registry)
+
+            self._workflow_initialized = True
+
+            logger.info(
+                "workflow_components_initialized",
+                agents=len(self._agent_registry.list_agents()),
+                workflows=len(self._workflow_registry.list_workflows()),
+            )
+
+        # Create agent runtime with emit_event for this execution
+        agent_runtime = AgentRuntime(
+            mcp_client=self._mcp_client,
+            mcp_registry=self._mcp_registry,
+            agent_registry=self._agent_registry,
+            llm=self._llm,
+            emit_event=emit_event,
+        )
+
+        # Create workflow engine
+        workflow_engine = WorkflowEngine(
+            agent_runtime=agent_runtime,
+            mcp_client=self._mcp_client,
+        )
+
+        # Create plan execution engine
+        return PlanExecutionEngine(
+            agent_runtime=agent_runtime,
+            workflow_engine=workflow_engine,
+            workflow_registry=self._workflow_registry,
+        )
 
     def _record_llm_call(
         self,
@@ -116,6 +195,101 @@ class PlanService:
         """Clear all recorded LLM calls."""
         self._llm_calls = []
         self.llm_service.clear_llm_calls()
+
+    async def execute_workflow(
+        self,
+        db_plan: Plan,
+        workflow_id: str,
+        project_context: dict[str, Any],
+        emit_event: Callable[[dict], None] | None = None,
+    ) -> dict[str, Any]:
+        """Execute a workflow for a plan.
+
+        Args:
+            db_plan: SQLAlchemy Plan from database
+            workflow_id: ID of the workflow to execute
+            project_context: Context variables for template substitution
+            emit_event: Callback for emitting workflow events
+
+        Returns:
+            Result dict with success status and any output data
+        """
+        def add_event(title: str, description: str, status: str = "info", data: dict = None):
+            if emit_event:
+                event = WorkflowEvent("workflow_step", title, description, status, data)
+                emit_event(event.to_dict())
+
+        try:
+            add_event("Initializing Workflow", f"Starting {workflow_id}...", "working")
+
+            # Get plan execution engine
+            plan_execution_engine = self._ensure_workflow_initialized(emit_event)
+
+            # Create Pydantic Plan for workflow execution
+            pydantic_plan = PydanticPlan(
+                id=db_plan.id,
+                name=db_plan.name,
+                description=db_plan.description or "",
+                plan_type=PlanType.WORKFLOW,
+                status=PlanStatus.PENDING,
+                workflow_id=workflow_id,
+                project_context=project_context,
+            )
+
+            add_event("Executing Workflow", f"Running workflow: {workflow_id}", "working")
+
+            # Execute the plan through PlanExecutionEngine
+            result_plan = await plan_execution_engine.execute(pydantic_plan)
+
+            # Update database plan with results
+            db_plan.status = result_plan.status.value
+            if result_plan.workflow_run:
+                db_plan.result = db_plan.result or {}
+                db_plan.result["workflow_run"] = {
+                    "id": result_plan.workflow_run.id,
+                    "status": result_plan.workflow_run.status,
+                    "context": result_plan.workflow_run.context,
+                }
+                # Extract useful URLs from context
+                context = result_plan.workflow_run.context
+                if context.get("step_deploy_production", {}).get("url"):
+                    db_plan.result["app_url"] = context["step_deploy_production"]["url"]
+                if context.get("step_deploy_preview", {}).get("url"):
+                    db_plan.result["preview_url"] = context["step_deploy_preview"]["url"]
+            db.session.commit()
+
+            success = result_plan.status == PlanStatus.COMPLETED
+            if success:
+                add_event(
+                    "Workflow Complete",
+                    f"Workflow {workflow_id} completed successfully",
+                    "success",
+                    {"status": "completed"}
+                )
+            else:
+                add_event(
+                    "Workflow Failed",
+                    f"Workflow {workflow_id} failed",
+                    "error",
+                    {"status": "failed"}
+                )
+
+            return {
+                "success": success,
+                "status": result_plan.status.value,
+                "workflow_run": result_plan.workflow_run.model_dump() if result_plan.workflow_run else None,
+                "result": db_plan.result,
+            }
+
+        except Exception as e:
+            logger.error("workflow_execution_failed", error=str(e), workflow_id=workflow_id)
+            add_event("Workflow Error", str(e), "error")
+            db_plan.status = "failed"
+            db.session.commit()
+            return {
+                "success": False,
+                "error": str(e),
+            }
 
     def _format_plan_for_display(
         self,
@@ -658,7 +832,7 @@ class PlanService:
                 "error": result.get("error"),
             }
 
-        # Handle update_app task (UPDATE_PROJECT flow)
+        # Handle update_app task (UPDATE_PROJECT flow) - Uses update_workflow
         if task.mcp_tool == "update_app" and task.mcp_arguments:
             app_info = task.mcp_arguments.get("app_info", {})
             target_project_id = task.mcp_arguments.get("target_project_id")
@@ -689,58 +863,66 @@ class PlanService:
                 {"project_id": project.id, "repo_url": project.repo_url}
             )
 
-            # For now, use the LLM service to apply updates
-            # In the future, this will trigger the update_workflow
+            # Build workflow context for update_workflow
             import time
             timestamp = int(time.time())
 
+            workflow_context = {
+                "project_name": project.name,
+                "project_id": project.id,
+                "update_description": update_description,
+                "timestamp": timestamp,
+                "app_type": app_info.get("app_type", "application"),
+                "technologies": app_info.get("technologies", []),
+                "features": app_info.get("features", []),
+            }
+
             add_event(
-                "update_starting",
+                "update_workflow_starting",
                 "Starting Update Workflow",
-                f"Creating feature branch and implementing changes...",
+                f"Using update_workflow to implement changes...",
                 "working",
-                {"branch": f"feature/update-{timestamp}"}
+                {"workflow_id": "update_workflow", "branch": f"feature/update-{timestamp}"}
             )
 
-            # Use code_service to generate update code
-            result = self.code_service.update_app(
-                project_id=project.id,
-                update_description=update_description,
-                app_info=app_info,
-                username=task.mcp_arguments.get("username"),
-                email=task.mcp_arguments.get("email"),
+            # Get the plan and execute the update_workflow
+            plan = Plan.query.get(task.plan_id)
+            if not plan:
+                return {
+                    "executed": True,
+                    "success": False,
+                    "error": f"Plan not found: {task.plan_id}",
+                }
+
+            # Execute the update_workflow asynchronously
+            result = asyncio.run(
+                self.execute_workflow(
+                    db_plan=plan,
+                    workflow_id="update_workflow",
+                    project_context=workflow_context,
+                    emit_event=emit_event,
+                )
             )
 
             if result.get("success"):
                 add_event(
-                    "update_applied",
-                    "Update Applied",
-                    f"Changes applied to branch: {result.get('branch', 'feature/update')}",
+                    "update_complete",
+                    "Update Workflow Complete",
+                    "Changes implemented and preview deployed",
                     "success",
                     {
-                        "branch": result.get("branch"),
-                        "files_modified": result.get("files_modified", []),
+                        "preview_url": result.get("result", {}).get("preview_url"),
+                        "status": result.get("status"),
                     }
                 )
-
-                # Update plan with preview URL if available
-                plan = Plan.query.get(task.plan_id)
-                if plan:
-                    plan.result = plan.result or {}
-                    if result.get("preview_url"):
-                        plan.result["preview_url"] = result["preview_url"]
-                    if result.get("branch"):
-                        plan.result["branch"] = result["branch"]
-                    db.session.commit()
 
             return {
                 "executed": True,
                 "success": result.get("success", False),
                 "project_id": project.id,
                 "project_name": project.name,
-                "branch": result.get("branch"),
-                "files_modified": result.get("files_modified", []),
-                "preview_url": result.get("preview_url"),
+                "preview_url": result.get("result", {}).get("preview_url"),
+                "workflow_run": result.get("workflow_run"),
                 "error": result.get("error"),
             }
 
