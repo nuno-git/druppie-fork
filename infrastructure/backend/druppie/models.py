@@ -211,3 +211,68 @@ class MCPPermission(db.Model):
             "allowed_roles": self.allowed_roles or [],
             "risk_level": self.risk_level,
         }
+
+
+class Question(db.Model):
+    """Question model for agent-user interaction.
+
+    When an agent needs clarification, it creates a Question that the user
+    must answer before the workflow can continue.
+    """
+
+    __tablename__ = "questions"
+
+    id = db.Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    plan_id = db.Column(String(36), db.ForeignKey("plans.id"), nullable=False)
+    task_id = db.Column(String(36), db.ForeignKey("tasks.id"), nullable=True)
+
+    # Question details
+    question = db.Column(db.Text, nullable=False)
+    context = db.Column(db.Text)  # Why this question is being asked
+    required_for = db.Column(String(255))  # What this info is needed for
+
+    # Optional suggested answers
+    options = db.Column(JSON, default=list)  # ["Option 1", "Option 2", ...]
+
+    # Agent info
+    agent_id = db.Column(String(100))  # Which agent asked this
+
+    # Status
+    status = db.Column(String(50), default="pending")  # pending, answered, cancelled
+
+    # User response
+    answer = db.Column(db.Text)
+    answered_by = db.Column(String(36))
+    answered_by_username = db.Column(String(255))
+
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    answered_at = db.Column(db.DateTime)
+
+    # Relationships
+    plan = db.relationship("Plan", backref=db.backref("questions", lazy="dynamic"))
+    task = db.relationship("Task", backref=db.backref("questions", lazy="dynamic"))
+
+    def to_dict(self, include_plan: bool = False) -> dict:
+        """Convert to dictionary."""
+        data = {
+            "id": self.id,
+            "plan_id": self.plan_id,
+            "task_id": self.task_id,
+            "question": self.question,
+            "context": self.context,
+            "required_for": self.required_for,
+            "options": self.options or [],
+            "agent_id": self.agent_id,
+            "status": self.status,
+            "answer": self.answer,
+            "answered_by": self.answered_by,
+            "answered_by_username": self.answered_by_username,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "answered_at": self.answered_at.isoformat() if self.answered_at else None,
+        }
+
+        if include_plan and self.plan:
+            data["plan"] = {"id": self.plan.id, "name": self.plan.name, "status": self.plan.status}
+
+        return data

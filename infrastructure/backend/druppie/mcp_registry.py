@@ -340,6 +340,32 @@ CODE_TOOLS = [
     ),
 ]
 
+INTERACTION_TOOLS = [
+    MCPTool(
+        id="interaction.ask_question",
+        name="Ask Question",
+        description="Ask the user a clarifying question before proceeding. Use this when you need more information to complete a task.",
+        category="interaction",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The question to ask the user"},
+                "context": {"type": "string", "description": "Additional context about why this question is needed"},
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of suggested answers/choices for the user",
+                },
+                "required_for": {"type": "string", "description": "What this information is needed for"},
+            },
+            "required": ["question"],
+        },
+        allowed_roles=[],  # All roles can use this
+        approval_type=ApprovalType.NONE,  # No approval needed to ask questions
+        danger_level="low",
+    ),
+]
+
 
 # =============================================================================
 # MCP REGISTRY
@@ -400,6 +426,13 @@ class MCPRegistry:
                 description="AI-powered code generation",
                 transport="internal",
                 tools=CODE_TOOLS,
+            ),
+            MCPServer(
+                id="interaction",
+                name="User Interaction",
+                description="Tools for interacting with users, asking questions, and getting clarification",
+                transport="internal",
+                tools=INTERACTION_TOOLS,
             ),
         ]
 

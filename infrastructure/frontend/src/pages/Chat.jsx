@@ -28,8 +28,13 @@ import {
   MessageSquare,
   History,
   Trash2,
+  HelpCircle,
+  Bug,
+  Copy,
+  Check,
+  X,
 } from 'lucide-react'
-import { sendChat, getPlans } from '../services/api'
+import { sendChat, getPlans, answerQuestion } from '../services/api'
 import { useAuth } from '../App'
 
 // Icon mapping for workflow events
@@ -65,6 +70,8 @@ const getEventIcon = (eventType, status) => {
       return <Play {...iconProps} />
     case 'approval_required':
       return <AlertTriangle {...iconProps} />
+    case 'question_pending':
+      return <HelpCircle {...iconProps} />
     case 'workflow_completed':
       return <CheckCircle {...iconProps} />
     case 'workflow_failed':
@@ -151,9 +158,40 @@ const WorkflowEvent = ({ event }) => {
   )
 }
 
+// Process workflow events to mark "working" events as complete if there are subsequent events
+const processWorkflowEvents = (events) => {
+  if (!events || events.length === 0) return events
+
+  return events.map((event, index) => {
+    // If this event has "working" status and there's a subsequent event, mark it as complete
+    if (event.status === 'working' && index < events.length - 1) {
+      // Check if any subsequent event indicates this step completed
+      const subsequentEvents = events.slice(index + 1)
+      const hasSubsequent = subsequentEvents.length > 0
+
+      if (hasSubsequent) {
+        // Determine appropriate status based on event type
+        let newStatus = 'success'
+        if (event.event_type === 'task_executing' || event.event_type === 'executing') {
+          // Check if there's a failed event
+          const hasFailed = subsequentEvents.some(e =>
+            e.event_type?.includes('failed') || e.status === 'error'
+          )
+          newStatus = hasFailed ? 'error' : 'success'
+        }
+        return { ...event, status: newStatus }
+      }
+    }
+    return event
+  })
+}
+
 // Workflow Events Timeline (collapsible)
 const WorkflowTimeline = ({ events, isExpanded, onToggle }) => {
   if (!events || events.length === 0) return null
+
+  // Process events to update statuses
+  const processedEvents = processWorkflowEvents(events)
 
   return (
     <div className="mt-3 border-t border-gray-100 pt-3">
@@ -163,12 +201,12 @@ const WorkflowTimeline = ({ events, isExpanded, onToggle }) => {
       >
         {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         <span className="font-medium">Workflow Details</span>
-        <span className="text-xs bg-gray-100 px-2 py-0.5 rounded-full">{events.length} steps</span>
+        <span className="text-xs bg-gray-100 px-2 py-0.5 rounded-full">{processedEvents.length} steps</span>
       </button>
 
       {isExpanded && (
         <div className="space-y-1 pl-2 border-l-2 border-gray-200 ml-2">
-          {events.map((event, index) => (
+          {processedEvents.map((event, index) => (
             <WorkflowEvent key={index} event={event} />
           ))}
         </div>
@@ -177,7 +215,99 @@ const WorkflowTimeline = ({ events, isExpanded, onToggle }) => {
   )
 }
 
-const Message = ({ message }) => {
+// Question Card Component - displays a question from an agent
+const QuestionCard = ({ question, onAnswer, isAnswering }) => {
+  const [selectedOption, setSelectedOption] = useState(null)
+  const [customAnswer, setCustomAnswer] = useState('')
+  const hasOptions = question.options && question.options.length > 0
+
+  const handleSubmit = () => {
+    const answer = selectedOption || customAnswer
+    if (answer.trim()) {
+      onAnswer(question.id, answer)
+    }
+  }
+
+  return (
+    <div className="mt-3 bg-purple-50 rounded-lg border border-purple-200 p-4">
+      <div className="flex items-start gap-3">
+        <div className="p-2 bg-purple-100 rounded-full">
+          <HelpCircle className="w-5 h-5 text-purple-600" />
+        </div>
+        <div className="flex-1">
+          <div className="text-sm font-medium text-purple-900 mb-1">
+            Agent needs your input
+          </div>
+          <div className="text-purple-800 font-medium mb-2">
+            {question.question}
+          </div>
+          {question.context && (
+            <div className="text-sm text-purple-600 mb-3">
+              {question.context}
+            </div>
+          )}
+
+          {/* Options as clickable buttons */}
+          {hasOptions && (
+            <div className="space-y-2 mb-3">
+              {question.options.map((option, index) => (
+                <button
+                  key={index}
+                  onClick={() => {
+                    setSelectedOption(option)
+                    setCustomAnswer('')
+                  }}
+                  className={`w-full text-left px-4 py-2 rounded-lg border transition-colors ${
+                    selectedOption === option
+                      ? 'bg-purple-600 text-white border-purple-600'
+                      : 'bg-white text-purple-800 border-purple-200 hover:border-purple-400'
+                  }`}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Custom answer input */}
+          <div className="mb-3">
+            <input
+              type="text"
+              value={customAnswer}
+              onChange={(e) => {
+                setCustomAnswer(e.target.value)
+                setSelectedOption(null)
+              }}
+              placeholder={hasOptions ? "Or type a custom answer..." : "Type your answer..."}
+              className="w-full px-3 py-2 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
+            />
+          </div>
+
+          {/* Submit button */}
+          <button
+            onClick={handleSubmit}
+            disabled={isAnswering || (!selectedOption && !customAnswer.trim())}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isAnswering ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Submitting...
+              </>
+            ) : (
+              <>
+                <Send className="w-4 h-4" />
+                Submit Answer
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const Message = ({ message, onAnswerQuestion, isAnsweringQuestion }) => {
   const isUser = message.role === 'user'
   const [eventsExpanded, setEventsExpanded] = useState(true)
 
@@ -198,7 +328,9 @@ const Message = ({ message }) => {
           )}
           <div className="flex-1 min-w-0">
             {/* Main content */}
-            <div className="whitespace-pre-wrap text-sm">{message.content}</div>
+            {message.content && (
+              <div className="whitespace-pre-wrap text-sm">{message.content}</div>
+            )}
 
             {/* Workflow Events Timeline */}
             {!isUser && message.workflowEvents && message.workflowEvents.length > 0 && (
@@ -226,6 +358,18 @@ const Message = ({ message }) => {
                   ))}
                 </ul>
               </div>
+            )}
+
+            {/* Pending Questions */}
+            {message.pendingQuestions && message.pendingQuestions.length > 0 && (
+              message.pendingQuestions.map((question) => (
+                <QuestionCard
+                  key={question.id}
+                  question={question}
+                  onAnswer={onAnswerQuestion}
+                  isAnswering={isAnsweringQuestion}
+                />
+              ))
             )}
           </div>
           {isUser && (
@@ -354,12 +498,277 @@ const ConversationSidebar = ({ plans, activePlanId, onSelectPlan, onNewChat }) =
   )
 }
 
+// Debug Panel - Shows API and LLM calls for debugging
+const DebugPanel = ({ isOpen, onClose, apiCalls }) => {
+  const [copiedIndex, setCopiedIndex] = useState(null)
+  const [expandedCalls, setExpandedCalls] = useState({})
+
+  const copyToClipboard = (text, index) => {
+    navigator.clipboard.writeText(text)
+    setCopiedIndex(index)
+    setTimeout(() => setCopiedIndex(null), 2000)
+  }
+
+  const toggleExpand = (index) => {
+    setExpandedCalls(prev => ({ ...prev, [index]: !prev[index] }))
+  }
+
+  if (!isOpen) return null
+
+  const llmCalls = apiCalls?.filter(c => c.type === 'llm') || []
+  const httpCalls = apiCalls?.filter(c => c.type === 'api') || []
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-white rounded-xl shadow-2xl w-[95vw] max-w-5xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-orange-100 rounded-lg">
+              <Bug className="w-5 h-5 text-orange-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Debug Panel</h2>
+              <p className="text-sm text-gray-500">
+                {llmCalls.length} LLM call(s), {httpCalls.length} API call(s)
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {apiCalls && apiCalls.length > 0 ? (
+            apiCalls.map((call, index) => (
+              <div key={index} className={`rounded-lg border overflow-hidden ${
+                call.type === 'llm' ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-200'
+              }`}>
+                {/* Call Header */}
+                <div className={`flex items-center justify-between px-4 py-3 border-b cursor-pointer ${
+                  call.type === 'llm' ? 'bg-purple-100 border-purple-200' : 'bg-gray-100 border-gray-200'
+                }`} onClick={() => toggleExpand(index)}>
+                  <div className="flex items-center gap-3">
+                    {call.type === 'llm' ? (
+                      <>
+                        <span className="px-2 py-1 rounded text-xs font-bold bg-purple-600 text-white">
+                          LLM
+                        </span>
+                        <div>
+                          <span className="text-sm font-medium text-purple-900">{call.name || 'LLM Call'}</span>
+                          <span className="text-xs text-purple-600 ml-2">({call.model})</span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <span className={`px-2 py-1 rounded text-xs font-bold ${
+                          call.method === 'POST' ? 'bg-green-600 text-white' :
+                          call.method === 'GET' ? 'bg-blue-600 text-white' :
+                          'bg-gray-600 text-white'
+                        }`}>
+                          {call.method || 'POST'}
+                        </span>
+                        <code className="text-sm text-gray-700">{call.endpoint || '/api/chat'}</code>
+                      </>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {call.duration_ms && (
+                      <span className="text-xs text-gray-500">{call.duration_ms}ms</span>
+                    )}
+                    <span className={`text-xs px-2 py-1 rounded ${
+                      call.status === 'success' ? 'bg-green-100 text-green-700' :
+                      call.status === 'error' ? 'bg-red-100 text-red-700' :
+                      'bg-yellow-100 text-yellow-700'
+                    }`}>
+                      {call.status || 'completed'}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {call.timestamp ? new Date(call.timestamp).toLocaleTimeString() : ''}
+                    </span>
+                    {expandedCalls[index] ? (
+                      <ChevronDown className="w-4 h-4 text-gray-400" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-gray-400" />
+                    )}
+                  </div>
+                </div>
+
+                {/* Expanded Content */}
+                {expandedCalls[index] && (
+                  <div className="p-4 space-y-4">
+                    {/* LLM-specific: Show Messages */}
+                    {call.type === 'llm' && call.request?.messages && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-medium text-purple-600 uppercase">Messages (Prompt)</span>
+                          <button
+                            onClick={() => copyToClipboard(JSON.stringify(call.request.messages, null, 2), `msg-${index}`)}
+                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            {copiedIndex === `msg-${index}` ? (
+                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
+                            ) : (
+                              <><Copy className="w-3 h-3" /> Copy</>
+                            )}
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {call.request.messages.map((msg, msgIdx) => (
+                            <div key={msgIdx} className={`p-3 rounded-lg ${
+                              msg.role === 'system' ? 'bg-blue-900 text-blue-100' :
+                              msg.role === 'user' ? 'bg-gray-800 text-gray-100' :
+                              'bg-green-900 text-green-100'
+                            }`}>
+                              <div className="text-xs font-bold uppercase mb-1 opacity-70">{msg.role}</div>
+                              <pre className="text-xs whitespace-pre-wrap overflow-x-auto max-h-64">{msg.content}</pre>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* LLM-specific: Show Response */}
+                    {call.type === 'llm' && call.response && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-medium text-purple-600 uppercase">LLM Response (Cleaned)</span>
+                          <button
+                            onClick={() => copyToClipboard(call.response, `llmres-${index}`)}
+                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            {copiedIndex === `llmres-${index}` ? (
+                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
+                            ) : (
+                              <><Copy className="w-3 h-3" /> Copy</>
+                            )}
+                          </button>
+                        </div>
+                        <pre className="text-xs bg-gray-900 text-green-400 p-3 rounded-lg overflow-x-auto max-h-64 whitespace-pre-wrap">
+                          {typeof call.response === 'string' ? call.response : JSON.stringify(call.response, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* LLM-specific: Show Raw Response */}
+                    {call.type === 'llm' && call.raw_response && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-medium text-purple-600 uppercase">Raw API Response</span>
+                          <button
+                            onClick={() => copyToClipboard(JSON.stringify(call.raw_response, null, 2), `raw-${index}`)}
+                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            {copiedIndex === `raw-${index}` ? (
+                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
+                            ) : (
+                              <><Copy className="w-3 h-3" /> Copy</>
+                            )}
+                          </button>
+                        </div>
+                        <pre className="text-xs bg-gray-900 text-yellow-400 p-3 rounded-lg overflow-x-auto max-h-48">
+                          {JSON.stringify(call.raw_response, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* HTTP API calls: Request */}
+                    {call.type === 'api' && call.request && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-medium text-gray-500 uppercase">Request</span>
+                          <button
+                            onClick={() => copyToClipboard(JSON.stringify(call.request, null, 2), `req-${index}`)}
+                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            {copiedIndex === `req-${index}` ? (
+                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
+                            ) : (
+                              <><Copy className="w-3 h-3" /> Copy</>
+                            )}
+                          </button>
+                        </div>
+                        <pre className="text-xs bg-gray-900 text-green-400 p-3 rounded-lg overflow-x-auto">
+                          {JSON.stringify(call.request, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* HTTP API calls: Response */}
+                    {call.type === 'api' && call.response && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-medium text-gray-500 uppercase">Response</span>
+                          <button
+                            onClick={() => copyToClipboard(JSON.stringify(call.response, null, 2), `res-${index}`)}
+                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            {copiedIndex === `res-${index}` ? (
+                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
+                            ) : (
+                              <><Copy className="w-3 h-3" /> Copy</>
+                            )}
+                          </button>
+                        </div>
+                        <pre className="text-xs bg-gray-900 text-green-400 p-3 rounded-lg overflow-x-auto max-h-64">
+                          {JSON.stringify(call.response, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* Usage stats for LLM calls */}
+                    {call.type === 'llm' && call.usage && (
+                      <div className="flex items-center gap-4 text-xs text-purple-600">
+                        <span>Tokens: {call.usage.total_tokens || 'N/A'}</span>
+                        <span>Prompt: {call.usage.prompt_tokens || 'N/A'}</span>
+                        <span>Completion: {call.usage.completion_tokens || 'N/A'}</span>
+                      </div>
+                    )}
+
+                    {/* Error display */}
+                    {call.error && (
+                      <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                        <span className="text-xs font-medium text-red-600 uppercase">Error</span>
+                        <pre className="text-xs text-red-700 mt-1">{call.error}</pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="text-center py-12 text-gray-500">
+              <Bug className="w-12 h-12 mx-auto mb-4 opacity-30" />
+              <p className="font-medium">No API calls yet</p>
+              <p className="text-sm mt-1">Send a message to see API and LLM calls here</p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-3 border-t border-gray-200 bg-gray-50">
+          <p className="text-xs text-gray-500 text-center">
+            {llmCalls.length} LLM call(s), {httpCalls.length} HTTP call(s) in this session
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const Chat = () => {
   const { user } = useAuth()
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [currentPlanId, setCurrentPlanId] = useState(null)
   const [currentStep, setCurrentStep] = useState(null)
+  const [debugPanelOpen, setDebugPanelOpen] = useState(false)
+  const [apiCalls, setApiCalls] = useState([])
   const messagesEndRef = useRef(null)
   const queryClient = useQueryClient()
 
@@ -398,7 +807,55 @@ What would you like to build today?`,
   }, [messages])
 
   const chatMutation = useMutation({
-    mutationFn: (message) => sendChat(message, currentPlanId),
+    mutationFn: async (message) => {
+      // Track the API call start time
+      const startTime = Date.now()
+      const requestData = { message, plan_id: currentPlanId }
+
+      try {
+        const response = await sendChat(message, currentPlanId)
+
+        // Log API call for debugging (frontend call + backend LLM calls)
+        const apiCallRecord = {
+          type: 'api',
+          method: 'POST',
+          endpoint: '/api/chat',
+          timestamp: new Date().toISOString(),
+          duration: Date.now() - startTime,
+          status: 'success',
+          request: requestData,
+          response: { ...response, llm_calls: undefined }, // Exclude llm_calls from response display
+        }
+
+        // Add the API call and any LLM calls from the backend
+        setApiCalls((prev) => [
+          ...prev,
+          apiCallRecord,
+          ...(response.llm_calls || []).map(call => ({
+            type: 'llm',
+            ...call,
+          })),
+        ])
+
+        return response
+      } catch (error) {
+        // Log failed API call
+        setApiCalls((prev) => [
+          ...prev,
+          {
+            type: 'api',
+            method: 'POST',
+            endpoint: '/api/chat',
+            timestamp: new Date().toISOString(),
+            duration: Date.now() - startTime,
+            status: 'error',
+            request: requestData,
+            response: { error: error.message },
+          },
+        ])
+        throw error
+      }
+    },
     onSuccess: (data) => {
       setMessages((prev) => [
         ...prev,
@@ -407,6 +864,7 @@ What would you like to build today?`,
           content: data.response,
           planId: data.plan_id,
           pendingApprovals: data.pending_approvals,
+          pendingQuestions: data.pending_questions || [],
           status: data.status,
           workflowEvents: data.workflow_events || [],
         },
@@ -416,6 +874,7 @@ What would you like to build today?`,
       queryClient.invalidateQueries(['projects'])
       queryClient.invalidateQueries(['plans'])
       queryClient.invalidateQueries(['tasks'])
+      queryClient.invalidateQueries(['questions'])
     },
     onError: (error) => {
       setMessages((prev) => [
@@ -428,6 +887,72 @@ What would you like to build today?`,
       setCurrentStep(null)
     },
   })
+
+  // Mutation for answering questions
+  const answerMutation = useMutation({
+    mutationFn: ({ questionId, answer }) => answerQuestion(questionId, answer),
+    onSuccess: (data, variables) => {
+      // Remove the answered question from the message and add the answer as a user message
+      setMessages((prev) => {
+        const updated = prev.map(msg => {
+          if (msg.pendingQuestions) {
+            return {
+              ...msg,
+              pendingQuestions: msg.pendingQuestions.filter(q => q.id !== variables.questionId),
+            }
+          }
+          return msg
+        })
+
+        // Add the answer as a user message
+        const newMessages = [
+          ...updated,
+          { role: 'user', content: variables.answer },
+        ]
+
+        // If backend continued the conversation (status: answered_and_continued), add the response
+        if (data.status === 'answered_and_continued' && data.response) {
+          newMessages.push({
+            role: 'assistant',
+            content: data.response,
+            planId: data.plan_id,
+            pendingApprovals: data.pending_approvals,
+            pendingQuestions: data.pending_questions || [],
+            workflowEvents: data.workflow_events || [],
+          })
+
+          // Add LLM calls to debug panel
+          if (data.llm_calls && data.llm_calls.length > 0) {
+            setApiCalls((prevCalls) => [
+              ...prevCalls,
+              ...data.llm_calls.map(call => ({ type: 'llm', ...call })),
+            ])
+          }
+        }
+
+        return newMessages
+      })
+
+      queryClient.invalidateQueries(['questions'])
+      queryClient.invalidateQueries(['plans'])
+      queryClient.invalidateQueries(['projects'])
+      setCurrentStep(null)
+    },
+    onError: (error) => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `Error answering question: ${error.message}`,
+        },
+      ])
+      setCurrentStep(null)
+    },
+  })
+
+  const handleAnswerQuestion = (questionId, answer) => {
+    answerMutation.mutate({ questionId, answer })
+  }
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -443,6 +968,7 @@ What would you like to build today?`,
 
   const handleNewChat = () => {
     setCurrentPlanId(null)
+    setApiCalls([]) // Clear debug data for new chat
     setMessages([
       {
         role: 'assistant',
@@ -460,6 +986,14 @@ What would you like to build today?`,
 
   const handleSelectPlan = (plan) => {
     setCurrentPlanId(plan.id)
+
+    // Load persisted workflow events and LLM calls from plan.result
+    const workflowEvents = plan.result?.workflow_events || []
+    const llmCalls = plan.result?.llm_calls || []
+
+    // Load LLM calls into debug panel (mark them as 'llm' type)
+    setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
+
     // Reconstruct messages from plan
     const reconstructedMessages = []
 
@@ -471,13 +1005,14 @@ What would you like to build today?`,
       })
     }
 
-    // Add a response based on plan result
+    // Add a response based on plan result with workflow events
     const resultMessage = plan.result?.response || `Plan "${plan.name}" - Status: ${plan.status}`
     reconstructedMessages.push({
       role: 'assistant',
       content: resultMessage,
       planId: plan.id,
       status: plan.status,
+      workflowEvents: workflowEvents, // Include persisted workflow events
     })
 
     setMessages(reconstructedMessages.length > 0 ? reconstructedMessages : [
@@ -508,10 +1043,42 @@ What would you like to build today?`,
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-gray-50">
+        {/* Header with Debug Button */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-white">
+          <div className="text-sm text-gray-600">
+            {currentPlanId ? (
+              <span className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                Active Conversation
+              </span>
+            ) : (
+              <span>New Conversation</span>
+            )}
+          </div>
+          <button
+            onClick={() => setDebugPanelOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Open Debug Panel"
+          >
+            <Bug className="w-4 h-4" />
+            Debug
+            {apiCalls.length > 0 && (
+              <span className="bg-orange-100 text-orange-700 text-xs px-1.5 py-0.5 rounded-full">
+                {apiCalls.length}
+              </span>
+            )}
+          </button>
+        </div>
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {messages.map((message, index) => (
-            <Message key={index} message={message} />
+            <Message
+              key={index}
+              message={message}
+              onAnswerQuestion={handleAnswerQuestion}
+              isAnsweringQuestion={answerMutation.isPending}
+            />
           ))}
 
           {chatMutation.isPending && (
@@ -560,6 +1127,13 @@ What would you like to build today?`,
           </div>
         </form>
       </div>
+
+      {/* Debug Panel */}
+      <DebugPanel
+        isOpen={debugPanelOpen}
+        onClose={() => setDebugPanelOpen(false)}
+        apiCalls={apiCalls}
+      />
     </div>
   )
 }
