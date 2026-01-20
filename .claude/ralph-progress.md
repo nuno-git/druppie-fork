@@ -848,3 +848,87 @@ Next iteration could focus on:
 - More comprehensive E2E test coverage
 - Add visual indication when another user is viewing the same conversation
 - Add sound notification option for approvals
+
+---
+
+## Iteration 12 Summary
+
+### What Was Implemented
+
+1. **Mock LLM Provider** - Working
+   - Created `ChatMock` class for testing without external LLM dependencies
+   - Auto-detects when no real LLM is available (no ZAI_API_KEY and no Ollama)
+   - Returns predefined responses matching agent schemas
+   - Properly simulates tool calls (done()) for router and planner agents
+   - Supports dynamic app type detection from user messages
+
+2. **LLM Provider Auto-Detection** - Improved
+   - Checks for Z.AI API key first
+   - Falls back to Ollama if available (checks connectivity)
+   - Falls back to mock if neither is available
+   - Can be forced with `LLM_PROVIDER=mock` in .env
+
+### Code Changes
+
+**backend/druppie/llm_service.py**:
+- Added `ChatMock` class with:
+  - `chat()` method returning JSON responses
+  - `ainvoke()` method returning proper LangChain AIMessage with tool_calls
+  - `_generate_mock_response()` for agent-specific responses
+  - Dynamic app type detection (todo, calculator, notes, weather, blog)
+- Updated `LLMService.get_provider()`:
+  - Added "mock" provider option
+  - Auto-detect falls back to mock when Ollama unavailable
+- Updated `LLMService.get_llm()`:
+  - Returns ChatMock when provider is "mock"
+
+### Test Results
+
+1. **Mock LLM Flow** - Working end-to-end:
+   - Router agent: Correctly identifies create_project intent
+   - Planner agent: Creates development_workflow plan
+   - Debug panel shows all mock LLM calls
+   - Full orchestrator flow completes
+
+2. **Debug Panel**:
+   - Shows 3 LLM calls: router_agent, planner_agent, orchestrator_summary
+   - Mock calls show "(mock)" provider label
+   - Correct response data visible in expanded view
+
+### Commits Made (Iteration 12)
+
+1. `a75dfd3` - Add mock LLM provider for testing (Iteration 12)
+
+---
+
+## Status After Iteration 12
+
+All core functionality is working:
+- Authentication with Keycloak
+- Chat with LLM (Z.AI / GLM-4.7 / Ollama / Mock)
+- Router agent analyzes intent (including deploy_project)
+- Planner agent creates execution plans
+- Developer agent generates code
+- HITL question/answer flow
+- Project creation with Git push to Gitea
+- Build and run projects in Docker
+- ROLE approval workflow (deploy.staging)
+- MULTI approval workflow (deploy.production)
+- Deployment workflow triggered from chat
+- Inline approval UI in chat
+- Agent attribution badges
+- Enhanced progress indicators
+- MULTI approval progress display
+- Partial approval feedback
+- Pending approvals in loaded conversations
+- Hide approve button when user already approved
+- WebSocket real-time approval updates
+- Toast notifications for approval events
+- **Mock LLM provider for testing** (NEW)
+
+Next iteration could focus on:
+- Implement actual deployment infrastructure (currently simulated)
+- Enhance mock LLM to generate actual code files for testing
+- Performance optimizations for LLM calls
+- More comprehensive E2E test coverage
+- Add visual indication when another user is viewing the same conversation
