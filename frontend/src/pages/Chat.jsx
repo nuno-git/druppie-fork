@@ -393,6 +393,14 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing }) => {
     }
   }
 
+  const isMultiApproval = approval.approval_type === 'multi'
+  const requiredApprovals = approval.required_approvals || 1
+  const currentApprovals = approval.current_approvals || 0
+  const approvedByRoles = approval.approved_by_roles || []
+  const requiredRoles = approval.required_roles || [approval.required_role]
+  const remainingRoles = requiredRoles.filter(r => !approvedByRoles.includes(r))
+  const progressPercent = Math.round((currentApprovals / requiredApprovals) * 100)
+
   return (
     <div className="mt-3 bg-amber-50 rounded-lg border border-amber-200 p-4">
       <div className="flex items-start gap-3">
@@ -400,20 +408,70 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing }) => {
           <AlertTriangle className="w-5 h-5 text-amber-600" />
         </div>
         <div className="flex-1">
-          <div className="text-sm font-medium text-amber-900 mb-1">
-            Approval Required
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-sm font-medium text-amber-900">
+              {isMultiApproval ? 'Multi-Approval Required' : 'Approval Required'}
+            </div>
+            {isMultiApproval && (
+              <span className="text-xs bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full">
+                {currentApprovals} of {requiredApprovals} approvals
+              </span>
+            )}
           </div>
           <div className="text-amber-800 font-medium mb-2">
             {approval.task_name}
           </div>
-          <div className="text-sm text-amber-700 mb-3">
-            This action requires approval from <span className="font-semibold">{approval.required_role}</span> role.
-            {approval.mcp_tool && (
-              <span className="block mt-1">
-                MCP Tool: <code className="bg-amber-100 px-1 rounded">{approval.mcp_tool}</code>
-              </span>
-            )}
-          </div>
+
+          {/* MULTI approval progress */}
+          {isMultiApproval && (
+            <div className="mb-3">
+              {/* Progress bar */}
+              <div className="w-full bg-amber-200 rounded-full h-2 mb-2">
+                <div
+                  className="bg-green-500 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+
+              {/* Approved roles */}
+              {approvedByRoles.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  <span className="text-xs text-amber-700">Approved by:</span>
+                  {approvedByRoles.map(role => (
+                    <span key={role} className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
+                      <CheckCircle className="w-3 h-3" />
+                      {role}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Remaining roles */}
+              {remainingRoles.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  <span className="text-xs text-amber-700">Still needed:</span>
+                  {remainingRoles.map(role => (
+                    <span key={role} className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full">
+                      {role}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Single approval role display */}
+          {!isMultiApproval && (
+            <div className="text-sm text-amber-700 mb-3">
+              This action requires approval from <span className="font-semibold">{approval.required_role}</span> role.
+            </div>
+          )}
+
+          {approval.mcp_tool && (
+            <div className="text-sm text-amber-700 mb-3">
+              MCP Tool: <code className="bg-amber-100 px-1 rounded">{approval.mcp_tool}</code>
+            </div>
+          )}
 
           {/* Reject reason input */}
           {showRejectInput && (
@@ -444,7 +502,7 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing }) => {
               ) : (
                 <>
                   <CheckCircle className="w-4 h-4" />
-                  Approve
+                  {isMultiApproval ? `Add Approval (${currentApprovals + 1}/${requiredApprovals})` : 'Approve'}
                 </>
               )}
             </button>
@@ -1280,7 +1338,10 @@ What would you like to build today?`,
   const approveMutation = useMutation({
     mutationFn: (taskId) => approveTask(taskId),
     onSuccess: (data, taskId) => {
-      // Remove the approved task from pending approvals in messages
+      const isFullyApproved = !data.approvals_required ||
+        (data.approvals_received >= data.approvals_required)
+
+      // Always remove the approval card after user approves (can't approve twice)
       setMessages((prev) => prev.map(msg => {
         if (msg.pendingApprovals) {
           return {
@@ -1291,14 +1352,26 @@ What would you like to build today?`,
         return msg
       }))
 
-      // Add success message
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: `✅ Task approved successfully! The action will now proceed.`,
-        },
-      ])
+      // Show appropriate message based on approval status
+      if (isFullyApproved) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: `✅ Task fully approved! The action will now proceed.`,
+          },
+        ])
+      } else {
+        // MULTI approval - still needs more approvals from other roles
+        const remaining = data.approvals_required - data.approvals_received
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: `✅ Your approval has been recorded (${data.approvals_received}/${data.approvals_required}). Waiting for ${remaining} more approval(s) from other roles before the action can proceed.`,
+          },
+        ])
+      }
 
       // Invalidate queries to refresh data
       queryClient.invalidateQueries(['tasks'])

@@ -464,3 +464,83 @@ Next iteration could focus on:
 - Add inline notification when approval is needed from another user
 - WebSocket real-time updates for approval status changes
 - Performance optimizations for LLM calls
+
+---
+
+## Iteration 7 Summary
+
+### What Was Implemented
+
+1. **MULTI Approval Progress Display** - Fully working
+   - Shows "Multi-Approval Required" header for MULTI approval tasks
+   - Progress badge: "X of Y approvals"
+   - Progress bar visualization
+   - "Approved by:" section with green badges for completed approvals
+   - "Still needed:" section showing remaining required roles
+   - "Add Approval (X/Y)" button text shows approval count
+
+2. **Partial MULTI Approval Handling** - Working
+   - When user approves MULTI task, card is removed (can't approve twice)
+   - Shows appropriate message: "Your approval has been recorded (1/2). Waiting for 1 more approval(s)..."
+   - Backend returns `approvals_received` and `approvals_required` counts
+
+### Code Changes
+
+**backend/druppie/plans.py** - `get_pending_approvals`:
+- Added MULTI approval fields: `required_roles`, `required_approvals`, `current_approvals`, `approved_by_roles`
+- Query existing approvals to get current count and approver roles
+
+**frontend/src/pages/Chat.jsx**:
+- Enhanced `ApprovalCard` component:
+  - Detect MULTI approval type
+  - Show progress bar and approval counts
+  - Show approved/remaining roles
+  - Update button text for MULTI
+- Updated `approveMutation` success handler:
+  - Check if task is fully approved vs needs more approvals
+  - Show different messages for complete vs partial approval
+  - Always remove card after user approves (prevents duplicate approval attempts)
+
+### Test Results
+
+1. **MULTI Approval UI** - Production deployment shows:
+   - "Multi-Approval Required" header
+   - "0 of 2 approvals" badge
+   - "Still needed: developer, infra-engineer, product-owner"
+   - "Add Approval (1/2)" button
+
+2. **Partial Approval Flow**:
+   - Click Add Approval → Card removed
+   - Message: "Your approval has been recorded (1/2). Waiting for 1 more approval(s) from other roles..."
+
+### Commits Made (Iteration 7)
+
+1. Add MULTI approval progress display and partial approval handling
+
+---
+
+## Status After Iteration 7
+
+All core functionality is working:
+- Authentication with Keycloak
+- Chat with LLM (Z.AI / GLM-4.7)
+- Router agent analyzes intent (including deploy_project)
+- Planner agent creates execution plans
+- Developer agent generates code
+- HITL question/answer flow
+- Project creation with Git push to Gitea
+- Build and run projects in Docker
+- ROLE approval workflow (deploy.staging)
+- MULTI approval workflow (deploy.production)
+- Deployment workflow triggered from chat
+- Inline approval UI in chat
+- Agent attribution badges
+- Enhanced progress indicators
+- **MULTI approval progress display** (NEW)
+- **Partial approval feedback** (NEW)
+
+Next iteration could focus on:
+- Implement actual deployment infrastructure (currently simulated)
+- Load pending approvals when opening existing conversations
+- WebSocket real-time updates for approval status changes
+- Performance optimizations for LLM calls

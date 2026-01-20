@@ -483,12 +483,24 @@ class PlanService:
 
     def get_pending_approvals(self, plan: Plan) -> list[dict]:
         """Get list of pending approval requirements."""
+        from druppie.models import Approval
+
         pending_tasks = Task.query.filter(
             Task.plan_id == plan.id, Task.status == "pending_approval"
         ).all()
 
         approvals = []
         for task in pending_tasks:
+            # Get current approval count for MULTI approval tasks
+            current_approvals = 0
+            approved_by_roles = []
+            if task.approval_type == "multi":
+                existing_approvals = Approval.query.filter_by(
+                    task_id=task.id, decision="approved"
+                ).all()
+                current_approvals = len(existing_approvals)
+                approved_by_roles = [a.approver_role for a in existing_approvals if a.approver_role]
+
             approvals.append(
                 {
                     "task_id": task.id,
@@ -496,6 +508,10 @@ class PlanService:
                     "mcp_tool": task.mcp_tool,
                     "required_role": task.required_role,
                     "approval_type": task.approval_type,
+                    "required_roles": task.required_roles,
+                    "required_approvals": task.required_approvals or 1,
+                    "current_approvals": current_approvals,
+                    "approved_by_roles": approved_by_roles,
                 }
             )
 
