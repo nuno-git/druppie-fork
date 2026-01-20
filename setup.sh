@@ -27,6 +27,15 @@ success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
+# Detect Docker Compose command (v1 or v2)
+if command -v docker-compose >/dev/null 2>&1; then
+    DOCKER_COMPOSE="docker-compose"
+elif docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE="docker compose"
+else
+    DOCKER_COMPOSE="docker compose"  # Default, will fail later with helpful error
+fi
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -85,7 +94,17 @@ check_requirements() {
     log "Checking requirements..."
 
     command -v docker >/dev/null 2>&1 || error "Docker is required but not installed"
-    command -v docker-compose >/dev/null 2>&1 || command -v "docker compose" >/dev/null 2>&1 || error "Docker Compose is required"
+
+    # Check for docker compose (v2) or docker-compose (v1)
+    if command -v docker-compose >/dev/null 2>&1; then
+        DOCKER_COMPOSE="docker-compose"
+    elif docker compose version >/dev/null 2>&1; then
+        DOCKER_COMPOSE="docker compose"
+    else
+        error "Docker Compose is required"
+    fi
+
+    log "Using: $DOCKER_COMPOSE"
 
     if ! docker info >/dev/null 2>&1; then
         error "Docker daemon is not running"
@@ -96,13 +115,15 @@ check_requirements() {
 
 create_network() {
     log "Creating Docker network..."
-    docker network create druppie-network 2>/dev/null || true
+    # Remove any existing network with wrong labels
+    docker network rm druppie-network 2>/dev/null || true
+    # Network will be created by docker compose
     success "Network ready"
 }
 
 start_infrastructure() {
     log "Starting infrastructure services..."
-    docker-compose up -d keycloak-db gitea-db druppie-db redis
+    $DOCKER_COMPOSE up -d keycloak-db gitea-db druppie-db redis
 
     log "Waiting for databases to be ready..."
     sleep 10
@@ -128,7 +149,7 @@ start_infrastructure() {
 
 start_keycloak() {
     log "Starting Keycloak..."
-    docker-compose up -d keycloak
+    $DOCKER_COMPOSE up -d keycloak
 
     log "Waiting for Keycloak to be ready (this may take a minute)..."
     until curl -sf http://localhost:8080/health/ready >/dev/null 2>&1; do
@@ -150,7 +171,7 @@ configure_keycloak() {
 
 start_gitea() {
     log "Starting Gitea..."
-    docker-compose up -d gitea registry
+    $DOCKER_COMPOSE up -d gitea registry
 
     log "Waiting for Gitea to be ready..."
     until curl -sf http://localhost:3000/api/v1/version >/dev/null 2>&1; do
@@ -172,19 +193,19 @@ configure_gitea() {
 
 build_backend() {
     log "Building Druppie backend..."
-    docker-compose build druppie-backend
+    $DOCKER_COMPOSE build druppie-backend
     success "Backend built"
 }
 
 build_frontend() {
     log "Building Druppie frontend..."
-    docker-compose build druppie-frontend
+    $DOCKER_COMPOSE build druppie-frontend
     success "Frontend built"
 }
 
 start_application() {
     log "Starting Druppie application..."
-    docker-compose up -d druppie-backend druppie-frontend
+    $DOCKER_COMPOSE up -d druppie-backend druppie-frontend
 
     log "Waiting for backend to be ready..."
     until curl -sf http://localhost:8000/health >/dev/null 2>&1; do
@@ -227,8 +248,8 @@ print_summary() {
     echo "  - Password: GiteaAdmin123"
     echo "  - Or login with Keycloak (click 'Sign in with Keycloak')"
     echo ""
-    echo "To stop: docker-compose down"
-    echo "To view logs: docker-compose logs -f"
+    echo "To stop: docker compose down"
+    echo "To view logs: docker compose logs -f"
     echo "============================================================================="
 }
 
@@ -269,30 +290,30 @@ case "${1:-all}" in
         start_application
         ;;
     start)
-        docker-compose up -d
+        $DOCKER_COMPOSE up -d
         ;;
     stop)
-        docker-compose down
+        $DOCKER_COMPOSE down
         ;;
     restart)
-        docker-compose down
-        docker-compose up -d
+        $DOCKER_COMPOSE down
+        $DOCKER_COMPOSE up -d
         ;;
     logs)
-        docker-compose logs -f "${2:-}"
+        $DOCKER_COMPOSE logs -f "${2:-}"
         ;;
     clean)
         warn "This will delete all data!"
         read -p "Are you sure? (y/N) " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            docker-compose down -v
+            $DOCKER_COMPOSE down -v
             docker network rm druppie-network 2>/dev/null || true
             success "Cleaned up"
         fi
         ;;
     status)
-        docker-compose ps
+        $DOCKER_COMPOSE ps
         ;;
     *)
         echo "Usage: $0 {all|infra|configure|app|start|stop|restart|logs|clean|status}"
