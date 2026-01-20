@@ -674,6 +674,29 @@ def stop_project(project_id):
     return jsonify(result)
 
 
+@app.route("/api/projects/<project_id>", methods=["DELETE"])
+@auth_required
+def delete_project(project_id):
+    """Delete a project completely (workspace, repo, database)."""
+    user = g.user
+    user_id = user.get("sub")
+
+    # First stop any running container
+    builder_service.stop_project(project_id)
+
+    # Delete the project
+    result = project_service.delete_project(
+        plan_id=project_id,
+        delete_repo=True,
+        user_id=user_id,
+    )
+
+    if result.get("success"):
+        socketio.emit("project_deleted", {"project_id": project_id})
+
+    return jsonify(result)
+
+
 # =============================================================================
 # RUNNING APPS
 # =============================================================================
