@@ -1112,3 +1112,104 @@ Next iteration could focus on:
 - Performance optimizations for LLM calls
 - More comprehensive E2E test coverage
 - Add visual indication when another user is viewing the same conversation
+
+---
+
+## Iteration 15 Summary
+
+### What Was Implemented
+
+1. **JSON Parsing Error Handling in agent.py** - Working
+   - Added try/except around `json.loads()` for `__DONE__|`, `__FAIL__|`, `__ASK_HUMAN__|` results
+   - If JSON parsing fails, extracts meaningful data from raw string
+   - Added logging for debugging malformed responses
+   - Added type coercion in control tools (done, fail, ask_human) to ensure valid inputs
+
+2. **JSON Parsing Error Handling in llm_service.py** - Working
+   - Added try/except around tool call argument parsing in `ChatZAI.ainvoke()` and `ChatOllama.ainvoke()`
+   - Added `_parse_malformed_args()` method to both ChatZAI and ChatOllama classes
+   - Handles LLM responses with XML-like tags mixed into JSON (GLM-4.7 quirk)
+   - Extracts valid arguments from malformed JSON using regex fallbacks
+
+### Test Results
+
+1. **Update Workflow Execution** - SUCCESS:
+   - Request: "Add a reset button to the counter app"
+   - Router identified `update_project` intent
+   - Planner selected `update_workflow`
+   - Developer agent analyzed codebase (31 tools)
+   - TDD agent wrote tests: `test_reset_functionality.py`, `conftest.py`, `run_tests.sh`
+   - Implementer agent implemented `/api/reset` endpoint
+   - Reviewer agent reviewed code and made improvements
+   - Git agent committed changes
+   - Docker built preview image
+   - DevOps agent deployed preview on port 9050
+   - Preview app running with reset button functional!
+
+2. **JSON Parsing Robustness** - Working:
+   - No JSON parsing errors during entire workflow execution
+   - All agents (router, planner, developer, tdd, implementer, reviewer, git, devops) executed successfully
+   - Malformed LLM responses handled gracefully
+
+### Issues Resolved
+
+1. **Agent JSON Parsing Errors** (from Iteration 14)
+   - Root cause: LLM (GLM-4.7) sometimes returns malformed JSON with XML-like tags
+   - Fix: Added error handling and fallback parsing in both agent.py and llm_service.py
+   - Result: Workflow executes without JSON parsing crashes
+
+### Code Changes
+
+**backend/druppie/agents/agent.py**:
+- Added try/except around JSON parsing for control tool results
+- Added type coercion and validation in control tools
+- Added debug logging for control tool calls
+
+**backend/druppie/llm_service.py**:
+- Added `_parse_malformed_args()` method to ChatZAI class
+- Added `_parse_malformed_args()` method to ChatOllama class
+- Added try/except around tool call argument parsing
+- Added logging for malformed argument handling
+
+### Commits Made (Iteration 15)
+
+1. `[pending]` - Fix agent and LLM JSON parsing with robust error handling
+
+---
+
+## Status After Iteration 15
+
+All core functionality is working:
+- Authentication with Keycloak
+- Chat with LLM (Z.AI / GLM-4.7 / Ollama / Mock)
+- Router agent analyzes intent (including deploy_project, update_project)
+- Planner agent creates execution plans
+- Developer agent generates code
+- HITL question/answer flow
+- Project creation with Git push to Gitea
+- Build and run projects in Docker
+- Flask apps now accessible from Docker containers
+- ROLE approval workflow (deploy.staging)
+- MULTI approval workflow (deploy.production)
+- Deployment workflow triggered from chat
+- Inline approval UI in chat
+- Agent attribution badges
+- Enhanced progress indicators
+- MULTI approval progress display
+- Partial approval feedback
+- Pending approvals in loaded conversations
+- Hide approve button when user already approved
+- WebSocket real-time approval updates
+- Toast notifications for approval events
+- Mock LLM provider for testing
+- Update workflow git clone and branch creation
+- DateTime serialization for JSON storage
+- **Full update workflow execution with TDD** (NEW)
+- **Robust JSON parsing for LLM responses** (FIXED)
+- **Preview deployment for project updates** (NEW)
+
+Next iteration could focus on:
+- Multiple HITL interactions in a single workflow
+- Performance optimizations for LLM calls
+- More comprehensive E2E test coverage
+- Add visual indication when another user is viewing the same conversation

@@ -529,10 +529,22 @@ class ChatOllama:
             if message.get("tool_calls"):
                 for tc in message["tool_calls"]:
                     func = tc.get("function", {})
+                    args_str = func.get("arguments", "{}")
+                    try:
+                        args = json.loads(args_str)
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            "Failed to parse tool call arguments (Ollama)",
+                            error=str(e),
+                            args_raw=args_str[:200] if args_str else "empty",
+                            tool_name=func.get("name", "unknown"),
+                        )
+                        # Try to clean up common LLM formatting issues
+                        args = self._parse_malformed_args(args_str, func.get("name", ""))
                     tool_calls.append({
                         "id": tc.get("id", ""),
                         "name": func.get("name", ""),
-                        "args": json.loads(func.get("arguments", "{}")),
+                        "args": args,
                     })
 
             call_record["response"] = content
@@ -583,6 +595,53 @@ class ChatOllama:
                 text = text[:-3]
 
         return text.strip()
+
+    def _parse_malformed_args(self, args_str: str, tool_name: str) -> dict:
+        """Attempt to parse malformed tool arguments from LLM.
+
+        Args:
+            args_str: The raw arguments string
+            tool_name: Name of the tool being called
+
+        Returns:
+            Parsed arguments dict, or empty dict if parsing fails
+        """
+        if not args_str:
+            return {}
+
+        # Clean up common LLM formatting issues
+        cleaned = args_str
+
+        # Remove XML-like tags
+        cleaned = re.sub(r'</?\w+(?:_\w+)*>', '', cleaned)
+
+        # Try to find and extract JSON object
+        json_match = re.search(r'\{[\s\S]*\}', cleaned)
+        if json_match:
+            try:
+                return json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+
+        # For 'done' tool, try to extract summary
+        if tool_name == "done":
+            summary_match = re.search(r'"?summary"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE)
+            summary = summary_match.group(1) if summary_match else "Task completed"
+            return {"summary": summary, "artifacts": [], "data": {}}
+
+        # For 'fail' tool
+        if tool_name == "fail":
+            reason_match = re.search(r'"?reason"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE)
+            reason = reason_match.group(1) if reason_match else args_str[:100]
+            return {"reason": reason}
+
+        # For 'ask_human' tool
+        if tool_name == "ask_human":
+            question_match = re.search(r'"?question"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE)
+            question = question_match.group(1) if question_match else args_str[:100]
+            return {"question": question}
+
+        return {}
 
 
 class ChatZAI:
@@ -913,10 +972,22 @@ class ChatZAI:
             if message.get("tool_calls"):
                 for tc in message["tool_calls"]:
                     func = tc.get("function", {})
+                    args_str = func.get("arguments", "{}")
+                    try:
+                        args = json.loads(args_str)
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            "Failed to parse tool call arguments (ZAI)",
+                            error=str(e),
+                            args_raw=args_str[:200] if args_str else "empty",
+                            tool_name=func.get("name", "unknown"),
+                        )
+                        # Try to clean up common LLM formatting issues
+                        args = self._parse_malformed_args(args_str, func.get("name", ""))
                     tool_calls.append({
                         "id": tc.get("id", ""),
                         "name": func.get("name", ""),
-                        "args": json.loads(func.get("arguments", "{}")),
+                        "args": args,
                     })
 
             call_record["response"] = content
@@ -971,6 +1042,70 @@ class ChatZAI:
                 text = text[:-3]
 
         return text.strip()
+
+    def _parse_malformed_args(self, args_str: str, tool_name: str) -> dict:
+        """Attempt to parse malformed tool arguments from LLM.
+
+        Some LLMs (like GLM-4.7) sometimes return malformed JSON with
+        XML-like tags or other issues. This method attempts to extract
+        valid arguments from such responses.
+
+        Args:
+            args_str: The raw arguments string
+            tool_name: Name of the tool being called
+
+        Returns:
+            Parsed arguments dict, or empty dict if parsing fails
+        """
+        if not args_str:
+            return {}
+
+        # Clean up common LLM formatting issues
+        cleaned = args_str
+
+        # Remove XML-like tags that GLM sometimes includes
+        cleaned = re.sub(r'</?\w+(?:_\w+)*>', '', cleaned)
+
+        # Try to find and extract JSON object
+        json_match = re.search(r'\{[\s\S]*\}', cleaned)
+        if json_match:
+            try:
+                return json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+
+        # For 'done' tool, try to extract summary and data
+        if tool_name == "done":
+            # Try to extract summary value
+            summary_match = re.search(r'"?summary"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE)
+            summary = summary_match.group(1) if summary_match else "Task completed"
+
+            # Try to extract data
+            data_match = re.search(r'"?data"?\s*[=:]\s*(\{[^}]*\}|\{[\s\S]*?\})', args_str)
+            data = {}
+            if data_match:
+                try:
+                    data = json.loads(data_match.group(1))
+                except json.JSONDecodeError:
+                    pass
+
+            return {"summary": summary, "artifacts": [], "data": data}
+
+        # For 'fail' tool
+        if tool_name == "fail":
+            reason_match = re.search(r'"?reason"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE)
+            reason = reason_match.group(1) if reason_match else args_str[:100]
+            return {"reason": reason}
+
+        # For 'ask_human' tool
+        if tool_name == "ask_human":
+            question_match = re.search(r'"?question"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE)
+            question = question_match.group(1) if question_match else args_str[:100]
+            return {"question": question}
+
+        # Default: return empty dict
+        logger.warning("Could not parse malformed args", tool_name=tool_name, args_str=args_str[:100])
+        return {}
 
 
 class LLMService:
