@@ -6,9 +6,7 @@ import React, { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
 import {
   Home,
-  FileText,
   CheckSquare,
-  Settings,
   LogOut,
   LogIn,
   User,
@@ -21,7 +19,6 @@ import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole } fr
 
 // Pages
 import Dashboard from './pages/Dashboard'
-import Plans from './pages/Plans'
 import Tasks from './pages/Tasks'
 import Chat from './pages/Chat'
 import Projects from './pages/Projects'
@@ -75,7 +72,6 @@ const Navigation = () => {
   const navItems = [
     { path: '/', icon: Home, label: 'Dashboard' },
     { path: '/chat', icon: MessageSquare, label: 'Chat' },
-    { path: '/plans', icon: FileText, label: 'Plans' },
     { path: '/tasks', icon: CheckSquare, label: 'Approvals' },
     { path: '/projects', icon: FolderOpen, label: 'Projects' },
   ]
@@ -228,14 +224,6 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <Chat />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/plans"
-                element={
-                  <ProtectedRoute>
-                    <Plans />
                   </ProtectedRoute>
                 }
               />
