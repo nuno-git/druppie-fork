@@ -170,7 +170,7 @@ class ChatOllama:
         This creates a new instance with tools bound.
 
         Args:
-            tools: List of tool definitions
+            tools: List of tool definitions (LangChain StructuredTool objects)
 
         Returns:
             New ChatOllama instance with tools bound
@@ -185,6 +185,200 @@ class ChatOllama:
         )
         new_instance.bound_tools = tools
         return new_instance
+
+    def _convert_messages_for_ollama(self, messages: list) -> list[dict]:
+        """Convert LangChain messages to Ollama format."""
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+
+        result = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                result.append({"role": "system", "content": msg.content})
+            elif isinstance(msg, HumanMessage):
+                result.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                msg_dict = {"role": "assistant", "content": msg.content or ""}
+                # Include tool calls if present
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    msg_dict["tool_calls"] = [
+                        {
+                            "id": tc.get("id", f"call_{i}"),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("name"),
+                                "arguments": json.dumps(tc.get("args", {})),
+                            },
+                        }
+                        for i, tc in enumerate(msg.tool_calls)
+                    ]
+                result.append(msg_dict)
+            elif isinstance(msg, ToolMessage):
+                result.append({
+                    "role": "tool",
+                    "tool_call_id": msg.tool_call_id,
+                    "content": msg.content,
+                })
+            elif isinstance(msg, dict):
+                result.append(msg)
+            else:
+                # Fallback for unknown message types
+                result.append({"role": "user", "content": str(msg)})
+        return result
+
+    def _convert_tools_for_ollama(self) -> list[dict]:
+        """Convert LangChain tools to Ollama/OpenAI format."""
+        if not self.bound_tools:
+            return []
+
+        tools = []
+        for tool in self.bound_tools:
+            # LangChain StructuredTool has name, description, and args_schema
+            tool_def = {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                },
+            }
+
+            # Extract parameters from args_schema if available
+            if hasattr(tool, "args_schema") and tool.args_schema:
+                schema = tool.args_schema.model_json_schema()
+                tool_def["function"]["parameters"] = {
+                    "type": "object",
+                    "properties": schema.get("properties", {}),
+                    "required": schema.get("required", []),
+                }
+
+            tools.append(tool_def)
+
+        return tools
+
+    async def ainvoke(self, messages: list, **kwargs):
+        """Async invoke method compatible with LangChain interface.
+
+        Args:
+            messages: List of LangChain message objects
+
+        Returns:
+            AIMessage with content and optional tool_calls
+        """
+        from langchain_core.messages import AIMessage
+
+        start_time = time.time()
+
+        # Convert messages to Ollama format
+        ollama_messages = self._convert_messages_for_ollama(messages)
+
+        # Ollama's OpenAI-compatible endpoint
+        url = f"{self.base_url.rstrip('/')}/v1/chat/completions"
+
+        payload = {
+            "model": self.model,
+            "messages": ollama_messages,
+            "temperature": self.temperature,
+            "stream": False,
+        }
+
+        if self.max_tokens:
+            payload["max_tokens"] = self.max_tokens
+
+        # Add tools if bound
+        tools = self._convert_tools_for_ollama()
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        headers = {"Content-Type": "application/json"}
+
+        # Track the call
+        call_record = {
+            "name": "ainvoke",
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "model": self.model,
+            "provider": "ollama",
+            "url": url,
+            "request": {
+                "model": self.model,
+                "messages": ollama_messages,
+                "temperature": self.temperature,
+                "tools": tools if tools else None,
+            },
+            "response": None,
+            "raw_response": None,
+            "duration_ms": None,
+            "status": "pending",
+            "error": None,
+        }
+
+        try:
+            # Use httpx async client
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(url, json=payload, headers=headers)
+
+                call_record["duration_ms"] = int((time.time() - start_time) * 1000)
+
+                if response.status_code != 200:
+                    call_record["status"] = "error"
+                    call_record["error"] = f"HTTP {response.status_code}: {response.text}"
+                    self.call_history.append(call_record)
+                    raise ValueError(
+                        f"Ollama API error {response.status_code}: {response.text}"
+                    )
+
+                data = response.json()
+                call_record["raw_response"] = data
+
+            if not data.get("choices"):
+                call_record["status"] = "error"
+                call_record["error"] = "No choices in response"
+                self.call_history.append(call_record)
+                raise ValueError("No response from Ollama")
+
+            choice = data["choices"][0]
+            message = choice.get("message", {})
+            content = message.get("content", "")
+
+            # Extract tool calls if present
+            tool_calls = []
+            if message.get("tool_calls"):
+                for tc in message["tool_calls"]:
+                    func = tc.get("function", {})
+                    tool_calls.append({
+                        "id": tc.get("id", ""),
+                        "name": func.get("name", ""),
+                        "args": json.loads(func.get("arguments", "{}")),
+                    })
+
+            call_record["response"] = content
+            call_record["tool_calls"] = tool_calls
+            call_record["status"] = "success"
+            call_record["usage"] = data.get("usage", {})
+            self.call_history.append(call_record)
+
+            # Return LangChain AIMessage
+            return AIMessage(
+                content=content,
+                tool_calls=tool_calls,
+                response_metadata={
+                    "model": self.model,
+                    "provider": "ollama",
+                    "usage": data.get("usage", {}),
+                },
+            )
+
+        except Exception as e:
+            call_record["duration_ms"] = int((time.time() - start_time) * 1000)
+            if call_record["status"] == "pending":
+                call_record["status"] = "error"
+                call_record["error"] = str(e)
+                self.call_history.append(call_record)
+            raise
 
     def _clean_response(self, text: str) -> str:
         """Clean the response text."""
@@ -248,6 +442,9 @@ class ChatZAI:
 
         # Track LLM calls for debugging
         self.call_history: list[dict] = []
+
+        # Bound tools for function calling (optional)
+        self.bound_tools: list = []
 
     def chat(
         self,
@@ -355,6 +552,216 @@ class ChatZAI:
     def clear_call_history(self):
         """Clear the call history."""
         self.call_history = []
+
+    def bind_tools(self, tools: list, **kwargs) -> "ChatZAI":
+        """Bind tools to the LLM for function calling.
+
+        Args:
+            tools: List of tool definitions (LangChain StructuredTool objects)
+
+        Returns:
+            New ChatZAI instance with tools bound
+        """
+        new_instance = ChatZAI(
+            api_key=self.api_key,
+            model=self.model,
+            base_url=self.base_url,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            timeout=self.timeout,
+        )
+        new_instance.bound_tools = tools
+        return new_instance
+
+    def _convert_messages_for_zai(self, messages: list) -> list[dict]:
+        """Convert LangChain messages to Z.AI format."""
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+
+        result = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                result.append({"role": "system", "content": msg.content})
+            elif isinstance(msg, HumanMessage):
+                result.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                msg_dict = {"role": "assistant", "content": msg.content or ""}
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    msg_dict["tool_calls"] = [
+                        {
+                            "id": tc.get("id", f"call_{i}"),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("name"),
+                                "arguments": json.dumps(tc.get("args", {})),
+                            },
+                        }
+                        for i, tc in enumerate(msg.tool_calls)
+                    ]
+                result.append(msg_dict)
+            elif isinstance(msg, ToolMessage):
+                result.append({
+                    "role": "tool",
+                    "tool_call_id": msg.tool_call_id,
+                    "content": msg.content,
+                })
+            elif isinstance(msg, dict):
+                result.append(msg)
+            else:
+                result.append({"role": "user", "content": str(msg)})
+        return result
+
+    def _convert_tools_for_zai(self) -> list[dict]:
+        """Convert LangChain tools to Z.AI/OpenAI format."""
+        if not hasattr(self, "bound_tools") or not self.bound_tools:
+            return []
+
+        tools = []
+        for tool in self.bound_tools:
+            tool_def = {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                },
+            }
+
+            if hasattr(tool, "args_schema") and tool.args_schema:
+                schema = tool.args_schema.model_json_schema()
+                tool_def["function"]["parameters"] = {
+                    "type": "object",
+                    "properties": schema.get("properties", {}),
+                    "required": schema.get("required", []),
+                }
+
+            tools.append(tool_def)
+
+        return tools
+
+    async def ainvoke(self, messages: list, **kwargs):
+        """Async invoke method compatible with LangChain interface.
+
+        Args:
+            messages: List of LangChain message objects
+
+        Returns:
+            AIMessage with content and optional tool_calls
+        """
+        from langchain_core.messages import AIMessage
+
+        start_time = time.time()
+
+        # Convert messages to Z.AI format
+        zai_messages = self._convert_messages_for_zai(messages)
+
+        url = f"{self.base_url.rstrip('/')}/chat/completions"
+
+        payload = {
+            "model": self.model,
+            "messages": zai_messages,
+            "temperature": self.temperature,
+            "stream": False,
+        }
+
+        if self.max_tokens:
+            payload["max_tokens"] = self.max_tokens
+
+        # Add tools if bound
+        tools = self._convert_tools_for_zai()
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        call_record = {
+            "name": "ainvoke",
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "model": self.model,
+            "provider": "zai",
+            "url": url,
+            "request": {
+                "model": self.model,
+                "messages": zai_messages,
+                "temperature": self.temperature,
+                "tools": tools if tools else None,
+            },
+            "response": None,
+            "raw_response": None,
+            "duration_ms": None,
+            "status": "pending",
+            "error": None,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(url, json=payload, headers=headers)
+
+                call_record["duration_ms"] = int((time.time() - start_time) * 1000)
+
+                if response.status_code != 200:
+                    call_record["status"] = "error"
+                    if response.status_code == 401:
+                        error_msg = "Z.AI API key is missing or invalid. Set ZAI_API_KEY environment variable or switch to Ollama (LLM_PROVIDER=ollama)."
+                    else:
+                        error_msg = f"Z.AI API error {response.status_code}: {response.text}"
+                    call_record["error"] = error_msg
+                    self.call_history.append(call_record)
+                    raise ValueError(error_msg)
+
+                data = response.json()
+                call_record["raw_response"] = data
+
+            if not data.get("choices"):
+                call_record["status"] = "error"
+                call_record["error"] = "No choices in response"
+                self.call_history.append(call_record)
+                raise ValueError("No response from Z.AI")
+
+            choice = data["choices"][0]
+            message = choice.get("message", {})
+            content = message.get("content", "")
+
+            # Extract tool calls if present
+            tool_calls = []
+            if message.get("tool_calls"):
+                for tc in message["tool_calls"]:
+                    func = tc.get("function", {})
+                    tool_calls.append({
+                        "id": tc.get("id", ""),
+                        "name": func.get("name", ""),
+                        "args": json.loads(func.get("arguments", "{}")),
+                    })
+
+            call_record["response"] = content
+            call_record["tool_calls"] = tool_calls
+            call_record["status"] = "success"
+            call_record["usage"] = data.get("usage", {})
+            self.call_history.append(call_record)
+
+            return AIMessage(
+                content=content,
+                tool_calls=tool_calls,
+                response_metadata={
+                    "model": self.model,
+                    "provider": "zai",
+                    "usage": data.get("usage", {}),
+                },
+            )
+
+        except Exception as e:
+            call_record["duration_ms"] = int((time.time() - start_time) * 1000)
+            if call_record["status"] == "pending":
+                call_record["status"] = "error"
+                call_record["error"] = str(e)
+                self.call_history.append(call_record)
+            raise
 
     def _clean_response(self, text: str) -> str:
         """Clean the response text.
