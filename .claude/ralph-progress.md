@@ -239,6 +239,11 @@ The chat workflow doesn't have a path to trigger MCP tools like `deploy.producti
 ### Next Steps
 
 1. Add deployment workflow that triggers MCP approval flow from chat
-2. Improve answer submission UI feedback
+2. Verify optimistic update for answer submission (needs testing)
 3. Add E2E tests for MULTI approval workflows
 4. Consider inline approval UI in chat for triggered deploy actions
+
+### Commits Made (Iteration 4)
+
+1. `6d77678` - Add MULTI approval workflow support
+2. `23abf83` - Add optimistic update for answer submission UI
