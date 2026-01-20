@@ -24,7 +24,7 @@ import Dashboard from './pages/Dashboard'
 import Plans from './pages/Plans'
 import Tasks from './pages/Tasks'
 import Chat from './pages/Chat'
-import Workspace from './pages/Workspace'
+import Projects from './pages/Projects'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -77,7 +77,7 @@ const Navigation = () => {
     { path: '/chat', icon: MessageSquare, label: 'Chat' },
     { path: '/plans', icon: FileText, label: 'Plans' },
     { path: '/tasks', icon: CheckSquare, label: 'Approvals' },
-    { path: '/workspace', icon: FolderOpen, label: 'Workspace' },
+    { path: '/projects', icon: FolderOpen, label: 'Projects' },
   ]
 
   const isActive = (path) => location.pathname === path
@@ -248,10 +248,10 @@ function App() {
                 }
               />
               <Route
-                path="/workspace"
+                path="/projects"
                 element={
                   <ProtectedRoute>
-                    <Workspace />
+                    <Projects />
                   </ProtectedRoute>
                 }
               />

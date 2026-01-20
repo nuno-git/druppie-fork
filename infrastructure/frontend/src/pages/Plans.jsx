@@ -3,10 +3,10 @@
  */
 
 import React from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { FileText, Clock, CheckCircle, XCircle, Play, AlertCircle } from 'lucide-react'
-import { getPlans, getPlan } from '../services/api'
+import { FileText, Clock, CheckCircle, XCircle, Play, AlertCircle, ExternalLink, GitBranch, Box, StopCircle } from 'lucide-react'
+import { getPlans, getPlan, buildProject, runProject, stopProject, getProjectStatus } from '../services/api'
 
 const StatusBadge = ({ status }) => {
   const config = {
@@ -28,10 +28,38 @@ const StatusBadge = ({ status }) => {
 }
 
 const PlanDetail = ({ planId }) => {
+  const queryClient = useQueryClient()
+
   const { data: plan, isLoading, error } = useQuery({
     queryKey: ['plan', planId],
     queryFn: () => getPlan(planId),
     enabled: !!planId,
+    refetchInterval: 5000,
+  })
+
+  const { data: projectStatus } = useQuery({
+    queryKey: ['projectStatus', planId],
+    queryFn: () => getProjectStatus(planId),
+    enabled: !!planId,
+    refetchInterval: 5000,
+  })
+
+  const buildMutation = useMutation({
+    mutationFn: () => buildProject(planId),
+    onSuccess: () => queryClient.invalidateQueries(['projectStatus', planId]),
+  })
+
+  const runMutation = useMutation({
+    mutationFn: () => runProject(planId),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['projectStatus', planId])
+      queryClient.invalidateQueries(['plan', planId])
+    },
+  })
+
+  const stopMutation = useMutation({
+    mutationFn: () => stopProject(planId),
+    onSuccess: () => queryClient.invalidateQueries(['projectStatus', planId]),
   })
 
   if (isLoading) {
@@ -53,6 +81,11 @@ const PlanDetail = ({ planId }) => {
 
   if (!plan) return null
 
+  const repoUrl = plan.result?.repo_url
+  const appUrl = plan.result?.app_url || projectStatus?.url
+  const isRunning = projectStatus?.status === 'running'
+  const isBuilt = projectStatus?.status === 'built' || projectStatus?.status === 'running'
+
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
       <div className="flex items-start justify-between mb-6">
@@ -62,6 +95,111 @@ const PlanDetail = ({ planId }) => {
         </div>
         <StatusBadge status={plan.status} />
       </div>
+
+      {/* Project Links */}
+      {(repoUrl || appUrl) && (
+        <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg mb-6">
+          <h3 className="font-semibold mb-3 flex items-center">
+            <Box className="w-4 h-4 mr-2" />
+            Project Links
+          </h3>
+          <div className="flex flex-wrap gap-3">
+            {repoUrl && (
+              <a
+                href={repoUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center px-4 py-2 bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow"
+              >
+                <GitBranch className="w-4 h-4 mr-2 text-gray-600" />
+                <span className="font-medium">View Repository</span>
+                <ExternalLink className="w-3 h-3 ml-2 text-gray-400" />
+              </a>
+            )}
+            {appUrl && (
+              <a
+                href={appUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center px-4 py-2 bg-green-500 text-white rounded-lg shadow-sm hover:shadow-md transition-shadow"
+              >
+                <Play className="w-4 h-4 mr-2" />
+                <span className="font-medium">Open App</span>
+                <ExternalLink className="w-3 h-3 ml-2" />
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Build & Run Controls */}
+      {plan.status === 'completed' && (
+        <div className="bg-gray-50 p-4 rounded-lg mb-6">
+          <h3 className="font-semibold mb-3 flex items-center">
+            <Box className="w-4 h-4 mr-2" />
+            Build & Deploy
+          </h3>
+          <div className="flex flex-wrap items-center gap-3">
+            {projectStatus && (
+              <span className={`px-3 py-1 rounded-full text-sm ${
+                isRunning ? 'bg-green-100 text-green-700' :
+                isBuilt ? 'bg-blue-100 text-blue-700' :
+                'bg-gray-100 text-gray-700'
+              }`}>
+                Status: {projectStatus.status || 'not built'}
+              </span>
+            )}
+            {!isBuilt && (
+              <button
+                onClick={() => buildMutation.mutate()}
+                disabled={buildMutation.isPending}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {buildMutation.isPending ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                ) : (
+                  <Box className="w-4 h-4 mr-2" />
+                )}
+                Build
+              </button>
+            )}
+            {isBuilt && !isRunning && (
+              <button
+                onClick={() => runMutation.mutate()}
+                disabled={runMutation.isPending}
+                className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                {runMutation.isPending ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                ) : (
+                  <Play className="w-4 h-4 mr-2" />
+                )}
+                Run
+              </button>
+            )}
+            {isRunning && (
+              <button
+                onClick={() => stopMutation.mutate()}
+                disabled={stopMutation.isPending}
+                className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                {stopMutation.isPending ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                ) : (
+                  <StopCircle className="w-4 h-4 mr-2" />
+                )}
+                Stop
+              </button>
+            )}
+          </div>
+          {buildMutation.error && (
+            <p className="text-red-500 text-sm mt-2">Build error: {buildMutation.error.message}</p>
+          )}
+          {runMutation.error && (
+            <p className="text-red-500 text-sm mt-2">Run error: {runMutation.error.message}</p>
+          )}
+        </div>
+      )}
 
       {/* Plan Info */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 text-sm">
@@ -120,12 +258,18 @@ const PlanDetail = ({ planId }) => {
         </div>
       )}
 
-      {/* Result */}
-      {plan.result && (
+      {/* Result (simplified, hiding URLs since we show them above) */}
+      {plan.result && Object.keys(plan.result).filter(k => k !== 'repo_url' && k !== 'app_url').length > 0 && (
         <div className="mt-6">
           <h3 className="font-semibold mb-3">Result</h3>
           <pre className="bg-gray-50 p-4 rounded-lg text-sm overflow-x-auto">
-            {JSON.stringify(plan.result, null, 2)}
+            {JSON.stringify(
+              Object.fromEntries(
+                Object.entries(plan.result).filter(([k]) => k !== 'repo_url' && k !== 'app_url')
+              ),
+              null,
+              2
+            )}
           </pre>
         </div>
       )}

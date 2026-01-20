@@ -28,6 +28,9 @@ from druppie.models import db, Plan, Task, MCPPermission, Approval
 from druppie.mcp_permissions import MCPPermissionManager
 from druppie.plans import PlanService
 from druppie.config import Config
+from druppie.project import project_service
+from druppie.builder import builder_service
+from druppie.mcp_registry import mcp_registry
 
 # Configure logging
 structlog.configure(
@@ -562,6 +565,206 @@ def download_workspace_file():
         return jsonify({"error": "Access denied"}), 403
 
     return send_file(target, as_attachment=True, download_name=target.name)
+
+
+# =============================================================================
+# PROJECTS
+# =============================================================================
+
+
+@app.route("/api/projects", methods=["GET"])
+@auth_required
+def list_projects():
+    """List all projects for the user."""
+    user = g.user
+    user_id = user.get("sub")
+    roles = user.get("realm_access", {}).get("roles", [])
+
+    # Admin sees all projects
+    if "admin" in roles:
+        projects = project_service.list_projects()
+    else:
+        projects = project_service.list_projects(user_id)
+
+    return jsonify([p.to_dict() for p in projects])
+
+
+@app.route("/api/projects/<project_id>", methods=["GET"])
+@auth_required
+def get_project(project_id):
+    """Get project details including running app info."""
+    project = project_service.get_project_for_plan(project_id)
+
+    if not project:
+        return jsonify({"error": "Project not found"}), 404
+
+    project_dict = project.to_dict()
+
+    # Add running app info
+    running_app = builder_service.get_running_app(project_id)
+    if running_app:
+        project_dict["running_app"] = running_app.to_dict()
+    else:
+        project_dict["running_app"] = None
+
+    # Add build status
+    project_dict["build_status"] = builder_service.get_project_status(project_id)
+
+    return jsonify(project_dict)
+
+
+@app.route("/api/projects/<project_id>/build", methods=["POST"])
+@auth_required
+def build_project(project_id):
+    """Build a project's Docker image."""
+    user = g.user
+    roles = user.get("realm_access", {}).get("roles", [])
+
+    # Check permission
+    perm = mcp_registry.check_permission("docker.build", roles, user.get("sub"))
+    if not perm["allowed"]:
+        return jsonify({"error": perm.get("message", "Permission denied")}), 403
+
+    result = builder_service.build_project(project_id)
+
+    if result.get("success"):
+        # Broadcast update
+        socketio.emit("project_built", {"project_id": project_id, **result})
+
+    return jsonify(result)
+
+
+@app.route("/api/projects/<project_id>/run", methods=["POST"])
+@auth_required
+def run_project(project_id):
+    """Run a project's Docker container."""
+    user = g.user
+    roles = user.get("realm_access", {}).get("roles", [])
+
+    # Check permission
+    perm = mcp_registry.check_permission("docker.run", roles, user.get("sub"))
+    if not perm["allowed"]:
+        return jsonify({"error": perm.get("message", "Permission denied")}), 403
+
+    result = builder_service.run_project(project_id)
+
+    if result.get("success"):
+        # Update plan with app URL
+        plan = Plan.query.get(project_id)
+        if plan:
+            plan.result = plan.result or {}
+            plan.result["app_url"] = result.get("url")
+            db.session.commit()
+
+        # Broadcast update
+        socketio.emit("project_running", {"project_id": project_id, **result})
+
+    return jsonify(result)
+
+
+@app.route("/api/projects/<project_id>/stop", methods=["POST"])
+@auth_required
+def stop_project(project_id):
+    """Stop a project's Docker container."""
+    result = builder_service.stop_project(project_id)
+
+    if result.get("success"):
+        socketio.emit("project_stopped", {"project_id": project_id})
+
+    return jsonify(result)
+
+
+# =============================================================================
+# RUNNING APPS
+# =============================================================================
+
+
+@app.route("/api/apps/running", methods=["GET"])
+@auth_required
+def list_running_apps():
+    """List all running applications."""
+    apps = builder_service.list_running_apps()
+    return jsonify([app.to_dict() for app in apps])
+
+
+@app.route("/api/apps/<project_id>/status", methods=["GET"])
+@auth_required
+def get_app_status(project_id):
+    """Get status of a running application."""
+    status = builder_service.get_project_status(project_id)
+    return jsonify(status)
+
+
+# =============================================================================
+# MCP REGISTRY (Enhanced)
+# =============================================================================
+
+
+@app.route("/api/mcp/registry", methods=["GET"])
+@auth_required
+def get_mcp_registry():
+    """Get the full MCP registry."""
+    return jsonify(mcp_registry.to_dict())
+
+
+@app.route("/api/mcp/tools", methods=["GET"])
+@auth_required
+def list_mcp_tools():
+    """List MCP tools available to the user."""
+    user = g.user
+    roles = user.get("realm_access", {}).get("roles", [])
+
+    tools = mcp_registry.list_tools(roles)
+    return jsonify([{
+        "id": t.id,
+        "name": t.name,
+        "description": t.description,
+        "category": t.category,
+        "approval_type": t.approval_type.value,
+        "danger_level": t.danger_level,
+        "input_schema": t.input_schema,
+    } for t in tools])
+
+
+@app.route("/api/mcp/tools/<tool_id>", methods=["GET"])
+@auth_required
+def get_mcp_tool(tool_id):
+    """Get details of an MCP tool."""
+    tool = mcp_registry.get_tool(tool_id)
+    if not tool:
+        return jsonify({"error": "Tool not found"}), 404
+
+    user = g.user
+    roles = user.get("realm_access", {}).get("roles", [])
+    permission = mcp_registry.check_permission(tool_id, roles, user.get("sub"))
+
+    return jsonify({
+        "id": tool.id,
+        "name": tool.name,
+        "description": tool.description,
+        "category": tool.category,
+        "input_schema": tool.input_schema,
+        "approval_type": tool.approval_type.value,
+        "approval_roles": tool.approval_roles,
+        "danger_level": tool.danger_level,
+        "permission": permission,
+    })
+
+
+@app.route("/api/mcp/servers", methods=["GET"])
+@auth_required
+def list_mcp_servers():
+    """List MCP servers available to the user."""
+    user = g.user
+    roles = user.get("realm_access", {}).get("roles", [])
+
+    servers = mcp_registry.list_servers(roles)
+    return jsonify([{
+        "id": s.id,
+        "name": s.name,
+        "description": s.description,
+        "tool_count": len(s.tools),
+    } for s in servers])
 
 
 # =============================================================================
