@@ -932,3 +932,91 @@ Next iteration could focus on:
 - Performance optimizations for LLM calls
 - More comprehensive E2E test coverage
 - Add visual indication when another user is viewing the same conversation
+
+---
+
+## Iteration 13 Summary
+
+### What Was Implemented
+
+1. **Flask Docker Binding Fix** - Working
+   - Fixed code generation prompt to include Docker-specific requirements
+   - Flask apps now include `app.run(host='0.0.0.0', port=5000, debug=True)`
+   - Generated apps are now accessible from outside the Docker container
+   - Also prompts for requirements.txt and Dockerfile generation
+
+### Problem Solved
+
+Previous issue: Generated Flask apps were only accessible inside the container:
+- `app.run(debug=True)` binds to 127.0.0.1 by default
+- Container runs but app not reachable from host
+- `curl http://localhost:9003` returned "Connection reset by peer"
+
+Fix: Updated code generation prompt in `code_service.py`:
+```python
+- For Python apps, use Flask with:
+  - app.run(host='0.0.0.0', port=5000, debug=True) - IMPORTANT for Docker
+  - Include requirements.txt with all dependencies
+  - Include a Dockerfile for containerization
+```
+
+### Test Results
+
+1. **Full Project Creation Flow** - Working:
+   - Request: "Create a simple counter app with Flask that has increment, decrement, and reset buttons"
+   - Router correctly identified create_project intent
+   - Planner created development_workflow plan
+   - Code generator created 7 files including Dockerfile
+   - Files pushed to Gitea: http://localhost:3000/druppie/counter-app-6bb20429
+
+2. **Build Flow** - Working:
+   - Built Docker image successfully
+   - Status changed to "built"
+
+3. **Run Flow** - Working:
+   - Container started on port 9004
+   - App accessible: `curl http://localhost:9004` returns full HTML
+   - API endpoints working: /api/increment, /api/decrement, /api/reset
+
+4. **Generated app.py** verification:
+   - Contains `app.run(host='0.0.0.0', port=5000, debug=True)`
+   - Correctly configured for Docker
+
+### Commits Made (Iteration 13)
+
+1. `6c72256` - Fix Flask Docker binding in code generation (Iteration 13)
+
+---
+
+## Status After Iteration 13
+
+All core functionality is working:
+- Authentication with Keycloak
+- Chat with LLM (Z.AI / GLM-4.7 / Ollama / Mock)
+- Router agent analyzes intent (including deploy_project)
+- Planner agent creates execution plans
+- Developer agent generates code
+- HITL question/answer flow
+- Project creation with Git push to Gitea
+- Build and run projects in Docker
+- **Flask apps now accessible from Docker containers** (FIXED)
+- ROLE approval workflow (deploy.staging)
+- MULTI approval workflow (deploy.production)
+- Deployment workflow triggered from chat
+- Inline approval UI in chat
+- Agent attribution badges
+- Enhanced progress indicators
+- MULTI approval progress display
+- Partial approval feedback
+- Pending approvals in loaded conversations
+- Hide approve button when user already approved
+- WebSocket real-time approval updates
+- Toast notifications for approval events
+- Mock LLM provider for testing
+
+Next iteration could focus on:
+- Implement actual deployment infrastructure (currently simulated)
+- Test project updates via chat (modify existing projects)
+- Performance optimizations for LLM calls
+- More comprehensive E2E test coverage
+- Add visual indication when another user is viewing the same conversation
