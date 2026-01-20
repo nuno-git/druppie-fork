@@ -446,6 +446,126 @@ class ProjectService:
 
         return projects
 
+    def delete_project(
+        self,
+        plan_id: str,
+        delete_repo: bool = True,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Delete a project completely.
+
+        Args:
+            plan_id: The plan/project ID to delete
+            delete_repo: Whether to also delete the Gitea repository
+            user_id: The user requesting deletion (for authorization)
+
+        Returns:
+            Dict with success status and details
+        """
+        import shutil
+
+        plan = Plan.query.get(plan_id)
+        if not plan:
+            return {"success": False, "error": "Project not found"}
+
+        # Check authorization - user can only delete their own projects
+        if user_id and plan.created_by != user_id:
+            return {"success": False, "error": "Not authorized to delete this project"}
+
+        errors = []
+
+        # Get project info before deletion
+        project = self.get_project_for_plan(plan_id)
+        repo_url = plan.result.get("repo_url") if plan.result else None
+
+        # 1. Delete workspace directory
+        workspace = WORKSPACE_PATH / plan_id
+        if workspace.exists():
+            try:
+                shutil.rmtree(workspace)
+                logger.info("Deleted workspace", project_id=plan_id)
+            except Exception as e:
+                errors.append(f"Failed to delete workspace: {e}")
+                logger.error("Failed to delete workspace", project_id=plan_id, error=str(e))
+
+        # 2. Delete Gitea repository if requested
+        if delete_repo and repo_url:
+            try:
+                self._delete_gitea_repo_by_url(repo_url)
+                logger.info("Deleted Gitea repository", project_id=plan_id, repo_url=repo_url)
+            except Exception as e:
+                errors.append(f"Failed to delete repository: {e}")
+                logger.error("Failed to delete Gitea repo", project_id=plan_id, error=str(e))
+
+        # 3. Delete related tasks
+        from .models import Task
+        Task.query.filter_by(plan_id=plan_id).delete()
+
+        # 4. Delete the plan from database
+        try:
+            db.session.delete(plan)
+            db.session.commit()
+            logger.info("Deleted plan from database", project_id=plan_id)
+        except Exception as e:
+            db.session.rollback()
+            errors.append(f"Failed to delete from database: {e}")
+            logger.error("Failed to delete plan", project_id=plan_id, error=str(e))
+
+        if errors:
+            return {"success": False, "errors": errors, "partial": True}
+
+        return {"success": True, "message": "Project deleted successfully"}
+
+    def _delete_gitea_repo_by_url(self, repo_url: str) -> None:
+        """Delete a Gitea repository by its URL.
+
+        Args:
+            repo_url: The full repo URL like http://localhost:3000/owner/repo-name
+        """
+        from urllib.parse import urlparse
+
+        # Parse the URL to extract owner and repo name
+        # URL format: http://localhost:3000/owner/repo-name
+        parsed = urlparse(repo_url)
+        path_parts = parsed.path.strip("/").split("/")
+
+        if len(path_parts) < 2:
+            logger.warning("Invalid repo URL format", repo_url=repo_url)
+            return
+
+        owner = path_parts[0]
+        repo_name = path_parts[1]
+
+        delete_url = f"{GITEA_INTERNAL_URL}/api/v1/repos/{owner}/{repo_name}"
+
+        response = self._session.delete(delete_url, timeout=10)
+
+        if response.status_code not in [204, 404]:
+            logger.warning(
+                "Gitea repo deletion returned unexpected status",
+                repo=repo_name,
+                owner=owner,
+                status=response.status_code,
+                response=response.text[:200] if response.text else None,
+            )
+
+    def _delete_gitea_repo(self, project: Project) -> None:
+        """Delete a Gitea repository (legacy method using project name)."""
+        repo_name = project.gitea_repo_name
+        owner = project.owner_username or GITEA_ORG
+
+        delete_url = f"{GITEA_INTERNAL_URL}/api/v1/repos/{owner}/{repo_name}"
+
+        response = self._session.delete(delete_url, timeout=10)
+
+        if response.status_code not in [204, 404]:
+            logger.warning(
+                "Gitea repo deletion returned unexpected status",
+                repo=repo_name,
+                owner=owner,
+                status=response.status_code,
+            )
+
 
 # Singleton instance
 project_service = ProjectService()

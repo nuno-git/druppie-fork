@@ -3,7 +3,7 @@
  */
 
 import React, { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Folder,
   File,
@@ -22,8 +22,9 @@ import {
   AlertCircle,
   Copy,
   Server,
+  Trash2,
 } from 'lucide-react'
-import { getWorkspaceFiles, getWorkspaceFile, getWorkspaceDownloadUrl, getPlans, getProjectStatus, getProjects } from '../services/api'
+import { getWorkspaceFiles, getWorkspaceFile, getWorkspaceDownloadUrl, getPlans, getProjectStatus, getProjects, deleteProject } from '../services/api'
 
 const getFileIcon = (filename) => {
   const ext = filename.split('.').pop().toLowerCase()
@@ -143,23 +144,44 @@ const FilePreview = ({ path, planId, onClose }) => {
   )
 }
 
-const ProjectCard = ({ plan, isSelected, onSelect, projectStatus }) => {
+const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDeleting }) => {
   const repoUrl = plan.result?.repo_url
   const appUrl = plan.result?.app_url || projectStatus?.url
   const hasRepo = !!repoUrl
   const isRunning = projectStatus?.status === 'running'
 
+  const handleDelete = (e) => {
+    e.stopPropagation()
+    if (window.confirm(`Are you sure you want to delete "${plan.name}"?\n\nThis will permanently delete:\n- All project files\n- The Git repository\n- Any running containers`)) {
+      onDelete(plan.id)
+    }
+  }
+
   return (
     <div
-      className={`p-4 rounded-xl border-2 transition-all cursor-pointer ${
+      className={`p-4 rounded-xl border-2 transition-all cursor-pointer relative group ${
         isSelected
           ? 'border-blue-500 bg-blue-50 shadow-md'
           : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
-      }`}
+      } ${isDeleting ? 'opacity-50 pointer-events-none' : ''}`}
       onClick={onSelect}
     >
+      {/* Delete Button */}
+      <button
+        onClick={handleDelete}
+        disabled={isDeleting}
+        className="absolute top-2 right-2 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+        title="Delete project"
+      >
+        {isDeleting ? (
+          <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+        ) : (
+          <Trash2 className="w-4 h-4" />
+        )}
+      </button>
+
       {/* Header */}
-      <div className="flex items-start justify-between mb-3">
+      <div className="flex items-start justify-between mb-3 pr-8">
         <div className="flex items-center">
           <Folder className={`w-5 h-5 mr-2 ${isSelected ? 'text-blue-500' : 'text-yellow-500'}`} />
           <h3 className="font-semibold text-gray-900 truncate">{plan.name}</h3>
@@ -262,11 +284,38 @@ const Projects = () => {
   const [previewFile, setPreviewFile] = useState(null)
   const [previewPlanId, setPreviewPlanId] = useState(null)
   const [viewMode, setViewMode] = useState('grid') // 'grid' or 'list'
+  const [deletingId, setDeletingId] = useState(null)
+
+  const queryClient = useQueryClient()
 
   const { data: plans = [] } = useQuery({
     queryKey: ['plans'],
     queryFn: getPlans,
   })
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteProject,
+    onMutate: (projectId) => {
+      setDeletingId(projectId)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plans'] })
+      queryClient.invalidateQueries({ queryKey: ['allProjectStatuses'] })
+      setDeletingId(null)
+      // If we deleted the selected project, deselect it
+      if (selectedPlan === deletingId) {
+        setSelectedPlan(null)
+      }
+    },
+    onError: (error) => {
+      setDeletingId(null)
+      alert(`Failed to delete project: ${error.message}`)
+    },
+  })
+
+  const handleDelete = (projectId) => {
+    deleteMutation.mutate(projectId)
+  }
 
   const { data: workspace, isLoading } = useQuery({
     queryKey: ['workspace', selectedPlan, currentPath],
@@ -336,6 +385,8 @@ const Projects = () => {
                 setCurrentPath('')
               }}
               projectStatus={projectStatuses.data?.[plan.id]}
+              onDelete={handleDelete}
+              isDeleting={deletingId === plan.id}
             />
           ))}
 
@@ -353,7 +404,7 @@ const Projects = () => {
       {selectedPlan && (
         <div className="space-y-4">
           {/* Back Button & Project Header */}
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center justify-between">
             <button
               onClick={() => {
                 setSelectedPlan(null)
@@ -363,6 +414,23 @@ const Projects = () => {
             >
               <ChevronRight className="w-4 h-4 rotate-180 mr-1" />
               Back to Projects
+            </button>
+            <button
+              onClick={() => {
+                if (window.confirm(`Are you sure you want to delete "${selectedPlanData?.name}"?\n\nThis will permanently delete:\n- All project files\n- The Git repository\n- Any running containers`)) {
+                  handleDelete(selectedPlan)
+                  setSelectedPlan(null)
+                }
+              }}
+              disabled={deletingId === selectedPlan}
+              className="flex items-center px-3 py-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+            >
+              {deletingId === selectedPlan ? (
+                <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin mr-2" />
+              ) : (
+                <Trash2 className="w-4 h-4 mr-2" />
+              )}
+              Delete Project
             </button>
           </div>
 

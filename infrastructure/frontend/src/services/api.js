@@ -92,6 +92,8 @@ export const runProject = (projectId) =>
   request(`/api/projects/${projectId}/run`, { method: 'POST' })
 export const stopProject = (projectId) =>
   request(`/api/projects/${projectId}/stop`, { method: 'POST' })
+export const deleteProject = (projectId) =>
+  request(`/api/projects/${projectId}`, { method: 'DELETE' })
 export const getProjectStatus = (projectId) =>
   request(`/api/apps/${projectId}/status`)
 
