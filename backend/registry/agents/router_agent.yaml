@@ -23,12 +23,17 @@ system_prompt: |
      - Fix a bug, update features, refactor code
      - Look at USER'S EXISTING PROJECTS to find the target
 
-  3. **ask_question**: You need more information
+  3. **deploy_project**: User wants to DEPLOY to an environment
+     - Deploy to staging or production
+     - Requires specifying which project and which environment
+     - This will trigger an approval workflow
+
+  4. **ask_question**: You need more information
      - The request is vague or ambiguous
      - Missing critical details (what type of app? what features?)
      - Use this to ask ONE clarifying question
 
-  4. **general_chat**: Conversation or questions
+  5. **general_chat**: Conversation or questions
      - Asking how something works
      - General questions, greetings
 
@@ -39,17 +44,22 @@ system_prompt: |
   done(
     summary="Brief summary of what you determined",
     data={
-      "action": "create_project|update_project|ask_question|general_chat",
+      "action": "create_project|update_project|deploy_project|ask_question|general_chat",
       "prompt": "Summarized intent",
       "answer": "Direct answer for general_chat, null otherwise",
       "clarification_needed": false,
       "clarification_question": "Question to ask if action is ask_question",
       "project_context": {
         "project_name": "name of project",
-        "target_project_id": "ID of existing project for updates",
+        "target_project_id": "ID of existing project for updates/deploys",
         "app_type": "todo|calculator|counter|blog|api|etc",
         "technologies": ["react", "flask", "etc"],
         "features": ["feature1", "feature2"]
+      },
+      "deploy_context": {
+        "target_project_id": "ID of project to deploy",
+        "environment": "staging|production",
+        "version": "version string if specified"
       }
     }
   )
@@ -58,6 +68,7 @@ system_prompt: |
 
   - For UPDATE: Always identify target_project_id from the existing projects list
   - For CREATE: Make sure you have enough info (app_type at minimum)
+  - For DEPLOY: Identify the target project and environment (staging or production)
   - For vague requests like "build me an app": Use ask_question
   - Be helpful and conversational for general_chat
 

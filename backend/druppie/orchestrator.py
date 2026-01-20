@@ -320,19 +320,31 @@ USER REQUEST:
 
 Analyze the request and call done() with your analysis in the data field:
 {{
-    "action": "create_project|update_project|ask_question|general_chat",
+    "action": "create_project|update_project|deploy_project|ask_question|general_chat",
     "prompt": "Summarized intent",
     "answer": "Direct answer if general_chat, otherwise null",
     "clarification_needed": false,
     "clarification_question": null,
     "project_context": {{
         "project_name": "name",
-        "target_project_id": "id if updating existing project",
+        "target_project_id": "id if updating or deploying existing project",
         "app_type": "type of application",
         "technologies": ["list"],
         "features": ["list"]
+    }},
+    "deploy_context": {{
+        "target_project_id": "id of project to deploy (for deploy_project action)",
+        "environment": "staging|production",
+        "version": "version string or null"
     }}
-}}"""
+}}
+
+ACTION RULES:
+- create_project: User wants to BUILD something NEW
+- update_project: User wants to MODIFY something EXISTING
+- deploy_project: User wants to DEPLOY a project to staging or production
+- ask_question: You need more information to understand the request
+- general_chat: Conversation, questions about how things work"""
 
         return await self._agent_runtime.execute_single_task(
             agent_id="router_agent",
@@ -402,6 +414,7 @@ Call done() with your plan in the data field:
         action_map = {
             "create_project": IntentAction.CREATE_PROJECT,
             "update_project": IntentAction.UPDATE_PROJECT,
+            "deploy_project": IntentAction.DEPLOY_PROJECT,
             "ask_question": IntentAction.GENERAL_CHAT,  # Map to general_chat with clarification
             "general_chat": IntentAction.GENERAL_CHAT,
         }
@@ -421,6 +434,7 @@ Call done() with your plan in the data field:
             clarification_needed=clarification_needed,
             clarification_question=data.get("clarification_question") or data.get("prompt") if clarification_needed else None,
             project_context=data.get("project_context") or {},  # Handle None explicitly
+            deploy_context=data.get("deploy_context") or {},  # For deployment actions
         )
 
     def _parse_plan(self, plan_id: str, intent: Intent, data: dict) -> Plan:

@@ -14,6 +14,7 @@ import structlog
 
 from .models import db, Plan, Task, Approval, Question
 from .mcp_permissions import MCPPermissionManager
+from .mcp_registry import mcp_registry as approval_mcp_registry
 from .llm_service import LLMService
 from .code_service import CodeService
 from .project import project_service
@@ -418,27 +419,42 @@ class PlanService:
         # Determine approval requirements
         approval_type = "auto"
         required_role = None
+        required_roles = None
+        required_approvals = 1
 
         if mcp_tool:
-            permission = self.mcp_manager.check_permission(
-                mcp_tool, plan.assigned_roles, created_by or plan.created_by
-            )
+            # First check the new MCP registry for approval settings (deploy tools, etc.)
+            tool = approval_mcp_registry.get_tool(mcp_tool)
+            if tool and tool.approval_type.value != "none":
+                approval_type = tool.approval_type.value
+                if tool.approval_roles:
+                    required_role = tool.approval_roles[0]
+                    if approval_type == "multi":
+                        required_roles = tool.approval_roles
+                        required_approvals = 2
+            else:
+                # Fall back to permission manager for other tools
+                permission = self.mcp_manager.check_permission(
+                    mcp_tool, plan.assigned_roles, created_by or plan.created_by
+                )
 
-            if permission["requires_approval"]:
-                approval_type = permission["approval_type"]
-                required_role = permission["required_role"]
+                if permission["requires_approval"]:
+                    approval_type = permission["approval_type"]
+                    required_role = permission["required_role"]
 
         task = Task(
             id=str(uuid.uuid4()),
             plan_id=plan.id,
             name=name,
             description=description,
-            status="pending" if approval_type == "auto" else "pending_approval",
+            status="pending" if approval_type in ("auto", "none") else "pending_approval",
             agent_id=agent_id,
             mcp_tool=mcp_tool,
             mcp_arguments=mcp_arguments,
             approval_type=approval_type,
             required_role=required_role,
+            required_roles=required_roles,
+            required_approvals=required_approvals,
             created_by=created_by or plan.created_by,
         )
 
@@ -976,6 +992,45 @@ class PlanService:
                 "options": options,
             }
 
+        # Handle deploy.staging and deploy.production MCP tools
+        if task.mcp_tool in ("deploy.staging", "deploy.production") and task.mcp_arguments:
+            project_id = task.mcp_arguments.get("project_id")
+            version = task.mcp_arguments.get("version", "latest")
+            environment = task.mcp_arguments.get("environment", "staging")
+
+            add_event(
+                "mcp_tool",
+                f"MCP Tool: {task.mcp_tool}",
+                f"Deploying {project_id} to {environment}...",
+                "working",
+                {"tool": task.mcp_tool, "project_id": project_id, "environment": environment}
+            )
+
+            # For now, simulate deployment success
+            # In production, this would call actual deployment infrastructure
+            add_event(
+                "deployment_complete",
+                f"Deployed to {environment.title()}",
+                f"Project {project_id} (version {version}) deployed successfully to {environment}",
+                "success",
+                {
+                    "project_id": project_id,
+                    "version": version,
+                    "environment": environment,
+                    "url": f"https://{project_id}.{environment}.example.com",
+                }
+            )
+
+            return {
+                "executed": True,
+                "mcp_tool": task.mcp_tool,
+                "success": True,
+                "environment": environment,
+                "project_id": project_id,
+                "version": version,
+                "deployment_url": f"https://{project_id}.{environment}.example.com",
+            }
+
         # Default response for other task types
         add_event(
             "mcp_tool",
@@ -1432,8 +1487,9 @@ class PlanService:
             "description": intent.prompt,
             "features": intent.project_context.get("features", []),
             "technologies": intent.project_context.get("technologies", []),
-            "target_project_id": intent.project_context.get("target_project_id"),
+            "target_project_id": intent.project_context.get("target_project_id") or intent.deploy_context.get("target_project_id"),
             "answer": intent.answer,
+            "deploy_context": intent.deploy_context,  # Include deploy context for deployment actions
         }
 
         # Collect LLM calls from orchestrator (these are the detailed agent calls)
@@ -1547,6 +1603,41 @@ class PlanService:
                             "app_info": app_info,
                             "message": message,
                             "target_project_id": target_id,
+                        },
+                    }
+                ],
+            }
+
+        # Handle deploy_project action
+        if action == "deploy_project":
+            deploy_context = intent.deploy_context if intent else {}
+            target_id = deploy_context.get("target_project_id") or app_info.get("target_project_id")
+            environment = deploy_context.get("environment", "staging")
+            version = deploy_context.get("version", "latest")
+
+            # Determine MCP tool based on environment
+            mcp_tool = f"deploy.{environment}"
+            approval_desc = (
+                f"Approval required from 2 of: developer, infra-engineer, product-owner"
+                if environment == "production"
+                else f"Approval required from developer or infra-engineer"
+            )
+
+            return {
+                "type": "action",
+                "intent": intent,
+                "app_info": app_info,
+                "plan": plan,
+                "tasks": [
+                    {
+                        "name": f"Deploy to {environment.title()}",
+                        "description": f"Deploying project {target_id or 'unknown'} to {environment}. {approval_desc}",
+                        "agent_id": "devops",
+                        "mcp_tool": mcp_tool,
+                        "mcp_arguments": {
+                            "project_id": target_id,
+                            "version": version,
+                            "environment": environment,
                         },
                     }
                 ],

@@ -29,6 +29,7 @@ system_prompt: |
 
   - **CREATE_PROJECT** → Use "development_workflow" or "coding" workflow
   - **UPDATE_PROJECT** → Use "update_workflow"
+  - **DEPLOY_PROJECT** → Create deployment task with deploy.staging or deploy.production MCP tool
   - **Simple fixes** → Assign developer agent directly
 
   ## How to Respond

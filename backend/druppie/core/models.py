@@ -41,10 +41,11 @@ class AgentType(str, Enum):
 
 
 class IntentAction(str, Enum):
-    """Possible actions from intent analysis - simplified to 3 options."""
+    """Possible actions from intent analysis."""
 
     CREATE_PROJECT = "create_project"
     UPDATE_PROJECT = "update_project"
+    DEPLOY_PROJECT = "deploy_project"
     GENERAL_CHAT = "general_chat"
 
 
@@ -73,9 +74,10 @@ class TokenUsage(BaseModel):
 class Intent(BaseModel):
     """Analyzed user intent from the Router.
 
-    The Router analyzes user input and classifies it as one of 3 actions:
+    The Router analyzes user input and classifies it as one of these actions:
     - CREATE_PROJECT: Build something new
     - UPDATE_PROJECT: Modify existing project
+    - DEPLOY_PROJECT: Deploy to staging or production
     - GENERAL_CHAT: Answer questions, no action needed
     """
 
@@ -92,6 +94,10 @@ class Intent(BaseModel):
     # Project context extracted from the prompt
     project_context: dict[str, Any] = Field(default_factory=dict)
     # e.g., {"repo_url": "...", "project_name": "...", "task_description": "..."}
+
+    # Deploy context for deployment actions
+    deploy_context: dict[str, Any] = Field(default_factory=dict)
+    # e.g., {"target_project_id": "...", "environment": "staging|production", "version": "..."}
 
 
 # --- Agent Definition ---
