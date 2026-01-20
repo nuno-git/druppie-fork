@@ -267,18 +267,27 @@ class ProjectService:
     def _get_git_remote_url(self, project: Project) -> str:
         """Build git remote URL with embedded credentials for push access."""
         from urllib.parse import urlparse, quote
-        parsed = urlparse(GITEA_INTERNAL_URL)
 
         # URL-encode credentials to handle special characters
         user = quote(GITEA_ADMIN_USER, safe='')
         password = quote(GITEA_ADMIN_PASSWORD, safe='')
 
-        # Determine repo path based on owner
-        owner = project.owner_username or GITEA_ORG
-        repo_name = project.gitea_repo_name
+        # If we have an existing repo_url, extract owner/repo from it
+        if project.repo_url:
+            # repo_url is like http://localhost:3000/juniordev/counter-app-xxx
+            parsed_repo = urlparse(project.repo_url)
+            repo_path = parsed_repo.path.strip("/")  # "juniordev/counter-app-xxx"
+            if repo_path.endswith(".git"):
+                repo_path = repo_path[:-4]
+        else:
+            # Fallback: generate from project name (for new projects)
+            owner = project.owner_username or GITEA_ORG
+            repo_name = project.gitea_repo_name
+            repo_path = f"{owner}/{repo_name}"
 
         # Build URL with embedded credentials: http://user:pass@gitea:3000/owner/repo.git
-        return f"{parsed.scheme}://{user}:{password}@{parsed.netloc}/{owner}/{repo_name}.git"
+        parsed = urlparse(GITEA_INTERNAL_URL)
+        return f"{parsed.scheme}://{user}:{password}@{parsed.netloc}/{repo_path}.git"
 
     def _init_git_repo(self, project: Project) -> None:
         """Initialize git repository in workspace and push to Gitea."""
@@ -400,8 +409,141 @@ class ProjectService:
             )
             return False
 
+    def commit_to_branch(
+        self,
+        project: Project,
+        branch: str,
+        message: str = "Update from Druppie",
+        author: str | None = None,
+    ) -> dict[str, Any]:
+        """Commit changes to a specific branch and push.
+
+        Creates the branch if it doesn't exist.
+
+        Args:
+            project: The project to commit to
+            branch: The branch name to commit to
+            message: Commit message
+            author: Optional author name
+
+        Returns:
+            Dict with success status and details
+        """
+        workspace = project.workspace_path
+
+        if not (workspace / ".git").exists():
+            return {"success": False, "error": "Git not initialized"}
+
+        try:
+            # Ensure remote URL has credentials
+            remote_url = self._get_git_remote_url(project)
+            subprocess.run(
+                ["git", "remote", "set-url", "origin", remote_url],
+                cwd=workspace,
+                capture_output=True,
+            )
+
+            # Fetch to get latest remote state
+            subprocess.run(
+                ["git", "fetch", "origin"],
+                cwd=workspace,
+                capture_output=True,
+            )
+
+            # Check if branch exists locally
+            result = subprocess.run(
+                ["git", "branch", "--list", branch],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+            )
+
+            if not result.stdout.strip():
+                # Create and checkout new branch
+                subprocess.run(
+                    ["git", "checkout", "-b", branch],
+                    cwd=workspace,
+                    capture_output=True,
+                    check=True,
+                )
+            else:
+                # Checkout existing branch
+                subprocess.run(
+                    ["git", "checkout", branch],
+                    cwd=workspace,
+                    capture_output=True,
+                    check=True,
+                )
+
+            # Add all files
+            subprocess.run(
+                ["git", "add", "-A"],
+                cwd=workspace,
+                capture_output=True,
+                check=True,
+            )
+
+            # Check if there are changes to commit
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+            )
+
+            if not result.stdout.strip():
+                logger.info("No changes to commit", project_id=project.id, branch=branch)
+                return {"success": True, "message": "No changes to commit"}
+
+            # Commit
+            commit_cmd = ["git", "commit", "-m", message]
+            if author:
+                commit_cmd.extend(["--author", f"{author} <{author}@druppie.local>"])
+
+            subprocess.run(
+                commit_cmd,
+                cwd=workspace,
+                capture_output=True,
+                check=True,
+            )
+
+            # Push to branch
+            result = subprocess.run(
+                ["git", "push", "-u", "origin", branch],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode != 0:
+                logger.error(
+                    "Git push to branch failed",
+                    project_id=project.id,
+                    branch=branch,
+                    stderr=result.stderr,
+                )
+                return {"success": False, "error": result.stderr}
+
+            logger.info(
+                "Committed and pushed to branch",
+                project_id=project.id,
+                branch=branch,
+            )
+            return {"success": True, "branch": branch}
+
+        except subprocess.CalledProcessError as e:
+            logger.error(
+                "Git branch operation failed",
+                project_id=project.id,
+                branch=branch,
+                error=e.stderr.decode() if e.stderr else str(e),
+            )
+            return {"success": False, "error": str(e)}
+
     def get_project_for_plan(self, plan_id: str) -> Project | None:
         """Get or create a project for a plan."""
+        from urllib.parse import urlparse
+
         plan = Plan.query.get(plan_id)
         if not plan:
             return None
@@ -413,10 +555,19 @@ class ProjectService:
         # Check if we have repo info in plan metadata
         repo_url = None
         app_url = None
+        owner_username = None
 
         if plan.result:
             repo_url = plan.result.get("repo_url")
             app_url = plan.result.get("app_url")
+
+            # Extract owner_username from repo_url if available
+            # repo_url is like http://localhost:3000/juniordev/counter-app-xxx
+            if repo_url:
+                parsed = urlparse(repo_url)
+                path_parts = parsed.path.strip("/").split("/")
+                if len(path_parts) >= 1:
+                    owner_username = path_parts[0]
 
         return Project(
             id=plan_id,
@@ -426,6 +577,7 @@ class ProjectService:
             app_url=app_url,
             created_by=plan.created_by,
             created_at=plan.created_at,
+            owner_username=owner_username,
         )
 
     def list_projects(self, user_id: str | None = None) -> list[Project]:

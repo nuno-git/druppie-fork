@@ -118,3 +118,108 @@ tools:
         - path
         - content
         - sha
+
+  - name: get_file
+    description: Get file contents and SHA from a repository
+    input_schema:
+      type: object
+      properties:
+        repo:
+          type: string
+          description: Repository name
+        path:
+          type: string
+          description: File path in the repository
+        branch:
+          type: string
+          description: Branch name
+          default: "main"
+      required:
+        - repo
+        - path
+
+  - name: list_branches
+    description: List all branches in a repository
+    input_schema:
+      type: object
+      properties:
+        repo:
+          type: string
+          description: Repository name
+      required:
+        - repo
+
+  - name: create_branch
+    description: Create a new branch in a repository
+    input_schema:
+      type: object
+      properties:
+        repo:
+          type: string
+          description: Repository name
+        branch:
+          type: string
+          description: New branch name
+        from_branch:
+          type: string
+          description: Source branch to create from
+          default: "main"
+      required:
+        - repo
+        - branch
+
+  - name: merge_branch
+    description: Merge a branch into another branch
+    input_schema:
+      type: object
+      properties:
+        repo:
+          type: string
+          description: Repository name
+        head:
+          type: string
+          description: Branch to merge from (feature branch)
+        base:
+          type: string
+          description: Branch to merge into
+          default: "main"
+        message:
+          type: string
+          description: Merge commit message
+      required:
+        - repo
+        - head
+
+  - name: get_branch_diff
+    description: Get the diff between two branches
+    input_schema:
+      type: object
+      properties:
+        repo:
+          type: string
+          description: Repository name
+        base:
+          type: string
+          description: Base branch
+          default: "main"
+        head:
+          type: string
+          description: Head branch (feature branch)
+      required:
+        - repo
+        - head
+
+  - name: delete_branch
+    description: Delete a branch from a repository
+    input_schema:
+      type: object
+      properties:
+        repo:
+          type: string
+          description: Repository name
+        branch:
+          type: string
+          description: Branch name to delete
+      required:
+        - repo
+        - branch

@@ -1,0 +1,173 @@
+# Main Workflow - Entry Point for All User Requests
+# This is the main orchestration workflow that processes user requests
+# Flow: Router Agent → Planner Agent → Execute Plan
+
+id: main_workflow
+name: Main Request Processing
+description: >
+  Main workflow that processes all user requests. The Router analyzes intent,
+  the Planner creates an execution plan, and then the appropriate workflow
+  or agents are executed.
+
+trigger_keywords:
+  - "*"  # Matches all requests
+
+required_mcps:
+  - interaction
+
+entry_point: analyze_intent
+
+steps:
+  # Step 1: Router Agent analyzes user intent
+  analyze_intent:
+    name: Analyze User Intent
+    type: agent
+    agent_id: router_agent
+    task: |
+      Analyze the following user request and determine the intent.
+
+      {user_message}
+
+      {project_context}
+
+      Classify the request as one of:
+      - create_project: User wants to build something NEW
+      - update_project: User wants to modify an EXISTING project
+      - ask_question: You need more information to proceed
+      - general_chat: User is asking a question, no action needed
+
+      Return structured JSON with your analysis.
+    on_success: check_clarification
+    on_failure: fail_workflow
+
+  # Step 2: Check if clarification is needed
+  check_clarification:
+    name: Check if Clarification Needed
+    type: condition
+    condition: "{step_analyze_intent.data.action} == 'ask_question'"
+    on_true: ask_clarification
+    on_false: check_chat
+
+  # Step 2a: Ask clarification question
+  ask_clarification:
+    name: Ask Clarification Question
+    type: mcp
+    tool: interaction.ask_question
+    params:
+      question: "{step_analyze_intent.data.question.text}"
+      context: "{step_analyze_intent.data.question.context}"
+      options: "{step_analyze_intent.data.question.options}"
+    on_success: wait_for_answer
+    on_failure: fail_workflow
+
+  # Step 2b: Wait for user answer (suspends workflow)
+  wait_for_answer:
+    name: Wait for User Response
+    type: suspend
+    suspend_type: user_input
+    on_resume: analyze_intent  # Re-run router with the answer
+    on_failure: fail_workflow
+
+  # Step 3: Check if general chat
+  check_chat:
+    name: Check if General Chat
+    type: condition
+    condition: "{step_analyze_intent.data.action} == 'general_chat'"
+    on_true: return_chat_response
+    on_false: create_plan
+
+  # Step 3a: Return chat response
+  return_chat_response:
+    name: Return Chat Response
+    type: agent
+    agent_id: router_agent
+    task: |
+      The user had a general question. Return a helpful response.
+
+      User message: {user_message}
+      Your analysis: {step_analyze_intent.data}
+
+      Provide a helpful, conversational response.
+    on_success: complete
+    on_failure: fail_workflow
+
+  # Step 4: Create execution plan
+  create_plan:
+    name: Create Execution Plan
+    type: agent
+    agent_id: planner_agent
+    task: |
+      Create an execution plan for the following request.
+
+      User request: {user_message}
+      Router analysis: {step_analyze_intent.data}
+
+      Action type: {step_analyze_intent.data.action}
+
+      For CREATE_PROJECT:
+      - Use workflow_id: development_workflow
+      - This handles: repo creation, code generation, git commit, Docker build
+
+      For UPDATE_PROJECT:
+      - Use workflow_id: update_workflow
+      - This handles: feature branch, code changes, preview deployment, merge
+
+      Create a detailed plan with execution steps.
+    on_success: check_workflow
+    on_failure: fail_workflow
+
+  # Step 5: Check if workflow or direct agents
+  check_workflow:
+    name: Check Plan Type
+    type: condition
+    condition: "{step_create_plan.data.plan_type} == 'workflow'"
+    on_true: execute_workflow
+    on_false: execute_agents
+
+  # Step 5a: Execute a predefined workflow
+  execute_workflow:
+    name: Execute Workflow
+    type: workflow
+    workflow_id: "{step_create_plan.data.workflow_id}"
+    params:
+      user_message: "{user_message}"
+      project_context: "{step_analyze_intent.data.project_context}"
+      plan_details: "{step_create_plan.data.plan_details}"
+    on_success: complete
+    on_failure: fail_workflow
+
+  # Step 5b: Execute agent tasks directly
+  execute_agents:
+    name: Execute Agent Tasks
+    type: agent_tasks
+    tasks: "{step_create_plan.data.tasks}"
+    parallel: false
+    on_success: complete
+    on_failure: fail_workflow
+
+  # Success handler
+  complete:
+    name: Workflow Complete
+    type: agent
+    agent_id: developer
+    task: |
+      Summarize what was accomplished:
+
+      User request: {user_message}
+      Plan: {step_create_plan.data}
+      Execution result: {context}
+
+      Provide a clear summary for the user.
+    on_success: null
+
+  # Failure handler
+  fail_workflow:
+    name: Handle Failure
+    type: agent
+    agent_id: developer
+    task: |
+      The workflow has failed. Summarize what happened and suggest next steps.
+
+      Context: {context}
+      Error: {error}
+    on_success: null

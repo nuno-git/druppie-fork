@@ -858,6 +858,225 @@ def get_app_status(project_id):
 
 
 # =============================================================================
+# PROJECT UPDATE APPROVAL
+# =============================================================================
+
+
+@app.route("/api/projects/<project_id>/preview", methods=["GET"])
+@auth_required
+def get_project_preview(project_id):
+    """Get preview deployment info for a project update."""
+    plan = Plan.query.get(project_id)
+    if not plan:
+        return jsonify({"error": "Project not found"}), 404
+
+    result = plan.result or {}
+    preview_url = result.get("preview_url")
+    branch = result.get("branch")
+
+    if not preview_url and not branch:
+        return jsonify({"error": "No preview available for this project"}), 404
+
+    # Check if preview container is running
+    preview_key = f"{project_id}-preview"
+    preview_app = builder_service.get_running_app(preview_key)
+
+    return jsonify({
+        "project_id": project_id,
+        "preview_url": preview_url,
+        "branch": branch,
+        "is_running": preview_app is not None,
+        "container_name": preview_app.container_name if preview_app else None,
+    })
+
+
+@app.route("/api/projects/<project_id>/approve", methods=["POST"])
+@auth_required
+def approve_project_update(project_id):
+    """Approve a preview update and merge to main.
+
+    This will:
+    1. Merge the feature branch to main
+    2. Rebuild production from main
+    3. Deploy to production
+    4. Clean up preview container
+    """
+    user = g.user
+    user_id = user.get("sub")
+    roles = user.get("realm_access", {}).get("roles", [])
+
+    plan = Plan.query.get(project_id)
+    if not plan:
+        return jsonify({"error": "Project not found"}), 404
+
+    # Check authorization - only creator or admin can approve
+    if plan.created_by != user_id and "admin" not in roles:
+        return jsonify({"error": "Not authorized to approve this update"}), 403
+
+    result = plan.result or {}
+    branch = result.get("branch")
+
+    if not branch:
+        return jsonify({"error": "No pending update to approve"}), 400
+
+    # Get the project
+    project = project_service.get_project_for_plan(project_id)
+    if not project:
+        return jsonify({"error": "Project not found"}), 404
+
+    errors = []
+
+    # 1. Merge feature branch to main via Gitea API
+    try:
+        from druppie.mcp.servers.gitea import GiteaMCPServer
+        gitea = GiteaMCPServer()
+        merge_result = gitea.merge_branch(
+            repo=project.gitea_repo_name,
+            head=branch,
+            base="main",
+            message=f"Merge {branch} into main (approved by {user.get('preferred_username', user_id)})",
+        )
+        if not merge_result.get("success"):
+            errors.append(f"Merge failed: {merge_result.get('error', 'Unknown error')}")
+    except Exception as e:
+        errors.append(f"Merge failed: {str(e)}")
+
+    # 2. Rebuild production image
+    try:
+        build_result = builder_service.build_project(project_id)
+        if not build_result.get("success"):
+            errors.append(f"Build failed: {build_result.get('error')}")
+    except Exception as e:
+        errors.append(f"Build failed: {str(e)}")
+
+    # 3. Deploy to production
+    production_url = None
+    try:
+        run_result = builder_service.run_project(project_id)
+        if run_result.get("success"):
+            production_url = run_result.get("url")
+            # Update plan with production URL
+            plan.result["app_url"] = production_url
+        else:
+            errors.append(f"Deploy failed: {run_result.get('error')}")
+    except Exception as e:
+        errors.append(f"Deploy failed: {str(e)}")
+
+    # 4. Stop and clean up preview container
+    try:
+        preview_key = f"{project_id}-preview"
+        builder_service.stop_project(preview_key)
+    except Exception as e:
+        logger.warning("Failed to clean up preview", error=str(e))
+
+    # Clear preview info from plan
+    plan.result.pop("preview_url", None)
+    plan.result.pop("branch", None)
+    db.session.commit()
+
+    # Broadcast updates
+    socketio.emit("project_updated", {
+        "project_id": project_id,
+        "action": "approved",
+        "production_url": production_url,
+    })
+
+    if errors:
+        return jsonify({
+            "success": False,
+            "errors": errors,
+            "partial": True,
+            "production_url": production_url,
+        }), 207  # Multi-status
+
+    return jsonify({
+        "success": True,
+        "message": "Update approved and deployed",
+        "production_url": production_url,
+    })
+
+
+@app.route("/api/projects/<project_id>/reject", methods=["POST"])
+@auth_required
+def reject_project_update(project_id):
+    """Reject a preview update and clean up.
+
+    This will:
+    1. Stop and remove preview container
+    2. Delete the feature branch
+    3. Clear preview state from plan
+    """
+    user = g.user
+    user_id = user.get("sub")
+    roles = user.get("realm_access", {}).get("roles", [])
+    data = request.get_json() or {}
+
+    plan = Plan.query.get(project_id)
+    if not plan:
+        return jsonify({"error": "Project not found"}), 404
+
+    # Check authorization
+    if plan.created_by != user_id and "admin" not in roles:
+        return jsonify({"error": "Not authorized to reject this update"}), 403
+
+    result = plan.result or {}
+    branch = result.get("branch")
+    reason = data.get("reason", "")
+
+    if not branch:
+        return jsonify({"error": "No pending update to reject"}), 400
+
+    # Get the project
+    project = project_service.get_project_for_plan(project_id)
+    errors = []
+
+    # 1. Stop preview container
+    try:
+        preview_key = f"{project_id}-preview"
+        builder_service.stop_project(preview_key)
+    except Exception as e:
+        errors.append(f"Failed to stop preview: {str(e)}")
+
+    # 2. Delete feature branch via Gitea API
+    if project:
+        try:
+            from druppie.mcp.servers.gitea import GiteaMCPServer
+            gitea = GiteaMCPServer()
+            delete_result = gitea.delete_branch(
+                repo=project.gitea_repo_name,
+                branch=branch,
+            )
+            if not delete_result.get("success"):
+                errors.append(f"Branch delete failed: {delete_result.get('error', 'Unknown')}")
+        except Exception as e:
+            errors.append(f"Branch delete failed: {str(e)}")
+
+    # 3. Clear preview state from plan
+    plan.result.pop("preview_url", None)
+    plan.result.pop("branch", None)
+    db.session.commit()
+
+    # Broadcast update
+    socketio.emit("project_updated", {
+        "project_id": project_id,
+        "action": "rejected",
+        "reason": reason,
+    })
+
+    if errors:
+        return jsonify({
+            "success": False,
+            "errors": errors,
+            "partial": True,
+        }), 207
+
+    return jsonify({
+        "success": True,
+        "message": "Update rejected and cleaned up",
+    })
+
+
+# =============================================================================
 # MCP REGISTRY (Enhanced)
 # =============================================================================
 

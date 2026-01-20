@@ -1,6 +1,6 @@
 """Plan service for managing execution plans.
 
-Integrates the Router and Planner from the druppie architecture.
+Uses the ChatOrchestrator for intent analysis and plan creation.
 """
 
 import asyncio
@@ -13,16 +13,13 @@ from typing import Any, Optional, Callable
 from .models import db, Plan, Task, Approval, Question
 from .mcp_permissions import MCPPermissionManager
 from .llm_service import LLMService
+from .code_service import CodeService
 from .project import project_service
 from .builder import builder_service
 
-# Import the new architecture components
-from druppie.llm import ChatZAI
-from druppie.router import Router
-from druppie.planner import Planner
+# Import the new orchestrator (handles routing + planning)
+from druppie.orchestrator import chat_orchestrator
 from druppie.core.models import IntentAction
-from druppie.registry import AgentRegistry
-from druppie.workflows import WorkflowRegistry
 
 
 class WorkflowEvent:
@@ -57,84 +54,18 @@ class WorkflowEvent:
 class PlanService:
     """Service for managing plans and tasks.
 
-    Uses the new architecture components:
-    - Router: Analyzes user intent
-    - Planner: Creates execution plans
+    Uses the ChatOrchestrator for:
+    - Intent analysis (router agent)
+    - Plan creation (planner agent)
     """
 
     def __init__(self):
         self.mcp_manager = MCPPermissionManager()
         self.llm_service = LLMService()
+        self.code_service = CodeService()
 
-        # Initialize LangChain-based LLM
-        self._llm = None
-        self._router = None
-        self._planner = None
-
-        # Initialize registries for agents and workflows
-        self._agent_registry = None
-        self._workflow_registry = None
-        self._registries_loaded = False
-
-        # Track LLM calls from the new architecture
+        # Track LLM calls for debugging
         self._llm_calls: list[dict] = []
-
-    def _get_llm(self) -> ChatZAI:
-        """Get or create the LangChain LLM instance."""
-        if self._llm is None:
-            self._llm = ChatZAI(
-                api_key=os.getenv("ZAI_API_KEY", ""),
-                model=os.getenv("ZAI_MODEL", "GLM-4.7"),
-                base_url=os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4"),
-            )
-        return self._llm
-
-    def _get_router(self) -> Router:
-        """Get or create the Router instance."""
-        if self._router is None:
-            self._router = Router(llm=self._get_llm())
-        return self._router
-
-    def _load_registries(self) -> None:
-        """Load agent and workflow registries from YAML files."""
-        if self._registries_loaded:
-            return
-
-        import structlog
-        logger = structlog.get_logger()
-
-        # Determine registry path
-        registry_path = os.getenv("REGISTRY_PATH", "/app/registry")
-
-        # Load agent registry
-        self._agent_registry = AgentRegistry(registry_path)
-        self._agent_registry.load()
-
-        # Load workflow registry
-        self._workflow_registry = WorkflowRegistry(registry_path)
-        self._workflow_registry.load()
-
-        logger.info(
-            "Registries loaded",
-            agents=len(self._agent_registry.list_agents()),
-            workflows=len(self._workflow_registry.list_workflows()),
-        )
-
-        self._registries_loaded = True
-
-    def _get_planner(self) -> Planner:
-        """Get or create the Planner instance."""
-        if self._planner is None:
-            # Load registries first
-            self._load_registries()
-
-            # Create planner with agent and workflow definitions
-            self._planner = Planner(
-                llm=self._get_llm(),
-                agents=self._agent_registry.as_dict() if self._agent_registry else {},
-                workflows=self._workflow_registry.as_dict() if self._workflow_registry else {},
-            )
-        return self._planner
 
     def _record_llm_call(
         self,
@@ -186,87 +117,45 @@ class PlanService:
         self._llm_calls = []
         self.llm_service.clear_llm_calls()
 
-    def _create_plan_with_planner(
+    def _format_plan_for_display(
         self,
-        plan_id: str,
+        plan: Any,
         intent: Any,
-        message: str,
         app_info: dict[str, Any],
     ) -> dict[str, Any]:
-        """Create an execution plan using the new Planner architecture.
+        """Format a Plan object for UI display.
 
         Args:
-            plan_id: The plan ID
-            intent: The Intent object from the Router (can be None)
-            message: The original user message
+            plan: The Plan object from orchestrator (can be None)
+            intent: The Intent object
             app_info: The app_info dict for fallback
 
         Returns:
             dict with plan_summary, plan_details, execution_steps, considerations
         """
-        import time
-        start_time = time.time()
+        # If we have a plan from the orchestrator, use it
+        if plan is not None:
+            # Build detailed plan output for debugging
+            plan_output = {
+                "name": plan.name,
+                "description": plan.description,
+                "plan_type": plan.plan_type.value,
+                "workflow_id": plan.workflow_id,
+                "tasks": [
+                    {
+                        "id": task.id,
+                        "agent_id": task.agent_id,
+                        "description": task.description,
+                        "depends_on": task.depends_on,
+                    }
+                    for task in plan.tasks
+                ] if plan.tasks else [],
+            }
 
-        # If we have a proper Intent object, use the Planner
-        if intent is not None and hasattr(intent, 'action'):
-            try:
-                planner = self._get_planner()
-
-                # Run the async planner in sync context
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # If loop is already running (e.g., in gevent), create new loop
-                        import concurrent.futures
-                        with concurrent.futures.ThreadPoolExecutor() as pool:
-                            pydantic_plan, usage = pool.submit(
-                                asyncio.run, planner.create_plan(plan_id, intent)
-                            ).result()
-                    else:
-                        pydantic_plan, usage = loop.run_until_complete(
-                            planner.create_plan(plan_id, intent)
-                        )
-                except RuntimeError:
-                    # Fallback: create new event loop
-                    pydantic_plan, usage = asyncio.run(planner.create_plan(plan_id, intent))
-
-                duration_ms = int((time.time() - start_time) * 1000)
-
-                # Build detailed plan output for debugging
-                plan_output = {
-                    "name": pydantic_plan.name,
-                    "description": pydantic_plan.description,
-                    "plan_type": pydantic_plan.plan_type.value,
-                    "workflow_id": pydantic_plan.workflow_id,
-                    "tasks": [
-                        {
-                            "id": task.id,
-                            "agent_id": task.agent_id,
-                            "description": task.description,
-                            "depends_on": task.depends_on,
-                        }
-                        for task in pydantic_plan.tasks
-                    ],
-                }
-
-                # Record the LLM call for debugging with full plan details
-                self._record_llm_call(
-                    name="planning_agent",
-                    model=os.getenv("ZAI_MODEL", "GLM-4.7"),
-                    prompt=f"Create plan for: {intent.prompt}",
-                    response=json.dumps(plan_output, indent=2),
-                    usage={
-                        "prompt_tokens": usage.prompt_tokens,
-                        "completion_tokens": usage.completion_tokens,
-                        "total_tokens": usage.total_tokens,
-                    },
-                    duration_ms=duration_ms,
-                    plan_output=plan_output,  # Include structured plan data
-                )
-
-                # Convert to the expected format for display
-                execution_steps = []
-                for i, task in enumerate(pydantic_plan.tasks):
+            # Convert to the expected format for display
+            execution_steps = []
+            if plan.tasks:
+                for i, task in enumerate(plan.tasks):
                     execution_steps.append({
                         "step": i + 1,
                         "name": f"Task: {task.agent_id}",
@@ -275,35 +164,47 @@ class PlanService:
                         "details": f"Agent: {task.agent_id}",
                     })
 
-                return {
-                    "plan_summary": pydantic_plan.name or f"Create {app_info.get('app_type', 'application')}",
-                    "plan_details": {
-                        "objective": pydantic_plan.description or intent.prompt,
-                        "approach": f"Using {pydantic_plan.plan_type.value} execution",
-                        "technologies": app_info.get("technologies", []),
-                        "estimated_files": [],
-                        "architecture": "Agent-based autonomous execution",
-                    },
-                    "execution_steps": execution_steps or [{
-                        "step": 1,
-                        "name": "Generate Application",
-                        "description": f"Create {app_info.get('app_type', 'application')} with all necessary files",
-                        "tool": "generate_app",
-                        "details": "Using LLM to generate complete, working code",
-                    }],
-                    "considerations": [],
+            return {
+                "plan_summary": plan.name or f"Create {app_info.get('app_type', 'application')}",
+                "plan_details": {
+                    "objective": plan.description or (intent.prompt if intent else ""),
+                    "approach": f"Using {plan.plan_type.value} execution",
+                    "technologies": app_info.get("technologies", []),
+                    "estimated_files": [],
+                    "architecture": "Agent-based autonomous execution",
+                },
+                "execution_steps": execution_steps or [{
+                    "step": 1,
+                    "name": "Generate Application",
+                    "description": f"Create {app_info.get('app_type', 'application')} with all necessary files",
+                    "tool": "generate_app",
+                    "details": "Using LLM to generate complete, working code",
+                }],
+                "considerations": [],
+                "plan_output": plan_output,  # Include for debugging
+            }
+
+        # Fallback to a default plan if no Plan object
+        return {
+            "plan_summary": f"Create {app_info.get('app_type', 'application')}",
+            "plan_details": {
+                "objective": app_info.get("description", "Build the requested application"),
+                "approach": "Generate complete application files",
+                "technologies": app_info.get("technologies", []),
+                "estimated_files": [],
+                "architecture": "Standard application structure",
+            },
+            "execution_steps": [
+                {
+                    "step": 1,
+                    "name": "Generate Application",
+                    "description": f"Create {app_info.get('app_type', 'application')} with all necessary files",
+                    "tool": "generate_app",
+                    "details": "Using LLM to generate complete, working code",
                 }
-
-            except Exception as e:
-                import structlog
-                logger = structlog.get_logger()
-                logger.warning("planner_failed_falling_back", error=str(e))
-
-        # Fallback to the old method if Planner fails or no Intent
-        return self.llm_service.create_execution_plan(
-            message=message,
-            router_analysis=app_info,
-        )
+            ],
+            "considerations": [],
+        }
 
     def create_plan(
         self,
@@ -638,7 +539,7 @@ class PlanService:
                 {"model": "GLM-4.7"}
             )
 
-            result = self.llm_service.generate_app(
+            result = self.code_service.generate_app(
                 plan_id=task.plan_id,
                 app_info=app_info,
                 auto_commit=True,  # Always commit to Git
@@ -754,6 +655,92 @@ class PlanService:
                 "success": result.get("success", False),
                 "url": result.get("url"),
                 "port": result.get("port"),
+                "error": result.get("error"),
+            }
+
+        # Handle update_app task (UPDATE_PROJECT flow)
+        if task.mcp_tool == "update_app" and task.mcp_arguments:
+            app_info = task.mcp_arguments.get("app_info", {})
+            target_project_id = task.mcp_arguments.get("target_project_id")
+            update_description = task.mcp_arguments.get("message", "Update project")
+
+            add_event(
+                "mcp_tool",
+                "MCP Tool: update_app",
+                f"Updating project with changes: {update_description[:100]}...",
+                "working",
+                {"tool": "update_app", "project_id": target_project_id}
+            )
+
+            # Get the target project
+            project = project_service.get_project_for_plan(target_project_id)
+            if not project:
+                return {
+                    "executed": True,
+                    "success": False,
+                    "error": f"Project not found: {target_project_id}",
+                }
+
+            add_event(
+                "project_found",
+                f"Found Project: {project.name}",
+                f"Repository: {project.repo_url}",
+                "success",
+                {"project_id": project.id, "repo_url": project.repo_url}
+            )
+
+            # For now, use the LLM service to apply updates
+            # In the future, this will trigger the update_workflow
+            import time
+            timestamp = int(time.time())
+
+            add_event(
+                "update_starting",
+                "Starting Update Workflow",
+                f"Creating feature branch and implementing changes...",
+                "working",
+                {"branch": f"feature/update-{timestamp}"}
+            )
+
+            # Use code_service to generate update code
+            result = self.code_service.update_app(
+                project_id=project.id,
+                update_description=update_description,
+                app_info=app_info,
+                username=task.mcp_arguments.get("username"),
+                email=task.mcp_arguments.get("email"),
+            )
+
+            if result.get("success"):
+                add_event(
+                    "update_applied",
+                    "Update Applied",
+                    f"Changes applied to branch: {result.get('branch', 'feature/update')}",
+                    "success",
+                    {
+                        "branch": result.get("branch"),
+                        "files_modified": result.get("files_modified", []),
+                    }
+                )
+
+                # Update plan with preview URL if available
+                plan = Plan.query.get(task.plan_id)
+                if plan:
+                    plan.result = plan.result or {}
+                    if result.get("preview_url"):
+                        plan.result["preview_url"] = result["preview_url"]
+                    if result.get("branch"):
+                        plan.result["branch"] = result["branch"]
+                    db.session.commit()
+
+            return {
+                "executed": True,
+                "success": result.get("success", False),
+                "project_id": project.id,
+                "project_name": project.name,
+                "branch": result.get("branch"),
+                "files_modified": result.get("files_modified", []),
+                "preview_url": result.get("preview_url"),
                 "error": result.get("error"),
             }
 
@@ -949,18 +936,12 @@ class PlanService:
                 }
             )
 
-            # Call Planning Agent to create detailed execution plan
-            add_event(
-                "planning_agent",
-                "Planning Agent",
-                "Creating detailed execution plan...",
-                "working"
-            )
-
-            execution_plan = self._create_plan_with_planner(
-                plan_id=plan.id,
-                intent=intent.get("intent"),  # The Pydantic Intent object
-                message=message,
+            # Format the plan from orchestrator for display
+            # (planner agent already ran in _analyze_intent via orchestrator)
+            orchestrator_plan = intent.get("plan")
+            execution_plan = self._format_plan_for_display(
+                plan=orchestrator_plan,
+                intent=intent.get("intent"),
                 app_info=app_info,
             )
 
@@ -1137,64 +1118,115 @@ class PlanService:
             for p in projects
         ]
 
-    def _analyze_intent_with_router(
+    def _analyze_intent_with_orchestrator(
         self,
         message: str,
+        user_projects: list[dict] | None = None,
         plan_id: str | None = None,
-    ) -> tuple[Any, dict[str, Any]]:
-        """Analyze user message using the new Router architecture.
+    ) -> tuple[Any, dict[str, Any], Any]:
+        """Analyze user message using the ChatOrchestrator.
 
-        Returns the Intent object and extracted app_info for compatibility.
+        The orchestrator runs both router and planner agents.
 
         Args:
             message: The user's message
+            user_projects: List of user's existing projects for context
             plan_id: Optional plan ID for context
 
         Returns:
-            Tuple of (Intent, app_info dict)
+            Tuple of (Intent, app_info dict, Plan or None)
         """
         import time
+        import structlog
+        logger = structlog.get_logger()
+
         start_time = time.time()
 
-        # Get the Router and run analysis
-        router = self._get_router()
-
-        # Run the async router in sync context
-        # Use asyncio.run() for new event loop or nest_asyncio if needed
+        # Run orchestrator in sync context
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # If loop is already running (e.g., in gevent), create new loop
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as pool:
-                    intent, usage = pool.submit(
-                        asyncio.run, router.analyze(message, plan_id)
+                    result = pool.submit(
+                        asyncio.run,
+                        chat_orchestrator.process_message(
+                            message=message,
+                            user_projects=user_projects,
+                            plan_id=plan_id,
+                        )
                     ).result()
             else:
-                intent, usage = loop.run_until_complete(
-                    router.analyze(message, plan_id)
+                result = loop.run_until_complete(
+                    chat_orchestrator.process_message(
+                        message=message,
+                        user_projects=user_projects,
+                        plan_id=plan_id,
+                    )
                 )
         except RuntimeError:
-            # Fallback: create new event loop
-            intent, usage = asyncio.run(router.analyze(message, plan_id))
+            result = asyncio.run(
+                chat_orchestrator.process_message(
+                    message=message,
+                    user_projects=user_projects,
+                    plan_id=plan_id,
+                )
+            )
 
         duration_ms = int((time.time() - start_time) * 1000)
 
-        # Record the LLM call for debugging
-        self._record_llm_call(
-            name="router_agent",
-            model=os.getenv("ZAI_MODEL", "GLM-4.7"),
-            prompt=message,
-            response=f"Action: {intent.action.value}, Prompt: {intent.prompt}",
-            usage={
-                "prompt_tokens": usage.prompt_tokens,
-                "completion_tokens": usage.completion_tokens,
-                "total_tokens": usage.total_tokens,
-            },
+        logger.info(
+            "orchestrator_result",
+            success=result.get("success"),
+            type=result.get("type"),
             duration_ms=duration_ms,
         )
 
-        # Convert Intent to app_info dict for compatibility with existing code
+        # Handle errors
+        if not result.get("success"):
+            logger.error("orchestrator_failed", error=result.get("error"))
+            # Return a fallback intent
+            from druppie.core.models import Intent
+            fallback_intent = Intent(
+                initial_prompt=message,
+                prompt=message,
+                action=IntentAction.GENERAL_CHAT,
+                answer=result.get("error") or "I couldn't process your request. Please try again.",
+            )
+            return fallback_intent, {"action": "general_chat", "answer": fallback_intent.answer}, None
+
+        # Handle chat responses (no plan needed)
+        if result.get("type") == "chat":
+            intent = result.get("intent")
+            if not intent:
+                from druppie.core.models import Intent
+                intent = Intent(
+                    initial_prompt=message,
+                    prompt=message,
+                    action=IntentAction.GENERAL_CHAT,
+                    answer=result.get("response"),
+                )
+            return intent, {"action": "general_chat", "answer": result.get("response")}, None
+
+        # Handle question responses
+        if result.get("type") == "question":
+            intent = result.get("intent")
+            app_info = {
+                "action": "ask_question",
+                "question": {
+                    "text": result.get("question"),
+                    "context": "Router needs more information",
+                    "options": [],
+                    "required_for": "Determining the appropriate action",
+                },
+            }
+            return intent, app_info, None
+
+        # Handle action responses (has intent and plan)
+        intent = result.get("intent")
+        plan = result.get("plan")
+
+        # Convert Intent to app_info dict for compatibility
         app_info = {
             "action": intent.action.value,
             "app_type": intent.project_context.get("app_type", "generic"),
@@ -1206,17 +1238,23 @@ class PlanService:
             "answer": intent.answer,
         }
 
-        # Handle clarification
-        if intent.clarification_needed and intent.clarification_question:
-            app_info["action"] = "ask_question"
-            app_info["question"] = {
-                "text": intent.clarification_question,
-                "context": "Router needs more information",
-                "options": [],
-                "required_for": "Determining the appropriate action",
-            }
+        # Record token usage if available
+        total_usage = result.get("total_usage")
+        if total_usage:
+            self._record_llm_call(
+                name="orchestrator",
+                model=os.getenv("ZAI_MODEL", "GLM-4.7"),
+                prompt=message,
+                response=f"Action: {intent.action.value}, Plan: {plan.name if plan else 'None'}",
+                usage={
+                    "prompt_tokens": total_usage.prompt_tokens,
+                    "completion_tokens": total_usage.completion_tokens,
+                    "total_tokens": total_usage.total_tokens,
+                },
+                duration_ms=duration_ms,
+            )
 
-        return intent, app_info
+        return intent, app_info, plan
 
     def _analyze_intent(
         self,
@@ -1224,9 +1262,9 @@ class PlanService:
         user_id: str | None = None,
         current_project_id: str | None = None,
     ) -> dict[str, Any]:
-        """Analyze user message to determine intent using the new Router.
+        """Analyze user message to determine intent using the ChatOrchestrator.
 
-        ALL messages go through the Router - no hardcoded responses.
+        ALL messages go through the orchestrator which runs router + planner agents.
 
         Args:
             message: The user's message
@@ -1236,40 +1274,29 @@ class PlanService:
         Returns:
             Intent dict with type and tasks/response
         """
-        # Get user's existing projects for context (build enhanced message)
+        # Get user's existing projects for context
         existing_projects = None
-        current_project = None
 
         if user_id:
             existing_projects = self._get_user_projects_for_context(user_id)
 
-            # Get current project context if specified
-            if current_project_id:
-                project = project_service.get_project_for_plan(current_project_id)
-                if project:
-                    current_project = {
-                        "id": project.id,
-                        "name": project.name,
-                        "repo_url": project.repo_url,
-                        "description": project.description,
-                    }
-
-        # Build enhanced message with project context
-        enhanced_message = self._build_message_with_context(
-            message, existing_projects, current_project
+        # Use the orchestrator for intent analysis (runs router + planner)
+        intent, app_info, plan = self._analyze_intent_with_orchestrator(
+            message=message,
+            user_projects=existing_projects,
         )
 
-        # Use the new Router for intent analysis
-        intent, app_info = self._analyze_intent_with_router(enhanced_message)
+        # Store the plan for later use
+        self._cached_plan = plan
 
         action = app_info.get("action", "general_chat")
 
-        # Handle general chat responses from router
+        # Handle general chat responses
         if action == "general_chat":
             return {
                 "type": "chat",
                 "response": app_info.get("answer") or intent.answer or f"I understand your message: {message}. How can I help you today?",
-                "intent": intent,  # Include for debugging
+                "intent": intent,
             }
 
         # Handle ask_question action - router needs clarification
@@ -1301,6 +1328,7 @@ class PlanService:
                 "type": "action",
                 "intent": intent,
                 "app_info": app_info,
+                "plan": plan,
                 "tasks": [
                     {
                         "name": f"Update {app_info['name']}",
@@ -1321,6 +1349,7 @@ class PlanService:
             "type": "action",
             "intent": intent,
             "app_info": app_info,
+            "plan": plan,
             "tasks": [
                 {
                     "name": f"Generate {app_info['name']}",
@@ -1332,38 +1361,3 @@ class PlanService:
             ],
         }
 
-    def _build_message_with_context(
-        self,
-        message: str,
-        existing_projects: list[dict[str, Any]] | None,
-        current_project: dict[str, Any] | None,
-    ) -> str:
-        """Build enhanced message with project context for the Router."""
-        parts = []
-
-        # Add current project context if available
-        if current_project:
-            parts.append("CURRENT PROJECT CONTEXT:")
-            parts.append(f"- Name: {current_project.get('name', 'Unknown')}")
-            parts.append(f"- ID: {current_project.get('id', 'Unknown')}")
-            if current_project.get("repo_url"):
-                parts.append(f"- Repo: {current_project['repo_url']}")
-            if current_project.get("description"):
-                parts.append(f"- Description: {current_project['description']}")
-            parts.append("")
-
-        # Add existing projects list if available
-        if existing_projects:
-            parts.append("USER'S EXISTING PROJECTS:")
-            for proj in existing_projects[:10]:  # Limit to 10 projects for context
-                proj_line = f"- {proj.get('name', 'Unknown')} (ID: {proj.get('id', 'Unknown')})"
-                if proj.get("repo_url"):
-                    proj_line += f" - {proj['repo_url']}"
-                parts.append(proj_line)
-            parts.append("")
-
-        # Add the actual user message
-        parts.append("USER REQUEST:")
-        parts.append(message)
-
-        return "\n".join(parts)
