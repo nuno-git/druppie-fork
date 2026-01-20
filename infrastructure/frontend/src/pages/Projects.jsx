@@ -24,7 +24,7 @@ import {
   Server,
   Trash2,
 } from 'lucide-react'
-import { getWorkspaceFiles, getWorkspaceFile, getWorkspaceDownloadUrl, getPlans, getProjectStatus, getProjects, deleteProject } from '../services/api'
+import { getWorkspaceFiles, getWorkspaceFile, getWorkspaceDownloadUrl, getProjectStatus, getProjects, deleteProject } from '../services/api'
 
 const getFileIcon = (filename) => {
   const ext = filename.split('.').pop().toLowerCase()
@@ -289,8 +289,8 @@ const Projects = () => {
   const queryClient = useQueryClient()
 
   const { data: plans = [] } = useQuery({
-    queryKey: ['plans'],
-    queryFn: getPlans,
+    queryKey: ['projects'],
+    queryFn: getProjects,
   })
 
   const deleteMutation = useMutation({
@@ -299,7 +299,7 @@ const Projects = () => {
       setDeletingId(projectId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['plans'] })
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
       queryClient.invalidateQueries({ queryKey: ['allProjectStatuses'] })
       setDeletingId(null)
       // If we deleted the selected project, deselect it
