@@ -186,7 +186,10 @@ services:
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
 
       # LLM Configuration
-      LLM_PROVIDER: ${LLM_PROVIDER:-zai}
+      # Set LLM_PROVIDER=zai and provide ZAI_API_KEY for cloud LLM
+      # Set LLM_PROVIDER=ollama for local LLM (requires Ollama running on host)
+      # Set LLM_PROVIDER=auto to auto-detect (uses Z.AI if key present, else Ollama)
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZAI_MODEL: ${ZAI_MODEL:-GLM-4.7}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
