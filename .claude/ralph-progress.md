@@ -1020,3 +1020,95 @@ Next iteration could focus on:
 - Performance optimizations for LLM calls
 - More comprehensive E2E test coverage
 - Add visual indication when another user is viewing the same conversation
+
+---
+
+## Iteration 14 Summary
+
+### What Was Implemented
+
+1. **DateTime JSON Serialization Fix** - Working
+   - Added `serialize_for_json()` helper function in plans.py
+   - Recursively converts datetime objects to ISO strings
+   - Applied to task.result and plan.result assignments
+   - Fixes "Object of type datetime is not JSON serializable" error
+
+2. **Update Workflow Parameter Fixes** - Partially Working
+   - Fixed git.clone to use `repo_url` instead of `url` parameter
+   - Fixed paths to use `{project_id}` instead of `{project_name}`
+   - Fixed repo references to use `{repo_name}` for Gitea operations
+   - Added `repo_name` and `repo_url` to workflow context
+
+### Test Results
+
+1. **Update Flow Router Detection** - Working:
+   - Request: "Update my counter app to add a dark mode toggle button"
+   - Router correctly identified `update_project` intent
+   - Router identified target project: `counter-app-6bb20429`
+
+2. **Update Workflow Execution** - Partially Working:
+   - `clone_repository` step: SUCCESS (correct repo_url parameter)
+   - `create_update_branch` step: SUCCESS (feature/update-{timestamp} created)
+   - `analyze_codebase` step: Agent running but JSON parsing errors
+   - Agents retry up to 15 times before moving forward
+
+### Issues Identified
+
+1. **Agent JSON Parsing Errors**
+   - Error: "Expecting value: line 1 column 11 (char 10)"
+   - LLM responses not parsing as valid JSON
+   - Agents retry multiple times, eventually proceeding
+   - Needs investigation of LLM response format
+
+### Code Changes
+
+**backend/druppie/plans.py**:
+- Added `serialize_for_json()` helper function
+- Apply serialization to task.result and plan.result
+- Added `repo_name` and `repo_url` to update workflow context
+
+**backend/registry/workflows/update_workflow.yaml**:
+- Changed `url` to `repo_url` in clone_repository step
+- Changed all `{project_name}` paths to `{project_id}`
+- Changed repo references to `{repo_name}`
+
+### Commits Made (Iteration 14)
+
+1. `7d637a9` - Fix update workflow and datetime serialization (Iteration 14)
+
+---
+
+## Status After Iteration 14
+
+All core functionality is working:
+- Authentication with Keycloak
+- Chat with LLM (Z.AI / GLM-4.7 / Ollama / Mock)
+- Router agent analyzes intent (including deploy_project, update_project)
+- Planner agent creates execution plans
+- Developer agent generates code
+- HITL question/answer flow
+- Project creation with Git push to Gitea
+- Build and run projects in Docker
+- Flask apps now accessible from Docker containers
+- ROLE approval workflow (deploy.staging)
+- MULTI approval workflow (deploy.production)
+- Deployment workflow triggered from chat
+- Inline approval UI in chat
+- Agent attribution badges
+- Enhanced progress indicators
+- MULTI approval progress display
+- Partial approval feedback
+- Pending approvals in loaded conversations
+- Hide approve button when user already approved
+- WebSocket real-time approval updates
+- Toast notifications for approval events
+- Mock LLM provider for testing
+- **Update workflow git clone and branch creation** (NEW)
+- **DateTime serialization for JSON storage** (FIXED)
+
+Next iteration could focus on:
+- Fix agent JSON parsing for LLM responses
+- Complete project update workflow testing
+- Performance optimizations for LLM calls
+- More comprehensive E2E test coverage
+- Add visual indication when another user is viewing the same conversation
