@@ -144,21 +144,34 @@ class Agent:
 
     def _create_control_tools(self) -> list[StructuredTool]:
         """Create control flow tools for the agent."""
+        agent_logger = self.logger
 
         def done(summary: str, artifacts: list[str] = [], data: dict = {}) -> str:
             """Call this when your task is complete.
             Provide a summary of what you accomplished."""
-            return f"__DONE__|{json.dumps({'summary': summary, 'artifacts': artifacts, 'data': data})}"
+            # Ensure we have valid types
+            summary = str(summary) if summary else "Task completed"
+            artifacts = list(artifacts) if artifacts else []
+            data = dict(data) if data else {}
+            result = f"__DONE__|{json.dumps({'summary': summary, 'artifacts': artifacts, 'data': data})}"
+            agent_logger.debug("control_tool_done", result_length=len(result))
+            return result
 
         def fail(reason: str) -> str:
             """Call this if you cannot complete the task.
             Explain why you cannot continue."""
-            return f"__FAIL__|{json.dumps({'reason': reason})}"
+            reason = str(reason) if reason else "Unknown failure"
+            result = f"__FAIL__|{json.dumps({'reason': reason})}"
+            agent_logger.debug("control_tool_fail", result_length=len(result))
+            return result
 
         def ask_human(question: str) -> str:
             """Call this if you need clarification from a human.
             Ask a specific question."""
-            return f"__ASK_HUMAN__|{json.dumps({'question': question})}"
+            question = str(question) if question else "Need input"
+            result = f"__ASK_HUMAN__|{json.dumps({'question': question})}"
+            agent_logger.debug("control_tool_ask_human", result_length=len(result))
+            return result
 
         return [
             StructuredTool.from_function(
@@ -394,7 +407,17 @@ class Agent:
 
                     # Check for control commands
                     if result.startswith("__DONE__|"):
-                        data = json.loads(result.split("|", 1)[1])
+                        json_part = result.split("|", 1)[1]
+                        try:
+                            data = json.loads(json_part)
+                        except json.JSONDecodeError as e:
+                            self.logger.error(
+                                f"Failed to parse DONE result JSON",
+                                error=str(e),
+                                json_part=json_part[:200] if json_part else "empty",
+                            )
+                            # Treat as plain text result
+                            data = {"summary": json_part or "Task completed", "artifacts": [], "data": {}}
                         # Add the parsed data to the last llm_call for visibility in debug panel
                         if self.llm_calls:
                             self.llm_calls[-1]["parsed_data"] = data.get("data", {})
@@ -416,7 +439,16 @@ class Agent:
                         )
 
                     if result.startswith("__FAIL__|"):
-                        data = json.loads(result.split("|", 1)[1])
+                        json_part = result.split("|", 1)[1]
+                        try:
+                            data = json.loads(json_part)
+                        except json.JSONDecodeError as e:
+                            self.logger.error(
+                                f"Failed to parse FAIL result JSON",
+                                error=str(e),
+                                json_part=json_part[:200] if json_part else "empty",
+                            )
+                            data = {"reason": json_part or "Task failed"}
                         self._emit(
                             "agent_failed",
                             f"Agent: {self.definition.name}",
@@ -435,7 +467,16 @@ class Agent:
 
                     if result.startswith("__ASK_HUMAN__|"):
                         # For now, treat as needing intervention
-                        data = json.loads(result.split("|", 1)[1])
+                        json_part = result.split("|", 1)[1]
+                        try:
+                            data = json.loads(json_part)
+                        except json.JSONDecodeError as e:
+                            self.logger.error(
+                                f"Failed to parse ASK_HUMAN result JSON",
+                                error=str(e),
+                                json_part=json_part[:200] if json_part else "empty",
+                            )
+                            data = {"question": json_part or "Need human input"}
                         self._emit(
                             "agent_question",
                             f"Agent: {self.definition.name}",
