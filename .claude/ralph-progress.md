@@ -340,3 +340,36 @@ Users can now type deployment requests in chat (e.g., "Deploy my project to stag
 ### Commits Made (Iteration 5)
 
 1. `b3c51c1` - Add deployment workflow integration to chat
+2. `7372a9b` - Update Ralph progress with iteration 5 summary
+3. `444fed9` - Add E2E tests for deployment approval workflows
+
+---
+
+## Status After Iteration 5
+
+All core functionality is working:
+- Authentication with Keycloak
+- Chat with LLM (Z.AI / GLM-4.7)
+- Router agent analyzes intent (including deploy_project)
+- Planner agent creates execution plans
+- Developer agent generates code
+- HITL question/answer flow
+- Project creation with Git push to Gitea
+- Build and run projects in Docker
+- ROLE approval workflow (deploy.staging)
+- MULTI approval workflow (deploy.production)
+- Deployment workflow triggered from chat
+
+E2E tests now cover:
+- Authentication flows
+- Chat and plan creation
+- Deployment approval workflows (ROLE and MULTI)
+- Reject workflow
+- Approval count updates
+- Debug panel events
+
+Next iteration could focus on:
+- Implement actual deployment infrastructure (currently simulated)
+- Add inline approval UI in chat
+- More comprehensive error handling
+- Performance optimizations for LLM calls
