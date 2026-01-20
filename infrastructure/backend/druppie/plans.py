@@ -1,5 +1,10 @@
-"""Plan service for managing execution plans."""
+"""Plan service for managing execution plans.
 
+Integrates the Router and Planner from the druppie architecture.
+"""
+
+import asyncio
+import os
 import uuid
 from datetime import datetime
 from typing import Any, Optional, Callable
@@ -9,6 +14,12 @@ from .mcp_permissions import MCPPermissionManager
 from .llm_service import LLMService
 from .project import project_service
 from .builder import builder_service
+
+# Import the new architecture components
+from druppie.llm import ChatZAI
+from druppie.router import Router
+from druppie.planner import Planner
+from druppie.core.models import IntentAction
 
 
 class WorkflowEvent:
@@ -41,11 +52,180 @@ class WorkflowEvent:
 
 
 class PlanService:
-    """Service for managing plans and tasks."""
+    """Service for managing plans and tasks.
+
+    Uses the new architecture components:
+    - Router: Analyzes user intent
+    - Planner: Creates execution plans
+    """
 
     def __init__(self):
         self.mcp_manager = MCPPermissionManager()
         self.llm_service = LLMService()
+
+        # Initialize LangChain-based LLM
+        self._llm = None
+        self._router = None
+        self._planner = None
+
+        # Track LLM calls from the new architecture
+        self._llm_calls: list[dict] = []
+
+    def _get_llm(self) -> ChatZAI:
+        """Get or create the LangChain LLM instance."""
+        if self._llm is None:
+            self._llm = ChatZAI(
+                api_key=os.getenv("ZAI_API_KEY", ""),
+                model=os.getenv("ZAI_MODEL", "GLM-4.7"),
+                base_url=os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4"),
+            )
+        return self._llm
+
+    def _get_router(self) -> Router:
+        """Get or create the Router instance."""
+        if self._router is None:
+            self._router = Router(llm=self._get_llm())
+        return self._router
+
+    def _get_planner(self) -> Planner:
+        """Get or create the Planner instance."""
+        if self._planner is None:
+            self._planner = Planner(llm=self._get_llm())
+        return self._planner
+
+    def _record_llm_call(
+        self,
+        name: str,
+        model: str,
+        prompt: str,
+        response: str,
+        usage: dict | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
+        """Record an LLM call for debugging."""
+        import time
+        self._llm_calls.append({
+            "name": name,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "model": model,
+            "request": {"messages": [{"role": "user", "content": prompt[:500] + "..." if len(prompt) > 500 else prompt}]},
+            "response": response[:1000] + "..." if len(response) > 1000 else response,
+            "usage": usage or {},
+            "duration_ms": duration_ms,
+            "status": "success",
+        })
+
+    def get_llm_calls(self) -> list[dict]:
+        """Get all recorded LLM calls."""
+        # Combine calls from both old and new architecture
+        old_calls = self.llm_service.get_llm_calls()
+        return self._llm_calls + old_calls
+
+    def clear_llm_calls(self) -> None:
+        """Clear all recorded LLM calls."""
+        self._llm_calls = []
+        self.llm_service.clear_llm_calls()
+
+    def _create_plan_with_planner(
+        self,
+        plan_id: str,
+        intent: Any,
+        message: str,
+        app_info: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Create an execution plan using the new Planner architecture.
+
+        Args:
+            plan_id: The plan ID
+            intent: The Intent object from the Router (can be None)
+            message: The original user message
+            app_info: The app_info dict for fallback
+
+        Returns:
+            dict with plan_summary, plan_details, execution_steps, considerations
+        """
+        import time
+        start_time = time.time()
+
+        # If we have a proper Intent object, use the Planner
+        if intent is not None and hasattr(intent, 'action'):
+            try:
+                planner = self._get_planner()
+
+                # Run the async planner in sync context
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If loop is already running (e.g., in gevent), create new loop
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            pydantic_plan, usage = pool.submit(
+                                asyncio.run, planner.create_plan(plan_id, intent)
+                            ).result()
+                    else:
+                        pydantic_plan, usage = loop.run_until_complete(
+                            planner.create_plan(plan_id, intent)
+                        )
+                except RuntimeError:
+                    # Fallback: create new event loop
+                    pydantic_plan, usage = asyncio.run(planner.create_plan(plan_id, intent))
+
+                duration_ms = int((time.time() - start_time) * 1000)
+
+                # Record the LLM call for debugging
+                self._record_llm_call(
+                    name="planning_agent",
+                    model=os.getenv("ZAI_MODEL", "GLM-4.7"),
+                    prompt=f"Create plan for: {intent.prompt}",
+                    response=f"Plan: {pydantic_plan.name}, Type: {pydantic_plan.plan_type.value}, Tasks: {len(pydantic_plan.tasks)}",
+                    usage={
+                        "prompt_tokens": usage.prompt_tokens,
+                        "completion_tokens": usage.completion_tokens,
+                        "total_tokens": usage.total_tokens,
+                    },
+                    duration_ms=duration_ms,
+                )
+
+                # Convert to the expected format for display
+                execution_steps = []
+                for i, task in enumerate(pydantic_plan.tasks):
+                    execution_steps.append({
+                        "step": i + 1,
+                        "name": f"Task: {task.agent_id}",
+                        "description": task.description,
+                        "tool": "agent_task",
+                        "details": f"Agent: {task.agent_id}",
+                    })
+
+                return {
+                    "plan_summary": pydantic_plan.name or f"Create {app_info.get('app_type', 'application')}",
+                    "plan_details": {
+                        "objective": pydantic_plan.description or intent.prompt,
+                        "approach": f"Using {pydantic_plan.plan_type.value} execution",
+                        "technologies": app_info.get("technologies", []),
+                        "estimated_files": [],
+                        "architecture": "Agent-based autonomous execution",
+                    },
+                    "execution_steps": execution_steps or [{
+                        "step": 1,
+                        "name": "Generate Application",
+                        "description": f"Create {app_info.get('app_type', 'application')} with all necessary files",
+                        "tool": "generate_app",
+                        "details": "Using LLM to generate complete, working code",
+                    }],
+                    "considerations": [],
+                }
+
+            except Exception as e:
+                import structlog
+                logger = structlog.get_logger()
+                logger.warning("planner_failed_falling_back", error=str(e))
+
+        # Fallback to the old method if Planner fails or no Intent
+        return self.llm_service.create_execution_plan(
+            message=message,
+            router_analysis=app_info,
+        )
 
     def create_plan(
         self,
@@ -645,8 +825,8 @@ class PlanService:
                 "success"
             )
 
-            # Get LLM calls before storing
-            llm_calls = self.llm_service.get_llm_calls()
+            # Get LLM calls before storing (from both old and new architecture)
+            llm_calls = self.get_llm_calls()
 
             # Store everything in plan.result for persistence
             # Must assign a new dict for SQLAlchemy to detect the change
@@ -699,9 +879,11 @@ class PlanService:
                 "working"
             )
 
-            execution_plan = self.llm_service.create_execution_plan(
+            execution_plan = self._create_plan_with_planner(
+                plan_id=plan.id,
+                intent=intent.get("intent"),  # The Pydantic Intent object
                 message=message,
-                router_analysis=app_info,
+                app_info=app_info,
             )
 
             # Show the plan to the user
@@ -833,8 +1015,8 @@ class PlanService:
         pending_questions = self.get_pending_questions(plan_id=plan.id)
         questions_list = [q.to_dict() for q in pending_questions]
 
-        # Get LLM calls before storing
-        llm_calls = self.llm_service.get_llm_calls()
+        # Get LLM calls before storing (from both old and new architecture)
+        llm_calls = self.get_llm_calls()
 
         # Store workflow_events and llm_calls in plan.result for persistence
         # Must assign a new dict for SQLAlchemy to detect the change
@@ -877,15 +1059,96 @@ class PlanService:
             for p in projects
         ]
 
+    def _analyze_intent_with_router(
+        self,
+        message: str,
+        plan_id: str | None = None,
+    ) -> tuple[Any, dict[str, Any]]:
+        """Analyze user message using the new Router architecture.
+
+        Returns the Intent object and extracted app_info for compatibility.
+
+        Args:
+            message: The user's message
+            plan_id: Optional plan ID for context
+
+        Returns:
+            Tuple of (Intent, app_info dict)
+        """
+        import time
+        start_time = time.time()
+
+        # Get the Router and run analysis
+        router = self._get_router()
+
+        # Run the async router in sync context
+        # Use asyncio.run() for new event loop or nest_asyncio if needed
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If loop is already running (e.g., in gevent), create new loop
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    intent, usage = pool.submit(
+                        asyncio.run, router.analyze(message, plan_id)
+                    ).result()
+            else:
+                intent, usage = loop.run_until_complete(
+                    router.analyze(message, plan_id)
+                )
+        except RuntimeError:
+            # Fallback: create new event loop
+            intent, usage = asyncio.run(router.analyze(message, plan_id))
+
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        # Record the LLM call for debugging
+        self._record_llm_call(
+            name="router_agent",
+            model=os.getenv("ZAI_MODEL", "GLM-4.7"),
+            prompt=message,
+            response=f"Action: {intent.action.value}, Prompt: {intent.prompt}",
+            usage={
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "total_tokens": usage.total_tokens,
+            },
+            duration_ms=duration_ms,
+        )
+
+        # Convert Intent to app_info dict for compatibility with existing code
+        app_info = {
+            "action": intent.action.value,
+            "app_type": intent.project_context.get("app_type", "generic"),
+            "name": intent.project_context.get("project_name", "my-app"),
+            "description": intent.prompt,
+            "features": intent.project_context.get("features", []),
+            "technologies": intent.project_context.get("technologies", []),
+            "target_project_id": intent.project_context.get("target_project_id"),
+            "answer": intent.answer,
+        }
+
+        # Handle clarification
+        if intent.clarification_needed and intent.clarification_question:
+            app_info["action"] = "ask_question"
+            app_info["question"] = {
+                "text": intent.clarification_question,
+                "context": "Router needs more information",
+                "options": [],
+                "required_for": "Determining the appropriate action",
+            }
+
+        return intent, app_info
+
     def _analyze_intent(
         self,
         message: str,
         user_id: str | None = None,
         current_project_id: str | None = None,
     ) -> dict[str, Any]:
-        """Analyze user message to determine intent using LLM router.
+        """Analyze user message to determine intent using the new Router.
 
-        ALL messages go through the LLM router - no hardcoded responses.
+        ALL messages go through the Router - no hardcoded responses.
 
         Args:
             message: The user's message
@@ -895,7 +1158,7 @@ class PlanService:
         Returns:
             Intent dict with type and tasks/response
         """
-        # Get user's existing projects for context
+        # Get user's existing projects for context (build enhanced message)
         existing_projects = None
         current_project = None
 
@@ -913,12 +1176,13 @@ class PlanService:
                         "description": project.description,
                     }
 
-        # Route ALL messages through the LLM router
-        app_info = self.llm_service.analyze_request(
-            message,
-            existing_projects=existing_projects,
-            current_project=current_project,
+        # Build enhanced message with project context
+        enhanced_message = self._build_message_with_context(
+            message, existing_projects, current_project
         )
+
+        # Use the new Router for intent analysis
+        intent, app_info = self._analyze_intent_with_router(enhanced_message)
 
         action = app_info.get("action", "general_chat")
 
@@ -926,7 +1190,8 @@ class PlanService:
         if action == "general_chat":
             return {
                 "type": "chat",
-                "response": app_info.get("answer") or f"I understand your message: {message}. How can I help you today?",
+                "response": app_info.get("answer") or intent.answer or f"I understand your message: {message}. How can I help you today?",
+                "intent": intent,  # Include for debugging
             }
 
         # Handle ask_question action - router needs clarification
@@ -934,6 +1199,7 @@ class PlanService:
             question_info = app_info.get("question", {})
             return {
                 "type": "action",
+                "intent": intent,
                 "tasks": [
                     {
                         "name": "Clarification Needed",
@@ -955,6 +1221,8 @@ class PlanService:
             target_id = app_info.get("target_project_id")
             return {
                 "type": "action",
+                "intent": intent,
+                "app_info": app_info,
                 "tasks": [
                     {
                         "name": f"Update {app_info['name']}",
@@ -973,6 +1241,8 @@ class PlanService:
         # Handle create_project action (default for action requests)
         return {
             "type": "action",
+            "intent": intent,
+            "app_info": app_info,
             "tasks": [
                 {
                     "name": f"Generate {app_info['name']}",
@@ -983,3 +1253,39 @@ class PlanService:
                 }
             ],
         }
+
+    def _build_message_with_context(
+        self,
+        message: str,
+        existing_projects: list[dict[str, Any]] | None,
+        current_project: dict[str, Any] | None,
+    ) -> str:
+        """Build enhanced message with project context for the Router."""
+        parts = []
+
+        # Add current project context if available
+        if current_project:
+            parts.append("CURRENT PROJECT CONTEXT:")
+            parts.append(f"- Name: {current_project.get('name', 'Unknown')}")
+            parts.append(f"- ID: {current_project.get('id', 'Unknown')}")
+            if current_project.get("repo_url"):
+                parts.append(f"- Repo: {current_project['repo_url']}")
+            if current_project.get("description"):
+                parts.append(f"- Description: {current_project['description']}")
+            parts.append("")
+
+        # Add existing projects list if available
+        if existing_projects:
+            parts.append("USER'S EXISTING PROJECTS:")
+            for proj in existing_projects[:10]:  # Limit to 10 projects for context
+                proj_line = f"- {proj.get('name', 'Unknown')} (ID: {proj.get('id', 'Unknown')})"
+                if proj.get("repo_url"):
+                    proj_line += f" - {proj['repo_url']}"
+                parts.append(proj_line)
+            parts.append("")
+
+        # Add the actual user message
+        parts.append("USER REQUEST:")
+        parts.append(message)
+
+        return "\n".join(parts)

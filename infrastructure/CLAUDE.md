@@ -7,13 +7,26 @@ Druppie is a governance platform for AI agents with MCP (Model Context Protocol)
 ## Architecture
 
 ```
-User Request -> LLM Router -> Intent Analysis -> Plan/Tasks -> MCP Tool Execution -> Result
-                    |
-                    v
-            Project Context (existing projects, current project)
+User Request -> Router (LLM) -> Intent Analysis -> Planner (LLM) -> Execution Plan
+                                                        |
+                                                        v
+                                                  Orchestrator
+                                                   /        \
+                                           Workflows    AgentRuntime
+                                                        (parallel tasks)
 ```
 
-### Key Components
+### Core Architecture Components (druppie/)
+
+- **Router** (`router/router.py`): LangChain-based intent analysis, classifies user requests
+- **Planner** (`planner/planner.py`): Creates execution plans using LLM
+- **Orchestrator** (`orchestrator.py`): Routes plans to WorkflowEngine or AgentRuntime
+- **AgentRuntime** (`agents/runtime.py`): Parallel execution of autonomous agents
+- **WorkflowEngine** (`workflows/engine.py`): Executes predefined workflow steps
+- **MCPClient** (`mcp/client.py`): Invokes MCP tools
+- **MCPRegistry** (`mcp/registry.py`): Loads MCP server definitions from YAML
+
+### Infrastructure Components
 
 - **Backend** (`/backend`): Flask API with Keycloak auth, SQLAlchemy ORM
 - **Frontend** (`/frontend`): Vite + React with Keycloak OIDC
@@ -198,6 +211,58 @@ curl -u gitea_admin:GiteaAdmin123 http://localhost:3000/api/v1/orgs/druppie/repo
 2. **"git: command not found"**: Rebuild backend (`docker compose build druppie-backend`)
 3. **Gitea repo not created**: Check backend logs for API errors
 4. **Frontend auth issues**: Clear browser storage, check Keycloak client config
+
+## E2E Testing with Playwright (Standard)
+
+**IMPORTANT**: Always use Playwright MCP tools for end-to-end testing. Do NOT use curl or bash commands for testing the UI or API interactions.
+
+### Testing Workflow
+
+1. **Navigate to the app**:
+   ```
+   Use: mcp__plugin_playwright_playwright__browser_navigate
+   URL: http://localhost:5173
+   ```
+
+2. **Take a snapshot to see the page state**:
+   ```
+   Use: mcp__plugin_playwright_playwright__browser_snapshot
+   ```
+
+3. **Login via Keycloak**:
+   - Navigate to login page
+   - Fill username/password fields using browser_type or browser_fill_form
+   - Click login button
+
+4. **Test chat functionality**:
+   - Navigate to Chat page
+   - Type a message in the chat input
+   - Submit and verify the response appears
+   - Check the Debug panel for LLM calls (router_agent, planning_agent)
+
+5. **Verify UI state**:
+   - Use browser_snapshot to get the current page state
+   - Check for expected elements, text, and data
+
+### Test Users for Playwright
+
+| Username | Password | Use Case |
+|----------|----------|----------|
+| admin | Admin123! | Full access testing |
+| architect | Architect123! | Role-based testing |
+| seniordev | Developer123! | Limited permissions |
+
+### Example: Test Chat with Router and Planner
+
+1. Navigate to `http://localhost:5173`
+2. Login as admin
+3. Go to Chat page
+4. Send message: "Create a simple counter app"
+5. Verify:
+   - Router Agent appears in Debug panel
+   - Planning Agent appears in Debug panel
+   - Execution plan is shown
+   - Response is generated
 
 ## Git Workflow for Claude
 
