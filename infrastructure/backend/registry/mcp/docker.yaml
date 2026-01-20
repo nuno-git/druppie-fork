@@ -1,0 +1,182 @@
+# Docker MCP Server
+# Provides Docker container operations
+
+id: docker
+name: Docker
+description: Docker container operations
+transport: stdio
+command: python3
+args:
+  - -m
+  - druppie.mcp.servers.docker
+
+tools:
+  - name: build
+    description: Build a Docker image
+    input_schema:
+      type: object
+      properties:
+        path:
+          type: string
+          description: Path to build context
+        tag:
+          type: string
+          description: Image tag
+        dockerfile:
+          type: string
+          description: Dockerfile name
+          default: Dockerfile
+        build_args:
+          type: object
+          description: Build arguments
+      required:
+        - path
+        - tag
+
+  - name: run
+    description: Run a Docker container
+    input_schema:
+      type: object
+      properties:
+        image:
+          type: string
+          description: Image to run
+        name:
+          type: string
+          description: Container name
+        command:
+          type: string
+          description: Command to run
+        detach:
+          type: boolean
+          description: Run in background
+          default: false
+        port:
+          type: string
+          description: Port mapping (e.g., "8080:8080")
+        volumes:
+          type: array
+          items:
+            type: string
+          description: Volume mounts
+        env:
+          type: object
+          description: Environment variables
+        workdir:
+          type: string
+          description: Working directory
+        rm:
+          type: boolean
+          description: Remove container after exit
+          default: false
+      required:
+        - image
+
+  - name: stop
+    description: Stop a running container
+    input_schema:
+      type: object
+      properties:
+        container:
+          type: string
+          description: Container ID or name
+        timeout:
+          type: integer
+          description: Seconds to wait before killing
+          default: 10
+      required:
+        - container
+
+  - name: logs
+    description: Get container logs
+    input_schema:
+      type: object
+      properties:
+        container:
+          type: string
+          description: Container ID or name
+        tail:
+          type: integer
+          description: Number of lines to show
+          default: 100
+        follow:
+          type: boolean
+          description: Follow log output
+          default: false
+      required:
+        - container
+
+  - name: ps
+    description: List containers
+    input_schema:
+      type: object
+      properties:
+        all:
+          type: boolean
+          description: Show all containers (including stopped)
+          default: false
+
+  - name: images
+    description: List Docker images
+    input_schema:
+      type: object
+      properties: {}
+
+  - name: rm
+    description: Remove a container
+    input_schema:
+      type: object
+      properties:
+        container:
+          type: string
+          description: Container ID or name
+        force:
+          type: boolean
+          description: Force removal
+          default: false
+      required:
+        - container
+
+  - name: rmi
+    description: Remove an image
+    input_schema:
+      type: object
+      properties:
+        image:
+          type: string
+          description: Image ID or tag
+        force:
+          type: boolean
+          description: Force removal
+          default: false
+      required:
+        - image
+
+  - name: exec
+    description: Execute a command in a running container
+    input_schema:
+      type: object
+      properties:
+        container:
+          type: string
+          description: Container ID or name
+        command:
+          type: string
+          description: Command to execute
+        workdir:
+          type: string
+          description: Working directory
+      required:
+        - container
+        - command
+
+  - name: pull
+    description: Pull a Docker image
+    input_schema:
+      type: object
+      properties:
+        image:
+          type: string
+          description: Image to pull
+      required:
+        - image

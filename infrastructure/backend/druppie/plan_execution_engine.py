@@ -1,8 +1,11 @@
-"""Orchestrator - routes plans to the appropriate execution engine.
+"""Plan Execution Engine - routes plans to the appropriate execution engine.
 
-The Orchestrator decides whether to:
+The PlanExecutionEngine decides whether to:
 - Execute a workflow (WorkflowEngine)
 - Execute agent tasks directly (AgentRuntime)
+
+Note: This is NOT an "orchestration agent" - it's simply a dispatcher that
+routes execution plans to the appropriate execution mechanism.
 """
 
 from typing import Any
@@ -16,10 +19,10 @@ from druppie.workflows import WorkflowEngine, WorkflowRegistry
 logger = structlog.get_logger()
 
 
-class Orchestrator:
+class PlanExecutionEngine:
     """Routes plans to the appropriate execution engine.
 
-    Based on the plan type, the orchestrator:
+    Based on the plan type, the engine:
     - WORKFLOW plans → WorkflowEngine
     - AGENTS plans → AgentRuntime
     """
@@ -30,7 +33,7 @@ class Orchestrator:
         workflow_engine: WorkflowEngine,
         workflow_registry: WorkflowRegistry,
     ):
-        """Initialize the Orchestrator.
+        """Initialize the PlanExecutionEngine.
 
         Args:
             agent_runtime: Runtime for executing agent tasks
@@ -40,7 +43,7 @@ class Orchestrator:
         self.agent_runtime = agent_runtime
         self.workflow_engine = workflow_engine
         self.workflow_registry = workflow_registry
-        self.logger = logger.bind(component="orchestrator")
+        self.logger = logger.bind(component="plan_execution_engine")
 
     async def execute(self, plan: Plan) -> Plan:
         """Execute a plan using the appropriate engine.
