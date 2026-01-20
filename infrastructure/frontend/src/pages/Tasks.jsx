@@ -4,8 +4,8 @@
 
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle } from 'lucide-react'
-import { getTasks, approveTask, rejectTask } from '../services/api'
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, HelpCircle, Send, Loader2, MessageSquare } from 'lucide-react'
+import { getTasks, approveTask, rejectTask, getQuestions, answerQuestion } from '../services/api'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
 
@@ -128,6 +128,104 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   )
 }
 
+// Question Card Component for the Tasks page
+const QuestionCard = ({ question, onAnswer, isAnswering }) => {
+  const [selectedOption, setSelectedOption] = useState(null)
+  const [customAnswer, setCustomAnswer] = useState('')
+  const hasOptions = question.options && question.options.length > 0
+
+  const handleSubmit = () => {
+    const answer = selectedOption || customAnswer
+    if (answer.trim()) {
+      onAnswer(question.id, answer)
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-purple-200 p-6">
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <HelpCircle className="w-5 h-5 text-purple-600" />
+            <h3 className="font-semibold text-lg text-purple-900">Agent Question</h3>
+          </div>
+          <p className="text-purple-800 font-medium">{question.question}</p>
+          {question.context && (
+            <p className="text-purple-600 text-sm mt-1">{question.context}</p>
+          )}
+        </div>
+        <span className="px-3 py-1 bg-purple-100 text-purple-700 text-sm rounded-full flex items-center">
+          <Clock className="w-4 h-4 mr-1" />
+          Waiting
+        </span>
+      </div>
+
+      {/* Plan info */}
+      {question.plan && (
+        <div className="mb-4 text-sm">
+          <span className="text-gray-500">Conversation:</span>
+          <span className="ml-2 font-medium">{question.plan.name}</span>
+        </div>
+      )}
+
+      {/* Options as clickable buttons */}
+      {hasOptions && (
+        <div className="space-y-2 mb-4">
+          {question.options.map((option, index) => (
+            <button
+              key={index}
+              onClick={() => {
+                setSelectedOption(option)
+                setCustomAnswer('')
+              }}
+              className={`w-full text-left px-4 py-2 rounded-lg border transition-colors ${
+                selectedOption === option
+                  ? 'bg-purple-600 text-white border-purple-600'
+                  : 'bg-white text-purple-800 border-purple-200 hover:border-purple-400'
+              }`}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Custom answer input */}
+      <div className="mb-4">
+        <input
+          type="text"
+          value={customAnswer}
+          onChange={(e) => {
+            setCustomAnswer(e.target.value)
+            setSelectedOption(null)
+          }}
+          placeholder={hasOptions ? "Or type a custom answer..." : "Type your answer..."}
+          className="w-full px-3 py-2 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+        />
+      </div>
+
+      {/* Submit button */}
+      <button
+        onClick={handleSubmit}
+        disabled={isAnswering || (!selectedOption && !customAnswer.trim())}
+        className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        {isAnswering ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Submitting...
+          </>
+        ) : (
+          <>
+            <Send className="w-4 h-4" />
+            Submit Answer
+          </>
+        )}
+      </button>
+    </div>
+  )
+}
+
 const Tasks = () => {
   const { user } = useAuth()
   const queryClient = useQueryClient()
@@ -135,6 +233,12 @@ const Tasks = () => {
   const { data: tasks = [], isLoading, error } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
+    refetchInterval: 10000,
+  })
+
+  const { data: questions = [], isLoading: questionsLoading } = useQuery({
+    queryKey: ['questions'],
+    queryFn: () => getQuestions(),
     refetchInterval: 10000,
   })
 
@@ -154,12 +258,24 @@ const Tasks = () => {
     },
   })
 
+  const answerMutation = useMutation({
+    mutationFn: ({ questionId, answer }) => answerQuestion(questionId, answer),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['questions'])
+      queryClient.invalidateQueries(['plans'])
+    },
+  })
+
   const handleApprove = (taskId) => {
     approveMutation.mutate({ taskId, comment: '' })
   }
 
   const handleReject = (taskId, reason) => {
     rejectMutation.mutate({ taskId, reason })
+  }
+
+  const handleAnswerQuestion = (questionId, answer) => {
+    answerMutation.mutate({ questionId, answer })
   }
 
   // Group tasks by required role
@@ -192,6 +308,30 @@ const Tasks = () => {
         </div>
       </div>
 
+      {/* Pending Questions Section */}
+      {questions.length > 0 && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold flex items-center">
+            <MessageSquare className="w-5 h-5 mr-2 text-purple-500" />
+            Pending Questions
+            <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-600 text-sm rounded-full">
+              {questions.length}
+            </span>
+          </h2>
+          <div className="grid gap-4">
+            {questions.map((question) => (
+              <QuestionCard
+                key={question.id}
+                question={question}
+                onAnswer={handleAnswerQuestion}
+                isAnswering={answerMutation.isPending}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Approval Tasks Section */}
       {isLoading ? (
         <div className="text-center py-12">
           <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
@@ -202,13 +342,13 @@ const Tasks = () => {
           <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
           <p className="text-red-500">Error loading tasks: {error.message}</p>
         </div>
-      ) : tasks.length === 0 ? (
+      ) : tasks.length === 0 && questions.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
           <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
           <h3 className="text-lg font-medium">All caught up!</h3>
-          <p className="text-gray-500">No pending approvals at the moment.</p>
+          <p className="text-gray-500">No pending approvals or questions at the moment.</p>
         </div>
-      ) : (
+      ) : tasks.length > 0 && (
         <div className="space-y-8">
           {Object.entries(tasksByRole).map(([role, roleTasks]) => (
             <div key={role}>

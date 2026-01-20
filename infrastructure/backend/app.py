@@ -24,7 +24,7 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room
 
 from druppie.auth import KeycloakAuth, auth_required, role_required
-from druppie.models import db, Plan, Task, MCPPermission, Approval
+from druppie.models import db, Plan, Task, MCPPermission, Approval, Question
 from druppie.mcp_permissions import MCPPermissionManager
 from druppie.plans import PlanService
 from druppie.config import Config
@@ -482,9 +482,138 @@ def chat():
             "response": result.get("response"),
             "status": plan.status,
             "pending_approvals": result.get("pending_approvals", []),
+            "pending_questions": result.get("pending_questions", []),
             "workflow_events": result.get("workflow_events", []),
+            "llm_calls": result.get("llm_calls", []),
         }
     )
+
+
+# =============================================================================
+# QUESTIONS (Agent-User Interaction)
+# =============================================================================
+
+
+@app.route("/api/questions", methods=["GET"])
+@auth_required
+def list_questions():
+    """List pending questions for the user."""
+    user = g.user
+    user_id = user.get("sub")
+    plan_id = request.args.get("plan_id")
+
+    questions = plan_service.get_pending_questions(
+        plan_id=plan_id,
+        user_id=user_id,
+    )
+
+    return jsonify([q.to_dict(include_plan=True) for q in questions])
+
+
+@app.route("/api/questions/<question_id>", methods=["GET"])
+@auth_required
+def get_question(question_id):
+    """Get question details."""
+    question = Question.query.get_or_404(question_id)
+    return jsonify(question.to_dict(include_plan=True))
+
+
+@app.route("/api/questions/<question_id>/answer", methods=["POST"])
+@auth_required
+def answer_question(question_id):
+    """Answer a pending question and continue the conversation."""
+    user = g.user
+    data = request.get_json()
+
+    answer = data.get("answer", "")
+    continue_chat = data.get("continue", True)  # By default, continue the conversation
+
+    if not answer:
+        return jsonify({"error": "Answer is required"}), 400
+
+    try:
+        question = plan_service.answer_question(
+            question_id=question_id,
+            answer=answer,
+            answered_by=user.get("sub"),
+            answered_by_username=user.get("preferred_username"),
+        )
+
+        # Broadcast update
+        socketio.emit("question_answered", {
+            "question_id": question.id,
+            "plan_id": question.plan_id,
+            "answer": answer,
+        })
+        socketio.emit("plan_updated", question.plan.to_dict(), room=f"plan:{question.plan_id}")
+
+        # Continue the conversation by calling router again with the answer
+        if continue_chat:
+            plan = question.plan
+
+            # Create event emitter for real-time updates
+            def emit_workflow_event(event: dict):
+                socketio.emit("workflow_event", {
+                    "plan_id": plan.id,
+                    "event": event,
+                })
+
+            # Build context message that includes the original question and answer
+            context_message = f"[Answering previous question: '{question.question}']\nMy answer: {answer}"
+
+            # Process through governance pipeline to continue
+            result = plan_service.process_chat(
+                plan, context_message, user, emit_event=emit_workflow_event
+            )
+
+            # Broadcast final update
+            socketio.emit("plan_updated", plan.to_dict(), room=f"plan:{plan.id}")
+
+            return jsonify({
+                "status": "answered_and_continued",
+                "question": question.to_dict(),
+                "plan_id": plan.id,
+                "response": result.get("response"),
+                "pending_approvals": result.get("pending_approvals", []),
+                "pending_questions": result.get("pending_questions", []),
+                "workflow_events": result.get("workflow_events", []),
+                "llm_calls": result.get("llm_calls", []),
+            })
+
+        return jsonify({
+            "status": "answered",
+            "question": question.to_dict(),
+        })
+
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/questions/<question_id>/cancel", methods=["POST"])
+@auth_required
+def cancel_question(question_id):
+    """Cancel a pending question."""
+    user = g.user
+    question = Question.query.get_or_404(question_id)
+
+    if question.status != "pending":
+        return jsonify({"error": f"Question is not pending (status: {question.status})"}), 400
+
+    # Check ownership - only the plan creator or admin can cancel
+    roles = user.get("realm_access", {}).get("roles", [])
+    if question.plan.created_by != user.get("sub") and "admin" not in roles:
+        return jsonify({"error": "You don't have permission to cancel this question"}), 403
+
+    question.status = "cancelled"
+    db.session.commit()
+
+    # Broadcast update
+    socketio.emit("question_cancelled", {
+        "question_id": question.id,
+        "plan_id": question.plan_id,
+    })
+
+    return jsonify({"status": "cancelled", "question": question.to_dict()})
 
 
 # =============================================================================

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional, Callable
 
-from .models import db, Plan, Task, Approval
+from .models import db, Plan, Task, Approval, Question
 from .mcp_permissions import MCPPermissionManager
 from .llm_service import LLMService
 from .project import project_service
@@ -155,6 +155,103 @@ class PlanService:
             )
 
         return approvals
+
+    def create_question(
+        self,
+        plan: Plan,
+        question_text: str,
+        context: str | None = None,
+        required_for: str | None = None,
+        options: list[str] | None = None,
+        agent_id: str | None = None,
+        task_id: str | None = None,
+    ) -> Question:
+        """Create a question that requires user response.
+
+        Args:
+            plan: The plan this question is associated with
+            question_text: The question to ask the user
+            context: Additional context about why this question is needed
+            required_for: What this information is needed for
+            options: Optional list of suggested answers
+            agent_id: Which agent is asking this question
+            task_id: Optional task ID this question is associated with
+
+        Returns:
+            The created Question object
+        """
+        question = Question(
+            id=str(uuid.uuid4()),
+            plan_id=plan.id,
+            task_id=task_id,
+            question=question_text,
+            context=context,
+            required_for=required_for,
+            options=options or [],
+            agent_id=agent_id,
+            status="pending",
+        )
+
+        db.session.add(question)
+        db.session.commit()
+
+        return question
+
+    def answer_question(
+        self,
+        question_id: str,
+        answer: str,
+        answered_by: str,
+        answered_by_username: str | None = None,
+    ) -> Question:
+        """Answer a pending question.
+
+        Args:
+            question_id: The question ID to answer
+            answer: The user's answer
+            answered_by: User ID of who answered
+            answered_by_username: Username of who answered
+
+        Returns:
+            The updated Question object
+        """
+        question = Question.query.get(question_id)
+        if not question:
+            raise ValueError(f"Question {question_id} not found")
+
+        if question.status != "pending":
+            raise ValueError(f"Question {question_id} is not pending (status: {question.status})")
+
+        question.answer = answer
+        question.answered_by = answered_by
+        question.answered_by_username = answered_by_username
+        question.answered_at = datetime.utcnow()
+        question.status = "answered"
+
+        db.session.commit()
+
+        return question
+
+    def get_pending_questions(self, plan_id: str | None = None, user_id: str | None = None) -> list[Question]:
+        """Get pending questions, optionally filtered by plan or user.
+
+        Args:
+            plan_id: Optional plan ID to filter by
+            user_id: Optional user ID to filter by (questions from their plans)
+
+        Returns:
+            List of pending Question objects
+        """
+        query = Question.query.filter(Question.status == "pending")
+
+        if plan_id:
+            query = query.filter(Question.plan_id == plan_id)
+
+        if user_id:
+            # Get questions from plans created by this user
+            query = query.join(Plan).filter(Plan.created_by == user_id)
+
+        return query.order_by(Question.created_at.desc()).all()
 
     def execute(
         self,
@@ -402,6 +499,60 @@ class PlanService:
                 "error": result.get("error"),
             }
 
+        # Handle ask_question MCP tool
+        if task.mcp_tool == "interaction.ask_question" and task.mcp_arguments:
+            question_text = task.mcp_arguments.get("question", "")
+            context = task.mcp_arguments.get("context")
+            options = task.mcp_arguments.get("options", [])
+            required_for = task.mcp_arguments.get("required_for")
+
+            add_event(
+                "mcp_tool",
+                "MCP Tool: ask_question",
+                f"Agent is asking: {question_text[:100]}{'...' if len(question_text) > 100 else ''}",
+                "warning",
+                {"tool": "interaction.ask_question", "question": question_text}
+            )
+
+            # Create the question
+            plan = Plan.query.get(task.plan_id)
+            question = self.create_question(
+                plan=plan,
+                question_text=question_text,
+                context=context,
+                required_for=required_for,
+                options=options,
+                agent_id=task.agent_id,
+                task_id=task.id,
+            )
+
+            add_event(
+                "question_pending",
+                "Waiting for Your Response",
+                question_text,
+                "warning",
+                {
+                    "question_id": question.id,
+                    "question": question_text,
+                    "context": context,
+                    "options": options,
+                    "required_for": required_for,
+                }
+            )
+
+            # Set task to waiting state
+            task.status = "waiting_response"
+            db.session.commit()
+
+            return {
+                "executed": True,
+                "waiting_for_response": True,
+                "question_id": question.id,
+                "question": question_text,
+                "context": context,
+                "options": options,
+            }
+
         # Default response for other task types
         add_event(
             "mcp_tool",
@@ -437,6 +588,9 @@ class PlanService:
         user_roles = user.get("realm_access", {}).get("roles", [])
         user_id = user.get("sub")
         workflow_events = []
+
+        # Clear LLM call history for fresh tracking
+        self.llm_service.clear_llm_calls()
 
         def add_event(event_type: str, title: str, description: str, status: str = "info", data: dict = None):
             event = WorkflowEvent(event_type, title, description, status, data)
@@ -474,6 +628,8 @@ class PlanService:
         app_info = intent.get("app_info", {})
 
         if intent.get("type") == "chat":
+            response_text = intent.get("response") or "Hello! How can I help you today?"
+
             add_event(
                 "intent_detected",
                 "Intent: General Chat",
@@ -481,9 +637,6 @@ class PlanService:
                 "success",
                 {"action": "general_chat"}
             )
-            plan.status = "completed"
-            plan.result = {"response": intent.get("response")}
-            db.session.commit()
 
             add_event(
                 "workflow_completed",
@@ -492,10 +645,27 @@ class PlanService:
                 "success"
             )
 
-            return {
-                "response": intent.get("response"),
-                "pending_approvals": [],
+            # Get LLM calls before storing
+            llm_calls = self.llm_service.get_llm_calls()
+
+            # Store everything in plan.result for persistence
+            # Must assign a new dict for SQLAlchemy to detect the change
+            plan.status = "completed"
+            existing_result = dict(plan.result) if plan.result else {}
+            existing_result.update({
+                "response": response_text,
                 "workflow_events": workflow_events,
+                "llm_calls": llm_calls,
+            })
+            plan.result = existing_result
+            db.session.commit()
+
+            return {
+                "response": response_text,
+                "pending_approvals": [],
+                "pending_questions": [],
+                "workflow_events": workflow_events,
+                "llm_calls": llm_calls,
             }
 
         # It's an action - report what we detected
@@ -518,6 +688,42 @@ class PlanService:
                     "app_type": app_info.get("app_type"),
                     "app_name": app_info.get("name"),
                     "features": app_info.get("features", []),
+                }
+            )
+
+            # Call Planning Agent to create detailed execution plan
+            add_event(
+                "planning_agent",
+                "Planning Agent",
+                "Creating detailed execution plan...",
+                "working"
+            )
+
+            execution_plan = self.llm_service.create_execution_plan(
+                message=message,
+                router_analysis=app_info,
+            )
+
+            # Show the plan to the user
+            plan_details = execution_plan.get("plan_details", {})
+            steps = execution_plan.get("execution_steps", [])
+            steps_desc = ", ".join([s.get("name", f"Step {i+1}") for i, s in enumerate(steps[:3])])
+            if len(steps) > 3:
+                steps_desc += f", +{len(steps) - 3} more"
+
+            add_event(
+                "plan_ready",
+                "Execution Plan Ready",
+                execution_plan.get("plan_summary", "Plan created"),
+                "success",
+                {
+                    "plan_summary": execution_plan.get("plan_summary"),
+                    "objective": plan_details.get("objective"),
+                    "approach": plan_details.get("approach"),
+                    "technologies": plan_details.get("technologies", []),
+                    "estimated_files": plan_details.get("estimated_files", []),
+                    "steps": steps,
+                    "considerations": execution_plan.get("considerations", []),
                 }
             )
 
@@ -623,12 +829,30 @@ class PlanService:
                 )
                 response = f"❌ Plan execution failed. Status: {result['status']}"
 
+        # Check for any pending questions
+        pending_questions = self.get_pending_questions(plan_id=plan.id)
+        questions_list = [q.to_dict() for q in pending_questions]
+
+        # Get LLM calls before storing
+        llm_calls = self.llm_service.get_llm_calls()
+
+        # Store workflow_events and llm_calls in plan.result for persistence
+        # Must assign a new dict for SQLAlchemy to detect the change
+        existing_result = dict(plan.result) if plan.result else {}
+        existing_result.update({
+            "response": response,
+            "workflow_events": workflow_events,
+            "llm_calls": llm_calls,
+        })
+        plan.result = existing_result
         db.session.commit()
 
         return {
             "response": response,
             "pending_approvals": pending,
+            "pending_questions": questions_list,
             "workflow_events": workflow_events,
+            "llm_calls": llm_calls,
         }
 
     def _get_user_projects_for_context(
@@ -659,7 +883,9 @@ class PlanService:
         user_id: str | None = None,
         current_project_id: str | None = None,
     ) -> dict[str, Any]:
-        """Analyze user message to determine intent.
+        """Analyze user message to determine intent using LLM router.
+
+        ALL messages go through the LLM router - no hardcoded responses.
 
         Args:
             message: The user's message
@@ -669,8 +895,6 @@ class PlanService:
         Returns:
             Intent dict with type and tasks/response
         """
-        message_lower = message.lower()
-
         # Get user's existing projects for context
         existing_projects = None
         current_project = None
@@ -689,74 +913,73 @@ class PlanService:
                         "description": project.description,
                     }
 
-        # Check if this is an app creation/modification request
-        if any(kw in message_lower for kw in ["create", "build", "make", "update", "fix", "add", "modify", "change"]):
-            # Use LLM service to analyze what app to build with project context
-            app_info = self.llm_service.analyze_request(
-                message,
-                existing_projects=existing_projects,
-                current_project=current_project,
-            )
+        # Route ALL messages through the LLM router
+        app_info = self.llm_service.analyze_request(
+            message,
+            existing_projects=existing_projects,
+            current_project=current_project,
+        )
 
-            action = app_info.get("action", "create_project")
+        action = app_info.get("action", "general_chat")
 
-            # Handle general chat responses from router
-            if action == "general_chat":
-                return {
-                    "type": "chat",
-                    "response": app_info.get("answer") or f"I understand: {message}. How can I help?",
-                }
+        # Handle general chat responses from router
+        if action == "general_chat":
+            return {
+                "type": "chat",
+                "response": app_info.get("answer") or f"I understand your message: {message}. How can I help you today?",
+            }
 
-            # Determine the task based on action
-            if action == "update_project":
-                target_id = app_info.get("target_project_id")
-                return {
-                    "type": "action",
-                    "tasks": [
-                        {
-                            "name": f"Update {app_info['name']}",
-                            "description": f"Updating {app_info['app_type']} application: {app_info['description']}",
-                            "agent_id": "developer",
-                            "mcp_tool": "update_app",
-                            "mcp_arguments": {
-                                "app_info": app_info,
-                                "message": message,
-                                "target_project_id": target_id,
-                            },
-                        }
-                    ],
-                }
-            else:
-                # create_project
-                return {
-                    "type": "action",
-                    "tasks": [
-                        {
-                            "name": f"Generate {app_info['name']}",
-                            "description": f"Creating {app_info['app_type']} application: {app_info['description']}",
-                            "agent_id": "developer",
-                            "mcp_tool": "generate_app",
-                            "mcp_arguments": {"app_info": app_info, "message": message},
-                        }
-                    ],
-                }
-
-        # Check for deployment requests
-        elif any(kw in message_lower for kw in ["deploy", "push", "release"]):
+        # Handle ask_question action - router needs clarification
+        if action == "ask_question":
+            question_info = app_info.get("question", {})
             return {
                 "type": "action",
                 "tasks": [
                     {
-                        "name": "Deploy code",
-                        "description": f"Deploy based on: {message}",
-                        "mcp_tool": "docker.deploy",
-                        "mcp_arguments": {"message": message},
+                        "name": "Clarification Needed",
+                        "description": question_info.get("text", "Need more information to proceed"),
+                        "agent_id": "router",
+                        "mcp_tool": "interaction.ask_question",
+                        "mcp_arguments": {
+                            "question": question_info.get("text", "Can you provide more details about what you'd like to build?"),
+                            "context": question_info.get("context", "I need more information to understand your request"),
+                            "options": question_info.get("options", []),
+                            "required_for": question_info.get("required_for", "Determining the right approach"),
+                        },
                     }
                 ],
             }
 
-        else:
+        # Handle update_project action
+        if action == "update_project":
+            target_id = app_info.get("target_project_id")
             return {
-                "type": "chat",
-                "response": f"I understand you want to: {message}. What would you like me to do?",
+                "type": "action",
+                "tasks": [
+                    {
+                        "name": f"Update {app_info['name']}",
+                        "description": f"Updating {app_info['app_type']} application: {app_info['description']}",
+                        "agent_id": "developer",
+                        "mcp_tool": "update_app",
+                        "mcp_arguments": {
+                            "app_info": app_info,
+                            "message": message,
+                            "target_project_id": target_id,
+                        },
+                    }
+                ],
             }
+
+        # Handle create_project action (default for action requests)
+        return {
+            "type": "action",
+            "tasks": [
+                {
+                    "name": f"Generate {app_info['name']}",
+                    "description": f"Creating {app_info['app_type']} application: {app_info['description']}",
+                    "agent_id": "developer",
+                    "mcp_tool": "generate_app",
+                    "mcp_arguments": {"app_info": app_info, "message": message},
+                }
+            ],
+        }

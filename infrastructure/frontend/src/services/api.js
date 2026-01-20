@@ -106,6 +106,18 @@ export const getMCPTools = () => request('/api/mcp/tools')
 export const getMCPTool = (toolId) => request(`/api/mcp/tools/${toolId}`)
 export const getMCPServers = () => request('/api/mcp/servers')
 
+// Questions (Agent-User Interaction)
+export const getQuestions = (planId = null) =>
+  request(`/api/questions${planId ? `?plan_id=${planId}` : ''}`)
+export const getQuestion = (questionId) => request(`/api/questions/${questionId}`)
+export const answerQuestion = (questionId, answer) =>
+  request(`/api/questions/${questionId}/answer`, {
+    method: 'POST',
+    body: JSON.stringify({ answer }),
+  })
+export const cancelQuestion = (questionId) =>
+  request(`/api/questions/${questionId}/cancel`, { method: 'POST' })
+
 // Health
 export const getHealth = () => request('/health')
 export const getStatus = () => request('/api/status')
