@@ -247,3 +247,96 @@ The chat workflow doesn't have a path to trigger MCP tools like `deploy.producti
 
 1. `6d77678` - Add MULTI approval workflow support
 2. `23abf83` - Add optimistic update for answer submission UI
+
+---
+
+## Iteration 5 Summary
+
+### What Was Implemented
+
+**Deployment Workflow Integration to Chat** - Fully working
+
+Users can now type deployment requests in chat (e.g., "Deploy my project to staging") and the system:
+1. Router agent recognizes `deploy_project` action
+2. Creates a deployment task with correct MCP tool (`deploy.staging` or `deploy.production`)
+3. Task requires approval from appropriate roles
+4. Approval appears on Approvals page for users with correct roles
+5. After approval, deployment executes
+
+### Bugs Fixed
+
+1. **Router Action Not Recognized**
+   - Cause: `IntentAction` enum didn't have `DEPLOY_PROJECT`
+   - Fix: Added `DEPLOY_PROJECT = "deploy_project"` to enum
+
+2. **Deploy Context Not Passed**
+   - Cause: `Intent` model didn't have `deploy_context` field
+   - Fix: Added `deploy_context: dict[str, Any]` to Intent model
+
+3. **Orchestrator Action Mapping Missing**
+   - Cause: `_parse_intent` didn't map `deploy_project` to `IntentAction.DEPLOY_PROJECT`
+   - Fix: Added `"deploy_project": IntentAction.DEPLOY_PROJECT` to action_map
+
+4. **Undefined Variable in plans.py**
+   - Cause: Line 1612 referenced `intent_data` which didn't exist
+   - Fix: Changed to `intent.deploy_context if intent else {}`
+
+5. **Router Task Prompt Missing Deploy Action**
+   - Cause: Task prompt only listed create_project, update_project, ask_question, general_chat
+   - Fix: Added `deploy_project` action with deploy_context schema
+
+### Code Changes
+
+**backend/druppie/core/models.py**:
+- Added `DEPLOY_PROJECT` to `IntentAction` enum
+- Added `deploy_context` field to `Intent` model
+
+**backend/druppie/orchestrator.py**:
+- Added `deploy_project` to action_map in `_parse_intent`
+- Extract `deploy_context` from router data
+- Updated router agent task prompt to include deploy_project action
+
+**backend/druppie/plans.py**:
+- Fixed `intent_data` → `intent.deploy_context` bug
+- Added `deploy_context` to `app_info` dict
+
+**backend/registry/agents/router_agent.yaml**:
+- Already had deploy_project action defined
+
+**backend/registry/agents/planner_agent.yaml**:
+- Added DEPLOY_PROJECT rule for deployment planning
+
+### Test Results
+
+1. **Chat Request**: "Deploy my project to staging"
+   - Router correctly identified `deploy_project` action
+   - Planner created deployment plan with `deploy.staging` MCP tool
+   - Task created with `pending_approval` status
+   - Required role: `developer`
+
+2. **Approval Flow**:
+   - Task appeared on Approvals page for seniordev (developer role)
+   - Approve button visible and functional
+   - Approval updated task to `approved` status
+   - Count decremented correctly
+
+3. **Debug Panel**:
+   - Shows router_agent and planner_agent LLM calls
+   - Workflow events show deployment flow correctly
+
+### What's Working Well
+
+- Complete end-to-end deployment workflow from chat
+- Approval requirements correctly applied from MCP registry
+- Role-based filtering works for deployment tasks
+- Real-time updates on approval status
+
+### Next Steps
+
+1. Add E2E tests for deployment approval workflows
+2. Consider adding inline approval UI in chat
+3. Implement actual deployment infrastructure (currently simulated)
+
+### Commits Made (Iteration 5)
+
+1. `b3c51c1` - Add deployment workflow integration to chat
