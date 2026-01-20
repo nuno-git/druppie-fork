@@ -491,15 +491,17 @@ class PlanService:
 
         approvals = []
         for task in pending_tasks:
-            # Get current approval count for MULTI approval tasks
+            # Get current approval count and who approved
             current_approvals = 0
             approved_by_roles = []
-            if task.approval_type == "multi":
-                existing_approvals = Approval.query.filter_by(
-                    task_id=task.id, decision="approved"
-                ).all()
-                current_approvals = len(existing_approvals)
-                approved_by_roles = [a.approver_role for a in existing_approvals if a.approver_role]
+            approved_by_ids = []
+
+            existing_approvals = Approval.query.filter_by(
+                task_id=task.id, decision="approved"
+            ).all()
+            current_approvals = len(existing_approvals)
+            approved_by_roles = [a.approver_role for a in existing_approvals if a.approver_role]
+            approved_by_ids = [a.approved_by for a in existing_approvals if a.approved_by]
 
             approvals.append(
                 {
@@ -512,6 +514,7 @@ class PlanService:
                     "required_approvals": task.required_approvals or 1,
                     "current_approvals": current_approvals,
                     "approved_by_roles": approved_by_roles,
+                    "approved_by_ids": approved_by_ids,
                 }
             )
 

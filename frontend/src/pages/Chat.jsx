@@ -379,7 +379,7 @@ const QuestionCard = ({ question, onAnswer, isAnswering }) => {
 }
 
 // Inline Approval Card Component - allows approve/reject directly in chat
-const ApprovalCard = ({ approval, onApprove, onReject, isProcessing }) => {
+const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUserId }) => {
   const [showRejectInput, setShowRejectInput] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
 
@@ -397,9 +397,13 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing }) => {
   const requiredApprovals = approval.required_approvals || 1
   const currentApprovals = approval.current_approvals || 0
   const approvedByRoles = approval.approved_by_roles || []
+  const approvedByIds = approval.approved_by_ids || []
   const requiredRoles = approval.required_roles || [approval.required_role]
   const remainingRoles = requiredRoles.filter(r => !approvedByRoles.includes(r))
   const progressPercent = Math.round((currentApprovals / requiredApprovals) * 100)
+
+  // Check if current user has already approved
+  const userHasApproved = currentUserId && approvedByIds.includes(currentUserId)
 
   return (
     <div className="mt-3 bg-amber-50 rounded-lg border border-amber-200 p-4">
@@ -487,56 +491,65 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing }) => {
             </div>
           )}
 
-          {/* Action buttons */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => onApprove(approval.task_id)}
-              disabled={isProcessing || showRejectInput}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {isProcessing ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <CheckCircle className="w-4 h-4" />
-                  {isMultiApproval ? `Add Approval (${currentApprovals + 1}/${requiredApprovals})` : 'Approve'}
-                </>
-              )}
-            </button>
-            <button
-              onClick={handleReject}
-              disabled={isProcessing}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                showRejectInput
-                  ? 'bg-red-600 text-white hover:bg-red-700'
-                  : 'bg-white text-red-600 border border-red-200 hover:bg-red-50'
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
-            >
-              <XCircle className="w-4 h-4" />
-              {showRejectInput ? 'Confirm Reject' : 'Reject'}
-            </button>
-            {showRejectInput && (
+          {/* Action buttons or "You have approved" message */}
+          {userHasApproved ? (
+            <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg border border-green-200">
+              <CheckCircle className="w-5 h-5 text-green-600" />
+              <span className="text-sm text-green-800 font-medium">
+                You have approved this task. Waiting for {requiredApprovals - currentApprovals} more approval(s) from other roles.
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => {
-                  setShowRejectInput(false)
-                  setRejectReason('')
-                }}
-                className="px-3 py-2 text-gray-600 hover:text-gray-800 text-sm"
+                onClick={() => onApprove(approval.task_id)}
+                disabled={isProcessing || showRejectInput}
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                Cancel
+                {isProcessing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    {isMultiApproval ? `Add Approval (${currentApprovals + 1}/${requiredApprovals})` : 'Approve'}
+                  </>
+                )}
               </button>
-            )}
-          </div>
+              <button
+                onClick={handleReject}
+                disabled={isProcessing}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                  showRejectInput
+                    ? 'bg-red-600 text-white hover:bg-red-700'
+                    : 'bg-white text-red-600 border border-red-200 hover:bg-red-50'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                <XCircle className="w-4 h-4" />
+                {showRejectInput ? 'Confirm Reject' : 'Reject'}
+              </button>
+              {showRejectInput && (
+                <button
+                  onClick={() => {
+                    setShowRejectInput(false)
+                    setRejectReason('')
+                  }}
+                  className="px-3 py-2 text-gray-600 hover:text-gray-800 text-sm"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
   )
 }
 
-const Message = ({ message, onAnswerQuestion, isAnsweringQuestion, onApproveTask, onRejectTask, isApprovingTask }) => {
+const Message = ({ message, onAnswerQuestion, isAnsweringQuestion, onApproveTask, onRejectTask, isApprovingTask, currentUserId }) => {
   const isUser = message.role === 'user'
   const [eventsExpanded, setEventsExpanded] = useState(true)
 
@@ -597,6 +610,7 @@ const Message = ({ message, onAnswerQuestion, isAnsweringQuestion, onApproveTask
                   onApprove={onApproveTask}
                   onReject={onRejectTask}
                   isProcessing={isApprovingTask}
+                  currentUserId={currentUserId}
                 />
               ))
             )}
@@ -1582,6 +1596,7 @@ What would you like to build today?`,
             required_approvals: task.required_approvals || 1,
             current_approvals: task.approvals?.filter(a => a.decision === 'approved').length || 0,
             approved_by_roles: task.approvals?.filter(a => a.decision === 'approved').map(a => a.role) || [],
+            approved_by_ids: task.approvals?.filter(a => a.decision === 'approved').map(a => a.approved_by || a.approver_id) || [],
           }))
       }
     } catch (err) {
@@ -1676,6 +1691,7 @@ What would you like to build today?`,
               onApproveTask={handleApproveTask}
               onRejectTask={handleRejectTask}
               isApprovingTask={approveMutation.isPending || rejectMutation.isPending}
+              currentUserId={user?.id}
             />
           ))}
 
