@@ -62,10 +62,14 @@ export const checkMCPPermission = (tool) =>
   request('/api/mcp/check', { method: 'POST', body: JSON.stringify({ tool }) })
 
 // Chat
-export const sendChat = (message, planId = null) =>
+export const sendChat = (message, planId = null, conversationHistory = null) =>
   request('/api/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, plan_id: planId }),
+    body: JSON.stringify({
+      message,
+      plan_id: planId,
+      conversation_history: conversationHistory,
+    }),
   })
 
 // Workspace

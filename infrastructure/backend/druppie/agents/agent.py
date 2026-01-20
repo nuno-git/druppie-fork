@@ -237,7 +237,7 @@ class Agent:
             "duration_ms": duration_ms,
             "status": "success",
             "request": {"messages": serialized_messages},
-            "response": content[:2000] if content else "",
+            "response": content or "",  # Full response without truncation for debugging
             "tool_calls": [
                 {"name": tc.get("name"), "args": tc.get("args")}
                 for tc in (tool_calls or [])
@@ -395,6 +395,10 @@ class Agent:
                     # Check for control commands
                     if result.startswith("__DONE__|"):
                         data = json.loads(result.split("|", 1)[1])
+                        # Add the parsed data to the last llm_call for visibility in debug panel
+                        if self.llm_calls:
+                            self.llm_calls[-1]["parsed_data"] = data.get("data", {})
+                            self.llm_calls[-1]["agent_summary"] = data.get("summary", "Task completed")
                         self._emit(
                             "agent_completed",
                             f"Agent: {self.definition.name}",
