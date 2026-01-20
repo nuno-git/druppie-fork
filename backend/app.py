@@ -435,6 +435,24 @@ def request_mcp_approval():
     if not tool_name:
         return jsonify({"error": "Tool name required"}), 400
 
+    if not plan_id:
+        return jsonify({"error": "Plan ID required"}), 400
+
+    # Verify the plan exists
+    plan = Plan.query.get(plan_id)
+    if not plan:
+        return jsonify({"error": "Plan not found"}), 404
+
+    # Get tool info from registry
+    tool = mcp_registry.get_tool(tool_name)
+    approval_type = tool.approval_type.value if tool else "role"
+
+    # Get required_role from tool's approval_roles (first one) or fallback to permission manager
+    if tool and tool.approval_roles:
+        required_role = tool.approval_roles[0]  # First role in the list can approve
+    else:
+        required_role = mcp_manager.get_required_role(tool_name)
+
     # Create approval request task
     task = Task(
         id=str(uuid.uuid4()),
@@ -444,7 +462,8 @@ def request_mcp_approval():
         mcp_tool=tool_name,
         mcp_arguments=arguments,
         status="pending_approval",
-        required_role=mcp_manager.get_required_role(tool_name),
+        approval_type=approval_type,
+        required_role=required_role,
         created_by=user.get("sub"),
     )
 
