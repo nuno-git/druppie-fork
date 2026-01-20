@@ -59,6 +59,9 @@ class ChatOllama:
         # Track LLM calls for debugging
         self.call_history: list[dict] = []
 
+        # Bound tools for function calling (optional)
+        self.bound_tools: list = []
+
     def chat(
         self,
         messages: list[dict],
@@ -159,6 +162,29 @@ class ChatOllama:
     def clear_call_history(self):
         """Clear the call history."""
         self.call_history = []
+
+    def bind_tools(self, tools: list, **kwargs) -> "ChatOllama":
+        """Bind tools to the LLM for function calling.
+
+        Note: Ollama supports function calling for some models.
+        This creates a new instance with tools bound.
+
+        Args:
+            tools: List of tool definitions
+
+        Returns:
+            New ChatOllama instance with tools bound
+        """
+        # Create a new instance with tools
+        new_instance = ChatOllama(
+            model=self.model,
+            base_url=self.base_url,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            timeout=self.timeout,
+        )
+        new_instance.bound_tools = tools
+        return new_instance
 
     def _clean_response(self, text: str) -> str:
         """Clean the response text."""
