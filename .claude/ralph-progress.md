@@ -373,3 +373,94 @@ Next iteration could focus on:
 - Add inline approval UI in chat
 - More comprehensive error handling
 - Performance optimizations for LLM calls
+
+---
+
+## Iteration 6 Summary
+
+### What Was Implemented
+
+1. **Inline Approval UI in Chat** - Fully working
+   - Approval cards appear directly in chat messages
+   - Users can approve/reject without leaving the chat
+   - Approve button processes immediately with visual feedback
+   - Reject button prompts for reason before confirming
+   - Optimistic UI updates remove approval card after action
+   - Success/error messages shown inline
+
+2. **Agent Attribution in Messages** - Working
+   - Agent badges (router, planner, devops, etc.) shown above messages
+   - Shows which agent(s) contributed to the response
+   - Extracted from workflow events data
+
+3. **Enhanced Progress Indicators** - Working
+   - Visual step progress: Analyzing → Planning → Executing
+   - Current step highlighted with animation
+   - Completed steps show checkmark
+   - Progress bar between steps
+
+### Code Changes
+
+**frontend/src/pages/Chat.jsx**:
+- Added `ApprovalCard` component with approve/reject buttons
+- Added `approveMutation` and `rejectMutation` for API calls
+- Added `handleApproveTask` and `handleRejectTask` handlers
+- Updated `Message` component to receive and pass approval handlers
+- Added agent attribution badges extraction from workflow events
+- Enhanced `TypingIndicator` with 3-step visual progress
+
+### Test Results
+
+1. **Inline Approval Flow** - Tested end-to-end:
+   - User requests deployment: "Deploy my todo app to staging"
+   - Router asks clarifying question (HITL flow)
+   - User provides answer
+   - Approval card appears with task details
+   - User clicks Approve → Task approved, card removed, success message shown
+
+2. **Agent Attribution** - Working:
+   - "router" badge appears for routing decisions
+   - "devops" badge appears for deployment tasks
+   - Multiple agents shown when workflow involves several
+
+3. **Progress Indicator** - Working:
+   - Shows "Analyzing" → "Planning" → "Executing" steps
+   - Animates current step
+   - Completes previous steps
+
+### What's Working Well
+
+- Conversational approval flow - no need to navigate away from chat
+- Real-time feedback on approval actions
+- Clear visual indication of which agent is responsible
+- Smooth progress indication during processing
+
+### Commits Made (Iteration 6)
+
+1. Add inline approval UI and agent attribution to chat
+
+---
+
+## Status After Iteration 6
+
+All core functionality is working:
+- Authentication with Keycloak
+- Chat with LLM (Z.AI / GLM-4.7)
+- Router agent analyzes intent (including deploy_project)
+- Planner agent creates execution plans
+- Developer agent generates code
+- HITL question/answer flow
+- Project creation with Git push to Gitea
+- Build and run projects in Docker
+- ROLE approval workflow (deploy.staging)
+- MULTI approval workflow (deploy.production)
+- Deployment workflow triggered from chat
+- **Inline approval UI in chat** (NEW)
+- **Agent attribution badges** (NEW)
+- **Enhanced progress indicators** (NEW)
+
+Next iteration could focus on:
+- Implement actual deployment infrastructure (currently simulated)
+- Add inline notification when approval is needed from another user
+- WebSocket real-time updates for approval status changes
+- Performance optimizations for LLM calls

@@ -34,7 +34,7 @@ import {
   Check,
   X,
 } from 'lucide-react'
-import { sendChat, getPlans, answerQuestion } from '../services/api'
+import { sendChat, getPlans, answerQuestion, approveTask, rejectTask } from '../services/api'
 import { useAuth } from '../App'
 
 // Icon mapping for workflow events
@@ -378,7 +378,107 @@ const QuestionCard = ({ question, onAnswer, isAnswering }) => {
   )
 }
 
-const Message = ({ message, onAnswerQuestion, isAnsweringQuestion }) => {
+// Inline Approval Card Component - allows approve/reject directly in chat
+const ApprovalCard = ({ approval, onApprove, onReject, isProcessing }) => {
+  const [showRejectInput, setShowRejectInput] = useState(false)
+  const [rejectReason, setRejectReason] = useState('')
+
+  const handleReject = () => {
+    if (showRejectInput && rejectReason.trim()) {
+      onReject(approval.task_id, rejectReason)
+      setShowRejectInput(false)
+      setRejectReason('')
+    } else {
+      setShowRejectInput(true)
+    }
+  }
+
+  return (
+    <div className="mt-3 bg-amber-50 rounded-lg border border-amber-200 p-4">
+      <div className="flex items-start gap-3">
+        <div className="p-2 bg-amber-100 rounded-full">
+          <AlertTriangle className="w-5 h-5 text-amber-600" />
+        </div>
+        <div className="flex-1">
+          <div className="text-sm font-medium text-amber-900 mb-1">
+            Approval Required
+          </div>
+          <div className="text-amber-800 font-medium mb-2">
+            {approval.task_name}
+          </div>
+          <div className="text-sm text-amber-700 mb-3">
+            This action requires approval from <span className="font-semibold">{approval.required_role}</span> role.
+            {approval.mcp_tool && (
+              <span className="block mt-1">
+                MCP Tool: <code className="bg-amber-100 px-1 rounded">{approval.mcp_tool}</code>
+              </span>
+            )}
+          </div>
+
+          {/* Reject reason input */}
+          {showRejectInput && (
+            <div className="mb-3">
+              <input
+                type="text"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Enter reason for rejection..."
+                className="w-full px-3 py-2 border border-amber-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm"
+                autoFocus
+              />
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onApprove(approval.task_id)}
+              disabled={isProcessing || showRejectInput}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {isProcessing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-4 h-4" />
+                  Approve
+                </>
+              )}
+            </button>
+            <button
+              onClick={handleReject}
+              disabled={isProcessing}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                showRejectInput
+                  ? 'bg-red-600 text-white hover:bg-red-700'
+                  : 'bg-white text-red-600 border border-red-200 hover:bg-red-50'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              <XCircle className="w-4 h-4" />
+              {showRejectInput ? 'Confirm Reject' : 'Reject'}
+            </button>
+            {showRejectInput && (
+              <button
+                onClick={() => {
+                  setShowRejectInput(false)
+                  setRejectReason('')
+                }}
+                className="px-3 py-2 text-gray-600 hover:text-gray-800 text-sm"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const Message = ({ message, onAnswerQuestion, isAnsweringQuestion, onApproveTask, onRejectTask, isApprovingTask }) => {
   const isUser = message.role === 'user'
   const [eventsExpanded, setEventsExpanded] = useState(true)
 
@@ -398,6 +498,24 @@ const Message = ({ message, onAnswerQuestion, isAnsweringQuestion }) => {
             </div>
           )}
           <div className="flex-1 min-w-0">
+            {/* Agent attribution badges */}
+            {!isUser && message.workflowEvents && message.workflowEvents.length > 0 && (
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                {[...new Set(message.workflowEvents
+                  .filter(e => e.data?.agent_id)
+                  .map(e => e.data.agent_id)
+                )].map(agentId => (
+                  <span
+                    key={agentId}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full"
+                  >
+                    <Bot className="w-3 h-3" />
+                    {agentId.replace('_agent', '').replace(/_/g, ' ')}
+                  </span>
+                ))}
+              </div>
+            )}
+
             {/* Main content */}
             {message.content && (
               <div className="whitespace-pre-wrap text-sm">{message.content}</div>
@@ -412,23 +530,17 @@ const Message = ({ message, onAnswerQuestion, isAnsweringQuestion }) => {
               />
             )}
 
-            {/* Pending Approvals */}
+            {/* Pending Approvals - Inline approval cards */}
             {message.pendingApprovals && message.pendingApprovals.length > 0 && (
-              <div className="mt-3 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-                <div className="flex items-center text-yellow-700 mb-2">
-                  <AlertCircle className="w-4 h-4 mr-2" />
-                  <span className="font-medium text-sm">Pending Approvals</span>
-                </div>
-                <ul className="text-sm text-yellow-800 space-y-1">
-                  {message.pendingApprovals.map((approval, i) => (
-                    <li key={i} className="flex items-center">
-                      <span className="w-2 h-2 rounded-full bg-yellow-500 mr-2" />
-                      {approval.task_name} - requires{' '}
-                      <span className="font-medium ml-1">{approval.required_role}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              message.pendingApprovals.map((approval, i) => (
+                <ApprovalCard
+                  key={approval.task_id || i}
+                  approval={approval}
+                  onApprove={onApproveTask}
+                  onReject={onRejectTask}
+                  isProcessing={isApprovingTask}
+                />
+              ))
             )}
 
             {/* Pending Questions */}
@@ -456,23 +568,77 @@ const Message = ({ message, onAnswerQuestion, isAnsweringQuestion }) => {
 
 // Typing indicator with workflow step
 const TypingIndicator = ({ currentStep }) => {
+  // Define workflow steps for visual progress
+  const workflowSteps = [
+    { id: 'analyzing', label: 'Analyzing', icon: Brain },
+    { id: 'planning', label: 'Planning', icon: Clock },
+    { id: 'executing', label: 'Executing', icon: Zap },
+  ]
+
+  // Determine current step from message
+  const getCurrentStepIndex = () => {
+    const step = (currentStep || '').toLowerCase()
+    if (step.includes('analyz') || step.includes('router') || step.includes('intent')) return 0
+    if (step.includes('plan') || step.includes('creat')) return 1
+    if (step.includes('execut') || step.includes('generat') || step.includes('build') || step.includes('answer')) return 2
+    return 0
+  }
+
+  const currentStepIndex = getCurrentStepIndex()
+
   return (
     <div className="flex justify-start mb-4">
-      <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-none px-4 py-3 shadow-sm">
-        <div className="flex items-center space-x-3">
+      <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-none px-4 py-4 shadow-sm min-w-[300px]">
+        <div className="flex items-center space-x-3 mb-3">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
             <Loader2 className="w-5 h-5 text-white animate-spin" />
           </div>
-          <div>
-            <div className="text-sm text-gray-600">
-              {currentStep || 'Thinking...'}
-            </div>
-            <div className="flex space-x-1 mt-1">
-              <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          <div className="flex-1">
+            <div className="text-sm font-medium text-gray-800">
+              {currentStep || 'Processing...'}
             </div>
           </div>
+        </div>
+
+        {/* Progress steps */}
+        <div className="flex items-center justify-between px-2">
+          {workflowSteps.map((step, idx) => {
+            const StepIcon = step.icon
+            const isActive = idx === currentStepIndex
+            const isComplete = idx < currentStepIndex
+
+            return (
+              <div key={step.id} className="flex items-center">
+                <div className="flex flex-col items-center">
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                      isActive
+                        ? 'bg-blue-500 text-white animate-pulse'
+                        : isComplete
+                        ? 'bg-green-500 text-white'
+                        : 'bg-gray-200 text-gray-400'
+                    }`}
+                  >
+                    {isComplete ? (
+                      <CheckCircle className="w-4 h-4" />
+                    ) : (
+                      <StepIcon className={`w-4 h-4 ${isActive ? 'animate-pulse' : ''}`} />
+                    )}
+                  </div>
+                  <span className={`text-xs mt-1 ${isActive ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
+                    {step.label}
+                  </span>
+                </div>
+                {idx < workflowSteps.length - 1 && (
+                  <div
+                    className={`w-12 h-0.5 mx-1 ${
+                      isComplete ? 'bg-green-500' : 'bg-gray-200'
+                    }`}
+                  />
+                )}
+              </div>
+            )
+          })}
         </div>
       </div>
     </div>
@@ -1110,6 +1276,92 @@ What would you like to build today?`,
     },
   })
 
+  // Mutation for approving tasks inline
+  const approveMutation = useMutation({
+    mutationFn: (taskId) => approveTask(taskId),
+    onSuccess: (data, taskId) => {
+      // Remove the approved task from pending approvals in messages
+      setMessages((prev) => prev.map(msg => {
+        if (msg.pendingApprovals) {
+          return {
+            ...msg,
+            pendingApprovals: msg.pendingApprovals.filter(a => a.task_id !== taskId),
+          }
+        }
+        return msg
+      }))
+
+      // Add success message
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `✅ Task approved successfully! The action will now proceed.`,
+        },
+      ])
+
+      // Invalidate queries to refresh data
+      queryClient.invalidateQueries(['tasks'])
+      queryClient.invalidateQueries(['plans'])
+    },
+    onError: (error) => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `❌ Error approving task: ${error.message}`,
+        },
+      ])
+    },
+  })
+
+  // Mutation for rejecting tasks inline
+  const rejectMutation = useMutation({
+    mutationFn: ({ taskId, reason }) => rejectTask(taskId, reason),
+    onSuccess: (data, { taskId }) => {
+      // Remove the rejected task from pending approvals in messages
+      setMessages((prev) => prev.map(msg => {
+        if (msg.pendingApprovals) {
+          return {
+            ...msg,
+            pendingApprovals: msg.pendingApprovals.filter(a => a.task_id !== taskId),
+          }
+        }
+        return msg
+      }))
+
+      // Add rejection message
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `🚫 Task rejected. The action has been cancelled.`,
+        },
+      ])
+
+      // Invalidate queries
+      queryClient.invalidateQueries(['tasks'])
+      queryClient.invalidateQueries(['plans'])
+    },
+    onError: (error) => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `❌ Error rejecting task: ${error.message}`,
+        },
+      ])
+    },
+  })
+
+  const handleApproveTask = (taskId) => {
+    approveMutation.mutate(taskId)
+  }
+
+  const handleRejectTask = (taskId, reason) => {
+    rejectMutation.mutate({ taskId, reason })
+  }
+
   // Mutation for answering questions
   const answerMutation = useMutation({
     mutationFn: ({ questionId, answer }) => answerQuestion(questionId, answer),
@@ -1324,6 +1576,9 @@ What would you like to build today?`,
               message={message}
               onAnswerQuestion={handleAnswerQuestion}
               isAnsweringQuestion={answerMutation.isPending}
+              onApproveTask={handleApproveTask}
+              onRejectTask={handleRejectTask}
+              isApprovingTask={approveMutation.isPending || rejectMutation.isPending}
             />
           ))}
 
