@@ -45,6 +45,7 @@ class AgentRuntime:
         mcp_registry: MCPRegistry,
         agent_registry: AgentRegistry,
         llm: BaseChatModel,
+        emit_event: callable = None,
     ):
         """Initialize the AgentRuntime.
 
@@ -53,13 +54,18 @@ class AgentRuntime:
             mcp_registry: Registry of available MCP servers
             agent_registry: Registry of agent definitions
             llm: LangChain chat model for agents
+            emit_event: Optional callback to emit real-time events
         """
         self.mcp_client = mcp_client
         self.mcp_registry = mcp_registry
         self.agent_registry = agent_registry
         self.llm = llm
+        self.emit_event = emit_event
         self.a2a = A2AProtocol()
         self.logger = logger.bind(component="agent_runtime")
+
+        # Collect LLM calls from all agent executions
+        self.all_llm_calls: list[dict] = []
 
     async def execute_plan(
         self,
@@ -186,12 +192,13 @@ class AgentRuntime:
             if not agent_def:
                 raise ValueError(f"Agent not found: {task.agent_id}")
 
-            # Create agent instance
+            # Create agent instance with emit_event callback
             agent = Agent(
                 definition=agent_def,
                 mcp_client=self.mcp_client,
                 mcp_registry=self.mcp_registry,
                 llm=self.llm,
+                emit_event=self.emit_event,
             )
 
             # Build task context from dependencies
@@ -211,6 +218,10 @@ class AgentRuntime:
 
             # Execute the agent
             result = await agent.execute(task.description, task_context)
+
+            # Collect LLM calls from this agent
+            if result.llm_calls:
+                self.all_llm_calls.extend(result.llm_calls)
 
             # Store result
             task.result = result
@@ -276,6 +287,13 @@ class AgentRuntime:
             mcp_client=self.mcp_client,
             mcp_registry=self.mcp_registry,
             llm=self.llm,
+            emit_event=self.emit_event,
         )
 
-        return await agent.execute(description, context or {})
+        result = await agent.execute(description, context or {})
+
+        # Collect LLM calls
+        if result.llm_calls:
+            self.all_llm_calls.extend(result.llm_calls)
+
+        return result
