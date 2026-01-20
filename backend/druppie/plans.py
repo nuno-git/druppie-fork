@@ -36,6 +36,17 @@ from druppie.plan_execution_engine import PlanExecutionEngine
 logger = structlog.get_logger()
 
 
+def serialize_for_json(obj: Any) -> Any:
+    """Recursively convert datetime objects to ISO strings for JSON serialization."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: serialize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_for_json(item) for item in obj]
+    return obj
+
+
 class WorkflowEvent:
     """Represents a workflow event for user visibility."""
 
@@ -660,7 +671,7 @@ class PlanService:
                 result = self._execute_task(task, emit_event=emit_event)
 
                 task.status = "completed"
-                task.result = result
+                task.result = serialize_for_json(result)
                 task.completed_at = datetime.utcnow()
                 db.session.commit()
 
@@ -699,11 +710,11 @@ class PlanService:
 
         # Preserve URLs that were set during task execution
         existing_result = plan.result or {}
-        plan.result = {
+        plan.result = serialize_for_json({
             "tasks": results,
             "repo_url": existing_result.get("repo_url"),
             "app_url": existing_result.get("app_url"),
-        }
+        })
         db.session.commit()
 
         return {"status": plan.status, "results": results}
@@ -898,9 +909,14 @@ class PlanService:
             import time
             timestamp = int(time.time())
 
+            # Extract repo name from repo_url (e.g., http://localhost:3000/druppie/counter-app-6bb20429)
+            repo_name = project.repo_url.rstrip('/').split('/')[-1] if project.repo_url else project.gitea_repo_name
+
             workflow_context = {
                 "project_name": project.name,
                 "project_id": project.id,
+                "repo_name": repo_name,
+                "repo_url": project.repo_url,
                 "update_description": update_description,
                 "timestamp": timestamp,
                 "app_type": app_info.get("app_type", "application"),

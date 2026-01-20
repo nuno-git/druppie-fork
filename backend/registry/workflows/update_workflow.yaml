@@ -29,8 +29,8 @@ steps:
     type: mcp
     tool: git.clone
     params:
-      url: "http://gitea:3000/druppie/{project_name}.git"
-      path: "/workspace/{project_name}"
+      repo_url: "http://gitea:3000/druppie/{repo_name}.git"
+      path: "/workspace/{project_id}"
     on_success: create_update_branch
     on_failure: fail_workflow
 
@@ -39,7 +39,7 @@ steps:
     type: mcp
     tool: gitea.create_branch
     params:
-      repo: "{project_name}"
+      repo: "{repo_name}"
       branch: "feature/update-{timestamp}"
       from_branch: "main"
     on_success: analyze_codebase
@@ -53,7 +53,7 @@ steps:
       Analyze the existing codebase to understand its structure:
 
       Project: {project_name}
-      Path: /workspace/{project_name}/
+      Path: /workspace/{project_id}/
 
       Requirements:
       1. Understand the project structure
@@ -73,6 +73,7 @@ steps:
       Write tests for the following update:
 
       Project: {project_name}
+      Path: /workspace/{project_id}/
       Update: {update_description}
       Codebase Analysis: {step_analyze_codebase.summary}
 
@@ -94,6 +95,7 @@ steps:
       Implement the following update:
 
       Project: {project_name}
+      Path: /workspace/{project_id}/
       Update: {update_description}
       Codebase Analysis: {step_analyze_codebase.summary}
 
@@ -110,7 +112,7 @@ steps:
     type: mcp
     tool: shell.run
     params:
-      command: "cd /workspace/{project_name} && make test || npm test || pytest || python -m pytest"
+      command: "cd /workspace/{project_id} && make test || npm test || pytest || python -m pytest"
       timeout: "180"
     on_success: code_review
     on_failure: fix_update_code
@@ -124,6 +126,7 @@ steps:
       Tests are failing. Fix the code:
 
       Project: {project_name}
+      Path: /workspace/{project_id}/
       Test output: {step_run_all_tests.error}
 
       Requirements:
@@ -142,7 +145,7 @@ steps:
 
       Project: {project_name}
       Update: {update_description}
-      Path: /workspace/{project_name}/
+      Path: /workspace/{project_id}/
 
       Focus on:
       1. New code quality
@@ -162,6 +165,7 @@ steps:
       Commit and push the update:
 
       Project: {project_name}
+      Path: /workspace/{project_id}/
       Branch: feature/update-{timestamp}
 
       Steps:
@@ -176,24 +180,24 @@ steps:
     type: mcp
     tool: docker.build
     params:
-      path: "/workspace/{project_name}"
-      tag: "druppie/{project_name}:preview"
+      path: "/workspace/{project_id}"
+      tag: "druppie/{repo_name}:preview"
     on_success: deploy_preview
     on_failure: fail_workflow
 
   deploy_preview:
-    name: Deploy Preview
+    Name: Deploy Preview
     type: agent
     agent_id: devops_agent
     task: |
       Deploy the update to a preview environment:
 
       Project: {project_name}
-      Image: druppie/{project_name}:preview
+      Image: druppie/{repo_name}:preview
 
       Requirements:
       1. Stop any existing preview container
-      2. Deploy with container name druppie-{project_name}-preview
+      2. Deploy with container name druppie-{project_id}-preview
       3. Use port range 9050-9100 for preview
       4. Verify the application works
       5. Return the preview URL
