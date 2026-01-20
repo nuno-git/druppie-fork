@@ -145,8 +145,9 @@ const FilePreview = ({ path, planId, onClose }) => {
 }
 
 const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDeleting }) => {
-  const repoUrl = plan.result?.repo_url
-  const appUrl = plan.result?.app_url || projectStatus?.url
+  // Projects from /api/projects have repo_url and app_url directly (not nested in result)
+  const repoUrl = plan.repo_url
+  const appUrl = plan.app_url || projectStatus?.url
   const hasRepo = !!repoUrl
   const isRunning = projectStatus?.status === 'running'
 
@@ -186,7 +187,7 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
           <Folder className={`w-5 h-5 mr-2 ${isSelected ? 'text-blue-500' : 'text-yellow-500'}`} />
           <h3 className="font-semibold text-gray-900 truncate">{plan.name}</h3>
         </div>
-        <StatusBadge status={plan.status} hasRepo={hasRepo} isRunning={isRunning} />
+        <StatusBadge status="completed" hasRepo={hasRepo} isRunning={isRunning} />
       </div>
 
       {/* Description */}
@@ -331,11 +332,12 @@ const Projects = () => {
   })
 
   // Get all project statuses for the grid view
+  // All projects returned by /api/projects have workspaces, so they're all "ready"
   const projectStatuses = useQuery({
     queryKey: ['allProjectStatuses'],
     queryFn: async () => {
       const statuses = {}
-      for (const plan of plans.filter(p => p.status === 'completed')) {
+      for (const plan of plans) {
         try {
           const status = await getProjectStatus(plan.id)
           statuses[plan.id] = status
@@ -349,10 +351,11 @@ const Projects = () => {
     refetchInterval: 15000,
   })
 
-  const completedPlans = plans.filter((p) => p.status === 'completed')
+  // All projects from /api/projects are "completed" (have workspaces with files)
+  const completedPlans = plans
   const selectedPlanData = plans.find((p) => p.id === selectedPlan)
-  const repoUrl = selectedPlanData?.result?.repo_url
-  const appUrl = selectedPlanData?.result?.app_url || projectStatus?.url
+  const repoUrl = selectedPlanData?.repo_url
+  const appUrl = selectedPlanData?.app_url || projectStatus?.url
 
   const navigateToPath = (path) => {
     setCurrentPath(path)
@@ -442,7 +445,7 @@ const Projects = () => {
                 <p className="text-gray-500 mt-1">{selectedPlanData?.description}</p>
               </div>
               <StatusBadge
-                status={selectedPlanData?.status}
+                status="completed"
                 hasRepo={!!repoUrl}
                 isRunning={projectStatus?.status === 'running'}
               />
