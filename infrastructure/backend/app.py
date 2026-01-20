@@ -461,8 +461,17 @@ def chat():
             user_roles=user.get("realm_access", {}).get("roles", []),
         )
 
-    # Process through governance pipeline
-    result = plan_service.process_chat(plan, message, user)
+    # Create event emitter for real-time updates
+    def emit_workflow_event(event: dict):
+        socketio.emit("workflow_event", {
+            "plan_id": plan.id,
+            "event": event,
+        })
+
+    # Process through governance pipeline with event emission
+    result = plan_service.process_chat(
+        plan, message, user, emit_event=emit_workflow_event
+    )
 
     # Broadcast update
     socketio.emit("plan_updated", plan.to_dict(), room=f"plan:{plan.id}")
@@ -473,6 +482,7 @@ def chat():
             "response": result.get("response"),
             "status": plan.status,
             "pending_approvals": result.get("pending_approvals", []),
+            "workflow_events": result.get("workflow_events", []),
         }
     )
 
