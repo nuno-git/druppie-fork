@@ -2,12 +2,14 @@
  * Tasks (Approvals) Page
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, HelpCircle, Send, Loader2, MessageSquare } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Wifi, WifiOff } from 'lucide-react'
 import { getTasks, approveTask, rejectTask, getQuestions, answerQuestion } from '../services/api'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
+import { useToast } from '../components/Toast'
+import { initSocket, onApprovalRequired, onApprovalStatusChanged, isSocketConnected, joinApprovalsRoom } from '../services/socket'
 
 // Helper to get human-readable tool description
 const getToolDescription = (toolName) => {
@@ -362,14 +364,16 @@ const QuestionCard = ({ question, onAnswer, isAnswering }) => {
 const Tasks = () => {
   const { user } = useAuth()
   const queryClient = useQueryClient()
+  const toast = useToast()
+  const [isConnected, setIsConnected] = useState(false)
 
-  const { data: tasks = [], isLoading, error } = useQuery({
+  const { data: tasks = [], isLoading, isError, error, refetch: refetchTasks } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
     refetchInterval: 10000,
   })
 
-  const { data: questions = [], isLoading: questionsLoading } = useQuery({
+  const { data: questions = [], isLoading: questionsLoading, isError: questionsError, error: questionsErrorData, refetch: refetchQuestions } = useQuery({
     queryKey: ['questions'],
     queryFn: () => getQuestions(),
     refetchInterval: 10000,
@@ -380,6 +384,10 @@ const Tasks = () => {
     onSuccess: () => {
       queryClient.invalidateQueries(['tasks'])
       queryClient.invalidateQueries(['plans'])
+      toast.success('Approval Granted', 'The task has been approved successfully.')
+    },
+    onError: (err) => {
+      toast.error('Approval Failed', err.message || 'Failed to approve the task. Please try again.')
     },
   })
 
@@ -388,6 +396,10 @@ const Tasks = () => {
     onSuccess: () => {
       queryClient.invalidateQueries(['tasks'])
       queryClient.invalidateQueries(['plans'])
+      toast.success('Task Rejected', 'The task has been rejected.')
+    },
+    onError: (err) => {
+      toast.error('Rejection Failed', err.message || 'Failed to reject the task. Please try again.')
     },
   })
 
@@ -396,8 +408,70 @@ const Tasks = () => {
     onSuccess: () => {
       queryClient.invalidateQueries(['questions'])
       queryClient.invalidateQueries(['plans'])
+      toast.success('Answer Submitted', 'Your answer has been sent to the agent.')
+    },
+    onError: (err) => {
+      toast.error('Submission Failed', err.message || 'Failed to submit your answer. Please try again.')
     },
   })
+
+  // Refetch callback for WebSocket events
+  const refetchAll = useCallback(() => {
+    refetchTasks()
+    refetchQuestions()
+  }, [refetchTasks, refetchQuestions])
+
+  // WebSocket connection for real-time updates
+  useEffect(() => {
+    // Initialize socket connection
+    const socket = initSocket()
+
+    // Check initial connection status
+    const checkConnection = () => {
+      setIsConnected(isSocketConnected())
+    }
+    checkConnection()
+
+    // Join approvals room for user's roles
+    if (user?.roles) {
+      joinApprovalsRoom(user.roles)
+    }
+
+    // Handle new approval required events
+    const handleApprovalRequired = (data) => {
+      const toolName = data.tool || data.mcp_tool || 'Unknown tool'
+      toast.info('New Approval Required', `Action requested: ${toolName}`)
+      refetchAll()
+    }
+
+    // Handle approval status changed events
+    const handleApprovalStatusChanged = (data) => {
+      const toolName = data.tool || data.mcp_tool || 'Unknown tool'
+      const status = data.status || 'updated'
+      if (status === 'approved') {
+        toast.success('Approval Granted', `${toolName} was approved`)
+      } else if (status === 'rejected') {
+        toast.warning('Approval Rejected', `${toolName} was rejected`)
+      } else {
+        toast.info('Approval Updated', `${toolName}: ${status}`)
+      }
+      refetchAll()
+    }
+
+    // Subscribe to events
+    const unsubApprovalRequired = onApprovalRequired(handleApprovalRequired)
+    const unsubStatusChanged = onApprovalStatusChanged(handleApprovalStatusChanged)
+
+    // Periodically check connection status
+    const connectionInterval = setInterval(checkConnection, 3000)
+
+    // Cleanup on unmount
+    return () => {
+      unsubApprovalRequired()
+      unsubStatusChanged()
+      clearInterval(connectionInterval)
+    }
+  }, [user?.roles, toast, refetchAll])
 
   const handleApprove = (taskId) => {
     approveMutation.mutate({ taskId, comment: '' })
@@ -423,7 +497,34 @@ const Tasks = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold">Pending Approvals</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold">Pending Approvals</h1>
+            {/* Live connection indicator */}
+            <span
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                isConnected
+                  ? 'bg-green-100 text-green-700'
+                  : 'bg-gray-100 text-gray-500'
+              }`}
+              title={isConnected ? 'Connected to real-time updates' : 'Disconnected from real-time updates'}
+            >
+              {isConnected ? (
+                <>
+                  <Wifi className="w-3 h-3" />
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                  </span>
+                  Live
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-3 h-3" />
+                  Offline
+                </>
+              )}
+            </span>
+          </div>
           <p className="text-gray-500 mt-1">
             Review and approve tasks based on your role permissions.
           </p>
@@ -464,16 +565,46 @@ const Tasks = () => {
         </div>
       )}
 
+      {/* Loading State for Questions */}
+      {questionsLoading && (
+        <div className="flex items-center justify-center h-32">
+          <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+          <span className="ml-2 text-gray-600">Loading questions...</span>
+        </div>
+      )}
+
+      {/* Error State for Questions */}
+      {questionsError && !questionsLoading && (
+        <div className="flex flex-col items-center justify-center h-32 text-red-500 bg-white rounded-xl border border-red-200 p-4">
+          <AlertCircle className="w-8 h-8 mb-2" />
+          <p className="font-medium">Failed to load questions</p>
+          <p className="text-sm text-red-400">{questionsErrorData?.message || 'An unexpected error occurred'}</p>
+          <button
+            onClick={() => refetchQuestions()}
+            className="mt-3 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors text-sm"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Approval Tasks Section */}
       {isLoading ? (
-        <div className="text-center py-12">
-          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-500">Loading tasks...</p>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+          <span className="ml-2 text-gray-600">Loading tasks...</span>
         </div>
-      ) : error ? (
-        <div className="text-center py-12">
-          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <p className="text-red-500">Error loading tasks: {error.message}</p>
+      ) : isError ? (
+        <div className="flex flex-col items-center justify-center h-64 text-red-500">
+          <AlertCircle className="w-12 h-12 mb-2" />
+          <p className="text-lg font-medium">Failed to load tasks</p>
+          <p className="text-sm text-red-400">{error?.message || 'An unexpected error occurred'}</p>
+          <button
+            onClick={() => refetchTasks()}
+            className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+          >
+            Retry
+          </button>
         </div>
       ) : tasks.length === 0 && questions.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-xl border border-gray-200">

@@ -10,7 +10,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 import structlog
 
-from druppie.api.routes import chat, sessions, approvals, mcps, projects
+from druppie.api.routes import chat, sessions, approvals, mcps, projects, questions
 from druppie.api.websocket import handle_websocket
 from druppie.core.loop import get_main_loop
 from druppie.agents import Agent
@@ -66,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(approvals.router, prefix="/api", tags=["Approvals"])
     app.include_router(mcps.router, prefix="/api", tags=["MCPs"])
     app.include_router(projects.router, prefix="/api", tags=["Projects"])
+    app.include_router(questions.router, prefix="/api/questions", tags=["Questions"])
 
     @app.get("/health")
     async def health_check():
