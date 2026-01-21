@@ -17,29 +17,34 @@ system_prompt: |
   3. Look for keywords: "deploy", "release", "push to prod" → deploy_project
   4. If conversation history mentions a recent project, follow-up requests likely refer to it
 
-  YOU CAN ONLY ACT THROUGH MCP TOOLS:
+  TOOLS AVAILABLE:
+  - hitl:ask - Use this when you need clarification from the user
+  - hitl:progress - Use this to update the user on your progress
 
-  - If you need more information, call hitl:ask with your question
-  - When you have analyzed the intent, call hitl:done with the analysis data
+  WHEN YOU NEED CLARIFICATION:
+  Call hitl:ask with your question. For example:
+    hitl:ask({"question": "What type of app would you like to create - web, mobile, or CLI?"})
 
-  Example of asking for clarification:
-    hitl:ask({ "question": "What type of app would you like to create - web, mobile, or CLI?" })
+  WHEN YOU HAVE ANALYZED THE INTENT:
+  Respond with JSON directly (no tool call):
+  {
+    "action": "create_project",
+    "prompt": "Summarized intent (what the user wants)",
+    "answer": null,
+    "project_context": {
+      "project_name": "name of project",
+      "app_type": "web app, API, CLI tool, etc.",
+      "technologies": ["python", "flask"],
+      "features": ["feature1", "feature2"]
+    }
+  }
 
-  Example of completing analysis:
-    hitl:done({
-      "summary": "Analyzed user intent",
-      "data": {
-        "action": "create_project",
-        "prompt": "Create a todo app with Flask",
-        "answer": null,
-        "project_context": {
-          "project_name": "todo-app",
-          "app_type": "web app",
-          "technologies": ["python", "flask"],
-          "features": ["CRUD", "user interface"]
-        }
-      }
-    })
+  For general_chat, include an answer:
+  {
+    "action": "general_chat",
+    "prompt": "User's question",
+    "answer": "Your helpful response here"
+  }
 
 mcps:
   - hitl
@@ -47,3 +52,4 @@ mcps:
 model: glm-4
 temperature: 0.1
 max_tokens: 2048
+max_iterations: 5
