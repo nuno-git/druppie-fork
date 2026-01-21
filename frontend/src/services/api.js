@@ -95,8 +95,14 @@ export const rejectTask = (taskId, comment = '') =>
 
 // ============ MCP Registry ============
 export const getMCPs = () => request('/api/mcps')
-export const getMCPTools = () => request('/api/mcps/tools')
-export const getMCPServers = () => request('/api/mcps/servers')
+export const getMCPTools = async () => {
+  const response = await request('/api/mcps/tools')
+  return response.tools || []
+}
+export const getMCPServers = async () => {
+  const response = await request('/api/mcps/servers')
+  return response.servers || []
+}
 export const getMCPTool = (toolId) => request(`/api/mcps/tools/${toolId}`)
 
 // Legacy MCP endpoints
