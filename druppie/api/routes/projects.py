@@ -507,3 +507,161 @@ async def get_project_status(
             for b in preview_builds
         ],
     }
+
+
+# =============================================================================
+# GITEA DATA ROUTES (Commits, Branches)
+# =============================================================================
+
+
+@router.get("/projects/{project_id}/commits")
+async def get_project_commits(
+    project_id: str,
+    branch: str = "main",
+    limit: int = Query(20, ge=1, le=100),
+    user: dict = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Get recent commits from Gitea for a project."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    gitea = get_gitea_client()
+
+    # Gitea API: GET /repos/{owner}/{repo}/commits
+    result = await gitea._request(
+        "GET",
+        f"/repos/{gitea.org}/{project.repo_name}/commits",
+        params={"sha": branch, "limit": limit},
+    )
+
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch commits: {result.get('error', 'Unknown error')}",
+        )
+
+    commits = []
+    for commit_data in result.get("data", []):
+        commit = commit_data.get("commit", {})
+        author = commit.get("author", {})
+        committer = commit.get("committer", {})
+        commits.append({
+            "sha": commit_data.get("sha"),
+            "short_sha": commit_data.get("sha", "")[:7],
+            "message": commit.get("message", ""),
+            "author": {
+                "name": author.get("name"),
+                "email": author.get("email"),
+                "date": author.get("date"),
+            },
+            "committer": {
+                "name": committer.get("name"),
+                "email": committer.get("email"),
+                "date": committer.get("date"),
+            },
+            "url": commit_data.get("html_url"),
+        })
+
+    return {
+        "project_id": project_id,
+        "branch": branch,
+        "commits": commits,
+        "count": len(commits),
+    }
+
+
+# =============================================================================
+# SESSIONS LINKED TO PROJECT
+# =============================================================================
+
+
+@router.get("/projects/{project_id}/sessions")
+async def get_project_sessions(
+    project_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    user: dict = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Get sessions (conversations) linked to a project."""
+    from druppie.db.models import Session
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Query sessions that have this project_id
+    sessions = (
+        db.query(Session)
+        .filter(Session.project_id == project_id)
+        .order_by(Session.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "project_id": project_id,
+        "sessions": [
+            {
+                "id": s.id,
+                "status": s.status,
+                "preview": s.preview,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+            }
+            for s in sessions
+        ],
+        "count": len(sessions),
+    }
+
+
+# =============================================================================
+# PROJECT SETTINGS UPDATE
+# =============================================================================
+
+
+class ProjectUpdateRequest(BaseModel):
+    """Request model for updating project settings."""
+
+    name: str | None = None
+    description: str | None = None
+
+
+@router.patch("/projects/{project_id}")
+async def update_project(
+    project_id: str,
+    update_data: ProjectUpdateRequest,
+    user: dict = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> ProjectResponse:
+    """Update project settings (name, description)."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Check ownership
+    user_id = user.get("sub")
+    roles = user.get("realm_access", {}).get("roles", [])
+    if "admin" not in roles and project.owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this project")
+
+    # Update fields if provided
+    if update_data.name is not None:
+        project.name = update_data.name
+    if update_data.description is not None:
+        project.description = update_data.description
+
+    db.commit()
+    db.refresh(project)
+
+    logger.info("project_updated", project_id=project_id)
+
+    builder = get_builder_service(db)
+    main_build = builder.get_main_build(project.id)
+    preview_builds = builder.get_preview_builds(project.id)
+
+    return project_to_response(project, main_build, preview_builds)

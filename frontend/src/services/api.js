@@ -155,6 +155,20 @@ export const deleteProject = (projectId) =>
   request(`/api/projects/${projectId}`, { method: 'DELETE' })
 export const getProjectStatus = (projectId) =>
   request(`/api/projects/${projectId}/status`)
+export const updateProject = (projectId, data) =>
+  request(`/api/projects/${projectId}`, { method: 'PATCH', body: JSON.stringify(data) })
+
+// Project detail endpoints
+export const getProjectCommits = (projectId, branch = 'main', limit = 20) =>
+  request(`/api/projects/${projectId}/commits?branch=${branch}&limit=${limit}`)
+export const getProjectBranches = (projectId) =>
+  request(`/api/projects/${projectId}/branches`)
+export const getProjectSessions = (projectId, limit = 20) =>
+  request(`/api/projects/${projectId}/sessions?limit=${limit}`)
+export const getProjectFiles = (projectId, path = '', branch = 'main') =>
+  request(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}&branch=${branch}`)
+export const getProjectFile = (projectId, path, branch = 'main') =>
+  request(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}&branch=${branch}`)
 
 // ============ Running Apps ============
 export const getRunningApps = () => request('/api/apps/running')
