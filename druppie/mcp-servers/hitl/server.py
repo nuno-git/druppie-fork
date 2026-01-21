@@ -6,6 +6,7 @@ Provides tools for agent-to-human interaction:
 
 Uses Redis pub/sub for real-time communication with frontend.
 Uses FastMCP framework for HTTP transport.
+Persists questions to the backend database via internal API.
 """
 
 import json
@@ -13,6 +14,7 @@ import os
 import uuid
 from datetime import datetime
 
+import httpx
 import redis
 from fastmcp import FastMCP
 
@@ -23,8 +25,52 @@ mcp = FastMCP("HITL MCP Server")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 redis_client = redis.from_url(REDIS_URL)
 
+# Backend API for persisting questions
+BACKEND_URL = os.getenv("BACKEND_URL", "http://druppie-backend:8000")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "druppie-internal-key")
+
 # Request timeout in seconds
 REQUEST_TIMEOUT = int(os.getenv("HITL_TIMEOUT", "300"))
+
+
+async def persist_question(
+    question_id: str,
+    session_id: str,
+    question: str,
+    question_type: str = "text",
+    choices: list[str] | None = None,
+    agent_id: str = "unknown",
+) -> bool:
+    """Persist a HITL question to the backend database.
+
+    This ensures questions survive service restarts and can be
+    retrieved by the frontend even if the user refreshes the page.
+
+    Returns True if successful, False otherwise.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{BACKEND_URL}/api/questions/internal/create",
+                json={
+                    "question_id": question_id,
+                    "session_id": session_id,
+                    "agent_id": agent_id,
+                    "question": question,
+                    "question_type": question_type,
+                    "choices": choices,
+                },
+                headers={"X-Internal-API-Key": INTERNAL_API_KEY},
+                timeout=10.0,
+            )
+            if response.status_code in (200, 201):
+                return True
+            else:
+                print(f"Failed to persist question: {response.status_code} {response.text}")
+                return False
+    except Exception as e:
+        print(f"Error persisting question to backend: {e}")
+        return False
 
 
 # =============================================================================
@@ -37,6 +83,7 @@ async def ask_question(
     session_id: str,
     question: str,
     context: str | None = None,
+    agent_id: str = "unknown",
 ) -> dict:
     """Ask user a free-form text question.
 
@@ -47,11 +94,21 @@ async def ask_question(
         session_id: Session ID for routing
         question: The question to ask
         context: Optional context about why this question is needed
+        agent_id: ID of the agent asking the question
 
     Returns:
         Dict with success, answer
     """
     request_id = str(uuid.uuid4())
+
+    # Persist question to database for durability
+    await persist_question(
+        question_id=request_id,
+        session_id=session_id,
+        question=question,
+        question_type="text",
+        agent_id=agent_id,
+    )
 
     # Publish question to frontend via Redis
     redis_client.publish(
@@ -94,6 +151,7 @@ async def ask_choice(
     choices: list[str],
     allow_other: bool = True,
     context: str | None = None,
+    agent_id: str = "unknown",
 ) -> dict:
     """Ask user a multiple choice question with optional free-text "Other".
 
@@ -110,11 +168,22 @@ async def ask_choice(
         choices: List of choice options
         allow_other: Whether to show "Other" option with text input
         context: Optional context
+        agent_id: ID of the agent asking the question
 
     Returns:
         Dict with success, selected choice, answer (if "other")
     """
     request_id = str(uuid.uuid4())
+
+    # Persist question to database for durability
+    await persist_question(
+        question_id=request_id,
+        session_id=session_id,
+        question=question,
+        question_type="choice",
+        choices=choices,
+        agent_id=agent_id,
+    )
 
     # Publish to frontend
     redis_client.publish(

@@ -66,3 +66,27 @@ async def get_optional_user(
 ) -> dict | None:
     """Get current user if authenticated, or None."""
     return auth.validate_request(authorization)
+
+
+# Internal API key for MCP servers to call backend
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "druppie-internal-key")
+
+
+async def verify_internal_api_key(
+    x_internal_api_key: str | None = Header(None),
+) -> bool:
+    """Verify internal API key for MCP server requests.
+
+    MCP servers use this to authenticate when calling backend endpoints.
+    """
+    if not x_internal_api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing internal API key",
+        )
+    if x_internal_api_key != INTERNAL_API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid internal API key",
+        )
+    return True
