@@ -13,6 +13,8 @@ import structlog
 from druppie.api.routes import chat, sessions, approvals, mcps
 from druppie.api.websocket import handle_websocket
 from druppie.core.loop import get_main_loop
+from druppie.agents import Agent
+from druppie.workflows import Workflow
 
 logger = structlog.get_logger()
 
@@ -23,12 +25,14 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("druppie_starting")
 
-    # Initialize main loop (loads agents and workflows)
-    main_loop = get_main_loop()
+    # Initialize main loop and list available agents/workflows
+    get_main_loop()
+    agents = Agent.list_agents()
+    workflows = Workflow.list_workflows()
     logger.info(
         "main_loop_initialized",
-        agents=len(main_loop._agents),
-        workflows=len(main_loop._workflows),
+        agents=len(agents),
+        workflows=len(workflows),
     )
 
     yield
@@ -70,13 +74,12 @@ def create_app() -> FastAPI:
     @app.get("/api/status")
     async def api_status():
         """API status endpoint for frontend dashboard."""
-        main_loop = get_main_loop()
         return {
             "status": "healthy",
             "version": "2.0.0",
-            "agents": list(main_loop._agents.keys()),
-            "workflows": list(main_loop._workflows.keys()),
-            "llm_provider": os.getenv("LLM_PROVIDER", "mock"),
+            "agents": Agent.list_agents(),
+            "workflows": Workflow.list_workflows(),
+            "llm_provider": os.getenv("LLM_PROVIDER", "auto"),
         }
 
     @app.get("/")

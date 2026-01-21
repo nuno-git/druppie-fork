@@ -258,6 +258,7 @@ class AgentDefinition(BaseModel):
     model: str | None = None
     temperature: float = 0.1
     max_tokens: int = 4096
+    max_iterations: int = 10  # Max tool-calling iterations
 
 
 class AgentResult(BaseModel):
@@ -295,6 +296,9 @@ class WorkflowStep(BaseModel):
     on_success: str | None = None
     on_failure: str | None = None
 
+    class Config:
+        extra = "allow"  # Allow extra fields from YAML
+
 
 class WorkflowDefinition(BaseModel):
     """Definition of a workflow loaded from YAML."""
@@ -303,8 +307,11 @@ class WorkflowDefinition(BaseModel):
     name: str
     description: str = ""
     entry_point: str
-    steps: dict[str, WorkflowStep] = Field(default_factory=dict)
+    steps: dict[str, Any] = Field(default_factory=dict)  # Allow flexible step format
     inputs: list[str] = Field(default_factory=list)
+
+    class Config:
+        extra = "allow"  # Allow extra fields from YAML
 
 
 # =============================================================================

@@ -1,0 +1,256 @@
+"""Agent runtime - clean abstraction for running agents.
+
+Usage:
+    result = await Agent("router").run("Create a todo app")
+    result = await Agent("developer").run("Implement the API", context={...})
+"""
+
+import os
+from typing import Any
+
+import structlog
+import yaml
+
+from druppie.agents.models import AgentDefinition
+from druppie.llm import get_llm_service
+from druppie.mcps import get_mcp_registry
+
+logger = structlog.get_logger()
+
+
+class AgentError(Exception):
+    """Base exception for agent errors."""
+    pass
+
+
+class AgentNotFoundError(AgentError):
+    """Agent definition not found."""
+    pass
+
+
+class AgentMaxIterationsError(AgentError):
+    """Agent exceeded maximum iterations."""
+    pass
+
+
+class Agent:
+    """Clean agent abstraction.
+
+    Handles:
+    - Loading YAML definition
+    - Building messages with system prompt
+    - Running tool-calling loop
+    - Parsing output
+
+    The agent can call any MCP tool. If it calls hitl:ask,
+    execution pauses automatically via LangGraph's interrupt().
+    """
+
+    _definitions_path: str = None
+    _cache: dict[str, "AgentDefinition"] = {}
+
+    def __init__(self, agent_id: str):
+        """Initialize agent by ID.
+
+        Args:
+            agent_id: Agent identifier (e.g., "router", "developer")
+        """
+        self.id = agent_id
+        self.definition = self._load_definition(agent_id)
+        self._llm = None
+        self._registry = None
+
+    @classmethod
+    def set_definitions_path(cls, path: str) -> None:
+        """Set the path to agent definitions."""
+        cls._definitions_path = path
+        cls._cache.clear()
+
+    @classmethod
+    def _get_definitions_path(cls) -> str:
+        """Get the path to agent definitions."""
+        if cls._definitions_path:
+            return cls._definitions_path
+        # Default: druppie/agents/definitions/
+        return os.path.join(os.path.dirname(__file__), "definitions")
+
+    @classmethod
+    def _load_definition(cls, agent_id: str) -> AgentDefinition:
+        """Load agent definition from YAML."""
+        if agent_id in cls._cache:
+            return cls._cache[agent_id]
+
+        path = os.path.join(cls._get_definitions_path(), f"{agent_id}.yaml")
+
+        if not os.path.exists(path):
+            raise AgentNotFoundError(f"Agent '{agent_id}' not found at {path}")
+
+        with open(path, "r") as f:
+            data = yaml.safe_load(f)
+
+        definition = AgentDefinition(**data)
+        cls._cache[agent_id] = definition
+
+        logger.debug("agent_definition_loaded", agent_id=agent_id)
+        return definition
+
+    @classmethod
+    def list_agents(cls) -> list[str]:
+        """List available agent IDs."""
+        path = cls._get_definitions_path()
+        if not os.path.exists(path):
+            return []
+        return [
+            f.replace(".yaml", "").replace(".yml", "")
+            for f in os.listdir(path)
+            if f.endswith((".yaml", ".yml"))
+        ]
+
+    @property
+    def llm(self):
+        """Get LLM service (lazy loaded)."""
+        if self._llm is None:
+            self._llm = get_llm_service().get_llm(
+                model=self.definition.model,
+                temperature=self.definition.temperature,
+                max_tokens=self.definition.max_tokens,
+            )
+        return self._llm
+
+    @property
+    def registry(self):
+        """Get MCP registry (lazy loaded)."""
+        if self._registry is None:
+            self._registry = get_mcp_registry()
+        return self._registry
+
+    async def run(self, prompt: str, context: dict = None) -> Any:
+        """Run the agent with the given prompt.
+
+        Args:
+            prompt: User prompt or task description
+            context: Optional context dict (previous results, etc.)
+
+        Returns:
+            Parsed result from agent's final response
+
+        Note:
+            If agent calls hitl:ask, execution pauses automatically
+            via LangGraph's interrupt() inside the tool.
+        """
+        messages = [
+            {"role": "system", "content": self.definition.system_prompt},
+            {"role": "user", "content": self._build_prompt(prompt, context)},
+        ]
+
+        # Get tools for this agent's MCPs
+        tools = self.registry.to_openai_tools(self.definition.mcps)
+
+        max_iterations = self.definition.max_iterations or 10
+
+        logger.info(
+            "agent_run_start",
+            agent_id=self.id,
+            prompt_length=len(prompt),
+            tools_count=len(tools),
+        )
+
+        for iteration in range(max_iterations):
+            response = await self.llm.achat(messages, tools)
+
+            # No tool calls = agent is done
+            if not response.tool_calls:
+                logger.info(
+                    "agent_run_complete",
+                    agent_id=self.id,
+                    iterations=iteration + 1,
+                )
+                return self._parse_output(response.content)
+
+            # Execute tools
+            for tool_call in response.tool_calls:
+                tool_name = tool_call.get("name", "")
+                tool_args = tool_call.get("args", {})
+
+                logger.debug(
+                    "agent_tool_call",
+                    agent_id=self.id,
+                    tool=tool_name,
+                    iteration=iteration,
+                )
+
+                # Convert OpenAI format to MCP format (hitl_ask -> hitl:ask)
+                mcp_tool_name = tool_name.replace("_", ":", 1)
+
+                # Execute tool - if it's hitl:ask, interrupt() is called
+                # inside and this whole function pauses automatically
+                result = await self.registry.call_tool(mcp_tool_name, tool_args)
+
+                # Add tool result to messages
+                messages.append({
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": tool_call.get("id", f"call_{iteration}"),
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": str(tool_args),
+                        },
+                    }],
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.get("id", f"call_{iteration}"),
+                    "content": str(result),
+                })
+
+        logger.warning("agent_max_iterations", agent_id=self.id)
+        raise AgentMaxIterationsError(
+            f"Agent '{self.id}' exceeded {max_iterations} iterations"
+        )
+
+    def _build_prompt(self, prompt: str, context: dict = None) -> str:
+        """Build the full prompt with context."""
+        if not context:
+            return prompt
+
+        context_str = "\n".join(
+            f"- {key}: {value}" for key, value in context.items()
+        )
+        return f"""CONTEXT:
+{context_str}
+
+TASK:
+{prompt}"""
+
+    def _parse_output(self, content: str) -> Any:
+        """Parse agent's final output.
+
+        Tries to parse as JSON, falls back to raw content.
+        """
+        if not content:
+            return {}
+
+        content = content.strip()
+
+        # Try to extract JSON from markdown code blocks
+        if content.startswith("```"):
+            lines = content.split("\n")
+            # Remove first and last lines (``` markers)
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            content = "\n".join(lines)
+
+        # Try to parse as JSON
+        import json
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            # Return as string if not valid JSON
+            return {"content": content}
+
+    def __repr__(self) -> str:
+        return f"Agent({self.id!r})"

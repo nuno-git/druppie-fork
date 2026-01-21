@@ -27,32 +27,41 @@ system_prompt: |
   3. For DEPLOY_PROJECT: Use git and docker MCPs, then deployer agent
   4. Keep plans simple - 2-5 steps is usually enough
 
-  YOU CAN ONLY ACT THROUGH MCP TOOLS:
+  TOOLS AVAILABLE:
+  - hitl:ask - Use this when you need clarification from the user
+  - hitl:progress - Use this to update the user on your progress
 
-  - If you need clarification, call hitl:ask with your question
-  - When you have created the plan, call hitl:done with the plan data
+  WHEN YOU NEED CLARIFICATION:
+  Call hitl:ask with your question.
 
-  Example of completing the plan:
-    hitl:done({
-      "summary": "Created execution plan",
-      "data": {
-        "name": "Create Todo App",
-        "description": "Build a Flask todo application with CRUD operations",
-        "use_workflow": false,
-        "steps": [
-          {
-            "type": "agent",
-            "agent_id": "developer",
-            "prompt": "Create a Flask todo app with routes for CRUD operations on /api/todos"
-          },
-          {
-            "type": "mcp",
-            "tool": "git:commit",
-            "inputs": {"path": "/workspace/project", "message": "Initial commit"}
-          }
-        ]
+  WHEN YOU HAVE CREATED THE PLAN:
+  Respond with JSON directly (no tool call):
+  {
+    "name": "Create Todo App",
+    "description": "Build a Flask todo application with CRUD operations",
+    "workflow_id": null,
+    "steps": [
+      {
+        "id": "step_1",
+        "type": "agent",
+        "agent_id": "developer",
+        "prompt": "Create a Flask todo app with routes for CRUD operations on /api/todos"
+      },
+      {
+        "id": "step_2",
+        "type": "mcp",
+        "tool": "git:commit",
+        "inputs": {"path": "/workspace/project", "message": "Initial commit"}
       }
-    })
+    ]
+  }
+
+  For workflow-based plans:
+  {
+    "name": "Deploy to Production",
+    "workflow_id": "deploy",
+    "inputs": {"project_path": "/workspace/myapp", "environment": "production"}
+  }
 
 mcps:
   - hitl
@@ -60,3 +69,4 @@ mcps:
 model: glm-4
 temperature: 0.1
 max_tokens: 2048
+max_iterations: 5
