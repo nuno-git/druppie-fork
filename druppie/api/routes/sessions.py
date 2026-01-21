@@ -57,14 +57,18 @@ def _session_to_response(session) -> SessionResponse:
     context = state.get("context", {})
 
     # Extract name from context or first user message
-    name = context.get("name") or f"Chat: {context.get('user_message', 'Session')[:30]}"
-    description = context.get("user_message", "")
+    # Support both "message" (new) and "user_message" (legacy)
+    message = context.get("message") or context.get("user_message", "Session")
+    name = context.get("name") or f"Chat: {message[:30]}"
+    description = message
 
     # Build result from state
     result = {
-        "response": context.get("final_response", ""),
+        "response": context.get("response") or context.get("final_response", ""),
         "workflow_events": state.get("workflow_events", []),
         "llm_calls": state.get("llm_calls", []),
+        "intent": state.get("intent"),
+        "plan": state.get("plan"),
     }
 
     return SessionResponse(

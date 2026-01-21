@@ -32,6 +32,12 @@ from langgraph.checkpoint.memory import MemorySaver
 from druppie.agents import Agent
 from druppie.workflows import Workflow
 from druppie.mcps.hitl import configure_hitl
+from druppie.core.execution_context import (
+    ExecutionContext,
+    set_current_context,
+    get_current_context,
+    clear_current_context,
+)
 
 logger = structlog.get_logger()
 
@@ -75,12 +81,21 @@ async def router_node(state: GraphState) -> dict:
     """
     logger.info("router_node_start", message=state["message"][:100])
 
+    # Emit step event
+    ctx = get_current_context()
+    if ctx:
+        ctx.emit("step_started", {"step": "router", "description": "Analyzing your request..."})
+
     try:
         result = await Agent("router").run(state["message"])
         logger.info("router_node_complete", action=result.get("action"))
+        if ctx:
+            ctx.emit("step_completed", {"step": "router", "action": result.get("action")})
         return {"intent": result}
     except Exception as e:
         logger.error("router_node_error", error=str(e))
+        if ctx:
+            ctx.emit("step_error", {"step": "router", "error": str(e)})
         return {"error": f"Router failed: {e}"}
 
 
@@ -91,11 +106,17 @@ async def planner_node(state: GraphState) -> dict:
     """
     logger.info("planner_node_start", intent=state["intent"])
 
+    ctx = get_current_context()
+    if ctx:
+        ctx.emit("step_started", {"step": "planner", "description": "Creating execution plan..."})
+
     if not state.get("intent"):
         return {"error": "No intent from router"}
 
     # Check if this is just a chat response (no planning needed)
     if state["intent"].get("action") == "general_chat":
+        if ctx:
+            ctx.emit("step_completed", {"step": "planner", "action": "general_chat"})
         return {
             "plan": None,
             "response": state["intent"].get("answer", state["intent"].get("prompt", "")),
@@ -108,10 +129,15 @@ Request: {state['intent'].get('prompt')}
 Context: {state['intent'].get('project_context', {})}"""
 
         result = await Agent("planner").run(prompt)
-        logger.info("planner_node_complete", steps=len(result.get("steps", [])))
+        steps_count = len(result.get("steps", []))
+        logger.info("planner_node_complete", steps=steps_count)
+        if ctx:
+            ctx.emit("step_completed", {"step": "planner", "steps_count": steps_count})
         return {"plan": result}
     except Exception as e:
         logger.error("planner_node_error", error=str(e))
+        if ctx:
+            ctx.emit("step_error", {"step": "planner", "error": str(e)})
         return {"error": f"Planner failed: {e}"}
 
 
@@ -123,6 +149,8 @@ async def execute_node(state: GraphState) -> dict:
     """
     logger.info("execute_node_start")
 
+    ctx = get_current_context()
+
     if not state.get("plan"):
         return {"results": [], "response": state.get("response", "No plan to execute")}
 
@@ -130,30 +158,54 @@ async def execute_node(state: GraphState) -> dict:
     results = []
     context = {}
 
+    if ctx:
+        ctx.emit("execution_started", {
+            "plan_name": plan.get("name", "Unnamed plan"),
+            "total_steps": len(plan.get("steps", [])),
+        })
+
     # Check if this is a workflow
     if plan.get("workflow_id"):
         try:
+            if ctx:
+                ctx.emit("workflow_started", {"workflow_id": plan["workflow_id"]})
             workflow_result = await Workflow(plan["workflow_id"]).run(
                 plan.get("inputs", {})
             )
+            if ctx:
+                ctx.emit("workflow_completed", {"workflow_id": plan["workflow_id"]})
             return {
                 "results": workflow_result.get("results", []),
                 "response": f"Workflow {plan['workflow_id']} completed",
             }
         except Exception as e:
             logger.error("workflow_error", workflow=plan["workflow_id"], error=str(e))
+            if ctx:
+                ctx.emit("workflow_error", {"workflow_id": plan["workflow_id"], "error": str(e)})
             return {"error": f"Workflow failed: {e}"}
 
     # Execute individual steps
+    total_steps = len(plan.get("steps", []))
     for i, step in enumerate(plan.get("steps", [])):
         step_type = step.get("type", "agent")
         step_id = step.get("id", f"step_{i}")
+        agent_id = step.get("agent_id") if step_type == "agent" else None
 
         logger.info("execute_step", step_id=step_id, step_type=step_type)
 
+        if ctx:
+            ctx.step_started(step_id, step_type, agent_id)
+            ctx.emit("step_progress", {
+                "current_step": i + 1,
+                "total_steps": total_steps,
+                "step_id": step_id,
+                "step_type": step_type,
+                "agent_id": agent_id,
+                "description": step.get("prompt", step.get("tool", ""))[:100],
+            })
+
         try:
             if step_type == "agent":
-                agent_id = step.get("agent_id")
                 prompt = step.get("prompt", "")
                 result = await Agent(agent_id).run(prompt, context)
             elif step_type == "mcp":
@@ -167,9 +219,15 @@ async def execute_node(state: GraphState) -> dict:
             results.append({"step_id": step_id, "success": True, "result": result})
             context[step_id] = result
 
+            if ctx:
+                ctx.step_completed(step_id, success=True)
+
         except Exception as e:
             logger.error("step_error", step_id=step_id, error=str(e))
             results.append({"step_id": step_id, "success": False, "error": str(e)})
+            if ctx:
+                ctx.step_completed(step_id, success=False)
+                ctx.emit("step_error", {"step_id": step_id, "error": str(e)})
             # Continue or stop based on step configuration
             if not step.get("continue_on_error", False):
                 break
@@ -184,6 +242,12 @@ async def execute_node(state: GraphState) -> dict:
         response = f"Completed {successful}/{total} steps"
     else:
         response = "Failed to complete steps"
+
+    if ctx:
+        ctx.emit("execution_completed", {
+            "successful_steps": successful,
+            "total_steps": total,
+        })
 
     return {"results": results, "response": response}
 
@@ -297,6 +361,14 @@ class MainLoop:
         """
         session_id = session_id or str(uuid.uuid4())
 
+        # Create execution context for tracking
+        exec_ctx = ExecutionContext(
+            session_id=session_id,
+            user_id=user_id,
+            emit_event=emit_event,
+        )
+        set_current_context(exec_ctx)
+
         # Configure HITL for this session
         configure_hitl(emit_event, session_id)
 
@@ -317,29 +389,47 @@ class MainLoop:
 
         logger.info("main_loop_start", session=session_id, message=message[:100])
 
+        # Emit start event
+        exec_ctx.emit("processing_started", {"message_preview": message[:100]})
+
         try:
+            # Save session to database
+            await self._save_session(session_id, user_id, "active", message, exec_ctx)
+
             # Run the graph
             final_state = await self.graph.ainvoke(initial_state, config=config)
 
             # Check for interrupt (question/approval pending)
             if "__interrupt__" in final_state:
                 interrupt_data = final_state["__interrupt__"]
+                await self._save_session(session_id, user_id, "paused", message, exec_ctx, final_state)
+                clear_current_context()
                 return {
                     "success": True,
                     "type": "interrupt",
                     "interrupt": interrupt_data,
                     "session_id": session_id,
+                    "workflow_events": exec_ctx.workflow_events,
+                    "llm_calls": exec_ctx.llm_calls,
                 }
 
             # Check for error
             if final_state.get("error"):
+                await self._save_session(session_id, user_id, "failed", message, exec_ctx, final_state)
+                clear_current_context()
                 return {
                     "success": False,
                     "error": final_state["error"],
                     "session_id": session_id,
+                    "workflow_events": exec_ctx.workflow_events,
+                    "llm_calls": exec_ctx.llm_calls,
                 }
 
             # Success
+            await self._save_session(session_id, user_id, "completed", message, exec_ctx, final_state)
+            exec_ctx.emit("processing_completed", {"response_preview": str(final_state.get("response", ""))[:100]})
+            clear_current_context()
+
             return {
                 "success": True,
                 "type": "result",
@@ -348,14 +438,20 @@ class MainLoop:
                 "plan": final_state.get("plan"),
                 "results": final_state.get("results", []),
                 "session_id": session_id,
+                "workflow_events": exec_ctx.workflow_events,
+                "llm_calls": exec_ctx.llm_calls,
             }
 
         except Exception as e:
             logger.error("main_loop_error", error=str(e))
+            await self._save_session(session_id, user_id, "failed", message, exec_ctx, error=str(e))
+            clear_current_context()
             return {
                 "success": False,
                 "error": str(e),
                 "session_id": session_id,
+                "workflow_events": exec_ctx.workflow_events,
+                "llm_calls": exec_ctx.llm_calls,
             }
 
     async def resume_session(
@@ -376,6 +472,13 @@ class MainLoop:
         """
         from langgraph.types import Command
 
+        # Create execution context for tracking
+        exec_ctx = ExecutionContext(
+            session_id=session_id,
+            emit_event=emit_event,
+        )
+        set_current_context(exec_ctx)
+
         configure_hitl(emit_event, session_id)
 
         config = {"configurable": {"thread_id": session_id}}
@@ -391,20 +494,27 @@ class MainLoop:
 
             # Check for another interrupt
             if "__interrupt__" in final_state:
+                clear_current_context()
                 return {
                     "success": True,
                     "type": "interrupt",
                     "interrupt": final_state["__interrupt__"],
                     "session_id": session_id,
+                    "workflow_events": exec_ctx.workflow_events,
+                    "llm_calls": exec_ctx.llm_calls,
                 }
 
             if final_state.get("error"):
+                clear_current_context()
                 return {
                     "success": False,
                     "error": final_state["error"],
                     "session_id": session_id,
+                    "workflow_events": exec_ctx.workflow_events,
+                    "llm_calls": exec_ctx.llm_calls,
                 }
 
+            clear_current_context()
             return {
                 "success": True,
                 "type": "result",
@@ -413,15 +523,73 @@ class MainLoop:
                 "plan": final_state.get("plan"),
                 "results": final_state.get("results", []),
                 "session_id": session_id,
+                "workflow_events": exec_ctx.workflow_events,
+                "llm_calls": exec_ctx.llm_calls,
             }
 
         except Exception as e:
             logger.error("main_loop_resume_error", error=str(e))
+            clear_current_context()
             return {
                 "success": False,
                 "error": str(e),
                 "session_id": session_id,
+                "workflow_events": exec_ctx.workflow_events,
+                "llm_calls": exec_ctx.llm_calls,
             }
+
+    async def _save_session(
+        self,
+        session_id: str,
+        user_id: str | None,
+        status: str,
+        message: str,
+        exec_ctx: ExecutionContext,
+        final_state: dict = None,
+        error: str = None,
+    ) -> None:
+        """Save session to database.
+
+        Args:
+            session_id: Session ID
+            user_id: User ID
+            status: Session status (active, paused, completed, failed)
+            message: Original user message
+            exec_ctx: Execution context with events and calls
+            final_state: Final graph state
+            error: Error message if any
+        """
+        try:
+            from druppie.db.crud import upsert_session
+            from druppie.api.deps import get_db
+
+            # Build state to store
+            state = {
+                "context": {
+                    "message": message,
+                    "name": f"Chat: {message[:30]}...",
+                    "response": final_state.get("response") if final_state else None,
+                },
+                "workflow_events": exec_ctx.workflow_events,
+                "llm_calls": exec_ctx.llm_calls,
+                "intent": final_state.get("intent") if final_state else None,
+                "plan": final_state.get("plan") if final_state else None,
+                "results": final_state.get("results") if final_state else None,
+                "error": error,
+            }
+
+            # Get database session
+            db = next(get_db())
+            try:
+                upsert_session(db, session_id, user_id, status, state)
+                db.commit()
+            finally:
+                db.close()
+
+            logger.debug("session_saved", session_id=session_id, status=status)
+
+        except Exception as e:
+            logger.error("session_save_error", session_id=session_id, error=str(e))
 
 
 # =============================================================================

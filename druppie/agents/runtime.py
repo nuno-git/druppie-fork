@@ -6,6 +6,7 @@ Usage:
 """
 
 import os
+import time
 from typing import Any
 
 import structlog
@@ -14,6 +15,7 @@ import yaml
 from druppie.agents.models import AgentDefinition
 from druppie.llm import get_llm_service
 from druppie.mcps import get_mcp_registry
+from druppie.core.execution_context import get_current_context
 
 logger = structlog.get_logger()
 
@@ -41,6 +43,7 @@ class Agent:
     - Building messages with system prompt
     - Running tool-calling loop
     - Parsing output
+    - Tracking events and LLM calls via ExecutionContext
 
     The agent can call any MCP tool. If it calls hitl:ask,
     execution pauses automatically via LangGraph's interrupt().
@@ -138,6 +141,9 @@ class Agent:
             If agent calls hitl:ask, execution pauses automatically
             via LangGraph's interrupt() inside the tool.
         """
+        # Get execution context for event tracking
+        exec_ctx = get_current_context()
+
         messages = [
             {"role": "system", "content": self.definition.system_prompt},
             {"role": "user", "content": self._build_prompt(prompt, context)},
@@ -155,8 +161,25 @@ class Agent:
             tools_count=len(tools),
         )
 
+        # Emit agent started event
+        if exec_ctx:
+            exec_ctx.agent_started(self.id, prompt)
+
         for iteration in range(max_iterations):
+            start_time = time.time()
             response = await self.llm.achat(messages, tools)
+            duration_ms = int((time.time() - start_time) * 1000)
+
+            # Track LLM call
+            if exec_ctx:
+                exec_ctx.add_llm_call(
+                    agent_id=self.id,
+                    iteration=iteration,
+                    messages=messages.copy(),
+                    response=response,
+                    tools=tools,
+                    duration_ms=duration_ms,
+                )
 
             # No tool calls = agent is done
             if not response.tool_calls:
@@ -165,6 +188,8 @@ class Agent:
                     agent_id=self.id,
                     iterations=iteration + 1,
                 )
+                if exec_ctx:
+                    exec_ctx.agent_completed(self.id, iteration + 1, success=True)
                 return self._parse_output(response.content)
 
             # Execute tools
@@ -178,6 +203,10 @@ class Agent:
                     tool=tool_name,
                     iteration=iteration,
                 )
+
+                # Emit tool call event
+                if exec_ctx:
+                    exec_ctx.tool_call(self.id, tool_name, tool_args)
 
                 # Convert OpenAI format to MCP format (hitl_ask -> hitl:ask)
                 mcp_tool_name = tool_name.replace("_", ":", 1)
@@ -206,6 +235,8 @@ class Agent:
                 })
 
         logger.warning("agent_max_iterations", agent_id=self.id)
+        if exec_ctx:
+            exec_ctx.agent_error(self.id, f"Exceeded {max_iterations} iterations")
         raise AgentMaxIterationsError(
             f"Agent '{self.id}' exceeded {max_iterations} iterations"
         )
