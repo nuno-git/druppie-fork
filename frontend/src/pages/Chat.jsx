@@ -146,20 +146,27 @@ const WorkflowEvent = ({ event }) => {
   const colors = getStatusColors(event.status)
   const iconBg = getIconBgColor(event.status)
 
+  // Normalize event type (supports both type and event_type)
+  const eventType = event.event_type || event.type || ''
+
   // Check if this is an agent/LLM event for compact display
-  const isAgentEvent = event.event_type?.includes('agent_') || event.event_type?.includes('llm_') || event.event_type?.includes('tool_')
+  const isAgentEvent = eventType.includes('agent_') || eventType.includes('llm_') || eventType.includes('tool_')
+
+  // Get title and description using helper functions if not provided
+  const displayTitle = event.title || formatEventTitle({ ...event, event_type: eventType })
+  const displayDescription = event.description || getEventDescription({ ...event, event_type: eventType })
 
   return (
     <div className={`flex items-start gap-2 p-2 rounded-lg border ${colors} mb-1 ${isAgentEvent ? 'text-xs' : ''}`}>
       <div className={`p-1 rounded-full ${iconBg} flex-shrink-0`}>
-        {getEventIcon(event.event_type, event.status)}
+        {getEventIcon(eventType, event.status)}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-sm">{event.title}</span>
+          <span className="font-medium text-sm">{displayTitle}</span>
           {event.data?.agent_id && (
             <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded">
-              {event.data.agent_id}
+              {event.data.agent_id.replace('_agent', '')}
             </span>
           )}
           {event.data?.duration_ms && (
@@ -168,7 +175,9 @@ const WorkflowEvent = ({ event }) => {
             </span>
           )}
         </div>
-        <div className="text-xs opacity-80 mt-0.5 truncate">{event.description}</div>
+        {displayDescription && (
+          <div className="text-xs opacity-80 mt-0.5 truncate">{displayDescription}</div>
+        )}
         {event.data?.tool_calls && event.data.tool_calls.length > 0 && (
           <div className="text-xs mt-1 flex flex-wrap gap-1">
             {event.data.tool_calls.map((tc, i) => (
@@ -178,10 +187,10 @@ const WorkflowEvent = ({ event }) => {
             ))}
           </div>
         )}
-        {event.data?.tool && (
+        {(event.data?.tool || event.data?.tool_name) && (
           <div className="text-xs mt-1">
             <span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">
-              {event.data.tool}
+              {event.data.tool || event.data.tool_name}
             </span>
           </div>
         )}
@@ -746,7 +755,7 @@ const Message = ({ message, onAnswerQuestion, isAnsweringQuestion, onApproveTask
 
 // Format event title for display
 const formatEventTitle = (event) => {
-  const type = event.event_type || ''
+  const type = event.event_type || event.type || ''
   const title = event.title || ''
   const data = event.data || {}
 
@@ -759,30 +768,106 @@ const formatEventTitle = (event) => {
   }
   if (type === 'agent_started' && data.agent_id) {
     const agentName = data.agent_id.replace('_agent', '').replace(/_/g, ' ')
-    return `Running ${agentName} agent`
+    return `Starting ${agentName} agent`
   }
-  if (type === 'llm_generating' || type === 'llm_calling') {
-    return 'Generating response'
+  if (type === 'agent_completed' && data.agent_id) {
+    const agentName = data.agent_id.replace('_agent', '').replace(/_/g, ' ')
+    return `${agentName} agent completed`
+  }
+  if (type === 'agent_error' || type === 'agent_failed') {
+    const agentName = (data.agent_id || 'agent').replace('_agent', '').replace(/_/g, ' ')
+    return `${agentName} agent error`
+  }
+  if (type === 'llm_generating' || type === 'llm_calling' || type === 'llm_call') {
+    const agentName = data.agent_id ? data.agent_id.replace('_agent', '').replace(/_/g, ' ') : ''
+    const iteration = data.iteration !== undefined ? ` (iteration ${data.iteration + 1})` : ''
+    return agentName ? `${agentName} calling LLM${iteration}` : `Calling LLM${iteration}`
+  }
+  if (type === 'llm_response') {
+    const duration = data.duration_ms ? ` (${data.duration_ms}ms)` : ''
+    return `LLM response received${duration}`
+  }
+  if (type === 'tool_call') {
+    const toolName = data.tool_name || data.tool || 'tool'
+    const agentName = data.agent_id ? data.agent_id.replace('_agent', '').replace(/_/g, ' ') : ''
+    return agentName ? `${agentName}: calling ${toolName}` : `Calling ${toolName}`
+  }
+  if (type === 'tool_executing' && (data.tool || data.tool_name)) {
+    return `Running ${data.tool || data.tool_name}`
+  }
+  if (type === 'tool_completed') {
+    return `Tool completed: ${data.tool_name || data.tool || 'tool'}`
   }
   if (type === 'files_created') {
     const count = data.file_count || data.files?.length || 0
-    return count > 0 ? `Creating ${count} files` : 'Creating files'
+    return count > 0 ? `Created ${count} files` : 'Created files'
   }
   if (type === 'git_pushed' || title.toLowerCase().includes('git')) {
-    return 'Pushing to Git repository'
-  }
-  if (type === 'tool_executing' && data.tool) {
-    return `Running ${data.tool}`
+    return 'Pushed to Git repository'
   }
   if (type === 'build_complete' || title.toLowerCase().includes('build')) {
-    return 'Building application'
+    return 'Build completed'
   }
   if (type === 'app_running') {
-    return 'Starting application'
+    return 'Application started'
+  }
+  if (type === 'workspace_initialized') {
+    const branch = data.branch ? ` on branch ${data.branch}` : ''
+    return `Workspace initialized${branch}`
+  }
+  if (type === 'approval_required') {
+    const tool = data.tool || data.tool_name || 'action'
+    return `Approval required for ${tool}`
+  }
+  if (type === 'step_started') {
+    return data.step_type ? `Starting ${data.step_type}` : 'Starting step'
+  }
+  if (type === 'step_completed') {
+    return 'Step completed'
   }
 
-  // Fall back to the title
-  return title || 'Processing'
+  // Fall back to the title or generate from type
+  if (title) return title
+  if (type) {
+    // Convert snake_case to Title Case
+    return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  }
+  return 'Processing'
+}
+
+// Get detailed description for an event
+const getEventDescription = (event) => {
+  const type = event.event_type || event.type || ''
+  const data = event.data || {}
+
+  if (type === 'agent_started') {
+    return data.prompt_preview ? `Processing: "${data.prompt_preview}..."` : 'Agent started processing'
+  }
+  if (type === 'agent_completed') {
+    const iterations = data.iterations ? `in ${data.iterations} iteration(s)` : ''
+    return `Agent completed successfully ${iterations}`.trim()
+  }
+  if (type === 'agent_error') {
+    return data.error || 'An error occurred'
+  }
+  if (type === 'llm_call') {
+    const duration = data.duration_ms ? `Duration: ${data.duration_ms}ms` : ''
+    const hasTools = data.has_tool_calls ? 'Tool calls made' : 'No tool calls'
+    return `${hasTools}. ${duration}`.trim()
+  }
+  if (type === 'tool_call') {
+    const args = data.args_preview || ''
+    return args ? `Arguments: ${args}` : 'Tool called'
+  }
+  if (type === 'workspace_initialized') {
+    return data.workspace_id ? `Workspace: ${data.workspace_id.substring(0, 8)}...` : 'Workspace ready'
+  }
+  if (type === 'approval_required') {
+    const roles = data.required_roles?.join(', ') || 'authorized user'
+    return `Requires approval from: ${roles}`
+  }
+
+  return event.description || ''
 }
 
 // Typing indicator with real-time workflow steps
@@ -1007,7 +1092,7 @@ const ConversationSidebar = ({ plans, activePlanId, onSelectPlan, onNewChat }) =
 }
 
 // Enhanced Debug Panel - Shows agents, workflows, MCP tools, and detailed execution info
-const DebugPanel = ({ isOpen, onClose, apiCalls, workflowEvents, workspaceInfo }) => {
+const DebugPanel = ({ isOpen, onClose, apiCalls, workflowEvents, llmCalls: llmCallsProp, workspaceInfo }) => {
   const [copiedIndex, setCopiedIndex] = useState(null)
   const [expandedItems, setExpandedItems] = useState({})
   const [allCopied, setAllCopied] = useState(false)
@@ -1020,7 +1105,7 @@ const DebugPanel = ({ isOpen, onClose, apiCalls, workflowEvents, workspaceInfo }
   }
 
   const copyAllToClipboard = () => {
-    const fullData = JSON.stringify({ apiCalls, workflowEvents, workspaceInfo }, null, 2)
+    const fullData = JSON.stringify({ apiCalls, workflowEvents, llmCalls: llmCallsProp, workspaceInfo }, null, 2)
     navigator.clipboard.writeText(fullData)
     setAllCopied(true)
     setTimeout(() => setAllCopied(false), 2000)
@@ -1033,7 +1118,8 @@ const DebugPanel = ({ isOpen, onClose, apiCalls, workflowEvents, workspaceInfo }
   if (!isOpen) return null
 
   // Process data for different views
-  const llmCalls = apiCalls?.filter(c => c.type === 'llm') || []
+  // Use provided llmCalls prop if available, otherwise fall back to filtering from apiCalls
+  const llmCalls = llmCallsProp?.length > 0 ? llmCallsProp : (apiCalls?.filter(c => c.type === 'llm') || [])
   const httpCalls = apiCalls?.filter(c => c.type === 'api') || []
   const events = workflowEvents || []
 
@@ -1041,8 +1127,12 @@ const DebugPanel = ({ isOpen, onClose, apiCalls, workflowEvents, workspaceInfo }
   const agentExecutions = []
   const agentMap = new Map()
 
+  // Helper to get event type (supports both type and event_type)
+  const getEventType = (event) => event.event_type || event.type || ''
+
   events.forEach(event => {
-    if (event.type === 'agent_started' || event.data?.agent_id) {
+    const eventType = getEventType(event)
+    if (eventType === 'agent_started' || event.data?.agent_id) {
       const agentId = event.data?.agent_id || event.agent_id
       if (agentId && !agentMap.has(agentId)) {
         agentMap.set(agentId, {
@@ -1058,14 +1148,14 @@ const DebugPanel = ({ isOpen, onClose, apiCalls, workflowEvents, workspaceInfo }
         agentMap.get(agentId).events.push(event)
       }
     }
-    if (event.type === 'agent_completed') {
+    if (eventType === 'agent_completed') {
       const agentId = event.data?.agent_id
       if (agentId && agentMap.has(agentId)) {
         agentMap.get(agentId).status = 'completed'
         agentMap.get(agentId).endTime = event.timestamp
       }
     }
-    if (event.type === 'agent_error' || event.type === 'agent_failed') {
+    if (eventType === 'agent_error' || eventType === 'agent_failed') {
       const agentId = event.data?.agent_id
       if (agentId && agentMap.has(agentId)) {
         agentMap.get(agentId).status = 'error'
@@ -1084,14 +1174,15 @@ const DebugPanel = ({ isOpen, onClose, apiCalls, workflowEvents, workspaceInfo }
   const agents = Array.from(agentMap.values())
 
   // Extract MCP tool calls from events
-  const toolCalls = events.filter(e =>
-    e.type === 'tool_call' ||
-    e.type === 'tool_executing' ||
-    e.type === 'tool_completed' ||
-    e.type === 'mcp_tool' ||
-    e.data?.tool_name ||
-    e.data?.tool
-  ).map(e => ({
+  const toolCalls = events.filter(e => {
+    const type = getEventType(e)
+    return type === 'tool_call' ||
+      type === 'tool_executing' ||
+      type === 'tool_completed' ||
+      type === 'mcp_tool' ||
+      e.data?.tool_name ||
+      e.data?.tool
+  }).map(e => ({
     name: e.data?.tool_name || e.data?.tool || e.title,
     args: e.data?.args_preview || e.data?.arguments,
     agent: e.data?.agent_id,
@@ -1552,6 +1643,8 @@ const Chat = () => {
   const [debugPanelOpen, setDebugPanelOpen] = useState(false)
   const [apiCalls, setApiCalls] = useState([])
   const [liveWorkflowEvents, setLiveWorkflowEvents] = useState([])
+  const [debugWorkflowEvents, setDebugWorkflowEvents] = useState([]) // Persisted events for debug panel
+  const [debugLLMCalls, setDebugLLMCalls] = useState([]) // LLM calls for debug panel
   const [workspaceInfo, setWorkspaceInfo] = useState(null)
   const messagesEndRef = useRef(null)
   const queryClient = useQueryClient()
@@ -1945,6 +2038,16 @@ What would you like to build today?`,
       }
     },
     onSuccess: (data) => {
+      // Normalize workflow events from API response to have consistent structure
+      const normalizedEvents = (data.workflow_events || []).map(event => ({
+        ...event,
+        event_type: event.type || event.event_type,
+        title: event.title || formatEventTitle({ ...event, event_type: event.type }),
+        description: event.data?.description || event.description || '',
+        status: event.status || (event.type?.includes('completed') || event.type?.includes('success') ? 'success' : 'info'),
+        data: event.data || event,
+      }))
+
       setMessages((prev) => [
         ...prev,
         {
@@ -1954,12 +2057,18 @@ What would you like to build today?`,
           pendingApprovals: data.pending_approvals,
           pendingQuestions: data.pending_questions || [],
           status: data.status,
-          workflowEvents: data.workflow_events || [],
+          workflowEvents: normalizedEvents,
         },
       ])
       setCurrentPlanId(data.plan_id)
       setCurrentStep(null)
-      setLiveWorkflowEvents([]) // Clear live events after completion
+
+      // Store events for debug panel (combine live events with API response events)
+      const combinedEvents = [...liveWorkflowEvents, ...normalizedEvents]
+      setDebugWorkflowEvents(combinedEvents)
+      setDebugLLMCalls(data.llm_calls || [])
+      setLiveWorkflowEvents([]) // Clear live events after storing
+
       // Update workspace info if available
       if (data.workspace_id || data.project_id || data.branch) {
         setWorkspaceInfo({
@@ -1983,7 +2092,9 @@ What would you like to build today?`,
         },
       ])
       setCurrentStep(null)
-      setLiveWorkflowEvents([]) // Clear live events on error
+      // Store what we have for debugging even on error
+      setDebugWorkflowEvents([...liveWorkflowEvents])
+      setLiveWorkflowEvents([])
     },
   })
 
@@ -2157,6 +2268,8 @@ What would you like to build today?`,
     // Show processing indicator
     setCurrentStep('Processing your answer...')
     setLiveWorkflowEvents([]) // Clear live events for new processing
+    setDebugWorkflowEvents([])
+    setDebugLLMCalls([])
 
     // Check if this is a HITL MCP request (UUID format request_id)
     const isHITLRequest = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(questionId)
@@ -2185,6 +2298,8 @@ What would you like to build today?`,
     setInput('')
     setCurrentStep('Processing your request...')
     setLiveWorkflowEvents([]) // Clear live events for new request
+    setDebugWorkflowEvents([])
+    setDebugLLMCalls([])
 
     // Generate or use existing session ID for real-time events
     // IMPORTANT: We need the session ID BEFORE the API call to receive WebSocket events
@@ -2225,6 +2340,9 @@ What would you like to build today?`,
     setCurrentPlanId(null)
     setApiCalls([]) // Clear debug data for new chat
     setLiveWorkflowEvents([]) // Clear live events for new chat
+    setDebugWorkflowEvents([]) // Clear debug events for new chat
+    setDebugLLMCalls([]) // Clear debug LLM calls for new chat
+    setWorkspaceInfo(null) // Clear workspace info for new chat
     setMessages([
       {
         role: 'assistant',
@@ -2248,7 +2366,17 @@ What would you like to build today?`,
     const workflowEvents = plan.result?.workflow_events || []
     const llmCalls = plan.result?.llm_calls || []
 
-    // Load LLM calls into debug panel (mark them as 'llm' type)
+    // Load into debug panel with normalized events
+    const normalizedEvents = workflowEvents.map(event => ({
+      ...event,
+      event_type: event.type || event.event_type,
+      title: event.title || formatEventTitle({ ...event, event_type: event.type }),
+      description: event.data?.description || event.description || '',
+      status: event.status || 'info',
+      data: event.data || event,
+    }))
+    setDebugWorkflowEvents(normalizedEvents)
+    setDebugLLMCalls(llmCalls)
     setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
 
     // Fetch full plan details with tasks to get pending approvals
@@ -2414,12 +2542,13 @@ What would you like to build today?`,
         </form>
       </div>
 
-      {/* Debug Panel */}
+      {/* Debug Panel - shows live events during execution, persisted events after */}
       <DebugPanel
         isOpen={debugPanelOpen}
         onClose={() => setDebugPanelOpen(false)}
         apiCalls={apiCalls}
-        workflowEvents={liveWorkflowEvents}
+        workflowEvents={liveWorkflowEvents.length > 0 ? liveWorkflowEvents : debugWorkflowEvents}
+        llmCalls={debugLLMCalls}
         workspaceInfo={workspaceInfo}
       />
     </div>
