@@ -1213,3 +1213,99 @@ Next iteration could focus on:
 - Performance optimizations for LLM calls
 - More comprehensive E2E test coverage
 - Add visual indication when another user is viewing the same conversation
+
+---
+
+## Iteration 17 Summary
+
+### What Was Tested
+
+1. **HITL Question/Answer Flow** - Working correctly
+   - Sent vague request: "Make an app"
+   - Router agent correctly identified request as too vague
+   - Clarifying question displayed in chat UI
+   - Answer input field and Submit button functional
+   - Answer submission processed correctly
+   - Workflow continued with clarified intent
+
+2. **ZAI API Configuration** - Fixed
+   - Initially environment variable not loaded in Docker container
+   - Fixed by force-recreating container with `docker compose up -d --force-recreate`
+   - Confirmed ZAI/GLM-4.7 provider being used
+
+### Test Flow Results
+
+1. **Vague Request**: "Make an app"
+   - Router identified: `action: ask_question`
+   - Question shown: "What type of application would you like me to build for you?"
+
+2. **Answer Submission**: "A simple notes app with Flask"
+   - Answer displayed in chat
+   - Router re-analyzed with clarified request
+   - Identified: `action: create_project`, `app_type: notes`, `technologies: flask`
+   - Planner selected: `development_workflow`
+
+3. **Code Generation**: In progress (long LLM call)
+   - LLM call started for code generation
+   - Z.AI GLM-4.7 processing
+
+### What's Working Well
+
+- HITL question detection and UI display
+- Answer input and submission
+- Workflow continuation after answer
+- Router correctly processes answers as context for decision-making
+- Agent attribution badges (shows "router" badge)
+- Execution log with event tracking
+- WebSocket connection for real-time updates
+
+### No Issues Found
+
+The HITL flow for single clarifying questions is working correctly:
+1. Vague request → Router asks question
+2. User answers → Answer processed
+3. Router re-analyzes with answer → Continues workflow
+
+### Commits Made (Iteration 17)
+
+1. Progress tracking only - no code changes needed
+
+---
+
+## Status After Iteration 17
+
+All core functionality is working:
+- Authentication with Keycloak
+- Chat with LLM (Z.AI / GLM-4.7 / Ollama / Mock)
+- Router agent analyzes intent (including deploy_project, update_project)
+- Planner agent creates execution plans
+- Developer agent generates code
+- **HITL question/answer flow verified working** (TESTED)
+- Project creation with Git push to Gitea
+- Build and run projects in Docker
+- Flask apps now accessible from Docker containers
+- ROLE approval workflow (deploy.staging)
+- MULTI approval workflow (deploy.production)
+- Deployment workflow triggered from chat
+- Inline approval UI in chat
+- Agent attribution badges
+- Enhanced progress indicators
+- MULTI approval progress display
+- Partial approval feedback
+- Pending approvals in loaded conversations
+- Hide approve button when user already approved
+- WebSocket real-time approval updates
+- Toast notifications for approval events
+- Mock LLM provider for testing
+- Update workflow git clone and branch creation
+- DateTime serialization for JSON storage
+- Full update workflow execution with TDD
+- Robust JSON parsing for LLM responses
+- Preview deployment for project updates
+
+Next iteration could focus on:
+- Multiple HITL interactions in a single workflow (e.g., ask 2+ questions in sequence)
+- Test approval HITL flow (inline approvals in chat)
+- Performance optimizations for LLM calls
+- More comprehensive E2E test coverage
+- Add visual indication when another user is viewing the same conversation
