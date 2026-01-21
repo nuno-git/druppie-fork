@@ -115,7 +115,7 @@ MCP servers run as separate Docker containers. Configuration is in `druppie/core
 
 | Server | Port | Tools | Description |
 |--------|------|-------|-------------|
-| coding | 9001 | read_file, write_file, list_dir, run_command, commit_and_push, create_branch, merge_to_main | File & git operations in workspace |
+| coding | 9001 | read_file, write_file, batch_write_files, list_dir, run_command, run_tests, commit_and_push | File, git, and test operations in workspace |
 | docker | 9002 | build, run, stop, logs, list_containers | Container operations |
 | hitl | 9003 | ask_question, ask_choice, progress, notify | Human-in-the-loop via Redis |
 
@@ -351,3 +351,48 @@ Always verify changes with Playwright E2E test:
 2. Send chat message
 3. Verify agent iterations and MCP tool calls in logs
 4. Check for "success": true in tool results
+
+## Current Agents (7 total)
+
+| Agent | Purpose | Key Tools |
+|-------|---------|-----------|
+| router | Classifies user intent | hitl |
+| planner | Creates execution plans | hitl |
+| architect | Designs system architecture | coding, hitl |
+| developer | Writes and modifies code | coding, hitl |
+| reviewer | Reviews code quality | coding, hitl |
+| deployer | Deploys to environments | docker, hitl |
+| tester | Runs tests and validates | coding:run_tests, hitl |
+
+## Recent Improvements
+
+### Debug Panel (`/debug/:sessionId`)
+Full execution transparency with:
+- Event tree showing all agent, tool, and LLM calls
+- Timeline with durations
+- Expandable details for each event
+
+### Session History
+Chat sidebar shows previous conversations with:
+- Session previews
+- Debug links
+- Project associations
+
+### Tool Validation
+Validates required arguments before MCP calls:
+- Catches missing fields early
+- Returns recoverable error for LLM to retry
+- Logs validation errors separately
+
+### batch_write_files
+Create multiple files with single git commit:
+```python
+batch_write_files(files={"src/main.py": "...", "package.json": "..."})
+```
+
+### run_tests
+Auto-detects and runs test frameworks:
+- Python: pytest, unittest
+- Node.js: jest, mocha, vitest
+- Go: go test
+- Returns structured pass/fail counts
