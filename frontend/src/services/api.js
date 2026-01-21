@@ -71,12 +71,12 @@ export const getApproval = (approvalId) => request(`/api/approvals/${approvalId}
 export const approveApproval = (approvalId, comment = '') =>
   request(`/api/approvals/${approvalId}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ comment }),
+    body: JSON.stringify({ approved: true, comment }),
   })
-export const rejectApproval = (approvalId, reason) =>
-  request(`/api/approvals/${approvalId}/reject`, {
+export const rejectApproval = (approvalId, comment = '') =>
+  request(`/api/approvals/${approvalId}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({ approved: false, comment }),
   })
 
 // Legacy task endpoints (mapped to approvals for backwards compatibility)
@@ -85,12 +85,12 @@ export const getTask = (taskId) => request(`/api/approvals/${taskId}`)
 export const approveTask = (taskId, comment = '') =>
   request(`/api/approvals/${taskId}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ comment }),
+    body: JSON.stringify({ approved: true, comment }),
   })
-export const rejectTask = (taskId, reason) =>
-  request(`/api/approvals/${taskId}/reject`, {
+export const rejectTask = (taskId, comment = '') =>
+  request(`/api/approvals/${taskId}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({ approved: false, comment }),
   })
 
 // ============ MCP Registry ============
