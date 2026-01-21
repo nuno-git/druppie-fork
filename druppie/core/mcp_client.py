@@ -250,6 +250,7 @@ class MCPClient:
         tool: str,
         args: dict[str, Any],
         context: "ExecutionContext",
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Call MCP tool, checking for approval requirements.
 
@@ -261,6 +262,7 @@ class MCPClient:
             tool: Tool name
             args: Tool arguments
             context: Execution context with session/user info
+            agent_id: ID of the agent making this call (for approval tracking)
 
         Returns:
             Tool result or paused status if approval required
@@ -270,7 +272,7 @@ class MCPClient:
         if needs_approval:
             # ALWAYS request approval - AI is executing, user must confirm
             return await self._request_approval(
-                server, tool, args, required_roles, danger_level, context
+                server, tool, args, required_roles, danger_level, context, agent_id
             )
 
         # No approval needed for this tool - execute with retry for transient errors
@@ -489,6 +491,7 @@ class MCPClient:
         required_roles: list[str],
         danger_level: str,
         context: "ExecutionContext",
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Request approval and pause execution."""
         from druppie.db import crud
@@ -536,6 +539,7 @@ class MCPClient:
                 "danger_level": danger_level,
                 "description": f"Execute {tool_name} with args: {json.dumps(args_with_context)[:200]}",
                 "status": "pending",
+                "agent_id": agent_id,
                 "agent_state": agent_state,
             },
         )

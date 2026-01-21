@@ -15,6 +15,51 @@ let reconnectAttempts = 0
 const MAX_RECONNECT_ATTEMPTS = 5
 const RECONNECT_DELAY = 1000
 
+// Connection status: 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
+let connectionStatus = 'disconnected'
+
+// Status change callbacks
+const statusCallbacks = []
+
+/**
+ * Get current connection status
+ */
+export const getConnectionStatus = () => connectionStatus
+
+/**
+ * Subscribe to connection status changes
+ * @param {function} callback - Called with new status when it changes
+ * @returns {function} Unsubscribe function
+ */
+export const onConnectionStatusChange = (callback) => {
+  statusCallbacks.push(callback)
+  // Immediately call with current status
+  callback(connectionStatus)
+
+  return () => {
+    const idx = statusCallbacks.indexOf(callback)
+    if (idx > -1) {
+      statusCallbacks.splice(idx, 1)
+    }
+  }
+}
+
+/**
+ * Update connection status and notify listeners
+ */
+const setConnectionStatus = (status) => {
+  if (connectionStatus !== status) {
+    connectionStatus = status
+    statusCallbacks.forEach((callback) => {
+      try {
+        callback(status)
+      } catch (err) {
+        console.error('[WebSocket] Status callback error:', err)
+      }
+    })
+  }
+}
+
 // Event callbacks
 const eventCallbacks = {
   task_approved: [],
@@ -48,11 +93,15 @@ export const initSocket = (sessionId = null) => {
   const wsPath = sessionId ? `/ws/session/${sessionId}` : '/ws'
   const wsUrl = token ? `${WS_URL}${wsPath}?token=${token}` : `${WS_URL}${wsPath}`
 
+  // Set status to connecting (or reconnecting if we've already attempted)
+  setConnectionStatus(reconnectAttempts > 0 ? 'reconnecting' : 'connecting')
+
   socket = new WebSocket(wsUrl)
 
   socket.onopen = () => {
     console.log('[WebSocket] Connected')
     reconnectAttempts = 0
+    setConnectionStatus('connected')
   }
 
   socket.onclose = (event) => {
@@ -62,9 +111,11 @@ export const initSocket = (sessionId = null) => {
     if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
       reconnectAttempts++
       console.log(`[WebSocket] Reconnecting (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`)
+      setConnectionStatus('reconnecting')
       setTimeout(() => initSocket(sessionId), RECONNECT_DELAY * reconnectAttempts)
     } else {
       console.error('[WebSocket] Max reconnection attempts reached')
+      setConnectionStatus('disconnected')
     }
   }
 
@@ -269,6 +320,7 @@ export const disconnectSocket = () => {
     socket.close()
     socket = null
     reconnectAttempts = 0
+    setConnectionStatus('disconnected')
     console.log('[WebSocket] Disconnected')
   }
 }

@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Wifi, WifiOff } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Wifi, WifiOff, Bot } from 'lucide-react'
 import { getTasks, approveTask, rejectTask, getQuestions, answerQuestion } from '../services/api'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
@@ -49,6 +49,16 @@ const getDangerLevelBadge = (level) => {
   return levels[level] || levels.low
 }
 
+// Helper to format agent display name
+const formatAgentName = (agentId) => {
+  if (!agentId) return null
+  // Remove common suffixes like '_agent' and format nicely
+  return agentId
+    .replace(/_agent$/i, '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 const TaskCard = ({ task, onApprove, onReject }) => {
   const [rejectReason, setRejectReason] = useState('')
   const [showReject, setShowReject] = useState(false)
@@ -88,7 +98,15 @@ const TaskCard = ({ task, onApprove, onReject }) => {
               </span>
             </div>
           )}
-          <h3 className="font-semibold text-lg">{task.name || `Approve ${toolName}`}</h3>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="font-semibold text-lg">{task.name || `Approve ${toolName}`}</h3>
+            {task.agent_id && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-600 text-xs rounded-full">
+                <Bot className="w-3 h-3" />
+                {formatAgentName(task.agent_id)}
+              </span>
+            )}
+          </div>
           <p className="text-gray-500 text-sm mt-1">{task.description || toolDescription}</p>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -120,9 +138,11 @@ const TaskCard = ({ task, onApprove, onReject }) => {
             <div className="mt-2">
               <button
                 onClick={() => setShowDetails(!showDetails)}
-                className="text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1"
+                className="text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                aria-expanded={showDetails}
+                aria-label={showDetails ? 'Hide tool arguments' : 'Show tool arguments'}
               >
-                {showDetails ? '▼' : '▶'} View arguments
+                <span aria-hidden="true">{showDetails ? '▼' : '▶'}</span> View arguments
               </button>
               {showDetails && (
                 <pre className="mt-2 bg-blue-100 p-3 rounded text-sm overflow-x-auto text-blue-900 font-mono">
@@ -182,6 +202,15 @@ const TaskCard = ({ task, onApprove, onReject }) => {
           <span className="text-gray-500">Created:</span>
           <span className="ml-2">{new Date(task.created_at).toLocaleString()}</span>
         </div>
+        {task.agent_id && (
+          <div>
+            <span className="text-gray-500">Requested by:</span>
+            <span className="ml-2 inline-flex items-center gap-1">
+              <Bot className="w-3.5 h-3.5 text-purple-500" />
+              <span className="font-medium text-purple-700">{formatAgentName(task.agent_id)}</span>
+            </span>
+          </div>
+        )}
         <div>
           <span className="text-gray-500">Required Role:</span>
           <span className="ml-2">
@@ -201,21 +230,23 @@ const TaskCard = ({ task, onApprove, onReject }) => {
       {canApprove ? (
         <div className="flex flex-col space-y-3">
           {!showReject ? (
-            <div className="flex space-x-3">
+            <div className="flex space-x-3" role="group" aria-label="Task approval actions">
               <button
                 onClick={() => onApprove(task.id)}
-                className={`flex-1 px-4 py-2 text-white rounded-lg flex items-center justify-center ${
-                  isMultiApproval ? 'bg-orange-500 hover:bg-orange-600' : 'bg-green-600 hover:bg-green-700'
+                className={`flex-1 px-4 py-2 text-white rounded-lg flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                  isMultiApproval ? 'bg-orange-500 hover:bg-orange-600 focus:ring-orange-500' : 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
                 }`}
+                aria-label={isMultiApproval ? `Add approval ${currentApprovals + 1} of ${requiredApprovals}` : 'Approve task'}
               >
-                <CheckCircle className="w-5 h-5 mr-2" />
+                <CheckCircle className="w-5 h-5 mr-2" aria-hidden="true" />
                 {isMultiApproval ? `Add Approval (${currentApprovals + 1}/${requiredApprovals})` : 'Approve'}
               </button>
               <button
                 onClick={() => setShowReject(true)}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center"
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                aria-label="Reject task"
               >
-                <XCircle className="w-5 h-5 mr-2" />
+                <XCircle className="w-5 h-5 mr-2" aria-hidden="true" />
                 Reject
               </button>
             </div>
@@ -228,10 +259,11 @@ const TaskCard = ({ task, onApprove, onReject }) => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
                 rows={3}
               />
-              <div className="flex space-x-3">
+              <div className="flex space-x-3" role="group" aria-label="Rejection actions">
                 <button
                   onClick={() => setShowReject(false)}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
+                  aria-label="Cancel rejection"
                 >
                   Cancel
                 </button>
@@ -242,7 +274,8 @@ const TaskCard = ({ task, onApprove, onReject }) => {
                     }
                   }}
                   disabled={!rejectReason.trim()}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                  aria-label="Confirm task rejection"
                 >
                   Confirm Rejection
                 </button>
@@ -343,16 +376,17 @@ const QuestionCard = ({ question, onAnswer, isAnswering }) => {
       <button
         onClick={handleSubmit}
         disabled={isAnswering || (!selectedOption && !customAnswer.trim())}
-        className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+        aria-label="Submit answer"
       >
         {isAnswering ? (
           <>
-            <Loader2 className="w-4 h-4 animate-spin" />
+            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
             Submitting...
           </>
         ) : (
           <>
-            <Send className="w-4 h-4" />
+            <Send className="w-4 h-4" aria-hidden="true" />
             Submit Answer
           </>
         )}
@@ -506,7 +540,9 @@ const Tasks = () => {
                   ? 'bg-green-100 text-green-700'
                   : 'bg-gray-100 text-gray-500'
               }`}
-              title={isConnected ? 'Connected to real-time updates' : 'Disconnected from real-time updates'}
+              role="status"
+              aria-live="polite"
+              aria-label={isConnected ? 'Connected to real-time updates' : 'Disconnected from real-time updates'}
             >
               {isConnected ? (
                 <>
@@ -581,7 +617,8 @@ const Tasks = () => {
           <p className="text-sm text-red-400">{questionsErrorData?.message || 'An unexpected error occurred'}</p>
           <button
             onClick={() => refetchQuestions()}
-            className="mt-3 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors text-sm"
+            className="mt-3 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+            aria-label="Retry loading questions"
           >
             Retry
           </button>
@@ -601,7 +638,8 @@ const Tasks = () => {
           <p className="text-sm text-red-400">{error?.message || 'An unexpected error occurred'}</p>
           <button
             onClick={() => refetchTasks()}
-            className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+            className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            aria-label="Retry loading tasks"
           >
             Retry
           </button>

@@ -40,6 +40,7 @@ class ApprovalResponse(BaseModel):
     approvals_received: list[dict] | None
     danger_level: str
     description: str | None
+    agent_id: str | None
     created_at: str | None
 
 
@@ -110,6 +111,7 @@ async def list_approvals(
             "approvals_received": a.approvals_received,
             "danger_level": a.danger_level,
             "description": a.description,
+            "agent_id": a.agent_id,
             "created_at": a.created_at.isoformat() if a.created_at else None,
         }
         for a in filtered
@@ -137,6 +139,7 @@ async def get_approval(
         approvals_received=approval.approvals_received,
         danger_level=approval.danger_level,
         description=approval.description,
+        agent_id=approval.agent_id,
         created_at=approval.created_at.isoformat() if approval.created_at else None,
     )
 
