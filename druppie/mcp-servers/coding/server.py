@@ -4,8 +4,11 @@ Combined file operations and git functionality for workspace sandbox.
 Uses FastMCP framework for HTTP transport.
 """
 
+import json
 import os
+import re
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -494,6 +497,353 @@ async def run_command(
 
     except subprocess.TimeoutExpired:
         return {"success": False, "error": f"Command timed out after {timeout}s"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def _detect_test_framework(workspace_path: Path) -> tuple[str | None, str | None]:
+    """Detect test framework from project files.
+
+    Returns:
+        Tuple of (framework_name, test_command)
+    """
+    # Check for Node.js/npm project
+    package_json = workspace_path / "package.json"
+    if package_json.exists():
+        try:
+            pkg = json.loads(package_json.read_text())
+            scripts = pkg.get("scripts", {})
+            if "test" in scripts:
+                # Check for common test frameworks
+                test_script = scripts["test"]
+                if "jest" in test_script:
+                    return ("jest", "npm test")
+                elif "mocha" in test_script:
+                    return ("mocha", "npm test")
+                elif "vitest" in test_script:
+                    return ("vitest", "npm test")
+                elif "ava" in test_script:
+                    return ("ava", "npm test")
+                else:
+                    return ("npm", "npm test")
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    # Check for Python pytest
+    pytest_ini = workspace_path / "pytest.ini"
+    pyproject_toml = workspace_path / "pyproject.toml"
+    setup_py = workspace_path / "setup.py"
+
+    # Check for test files
+    has_pytest_files = list(workspace_path.glob("test_*.py")) or list(workspace_path.glob("**/test_*.py"))
+    has_tests_dir = (workspace_path / "tests").exists()
+
+    if pytest_ini.exists() or has_pytest_files or has_tests_dir:
+        return ("pytest", "pytest -v")
+
+    # Check pyproject.toml for pytest config
+    if pyproject_toml.exists():
+        try:
+            content = pyproject_toml.read_text()
+            if "[tool.pytest" in content:
+                return ("pytest", "pytest -v")
+        except Exception:
+            pass
+
+    # Check for Go tests
+    go_test_files = list(workspace_path.glob("*_test.go")) or list(workspace_path.glob("**/*_test.go"))
+    go_mod = workspace_path / "go.mod"
+    if go_test_files or go_mod.exists():
+        return ("go", "go test -v ./...")
+
+    # Check for Rust tests
+    cargo_toml = workspace_path / "Cargo.toml"
+    if cargo_toml.exists():
+        return ("cargo", "cargo test")
+
+    # Check for Ruby/RSpec
+    gemfile = workspace_path / "Gemfile"
+    spec_dir = workspace_path / "spec"
+    if spec_dir.exists():
+        return ("rspec", "bundle exec rspec")
+    elif gemfile.exists():
+        try:
+            content = gemfile.read_text()
+            if "rspec" in content.lower():
+                return ("rspec", "bundle exec rspec")
+            elif "minitest" in content.lower():
+                return ("minitest", "bundle exec rake test")
+        except Exception:
+            pass
+
+    # Check for Java/Maven
+    pom_xml = workspace_path / "pom.xml"
+    if pom_xml.exists():
+        return ("maven", "mvn test")
+
+    # Check for Java/Gradle
+    build_gradle = workspace_path / "build.gradle"
+    build_gradle_kts = workspace_path / "build.gradle.kts"
+    if build_gradle.exists() or build_gradle_kts.exists():
+        return ("gradle", "./gradlew test")
+
+    return (None, None)
+
+
+def _parse_test_output(stdout: str, stderr: str, framework: str) -> dict:
+    """Parse test output to extract pass/fail counts.
+
+    Returns:
+        Dict with total, passed, failed, skipped, failed_tests
+    """
+    result = {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "failed_tests": [],
+    }
+
+    combined = stdout + "\n" + stderr
+
+    if framework == "pytest":
+        # pytest output: "5 passed, 2 failed, 1 skipped in 1.23s"
+        match = re.search(
+            r"(\d+)\s+passed(?:,\s+(\d+)\s+failed)?(?:,\s+(\d+)\s+skipped)?",
+            combined,
+        )
+        if match:
+            result["passed"] = int(match.group(1))
+            result["failed"] = int(match.group(2)) if match.group(2) else 0
+            result["skipped"] = int(match.group(3)) if match.group(3) else 0
+            result["total"] = result["passed"] + result["failed"] + result["skipped"]
+
+        # Extract failed test names
+        failed_matches = re.findall(r"FAILED\s+([\w:]+)", combined)
+        result["failed_tests"] = failed_matches
+
+    elif framework in ("jest", "vitest"):
+        # Jest/Vitest: "Tests: 2 failed, 5 passed, 7 total"
+        match = re.search(
+            r"Tests:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(?:(\d+)\s+passed,\s*)?(\d+)\s+total",
+            combined,
+        )
+        if match:
+            result["failed"] = int(match.group(1)) if match.group(1) else 0
+            result["skipped"] = int(match.group(2)) if match.group(2) else 0
+            result["passed"] = int(match.group(3)) if match.group(3) else 0
+            result["total"] = int(match.group(4))
+
+        # Extract failed test names
+        failed_matches = re.findall(r"FAIL\s+(.+)", combined)
+        result["failed_tests"] = failed_matches
+
+    elif framework == "mocha":
+        # Mocha: "5 passing (1s)\n2 failing"
+        passing = re.search(r"(\d+)\s+passing", combined)
+        failing = re.search(r"(\d+)\s+failing", combined)
+        pending = re.search(r"(\d+)\s+pending", combined)
+
+        if passing:
+            result["passed"] = int(passing.group(1))
+        if failing:
+            result["failed"] = int(failing.group(1))
+        if pending:
+            result["skipped"] = int(pending.group(1))
+        result["total"] = result["passed"] + result["failed"] + result["skipped"]
+
+    elif framework == "go":
+        # Go test: "ok  \tpackage\t0.123s" or "FAIL\tpackage\t0.123s"
+        # Also: "--- FAIL: TestName"
+        ok_count = len(re.findall(r"^ok\s+", combined, re.MULTILINE))
+        fail_count = len(re.findall(r"^FAIL\s+", combined, re.MULTILINE))
+        skip_count = len(re.findall(r"^SKIP\s+", combined, re.MULTILINE))
+
+        # Try to get individual test counts
+        pass_match = re.search(r"PASS", combined)
+        individual_fails = re.findall(r"--- FAIL:\s+(\w+)", combined)
+
+        result["passed"] = ok_count if ok_count else (1 if pass_match else 0)
+        result["failed"] = len(individual_fails) if individual_fails else fail_count
+        result["skipped"] = skip_count
+        result["total"] = result["passed"] + result["failed"] + result["skipped"]
+        result["failed_tests"] = individual_fails
+
+    elif framework == "cargo":
+        # Rust/Cargo: "test result: ok. 5 passed; 0 failed; 0 ignored"
+        match = re.search(
+            r"(\d+)\s+passed;\s*(\d+)\s+failed;\s*(\d+)\s+ignored",
+            combined,
+        )
+        if match:
+            result["passed"] = int(match.group(1))
+            result["failed"] = int(match.group(2))
+            result["skipped"] = int(match.group(3))
+            result["total"] = result["passed"] + result["failed"] + result["skipped"]
+
+        # Extract failed test names
+        failed_matches = re.findall(r"---- (\S+) stdout ----", combined)
+        result["failed_tests"] = failed_matches
+
+    elif framework == "rspec":
+        # RSpec: "10 examples, 2 failures, 1 pending"
+        match = re.search(
+            r"(\d+)\s+examples?,\s*(\d+)\s+failures?(?:,\s*(\d+)\s+pending)?",
+            combined,
+        )
+        if match:
+            result["total"] = int(match.group(1))
+            result["failed"] = int(match.group(2))
+            result["skipped"] = int(match.group(3)) if match.group(3) else 0
+            result["passed"] = result["total"] - result["failed"] - result["skipped"]
+
+    elif framework in ("maven", "gradle"):
+        # Maven/Gradle: "Tests run: 10, Failures: 2, Errors: 1, Skipped: 1"
+        match = re.search(
+            r"Tests\s+run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)",
+            combined,
+        )
+        if match:
+            result["total"] = int(match.group(1))
+            result["failed"] = int(match.group(2)) + int(match.group(3))  # failures + errors
+            result["skipped"] = int(match.group(4))
+            result["passed"] = result["total"] - result["failed"] - result["skipped"]
+
+    else:
+        # Generic npm test or unknown - try common patterns
+        # Try "X passing, Y failing" pattern
+        match = re.search(r"(\d+)\s+(?:passing|passed)", combined)
+        if match:
+            result["passed"] = int(match.group(1))
+        match = re.search(r"(\d+)\s+(?:failing|failed)", combined)
+        if match:
+            result["failed"] = int(match.group(1))
+        match = re.search(r"(\d+)\s+(?:pending|skipped)", combined)
+        if match:
+            result["skipped"] = int(match.group(1))
+        result["total"] = result["passed"] + result["failed"] + result["skipped"]
+
+    return result
+
+
+@mcp.tool()
+async def run_tests(
+    workspace_id: str,
+    test_command: str | None = None,
+    timeout: int = 120,
+) -> dict:
+    """Run tests in the workspace and return structured results.
+
+    If test_command is not provided, auto-detects the test framework
+    and runs the appropriate command (npm test, pytest, etc.).
+
+    Args:
+        workspace_id: Workspace to run tests in
+        test_command: Optional test command to run
+        timeout: Timeout in seconds (default 120)
+
+    Returns:
+        {
+            "success": true/false,
+            "framework": "pytest",
+            "command_used": "pytest -v",
+            "total": 10,
+            "passed": 8,
+            "failed": 2,
+            "skipped": 0,
+            "failed_tests": ["test_foo", "test_bar"],
+            "stdout": "...",
+            "stderr": "...",
+            "duration_seconds": 5.2
+        }
+    """
+    try:
+        ws = get_workspace(workspace_id)
+        workspace_path = Path(ws["path"])
+
+        # Auto-detect test framework if command not provided
+        framework = None
+        command = test_command
+
+        if command is None:
+            framework, command = _detect_test_framework(workspace_path)
+            if command is None:
+                return {
+                    "success": False,
+                    "error": "Could not detect test framework. Please provide test_command.",
+                    "hint": "Supported frameworks: pytest, jest, mocha, vitest, go test, cargo test, rspec, maven, gradle",
+                }
+        else:
+            # Try to determine framework from command
+            if "pytest" in command:
+                framework = "pytest"
+            elif "jest" in command:
+                framework = "jest"
+            elif "vitest" in command:
+                framework = "vitest"
+            elif "mocha" in command:
+                framework = "mocha"
+            elif "go test" in command:
+                framework = "go"
+            elif "cargo test" in command:
+                framework = "cargo"
+            elif "rspec" in command:
+                framework = "rspec"
+            elif "mvn test" in command or "maven" in command:
+                framework = "maven"
+            elif "gradle" in command:
+                framework = "gradle"
+            elif "npm test" in command:
+                # Try to detect from package.json
+                framework, _ = _detect_test_framework(workspace_path)
+                if framework is None:
+                    framework = "npm"
+            else:
+                framework = "unknown"
+
+        # Run the test command
+        start_time = time.time()
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=str(workspace_path),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            duration = time.time() - start_time
+
+            # Parse test output
+            parsed = _parse_test_output(result.stdout, result.stderr, framework)
+
+            return {
+                "success": result.returncode == 0,
+                "framework": framework,
+                "command_used": command,
+                "total": parsed["total"],
+                "passed": parsed["passed"],
+                "failed": parsed["failed"],
+                "skipped": parsed["skipped"],
+                "failed_tests": parsed["failed_tests"],
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "return_code": result.returncode,
+                "duration_seconds": round(duration, 2),
+            }
+
+        except subprocess.TimeoutExpired:
+            duration = time.time() - start_time
+            return {
+                "success": False,
+                "framework": framework,
+                "command_used": command,
+                "error": f"Test command timed out after {timeout} seconds",
+                "duration_seconds": round(duration, 2),
+            }
+
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
