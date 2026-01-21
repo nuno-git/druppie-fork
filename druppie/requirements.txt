@@ -1,0 +1,30 @@
+# Druppie Platform Dependencies
+
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# HTTP Client
+httpx>=0.26.0
+
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+
+# Data Validation
+pydantic>=2.5.0
+
+# Configuration
+pyyaml>=6.0.0
+python-dotenv>=1.0.0
+
+# Logging
+structlog>=24.1.0
+
+# Authentication
+pyjwt[crypto]>=2.8.0
+cryptography>=42.0.0
+
+# Development
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
