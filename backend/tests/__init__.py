@@ -1,1 +1,0 @@
-# Druppie Backend Tests

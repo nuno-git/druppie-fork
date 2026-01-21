@@ -6,6 +6,10 @@ mcps:
     url: ${MCP_CODING_URL:-http://mcp-coding:9001}
     description: "File operations and git within workspace sandbox"
     tools:
+      - name: register_workspace
+        description: "Register an existing workspace (created by backend)"
+        requires_approval: false
+
       - name: initialize_workspace
         description: "Initialize workspace for user/project/session"
         requires_approval: false

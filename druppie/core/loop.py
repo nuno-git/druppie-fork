@@ -617,6 +617,9 @@ class MainLoop:
         - If project_name is provided, creates new project with repo on main
         - If neither, creates a project with auto-generated name
 
+        After creating the workspace, registers it with the MCP coding server
+        so that coding tools (read_file, write_file, etc.) can access it.
+
         Args:
             session_id: Session ID
             user_id: User ID
@@ -628,7 +631,7 @@ class MainLoop:
             Dict with workspace info (workspace_id, project_id, workspace_path, branch)
         """
         try:
-            from druppie.core.workspace import get_workspace_service
+            from druppie.core.workspace import get_workspace_service, WORKSPACE_ROOT
             from druppie.api.deps import get_db
 
             exec_ctx.emit("workspace_initializing", {
@@ -659,11 +662,29 @@ class MainLoop:
 
                 db.commit()
 
+                # Register workspace with MCP coding server
+                # The MCP server uses a different mount path for the same volume
+                # Backend: /app/workspace -> MCP: /workspaces
+                mcp_workspace_path = workspace.local_path.replace(
+                    str(WORKSPACE_ROOT), "/workspaces"
+                )
+
+                await self._register_workspace_with_mcp(
+                    workspace_id=workspace.id,
+                    workspace_path=mcp_workspace_path,
+                    project_id=workspace.project_id,
+                    branch=workspace.branch,
+                    user_id=user_id,
+                    session_id=session_id,
+                    exec_ctx=exec_ctx,
+                )
+
                 logger.info(
                     "workspace_initialized",
                     workspace_id=workspace.id,
                     project_id=workspace.project_id,
                     branch=workspace.branch,
+                    mcp_path=mcp_workspace_path,
                 )
 
                 return {
@@ -687,6 +708,76 @@ class MainLoop:
                 "workspace_path": None,
                 "branch": None,
             }
+
+    async def _register_workspace_with_mcp(
+        self,
+        workspace_id: str,
+        workspace_path: str,
+        project_id: str,
+        branch: str,
+        user_id: str | None,
+        session_id: str,
+        exec_ctx: ExecutionContext,
+    ) -> None:
+        """Register workspace with MCP coding server.
+
+        The MCP coding server maintains an in-memory registry of workspaces.
+        This must be called after backend workspace initialization so that
+        coding tools (read_file, write_file, etc.) can find the workspace.
+
+        Args:
+            workspace_id: Workspace ID from backend
+            workspace_path: Path to workspace (using MCP server's mount path)
+            project_id: Project ID
+            branch: Current git branch
+            user_id: User ID
+            session_id: Session ID
+            exec_ctx: Execution context for logging
+        """
+        try:
+            from druppie.api.deps import get_db
+
+            db = next(get_db())
+            try:
+                mcp_client = get_mcp_client(db)
+
+                result = await mcp_client._execute_tool(
+                    server="coding",
+                    tool="register_workspace",
+                    args={
+                        "workspace_id": workspace_id,
+                        "workspace_path": workspace_path,
+                        "project_id": project_id,
+                        "branch": branch,
+                        "user_id": user_id,
+                        "session_id": session_id,
+                    },
+                    context=exec_ctx,
+                )
+
+                if result.get("success"):
+                    logger.info(
+                        "workspace_registered_with_mcp",
+                        workspace_id=workspace_id,
+                        mcp_path=workspace_path,
+                    )
+                else:
+                    logger.warning(
+                        "workspace_mcp_registration_failed",
+                        workspace_id=workspace_id,
+                        error=result.get("error"),
+                    )
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            # Log but don't fail - workspace still exists, just MCP might not find it
+            logger.warning(
+                "workspace_mcp_registration_error",
+                workspace_id=workspace_id,
+                error=str(e),
+            )
 
     async def _save_session(
         self,

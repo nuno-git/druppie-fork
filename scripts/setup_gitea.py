@@ -54,7 +54,7 @@ def run_gitea_cli(args: list) -> tuple[bool, str, str]:
     """Run Gitea CLI command inside container as git user."""
     try:
         result = subprocess.run(
-            ["docker", "exec", "-u", "git", "druppie-gitea", "gitea"] + args,
+            ["docker", "exec", "-u", "git", "druppie-new-gitea", "gitea"] + args,
             capture_output=True,
             text=True,
             timeout=30,
@@ -305,9 +305,10 @@ def main():
     create_organization()
     create_sample_repo()
 
+    gitea_port = GITEA_URL.split(":")[-1] if ":" in GITEA_URL else "3100"
     print("\n" + "=" * 60)
     print("[DONE] Gitea setup complete!")
-    print(f"  URL: http://{EXTERNAL_HOST}:3000")
+    print(f"  URL: {GITEA_URL}")
     print(f"  Admin: {GITEA_ADMIN_USER} / {GITEA_ADMIN_PASSWORD}")
     print("")
     print("  To login with Keycloak:")

@@ -3,7 +3,7 @@
 ## Overview
 
 Druppie is a governance platform for AI agents with MCP (Model Context Protocol) tool permissions, approval workflows, and project management integrated with Gitea.
-
+workflow: always push and commit changes to git!
 ## Repository Structure
 
 ```
@@ -311,3 +311,43 @@ python scripts/setup_keycloak.py
 ```bash
 ./setup.sh status
 ```
+
+## Key Learnings & Common Issues
+
+### Issue: Router Agent Asking Unnecessary HITL Questions
+**Symptom**: Router uses `hitl:ask_question` for simple tasks like "Create a hello.txt file"
+**Fix**: Update router.yaml system prompt to be decisive - only ask HITL for truly ambiguous requests
+**Key**: Add explicit examples of CLEAR vs AMBIGUOUS requests in the prompt
+
+### Issue: Developer Agent Asking for user_id/workspace_id
+**Symptom**: Developer uses `hitl:ask_question` to ask "What is your user ID?"
+**Fix**: Update developer.yaml to explain workspace is ALREADY initialized from CONTEXT
+**Key**: Pass workspace context via ExecutionContext, inject into tool args automatically
+
+### Issue: `'FunctionTool' object is not callable` Error
+**Symptom**: write_file fails when calling commit_and_push internally
+**Cause**: Functions decorated with `@mcp.tool()` become FunctionTool objects, not callable
+**Fix**: Create separate internal `_do_commit_and_push()` function, keep `commit_and_push` as MCP wrapper
+**Pattern**: Always separate internal logic from MCP decorators for functions that call each other
+
+### Issue: Workspace Context Not Reaching MCP Tools
+**Symptom**: MCP tools receive placeholder workspace_id instead of actual value
+**Fix**: Auto-inject context in `agents/runtime.py` before calling MCP:
+```python
+if exec_ctx and server == "coding" and "workspace_id" not in tool_args:
+    tool_args["workspace_id"] = exec_ctx.workspace_id
+```
+
+### Architecture Reminder
+- `loop.py` - Keep simple/abstract, orchestrates LangGraph states
+- `agents/runtime.py` - Tool-calling loop, injects context
+- `core/mcp_client.py` - HTTP client with approval checking
+- MCP servers - FastMCP microservices in Docker containers
+- Agent definitions - YAML files in `agents/definitions/`
+
+### E2E Testing
+Always verify changes with Playwright E2E test:
+1. Login via Keycloak
+2. Send chat message
+3. Verify agent iterations and MCP tool calls in logs
+4. Check for "success": true in tool results

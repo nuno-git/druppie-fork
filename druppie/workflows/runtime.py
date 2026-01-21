@@ -16,7 +16,7 @@ import yaml
 
 from druppie.agents import Agent
 from druppie.core.models import WorkflowDefinition, StepType
-from druppie.mcps import get_mcp_registry
+from druppie.core.execution_context import get_current_context
 
 logger = structlog.get_logger()
 
@@ -57,7 +57,7 @@ class Workflow:
         """
         self.id = workflow_id
         self.definition = self._load_definition(workflow_id)
-        self._registry = None
+        self._mcp_client = None
 
     @classmethod
     def set_definitions_path(cls, path: str) -> None:
@@ -106,11 +106,14 @@ class Workflow:
         ]
 
     @property
-    def registry(self):
-        """Get MCP registry (lazy loaded)."""
-        if self._registry is None:
-            self._registry = get_mcp_registry()
-        return self._registry
+    def mcp_client(self):
+        """Get MCP client (lazy loaded)."""
+        if self._mcp_client is None:
+            from druppie.api.deps import get_db
+            from druppie.core.mcp_client import get_mcp_client
+            db = next(get_db())
+            self._mcp_client = get_mcp_client(db)
+        return self._mcp_client
 
     async def run(self, inputs: dict[str, Any] = None) -> dict[str, Any]:
         """Run the workflow with given inputs.
@@ -248,7 +251,18 @@ class Workflow:
             else:
                 inputs[key] = value
 
-        return await self.registry.call_tool(tool, inputs)
+        # Parse tool name (format: server:tool_name)
+        if ":" in tool:
+            server, tool_name = tool.split(":", 1)
+        else:
+            server = "coding"
+            tool_name = tool
+
+        # Get execution context for the call
+        exec_ctx = get_current_context()
+
+        # Call via MCP client
+        return await self.mcp_client.call_tool(server, tool_name, inputs, exec_ctx)
 
     def _render_template(self, template: str, context: dict[str, Any]) -> str:
         """Render a template string with context variables.
