@@ -1529,3 +1529,80 @@ Next iteration could focus on:
 - Add timeout handling for long-running LLM calls
 - Add streaming response or progress polling for code generation
 - E2E test coverage for all HITL types
+
+---
+
+## Iteration 20 Summary
+
+### What Was Implemented
+
+1. **MULTI Approval Progress on Approvals Page** - Working
+   - TaskCard component now detects MULTI approval tasks
+   - Displays "Multi-Approval Required" header in orange
+   - Shows "X of Y approvals" progress badge
+   - Displays progress bar visualization (~50% when 1 of 2)
+   - Shows "Approved by:" section with green checkmarks for completed approvals
+   - Shows "Still needed:" section with remaining required roles
+   - Button changes to "Add Approval (X/Y)" with orange color for MULTI tasks
+   - Orange border around MULTI approval cards
+
+2. **Backend Task.to_dict() Enhancement** - Working
+   - Added computed fields when `include_approvals=True`:
+     - `current_approvals`: Count of approved approvals
+     - `approved_by_roles`: List of roles that have approved
+     - `approved_by_ids`: List of user IDs who have approved
+
+### Code Changes
+
+**frontend/src/pages/Tasks.jsx**:
+- Added MULTI approval detection: `isMultiApproval = task.approval_type === 'multi'`
+- Added computed state for progress, approved roles, remaining roles
+- Added orange border styling for MULTI tasks
+- Added "Multi-Approval Required" header with progress badge
+- Added progress bar visualization
+- Added "Approved by:" and "Still needed:" sections
+- Changed button text and color for MULTI tasks
+
+**backend/druppie/models.py** - Task.to_dict():
+- Added computation of `current_approvals`, `approved_by_roles`, `approved_by_ids`
+- Only computed when `include_approvals=True` for efficiency
+
+### Test Results
+
+1. **Approvals Page MULTI Display** - Tested end-to-end:
+   - Created production deployment request
+   - Admin added first approval (1/2) in chat
+   - Navigated to Approvals page
+   - Card shows:
+     - "Multi-Approval Required" + "1 of 2 approvals"
+     - Progress bar ~50% filled
+     - "Approved by: admin" with checkmark
+     - "Still needed: developer, infra-engineer, product-owner"
+     - "Add Approval (2/2)" orange button
+
+### Commits Made (Iteration 20)
+
+1. `8934a0a` - Add MULTI approval progress to Approvals page
+
+---
+
+## Status After Iteration 20
+
+All core functionality and HITL types working:
+- ✅ Q&A HITL - Router asks clarifying questions
+- ✅ Approval HITL - Inline approve/reject buttons
+- ✅ MULTI Approval HITL - Multiple approvals from different users
+- ✅ **MULTI approval progress on Approvals page** (NEW)
+
+The Approvals page now matches the Chat UI for MULTI approval display:
+- Both show approval progress (X of Y)
+- Both show who has approved
+- Both show remaining required roles
+- Both have appropriate button text
+
+Next iteration could focus on:
+- Trigger actual deployment execution after MULTI approval
+- Add timeout handling for long-running LLM calls
+- Add streaming response or progress polling for code generation
+- E2E test coverage for all HITL types
+- Consider adding notification when task needs user's approval
