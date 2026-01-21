@@ -90,7 +90,8 @@ async def router_node(state: GraphState) -> dict:
     The router can call hitl:ask if it needs clarification.
     This automatically pauses via LangGraph's interrupt().
     """
-    logger.info("router_node_start", message=state["message"][:100])
+    message = state.get("message", "")
+    logger.info("router_node_start", message=message[:100] if message else "(no message)")
 
     # Emit step event
     ctx = get_current_context()
@@ -98,7 +99,7 @@ async def router_node(state: GraphState) -> dict:
         ctx.emit("step_started", {"step": "router", "description": "Analyzing your request..."})
 
     try:
-        result = await Agent("router").run(state["message"])
+        result = await Agent("router").run(message)
         logger.info("router_node_complete", action=result.get("action"))
         if ctx:
             ctx.emit("step_completed", {"step": "router", "action": result.get("action")})
@@ -115,7 +116,8 @@ async def planner_node(state: GraphState) -> dict:
 
     The planner can call hitl:ask if it needs more info.
     """
-    logger.info("planner_node_start", intent=state["intent"])
+    intent = state.get("intent")
+    logger.info("planner_node_start", intent=intent)
 
     ctx = get_current_context()
     if ctx:
