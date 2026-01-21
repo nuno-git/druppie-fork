@@ -19,10 +19,27 @@ const TaskCard = ({ task, onApprove, onReject }) => {
     ? task.required_roles.some(role => hasRole(role))
     : hasRole(task.required_role)
 
+  // MULTI approval state
+  const isMultiApproval = task.approval_type === 'multi'
+  const requiredApprovals = task.required_approvals || 2
+  const currentApprovals = task.current_approvals || 0
+  const approvedByRoles = task.approved_by_roles || []
+  const remainingRoles = isMultiApproval && task.required_roles
+    ? task.required_roles.filter(role => !approvedByRoles.includes(role))
+    : []
+
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+    <div className={`bg-white rounded-xl shadow-sm border p-6 ${isMultiApproval ? 'border-orange-200' : 'border-gray-200'}`}>
       <div className="flex items-start justify-between mb-4">
         <div>
+          {isMultiApproval && (
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-orange-600 font-semibold text-sm">Multi-Approval Required</span>
+              <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full">
+                {currentApprovals} of {requiredApprovals} approvals
+              </span>
+            </div>
+          )}
           <h3 className="font-semibold text-lg">{task.name}</h3>
           <p className="text-gray-500 text-sm mt-1">{task.description}</p>
         </div>
@@ -31,6 +48,44 @@ const TaskCard = ({ task, onApprove, onReject }) => {
           Pending
         </span>
       </div>
+
+      {/* MULTI approval progress */}
+      {isMultiApproval && (
+        <div className="mb-4 p-3 bg-orange-50 rounded-lg">
+          {/* Progress bar */}
+          <div className="w-full bg-gray-200 rounded-full h-2 mb-3">
+            <div
+              className="bg-orange-500 h-2 rounded-full transition-all"
+              style={{ width: `${(currentApprovals / requiredApprovals) * 100}%` }}
+            />
+          </div>
+
+          {/* Approved by */}
+          {approvedByRoles.length > 0 && (
+            <div className="mb-2">
+              <span className="text-sm text-gray-600">Approved by: </span>
+              {approvedByRoles.map(role => (
+                <span key={role} className="inline-flex items-center px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full mr-1">
+                  <CheckCircle className="w-3 h-3 mr-1" />
+                  {role}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Still needed */}
+          {remainingRoles.length > 0 && (
+            <div>
+              <span className="text-sm text-gray-600">Still needed: </span>
+              {remainingRoles.map(role => (
+                <span key={role} className="inline-flex items-center px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full mr-1">
+                  {role}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Task Details */}
       <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
@@ -77,10 +132,12 @@ const TaskCard = ({ task, onApprove, onReject }) => {
             <div className="flex space-x-3">
               <button
                 onClick={() => onApprove(task.id)}
-                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center justify-center"
+                className={`flex-1 px-4 py-2 text-white rounded-lg flex items-center justify-center ${
+                  isMultiApproval ? 'bg-orange-500 hover:bg-orange-600' : 'bg-green-600 hover:bg-green-700'
+                }`}
               >
                 <CheckCircle className="w-5 h-5 mr-2" />
-                Approve
+                {isMultiApproval ? `Add Approval (${currentApprovals + 1}/${requiredApprovals})` : 'Approve'}
               </button>
               <button
                 onClick={() => setShowReject(true)}
