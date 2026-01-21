@@ -1,56 +1,106 @@
 /**
  * WebSocket Service for Druppie Real-time Updates
+ *
+ * Updated to use native WebSocket for the new FastAPI backend.
  */
 
-import { io } from 'socket.io-client'
 import { getToken } from './keycloak'
 
-const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const WS_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000')
+  .replace('http://', 'ws://')
+  .replace('https://', 'wss://')
 
 let socket = null
 let reconnectAttempts = 0
 const MAX_RECONNECT_ATTEMPTS = 5
+const RECONNECT_DELAY = 1000
+
+// Event callbacks
+const eventCallbacks = {
+  task_approved: [],
+  task_rejected: [],
+  plan_updated: [],
+  workflow_event: [],
+  approval_requested: [],
+  session_updated: [],
+  question_pending: [],
+}
 
 /**
- * Initialize socket connection
+ * Initialize WebSocket connection
  */
-export const initSocket = () => {
-  if (socket?.connected) {
+export const initSocket = (sessionId = null) => {
+  if (socket?.readyState === WebSocket.OPEN) {
     return socket
   }
 
+  // Close existing socket if any
+  if (socket) {
+    socket.close()
+  }
+
   const token = getToken()
+  const wsPath = sessionId ? `/ws/session/${sessionId}` : '/ws'
+  const wsUrl = token ? `${WS_URL}${wsPath}?token=${token}` : `${WS_URL}${wsPath}`
 
-  socket = io(SOCKET_URL, {
-    auth: {
-      token: token,
-    },
-    transports: ['websocket', 'polling'],
-    reconnection: true,
-    reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
-    reconnectionDelay: 1000,
-  })
+  socket = new WebSocket(wsUrl)
 
-  socket.on('connect', () => {
-    console.log('[Socket] Connected:', socket.id)
+  socket.onopen = () => {
+    console.log('[WebSocket] Connected')
     reconnectAttempts = 0
-  })
+  }
 
-  socket.on('disconnect', (reason) => {
-    console.log('[Socket] Disconnected:', reason)
-  })
+  socket.onclose = (event) => {
+    console.log('[WebSocket] Disconnected:', event.code, event.reason)
 
-  socket.on('connect_error', (error) => {
-    console.error('[Socket] Connection error:', error.message)
-    reconnectAttempts++
-    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-      console.error('[Socket] Max reconnection attempts reached')
+    // Attempt reconnection
+    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttempts++
+      console.log(`[WebSocket] Reconnecting (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`)
+      setTimeout(() => initSocket(sessionId), RECONNECT_DELAY * reconnectAttempts)
+    } else {
+      console.error('[WebSocket] Max reconnection attempts reached')
     }
-  })
+  }
 
-  socket.on('connected', (data) => {
-    console.log('[Socket] Server confirmed connection:', data)
-  })
+  socket.onerror = (error) => {
+    console.error('[WebSocket] Error:', error)
+  }
+
+  socket.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      const eventType = data.type
+
+      console.log('[WebSocket] Message received:', eventType, data)
+
+      // Handle connected confirmation
+      if (eventType === 'connected') {
+        console.log('[WebSocket] Server confirmed connection:', data)
+        return
+      }
+
+      // Dispatch to registered callbacks
+      // Map new event types to legacy names for backwards compatibility
+      const eventMap = {
+        approval_approved: 'task_approved',
+        approval_rejected: 'task_rejected',
+        session_updated: 'plan_updated',
+      }
+
+      const callbackType = eventMap[eventType] || eventType
+      const callbacks = eventCallbacks[callbackType] || []
+      callbacks.forEach((callback) => {
+        try {
+          callback(data)
+        } catch (err) {
+          console.error('[WebSocket] Callback error:', err)
+        }
+      })
+    } catch (err) {
+      console.error('[WebSocket] Failed to parse message:', err)
+    }
+  }
 
   return socket
 }
@@ -59,20 +109,31 @@ export const initSocket = () => {
  * Get the socket instance
  */
 export const getSocket = () => {
-  if (!socket) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
     return initSocket()
   }
   return socket
 }
 
 /**
- * Join a plan room for real-time updates
+ * Send a message through the WebSocket
+ */
+const sendMessage = (message) => {
+  const s = getSocket()
+  if (s && s.readyState === WebSocket.OPEN) {
+    s.send(JSON.stringify(message))
+  } else {
+    console.warn('[WebSocket] Cannot send message - not connected')
+  }
+}
+
+/**
+ * Join a plan/session room for real-time updates
  */
 export const joinPlanRoom = (planId) => {
-  const s = getSocket()
-  if (s && planId) {
-    s.emit('join_plan', { plan_id: planId })
-    console.log('[Socket] Joining plan room:', planId)
+  if (planId) {
+    sendMessage({ type: 'join_session', session_id: planId })
+    console.log('[WebSocket] Joining session room:', planId)
   }
 }
 
@@ -80,10 +141,27 @@ export const joinPlanRoom = (planId) => {
  * Join approvals rooms for the user's roles
  */
 export const joinApprovalsRoom = (roles) => {
-  const s = getSocket()
-  if (s && roles?.length > 0) {
-    s.emit('join_approvals', { roles })
-    console.log('[Socket] Joining approvals rooms for roles:', roles)
+  if (roles?.length > 0) {
+    sendMessage({ type: 'join_approvals', roles })
+    console.log('[WebSocket] Joining approvals rooms for roles:', roles)
+  }
+}
+
+/**
+ * Register a callback for an event type
+ */
+const registerCallback = (eventType, callback) => {
+  if (!eventCallbacks[eventType]) {
+    eventCallbacks[eventType] = []
+  }
+  eventCallbacks[eventType].push(callback)
+
+  // Return unsubscribe function
+  return () => {
+    const idx = eventCallbacks[eventType].indexOf(callback)
+    if (idx > -1) {
+      eventCallbacks[eventType].splice(idx, 1)
+    }
   }
 }
 
@@ -91,60 +169,49 @@ export const joinApprovalsRoom = (roles) => {
  * Subscribe to task approved events
  */
 export const onTaskApproved = (callback) => {
-  const s = getSocket()
-  if (s) {
-    s.on('task_approved', callback)
-    return () => s.off('task_approved', callback)
-  }
-  return () => {}
+  return registerCallback('task_approved', callback)
 }
 
 /**
  * Subscribe to task rejected events
  */
 export const onTaskRejected = (callback) => {
-  const s = getSocket()
-  if (s) {
-    s.on('task_rejected', callback)
-    return () => s.off('task_rejected', callback)
-  }
-  return () => {}
+  return registerCallback('task_rejected', callback)
 }
 
 /**
  * Subscribe to plan updated events
  */
 export const onPlanUpdated = (callback) => {
-  const s = getSocket()
-  if (s) {
-    s.on('plan_updated', callback)
-    return () => s.off('plan_updated', callback)
-  }
-  return () => {}
+  return registerCallback('plan_updated', callback)
 }
 
 /**
  * Subscribe to workflow events
  */
 export const onWorkflowEvent = (callback) => {
-  const s = getSocket()
-  if (s) {
-    s.on('workflow_event', callback)
-    return () => s.off('workflow_event', callback)
-  }
-  return () => {}
+  return registerCallback('workflow_event', callback)
 }
 
 /**
  * Subscribe to approval requested events
  */
 export const onApprovalRequested = (callback) => {
-  const s = getSocket()
-  if (s) {
-    s.on('approval_requested', callback)
-    return () => s.off('approval_requested', callback)
-  }
-  return () => {}
+  return registerCallback('approval_requested', callback)
+}
+
+/**
+ * Subscribe to session updated events
+ */
+export const onSessionUpdated = (callback) => {
+  return registerCallback('session_updated', callback)
+}
+
+/**
+ * Subscribe to question pending events
+ */
+export const onQuestionPending = (callback) => {
+  return registerCallback('question_pending', callback)
 }
 
 /**
@@ -152,8 +219,9 @@ export const onApprovalRequested = (callback) => {
  */
 export const disconnectSocket = () => {
   if (socket) {
-    socket.disconnect()
+    socket.close()
     socket = null
-    console.log('[Socket] Disconnected')
+    reconnectAttempts = 0
+    console.log('[WebSocket] Disconnected')
   }
 }

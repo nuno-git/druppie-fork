@@ -1,0 +1,77 @@
+id: feature_dev
+name: Feature Development
+description: Develop a new feature end-to-end with git workflow
+
+inputs:
+  - project_path
+  - feature_description
+  - branch_name
+
+entry_point: create_branch
+
+steps:
+  create_branch:
+    id: create_branch
+    type: mcp
+    tool: git:branch
+    inputs:
+      path: "{{ project_path }}"
+      name: "{{ branch_name }}"
+      checkout: "true"
+    on_success: implement
+
+  implement:
+    id: implement
+    type: agent
+    agent_id: developer
+    prompt: |
+      Implement the following feature:
+      {{ feature_description }}
+
+      Working in: {{ project_path }}
+      Branch: {{ branch_name }}
+
+      Follow best practices:
+      - Write clean, documented code
+      - Add appropriate error handling
+      - Create tests if applicable
+    on_success: review
+
+  review:
+    id: review
+    type: agent
+    agent_id: reviewer
+    prompt: |
+      Review the changes made for:
+      {{ feature_description }}
+
+      Check the code in {{ project_path }} on branch {{ branch_name }}
+      Provide feedback on quality, security, and best practices.
+    on_success: commit_changes
+    on_failure: revise
+
+  revise:
+    id: revise
+    type: agent
+    agent_id: developer
+    prompt: |
+      Address the review feedback and make necessary changes.
+      Working in: {{ project_path }}
+    on_success: review
+
+  commit_changes:
+    id: commit_changes
+    type: mcp
+    tool: git:add
+    inputs:
+      path: "{{ project_path }}"
+      files: "."
+    on_success: final_commit
+
+  final_commit:
+    id: final_commit
+    type: mcp
+    tool: git:commit
+    inputs:
+      path: "{{ project_path }}"
+      message: "feat: {{ feature_description }}"

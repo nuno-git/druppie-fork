@@ -1,5 +1,8 @@
 /**
- * API Service for Druppie Backend
+ * API Service for Druppie Backend (New FastAPI)
+ *
+ * Updated to work with the new druppie/ backend architecture.
+ * Sessions replace Plans, and endpoints use the new API structure.
  */
 
 import { getToken } from './keycloak'
@@ -24,70 +27,109 @@ const request = async (endpoint, options = {}) => {
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' }))
-    throw new Error(error.error || `Request failed: ${response.status}`)
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+    throw new Error(error.detail || error.error || `Request failed: ${response.status}`)
   }
 
   return response.json()
 }
 
-// User
+// ============ User ============
 export const getUser = () => request('/api/user')
 
-// Plans
-export const getPlans = () => request('/api/plans')
-export const getPlan = (planId) => request(`/api/plans/${planId}`)
-export const createPlan = (data) =>
-  request('/api/plans', { method: 'POST', body: JSON.stringify(data) })
-export const executePlan = (planId) =>
-  request(`/api/plans/${planId}/execute`, { method: 'POST' })
-
-// Tasks (Approvals)
-export const getTasks = () => request('/api/tasks')
-export const getTask = (taskId) => request(`/api/tasks/${taskId}`)
-export const approveTask = (taskId, comment = '') =>
-  request(`/api/tasks/${taskId}/approve`, {
-    method: 'POST',
-    body: JSON.stringify({ comment }),
-  })
-export const rejectTask = (taskId, reason) =>
-  request(`/api/tasks/${taskId}/reject`, {
-    method: 'POST',
-    body: JSON.stringify({ reason }),
-  })
-
-// MCP Permissions
-export const getMCPPermissions = () => request('/api/mcp/permissions')
-export const checkMCPPermission = (tool) =>
-  request('/api/mcp/check', { method: 'POST', body: JSON.stringify({ tool }) })
-
-// Chat
-export const sendChat = (message, planId = null, conversationHistory = null) =>
+// ============ Chat (Main Entry Point) ============
+export const sendChat = (message, sessionId = null, conversationHistory = null) =>
   request('/api/chat', {
     method: 'POST',
     body: JSON.stringify({
       message,
-      plan_id: planId,
-      conversation_history: conversationHistory,
+      session_id: sessionId || undefined,
+      conversation_history: conversationHistory || [],
     }),
   })
 
-// Workspace
-export const getWorkspaceFiles = (planId = null) =>
-  request(`/api/workspace${planId ? `?plan_id=${planId}` : ''}`)
-export const getWorkspaceFile = (path, planId = null) => {
+// ============ Sessions (replaces Plans) ============
+export const getSessions = () => request('/api/sessions')
+export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
+export const resumeSession = (sessionId, answer = null) =>
+  request(`/api/sessions/${sessionId}/resume`, {
+    method: 'POST',
+    body: JSON.stringify({ answer }),
+  })
+
+// Legacy plan endpoints (mapped to sessions for backwards compatibility)
+export const getPlans = () => request('/api/sessions')
+export const getPlan = (planId) => request(`/api/sessions/${planId}`)
+export const createPlan = (data) =>
+  request('/api/sessions', { method: 'POST', body: JSON.stringify(data) })
+
+// ============ Approvals ============
+export const getApprovals = () => request('/api/approvals')
+export const getApproval = (approvalId) => request(`/api/approvals/${approvalId}`)
+export const approveApproval = (approvalId, comment = '') =>
+  request(`/api/approvals/${approvalId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ comment }),
+  })
+export const rejectApproval = (approvalId, reason) =>
+  request(`/api/approvals/${approvalId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  })
+
+// Legacy task endpoints (mapped to approvals for backwards compatibility)
+export const getTasks = () => request('/api/approvals')
+export const getTask = (taskId) => request(`/api/approvals/${taskId}`)
+export const approveTask = (taskId, comment = '') =>
+  request(`/api/approvals/${taskId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ comment }),
+  })
+export const rejectTask = (taskId, reason) =>
+  request(`/api/approvals/${taskId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  })
+
+// ============ MCP Registry ============
+export const getMCPs = () => request('/api/mcps')
+export const getMCPTools = () => request('/api/mcps/tools')
+export const getMCPServers = () => request('/api/mcps/servers')
+export const getMCPTool = (toolId) => request(`/api/mcps/tools/${toolId}`)
+
+// Legacy MCP endpoints
+export const getMCPRegistry = () => request('/api/mcps')
+export const getMCPPermissions = () => request('/api/mcps')
+export const checkMCPPermission = (tool) =>
+  request('/api/mcps/check', { method: 'POST', body: JSON.stringify({ tool }) })
+
+// ============ Questions (HITL - Human in the Loop) ============
+export const getQuestions = (sessionId = null) =>
+  request(`/api/questions${sessionId ? `?session_id=${sessionId}` : ''}`)
+export const getQuestion = (questionId) => request(`/api/questions/${questionId}`)
+export const answerQuestion = (questionId, answer) =>
+  request(`/api/questions/${questionId}/answer`, {
+    method: 'POST',
+    body: JSON.stringify({ answer }),
+  })
+export const cancelQuestion = (questionId) =>
+  request(`/api/questions/${questionId}/cancel`, { method: 'POST' })
+
+// ============ Workspace ============
+export const getWorkspaceFiles = (sessionId = null) =>
+  request(`/api/workspace${sessionId ? `?session_id=${sessionId}` : ''}`)
+export const getWorkspaceFile = (path, sessionId = null) => {
   const params = new URLSearchParams({ path })
-  if (planId) params.append('plan_id', planId)
+  if (sessionId) params.append('session_id', sessionId)
   return request(`/api/workspace/file?${params.toString()}`)
 }
-export const getWorkspaceDownloadUrl = (path, planId = null) => {
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+export const getWorkspaceDownloadUrl = (path, sessionId = null) => {
   const params = new URLSearchParams({ path })
-  if (planId) params.append('plan_id', planId)
+  if (sessionId) params.append('session_id', sessionId)
   return `${API_URL}/api/workspace/download?${params.toString()}`
 }
 
-// Projects
+// ============ Projects ============
 export const getProjects = () => request('/api/projects')
 export const getProject = (projectId) => request(`/api/projects/${projectId}`)
 export const buildProject = (projectId) =>
@@ -99,29 +141,11 @@ export const stopProject = (projectId) =>
 export const deleteProject = (projectId) =>
   request(`/api/projects/${projectId}`, { method: 'DELETE' })
 export const getProjectStatus = (projectId) =>
-  request(`/api/apps/${projectId}/status`)
+  request(`/api/projects/${projectId}/status`)
 
-// Running Apps
+// ============ Running Apps ============
 export const getRunningApps = () => request('/api/apps/running')
 
-// MCP Registry
-export const getMCPRegistry = () => request('/api/mcp/registry')
-export const getMCPTools = () => request('/api/mcp/tools')
-export const getMCPTool = (toolId) => request(`/api/mcp/tools/${toolId}`)
-export const getMCPServers = () => request('/api/mcp/servers')
-
-// Questions (Agent-User Interaction)
-export const getQuestions = (planId = null) =>
-  request(`/api/questions${planId ? `?plan_id=${planId}` : ''}`)
-export const getQuestion = (questionId) => request(`/api/questions/${questionId}`)
-export const answerQuestion = (questionId, answer) =>
-  request(`/api/questions/${questionId}/answer`, {
-    method: 'POST',
-    body: JSON.stringify({ answer }),
-  })
-export const cancelQuestion = (questionId) =>
-  request(`/api/questions/${questionId}/cancel`, { method: 'POST' })
-
-// Health
+// ============ Health ============
 export const getHealth = () => request('/health')
 export const getStatus = () => request('/api/status')

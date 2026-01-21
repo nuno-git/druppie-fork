@@ -1,0 +1,50 @@
+id: project_setup
+name: Project Setup
+description: Set up a new project with git repository and basic structure
+
+inputs:
+  - project_name
+  - project_path
+
+entry_point: init_git
+
+steps:
+  init_git:
+    id: init_git
+    type: mcp
+    tool: git:init
+    inputs:
+      path: "{{ project_path }}"
+    on_success: create_structure
+
+  create_structure:
+    id: create_structure
+    type: agent
+    agent_id: developer
+    prompt: |
+      Create the basic project structure for {{ project_name }}:
+      - README.md with project description
+      - .gitignore for common files
+      - src/ directory for source code
+      - tests/ directory for tests
+      - requirements.txt or package.json depending on project type
+
+      Working directory: {{ project_path }}
+    on_success: initial_commit
+
+  initial_commit:
+    id: initial_commit
+    type: mcp
+    tool: git:add
+    inputs:
+      path: "{{ project_path }}"
+      files: "."
+    on_success: commit
+
+  commit:
+    id: commit
+    type: mcp
+    tool: git:commit
+    inputs:
+      path: "{{ project_path }}"
+      message: "Initial project structure"

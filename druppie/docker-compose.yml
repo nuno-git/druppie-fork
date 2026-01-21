@@ -1,0 +1,109 @@
+# Druppie Platform v2 - Docker Compose
+# This runs the new druppie/ backend implementation
+#
+# To use: docker compose -f druppie/docker-compose.yml up
+# Or with the project root docker-compose: Set DRUPPIE_BACKEND_DIR=druppie
+
+services:
+  # =============================================================================
+  # DATABASE (shared with main compose, or standalone for testing)
+  # =============================================================================
+
+  druppie-db:
+    image: postgres:15-alpine
+    container_name: druppie-v2-db
+    environment:
+      POSTGRES_DB: druppie
+      POSTGRES_USER: druppie
+      POSTGRES_PASSWORD: ${DRUPPIE_DB_PASSWORD:-druppie_secret}
+    volumes:
+      - druppie_v2_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "druppie"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5433:5432"
+    networks:
+      - druppie-v2-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: druppie-v2-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - druppie_v2_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "6380:6379"
+    networks:
+      - druppie-v2-network
+
+  # =============================================================================
+  # DRUPPIE V2 BACKEND (FastAPI)
+  # =============================================================================
+
+  druppie-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: druppie-v2-backend
+    environment:
+      # Database
+      DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
+      REDIS_URL: redis://redis:6379/0
+
+      # Auth (dev mode for testing)
+      DEV_MODE: ${DEV_MODE:-true}
+      KEYCLOAK_SERVER_URL: ${KEYCLOAK_SERVER_URL:-http://localhost:8080}
+      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_ISSUER_URL:-http://localhost:8080}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-druppie}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-druppie-backend}
+
+      # LLM Configuration
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_MODEL: ${ZAI_MODEL:-GLM-4.7}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
+
+      # CORS
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000
+
+      # Workspace
+      WORKSPACE_PATH: /app/workspace
+
+      # Gitea (optional)
+      GITEA_URL: ${GITEA_URL:-http://localhost:3000}
+      GITEA_TOKEN: ${GITEA_TOKEN:-}
+    volumes:
+      - druppie_v2_workspace:/app/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8001:8000"
+    depends_on:
+      druppie-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - druppie-v2-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  druppie_v2_postgres_data:
+    name: druppie_v2_postgres
+  druppie_v2_redis_data:
+    name: druppie_v2_redis
+  druppie_v2_workspace:
+    name: druppie_v2_workspace
+
+networks:
+  druppie-v2-network:
+    name: druppie-v2-network
+    driver: bridge

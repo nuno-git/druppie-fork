@@ -1,0 +1,187 @@
+# Druppie Platform v2 - Full Stack Docker Compose
+# Complete standalone setup with Keycloak on NEW PORTS to avoid conflicts
+#
+# Ports used:
+#   - Keycloak: 8180
+#   - Backend:  8100
+#   - Frontend: 5273
+#   - Postgres: 5533
+#   - Redis:    6480
+
+services:
+  # =============================================================================
+  # DATABASE
+  # =============================================================================
+
+  druppie-db:
+    image: postgres:15-alpine
+    container_name: druppie-new-db
+    environment:
+      POSTGRES_DB: druppie
+      POSTGRES_USER: druppie
+      POSTGRES_PASSWORD: druppie_secret
+    volumes:
+      - druppie_new_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "druppie"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5533:5432"
+    networks:
+      - druppie-new-network
+
+  keycloak-db:
+    image: postgres:15-alpine
+    container_name: druppie-new-keycloak-db
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak_secret
+    volumes:
+      - druppie_new_keycloak_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - druppie-new-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: druppie-new-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - druppie_new_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "6480:6379"
+    networks:
+      - druppie-new-network
+
+  # =============================================================================
+  # KEYCLOAK
+  # =============================================================================
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: druppie-new-keycloak
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak_secret
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: 8180
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY: edge
+      KC_HEALTH_ENABLED: "true"
+    command: start-dev
+    ports:
+      - "8180:8080"
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e 'GET /health/ready HTTP/1.1\r\nhost: localhost\r\nConnection: close\r\n\r\n' >&3;if [ $? -eq 0 ]; then echo 'Healthcheck Successful';exit 0;else echo 'Healthcheck Failed';exit 1;fi;"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+    networks:
+      - druppie-new-network
+
+  # =============================================================================
+  # BACKEND (FastAPI)
+  # =============================================================================
+
+  druppie-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: druppie-new-backend
+    environment:
+      # Database
+      DATABASE_URL: postgresql://druppie:druppie_secret@druppie-db:5432/druppie
+      REDIS_URL: redis://redis:6379/0
+
+      # Auth - Use real Keycloak
+      DEV_MODE: "false"
+      KEYCLOAK_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_ISSUER_URL: http://localhost:8180
+      KEYCLOAK_REALM: druppie
+      KEYCLOAK_CLIENT_ID: druppie-backend
+
+      # LLM Configuration - Use mock for testing (set LLM_PROVIDER=zai and ZAI_API_KEY for real LLM)
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_MODEL: ${ZAI_MODEL:-GLM-4.7}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
+
+      # CORS - allow new frontend port
+      CORS_ORIGINS: http://localhost:5273,http://localhost:5173
+
+      # Workspace
+      WORKSPACE_PATH: /app/workspace
+    volumes:
+      - druppie_new_workspace:/app/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8100:8000"
+    depends_on:
+      druppie-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # =============================================================================
+  # FRONTEND (Vite + React)
+  # =============================================================================
+
+  druppie-frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8100
+        VITE_KEYCLOAK_URL: http://localhost:8180
+        VITE_KEYCLOAK_REALM: druppie
+        VITE_KEYCLOAK_CLIENT_ID: druppie-frontend
+    container_name: druppie-new-frontend
+    ports:
+      - "5273:5173"
+    depends_on:
+      - druppie-backend
+    networks:
+      - druppie-new-network
+
+volumes:
+  druppie_new_postgres:
+    name: druppie_new_postgres
+  druppie_new_keycloak_postgres:
+    name: druppie_new_keycloak_postgres
+  druppie_new_redis:
+    name: druppie_new_redis
+  druppie_new_workspace:
+    name: druppie_new_workspace
+
+networks:
+  druppie-new-network:
+    name: druppie-new-network
+    driver: bridge
