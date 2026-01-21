@@ -285,7 +285,7 @@ class Agent:
                     }
                 else:
                     # Execute tool via MCP client
-                    result = await self.mcp_client.call_tool(server, tool, tool_args, exec_ctx)
+                    result = await self.mcp_client.call_tool(server, tool, tool_args, exec_ctx, agent_id=self.id)
 
                 # Check if paused for approval
                 if result.get("status") == "paused":

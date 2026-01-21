@@ -28,6 +28,8 @@ import {
   Loader2,
 } from 'lucide-react'
 import { getWorkspaceFiles, getWorkspaceFile, getWorkspaceDownloadUrl, getProjectStatus, getProjects, deleteProject, buildProject, runProject, stopProject } from '../services/api'
+import { useToast } from '../components/Toast'
+import CodeBlock from '../components/CodeBlock'
 
 const getFileIcon = (filename) => {
   const ext = filename.split('.').pop().toLowerCase()
@@ -96,14 +98,15 @@ const CopyButton = ({ text, label }) => {
   return (
     <button
       onClick={handleCopy}
-      className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-      title={`Copy ${label}`}
+      className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+      aria-label={copied ? `${label} copied` : `Copy ${label}`}
     >
       {copied ? (
-        <CheckCircle className="w-4 h-4 text-green-500" />
+        <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
       ) : (
-        <Copy className="w-4 h-4" />
+        <Copy className="w-4 h-4" aria-hidden="true" />
       )}
+      <span className="sr-only">{copied ? `${label} copied to clipboard` : `Copy ${label}`}</span>
     </button>
   )
 }
@@ -115,13 +118,19 @@ const FilePreview = ({ path, planId, onClose }) => {
     enabled: !!path,
   })
 
+  const filename = path.split('/').pop()
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl max-w-4xl w-full max-h-[80vh] flex flex-col">
+      <div className="bg-white rounded-xl max-w-5xl w-full max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between p-4 border-b">
-          <h3 className="font-semibold">{path.split('/').pop()}</h3>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded">
-            <X className="w-5 h-5" />
+          <h3 className="font-semibold">{filename}</h3>
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-gray-100 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-label="Close file preview"
+          >
+            <X className="w-5 h-5" aria-hidden="true" />
           </button>
         </div>
 
@@ -137,9 +146,11 @@ const FilePreview = ({ path, planId, onClose }) => {
           ) : data?.binary ? (
             <div className="text-center py-8 text-gray-500">Binary file - cannot preview</div>
           ) : (
-            <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto text-sm font-mono">
-              {data?.content}
-            </pre>
+            <CodeBlock
+              code={data?.content || ''}
+              filename={filename}
+              showLineNumbers={true}
+            />
           )}
         </div>
       </div>
@@ -179,14 +190,15 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
       <button
         onClick={handleDelete}
         disabled={isDeleting}
-        className="absolute top-2 right-2 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-        title="Delete project"
+        className="absolute top-2 right-2 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500"
+        aria-label={`Delete project ${plan.name}`}
       >
         {isDeleting ? (
-          <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+          <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin" aria-hidden="true" />
         ) : (
-          <Trash2 className="w-4 h-4" />
+          <Trash2 className="w-4 h-4" aria-hidden="true" />
         )}
+        <span className="sr-only">{isDeleting ? 'Deleting project' : 'Delete project'}</span>
       </button>
 
       {/* Header */}
@@ -225,9 +237,10 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
                 href={repoUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                aria-label="Open repository in new tab"
               >
-                <ExternalLink className="w-4 h-4" />
+                <ExternalLink className="w-4 h-4" aria-hidden="true" />
               </a>
             </div>
           </div>
@@ -255,9 +268,10 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
                 href={appUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center px-2 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors"
+                className="flex items-center px-2 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                aria-label="Open running application in new tab"
               >
-                <Play className="w-3 h-3 mr-1" />
+                <Play className="w-3 h-3 mr-1" aria-hidden="true" />
                 Open
               </a>
             </div>
@@ -287,9 +301,10 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
       {/* View Details Button */}
       <button
         onClick={handleViewDetails}
-        className="mt-3 w-full py-2 px-3 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center justify-center"
+        className="mt-3 w-full py-2 px-3 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        aria-label={`View details for ${plan.name}`}
       >
-        <Eye className="w-4 h-4 mr-1.5" />
+        <Eye className="w-4 h-4 mr-1.5" aria-hidden="true" />
         View Details
       </button>
     </div>
@@ -306,6 +321,7 @@ const Projects = () => {
 
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const toast = useToast()
 
   const { data: plans = [], isLoading: plansLoading, isError: plansError, error: plansErrorData, refetch: refetchPlans } = useQuery({
     queryKey: ['projects'],
@@ -328,7 +344,7 @@ const Projects = () => {
     },
     onError: (error) => {
       setDeletingId(null)
-      alert(`Failed to delete project: ${error.message}`)
+      toast.error('Delete Failed', `Could not delete project: ${error.message}`)
     },
   })
 
@@ -339,7 +355,7 @@ const Projects = () => {
       queryClient.invalidateQueries({ queryKey: ['allProjectStatuses'] })
     },
     onError: (error) => {
-      alert(`Build failed: ${error.message}`)
+      toast.error('Build Failed', `Could not build project: ${error.message}`)
     },
   })
 
@@ -350,7 +366,7 @@ const Projects = () => {
       queryClient.invalidateQueries({ queryKey: ['allProjectStatuses'] })
     },
     onError: (error) => {
-      alert(`Failed to run: ${error.message}`)
+      toast.error('Run Failed', `Could not start project: ${error.message}`)
     },
   })
 
@@ -361,7 +377,7 @@ const Projects = () => {
       queryClient.invalidateQueries({ queryKey: ['allProjectStatuses'] })
     },
     onError: (error) => {
-      alert(`Failed to stop: ${error.message}`)
+      toast.error('Stop Failed', `Could not stop project: ${error.message}`)
     },
   })
 
@@ -457,7 +473,8 @@ const Projects = () => {
           <p className="text-sm text-red-400">{plansErrorData?.message || 'An unexpected error occurred'}</p>
           <button
             onClick={() => refetchPlans()}
-            className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+            className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            aria-label="Retry loading projects"
           >
             Retry
           </button>
@@ -502,9 +519,10 @@ const Projects = () => {
                 setSelectedPlan(null)
                 setCurrentPath('')
               }}
-              className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              className="flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Go back to projects list"
             >
-              <ChevronRight className="w-4 h-4 rotate-180 mr-1" />
+              <ChevronRight className="w-4 h-4 rotate-180 mr-1" aria-hidden="true" />
               Back to Projects
             </button>
             <button
@@ -515,12 +533,13 @@ const Projects = () => {
                 }
               }}
               disabled={deletingId === selectedPlan}
-              className="flex items-center px-3 py-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+              className="flex items-center px-3 py-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
+              aria-label={`Delete project ${selectedPlanData?.name}`}
             >
               {deletingId === selectedPlan ? (
-                <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin mr-2" />
+                <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin mr-2" aria-hidden="true" />
               ) : (
-                <Trash2 className="w-4 h-4 mr-2" />
+                <Trash2 className="w-4 h-4 mr-2" aria-hidden="true" />
               )}
               Delete Project
             </button>
@@ -618,12 +637,13 @@ const Projects = () => {
                 <button
                   onClick={() => handleBuild(selectedPlan)}
                   disabled={buildMutation.isPending}
-                  className="flex items-center px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="flex items-center px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+                  aria-label={buildMutation.isPending ? 'Building project' : 'Build project'}
                 >
                   {buildMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
                   ) : (
-                    <Hammer className="w-4 h-4 mr-2" />
+                    <Hammer className="w-4 h-4 mr-2" aria-hidden="true" />
                   )}
                   {buildMutation.isPending ? 'Building...' : 'Build'}
                 </button>
@@ -633,12 +653,13 @@ const Projects = () => {
                   <button
                     onClick={() => handleStop(selectedPlan)}
                     disabled={stopMutation.isPending}
-                    className="flex items-center px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    className="flex items-center px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                    aria-label={stopMutation.isPending ? 'Stopping project' : 'Stop running project'}
                   >
                     {stopMutation.isPending ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
                     ) : (
-                      <Square className="w-4 h-4 mr-2" />
+                      <Square className="w-4 h-4 mr-2" aria-hidden="true" />
                     )}
                     {stopMutation.isPending ? 'Stopping...' : 'Stop'}
                   </button>
@@ -646,13 +667,13 @@ const Projects = () => {
                   <button
                     onClick={() => handleRun(selectedPlan)}
                     disabled={runMutation.isPending || projectStatus?.status !== 'built'}
-                    className="flex items-center px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    title={projectStatus?.status !== 'built' ? 'Build first' : 'Run the app'}
+                    className="flex items-center px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                    aria-label={projectStatus?.status !== 'built' ? 'Build project first before running' : (runMutation.isPending ? 'Starting project' : 'Run project')}
                   >
                     {runMutation.isPending ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
                     ) : (
-                      <Play className="w-4 h-4 mr-2" />
+                      <Play className="w-4 h-4 mr-2" aria-hidden="true" />
                     )}
                     {runMutation.isPending ? 'Starting...' : 'Run'}
                   </button>
@@ -664,27 +685,29 @@ const Projects = () => {
           {/* File Browser */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200">
             {/* Breadcrumb */}
-            <div className="p-4 border-b flex items-center text-sm">
+            <nav className="p-4 border-b flex items-center text-sm" aria-label="File browser breadcrumb">
               <button
                 onClick={() => navigateToPath('')}
-                className="text-blue-600 hover:underline"
+                className="text-blue-600 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                aria-label={`Navigate to project root: ${selectedPlanData?.name || 'project'}`}
               >
                 {selectedPlanData?.name || 'project'}
               </button>
               {breadcrumbs.map((crumb, index) => (
                 <React.Fragment key={index}>
-                  <ChevronRight className="w-4 h-4 mx-1 text-gray-400" />
+                  <ChevronRight className="w-4 h-4 mx-1 text-gray-400" aria-hidden="true" />
                   <button
                     onClick={() =>
                       navigateToPath(breadcrumbs.slice(0, index + 1).join('/'))
                     }
-                    className="text-blue-600 hover:underline"
+                    className="text-blue-600 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                    aria-label={`Navigate to folder: ${crumb}`}
                   >
                     {crumb}
                   </button>
                 </React.Fragment>
               ))}
-            </div>
+            </nav>
 
             {/* Files */}
             <div className="p-4">
@@ -730,25 +753,25 @@ const Projects = () => {
                           </span>
                         </div>
 
-                        <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                           <button
                             onClick={() => {
                               setPreviewFile(filePath)
                               setPreviewPlanId(selectedPlan)
                             }}
-                            className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded"
-                            title="Preview"
+                            className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            aria-label={`Preview ${file.name}`}
                           >
-                            <Eye className="w-4 h-4" />
+                            <Eye className="w-4 h-4" aria-hidden="true" />
                           </button>
                           <a
                             href={getWorkspaceDownloadUrl(filePath, selectedPlan)}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-1.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded"
-                            title="Download"
+                            className="p-1.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded focus:outline-none focus:ring-2 focus:ring-green-500"
+                            aria-label={`Download ${file.name}`}
                           >
-                            <Download className="w-4 h-4" />
+                            <Download className="w-4 h-4" aria-hidden="true" />
                           </a>
                         </div>
                       </div>

@@ -277,9 +277,11 @@ const WorkflowTimeline = ({ events, isExpanded, onToggle }) => {
     <div className="mt-3 border-t border-gray-100 pt-3">
       <button
         onClick={onToggle}
-        className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2 w-full"
+        className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+        aria-expanded={isExpanded}
+        aria-label={isExpanded ? 'Collapse execution log' : 'Expand execution log'}
       >
-        {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        {isExpanded ? <ChevronDown className="w-4 h-4" aria-hidden="true" /> : <ChevronRight className="w-4 h-4" aria-hidden="true" />}
         <span className="font-medium">Execution Log</span>
         <div className="flex items-center gap-2 ml-auto">
           {agentsRun > 0 && (
@@ -381,16 +383,17 @@ const QuestionCard = ({ question, onAnswer, isAnswering }) => {
           <button
             onClick={handleSubmit}
             disabled={isAnswering || (!selectedOption && !customAnswer.trim())}
-            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+            aria-label="Submit answer"
           >
             {isAnswering ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                 Submitting...
               </>
             ) : (
               <>
-                <Send className="w-4 h-4" />
+                <Send className="w-4 h-4" aria-hidden="true" />
                 Submit Answer
               </>
             )}
@@ -523,20 +526,21 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
               </span>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2" role="group" aria-label="Approval actions">
               <button
                 onClick={() => onApprove(approval.task_id)}
                 disabled={isProcessing || showRejectInput}
-                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                aria-label={isMultiApproval ? `Add approval ${currentApprovals + 1} of ${requiredApprovals}` : 'Approve task'}
               >
                 {isProcessing ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                     Processing...
                   </>
                 ) : (
                   <>
-                    <CheckCircle className="w-4 h-4" />
+                    <CheckCircle className="w-4 h-4" aria-hidden="true" />
                     {isMultiApproval ? `Add Approval (${currentApprovals + 1}/${requiredApprovals})` : 'Approve'}
                   </>
                 )}
@@ -544,13 +548,14 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
               <button
                 onClick={handleReject}
                 disabled={isProcessing}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 ${
                   showRejectInput
                     ? 'bg-red-600 text-white hover:bg-red-700'
                     : 'bg-white text-red-600 border border-red-200 hover:bg-red-50'
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
+                aria-label={showRejectInput ? 'Confirm task rejection' : 'Reject task'}
               >
-                <XCircle className="w-4 h-4" />
+                <XCircle className="w-4 h-4" aria-hidden="true" />
                 {showRejectInput ? 'Confirm Reject' : 'Reject'}
               </button>
               {showRejectInput && (
@@ -559,7 +564,8 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
                     setShowRejectInput(false)
                     setRejectReason('')
                   }}
-                  className="px-3 py-2 text-gray-600 hover:text-gray-800 text-sm"
+                  className="px-3 py-2 text-gray-600 hover:text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-gray-500 rounded"
+                  aria-label="Cancel rejection"
                 >
                   Cancel
                 </button>
@@ -1058,10 +1064,10 @@ const ConversationItem = ({ session, isActive, onClick, onDebug }) => {
             e.stopPropagation()
             onDebug(session.id)
           }}
-          className="text-xs text-gray-500 hover:text-orange-600 flex items-center gap-1"
-          title="View debug trace"
+          className="text-xs text-gray-500 hover:text-orange-600 flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-orange-500 rounded"
+          aria-label="View debug trace for this session"
         >
-          <Bug className="w-3 h-3" />
+          <Bug className="w-3 h-3" aria-hidden="true" />
           Debug
         </button>
       </div>
@@ -1082,20 +1088,21 @@ const ConversationSidebar = ({ sessions, activeSessionId, onSelectSession, onNew
         <div className="p-2 border-b border-gray-200">
           <button
             onClick={onToggleCollapse}
-            className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-            title="Expand sidebar"
+            className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-label="Expand sidebar"
+            aria-expanded="false"
           >
-            <ChevronRight className="w-4 h-4 text-gray-600" />
+            <ChevronRight className="w-4 h-4 text-gray-600" aria-hidden="true" />
           </button>
         </div>
         {/* Collapsed new chat button */}
         <div className="p-2">
           <button
             onClick={onNewChat}
-            className="w-8 h-8 flex items-center justify-center bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all shadow-md"
-            title="New Chat"
+            className="w-8 h-8 flex items-center justify-center bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            aria-label="Start new chat"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
         {/* Collapsed session indicators */}
@@ -1104,14 +1111,15 @@ const ConversationSidebar = ({ sessions, activeSessionId, onSelectSession, onNew
             <button
               key={session.id}
               onClick={() => onSelectSession(session)}
-              className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${
+              className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 session.id === activeSessionId
                   ? 'bg-blue-100 border border-blue-300'
                   : 'bg-gray-50 hover:bg-gray-100'
               }`}
-              title={session.preview || 'Session'}
+              aria-label={`Select session: ${session.preview || 'Session'}`}
+              aria-current={session.id === activeSessionId ? 'true' : undefined}
             >
-              <MessageSquare className={`w-4 h-4 ${session.id === activeSessionId ? 'text-blue-600' : 'text-gray-400'}`} />
+              <MessageSquare className={`w-4 h-4 ${session.id === activeSessionId ? 'text-blue-600' : 'text-gray-400'}`} aria-hidden="true" />
             </button>
           ))}
         </div>
@@ -1126,10 +1134,11 @@ const ConversationSidebar = ({ sessions, activeSessionId, onSelectSession, onNew
         <div className="flex items-center gap-2 mb-3">
           <button
             onClick={onToggleCollapse}
-            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-            title="Collapse sidebar"
+            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-label="Collapse sidebar"
+            aria-expanded="true"
           >
-            <ChevronDown className="w-4 h-4 text-gray-500 rotate-90" />
+            <ChevronDown className="w-4 h-4 text-gray-500 rotate-90" aria-hidden="true" />
           </button>
           <span className="text-sm font-medium text-gray-700">Session History</span>
           {totalSessions > 0 && (
@@ -1140,9 +1149,9 @@ const ConversationSidebar = ({ sessions, activeSessionId, onSelectSession, onNew
         </div>
         <button
           onClick={onNewChat}
-          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all shadow-md"
+          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="w-4 h-4" aria-hidden="true" />
           New Chat
         </button>
       </div>
@@ -1309,8 +1318,12 @@ const DebugPanel = ({ isOpen, onClose, apiCalls, workflowEvents, llmCalls: llmCa
             >
               {allCopied ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Export All</>}
             </button>
-            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors ml-2">
-              <X className="w-5 h-5 text-gray-500" />
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors ml-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Close debug panel"
+            >
+              <X className="w-5 h-5 text-gray-500" aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -2570,10 +2583,10 @@ What would you like to build today?`,
           </div>
           <button
             onClick={() => setDebugPanelOpen(true)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
-            title="Open Debug Panel"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-label="Open debug panel"
           >
-            <Bug className="w-4 h-4" />
+            <Bug className="w-4 h-4" aria-hidden="true" />
             Debug
             {apiCalls.length > 0 && (
               <span className="bg-orange-100 text-orange-700 text-xs px-1.5 py-0.5 rounded-full">
@@ -2637,9 +2650,11 @@ What would you like to build today?`,
             <button
               type="submit"
               disabled={!input.trim() || chatMutation.isPending}
-              className="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg"
+              className="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              aria-label="Send message"
             >
-              <Send className="w-5 h-5" />
+              <Send className="w-5 h-5" aria-hidden="true" />
+              <span className="sr-only">Send message</span>
             </button>
           </div>
         </form>

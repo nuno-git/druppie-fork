@@ -57,6 +57,7 @@ class Approval(Base):
     approvals_received = Column(JSON, nullable=True)  # List of {user_id, role, timestamp}
     danger_level = Column(String(20), default="low")  # low, medium, high, critical
     description = Column(Text, nullable=True)
+    agent_id = Column(String(255), nullable=True)  # Agent that requested this approval
     agent_state = Column(JSON, nullable=True)  # Full LangGraph state for resume
     approved_by = Column(String(255), nullable=True)  # User ID who approved
     approved_at = Column(DateTime, nullable=True)
@@ -75,6 +76,7 @@ class Approval(Base):
             "approvals_received": self.approvals_received,
             "danger_level": self.danger_level,
             "description": self.description,
+            "agent_id": self.agent_id,
             "agent_state": self.agent_state,
             "approved_by": self.approved_by,
             "approved_at": self.approved_at.isoformat() if self.approved_at else None,

@@ -19,6 +19,8 @@ import {
 
 import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole } from './services/keycloak'
 import { ToastProvider } from './components/Toast'
+import ErrorBoundary from './components/ErrorBoundary'
+import ConnectionStatus from './components/ConnectionStatus'
 
 // Pages
 import Dashboard from './pages/Dashboard'
@@ -212,13 +214,14 @@ function App() {
   }
 
   return (
-    <AuthContext.Provider value={{ authenticated, user }}>
-      <ToastProvider>
-        <BrowserRouter>
-          <div className="min-h-screen bg-gray-50">
-            <Navigation />
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-              <Routes>
+    <ErrorBoundary>
+      <AuthContext.Provider value={{ authenticated, user }}>
+        <ToastProvider>
+          <BrowserRouter>
+            <div className="min-h-screen bg-gray-50">
+              <Navigation />
+              <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                <Routes>
                 <Route
                   path="/"
                   element={
@@ -276,12 +279,14 @@ function App() {
                   }
                 />
                 <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </main>
-          </div>
-        </BrowserRouter>
-      </ToastProvider>
-    </AuthContext.Provider>
+                </Routes>
+              </main>
+            </div>
+            <ConnectionStatus />
+          </BrowserRouter>
+        </ToastProvider>
+      </AuthContext.Provider>
+    </ErrorBoundary>
   )
 }
 

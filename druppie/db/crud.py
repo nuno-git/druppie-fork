@@ -174,6 +174,7 @@ def create_approval(db: DBSession, data: dict[str, Any]) -> Approval:
         approvals_received=data.get("approvals_received", []),
         danger_level=data.get("danger_level", "low"),
         description=data.get("description"),
+        agent_id=data.get("agent_id"),
         agent_state=data.get("agent_state"),
     )
     db.add(approval)
