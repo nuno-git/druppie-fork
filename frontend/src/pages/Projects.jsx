@@ -3,6 +3,7 @@
  */
 
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Folder,
@@ -146,7 +147,7 @@ const FilePreview = ({ path, planId, onClose }) => {
   )
 }
 
-const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDeleting }) => {
+const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDeleting, onViewDetails }) => {
   // Projects from /api/projects have repo_url and app_url directly (not nested in result)
   const repoUrl = plan.repo_url
   const appUrl = plan.app_url || projectStatus?.url
@@ -158,6 +159,11 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
     if (window.confirm(`Are you sure you want to delete "${plan.name}"?\n\nThis will permanently delete:\n- All project files\n- The Git repository\n- Any running containers`)) {
       onDelete(plan.id)
     }
+  }
+
+  const handleViewDetails = (e) => {
+    e.stopPropagation()
+    onViewDetails(plan.id)
   }
 
   return (
@@ -277,6 +283,15 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
           )}
         </div>
       </div>
+
+      {/* View Details Button */}
+      <button
+        onClick={handleViewDetails}
+        className="mt-3 w-full py-2 px-3 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center justify-center"
+      >
+        <Eye className="w-4 h-4 mr-1.5" />
+        View Details
+      </button>
     </div>
   )
 }
@@ -289,6 +304,7 @@ const Projects = () => {
   const [viewMode, setViewMode] = useState('grid') // 'grid' or 'list'
   const [deletingId, setDeletingId] = useState(null)
 
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
 
   const { data: plans = [], isLoading: plansLoading, isError: plansError, error: plansErrorData, refetch: refetchPlans } = useQuery({
@@ -363,6 +379,10 @@ const Projects = () => {
 
   const handleStop = (projectId) => {
     stopMutation.mutate(projectId)
+  }
+
+  const handleViewDetails = (projectId) => {
+    navigate(`/projects/${projectId}`)
   }
 
   const { data: workspace, isLoading } = useQuery({
@@ -458,6 +478,7 @@ const Projects = () => {
               projectStatus={projectStatuses.data?.[plan.id]}
               onDelete={handleDelete}
               isDeleting={deletingId === plan.id}
+              onViewDetails={handleViewDetails}
             />
           ))}
 

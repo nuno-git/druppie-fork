@@ -24,6 +24,7 @@ import Dashboard from './pages/Dashboard'
 import Tasks from './pages/Tasks'
 import Chat from './pages/Chat'
 import Projects from './pages/Projects'
+import ProjectDetail from './pages/ProjectDetail'
 import Debug from './pages/Debug'
 
 // Auth context
@@ -244,6 +245,14 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <Projects />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/projects/:projectId"
+                  element={
+                    <ProtectedRoute>
+                      <ProjectDetail />
                     </ProtectedRoute>
                   }
                 />
