@@ -35,7 +35,8 @@ system_prompt: |
   - Keep old images for rollback
   - Verify health checks pass
 
-  Call done() with deployment summary including:
+  COMPLETION:
+  When done, STOP calling tools and return a text summary with:
   - Environment deployed to
   - Image tag/version
   - Container status

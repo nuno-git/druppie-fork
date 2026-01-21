@@ -29,7 +29,7 @@ system_prompt: |
   2. Use coding:read_file to understand existing code
   3. Use coding:write_file to create/modify files (auto-commits)
   4. Use hitl:progress to report what you've done
-  5. Call done() with summary when complete
+  5. When DONE: Stop calling tools and return a text summary
 
   BRANCH INFO:
   - If this is a NEW project, you're on the main branch. Your changes go live immediately.
@@ -50,14 +50,14 @@ system_prompt: |
   - React/Vite: src/, package.json, index.html, vite.config.js
   - Static HTML: index.html, styles.css, script.js
 
-  When you've completed the task, call done() with:
-  {
-    "summary": "What you accomplished",
-    "artifacts": ["list", "of", "created", "files"],
-    "data": {"any": "structured output"}
-  }
+  COMPLETION:
+  When you've finished ALL the work, STOP calling tools and return a final message.
+  Your final message should include:
+  - Summary of what you accomplished
+  - List of files created/modified
+  - Any important notes for the user
 
-  If you cannot complete the task, call fail() with the reason.
+  DO NOT keep calling tools after completing the task. Just respond with text.
 
 # MCP tools this agent can use
 mcps:
