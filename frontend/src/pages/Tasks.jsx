@@ -9,9 +9,48 @@ import { getTasks, approveTask, rejectTask, getQuestions, answerQuestion } from 
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
 
+// Helper to get human-readable tool description
+const getToolDescription = (toolName) => {
+  const toolDescriptions = {
+    'run_command': 'Execute a shell command in the workspace',
+    'coding:run_command': 'Execute a shell command in the workspace',
+    'write_file': 'Write content to a file in the workspace',
+    'coding:write_file': 'Write content to a file in the workspace',
+    'delete_file': 'Delete a file from the workspace',
+    'coding:delete_file': 'Delete a file from the workspace',
+    'commit_and_push': 'Commit changes and push to Git repository',
+    'coding:commit_and_push': 'Commit changes and push to Git repository',
+    'merge_to_main': 'Merge current branch to main branch',
+    'coding:merge_to_main': 'Merge current branch to main branch',
+    'build': 'Build a Docker image',
+    'docker:build': 'Build a Docker image',
+    'run': 'Run a Docker container',
+    'docker:run': 'Run a Docker container',
+    'stop': 'Stop a running Docker container',
+    'docker:stop': 'Stop a running Docker container',
+    'remove': 'Remove a Docker container',
+    'docker:remove': 'Remove a Docker container',
+    'exec_command': 'Execute command inside a Docker container',
+    'docker:exec_command': 'Execute command inside a Docker container',
+  }
+  return toolDescriptions[toolName] || `Execute ${toolName}`
+}
+
+// Helper to get danger level badge
+const getDangerLevelBadge = (level) => {
+  const levels = {
+    low: { bg: 'bg-green-100', text: 'text-green-700', label: 'Low Risk' },
+    medium: { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Medium Risk' },
+    high: { bg: 'bg-orange-100', text: 'text-orange-700', label: 'High Risk' },
+    critical: { bg: 'bg-red-100', text: 'text-red-700', label: 'Critical' },
+  }
+  return levels[level] || levels.low
+}
+
 const TaskCard = ({ task, onApprove, onReject }) => {
   const [rejectReason, setRejectReason] = useState('')
   const [showReject, setShowReject] = useState(false)
+  const [showDetails, setShowDetails] = useState(false)
   const { user } = useAuth()
 
   // For MULTI approval, check if user has any of the required roles
@@ -28,10 +67,17 @@ const TaskCard = ({ task, onApprove, onReject }) => {
     ? task.required_roles.filter(role => !approvedByRoles.includes(role))
     : []
 
+  // Get tool info
+  const toolName = task.mcp_tool || task.tool_name || 'unknown'
+  const toolDescription = getToolDescription(toolName)
+  const dangerLevel = task.danger_level || 'medium'
+  const dangerBadge = getDangerLevelBadge(dangerLevel)
+
   return (
     <div className={`bg-white rounded-xl shadow-sm border p-6 ${isMultiApproval ? 'border-orange-200' : 'border-gray-200'}`}>
+      {/* Header with approval type and status */}
       <div className="flex items-start justify-between mb-4">
-        <div>
+        <div className="flex-1">
           {isMultiApproval && (
             <div className="flex items-center gap-2 mb-2">
               <span className="text-orange-600 font-semibold text-sm">Multi-Approval Required</span>
@@ -40,13 +86,50 @@ const TaskCard = ({ task, onApprove, onReject }) => {
               </span>
             </div>
           )}
-          <h3 className="font-semibold text-lg">{task.name}</h3>
-          <p className="text-gray-500 text-sm mt-1">{task.description}</p>
+          <h3 className="font-semibold text-lg">{task.name || `Approve ${toolName}`}</h3>
+          <p className="text-gray-500 text-sm mt-1">{task.description || toolDescription}</p>
         </div>
-        <span className="px-3 py-1 bg-yellow-100 text-yellow-700 text-sm rounded-full flex items-center">
-          <Clock className="w-4 h-4 mr-1" />
-          Pending
-        </span>
+        <div className="flex flex-col items-end gap-2">
+          <span className="px-3 py-1 bg-yellow-100 text-yellow-700 text-sm rounded-full flex items-center">
+            <Clock className="w-4 h-4 mr-1" />
+            Pending
+          </span>
+          <span className={`px-2 py-0.5 ${dangerBadge.bg} ${dangerBadge.text} text-xs rounded-full`}>
+            {dangerBadge.label}
+          </span>
+        </div>
+      </div>
+
+      {/* What needs approval - clear explanation */}
+      <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+        <h4 className="font-medium text-blue-900 mb-2 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4" />
+          What needs your approval:
+        </h4>
+        <div className="space-y-2">
+          <div className="flex items-start gap-2">
+            <span className="text-blue-700 font-medium">Tool:</span>
+            <code className="bg-blue-100 px-2 py-0.5 rounded text-blue-800 font-mono text-sm">{toolName}</code>
+          </div>
+          <div className="text-blue-700">
+            <span className="font-medium">Action:</span> {toolDescription}
+          </div>
+          {task.mcp_arguments && Object.keys(task.mcp_arguments).length > 0 && (
+            <div className="mt-2">
+              <button
+                onClick={() => setShowDetails(!showDetails)}
+                className="text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1"
+              >
+                {showDetails ? '▼' : '▶'} View arguments
+              </button>
+              {showDetails && (
+                <pre className="mt-2 bg-blue-100 p-3 rounded text-sm overflow-x-auto text-blue-900 font-mono">
+                  {JSON.stringify(task.mcp_arguments, null, 2)}
+                </pre>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* MULTI approval progress */}
@@ -87,15 +170,15 @@ const TaskCard = ({ task, onApprove, onReject }) => {
         </div>
       )}
 
-      {/* Task Details */}
-      <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
+      {/* Context info - simplified */}
+      <div className="grid grid-cols-2 gap-4 mb-4 text-sm bg-gray-50 rounded-lg p-3">
         <div>
-          <span className="text-gray-500">Plan:</span>
-          <span className="ml-2 font-medium">{task.plan?.name || task.plan_id}</span>
+          <span className="text-gray-500">Conversation:</span>
+          <span className="ml-2 font-medium">{task.plan?.name || task.plan_id?.substring(0, 8) + '...'}</span>
         </div>
         <div>
-          <span className="text-gray-500">MCP Tool:</span>
-          <span className="ml-2 font-mono text-blue-600">{task.mcp_tool || 'N/A'}</span>
+          <span className="text-gray-500">Created:</span>
+          <span className="ml-2">{new Date(task.created_at).toLocaleString()}</span>
         </div>
         <div>
           <span className="text-gray-500">Required Role:</span>
@@ -107,23 +190,10 @@ const TaskCard = ({ task, onApprove, onReject }) => {
             >
               {task.required_role}
             </span>
+            {canApprove && <span className="ml-1 text-green-600">(you can approve)</span>}
           </span>
         </div>
-        <div>
-          <span className="text-gray-500">Created:</span>
-          <span className="ml-2">{new Date(task.created_at).toLocaleString()}</span>
-        </div>
       </div>
-
-      {/* MCP Arguments */}
-      {task.mcp_arguments && Object.keys(task.mcp_arguments).length > 0 && (
-        <div className="mb-4">
-          <p className="text-sm text-gray-500 mb-2">Arguments:</p>
-          <pre className="bg-gray-50 p-3 rounded-lg text-sm overflow-x-auto">
-            {JSON.stringify(task.mcp_arguments, null, 2)}
-          </pre>
-        </div>
-      )}
 
       {/* Actions */}
       {canApprove ? (
