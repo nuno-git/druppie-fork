@@ -33,16 +33,19 @@ class MCPErrorType:
     TRANSIENT = "transient"  # Connection issues, timeouts - should retry
     PERMISSION = "permission"  # 403, approval needed - don't retry
     FATAL = "fatal"  # Invalid args, tool not found - don't retry
+    VALIDATION = "validation"  # Argument validation errors - recoverable by LLM
 
 
-def classify_error(error: Exception) -> tuple[str, bool]:
-    """Classify an error and determine if it's retryable.
+def classify_error(error: Exception) -> tuple[str, bool, bool]:
+    """Classify an error and determine if it's retryable or recoverable.
 
     Args:
         error: The exception to classify
 
     Returns:
-        Tuple of (error_type, retryable)
+        Tuple of (error_type, retryable, recoverable)
+        - retryable: System should auto-retry (for transient errors)
+        - recoverable: LLM can fix and retry (for validation errors)
     """
     error_str = str(error).lower()
     error_type = type(error).__name__
@@ -69,14 +72,14 @@ def classify_error(error: Exception) -> tuple[str, bool]:
     ]
 
     if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
-        return MCPErrorType.TRANSIENT, True
+        return MCPErrorType.TRANSIENT, True, False
 
     if isinstance(error, ConnectionError) or isinstance(error, OSError):
-        return MCPErrorType.TRANSIENT, True
+        return MCPErrorType.TRANSIENT, True, False
 
     for indicator in transient_indicators:
         if indicator in error_str:
-            return MCPErrorType.TRANSIENT, True
+            return MCPErrorType.TRANSIENT, True, False
 
     # Permission errors - authorization/approval issues
     permission_indicators = [
@@ -93,7 +96,25 @@ def classify_error(error: Exception) -> tuple[str, bool]:
 
     for indicator in permission_indicators:
         if indicator in error_str:
-            return MCPErrorType.PERMISSION, False
+            return MCPErrorType.PERMISSION, False, False
+
+    # Validation errors - argument/parameter issues that LLM can fix
+    validation_indicators = [
+        "missing required",
+        "validation error",
+        "required argument",
+        "invalid argument format",
+        "required field",
+        "missing field",
+        "invalid value for",
+        "expected type",
+        "argument must be",
+        "parameter must be",
+    ]
+
+    for indicator in validation_indicators:
+        if indicator in error_str:
+            return MCPErrorType.VALIDATION, False, True
 
     # Fatal errors - invalid requests that won't succeed on retry
     fatal_indicators = [
@@ -105,19 +126,17 @@ def classify_error(error: Exception) -> tuple[str, bool]:
         "404",
         "400",
         "bad request",
-        "validation error",
         "schema",
-        "missing required",
         "type error",
         "value error",
     ]
 
     for indicator in fatal_indicators:
         if indicator in error_str:
-            return MCPErrorType.FATAL, False
+            return MCPErrorType.FATAL, False, False
 
     # Default to fatal for unknown errors (safer to not retry)
-    return MCPErrorType.FATAL, False
+    return MCPErrorType.FATAL, False, False
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DBSession
@@ -326,7 +345,7 @@ class MCPClient:
             await asyncio.sleep(delay)
 
         # Should not reach here, but return last result as fallback
-        return last_result or {"success": False, "error": "Unknown error", "error_type": MCPErrorType.FATAL, "retryable": False}
+        return last_result or {"success": False, "error": "Unknown error", "error_type": MCPErrorType.FATAL, "retryable": False, "recoverable": False}
 
     async def _execute_tool(
         self,
@@ -430,23 +449,36 @@ class MCPClient:
 
         except Exception as e:
             # Classify the error
-            error_type, retryable = classify_error(e)
+            error_type, retryable, recoverable = classify_error(e)
 
-            logger.error(
-                "mcp_tool_error",
-                server=server,
-                tool=tool,
-                workspace_id=workspace_id,
-                error=str(e),
-                error_type=error_type,
-                retryable=retryable,
-            )
+            # Use appropriate log level based on error type
+            if error_type == MCPErrorType.VALIDATION:
+                logger.warning(
+                    "mcp_tool_validation_error",
+                    server=server,
+                    tool=tool,
+                    workspace_id=workspace_id,
+                    error=str(e),
+                    recoverable=True,
+                )
+            else:
+                logger.error(
+                    "mcp_tool_error",
+                    server=server,
+                    tool=tool,
+                    workspace_id=workspace_id,
+                    error=str(e),
+                    error_type=error_type,
+                    retryable=retryable,
+                    recoverable=recoverable,
+                )
 
             return {
                 "success": False,
                 "error": str(e),
                 "error_type": error_type,
                 "retryable": retryable,
+                "recoverable": recoverable,
             }
 
     async def _request_approval(

@@ -155,6 +155,18 @@ class Agent:
         mcp_ids = self.definition.get_mcp_names() if hasattr(self.definition, 'get_mcp_names') else self.definition.mcps
         tools = await self.mcp_client.to_openai_tools_async(mcp_ids)
 
+        # Build a mapping of tool_name -> required_fields for validation
+        tool_schemas: dict[str, dict] = {}
+        for tool in tools:
+            if tool.get("type") == "function" and "function" in tool:
+                func = tool["function"]
+                tool_name = func.get("name", "")
+                params = func.get("parameters", {})
+                tool_schemas[tool_name] = {
+                    "required": params.get("required", []),
+                    "properties": params.get("properties", {}),
+                }
+
         max_iterations = self.definition.max_iterations or 10
 
         logger.info(
@@ -244,8 +256,36 @@ class Agent:
                             injected_values=injected,
                         )
 
-                # Execute tool via MCP client
-                result = await self.mcp_client.call_tool(server, tool, tool_args, exec_ctx)
+                # Validate required arguments before MCP call
+                schema = tool_schemas.get(tool_name, {})
+                required_fields = schema.get("required", [])
+                provided_args = set(tool_args.keys())
+                missing_fields = [f for f in required_fields if f not in provided_args]
+
+                if missing_fields:
+                    missing_field = missing_fields[0]  # Report first missing field
+                    logger.warning(
+                        "agent_tool_validation_error",
+                        agent_id=self.id,
+                        tool=tool_name,
+                        missing_field=missing_field,
+                        missing_fields=missing_fields,
+                        provided_args=list(provided_args),
+                        required_args=required_fields,
+                    )
+                    result = {
+                        "success": False,
+                        "error": f"Missing required argument: {missing_field}",
+                        "error_type": "validation",
+                        "recoverable": True,
+                        "tool": tool_name,
+                        "provided_args": list(provided_args),
+                        "required_args": list(required_fields),
+                        "suggested_fix": f"Please call {tool_name} again with argument: {missing_field}",
+                    }
+                else:
+                    # Execute tool via MCP client
+                    result = await self.mcp_client.call_tool(server, tool, tool_args, exec_ctx)
 
                 # Check if paused for approval
                 if result.get("status") == "paused":
