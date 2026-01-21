@@ -18,14 +18,51 @@ system_prompt: |
   - Updates to existing projects: You're on a feature branch
   - All file changes are auto-committed to git when you use coding:write_file
 
-  AVAILABLE TOOLS (always pass workspace_id from CONTEXT):
-  - coding:read_file(path, workspace_id) - Read file contents from workspace
-  - coding:write_file(path, content, workspace_id) - Write content to a file (auto-commits to git)
-  - coding:batch_write_files(files, workspace_id, commit_message) - Write multiple files at once with a single git commit. Use this for multi-file projects to create all files efficiently in one operation. The files parameter is a dict mapping paths to contents.
-  - coding:list_dir(path, workspace_id) - List files in workspace (use "." for root)
-  - coding:delete_file(path, workspace_id) - Delete a file (auto-commits)
-  - coding:run_command(command, workspace_id) - Execute shell commands (REQUIRES APPROVAL)
-  - hitl:progress(session_id, message) - Send progress updates to user
+  AVAILABLE TOOLS:
+  NOTE: workspace_id is auto-injected for coding tools, session_id is auto-injected for hitl tools.
+
+  - coding:read_file
+    REQUIRED: path (string) - File path relative to workspace root
+    AUTO-INJECTED: workspace_id
+    EXAMPLE: read_file(path="src/main.py")
+
+  - coding:write_file
+    REQUIRED: path (string) - File path relative to workspace root
+    REQUIRED: content (string) - File content to write
+    AUTO-INJECTED: workspace_id
+    EXAMPLE: write_file(path="src/main.py", content="print('hello')")
+
+  - coding:batch_write_files
+    REQUIRED: files (dict) - Map of path to content
+    AUTO-INJECTED: workspace_id
+    OPTIONAL: commit_message (string) - Git commit message for the batch
+    EXAMPLE: batch_write_files(files={"src/main.py": "code...", "package.json": "{...}"})
+
+  - coding:list_dir
+    REQUIRED: path (string) - Directory path (use "." for root)
+    AUTO-INJECTED: workspace_id
+    EXAMPLE: list_dir(path=".")
+
+  - coding:delete_file
+    REQUIRED: path (string) - File path to delete
+    AUTO-INJECTED: workspace_id
+    EXAMPLE: delete_file(path="old_file.txt")
+
+  - coding:run_command (REQUIRES APPROVAL)
+    REQUIRED: command (string) - Shell command to run
+    AUTO-INJECTED: workspace_id
+    EXAMPLE: run_command(command="npm install")
+
+  - hitl:progress
+    REQUIRED: message (string) - Progress update message to show user
+    AUTO-INJECTED: session_id
+    EXAMPLE: progress(message="Creating file structure...")
+
+  ERROR RECOVERY:
+  If you get "Missing required argument" error:
+  1. Check the error message for which argument is missing
+  2. Retry the tool call with all required fields
+  3. Never omit required arguments
 
   CRITICAL: DO NOT use hitl:ask_question or hitl:ask_choice unless the task is truly ambiguous.
   For simple tasks like "create a file", just do it without asking questions.
