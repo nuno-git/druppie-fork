@@ -23,22 +23,47 @@ def create_emit_event(session_id: str) -> Callable[[dict], None]:
 
     This bridges the sync callback interface expected by ExecutionContext
     with the async WebSocket manager.
+
+    If WebSocket broadcast fails, events are stored in the manager's
+    missed_events buffer for later retrieval via GET /events/{session_id}.
     """
+    async def _emit_with_fallback(event: dict) -> None:
+        """Async helper that broadcasts and stores on failure."""
+        try:
+            await manager.broadcast_to_session(session_id, event)
+        except Exception as e:
+            logger.warning(
+                "websocket_broadcast_failed",
+                session_id=session_id,
+                event_type=event.get("type"),
+                error=str(e),
+            )
+            # Store event for later retrieval
+            manager.store_missed_event(session_id, event)
+
     def emit_event(event: dict) -> None:
         """Emit event to WebSocket (sync wrapper)."""
         try:
-            # Get the current event loop or create a new one
-            try:
-                loop = asyncio.get_running_loop()
-                # If we're in an async context, schedule the coroutine
-                asyncio.create_task(
-                    manager.broadcast_to_session(session_id, event)
-                )
-            except RuntimeError:
-                # No running loop - this shouldn't happen in FastAPI but handle it
-                pass
-        except Exception as e:
-            logger.debug("emit_event_error", error=str(e))
+            loop = asyncio.get_running_loop()
+            # Schedule the coroutine and handle errors properly
+            task = asyncio.create_task(_emit_with_fallback(event))
+            # Add error handler to catch any unhandled exceptions
+            task.add_done_callback(
+                lambda t: logger.error(
+                    "emit_event_task_error",
+                    session_id=session_id,
+                    error=str(t.exception()),
+                ) if t.exception() else None
+            )
+        except RuntimeError:
+            # No running loop - shouldn't happen in FastAPI but log it
+            logger.warning(
+                "emit_event_no_loop",
+                session_id=session_id,
+                event_type=event.get("type"),
+            )
+            # Store event for later retrieval since we can't broadcast
+            manager.store_missed_event(session_id, event)
 
     return emit_event
 
@@ -256,4 +281,30 @@ async def get_chat_status(
         "current_index": state.current_index,
         "has_pending_question": state.pending_question is not None,
         "has_pending_approval": state.pending_approval is not None,
+    }
+
+
+@router.get("/chat/{session_id}/events")
+async def get_missed_events(
+    session_id: str,
+    clear: bool = True,
+    user: dict = Depends(get_current_user),
+):
+    """Get missed events for a session.
+
+    Events that failed to deliver via WebSocket are stored for later retrieval.
+    Use this endpoint to poll for missed events when WebSocket is unavailable.
+
+    Args:
+        session_id: The session ID to get events for
+        clear: If True (default), clear events after retrieval
+
+    Returns:
+        List of missed events
+    """
+    events = manager.get_missed_events(session_id, clear=clear)
+    return {
+        "session_id": session_id,
+        "events": events,
+        "count": len(events),
     }

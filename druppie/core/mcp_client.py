@@ -7,6 +7,7 @@ This client:
 4. Executes tools via FastMCP Client to MCP server containers
 """
 
+import asyncio
 import json
 import os
 import re
@@ -20,6 +21,103 @@ import structlog
 import yaml
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+
+
+# =============================================================================
+# ERROR CLASSIFICATION
+# =============================================================================
+
+
+class MCPErrorType:
+    """Error type constants for MCP tool execution."""
+    TRANSIENT = "transient"  # Connection issues, timeouts - should retry
+    PERMISSION = "permission"  # 403, approval needed - don't retry
+    FATAL = "fatal"  # Invalid args, tool not found - don't retry
+
+
+def classify_error(error: Exception) -> tuple[str, bool]:
+    """Classify an error and determine if it's retryable.
+
+    Args:
+        error: The exception to classify
+
+    Returns:
+        Tuple of (error_type, retryable)
+    """
+    error_str = str(error).lower()
+    error_type = type(error).__name__
+
+    # Transient errors - connection/network issues that may resolve on retry
+    transient_indicators = [
+        "connection refused",
+        "connection reset",
+        "connection error",
+        "timeout",
+        "timed out",
+        "temporary failure",
+        "service unavailable",
+        "503",
+        "502",
+        "504",
+        "network unreachable",
+        "name resolution",
+        "dns",
+        "econnrefused",
+        "econnreset",
+        "etimedout",
+        "ehostunreach",
+    ]
+
+    if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
+        return MCPErrorType.TRANSIENT, True
+
+    if isinstance(error, ConnectionError) or isinstance(error, OSError):
+        return MCPErrorType.TRANSIENT, True
+
+    for indicator in transient_indicators:
+        if indicator in error_str:
+            return MCPErrorType.TRANSIENT, True
+
+    # Permission errors - authorization/approval issues
+    permission_indicators = [
+        "403",
+        "forbidden",
+        "permission denied",
+        "access denied",
+        "unauthorized",
+        "401",
+        "approval required",
+        "not authorized",
+        "insufficient permissions",
+    ]
+
+    for indicator in permission_indicators:
+        if indicator in error_str:
+            return MCPErrorType.PERMISSION, False
+
+    # Fatal errors - invalid requests that won't succeed on retry
+    fatal_indicators = [
+        "invalid argument",
+        "invalid parameter",
+        "tool not found",
+        "method not found",
+        "not found",
+        "404",
+        "400",
+        "bad request",
+        "validation error",
+        "schema",
+        "missing required",
+        "type error",
+        "value error",
+    ]
+
+    for indicator in fatal_indicators:
+        if indicator in error_str:
+            return MCPErrorType.FATAL, False
+
+    # Default to fatal for unknown errors (safer to not retry)
+    return MCPErrorType.FATAL, False
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DBSession
@@ -156,8 +254,79 @@ class MCPClient:
                 server, tool, args, required_roles, danger_level, context
             )
 
-        # No approval needed for this tool
-        return await self._execute_tool(server, tool, args, context)
+        # No approval needed for this tool - execute with retry for transient errors
+        return await self._execute_tool_with_retry(server, tool, args, context)
+
+    async def _execute_tool_with_retry(
+        self,
+        server: str,
+        tool: str,
+        args: dict[str, Any],
+        context: "ExecutionContext",
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+    ) -> dict[str, Any]:
+        """Execute tool with retry logic for transient errors.
+
+        Uses exponential backoff: delay = base_delay * (2 ** attempt)
+        So with base_delay=1.0: 1s, 2s, 4s delays between retries.
+
+        Args:
+            server: MCP server name
+            tool: Tool name
+            args: Tool arguments
+            context: Execution context
+            max_retries: Maximum number of retry attempts (default 3)
+            base_delay: Base delay in seconds for exponential backoff (default 1.0)
+
+        Returns:
+            Tool result dict with success/error status
+        """
+        last_result = None
+
+        for attempt in range(max_retries + 1):
+            result = await self._execute_tool(server, tool, args, context)
+            last_result = result
+
+            # If successful or not retryable, return immediately
+            if result.get("success", False):
+                return result
+
+            # Check if error is retryable
+            if not result.get("retryable", False):
+                return result
+
+            # Don't retry after last attempt
+            if attempt >= max_retries:
+                logger.warning(
+                    "mcp_tool_max_retries_exceeded",
+                    server=server,
+                    tool=tool,
+                    attempts=attempt + 1,
+                    error=result.get("error"),
+                    error_type=result.get("error_type"),
+                )
+                # Add retry info to the result
+                result["retry_attempts"] = attempt + 1
+                result["max_retries_exceeded"] = True
+                return result
+
+            # Calculate delay with exponential backoff
+            delay = base_delay * (2 ** attempt)
+            logger.info(
+                "mcp_tool_retry",
+                server=server,
+                tool=tool,
+                attempt=attempt + 1,
+                max_retries=max_retries,
+                delay=delay,
+                error=result.get("error"),
+                error_type=result.get("error_type"),
+            )
+            await asyncio.sleep(delay)
+
+        # Should not reach here, but return last result as fallback
+        return last_result or {"success": False, "error": "Unknown error", "error_type": MCPErrorType.FATAL, "retryable": False}
 
     async def _execute_tool(
         self,
@@ -259,23 +428,26 @@ class MCPClient:
                     )
                 return result_dict
 
-        except TimeoutError:
-            logger.error(
-                "mcp_tool_timeout",
-                server=server,
-                tool=tool,
-                workspace_id=workspace_id,
-            )
-            return {"success": False, "error": "MCP call timed out"}
         except Exception as e:
+            # Classify the error
+            error_type, retryable = classify_error(e)
+
             logger.error(
                 "mcp_tool_error",
                 server=server,
                 tool=tool,
                 workspace_id=workspace_id,
                 error=str(e),
+                error_type=error_type,
+                retryable=retryable,
             )
-            return {"success": False, "error": str(e)}
+
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": error_type,
+                "retryable": retryable,
+            }
 
     async def _request_approval(
         self,

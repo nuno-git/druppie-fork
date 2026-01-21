@@ -222,12 +222,27 @@ class Agent:
                     tool = mcp_tool_name
 
                 # Inject context into tool args
+                # Only inject fields that are accepted by the MCP tool schemas
                 if exec_ctx:
-                    if server == "coding" and "workspace_id" not in tool_args:
-                        if exec_ctx.workspace_id:
+                    injected = {}
+                    if server == "coding":
+                        # Coding tools only accept: workspace_id, path, content
+                        # Do NOT inject project_id, workspace_path, branch - not in MCP schemas
+                        if "workspace_id" not in tool_args and exec_ctx.workspace_id:
                             tool_args["workspace_id"] = exec_ctx.workspace_id
+                            injected["workspace_id"] = exec_ctx.workspace_id
                     if server == "hitl" and "session_id" not in tool_args:
                         tool_args["session_id"] = exec_ctx.session_id
+                        injected["session_id"] = exec_ctx.session_id
+
+                    if injected:
+                        logger.debug(
+                            "context_injected_into_tool",
+                            agent_id=self.id,
+                            tool=mcp_tool_name,
+                            injected_fields=list(injected.keys()),
+                            injected_values=injected,
+                        )
 
                 # Execute tool via MCP client
                 result = await self.mcp_client.call_tool(server, tool, tool_args, exec_ctx)

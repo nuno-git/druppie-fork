@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 class ConnectionManager:
     """Manages WebSocket connections and broadcasting."""
 
+    # Maximum number of missed events to store per session
+    MAX_MISSED_EVENTS_PER_SESSION = 100
+
     def __init__(self):
         # Map of session_id -> list of websockets
         self.session_connections: dict[str, list[WebSocket]] = defaultdict(list)
@@ -31,6 +34,9 @@ class ConnectionManager:
         self.role_connections: dict[str, list[WebSocket]] = defaultdict(list)
         # All active connections
         self.active_connections: list[WebSocket] = []
+        # Buffer for missed events (when WebSocket broadcast fails)
+        # Map of session_id -> list of events
+        self.missed_events: dict[str, list[dict]] = defaultdict(list)
 
     async def connect(self, websocket: WebSocket, session_id: str | None = None):
         """Accept a new WebSocket connection."""
@@ -100,6 +106,46 @@ class ConnectionManager:
                 await websocket.send_json(message)
             except Exception as e:
                 logger.error(f"Error broadcasting to all: {e}")
+
+    def store_missed_event(self, session_id: str, event: dict):
+        """Store an event that failed to broadcast for later retrieval.
+
+        Events are stored in a bounded buffer (MAX_MISSED_EVENTS_PER_SESSION)
+        to prevent memory exhaustion.
+        """
+        events = self.missed_events[session_id]
+        if len(events) >= self.MAX_MISSED_EVENTS_PER_SESSION:
+            # Remove oldest event to make room
+            events.pop(0)
+            logger.warning(
+                f"Missed events buffer full for session {session_id}, "
+                "dropping oldest event"
+            )
+        events.append(event)
+        logger.debug(
+            f"Stored missed event for session {session_id}, "
+            f"total: {len(events)}"
+        )
+
+    def get_missed_events(self, session_id: str, clear: bool = True) -> list[dict]:
+        """Retrieve missed events for a session.
+
+        Args:
+            session_id: The session to get events for
+            clear: If True, clear the events after retrieval (default: True)
+
+        Returns:
+            List of missed events
+        """
+        events = list(self.missed_events.get(session_id, []))
+        if clear and session_id in self.missed_events:
+            del self.missed_events[session_id]
+        return events
+
+    def clear_missed_events(self, session_id: str):
+        """Clear all missed events for a session."""
+        if session_id in self.missed_events:
+            del self.missed_events[session_id]
 
 
 # Singleton connection manager

@@ -89,6 +89,57 @@ def resolve_path(path: str, workspace_path: Path) -> Path:
 
 
 @mcp.tool()
+async def register_workspace(
+    workspace_id: str,
+    workspace_path: str,
+    project_id: str,
+    branch: str,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> dict:
+    """Register an existing workspace (created by backend).
+
+    This is used when the backend has already initialized the workspace
+    (cloned repo, created branch, etc.) and just needs to register it
+    with the MCP server so tools can access it.
+
+    Args:
+        workspace_id: Workspace ID (from backend)
+        workspace_path: Absolute path to the workspace
+        project_id: Project ID
+        branch: Current git branch
+        user_id: Optional user ID for context
+        session_id: Optional session ID for context
+
+    Returns:
+        Dict with success status
+    """
+    # Validate the path exists
+    path = Path(workspace_path)
+    if not path.exists():
+        return {
+            "success": False,
+            "error": f"Workspace path does not exist: {workspace_path}",
+        }
+
+    # Register workspace in memory
+    workspaces[workspace_id] = {
+        "path": str(path),
+        "project_id": project_id,
+        "branch": branch,
+        "user_id": user_id,
+        "session_id": session_id,
+    }
+
+    return {
+        "success": True,
+        "workspace_id": workspace_id,
+        "workspace_path": str(path),
+        "message": f"Workspace registered: {workspace_id}",
+    }
+
+
+@mcp.tool()
 async def initialize_workspace(
     user_id: str,
     session_id: str,
@@ -99,6 +150,9 @@ async def initialize_workspace(
 
     - New project (project_id=None): Create repo on main branch
     - Existing project: Clone and create feature branch
+
+    Note: Prefer using register_workspace if the backend has already
+    set up the workspace with git operations.
 
     Args:
         user_id: User ID

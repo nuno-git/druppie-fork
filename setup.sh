@@ -6,8 +6,9 @@
 # - Docker network
 # - Keycloak (identity provider)
 # - Gitea (git server)
-# - Druppie Backend (Flask API)
+# - Druppie Backend (FastAPI)
 # - Druppie Frontend (Vite + React)
+# - MCP Servers (Coding, Docker, HITL)
 # =============================================================================
 
 set -e
@@ -36,6 +37,9 @@ else
     DOCKER_COMPOSE="docker compose"  # Default, will fail later with helpful error
 fi
 
+# Use the druppie directory docker-compose.yml
+COMPOSE_FILE="druppie/docker-compose.yml"
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -44,7 +48,7 @@ export KEYCLOAK_DB_PASSWORD="${KEYCLOAK_DB_PASSWORD:-keycloak_secret}"
 export GITEA_DB_PASSWORD="${GITEA_DB_PASSWORD:-gitea_secret}"
 export DRUPPIE_DB_PASSWORD="${DRUPPIE_DB_PASSWORD:-druppie_secret}"
 export KEYCLOAK_ADMIN="${KEYCLOAK_ADMIN:-admin}"
-export KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin_password}"
+export KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin}"
 export KEYCLOAK_CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET:-$(openssl rand -hex 32)}"
 export GITEA_CLIENT_SECRET="${GITEA_CLIENT_SECRET:-$(openssl rand -hex 32)}"
 export GITEA_SECRET_KEY="${GITEA_SECRET_KEY:-$(openssl rand -hex 32)}"
@@ -80,10 +84,18 @@ ZAI_BASE_URL=https://api.z.ai/api/coding/paas/v4
 OLLAMA_HOST=http://host.docker.internal:11434
 OLLAMA_MODEL=qwen2.5:7b
 
-# App Configuration
-FLASK_ENV=development
+# MCP Microservices
+USE_MCP_MICROSERVICES=true
+MCP_CODING_URL=http://mcp-coding:9001
+MCP_DOCKER_URL=http://mcp-docker:9002
+MCP_HITL_URL=http://mcp-hitl:9003
 EOF
     success "Environment saved to .env"
+}
+
+# Helper function for docker compose
+compose() {
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" "$@"
 }
 
 # =============================================================================
@@ -105,9 +117,14 @@ check_requirements() {
     fi
 
     log "Using: $DOCKER_COMPOSE"
+    log "Compose file: $COMPOSE_FILE"
 
     if ! docker info >/dev/null 2>&1; then
         error "Docker daemon is not running"
+    fi
+
+    if [ ! -f "$COMPOSE_FILE" ]; then
+        error "Docker compose file not found: $COMPOSE_FILE"
     fi
 
     success "All requirements met"
@@ -123,23 +140,23 @@ create_network() {
 
 start_infrastructure() {
     log "Starting infrastructure services..."
-    $DOCKER_COMPOSE up -d keycloak-db gitea-db druppie-db redis
+    compose up -d keycloak-db gitea-db druppie-db redis
 
     log "Waiting for databases to be ready..."
     sleep 10
 
-    # Wait for PostgreSQL
-    until docker exec druppie-keycloak-db pg_isready -U keycloak 2>/dev/null; do
+    # Wait for PostgreSQL (using container names from docker-compose.yml)
+    until docker exec druppie-new-keycloak-db pg_isready -U keycloak 2>/dev/null; do
         log "Waiting for Keycloak DB..."
         sleep 2
     done
 
-    until docker exec druppie-gitea-db pg_isready -U gitea 2>/dev/null; do
+    until docker exec druppie-new-gitea-db pg_isready -U gitea 2>/dev/null; do
         log "Waiting for Gitea DB..."
         sleep 2
     done
 
-    until docker exec druppie-app-db pg_isready -U druppie 2>/dev/null; do
+    until docker exec druppie-new-db pg_isready -U druppie 2>/dev/null; do
         log "Waiting for Druppie DB..."
         sleep 2
     done
@@ -149,19 +166,22 @@ start_infrastructure() {
 
 start_keycloak() {
     log "Starting Keycloak..."
-    $DOCKER_COMPOSE up -d keycloak
+    compose up -d keycloak
 
     log "Waiting for Keycloak to be ready (this may take a minute)..."
-    until curl -sf http://localhost:8080/health/ready >/dev/null 2>&1; do
+    until curl -sf http://localhost:8180/health/ready >/dev/null 2>&1; do
         sleep 5
         log "Still waiting for Keycloak..."
     done
 
-    success "Keycloak is ready at http://${EXTERNAL_HOST}:8080"
+    success "Keycloak is ready at http://${EXTERNAL_HOST}:8180"
 }
 
 configure_keycloak() {
     log "Configuring Keycloak realm and users..."
+
+    # Update Keycloak URL for new port
+    export KEYCLOAK_URL="http://localhost:8180"
 
     # Run the Keycloak configuration script
     python3 scripts/setup_keycloak.py
@@ -171,19 +191,23 @@ configure_keycloak() {
 
 start_gitea() {
     log "Starting Gitea..."
-    $DOCKER_COMPOSE up -d gitea registry
+    compose up -d gitea
 
     log "Waiting for Gitea to be ready..."
-    until curl -sf http://localhost:3000/api/v1/version >/dev/null 2>&1; do
+    until curl -sf http://localhost:3100/api/v1/version >/dev/null 2>&1; do
         sleep 3
         log "Still waiting for Gitea..."
     done
 
-    success "Gitea is ready at http://${EXTERNAL_HOST}:3000"
+    success "Gitea is ready at http://${EXTERNAL_HOST}:3100"
 }
 
 configure_gitea() {
     log "Configuring Gitea OAuth2..."
+
+    # Set Gitea URL for new port
+    export GITEA_URL="http://localhost:3100"
+    export KEYCLOAK_URL="http://localhost:8180"
 
     # Run the Gitea configuration script
     python3 scripts/setup_gitea.py
@@ -191,24 +215,59 @@ configure_gitea() {
     success "Gitea configured"
 }
 
+start_mcp_servers() {
+    log "Starting MCP microservices..."
+    compose up -d mcp-coding mcp-docker mcp-hitl
+
+    log "Waiting for MCP servers to be ready..."
+    sleep 5
+
+    # Check if services are running
+    if compose ps mcp-coding | grep -q "Up"; then
+        success "Coding MCP ready (port 9001)"
+    else
+        warn "Coding MCP may not be ready yet"
+    fi
+
+    if compose ps mcp-docker | grep -q "Up"; then
+        success "Docker MCP ready (port 9002)"
+    else
+        warn "Docker MCP may not be ready yet"
+    fi
+
+    if compose ps mcp-hitl | grep -q "Up"; then
+        success "HITL MCP ready (port 9003)"
+    else
+        warn "HITL MCP may not be ready yet"
+    fi
+
+    success "MCP microservices started"
+}
+
 build_backend() {
     log "Building Druppie backend..."
-    $DOCKER_COMPOSE build druppie-backend
+    compose build druppie-backend
     success "Backend built"
 }
 
 build_frontend() {
     log "Building Druppie frontend..."
-    $DOCKER_COMPOSE build druppie-frontend
+    compose build druppie-frontend
     success "Frontend built"
+}
+
+build_mcp_servers() {
+    log "Building MCP servers..."
+    compose build mcp-coding mcp-docker mcp-hitl
+    success "MCP servers built"
 }
 
 start_application() {
     log "Starting Druppie application..."
-    $DOCKER_COMPOSE up -d druppie-backend druppie-frontend
+    compose up -d druppie-backend druppie-frontend
 
     log "Waiting for backend to be ready..."
-    until curl -sf http://localhost:8000/health >/dev/null 2>&1; do
+    until curl -sf http://localhost:8100/health >/dev/null 2>&1; do
         sleep 2
         log "Still waiting for backend..."
     done
@@ -223,18 +282,22 @@ print_summary() {
     echo "============================================================================="
     echo ""
     echo "Services:"
-    echo "  - Druppie Frontend: http://${EXTERNAL_HOST}:5173"
-    echo "  - Druppie Backend:  http://${EXTERNAL_HOST}:8000"
-    echo "  - Keycloak:         http://${EXTERNAL_HOST}:8080"
-    echo "  - Gitea:            http://${EXTERNAL_HOST}:3000"
-    echo "  - Docker Registry:  http://${EXTERNAL_HOST}:5000"
+    echo "  - Druppie Frontend: http://${EXTERNAL_HOST}:5273"
+    echo "  - Druppie Backend:  http://${EXTERNAL_HOST}:8100"
+    echo "  - Keycloak:         http://${EXTERNAL_HOST}:8180"
+    echo "  - Gitea:            http://${EXTERNAL_HOST}:3100"
+    echo ""
+    echo "MCP Microservices:"
+    echo "  - Coding MCP:  http://localhost:9001 (internal: mcp-coding:9001)"
+    echo "  - Docker MCP:  http://localhost:9002 (internal: mcp-docker:9002)"
+    echo "  - HITL MCP:    http://localhost:9003 (internal: mcp-hitl:9003)"
     echo ""
     echo "Default Users (Keycloak):"
     echo "  - admin / Admin123!           (Full access)"
     echo "  - infra / Infra123!           (Infrastructure Engineer)"
     echo "  - architect / Architect123!   (System Architect)"
     echo "  - seniordev / Developer123!   (Senior Developer)"
-    echo "  - juniordev / Developer123!   (Junior Developer)"
+    echo "  - juniordev / Junior123!      (Junior Developer)"
     echo "  - productowner / Product123!  (Product Owner)"
     echo "  - compliance / Compliance123! (Compliance Officer)"
     echo "  - viewer / Viewer123!         (Viewer)"
@@ -248,8 +311,8 @@ print_summary() {
     echo "  - Password: GiteaAdmin123"
     echo "  - Or login with Keycloak (click 'Sign in with Keycloak')"
     echo ""
-    echo "To stop: docker compose down"
-    echo "To view logs: docker compose logs -f"
+    echo "To stop: ./setup.sh stop"
+    echo "To view logs: ./setup.sh logs"
     echo "============================================================================="
 }
 
@@ -267,8 +330,10 @@ case "${1:-all}" in
         configure_keycloak
         start_gitea
         configure_gitea
+        build_mcp_servers
         build_backend
         build_frontend
+        start_mcp_servers
         start_application
         print_summary
         ;;
@@ -284,44 +349,54 @@ case "${1:-all}" in
         configure_keycloak
         configure_gitea
         ;;
+    mcp)
+        build_mcp_servers
+        start_mcp_servers
+        ;;
     app)
         build_backend
         build_frontend
         start_application
         ;;
     start)
-        $DOCKER_COMPOSE up -d
+        compose up -d
         ;;
     stop)
-        $DOCKER_COMPOSE down
+        compose down
         ;;
     restart)
-        $DOCKER_COMPOSE down
-        $DOCKER_COMPOSE up -d
+        compose down
+        compose up -d
         ;;
     logs)
-        $DOCKER_COMPOSE logs -f "${2:-}"
+        compose logs -f "${2:-}"
         ;;
     clean)
         warn "This will delete all data!"
         read -p "Are you sure? (y/N) " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            $DOCKER_COMPOSE down -v
+            compose down -v
             docker network rm druppie-network 2>/dev/null || true
             success "Cleaned up"
         fi
         ;;
     status)
-        $DOCKER_COMPOSE ps
+        compose ps
+        ;;
+    build)
+        log "Building all services..."
+        compose build
+        success "All services built"
         ;;
     *)
-        echo "Usage: $0 {all|infra|configure|app|start|stop|restart|logs|clean|status}"
+        echo "Usage: $0 {all|infra|configure|mcp|app|start|stop|restart|logs|clean|status|build}"
         echo ""
         echo "Commands:"
         echo "  all       - Full setup (default)"
         echo "  infra     - Start infrastructure only (DBs, Keycloak, Gitea)"
         echo "  configure - Configure Keycloak and Gitea"
+        echo "  mcp       - Build and start MCP microservices"
         echo "  app       - Build and start application"
         echo "  start     - Start all services"
         echo "  stop      - Stop all services"
@@ -329,6 +404,7 @@ case "${1:-all}" in
         echo "  logs      - View logs (optionally specify service)"
         echo "  clean     - Remove all containers and volumes"
         echo "  status    - Show service status"
+        echo "  build     - Build all services"
         exit 1
         ;;
 esac

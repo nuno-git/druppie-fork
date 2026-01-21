@@ -1,14 +1,16 @@
 """MCPs API routes.
 
 Endpoints for listing and managing MCP servers and tools.
+Now reads from mcp_config.yaml via MCPClient.
 """
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 import structlog
 
-from druppie.api.deps import get_current_user
-from druppie.mcps import get_mcp_registry
+from druppie.api.deps import get_current_user, get_db
+from druppie.core.mcp_client import get_mcp_client
+from sqlalchemy.orm import Session
 
 logger = structlog.get_logger()
 
@@ -27,8 +29,9 @@ class ToolResponse(BaseModel):
     name: str
     description: str
     category: str
-    approval_type: str
+    requires_approval: bool
     danger_level: str
+    required_roles: list[str] = []
 
 
 class ServerResponse(BaseModel):
@@ -37,6 +40,7 @@ class ServerResponse(BaseModel):
     id: str
     name: str
     description: str
+    url: str
     tools: list[ToolResponse]
 
 
@@ -55,42 +59,47 @@ class MCPListResponse(BaseModel):
 @router.get("/mcps", response_model=MCPListResponse)
 async def list_mcps(
     user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """List available MCP servers and tools.
 
     Returns tools accessible to the current user based on their roles.
     """
-    registry = get_mcp_registry()
+    mcp_client = get_mcp_client(db)
+    config = mcp_client.config
     user_roles = user.get("realm_access", {}).get("roles", [])
 
     servers = []
     total_tools = 0
 
-    for server in registry.list_servers(user_roles):
+    for server_id, server_config in config.get("mcps", {}).items():
         tools = []
-        for tool in server.tools:
-            # Check if user can access this tool
-            if tool.allowed_roles and "admin" not in user_roles:
-                if not any(r in tool.allowed_roles for r in user_roles):
+        for tool in server_config.get("tools", []):
+            # Check if user can access this tool based on required_roles
+            required_roles = tool.get("required_roles", [])
+            if required_roles and "admin" not in user_roles:
+                if not any(r in required_roles for r in user_roles):
                     continue
 
             tools.append(
                 ToolResponse(
-                    id=tool.id,
-                    name=tool.name,
-                    description=tool.description,
-                    category=tool.category,
-                    approval_type=tool.approval_type.value,
-                    danger_level=tool.danger_level,
+                    id=f"{server_id}:{tool['name']}",
+                    name=tool["name"],
+                    description=tool.get("description", ""),
+                    category=server_id,
+                    requires_approval=tool.get("requires_approval", False),
+                    danger_level=tool.get("danger_level", "low"),
+                    required_roles=required_roles,
                 )
             )
 
         if tools:
             servers.append(
                 ServerResponse(
-                    id=server.id,
-                    name=server.name,
-                    description=server.description,
+                    id=server_id,
+                    name=server_id.title(),
+                    description=server_config.get("description", ""),
+                    url=mcp_client.get_mcp_url(server_id),
                     tools=tools,
                 )
             )
@@ -103,35 +112,39 @@ async def list_mcps(
 async def get_mcp_server(
     server_id: str,
     user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """Get details of a specific MCP server."""
-    registry = get_mcp_registry()
-    server = registry.get_server(server_id)
+    mcp_client = get_mcp_client(db)
+    config = mcp_client.config
 
-    if not server:
-        return {"error": "Server not found"}
+    server_config = config.get("mcps", {}).get(server_id)
+    if not server_config:
+        raise HTTPException(status_code=404, detail="Server not found")
 
     user_roles = user.get("realm_access", {}).get("roles", [])
 
     tools = []
-    for tool in server.tools:
-        if tool.allowed_roles and "admin" not in user_roles:
-            if not any(r in tool.allowed_roles for r in user_roles):
+    for tool in server_config.get("tools", []):
+        required_roles = tool.get("required_roles", [])
+        if required_roles and "admin" not in user_roles:
+            if not any(r in required_roles for r in user_roles):
                 continue
 
         tools.append({
-            "id": tool.id,
-            "name": tool.name,
-            "description": tool.description,
-            "input_schema": tool.input_schema,
-            "approval_type": tool.approval_type.value,
-            "danger_level": tool.danger_level,
+            "id": f"{server_id}:{tool['name']}",
+            "name": tool["name"],
+            "description": tool.get("description", ""),
+            "requires_approval": tool.get("requires_approval", False),
+            "danger_level": tool.get("danger_level", "low"),
+            "required_roles": required_roles,
         })
 
     return {
-        "id": server.id,
-        "name": server.name,
-        "description": server.description,
+        "id": server_id,
+        "name": server_id.title(),
+        "description": server_config.get("description", ""),
+        "url": mcp_client.get_mcp_url(server_id),
         "tools": tools,
     }
 
@@ -140,27 +153,41 @@ async def get_mcp_server(
 async def get_tool(
     tool_id: str,
     user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """Get details of a specific tool."""
-    registry = get_mcp_registry()
-    tool = registry.get_tool(tool_id)
+    mcp_client = get_mcp_client(db)
 
-    if not tool:
-        return {"error": "Tool not found"}
+    # Parse tool_id (format: server:tool_name)
+    if ":" not in tool_id:
+        raise HTTPException(status_code=400, detail="Invalid tool ID format. Use server:tool_name")
+
+    server_id, tool_name = tool_id.split(":", 1)
+    tool_config = mcp_client.get_tool_config(server_id, tool_name)
+
+    if not tool_config:
+        raise HTTPException(status_code=404, detail="Tool not found")
 
     user_roles = user.get("realm_access", {}).get("roles", [])
+    required_roles = tool_config.get("required_roles", [])
 
-    # Check permission
-    permission = registry.check_permission(tool_id, user_roles, user.get("sub", ""))
+    # Check if user can approve
+    can_approve = (
+        "admin" in user_roles or
+        any(r in required_roles for r in user_roles) if required_roles else True
+    )
 
     return {
-        "id": tool.id,
-        "name": tool.name,
-        "description": tool.description,
-        "category": tool.category,
-        "input_schema": tool.input_schema,
-        "approval_type": tool.approval_type.value,
-        "approval_roles": tool.approval_roles,
-        "danger_level": tool.danger_level,
-        "permission": permission,
+        "id": tool_id,
+        "name": tool_name,
+        "description": tool_config.get("description", ""),
+        "category": server_id,
+        "requires_approval": tool_config.get("requires_approval", False),
+        "required_roles": required_roles,
+        "danger_level": tool_config.get("danger_level", "low"),
+        "permission": {
+            "allowed": True,  # All tools are visible, but may require approval
+            "can_approve": can_approve,
+            "requires_approval": tool_config.get("requires_approval", False),
+        },
     }
