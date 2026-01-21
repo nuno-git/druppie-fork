@@ -56,7 +56,7 @@ class ApprovalDecision(BaseModel):
 # =============================================================================
 
 
-@router.get("/approvals", response_model=ApprovalListResponse)
+@router.get("/approvals")
 async def list_approvals(
     session_id: str | None = None,
     status: str = "pending",
@@ -66,6 +66,7 @@ async def list_approvals(
     """List approval requests.
 
     By default, shows pending approvals that the user can approve.
+    Returns as a list directly for backwards compatibility with getTasks.
     """
     user_roles = user.get("realm_access", {}).get("roles", [])
 
@@ -85,24 +86,26 @@ async def list_approvals(
         if "admin" in user_roles or not required_roles or any(r in user_roles for r in required_roles):
             filtered.append(a)
 
-    return ApprovalListResponse(
-        approvals=[
-            ApprovalResponse(
-                id=a.id,
-                session_id=a.session_id,
-                tool_name=a.tool_name,
-                arguments=a.arguments,
-                status=a.status,
-                required_roles=a.required_roles,
-                approvals_received=a.approvals_received,
-                danger_level=a.danger_level,
-                description=a.description,
-                created_at=a.created_at.isoformat() if a.created_at else None,
-            )
-            for a in filtered
-        ],
-        total=len(filtered),
-    )
+    # Return as a list for backwards compatibility with frontend getTasks
+    return [
+        {
+            "id": a.id,
+            "session_id": a.session_id,
+            # Frontend expects 'name' for display
+            "name": a.tool_name,
+            "tool_name": a.tool_name,
+            "arguments": a.arguments,
+            "status": a.status,
+            "required_roles": a.required_roles,
+            # Frontend expects 'required_role' (singular)
+            "required_role": (a.required_roles or ["admin"])[0],
+            "approvals_received": a.approvals_received,
+            "danger_level": a.danger_level,
+            "description": a.description,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in filtered
+    ]
 
 
 @router.get("/approvals/{approval_id}", response_model=ApprovalResponse)
