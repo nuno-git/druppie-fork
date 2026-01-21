@@ -1,19 +1,84 @@
 """Coding MCP Server.
 
 Provides file operations and code generation capabilities.
+All file operations are sandboxed to the workspace directory.
+
+In the git-first architecture:
+- Files are relative to the workspace.local_path (cloned repo)
+- write_file can auto-commit and push changes
+- The workspace is set via ExecutionContext
 """
 
+import asyncio
 import os
 import glob as glob_module
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import structlog
 
 from .registry import ApprovalType, MCPRegistry, MCPServer, MCPTool
+from druppie.core.execution_context import get_current_context
 
 logger = structlog.get_logger()
+
+# Fallback workspace root (used when no workspace context is set)
+WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace"))
+
+
+def get_workspace_root() -> Path:
+    """Get the workspace root for the current context.
+
+    Returns workspace_path from ExecutionContext if available,
+    otherwise falls back to WORKSPACE_ROOT.
+    """
+    ctx = get_current_context()
+    if ctx and ctx.workspace_path:
+        return Path(ctx.workspace_path)
+    return WORKSPACE_ROOT
+
+
+def resolve_path(path: str, workspace_root: Path | None = None) -> Path:
+    """Resolve a path relative to the workspace root.
+
+    - Absolute paths are rejected (security)
+    - Relative paths are resolved within workspace root
+    - Path traversal attempts (../) are blocked
+
+    Args:
+        path: Path to resolve
+        workspace_root: Override workspace root (uses context if not provided)
+
+    Returns:
+        Resolved absolute path
+    """
+    root = workspace_root or get_workspace_root()
+
+    # Convert to Path object
+    p = Path(path)
+
+    # Block absolute paths
+    if p.is_absolute():
+        # Allow if it's already under workspace root
+        try:
+            p.relative_to(root)
+            return p
+        except ValueError:
+            # Re-root to workspace
+            return root / p.name
+
+    # Resolve relative path within workspace
+    resolved = (root / p).resolve()
+
+    # Security: ensure it's still under workspace root
+    try:
+        resolved.relative_to(root.resolve())
+    except ValueError:
+        raise ValueError(f"Path traversal not allowed: {path}")
+
+    return resolved
 
 
 # =============================================================================
@@ -38,13 +103,22 @@ CODING_TOOLS = [
     MCPTool(
         id="coding:write_file",
         name="Write File",
-        description="Write content to a file (creates parent directories if needed)",
+        description="Write content to a file (creates parent directories if needed). Auto-commits to git if workspace is initialized.",
         category="coding",
         input_schema={
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "File path to write"},
                 "content": {"type": "string", "description": "Content to write"},
+                "auto_commit": {
+                    "type": "boolean",
+                    "description": "Automatically commit and push changes (default: true)",
+                    "default": True,
+                },
+                "commit_message": {
+                    "type": "string",
+                    "description": "Custom commit message (optional)",
+                },
             },
             "required": ["path", "content"],
         },
@@ -77,12 +151,17 @@ CODING_TOOLS = [
     MCPTool(
         id="coding:delete_file",
         name="Delete File",
-        description="Delete a file",
+        description="Delete a file. Auto-commits to git if workspace is initialized.",
         category="coding",
         input_schema={
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "File path to delete"},
+                "auto_commit": {
+                    "type": "boolean",
+                    "description": "Automatically commit and push changes (default: true)",
+                    "default": True,
+                },
             },
             "required": ["path"],
         },
@@ -137,14 +216,17 @@ CODING_TOOLS = [
 async def read_file(path: str) -> dict[str, Any]:
     """Read the contents of a file."""
     try:
-        if not os.path.exists(path):
+        workspace_root = get_workspace_root()
+        resolved = resolve_path(path, workspace_root)
+
+        if not resolved.exists():
             return {"success": False, "error": f"File does not exist: {path}"}
 
-        if not os.path.isfile(path):
+        if not resolved.is_file():
             return {"success": False, "error": f"Path is not a file: {path}"}
 
         # Check size limit (10MB)
-        size = os.path.getsize(path)
+        size = resolved.stat().st_size
         if size > 10 * 1024 * 1024:
             return {
                 "success": False,
@@ -152,11 +234,11 @@ async def read_file(path: str) -> dict[str, Any]:
             }
 
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = resolved.read_text(encoding="utf-8")
             return {
                 "success": True,
                 "content": content,
+                "path": str(resolved),
                 "size": size,
                 "encoding": "utf-8",
             }
@@ -164,85 +246,242 @@ async def read_file(path: str) -> dict[str, Any]:
             return {
                 "success": True,
                 "binary": True,
+                "path": str(resolved),
                 "size": size,
                 "message": "File is binary. Cannot return content.",
             }
 
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
     except Exception as e:
         logger.error("read_file_error", path=path, error=str(e))
         return {"success": False, "error": str(e)}
 
 
-async def write_file(path: str, content: str) -> dict[str, Any]:
-    """Write content to a file."""
+async def write_file(
+    path: str,
+    content: str,
+    auto_commit: bool = True,
+    commit_message: str | None = None,
+) -> dict[str, Any]:
+    """Write content to a file, optionally auto-committing to git."""
     try:
+        # Get workspace root and resolve path
+        workspace_root = get_workspace_root()
+        resolved = resolve_path(path, workspace_root)
+
         # Ensure parent directory exists
-        parent_dir = os.path.dirname(path)
-        if parent_dir:
-            os.makedirs(parent_dir, exist_ok=True)
+        parent_dir = resolved.parent
+        parent_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
+        # Write the file
+        resolved.write_text(content, encoding="utf-8")
 
-        logger.info("file_written", path=path, size=len(content))
-        return {"success": True, "path": path, "size": len(content)}
+        logger.info("file_written", path=str(resolved), size=len(content))
+
+        result = {
+            "success": True,
+            "path": str(resolved),
+            "relative_path": str(resolved.relative_to(workspace_root)) if resolved.is_relative_to(workspace_root) else path,
+            "size": len(content),
+        }
+
+        # Auto-commit if workspace is initialized
+        ctx = get_current_context()
+        if auto_commit and ctx and ctx.workspace_id:
+            commit_result = await _auto_commit(
+                workspace_root,
+                commit_message or f"Update {path}",
+            )
+            result["committed"] = commit_result.get("success", False)
+            if commit_result.get("success"):
+                result["commit_message"] = commit_message or f"Update {path}"
+
+        return result
 
     except Exception as e:
         logger.error("write_file_error", path=path, error=str(e))
         return {"success": False, "error": str(e)}
 
 
+async def _auto_commit(workspace_path: Path, message: str) -> dict[str, Any]:
+    """Auto-commit and push changes.
+
+    This is a lightweight version that doesn't require WorkspaceService.
+    """
+    try:
+        # Configure git user (for container environment)
+        await asyncio.to_thread(
+            subprocess.run,
+            ["git", "config", "user.email", "druppie@localhost"],
+            cwd=str(workspace_path),
+            capture_output=True,
+            timeout=10,
+        )
+        await asyncio.to_thread(
+            subprocess.run,
+            ["git", "config", "user.name", "Druppie Agent"],
+            cwd=str(workspace_path),
+            capture_output=True,
+            timeout=10,
+        )
+
+        # Stage all changes
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "add", "-A"],
+            cwd=str(workspace_path),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            logger.warning("git_add_failed", stderr=result.stderr)
+            return {"success": False, "error": result.stderr}
+
+        # Check if there are changes
+        status_result = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "status", "--porcelain"],
+            cwd=str(workspace_path),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if not status_result.stdout.strip():
+            return {"success": True, "message": "No changes to commit"}
+
+        # Commit
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "commit", "-m", message],
+            cwd=str(workspace_path),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            logger.warning("git_commit_failed", stderr=result.stderr)
+            return {"success": False, "error": result.stderr}
+
+        # Push
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "push"],
+            cwd=str(workspace_path),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode != 0:
+            logger.warning("git_push_failed", stderr=result.stderr)
+            # Push failure is not critical - changes are committed locally
+            return {"success": True, "pushed": False, "error": result.stderr}
+
+        logger.info("auto_committed", workspace=str(workspace_path), message=message[:50])
+        return {"success": True, "pushed": True}
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Git operation timed out"}
+    except Exception as e:
+        logger.error("auto_commit_error", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
 async def list_dir(
-    path: str,
+    path: str = ".",
     patterns: list[str] | None = None,
     recursive: bool = True,
 ) -> dict[str, Any]:
     """List files in a directory."""
     try:
-        if not os.path.exists(path):
+        workspace_root = get_workspace_root()
+        resolved = resolve_path(path, workspace_root)
+
+        if not resolved.exists():
             return {"success": False, "error": f"Path does not exist: {path}"}
 
-        if not os.path.isdir(path):
+        if not resolved.is_dir():
             return {"success": False, "error": f"Path is not a directory: {path}"}
 
         files = []
+        directories = []
         patterns = patterns or ["*"]
 
         for pattern in patterns:
             if recursive:
-                search_pattern = os.path.join(path, "**", pattern)
+                search_pattern = str(resolved / "**" / pattern)
                 matches = glob_module.glob(search_pattern, recursive=True)
             else:
-                search_pattern = os.path.join(path, pattern)
+                search_pattern = str(resolved / pattern)
                 matches = glob_module.glob(search_pattern)
 
             for match in matches:
-                if os.path.isfile(match):
+                match_path = Path(match)
+                # Get path relative to workspace
+                try:
+                    rel_path = match_path.relative_to(workspace_root)
+                except ValueError:
+                    rel_path = match_path.name
+
+                if match_path.is_file():
                     files.append({
-                        "path": match,
-                        "name": os.path.basename(match),
-                        "size": os.path.getsize(match),
+                        "path": str(rel_path),
+                        "name": match_path.name,
+                        "size": match_path.stat().st_size,
+                        "type": "file",
+                    })
+                elif match_path.is_dir() and match_path.name not in ["__pycache__", ".git", "node_modules"]:
+                    directories.append({
+                        "path": str(rel_path),
+                        "name": match_path.name,
+                        "type": "directory",
                     })
 
-        return {"success": True, "files": files, "count": len(files)}
+        return {
+            "success": True,
+            "path": str(resolved),
+            "files": files,
+            "directories": directories,
+            "count": len(files) + len(directories),
+        }
 
     except Exception as e:
         logger.error("list_dir_error", path=path, error=str(e))
         return {"success": False, "error": str(e)}
 
 
-async def delete_file(path: str) -> dict[str, Any]:
-    """Delete a file."""
+async def delete_file(path: str, auto_commit: bool = True) -> dict[str, Any]:
+    """Delete a file, optionally auto-committing to git."""
     try:
-        if not os.path.exists(path):
+        workspace_root = get_workspace_root()
+        resolved = resolve_path(path, workspace_root)
+
+        if not resolved.exists():
             return {"success": False, "error": f"File does not exist: {path}"}
 
-        if os.path.isdir(path):
+        if resolved.is_dir():
             return {"success": False, "error": f"Path is a directory: {path}"}
 
-        os.remove(path)
-        logger.info("file_deleted", path=path)
-        return {"success": True, "deleted": path}
+        resolved.unlink()
+        logger.info("file_deleted", path=str(resolved))
+
+        result = {"success": True, "deleted": str(resolved)}
+
+        # Auto-commit if workspace is initialized
+        ctx = get_current_context()
+        if auto_commit and ctx and ctx.workspace_id:
+            commit_result = await _auto_commit(
+                workspace_root,
+                f"Delete {path}",
+            )
+            result["committed"] = commit_result.get("success", False)
+
+        return result
 
     except Exception as e:
         logger.error("delete_file_error", path=path, error=str(e))
@@ -254,9 +493,19 @@ async def run_command(
     cwd: str | None = None,
     timeout: int = 60,
 ) -> dict[str, Any]:
-    """Execute a shell command."""
+    """Execute a shell command in the workspace directory."""
     try:
-        result = subprocess.run(
+        # Use workspace path as default cwd
+        if cwd is None:
+            workspace_root = get_workspace_root()
+            cwd = str(workspace_root)
+        else:
+            # Resolve cwd relative to workspace
+            workspace_root = get_workspace_root()
+            cwd = str(resolve_path(cwd, workspace_root))
+
+        result = await asyncio.to_thread(
+            subprocess.run,
             command,
             shell=True,
             capture_output=True,
@@ -268,6 +517,7 @@ async def run_command(
         logger.info(
             "command_executed",
             command=command[:100],
+            cwd=cwd,
             returncode=result.returncode,
         )
 
@@ -276,6 +526,7 @@ async def run_command(
             "stdout": result.stdout,
             "stderr": result.stderr,
             "returncode": result.returncode,
+            "cwd": cwd,
         }
 
     except subprocess.TimeoutExpired:
@@ -287,20 +538,38 @@ async def run_command(
         return {"success": False, "error": str(e)}
 
 
-async def move_file(source: str, destination: str) -> dict[str, Any]:
-    """Move or rename a file."""
+async def move_file(source: str, destination: str, auto_commit: bool = True) -> dict[str, Any]:
+    """Move or rename a file, optionally auto-committing to git."""
     try:
-        if not os.path.exists(source):
+        workspace_root = get_workspace_root()
+        resolved_source = resolve_path(source, workspace_root)
+        resolved_dest = resolve_path(destination, workspace_root)
+
+        if not resolved_source.exists():
             return {"success": False, "error": f"Source does not exist: {source}"}
 
         # Ensure destination parent exists
-        dest_parent = os.path.dirname(destination)
-        if dest_parent:
-            os.makedirs(dest_parent, exist_ok=True)
+        resolved_dest.parent.mkdir(parents=True, exist_ok=True)
 
-        shutil.move(source, destination)
-        logger.info("file_moved", source=source, destination=destination)
-        return {"success": True, "source": source, "destination": destination}
+        shutil.move(str(resolved_source), str(resolved_dest))
+        logger.info("file_moved", source=str(resolved_source), destination=str(resolved_dest))
+
+        result = {
+            "success": True,
+            "source": str(resolved_source),
+            "destination": str(resolved_dest),
+        }
+
+        # Auto-commit if workspace is initialized
+        ctx = get_current_context()
+        if auto_commit and ctx and ctx.workspace_id:
+            commit_result = await _auto_commit(
+                workspace_root,
+                f"Move {source} to {destination}",
+            )
+            result["committed"] = commit_result.get("success", False)
+
+        return result
 
     except Exception as e:
         logger.error("move_file_error", source=source, error=str(e))

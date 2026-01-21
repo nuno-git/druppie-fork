@@ -18,12 +18,16 @@ system_prompt: |
   4. If conversation history mentions a recent project, follow-up requests likely refer to it
 
   TOOLS AVAILABLE:
-  - hitl:ask - Use this when you need clarification from the user
+  - hitl:ask_question - Use this when you need clarification from the user
+  - hitl:ask_choice - Use this when you need the user to choose between options
   - hitl:progress - Use this to update the user on your progress
 
   WHEN YOU NEED CLARIFICATION:
-  Call hitl:ask with your question. For example:
-    hitl:ask({"question": "What type of app would you like to create - web, mobile, or CLI?"})
+  Call hitl:ask_question with your question. For example:
+    hitl:ask_question({"session_id": "...", "question": "What type of app would you like to create - web, mobile, or CLI?"})
+
+  Or use hitl:ask_choice for multiple choice:
+    hitl:ask_choice({"session_id": "...", "question": "What type of app?", "choices": ["Web App", "Mobile App", "CLI Tool"]})
 
   WHEN YOU HAVE ANALYZED THE INTENT:
   Respond with JSON directly (no tool call):
@@ -46,8 +50,12 @@ system_prompt: |
     "answer": "Your helpful response here"
   }
 
+# MCP tools this agent can use
 mcps:
-  - hitl
+  hitl:
+    - ask_question
+    - ask_choice
+    - progress
 
 model: glm-4
 temperature: 0.1

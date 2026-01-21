@@ -115,6 +115,17 @@ export const answerQuestion = (questionId, answer) =>
 export const cancelQuestion = (questionId) =>
   request(`/api/questions/${questionId}/cancel`, { method: 'POST' })
 
+// ============ HITL MCP Response (for microservices) ============
+export const submitHITLResponse = (requestId, answer, selected = null) =>
+  request('/api/hitl/response', {
+    method: 'POST',
+    body: JSON.stringify({
+      request_id: requestId,
+      answer,
+      selected,
+    }),
+  })
+
 // ============ Workspace ============
 export const getWorkspaceFiles = (sessionId = null) =>
   request(`/api/workspace${sessionId ? `?session_id=${sessionId}` : ''}`)

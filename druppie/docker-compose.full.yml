@@ -66,6 +66,62 @@ services:
       - druppie-new-network
 
   # =============================================================================
+  # GITEA
+  # =============================================================================
+
+  gitea-db:
+    image: postgres:15-alpine
+    container_name: druppie-new-gitea-db
+    environment:
+      POSTGRES_DB: gitea
+      POSTGRES_USER: gitea
+      POSTGRES_PASSWORD: gitea_secret
+    volumes:
+      - druppie_new_gitea_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "gitea"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - druppie-new-network
+
+  gitea:
+    image: gitea/gitea:1.21
+    container_name: druppie-new-gitea
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+      GITEA__database__DB_TYPE: postgres
+      GITEA__database__HOST: gitea-db:5432
+      GITEA__database__NAME: gitea
+      GITEA__database__USER: gitea
+      GITEA__database__PASSWD: gitea_secret
+      GITEA__server__ROOT_URL: http://localhost:3100/
+      GITEA__server__HTTP_PORT: 3000
+      GITEA__server__DOMAIN: localhost
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__service__DISABLE_REGISTRATION: "false"
+    volumes:
+      - druppie_new_gitea:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "3100:3000"
+      - "2223:22"
+    depends_on:
+      gitea-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - druppie-new-network
+
+  # =============================================================================
   # KEYCLOAK
   # =============================================================================
 
@@ -122,17 +178,31 @@ services:
       KEYCLOAK_REALM: druppie
       KEYCLOAK_CLIENT_ID: druppie-backend
 
-      # LLM Configuration - Use mock for testing (set LLM_PROVIDER=zai and ZAI_API_KEY for real LLM)
-      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
-      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      # LLM Configuration - Use Z.AI GLM
+      LLM_PROVIDER: zai
+      ZAI_API_KEY: ${ZAI_API_KEY}
       ZAI_MODEL: ${ZAI_MODEL:-GLM-4.7}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
 
       # CORS - allow new frontend port
       CORS_ORIGINS: http://localhost:5273,http://localhost:5173
 
+      # Gitea Configuration
+      GITEA_URL: http://localhost:3100
+      GITEA_INTERNAL_URL: http://gitea:3000
+      GITEA_ADMIN_USER: gitea_admin
+      GITEA_ADMIN_PASSWORD: GiteaAdmin123
+      GITEA_ADMIN_EMAIL: admin@druppie.local
+      GITEA_ORG: druppie
+
       # Workspace
       WORKSPACE_PATH: /app/workspace
+
+      # MCP Microservices
+      USE_MCP_MICROSERVICES: "true"
+      MCP_CODING_URL: http://mcp-coding:9001
+      MCP_DOCKER_URL: http://mcp-docker:9002
+      MCP_HITL_URL: http://mcp-hitl:9003
     volumes:
       - druppie_new_workspace:/app/workspace
       - /var/run/docker.sock:/var/run/docker.sock
@@ -145,10 +215,95 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+      gitea:
+        condition: service_healthy
     networks:
       - druppie-new-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # =============================================================================
+  # MCP SERVERS (Microservices)
+  # =============================================================================
+
+  mcp-coding:
+    build:
+      context: ./mcp-servers/coding
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-coding
+    environment:
+      WORKSPACE_ROOT: /workspaces
+      MCP_PORT: "9001"
+      GITEA_INTERNAL_URL: http://gitea:3000
+      GITEA_ORG: druppie
+      GITEA_TOKEN: ${GITEA_TOKEN:-}
+    volumes:
+      - druppie_new_workspace:/workspaces
+    ports:
+      - "9001:9001"
+    depends_on:
+      gitea:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  mcp-docker:
+    build:
+      context: ./mcp-servers/docker
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-docker
+    environment:
+      MCP_PORT: "9002"
+      WORKSPACE_ROOT: /workspaces
+      DOCKER_NETWORK: druppie-new-network
+    volumes:
+      - druppie_new_workspace:/workspaces
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "9002:9002"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  mcp-hitl:
+    build:
+      context: ./mcp-servers/hitl
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-hitl
+    environment:
+      MCP_PORT: "9003"
+      REDIS_URL: redis://redis:6379/0
+      HITL_TIMEOUT: "300"
+    ports:
+      - "9003:9003"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # =============================================================================
   # FRONTEND (Vite + React)
@@ -180,6 +335,10 @@ volumes:
     name: druppie_new_redis
   druppie_new_workspace:
     name: druppie_new_workspace
+  druppie_new_gitea:
+    name: druppie_new_gitea
+  druppie_new_gitea_postgres:
+    name: druppie_new_gitea_postgres
 
 networks:
   druppie-new-network:

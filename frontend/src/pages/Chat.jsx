@@ -34,7 +34,7 @@ import {
   Check,
   X,
 } from 'lucide-react'
-import { sendChat, getPlans, getPlan, answerQuestion, approveTask, rejectTask } from '../services/api'
+import { sendChat, getPlans, getPlan, answerQuestion, approveTask, rejectTask, submitHITLResponse } from '../services/api'
 import { useAuth } from '../App'
 import {
   initSocket,
@@ -44,6 +44,9 @@ import {
   onTaskRejected,
   onPlanUpdated,
   onWorkflowEvent,
+  onHITLQuestion,
+  onApprovalRequired,
+  onHITLProgress,
   disconnectSocket,
 } from '../services/socket'
 import { useToast } from '../components/Toast'
@@ -1003,11 +1006,12 @@ const ConversationSidebar = ({ plans, activePlanId, onSelectPlan, onNewChat }) =
   )
 }
 
-// Debug Panel - Shows API and LLM calls for debugging
-const DebugPanel = ({ isOpen, onClose, apiCalls }) => {
+// Enhanced Debug Panel - Shows agents, workflows, MCP tools, and detailed execution info
+const DebugPanel = ({ isOpen, onClose, apiCalls, workflowEvents, workspaceInfo }) => {
   const [copiedIndex, setCopiedIndex] = useState(null)
-  const [expandedCalls, setExpandedCalls] = useState({})
+  const [expandedItems, setExpandedItems] = useState({})
   const [allCopied, setAllCopied] = useState(false)
+  const [activeTab, setActiveTab] = useState('overview')
 
   const copyToClipboard = (text, index) => {
     navigator.clipboard.writeText(text)
@@ -1016,34 +1020,98 @@ const DebugPanel = ({ isOpen, onClose, apiCalls }) => {
   }
 
   const copyAllToClipboard = () => {
-    const fullData = JSON.stringify(apiCalls, null, 2)
+    const fullData = JSON.stringify({ apiCalls, workflowEvents, workspaceInfo }, null, 2)
     navigator.clipboard.writeText(fullData)
     setAllCopied(true)
     setTimeout(() => setAllCopied(false), 2000)
   }
 
   const toggleExpand = (index) => {
-    setExpandedCalls(prev => ({ ...prev, [index]: !prev[index] }))
-  }
-
-  const expandAll = () => {
-    const allExpanded = {}
-    apiCalls?.forEach((_, index) => { allExpanded[index] = true })
-    setExpandedCalls(allExpanded)
-  }
-
-  const collapseAll = () => {
-    setExpandedCalls({})
+    setExpandedItems(prev => ({ ...prev, [index]: !prev[index] }))
   }
 
   if (!isOpen) return null
 
+  // Process data for different views
   const llmCalls = apiCalls?.filter(c => c.type === 'llm') || []
   const httpCalls = apiCalls?.filter(c => c.type === 'api') || []
+  const events = workflowEvents || []
+
+  // Extract agents from events and LLM calls
+  const agentExecutions = []
+  const agentMap = new Map()
+
+  events.forEach(event => {
+    if (event.type === 'agent_started' || event.data?.agent_id) {
+      const agentId = event.data?.agent_id || event.agent_id
+      if (agentId && !agentMap.has(agentId)) {
+        agentMap.set(agentId, {
+          id: agentId,
+          startTime: event.timestamp,
+          events: [],
+          toolCalls: [],
+          llmCalls: [],
+          status: 'running'
+        })
+      }
+      if (agentId && agentMap.has(agentId)) {
+        agentMap.get(agentId).events.push(event)
+      }
+    }
+    if (event.type === 'agent_completed') {
+      const agentId = event.data?.agent_id
+      if (agentId && agentMap.has(agentId)) {
+        agentMap.get(agentId).status = 'completed'
+        agentMap.get(agentId).endTime = event.timestamp
+      }
+    }
+    if (event.type === 'agent_error' || event.type === 'agent_failed') {
+      const agentId = event.data?.agent_id
+      if (agentId && agentMap.has(agentId)) {
+        agentMap.get(agentId).status = 'error'
+        agentMap.get(agentId).error = event.data?.error
+      }
+    }
+  })
+
+  // Add LLM calls to agents
+  llmCalls.forEach(call => {
+    if (call.agent_id && agentMap.has(call.agent_id)) {
+      agentMap.get(call.agent_id).llmCalls.push(call)
+    }
+  })
+
+  const agents = Array.from(agentMap.values())
+
+  // Extract MCP tool calls from events
+  const toolCalls = events.filter(e =>
+    e.type === 'tool_call' ||
+    e.type === 'tool_executing' ||
+    e.type === 'tool_completed' ||
+    e.type === 'mcp_tool' ||
+    e.data?.tool_name ||
+    e.data?.tool
+  ).map(e => ({
+    name: e.data?.tool_name || e.data?.tool || e.title,
+    args: e.data?.args_preview || e.data?.arguments,
+    agent: e.data?.agent_id,
+    timestamp: e.timestamp,
+    status: e.status || 'completed',
+    result: e.data?.result
+  }))
+
+  // Tab definitions
+  const tabs = [
+    { id: 'overview', label: 'Overview', icon: Zap },
+    { id: 'agents', label: `Agents (${agents.length})`, icon: Bot },
+    { id: 'tools', label: `Tools (${toolCalls.length})`, icon: Hammer },
+    { id: 'events', label: `Events (${events.length})`, icon: Clock },
+    { id: 'llm', label: `LLM (${llmCalls.length})`, icon: Brain },
+  ]
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-xl shadow-2xl w-[95vw] max-w-5xl max-h-[90vh] flex flex-col">
+      <div className="bg-white rounded-xl shadow-2xl w-[95vw] max-w-6xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <div className="flex items-center gap-3">
@@ -1051,352 +1119,414 @@ const DebugPanel = ({ isOpen, onClose, apiCalls }) => {
               <Bug className="w-5 h-5 text-orange-600" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Debug Panel</h2>
+              <h2 className="text-lg font-semibold text-gray-900">Execution Debug Panel</h2>
               <p className="text-sm text-gray-500">
-                {llmCalls.length} LLM call(s), {httpCalls.length} API call(s)
+                {agents.length} agents, {toolCalls.length} tool calls, {llmCalls.length} LLM calls
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Action buttons */}
-            <button
-              onClick={expandAll}
-              className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              Expand All
-            </button>
-            <button
-              onClick={collapseAll}
-              className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              Collapse All
-            </button>
             <button
               onClick={copyAllToClipboard}
               className="flex items-center gap-1 px-3 py-1.5 text-xs bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors"
             >
-              {allCopied ? (
-                <><Check className="w-3 h-3" /> Copied All!</>
-              ) : (
-                <><Copy className="w-3 h-3" /> Copy All</>
-              )}
+              {allCopied ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Export All</>}
             </button>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors ml-2"
-            >
+            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors ml-2">
               <X className="w-5 h-5 text-gray-500" />
             </button>
           </div>
         </div>
 
+        {/* Tabs */}
+        <div className="flex border-b border-gray-200 px-4">
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tab.id
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {apiCalls && apiCalls.length > 0 ? (
-            apiCalls.map((call, index) => (
-              <div key={index} className={`rounded-lg border overflow-hidden ${
-                call.type === 'llm' ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-200'
-              }`}>
-                {/* Call Header */}
-                <div className={`flex items-center justify-between px-4 py-3 border-b cursor-pointer ${
-                  call.type === 'llm' ? 'bg-purple-100 border-purple-200' : 'bg-gray-100 border-gray-200'
-                }`} onClick={() => toggleExpand(index)}>
-                  <div className="flex items-center gap-3">
-                    {call.type === 'llm' ? (
-                      <>
-                        <span className="px-2 py-1 rounded text-xs font-bold bg-purple-600 text-white">
-                          LLM
-                        </span>
-                        <div>
-                          <span className="text-sm font-medium text-purple-900">{call.name || 'LLM Call'}</span>
-                          <span className="text-xs text-purple-600 ml-2">({call.model})</span>
+        <div className="flex-1 overflow-y-auto p-4">
+          {/* Overview Tab */}
+          {activeTab === 'overview' && (
+            <div className="space-y-4">
+              {/* Workspace Info */}
+              {workspaceInfo && (
+                <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200 p-4">
+                  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <GitBranch className="w-5 h-5 text-blue-600" />
+                    Workspace Info
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {workspaceInfo.workspace_id && (
+                      <div>
+                        <div className="text-xs text-gray-500 uppercase">Workspace ID</div>
+                        <div className="font-mono text-sm">{workspaceInfo.workspace_id?.substring(0, 8)}...</div>
+                      </div>
+                    )}
+                    {workspaceInfo.project_id && (
+                      <div>
+                        <div className="text-xs text-gray-500 uppercase">Project ID</div>
+                        <div className="font-mono text-sm">{workspaceInfo.project_id?.substring(0, 8)}...</div>
+                      </div>
+                    )}
+                    {workspaceInfo.branch && (
+                      <div>
+                        <div className="text-xs text-gray-500 uppercase">Branch</div>
+                        <div className="font-mono text-sm flex items-center gap-1">
+                          <GitBranch className="w-3 h-3" />
+                          {workspaceInfo.branch}
                         </div>
-                      </>
-                    ) : (
-                      <>
-                        <span className={`px-2 py-1 rounded text-xs font-bold ${
-                          call.method === 'POST' ? 'bg-green-600 text-white' :
-                          call.method === 'GET' ? 'bg-blue-600 text-white' :
-                          'bg-gray-600 text-white'
-                        }`}>
-                          {call.method || 'POST'}
-                        </span>
-                        <code className="text-sm text-gray-700">{call.endpoint || '/api/chat'}</code>
-                      </>
+                      </div>
                     )}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {call.duration_ms && (
-                      <span className="text-xs text-gray-500">{call.duration_ms}ms</span>
-                    )}
-                    <span className={`text-xs px-2 py-1 rounded ${
-                      call.status === 'success' ? 'bg-green-100 text-green-700' :
-                      call.status === 'error' ? 'bg-red-100 text-red-700' :
-                      'bg-yellow-100 text-yellow-700'
-                    }`}>
-                      {call.status || 'completed'}
-                    </span>
-                    <span className="text-xs text-gray-500">
-                      {call.timestamp ? new Date(call.timestamp).toLocaleTimeString() : ''}
-                    </span>
-                    {expandedCalls[index] ? (
-                      <ChevronDown className="w-4 h-4 text-gray-400" />
-                    ) : (
-                      <ChevronRight className="w-4 h-4 text-gray-400" />
+                    {workspaceInfo.workspace_path && (
+                      <div>
+                        <div className="text-xs text-gray-500 uppercase">Path</div>
+                        <div className="font-mono text-sm truncate">{workspaceInfo.workspace_path}</div>
+                      </div>
                     )}
                   </div>
                 </div>
+              )}
 
-                {/* Expanded Content */}
-                {expandedCalls[index] && (
-                  <div className="p-4 space-y-4">
-                    {/* LLM-specific: Show Messages */}
-                    {call.type === 'llm' && call.request?.messages && (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-medium text-purple-600 uppercase">Messages (Prompt)</span>
-                          <button
-                            onClick={() => copyToClipboard(JSON.stringify(call.request.messages, null, 2), `msg-${index}`)}
-                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-                          >
-                            {copiedIndex === `msg-${index}` ? (
-                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
-                            ) : (
-                              <><Copy className="w-3 h-3" /> Copy</>
-                            )}
-                          </button>
-                        </div>
-                        <div className="space-y-2">
-                          {call.request.messages.map((msg, msgIdx) => (
-                            <div key={msgIdx} className={`p-3 rounded-lg ${
-                              msg.role === 'system' ? 'bg-blue-900 text-blue-100' :
-                              msg.role === 'user' ? 'bg-gray-800 text-gray-100' :
-                              'bg-green-900 text-green-100'
-                            }`}>
-                              <div className="text-xs font-bold uppercase mb-1 opacity-70">{msg.role}</div>
-                              <pre className="text-xs whitespace-pre-wrap overflow-x-auto max-h-64">{msg.content}</pre>
-                            </div>
-                          ))}
+              {/* Stats Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Bot className="w-5 h-5 text-purple-600" />
+                    <span className="text-sm font-medium text-purple-900">Agents</span>
+                  </div>
+                  <div className="text-2xl font-bold text-purple-700">{agents.length}</div>
+                  <div className="text-xs text-purple-600 mt-1">
+                    {agents.filter(a => a.status === 'completed').length} completed
+                  </div>
+                </div>
+                <div className="bg-orange-50 rounded-lg p-4 border border-orange-200">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Hammer className="w-5 h-5 text-orange-600" />
+                    <span className="text-sm font-medium text-orange-900">Tool Calls</span>
+                  </div>
+                  <div className="text-2xl font-bold text-orange-700">{toolCalls.length}</div>
+                  <div className="text-xs text-orange-600 mt-1">MCP operations</div>
+                </div>
+                <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Brain className="w-5 h-5 text-blue-600" />
+                    <span className="text-sm font-medium text-blue-900">LLM Calls</span>
+                  </div>
+                  <div className="text-2xl font-bold text-blue-700">{llmCalls.length}</div>
+                  <div className="text-xs text-blue-600 mt-1">
+                    {llmCalls.reduce((acc, c) => acc + (c.usage?.total_tokens || 0), 0)} tokens
+                  </div>
+                </div>
+                <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Clock className="w-5 h-5 text-green-600" />
+                    <span className="text-sm font-medium text-green-900">Events</span>
+                  </div>
+                  <div className="text-2xl font-bold text-green-700">{events.length}</div>
+                  <div className="text-xs text-green-600 mt-1">workflow events</div>
+                </div>
+              </div>
+
+              {/* Execution Flow */}
+              <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">
+                <h3 className="font-semibold text-gray-900 mb-3">Execution Flow</h3>
+                <div className="space-y-2">
+                  {agents.map((agent, idx) => (
+                    <div key={idx} className="flex items-center gap-3 bg-white rounded-lg p-3 border">
+                      <div className={`p-2 rounded-full ${
+                        agent.status === 'completed' ? 'bg-green-100' :
+                        agent.status === 'error' ? 'bg-red-100' : 'bg-blue-100'
+                      }`}>
+                        <Bot className={`w-4 h-4 ${
+                          agent.status === 'completed' ? 'text-green-600' :
+                          agent.status === 'error' ? 'text-red-600' : 'text-blue-600'
+                        }`} />
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900">{agent.id}</div>
+                        <div className="text-xs text-gray-500">
+                          {agent.llmCalls.length} LLM calls, {agent.events.filter(e => e.data?.tool).length} tools
                         </div>
                       </div>
-                    )}
+                      <div className={`px-2 py-1 rounded text-xs font-medium ${
+                        agent.status === 'completed' ? 'bg-green-100 text-green-700' :
+                        agent.status === 'error' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {agent.status}
+                      </div>
+                    </div>
+                  ))}
+                  {agents.length === 0 && (
+                    <div className="text-center py-8 text-gray-500">
+                      <Bot className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                      <p>No agents have run yet</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
-                    {/* LLM-specific: Show Agent Info and Tool Calls */}
-                    {call.type === 'llm' && (call.agent_id || call.tool_calls?.length > 0 || call.usage) && (
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                        {/* Agent Info */}
-                        {call.agent_id && (
-                          <div className="bg-purple-100 rounded-lg p-3">
-                            <span className="text-xs font-medium text-purple-600 uppercase block mb-1">Agent</span>
-                            <div className="flex items-center gap-2">
-                              <Bot className="w-4 h-4 text-purple-600" />
-                              <span className="text-sm font-medium text-purple-900">{call.agent_id}</span>
-                              {call.iteration && (
-                                <span className="text-xs bg-purple-200 text-purple-700 px-1.5 py-0.5 rounded">
-                                  iter {call.iteration}
-                                </span>
-                              )}
-                            </div>
+          {/* Agents Tab */}
+          {activeTab === 'agents' && (
+            <div className="space-y-4">
+              {agents.length > 0 ? agents.map((agent, idx) => (
+                <div key={idx} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                  <div
+                    className={`flex items-center justify-between p-4 cursor-pointer ${
+                      agent.status === 'completed' ? 'bg-green-50' :
+                      agent.status === 'error' ? 'bg-red-50' : 'bg-blue-50'
+                    }`}
+                    onClick={() => toggleExpand(`agent-${idx}`)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Bot className={`w-5 h-5 ${
+                        agent.status === 'completed' ? 'text-green-600' :
+                        agent.status === 'error' ? 'text-red-600' : 'text-blue-600'
+                      }`} />
+                      <div>
+                        <div className="font-semibold text-gray-900">{agent.id}</div>
+                        <div className="text-xs text-gray-500">
+                          {agent.llmCalls.length} LLM iterations, {agent.events.length} events
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${
+                        agent.status === 'completed' ? 'bg-green-100 text-green-700' :
+                        agent.status === 'error' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {agent.status}
+                      </span>
+                      {expandedItems[`agent-${idx}`] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    </div>
+                  </div>
+                  {expandedItems[`agent-${idx}`] && (
+                    <div className="p-4 border-t border-gray-200 space-y-3">
+                      {/* Agent LLM Calls */}
+                      {agent.llmCalls.map((call, callIdx) => (
+                        <div key={callIdx} className="bg-purple-50 rounded-lg p-3 border border-purple-200">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Brain className="w-4 h-4 text-purple-600" />
+                            <span className="text-sm font-medium text-purple-900">Iteration {call.iteration || callIdx + 1}</span>
+                            {call.tool_calls?.length > 0 && (
+                              <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-xs">
+                                {call.tool_calls.length} tools
+                              </span>
+                            )}
                           </div>
-                        )}
-
-                        {/* Token Usage */}
-                        {call.usage && (
-                          <div className="bg-blue-100 rounded-lg p-3">
-                            <span className="text-xs font-medium text-blue-600 uppercase block mb-1">Token Usage</span>
-                            <div className="text-sm space-y-1">
-                              <div className="flex justify-between">
-                                <span className="text-blue-600">Prompt:</span>
-                                <span className="font-mono text-blue-900">{call.usage.prompt_tokens || 0}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-blue-600">Completion:</span>
-                                <span className="font-mono text-blue-900">{call.usage.completion_tokens || 0}</span>
-                              </div>
-                              <div className="flex justify-between border-t border-blue-200 pt-1">
-                                <span className="text-blue-600 font-medium">Total:</span>
-                                <span className="font-mono font-medium text-blue-900">{call.usage.total_tokens || 0}</span>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Tool Calls */}
-                        {call.tool_calls?.length > 0 && (
-                          <div className="bg-orange-100 rounded-lg p-3">
-                            <span className="text-xs font-medium text-orange-600 uppercase block mb-1">Tool Calls</span>
-                            <div className="space-y-1">
+                          {call.tool_calls?.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
                               {call.tool_calls.map((tc, tcIdx) => (
-                                <div key={tcIdx} className="flex items-center gap-2">
-                                  <Hammer className="w-3 h-3 text-orange-600" />
-                                  <span className="text-sm font-mono text-orange-900">{tc.name || tc}</span>
-                                </div>
+                                <span key={tcIdx} className="bg-orange-200 text-orange-800 px-2 py-0.5 rounded text-xs font-mono">
+                                  {tc.name || tc}
+                                </span>
                               ))}
                             </div>
-                          </div>
+                          )}
+                        </div>
+                      ))}
+                      {/* Agent Events */}
+                      <div className="text-xs text-gray-500 mt-2">
+                        <strong>Events:</strong> {agent.events.map(e => e.type).join(' → ')}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )) : (
+                <div className="text-center py-12 text-gray-500">
+                  <Bot className="w-12 h-12 mx-auto mb-4 opacity-30" />
+                  <p className="font-medium">No agents have run yet</p>
+                  <p className="text-sm mt-1">Agents will appear here as they execute</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tools Tab */}
+          {activeTab === 'tools' && (
+            <div className="space-y-2">
+              {toolCalls.length > 0 ? toolCalls.map((tool, idx) => (
+                <div key={idx} className="bg-orange-50 rounded-lg border border-orange-200 p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Hammer className="w-4 h-4 text-orange-600" />
+                      <span className="font-mono text-sm font-medium text-orange-900">{tool.name}</span>
+                      {tool.agent && (
+                        <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs">
+                          {tool.agent}
+                        </span>
+                      )}
+                    </div>
+                    <span className={`px-2 py-0.5 rounded text-xs ${
+                      tool.status === 'success' || tool.status === 'completed'
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-gray-100 text-gray-700'
+                    }`}>
+                      {tool.status}
+                    </span>
+                  </div>
+                  {tool.args && (
+                    <div className="mt-2 text-xs text-gray-600 font-mono bg-white rounded p-2 border">
+                      {typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args, null, 2)}
+                    </div>
+                  )}
+                  {tool.timestamp && (
+                    <div className="text-xs text-gray-400 mt-1">
+                      {new Date(tool.timestamp).toLocaleTimeString()}
+                    </div>
+                  )}
+                </div>
+              )) : (
+                <div className="text-center py-12 text-gray-500">
+                  <Hammer className="w-12 h-12 mx-auto mb-4 opacity-30" />
+                  <p className="font-medium">No tool calls yet</p>
+                  <p className="text-sm mt-1">MCP tool calls will appear here</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Events Tab */}
+          {activeTab === 'events' && (
+            <div className="space-y-2">
+              {events.length > 0 ? events.map((event, idx) => (
+                <div key={idx} className={`rounded-lg border p-3 ${getStatusColors(event.status)}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={`p-1 rounded-full ${getIconBgColor(event.status)}`}>
+                        {getEventIcon(event.type, event.status)}
+                      </div>
+                      <div>
+                        <span className="font-medium text-sm">{event.title || event.type}</span>
+                        {event.data?.agent_id && (
+                          <span className="ml-2 bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-xs">
+                            {event.data.agent_id}
+                          </span>
                         )}
                       </div>
-                    )}
-
-                    {/* LLM-specific: Show Agent Parsed Data (structured output from done() tool) */}
-                    {call.type === 'llm' && call.parsed_data && Object.keys(call.parsed_data).length > 0 && (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-medium text-green-600 uppercase">
-                            Agent Output (done() data) {call.agent_summary && `- ${call.agent_summary.substring(0, 50)}`}
-                          </span>
-                          <button
-                            onClick={() => copyToClipboard(JSON.stringify(call.parsed_data, null, 2), `parsed-${index}`)}
-                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-                          >
-                            {copiedIndex === `parsed-${index}` ? (
-                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
-                            ) : (
-                              <><Copy className="w-3 h-3" /> Copy</>
-                            )}
-                          </button>
-                        </div>
-                        <pre className="text-xs bg-green-900 text-green-200 p-3 rounded-lg overflow-x-auto max-h-96 whitespace-pre-wrap">
-                          {JSON.stringify(call.parsed_data, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* LLM-specific: Show Parsed/Cleaned Response */}
-                    {call.type === 'llm' && call.response && (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-medium text-purple-600 uppercase">LLM Response Content</span>
-                          <button
-                            onClick={() => copyToClipboard(typeof call.response === 'string' ? call.response : JSON.stringify(call.response, null, 2), `llmres-${index}`)}
-                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-                          >
-                            {copiedIndex === `llmres-${index}` ? (
-                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
-                            ) : (
-                              <><Copy className="w-3 h-3" /> Copy</>
-                            )}
-                          </button>
-                        </div>
-                        <pre className="text-xs bg-gray-900 text-green-400 p-3 rounded-lg overflow-x-auto max-h-64 whitespace-pre-wrap">
-                          {typeof call.response === 'string' ? call.response : JSON.stringify(call.response, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* LLM-specific: Show Raw Unclean Content */}
-                    {call.type === 'llm' && call.response_raw && (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-medium text-orange-600 uppercase">Raw LLM Output (unclean, includes think tags)</span>
-                          <button
-                            onClick={() => copyToClipboard(call.response_raw, `rawcontent-${index}`)}
-                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-                          >
-                            {copiedIndex === `rawcontent-${index}` ? (
-                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
-                            ) : (
-                              <><Copy className="w-3 h-3" /> Copy</>
-                            )}
-                          </button>
-                        </div>
-                        <pre className="text-xs bg-gray-800 text-orange-300 p-3 rounded-lg overflow-x-auto max-h-96 whitespace-pre-wrap">
-                          {call.response_raw}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* LLM-specific: Show Full API Response Object */}
-                    {call.type === 'llm' && call.raw_response && (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-medium text-yellow-600 uppercase">Full API Response Object</span>
-                          <button
-                            onClick={() => copyToClipboard(JSON.stringify(call.raw_response, null, 2), `raw-${index}`)}
-                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-                          >
-                            {copiedIndex === `raw-${index}` ? (
-                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
-                            ) : (
-                              <><Copy className="w-3 h-3" /> Copy</>
-                            )}
-                          </button>
-                        </div>
-                        <pre className="text-xs bg-gray-900 text-yellow-400 p-3 rounded-lg overflow-x-auto max-h-48">
-                          {JSON.stringify(call.raw_response, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* HTTP API calls: Request */}
-                    {call.type === 'api' && call.request && (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-medium text-gray-500 uppercase">Request</span>
-                          <button
-                            onClick={() => copyToClipboard(JSON.stringify(call.request, null, 2), `req-${index}`)}
-                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-                          >
-                            {copiedIndex === `req-${index}` ? (
-                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
-                            ) : (
-                              <><Copy className="w-3 h-3" /> Copy</>
-                            )}
-                          </button>
-                        </div>
-                        <pre className="text-xs bg-gray-900 text-green-400 p-3 rounded-lg overflow-x-auto">
-                          {JSON.stringify(call.request, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* HTTP API calls: Response */}
-                    {call.type === 'api' && call.response && (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-medium text-gray-500 uppercase">Response</span>
-                          <button
-                            onClick={() => copyToClipboard(JSON.stringify(call.response, null, 2), `res-${index}`)}
-                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-                          >
-                            {copiedIndex === `res-${index}` ? (
-                              <><Check className="w-3 h-3 text-green-500" /> Copied!</>
-                            ) : (
-                              <><Copy className="w-3 h-3" /> Copy</>
-                            )}
-                          </button>
-                        </div>
-                        <pre className="text-xs bg-gray-900 text-green-400 p-3 rounded-lg overflow-x-auto max-h-64">
-                          {JSON.stringify(call.response, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* Usage stats for LLM calls */}
-                    {call.type === 'llm' && call.usage && (
-                      <div className="flex items-center gap-4 text-xs text-purple-600">
-                        <span>Tokens: {call.usage.total_tokens || 'N/A'}</span>
-                        <span>Prompt: {call.usage.prompt_tokens || 'N/A'}</span>
-                        <span>Completion: {call.usage.completion_tokens || 'N/A'}</span>
-                      </div>
-                    )}
-
-                    {/* Error display */}
-                    {call.error && (
-                      <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                        <span className="text-xs font-medium text-red-600 uppercase">Error</span>
-                        <pre className="text-xs text-red-700 mt-1">{call.error}</pre>
-                      </div>
-                    )}
+                    </div>
+                    <span className="text-xs text-gray-500">
+                      {event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : ''}
+                    </span>
                   </div>
-                )}
-              </div>
-            ))
-          ) : (
-            <div className="text-center py-12 text-gray-500">
-              <Bug className="w-12 h-12 mx-auto mb-4 opacity-30" />
-              <p className="font-medium">No API calls yet</p>
-              <p className="text-sm mt-1">Send a message to see API and LLM calls here</p>
+                  {event.description && (
+                    <div className="text-xs opacity-80 mt-1 ml-8">{event.description}</div>
+                  )}
+                  {event.data && Object.keys(event.data).length > 0 && (
+                    <details className="mt-2 ml-8">
+                      <summary className="text-xs text-gray-500 cursor-pointer">Show data</summary>
+                      <pre className="text-xs bg-gray-900 text-green-400 p-2 rounded mt-1 overflow-x-auto">
+                        {JSON.stringify(event.data, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              )) : (
+                <div className="text-center py-12 text-gray-500">
+                  <Clock className="w-12 h-12 mx-auto mb-4 opacity-30" />
+                  <p className="font-medium">No events yet</p>
+                  <p className="text-sm mt-1">Workflow events will appear here</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* LLM Tab */}
+          {activeTab === 'llm' && (
+            <div className="space-y-4">
+              {llmCalls.length > 0 ? llmCalls.map((call, idx) => (
+                <div key={idx} className="bg-purple-50 rounded-lg border border-purple-200 overflow-hidden">
+                  <div
+                    className="flex items-center justify-between p-4 bg-purple-100 cursor-pointer"
+                    onClick={() => toggleExpand(`llm-${idx}`)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Brain className="w-5 h-5 text-purple-600" />
+                      <div>
+                        <span className="font-medium text-purple-900">{call.agent_id || 'LLM Call'}</span>
+                        <span className="text-xs text-purple-600 ml-2">iter {call.iteration || idx + 1}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {call.usage?.total_tokens && (
+                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                          {call.usage.total_tokens} tokens
+                        </span>
+                      )}
+                      {call.duration_ms && (
+                        <span className="text-xs text-purple-600">{call.duration_ms}ms</span>
+                      )}
+                      {expandedItems[`llm-${idx}`] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    </div>
+                  </div>
+                  {expandedItems[`llm-${idx}`] && (
+                    <div className="p-4 space-y-3">
+                      {/* Tool Calls */}
+                      {call.tool_calls?.length > 0 && (
+                        <div>
+                          <div className="text-xs font-medium text-orange-600 uppercase mb-2">Tool Calls</div>
+                          <div className="flex flex-wrap gap-1">
+                            {call.tool_calls.map((tc, tcIdx) => (
+                              <span key={tcIdx} className="bg-orange-200 text-orange-800 px-2 py-1 rounded text-xs font-mono">
+                                {tc.name || tc}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {/* Messages */}
+                      {call.request?.messages && (
+                        <details>
+                          <summary className="text-xs font-medium text-purple-600 uppercase cursor-pointer">
+                            Messages ({call.request.messages.length})
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {call.request.messages.map((msg, msgIdx) => (
+                              <div key={msgIdx} className={`p-2 rounded text-xs ${
+                                msg.role === 'system' ? 'bg-blue-900 text-blue-100' :
+                                msg.role === 'user' ? 'bg-gray-800 text-gray-100' :
+                                'bg-green-900 text-green-100'
+                              }`}>
+                                <div className="font-bold uppercase mb-1 opacity-70">{msg.role}</div>
+                                <pre className="whitespace-pre-wrap overflow-x-auto max-h-32">{msg.content}</pre>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                      {/* Response */}
+                      {call.response && (
+                        <details>
+                          <summary className="text-xs font-medium text-green-600 uppercase cursor-pointer">Response</summary>
+                          <pre className="mt-2 text-xs bg-gray-900 text-green-400 p-2 rounded overflow-x-auto max-h-48">
+                            {typeof call.response === 'string' ? call.response : JSON.stringify(call.response, null, 2)}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )) : (
+                <div className="text-center py-12 text-gray-500">
+                  <Brain className="w-12 h-12 mx-auto mb-4 opacity-30" />
+                  <p className="font-medium">No LLM calls yet</p>
+                  <p className="text-sm mt-1">LLM calls will appear here</p>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1404,7 +1534,7 @@ const DebugPanel = ({ isOpen, onClose, apiCalls }) => {
         {/* Footer */}
         <div className="px-6 py-3 border-t border-gray-200 bg-gray-50">
           <p className="text-xs text-gray-500 text-center">
-            {llmCalls.length} LLM call(s), {httpCalls.length} HTTP call(s) in this session
+            {agents.length} agent(s), {toolCalls.length} tool call(s), {llmCalls.length} LLM call(s), {events.length} event(s)
           </p>
         </div>
       </div>
@@ -1422,6 +1552,7 @@ const Chat = () => {
   const [debugPanelOpen, setDebugPanelOpen] = useState(false)
   const [apiCalls, setApiCalls] = useState([])
   const [liveWorkflowEvents, setLiveWorkflowEvents] = useState([])
+  const [workspaceInfo, setWorkspaceInfo] = useState(null)
   const messagesEndRef = useRef(null)
   const queryClient = useQueryClient()
 
@@ -1479,21 +1610,32 @@ What would you like to build today?`,
     const handleWorkflowEvent = (data) => {
       console.log('[Socket] Workflow event:', data)
 
-      // Only process events for the current plan (or if no plan yet, any event)
-      if (data.plan_id && currentPlanId && data.plan_id !== currentPlanId) {
+      // Only process events for the current session (or if no session yet, any event)
+      // Backend sends session_id, not plan_id
+      const eventSessionId = data.session_id || data.plan_id
+      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) {
         return
       }
 
       const event = data.event
       if (!event) return
 
-      // Update current step description
-      if (event.title) {
-        setCurrentStep(event.title)
+      // Update current step description - prefer title from event data
+      const stepTitle = event.title || event.data?.description || formatEventTitle(event)
+      if (stepTitle) {
+        setCurrentStep(stepTitle)
       }
 
-      // Add to live events list
-      setLiveWorkflowEvents((prev) => [...prev, event])
+      // Add to live events list with proper formatting
+      const formattedEvent = {
+        ...event,
+        event_type: event.type,
+        title: stepTitle,
+        description: event.data?.description || event.description,
+        status: event.status || (event.type?.includes('completed') || event.type?.includes('success') ? 'success' : 'working'),
+        data: event.data || event,
+      }
+      setLiveWorkflowEvents((prev) => [...prev, formattedEvent])
     }
 
     // Subscribe to workflow events
@@ -1613,6 +1755,129 @@ What would you like to build today?`,
     }
   }, [queryClient, user?.id, toast])
 
+  // Listen for HITL MCP events (questions and approvals from microservices)
+  useEffect(() => {
+    // Handler for HITL questions from MCP microservices
+    const handleHITLQuestion = (data) => {
+      console.log('[Socket] HITL Question:', data)
+
+      // Add question to the current message or create a new one
+      const questionData = {
+        id: data.request_id,
+        question: data.question,
+        input_type: data.input_type,
+        choices: data.choices || [],
+        allow_other: data.allow_other !== false,
+        context: data.context,
+        session_id: data.session_id || currentPlanId,
+      }
+
+      // Update messages to show the question
+      setMessages((prev) => {
+        const lastMsg = prev[prev.length - 1]
+        if (lastMsg && !lastMsg.role === 'user') {
+          // Append question to the last assistant message
+          return prev.map((msg, idx) => {
+            if (idx === prev.length - 1) {
+              return {
+                ...msg,
+                pendingQuestions: [...(msg.pendingQuestions || []), questionData],
+              }
+            }
+            return msg
+          })
+        } else {
+          // Add a new assistant message with the question
+          return [
+            ...prev,
+            {
+              role: 'assistant',
+              content: '',
+              pendingQuestions: [questionData],
+              timestamp: new Date().toISOString(),
+            },
+          ]
+        }
+      })
+
+      toast.info('Question from Agent', data.question)
+    }
+
+    // Handler for MCP approval required events
+    const handleApprovalRequired = (data) => {
+      console.log('[Socket] Approval Required:', data)
+
+      const approvalData = {
+        task_id: data.approval_id,
+        task_name: `${data.tool}`,
+        mcp_tool: data.tool,
+        required_roles: data.required_roles || ['developer'],
+        danger_level: data.danger_level || 'medium',
+        approval_type: data.required_roles?.length > 1 ? 'multi' : 'self',
+        current_approvals: 0,
+        required_approvals: 1,
+        approved_by_roles: [],
+        approved_by_ids: [],
+        args: data.args,
+      }
+
+      // Update messages to show the approval request
+      setMessages((prev) => {
+        const lastMsg = prev[prev.length - 1]
+        if (lastMsg && lastMsg.role !== 'user') {
+          return prev.map((msg, idx) => {
+            if (idx === prev.length - 1) {
+              return {
+                ...msg,
+                pendingApprovals: [...(msg.pendingApprovals || []), approvalData],
+              }
+            }
+            return msg
+          })
+        } else {
+          return [
+            ...prev,
+            {
+              role: 'assistant',
+              content: `I need approval to run: ${data.tool}`,
+              pendingApprovals: [approvalData],
+              timestamp: new Date().toISOString(),
+            },
+          ]
+        }
+      })
+
+      toast.warning('Approval Required', `Agent wants to run: ${data.tool}`)
+    }
+
+    // Handler for progress updates
+    const handleHITLProgress = (data) => {
+      console.log('[Socket] HITL Progress:', data)
+
+      // Add progress event to workflow events
+      setLiveWorkflowEvents((prev) => [
+        ...prev,
+        {
+          event_type: 'progress',
+          title: data.step || 'Progress Update',
+          description: data.message,
+          status: 'working',
+          data: { percent: data.percent },
+        },
+      ])
+    }
+
+    const unsubQuestion = onHITLQuestion(handleHITLQuestion)
+    const unsubApproval = onApprovalRequired(handleApprovalRequired)
+    const unsubProgress = onHITLProgress(handleHITLProgress)
+
+    return () => {
+      unsubQuestion()
+      unsubApproval()
+      unsubProgress()
+    }
+  }, [currentPlanId, toast])
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
@@ -1622,18 +1887,21 @@ What would you like to build today?`,
   }, [messages])
 
   const chatMutation = useMutation({
-    mutationFn: async ({ message, conversationHistory }) => {
+    mutationFn: async ({ message, conversationHistory, sessionId }) => {
       // Track the API call start time
       const startTime = Date.now()
 
+      // Use the pre-generated sessionId for consistency with WebSocket room
+      const effectiveSessionId = sessionId || currentPlanId
+
       const requestData = {
         message,
-        plan_id: currentPlanId,
+        session_id: effectiveSessionId,
         conversation_history: conversationHistory.length > 0 ? conversationHistory : null,
       }
 
       try {
-        const response = await sendChat(message, currentPlanId, requestData.conversation_history)
+        const response = await sendChat(message, effectiveSessionId, requestData.conversation_history)
 
         // Log API call for debugging (frontend call + backend LLM calls)
         const apiCallRecord = {
@@ -1692,6 +1960,15 @@ What would you like to build today?`,
       setCurrentPlanId(data.plan_id)
       setCurrentStep(null)
       setLiveWorkflowEvents([]) // Clear live events after completion
+      // Update workspace info if available
+      if (data.workspace_id || data.project_id || data.branch) {
+        setWorkspaceInfo({
+          workspace_id: data.workspace_id,
+          project_id: data.project_id,
+          branch: data.branch,
+          workspace_path: data.workspace_path,
+        })
+      }
       queryClient.invalidateQueries(['projects'])
       queryClient.invalidateQueries(['plans'])
       queryClient.invalidateQueries(['tasks'])
@@ -1860,7 +2137,7 @@ What would you like to build today?`,
     },
   })
 
-  const handleAnswerQuestion = (questionId, answer) => {
+  const handleAnswerQuestion = async (questionId, answer, selected = null) => {
     // Optimistic update: immediately show feedback
     setMessages((prev) => {
       // Remove the question from pendingQuestions
@@ -1874,15 +2151,30 @@ What would you like to build today?`,
         return msg
       })
       // Add the user's answer as a message
-      return [...updated, { role: 'user', content: answer }]
+      return [...updated, { role: 'user', content: selected || answer }]
     })
 
     // Show processing indicator
     setCurrentStep('Processing your answer...')
     setLiveWorkflowEvents([]) // Clear live events for new processing
 
-    // Make the API call
-    answerMutation.mutate({ questionId, answer })
+    // Check if this is a HITL MCP request (UUID format request_id)
+    const isHITLRequest = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(questionId)
+
+    if (isHITLRequest) {
+      // Use HITL MCP response endpoint
+      try {
+        await submitHITLResponse(questionId, answer, selected)
+        setCurrentStep(null)
+      } catch (error) {
+        console.error('HITL response error:', error)
+        toast.error('Error', 'Failed to submit answer')
+        setCurrentStep(null)
+      }
+    } else {
+      // Use legacy question answer API
+      answerMutation.mutate({ questionId, answer })
+    }
   }
 
   const handleSubmit = (e) => {
@@ -1893,6 +2185,20 @@ What would you like to build today?`,
     setInput('')
     setCurrentStep('Processing your request...')
     setLiveWorkflowEvents([]) // Clear live events for new request
+
+    // Generate or use existing session ID for real-time events
+    // IMPORTANT: We need the session ID BEFORE the API call to receive WebSocket events
+    const sessionId = currentPlanId || crypto.randomUUID()
+
+    // Join the session room BEFORE making the API call to receive events
+    // This ensures we receive all workflow events emitted during processing
+    console.log('[Chat] Joining session room before API call:', sessionId)
+    joinPlanRoom(sessionId)
+
+    // If this is a new session, set it immediately so event handlers work
+    if (!currentPlanId) {
+      setCurrentPlanId(sessionId)
+    }
 
     // Build conversation history from CURRENT messages BEFORE adding the new one
     // This ensures we capture previous exchanges, not the message being sent
@@ -1912,7 +2218,7 @@ What would you like to build today?`,
       }))
 
     setMessages((prev) => [...prev, { role: 'user', content: userMessage }])
-    chatMutation.mutate({ message: userMessage, conversationHistory })
+    chatMutation.mutate({ message: userMessage, conversationHistory, sessionId })
   }
 
   const handleNewChat = () => {
@@ -2113,6 +2419,8 @@ What would you like to build today?`,
         isOpen={debugPanelOpen}
         onClose={() => setDebugPanelOpen(false)}
         apiCalls={apiCalls}
+        workflowEvents={liveWorkflowEvents}
+        workspaceInfo={workspaceInfo}
       />
     </div>
   )

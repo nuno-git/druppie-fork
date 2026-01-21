@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session as DBSession
 
-from .models import Approval, Session
+from .models import Approval, Build, Project, Session, Workspace
 
 
 # =============================================================================
@@ -174,6 +174,7 @@ def create_approval(db: DBSession, data: dict[str, Any]) -> Approval:
         approvals_received=data.get("approvals_received", []),
         danger_level=data.get("danger_level", "low"),
         description=data.get("description"),
+        agent_state=data.get("agent_state"),
     )
     db.add(approval)
     db.commit()
@@ -196,6 +197,16 @@ def update_approval(db: DBSession, approval_id: str, data: dict[str, Any]) -> Ap
         approval.status = data["status"]
     if "approvals_received" in data:
         approval.approvals_received = data["approvals_received"]
+    if "approved_by" in data:
+        approval.approved_by = data["approved_by"]
+    if "approved_at" in data:
+        approval.approved_at = data["approved_at"]
+    if "rejected_by" in data:
+        approval.rejected_by = data["rejected_by"]
+    if "rejection_reason" in data:
+        approval.rejection_reason = data["rejection_reason"]
+    if "agent_state" in data:
+        approval.agent_state = data["agent_state"]
 
     db.commit()
     db.refresh(approval)
@@ -224,3 +235,305 @@ def list_approvals_for_session(db: DBSession, session_id: str) -> list[Approval]
         .order_by(Approval.created_at.desc())
         .all()
     )
+
+
+def list_approvals(
+    db: DBSession,
+    status: str | None = None,
+    limit: int = 50,
+) -> list[Approval]:
+    """List all approvals with optional status filter."""
+    query = db.query(Approval)
+
+    if status:
+        query = query.filter(Approval.status == status)
+
+    return query.order_by(Approval.created_at.desc()).limit(limit).all()
+
+
+def list_approvals_for_roles(
+    db: DBSession,
+    user_roles: list[str],
+    status: str | None = None,
+    limit: int = 50,
+) -> list[Approval]:
+    """List approvals that a user with given roles can approve.
+
+    Filters approvals where required_roles overlaps with user_roles.
+    """
+    query = db.query(Approval)
+
+    if status:
+        query = query.filter(Approval.status == status)
+
+    approvals = query.order_by(Approval.created_at.desc()).limit(limit).all()
+
+    # Filter by roles (JSON array comparison not easy in SQL, do it in Python)
+    filtered = []
+    for approval in approvals:
+        required = approval.required_roles or []
+        if not required or any(r in user_roles for r in required):
+            filtered.append(approval)
+
+    return filtered
+
+
+# =============================================================================
+# PROJECT CRUD
+# =============================================================================
+
+
+def create_project(
+    db: DBSession,
+    project_id: str,
+    name: str,
+    repo_name: str,
+    description: str | None = None,
+    repo_url: str | None = None,
+    clone_url: str | None = None,
+    owner_id: str | None = None,
+) -> Project:
+    """Create a new project."""
+    project = Project(
+        id=project_id,
+        name=name,
+        description=description,
+        repo_name=repo_name,
+        repo_url=repo_url,
+        clone_url=clone_url,
+        owner_id=owner_id,
+        status="active",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def get_project(db: DBSession, project_id: str) -> Project | None:
+    """Get a project by ID."""
+    return db.query(Project).filter(Project.id == project_id).first()
+
+
+def get_project_by_repo(db: DBSession, repo_name: str) -> Project | None:
+    """Get a project by repository name."""
+    return db.query(Project).filter(Project.repo_name == repo_name).first()
+
+
+def list_projects(
+    db: DBSession,
+    owner_id: str | None = None,
+    status: str | None = "active",
+    limit: int = 50,
+) -> list[Project]:
+    """List projects with optional filters."""
+    query = db.query(Project)
+
+    if owner_id:
+        query = query.filter(Project.owner_id == owner_id)
+    if status:
+        query = query.filter(Project.status == status)
+
+    return query.order_by(Project.created_at.desc()).limit(limit).all()
+
+
+def update_project(
+    db: DBSession,
+    project_id: str,
+    data: dict[str, Any],
+) -> Project | None:
+    """Update a project."""
+    project = get_project(db, project_id)
+    if not project:
+        return None
+
+    for key, value in data.items():
+        if hasattr(project, key):
+            setattr(project, key, value)
+
+    project.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def delete_project(db: DBSession, project_id: str) -> bool:
+    """Delete a project (or archive it)."""
+    project = get_project(db, project_id)
+    if not project:
+        return False
+
+    project.status = "archived"
+    db.commit()
+    return True
+
+
+# =============================================================================
+# BUILD CRUD
+# =============================================================================
+
+
+def create_build(
+    db: DBSession,
+    build_id: str,
+    project_id: str,
+    branch: str = "main",
+    is_preview: bool = False,
+) -> Build:
+    """Create a new build."""
+    build = Build(
+        id=build_id,
+        project_id=project_id,
+        branch=branch,
+        status="pending",
+        is_preview=is_preview,
+    )
+    db.add(build)
+    db.commit()
+    db.refresh(build)
+    return build
+
+
+def get_build(db: DBSession, build_id: str) -> Build | None:
+    """Get a build by ID."""
+    return db.query(Build).filter(Build.id == build_id).first()
+
+
+def list_builds(
+    db: DBSession,
+    project_id: str | None = None,
+    status: str | None = None,
+    is_preview: bool | None = None,
+    limit: int = 50,
+) -> list[Build]:
+    """List builds with optional filters."""
+    query = db.query(Build)
+
+    if project_id:
+        query = query.filter(Build.project_id == project_id)
+    if status:
+        query = query.filter(Build.status == status)
+    if is_preview is not None:
+        query = query.filter(Build.is_preview == is_preview)
+
+    return query.order_by(Build.created_at.desc()).limit(limit).all()
+
+
+def update_build(
+    db: DBSession,
+    build_id: str,
+    data: dict[str, Any],
+) -> Build | None:
+    """Update a build."""
+    build = get_build(db, build_id)
+    if not build:
+        return None
+
+    for key, value in data.items():
+        if hasattr(build, key):
+            setattr(build, key, value)
+
+    build.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(build)
+    return build
+
+
+def get_running_build(
+    db: DBSession,
+    project_id: str,
+    is_preview: bool = False,
+) -> Build | None:
+    """Get the running build for a project."""
+    return (
+        db.query(Build)
+        .filter(
+            Build.project_id == project_id,
+            Build.status == "running",
+            Build.is_preview == is_preview,
+        )
+        .first()
+    )
+
+
+# =============================================================================
+# WORKSPACE CRUD
+# =============================================================================
+
+
+def create_workspace(
+    db: DBSession,
+    workspace_id: str,
+    session_id: str,
+    project_id: str | None = None,
+    branch: str = "main",
+    local_path: str | None = None,
+    is_new_project: bool = False,
+) -> Workspace:
+    """Create a new workspace."""
+    workspace = Workspace(
+        id=workspace_id,
+        session_id=session_id,
+        project_id=project_id,
+        branch=branch,
+        local_path=local_path,
+        is_new_project=is_new_project,
+    )
+    db.add(workspace)
+    db.commit()
+    db.refresh(workspace)
+    return workspace
+
+
+def get_workspace(db: DBSession, workspace_id: str) -> Workspace | None:
+    """Get a workspace by ID."""
+    return db.query(Workspace).filter(Workspace.id == workspace_id).first()
+
+
+def get_workspace_by_session(db: DBSession, session_id: str) -> Workspace | None:
+    """Get a workspace by session ID."""
+    return db.query(Workspace).filter(Workspace.session_id == session_id).first()
+
+
+def list_workspaces(
+    db: DBSession,
+    project_id: str | None = None,
+    limit: int = 50,
+) -> list[Workspace]:
+    """List workspaces with optional filters."""
+    query = db.query(Workspace)
+
+    if project_id:
+        query = query.filter(Workspace.project_id == project_id)
+
+    return query.order_by(Workspace.created_at.desc()).limit(limit).all()
+
+
+def update_workspace(
+    db: DBSession,
+    workspace_id: str,
+    data: dict[str, Any],
+) -> Workspace | None:
+    """Update a workspace."""
+    workspace = get_workspace(db, workspace_id)
+    if not workspace:
+        return None
+
+    for key, value in data.items():
+        if hasattr(workspace, key):
+            setattr(workspace, key, value)
+
+    db.commit()
+    db.refresh(workspace)
+    return workspace
+
+
+def delete_workspace(db: DBSession, workspace_id: str) -> bool:
+    """Delete a workspace."""
+    workspace = get_workspace(db, workspace_id)
+    if not workspace:
+        return False
+
+    db.delete(workspace)
+    db.commit()
+    return True

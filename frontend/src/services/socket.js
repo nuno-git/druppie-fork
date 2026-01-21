@@ -22,8 +22,12 @@ const eventCallbacks = {
   plan_updated: [],
   workflow_event: [],
   approval_requested: [],
+  approval_required: [],  // MCP microservices approval
   session_updated: [],
   question_pending: [],
+  question: [],  // HITL MCP question events
+  progress: [],  // HITL MCP progress events
+  notification: [],  // HITL MCP notification events
 }
 
 /**
@@ -212,6 +216,34 @@ export const onSessionUpdated = (callback) => {
  */
 export const onQuestionPending = (callback) => {
   return registerCallback('question_pending', callback)
+}
+
+/**
+ * Subscribe to HITL question events (from MCP microservices)
+ */
+export const onHITLQuestion = (callback) => {
+  return registerCallback('question', callback)
+}
+
+/**
+ * Subscribe to approval required events (from MCP microservices)
+ */
+export const onApprovalRequired = (callback) => {
+  return registerCallback('approval_required', callback)
+}
+
+/**
+ * Subscribe to HITL progress events
+ */
+export const onHITLProgress = (callback) => {
+  return registerCallback('progress', callback)
+}
+
+/**
+ * Subscribe to HITL notification events
+ */
+export const onHITLNotification = (callback) => {
+  return registerCallback('notification', callback)
 }
 
 /**

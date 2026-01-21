@@ -6,6 +6,9 @@ Flow:
     User Message
          |
          v
+    Workspace Init ─── Clone/create repo (git-first)
+         |
+         v
     Router Agent ─── Analyzes intent
          |
          v
@@ -20,8 +23,10 @@ Flow:
 Key principle: The loop just defines graph structure.
 All execution logic is in Agent and Workflow classes.
 All HITL (pause/resume) is handled by LangGraph's interrupt() in MCP tools.
+Workspace is initialized at conversation start (git-first architecture).
 """
 
+import os
 import uuid
 from typing import Any, Callable, TypedDict
 
@@ -38,6 +43,7 @@ from druppie.core.execution_context import (
     get_current_context,
     clear_current_context,
 )
+from druppie.core.mcp_client import get_mcp_client
 
 logger = structlog.get_logger()
 
@@ -53,6 +59,12 @@ class GraphState(TypedDict):
     message: str
     session_id: str
     user_id: str | None
+
+    # Workspace context (set after initialization)
+    workspace_id: str | None
+    project_id: str | None
+    workspace_path: str | None
+    branch: str | None
 
     # Router output
     intent: dict | None
@@ -209,10 +221,44 @@ async def execute_node(state: GraphState) -> dict:
                 prompt = step.get("prompt", "")
                 result = await Agent(agent_id).run(prompt, context)
             elif step_type == "mcp":
-                from druppie.mcps import get_mcp_registry
                 tool = step.get("tool")
                 inputs = step.get("inputs", {})
-                result = await get_mcp_registry().call_tool(tool, inputs)
+
+                # Check if we should use HTTP-based MCPClient (for microservices)
+                use_http_mcp = os.getenv("USE_MCP_MICROSERVICES", "false").lower() == "true"
+
+                if use_http_mcp and ctx:
+                    # Use MCPClient for HTTP calls to MCP microservices
+                    from druppie.api.deps import get_db
+
+                    db = next(get_db())
+                    try:
+                        mcp_client = get_mcp_client(db)
+
+                        # Parse tool name (format: server:tool)
+                        if ":" in tool:
+                            server, tool_name = tool.split(":", 1)
+                        else:
+                            server = "coding"
+                            tool_name = tool
+
+                        result = await mcp_client.call_tool(server, tool_name, inputs, ctx)
+
+                        # Check if paused for approval
+                        if result.get("status") == "paused":
+                            # Return paused state - execution will resume after approval
+                            return {
+                                "results": results,
+                                "response": f"Waiting for approval: {result.get('tool')}",
+                                "paused": True,
+                                "approval_id": result.get("approval_id"),
+                            }
+                    finally:
+                        db.close()
+                else:
+                    # Use in-process MCP registry (legacy mode)
+                    from druppie.mcps import get_mcp_registry
+                    result = await get_mcp_registry().call_tool(tool, inputs)
             else:
                 result = {"error": f"Unknown step type: {step_type}"}
 
@@ -346,6 +392,8 @@ class MainLoop:
         message: str,
         session_id: str | None = None,
         user_id: str | None = None,
+        project_id: str | None = None,
+        project_name: str | None = None,
         emit_event: Callable[[dict], None] | None = None,
     ) -> dict[str, Any]:
         """Process a user message through the LangGraph flow.
@@ -354,6 +402,8 @@ class MainLoop:
             message: User's message
             session_id: Session ID (used as thread_id for LangGraph)
             user_id: User ID for context
+            project_id: Optional existing project ID to work on
+            project_name: Optional name for new project (used if project_id not provided)
             emit_event: Callback for real-time events
 
         Returns:
@@ -372,6 +422,18 @@ class MainLoop:
         # Configure HITL for this session
         configure_hitl(emit_event, session_id)
 
+        # Save session first (required for workspace foreign key)
+        await self._save_session(session_id, user_id, "initializing", message, exec_ctx)
+
+        # Initialize workspace (git-first architecture)
+        workspace_info = await self._initialize_workspace(
+            session_id=session_id,
+            user_id=user_id,
+            project_id=project_id,
+            project_name=project_name,
+            exec_ctx=exec_ctx,
+        )
+
         # LangGraph config (thread_id enables persistence)
         config = {"configurable": {"thread_id": session_id}}
 
@@ -380,6 +442,10 @@ class MainLoop:
             "message": message,
             "session_id": session_id,
             "user_id": user_id,
+            "workspace_id": workspace_info.get("workspace_id"),
+            "project_id": workspace_info.get("project_id"),
+            "workspace_path": workspace_info.get("workspace_path"),
+            "branch": workspace_info.get("branch"),
             "intent": None,
             "plan": None,
             "results": [],
@@ -387,7 +453,7 @@ class MainLoop:
             "error": None,
         }
 
-        logger.info("main_loop_start", session=session_id, message=message[:100])
+        logger.info("main_loop_start", session=session_id, message=message[:100], workspace=workspace_info)
 
         # Emit start event
         exec_ctx.emit("processing_started", {"message_preview": message[:100]})
@@ -438,6 +504,9 @@ class MainLoop:
                 "plan": final_state.get("plan"),
                 "results": final_state.get("results", []),
                 "session_id": session_id,
+                "workspace_id": exec_ctx.workspace_id,
+                "project_id": exec_ctx.project_id,
+                "branch": exec_ctx.branch,
                 "workflow_events": exec_ctx.workflow_events,
                 "llm_calls": exec_ctx.llm_calls,
             }
@@ -538,6 +607,91 @@ class MainLoop:
                 "llm_calls": exec_ctx.llm_calls,
             }
 
+    async def _initialize_workspace(
+        self,
+        session_id: str,
+        user_id: str | None,
+        project_id: str | None,
+        project_name: str | None,
+        exec_ctx: ExecutionContext,
+    ) -> dict[str, Any]:
+        """Initialize workspace for the session (git-first architecture).
+
+        - If project_id is provided, clones existing repo with feature branch
+        - If project_name is provided, creates new project with repo on main
+        - If neither, creates a project with auto-generated name
+
+        Args:
+            session_id: Session ID
+            user_id: User ID
+            project_id: Optional existing project ID
+            project_name: Optional name for new project
+            exec_ctx: Execution context for events
+
+        Returns:
+            Dict with workspace info (workspace_id, project_id, workspace_path, branch)
+        """
+        try:
+            from druppie.core.workspace import get_workspace_service
+            from druppie.api.deps import get_db
+
+            exec_ctx.emit("workspace_initializing", {
+                "project_id": project_id,
+                "project_name": project_name,
+            })
+
+            # Get database session
+            db = next(get_db())
+            try:
+                workspace_service = get_workspace_service(db)
+
+                # Initialize workspace (creates project/repo if needed)
+                workspace = await workspace_service.initialize_workspace(
+                    session_id=session_id,
+                    project_id=project_id,
+                    user_id=user_id,
+                    project_name=project_name,
+                )
+
+                # Update execution context with workspace info
+                exec_ctx.set_workspace(
+                    workspace_id=workspace.id,
+                    project_id=workspace.project_id,
+                    workspace_path=workspace.local_path,
+                    branch=workspace.branch,
+                )
+
+                db.commit()
+
+                logger.info(
+                    "workspace_initialized",
+                    workspace_id=workspace.id,
+                    project_id=workspace.project_id,
+                    branch=workspace.branch,
+                )
+
+                return {
+                    "workspace_id": workspace.id,
+                    "project_id": workspace.project_id,
+                    "workspace_path": workspace.local_path,
+                    "branch": workspace.branch,
+                    "is_new_project": workspace.is_new_project,
+                }
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            logger.error("workspace_initialization_failed", error=str(e))
+            exec_ctx.emit("workspace_error", {"error": str(e)})
+            # Return empty workspace info - execution can continue without workspace
+            return {
+                "workspace_id": None,
+                "project_id": project_id,
+                "workspace_path": None,
+                "branch": None,
+            }
+
     async def _save_session(
         self,
         session_id: str,
@@ -569,6 +723,12 @@ class MainLoop:
                     "message": message,
                     "name": f"Chat: {message[:30]}...",
                     "response": final_state.get("response") if final_state else None,
+                },
+                "workspace": {
+                    "workspace_id": exec_ctx.workspace_id,
+                    "project_id": exec_ctx.project_id,
+                    "workspace_path": exec_ctx.workspace_path,
+                    "branch": exec_ctx.branch,
                 },
                 "workflow_events": exec_ctx.workflow_events,
                 "llm_calls": exec_ctx.llm_calls,

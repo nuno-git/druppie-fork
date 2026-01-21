@@ -18,21 +18,21 @@ system_prompt: |
 
   AVAILABLE MCPs:
   - coding: read_file, write_file, list_dir, delete_file, run_command
-  - git: clone, init, status, add, commit, push, pull, branch, checkout
-  - docker: build, run, stop, logs, compose_up, compose_down
+  - docker: build, run, stop, logs, list_containers
 
   PLANNING RULES:
   1. For CREATE_PROJECT: Start with developer to create files
   2. For UPDATE_PROJECT: Developer to make changes, optionally reviewer
-  3. For DEPLOY_PROJECT: Use git and docker MCPs, then deployer agent
+  3. For DEPLOY_PROJECT: Use docker MCP, then deployer agent
   4. Keep plans simple - 2-5 steps is usually enough
 
   TOOLS AVAILABLE:
-  - hitl:ask - Use this when you need clarification from the user
+  - hitl:ask_question - Use this when you need clarification from the user
+  - hitl:ask_choice - Use this when you need the user to choose between options
   - hitl:progress - Use this to update the user on your progress
 
   WHEN YOU NEED CLARIFICATION:
-  Call hitl:ask with your question.
+  Call hitl:ask_question or hitl:ask_choice with your question.
 
   WHEN YOU HAVE CREATED THE PLAN:
   Respond with JSON directly (no tool call):
@@ -50,8 +50,8 @@ system_prompt: |
       {
         "id": "step_2",
         "type": "mcp",
-        "tool": "git:commit",
-        "inputs": {"path": "/workspace/project", "message": "Initial commit"}
+        "tool": "coding:commit_and_push",
+        "inputs": {"workspace_id": "...", "message": "Initial commit"}
       }
     ]
   }
@@ -63,8 +63,12 @@ system_prompt: |
     "inputs": {"project_path": "/workspace/myapp", "environment": "production"}
   }
 
+# MCP tools this agent can use
 mcps:
-  - hitl
+  hitl:
+    - ask_question
+    - ask_choice
+    - progress
 
 model: glm-4
 temperature: 0.1
