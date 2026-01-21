@@ -221,6 +221,14 @@ class Agent:
                     server = "coding"
                     tool = mcp_tool_name
 
+                # Inject context into tool args
+                if exec_ctx:
+                    if server == "coding" and "workspace_id" not in tool_args:
+                        if exec_ctx.workspace_id:
+                            tool_args["workspace_id"] = exec_ctx.workspace_id
+                    if server == "hitl" and "session_id" not in tool_args:
+                        tool_args["session_id"] = exec_ctx.session_id
+
                 # Execute tool via MCP client
                 result = await self.mcp_client.call_tool(server, tool, tool_args, exec_ctx)
 

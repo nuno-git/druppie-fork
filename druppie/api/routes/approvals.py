@@ -200,9 +200,29 @@ async def approve_request(
         # Execute the approved tool via MCP client
         try:
             mcp_client = get_mcp_client(db)
+
+            # Extract workspace context from approval arguments
+            args = approval.arguments or {}
+            workspace_id = args.get("workspace_id")
+            project_id = args.get("project_id")
+            workspace_path = args.get("workspace_path")
+            branch = args.get("branch")
+
+            logger.info(
+                "creating_execution_context_for_approval",
+                approval_id=approval_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                branch=branch,
+            )
+
             context = ExecutionContext(
                 session_id=approval.session_id,
                 user_id=user_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                workspace_path=workspace_path,
+                branch=branch,
             )
 
             # Execute the tool that was waiting for approval
