@@ -1309,3 +1309,109 @@ Next iteration could focus on:
 - Performance optimizations for LLM calls
 - More comprehensive E2E test coverage
 - Add visual indication when another user is viewing the same conversation
+
+---
+
+## Iteration 18 Summary
+
+### What Was Tested
+
+1. **Inline Approval HITL** - Working correctly
+   - Sent deployment request: "Deploy my counter app to staging"
+   - Router identified `deploy_project` action with `environment: staging`
+   - Planner created deployment plan with 1 task requiring approval
+   - Inline approval card displayed in chat with:
+     - "Approval Required" header
+     - "Deploy to Staging" title
+     - "This action requires approval from developer role"
+     - MCP Tool: `deploy.staging`
+     - "Approve" and "Reject" buttons
+   - Clicked "Approve" → Task approved successfully
+   - Message shown: "✅ Task fully approved! The action will now proceed."
+
+2. **App Creation Flow** - Tested
+   - Sent request: "Create a simple Flask bookmark manager app with CRUD operations"
+   - Router correctly identified `create_project` intent
+   - Planner selected `development_workflow`
+   - Code generation started with Z.AI LLM
+   - Note: Code generation takes very long (>3 minutes) - potential LLM timeout issue
+
+### Test Flow Results
+
+**Deployment Approval Flow:**
+1. Request: "Deploy my counter app to staging"
+2. Router → `deploy_project` action, identified counter app project
+3. Planner → Created deployment task requiring ROLE approval
+4. UI → Approval card with Approve/Reject buttons
+5. Click "Approve" → Task approved, card replaced with success message
+
+**App Creation Flow:**
+1. Request: "Create a simple Flask bookmark manager app with CRUD operations"
+2. Router → `create_project` action, app_type: bookmark_manager
+3. Planner → Selected `development_workflow`
+4. Code generation → Started (long-running LLM call)
+
+### What's Working Well
+
+- Inline approval card UI with clear information
+- Approve/Reject buttons functional
+- Optimistic UI update after approval (card disappears, success message appears)
+- Agent attribution badges (shows "devops" for deployment tasks)
+- Execution log with detailed events
+- Router correctly identifies deployment targets from existing projects
+
+### Issues Identified
+
+1. **Code Generation Timeout** - Z.AI LLM calls for code generation can take >3 minutes
+   - This affects new project creation flow
+   - May need timeout handling or progress indicators
+   - Potential improvement: add streaming response or progress polling
+
+### Commits Made (Iteration 18)
+
+1. Progress tracking only - both HITL types verified working
+
+---
+
+## Status After Iteration 18
+
+All core HITL functionality is working:
+- Authentication with Keycloak
+- Chat with LLM (Z.AI / GLM-4.7 / Ollama / Mock)
+- Router agent analyzes intent (including deploy_project, update_project)
+- Planner agent creates execution plans
+- Developer agent generates code
+- **HITL question/answer flow** (VERIFIED - Iteration 17)
+- **Inline approval HITL flow** (VERIFIED - Iteration 18)
+- Project creation with Git push to Gitea
+- Build and run projects in Docker
+- Flask apps now accessible from Docker containers
+- ROLE approval workflow (deploy.staging)
+- MULTI approval workflow (deploy.production)
+- Deployment workflow triggered from chat
+- Inline approval UI in chat
+- Agent attribution badges
+- Enhanced progress indicators
+- MULTI approval progress display
+- Partial approval feedback
+- Pending approvals in loaded conversations
+- Hide approve button when user already approved
+- WebSocket real-time approval updates
+- Toast notifications for approval events
+- Mock LLM provider for testing
+- Update workflow git clone and branch creation
+- DateTime serialization for JSON storage
+- Full update workflow execution with TDD
+- Robust JSON parsing for LLM responses
+- Preview deployment for project updates
+
+Both types of HITL are now verified working:
+1. ✅ Q&A HITL - Router asks clarifying questions, user answers inline
+2. ✅ Approval HITL - Inline approval cards with Approve/Reject buttons
+
+Next iteration could focus on:
+- Add timeout handling for long-running LLM calls
+- Add streaming response or progress polling for code generation
+- Test MULTI approval HITL (production deployments requiring 2+ approvals)
+- Multiple HITL interactions in a single workflow
+- Performance optimizations for LLM calls
