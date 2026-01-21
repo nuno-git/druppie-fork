@@ -266,7 +266,7 @@ async def write_file(
 
         # Auto-commit
         if auto_commit:
-            commit_result = await commit_and_push(
+            commit_result = await _do_commit_and_push(
                 workspace_id,
                 commit_message or f"Update {path}",
             )
@@ -392,7 +392,7 @@ async def delete_file(
         }
 
         if auto_commit:
-            commit_result = await commit_and_push(workspace_id, f"Delete {path}")
+            commit_result = await _do_commit_and_push(workspace_id, f"Delete {path}")
             result["committed"] = commit_result.get("success", False)
 
         return result
@@ -444,16 +444,10 @@ async def run_command(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
-async def commit_and_push(workspace_id: str, message: str) -> dict:
-    """Commit all changes and push to Gitea.
+async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
+    """Internal function to commit all changes and push to Gitea.
 
-    Args:
-        workspace_id: Workspace ID
-        message: Commit message
-
-    Returns:
-        Dict with success, message
+    This is separate from the MCP tool to allow internal calls.
     """
     try:
         ws = get_workspace(workspace_id)
@@ -508,6 +502,20 @@ async def commit_and_push(workspace_id: str, message: str) -> dict:
         return {"success": False, "error": str(e)}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def commit_and_push(workspace_id: str, message: str) -> dict:
+    """Commit all changes and push to Gitea.
+
+    Args:
+        workspace_id: Workspace ID
+        message: Commit message
+
+    Returns:
+        Dict with success, message
+    """
+    return await _do_commit_and_push(workspace_id, message)
 
 
 @mcp.tool()
