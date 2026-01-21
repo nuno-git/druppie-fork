@@ -108,8 +108,6 @@ async def chat(
             message=request.message,
             session_id=session_id,
             user_id=user.get("sub") if user else None,
-            user_projects=request.user_projects,
-            conversation_history=history,
         )
 
         result_session_id = result.get("session_id", session_id)
@@ -162,11 +160,15 @@ async def resume_chat(
     )
 
     try:
+        # Determine the response value based on what's provided
+        if request.approved is not None:
+            response_value = {"approved": request.approved}
+        else:
+            response_value = request.answer
+
         result = await loop.resume_session(
             session_id=session_id,
-            user_response=request.answer,
-            approval=request.approved,
-            user_id=user.get("sub"),
+            response=response_value,
         )
 
         return ChatResponse(
