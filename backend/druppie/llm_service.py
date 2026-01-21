@@ -599,6 +599,10 @@ class ChatOllama:
     def _parse_malformed_args(self, args_str: str, tool_name: str) -> dict:
         """Attempt to parse malformed tool arguments from LLM.
 
+        Some LLMs sometimes return malformed JSON with XML-like tags,
+        assignment syntax, or other issues. This method attempts to
+        extract valid arguments from such responses.
+
         Args:
             args_str: The raw arguments string
             tool_name: Name of the tool being called
@@ -615,19 +619,45 @@ class ChatOllama:
         # Remove XML-like tags
         cleaned = re.sub(r'</?\w+(?:_\w+)*>', '', cleaned)
 
+        # Fix assignment syntax: key="value" -> "key": "value"
+        cleaned = re.sub(r'(\w+)="([^"]*)"', r'"\1": "\2"', cleaned)
+
+        # Remove duplicate colons
+        cleaned = re.sub(r':+\s*:', ':', cleaned)
+
+        # Fix missing commas between properties
+        cleaned = re.sub(r'"\s+"', '", "', cleaned)
+
         # Try to find and extract JSON object
         json_match = re.search(r'\{[\s\S]*\}', cleaned)
         if json_match:
             try:
-                return json.loads(json_match.group())
+                result = json.loads(json_match.group())
+                # If data is a stringified JSON, parse it
+                if 'data' in result and isinstance(result['data'], str):
+                    try:
+                        result['data'] = json.loads(result['data'])
+                    except json.JSONDecodeError:
+                        pass
+                return result
             except json.JSONDecodeError:
                 pass
 
-        # For 'done' tool, try to extract summary
+        # For 'done' tool, try to extract summary and data
         if tool_name == "done":
             summary_match = re.search(r'"?summary"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE)
             summary = summary_match.group(1) if summary_match else "Task completed"
-            return {"summary": summary, "artifacts": [], "data": {}}
+
+            data = {}
+            data_str_match = re.search(r'"?data"?\s*[=:]\s*"(\{[^}]*(?:\{[^}]*\}[^}]*)*\})"', args_str)
+            if data_str_match:
+                try:
+                    data_str = data_str_match.group(1).replace('\\"', '"')
+                    data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    pass
+
+            return {"summary": summary, "artifacts": [], "data": data}
 
         # For 'fail' tool
         if tool_name == "fail":
@@ -1047,8 +1077,13 @@ class ChatZAI:
         """Attempt to parse malformed tool arguments from LLM.
 
         Some LLMs (like GLM-4.7) sometimes return malformed JSON with
-        XML-like tags or other issues. This method attempts to extract
-        valid arguments from such responses.
+        XML-like tags, assignment syntax, or other issues. This method
+        attempts to extract valid arguments from such responses.
+
+        Common patterns we handle:
+        - XML tags mixed with JSON: {"summary</arg_value><arg_key>data": "..."}
+        - Assignment syntax: summary="value" instead of "summary": "value"
+        - Stringified JSON data: "data": "{\"key\": \"value\"}"
 
         Args:
             args_str: The raw arguments string
@@ -1060,34 +1095,65 @@ class ChatZAI:
         if not args_str:
             return {}
 
+        logger.debug("Parsing malformed args", tool_name=tool_name, args_str=args_str[:200])
+
         # Clean up common LLM formatting issues
         cleaned = args_str
 
         # Remove XML-like tags that GLM sometimes includes
         cleaned = re.sub(r'</?\w+(?:_\w+)*>', '', cleaned)
 
+        # Fix assignment syntax: key="value" -> "key": "value"
+        # But only outside of already-quoted strings
+        cleaned = re.sub(r'(\w+)="([^"]*)"', r'"\1": "\2"', cleaned)
+
+        # Remove duplicate colons that might result from the above
+        cleaned = re.sub(r':+\s*:', ':', cleaned)
+
+        # Fix missing commas between properties
+        cleaned = re.sub(r'"\s+"', '", "', cleaned)
+
         # Try to find and extract JSON object
         json_match = re.search(r'\{[\s\S]*\}', cleaned)
         if json_match:
             try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
+                result = json.loads(json_match.group())
+                # If data is a stringified JSON, parse it
+                if 'data' in result and isinstance(result['data'], str):
+                    try:
+                        result['data'] = json.loads(result['data'])
+                    except json.JSONDecodeError:
+                        pass
+                return result
+            except json.JSONDecodeError as e:
+                logger.debug("JSON parse failed after cleanup", error=str(e), cleaned=cleaned[:200])
 
-        # For 'done' tool, try to extract summary and data
+        # For 'done' tool, try to extract summary and data with more aggressive parsing
         if tool_name == "done":
-            # Try to extract summary value
+            # Try to extract summary value - handle both JSON and assignment syntax
             summary_match = re.search(r'"?summary"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE)
             summary = summary_match.group(1) if summary_match else "Task completed"
 
-            # Try to extract data
-            data_match = re.search(r'"?data"?\s*[=:]\s*(\{[^}]*\}|\{[\s\S]*?\})', args_str)
+            # Try to extract data - it might be a stringified JSON
             data = {}
-            if data_match:
+            # First try to find data as a stringified JSON (common pattern)
+            data_str_match = re.search(r'"?data"?\s*[=:]\s*"(\{[^}]*(?:\{[^}]*\}[^}]*)*\})"', args_str)
+            if data_str_match:
                 try:
-                    data = json.loads(data_match.group(1))
+                    # Unescape the stringified JSON
+                    data_str = data_str_match.group(1).replace('\\"', '"')
+                    data = json.loads(data_str)
                 except json.JSONDecodeError:
                     pass
+
+            # If that didn't work, try direct JSON object
+            if not data:
+                data_match = re.search(r'"?data"?\s*[=:]\s*(\{[\s\S]*?\})', args_str)
+                if data_match:
+                    try:
+                        data = json.loads(data_match.group(1))
+                    except json.JSONDecodeError:
+                        pass
 
             return {"summary": summary, "artifacts": [], "data": data}
 
