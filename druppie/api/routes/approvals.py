@@ -208,6 +208,24 @@ async def approve_request(
             workspace_path = args.get("workspace_path")
             branch = args.get("branch")
 
+            # Fallback: if workspace_id not in args, try to get from session's workspace
+            # This handles backwards compatibility with approvals created before the fix
+            if not workspace_id:
+                workspace = db.query(Workspace).filter(
+                    Workspace.session_id == approval.session_id
+                ).first()
+                if workspace:
+                    workspace_id = workspace.id
+                    project_id = project_id or workspace.project_id
+                    workspace_path = workspace_path or workspace.local_path
+                    branch = branch or workspace.branch
+                    logger.info(
+                        "workspace_context_loaded_from_session",
+                        approval_id=approval_id,
+                        workspace_id=workspace_id,
+                        session_id=approval.session_id,
+                    )
+
             logger.info(
                 "creating_execution_context_for_approval",
                 approval_id=approval_id,
