@@ -42,6 +42,10 @@ mcps:
           - admin
         danger_level: high
 
+      - name: run_tests
+        description: "Run tests in workspace with auto-detection of test framework"
+        requires_approval: false
+
       - name: commit_and_push
         description: "Commit and push changes to Gitea"
         requires_approval: false
