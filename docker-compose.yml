@@ -165,10 +165,10 @@ services:
   # APPLICATION LAYER
   # =============================================================================
 
-  # Druppie Backend (Flask API with Keycloak Auth)
+  # Druppie Backend (FastAPI with Keycloak Auth)
   druppie-backend:
     build:
-      context: ./backend
+      context: ./druppie
       dockerfile: Dockerfile
     container_name: druppie-backend
     environment:
