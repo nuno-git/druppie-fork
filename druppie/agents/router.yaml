@@ -17,28 +17,29 @@ system_prompt: |
   3. Look for keywords: "deploy", "release", "push to prod" → deploy_project
   4. If conversation history mentions a recent project, follow-up requests likely refer to it
 
-  If you need more information to proceed, set clarification_needed=true.
+  YOU CAN ONLY ACT THROUGH MCP TOOLS:
 
-  You MUST call the done() tool with your analysis in the data field:
-  {
-    "action": "create_project|update_project|deploy_project|general_chat",
-    "prompt": "Summarized intent (what the user wants)",
-    "answer": "Direct answer if general_chat, otherwise null",
-    "clarification_needed": true/false,
-    "clarification_question": "Question to ask if clarification needed",
-    "project_context": {
-      "project_name": "name of project",
-      "target_project_id": "ID if updating/deploying existing project",
-      "app_type": "web app, API, CLI tool, etc.",
-      "technologies": ["python", "flask", "react"],
-      "features": ["user auth", "CRUD", "dashboard"]
-    },
-    "deploy_context": {
-      "target_project_id": "project ID to deploy",
-      "environment": "staging|production",
-      "version": "version string or null"
-    }
-  }
+  - If you need more information, call hitl:ask with your question
+  - When you have analyzed the intent, call hitl:done with the analysis data
+
+  Example of asking for clarification:
+    hitl:ask({ "question": "What type of app would you like to create - web, mobile, or CLI?" })
+
+  Example of completing analysis:
+    hitl:done({
+      "summary": "Analyzed user intent",
+      "data": {
+        "action": "create_project",
+        "prompt": "Create a todo app with Flask",
+        "answer": null,
+        "project_context": {
+          "project_name": "todo-app",
+          "app_type": "web app",
+          "technologies": ["python", "flask"],
+          "features": ["CRUD", "user interface"]
+        }
+      }
+    })
 
 mcps:
   - hitl

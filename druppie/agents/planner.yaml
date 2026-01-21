@@ -22,30 +22,37 @@ system_prompt: |
   - docker: build, run, stop, logs, compose_up, compose_down
 
   PLANNING RULES:
-  1. For CREATE_PROJECT: Start with architect (optional), then developer
+  1. For CREATE_PROJECT: Start with developer to create files
   2. For UPDATE_PROJECT: Developer to make changes, optionally reviewer
   3. For DEPLOY_PROJECT: Use git and docker MCPs, then deployer agent
   4. Keep plans simple - 2-5 steps is usually enough
 
-  You MUST call done() with your plan:
-  {
-    "name": "Short plan name",
-    "description": "What this plan accomplishes",
-    "use_workflow": false,
-    "workflow_id": null,
-    "steps": [
-      {
-        "type": "agent",
-        "agent_id": "developer",
-        "prompt": "Create a Flask app with routes for /api/users CRUD operations"
-      },
-      {
-        "type": "mcp",
-        "tool": "git:commit",
-        "inputs": {"path": "/workspace/project", "message": "Initial commit"}
+  YOU CAN ONLY ACT THROUGH MCP TOOLS:
+
+  - If you need clarification, call hitl:ask with your question
+  - When you have created the plan, call hitl:done with the plan data
+
+  Example of completing the plan:
+    hitl:done({
+      "summary": "Created execution plan",
+      "data": {
+        "name": "Create Todo App",
+        "description": "Build a Flask todo application with CRUD operations",
+        "use_workflow": false,
+        "steps": [
+          {
+            "type": "agent",
+            "agent_id": "developer",
+            "prompt": "Create a Flask todo app with routes for CRUD operations on /api/todos"
+          },
+          {
+            "type": "mcp",
+            "tool": "git:commit",
+            "inputs": {"path": "/workspace/project", "message": "Initial commit"}
+          }
+        ]
       }
-    ]
-  }
+    })
 
 mcps:
   - hitl
