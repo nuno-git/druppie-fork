@@ -34,7 +34,7 @@ import {
   Check,
   X,
 } from 'lucide-react'
-import { sendChat, getPlans, getPlan, answerQuestion, approveTask, rejectTask, submitHITLResponse } from '../services/api'
+import { sendChat, getSessions, getPlan, answerQuestion, approveTask, rejectTask, submitHITLResponse } from '../services/api'
 import { useAuth } from '../App'
 import {
   initSocket,
@@ -1002,13 +1002,15 @@ const TypingIndicator = ({ currentStep, liveEvents = [] }) => {
 }
 
 // Conversation History Sidebar Item
-const ConversationItem = ({ plan, isActive, onClick }) => {
+const ConversationItem = ({ session, isActive, onClick, onDebug }) => {
   const getStatusColor = (status) => {
     switch (status) {
       case 'completed':
         return 'bg-green-500'
+      case 'active':
       case 'running':
         return 'bg-blue-500'
+      case 'paused':
       case 'pending_approval':
         return 'bg-yellow-500'
       case 'failed':
@@ -1018,41 +1020,124 @@ const ConversationItem = ({ plan, isActive, onClick }) => {
     }
   }
 
-  // Extract a cleaner title from the plan name
-  const title = plan.name?.replace(/^Chat:\s*/i, '').slice(0, 40) || 'Untitled'
-  const date = new Date(plan.created_at).toLocaleDateString()
+  // Use preview from new API format, or fall back to name for legacy format
+  const preview = session.preview || session.name?.replace(/^Chat:\s*/i, '').slice(0, 50) || 'No message'
+  const date = session.created_at ? new Date(session.created_at).toLocaleDateString() : ''
 
   return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left p-3 rounded-lg transition-all ${
+    <div
+      className={`group w-full text-left p-3 rounded-lg transition-all ${
         isActive
           ? 'bg-blue-50 border border-blue-200'
           : 'hover:bg-gray-50 border border-transparent'
       }`}
     >
-      <div className="flex items-start gap-2">
-        <MessageSquare className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isActive ? 'text-blue-600' : 'text-gray-400'}`} />
-        <div className="flex-1 min-w-0">
-          <div className={`text-sm font-medium truncate ${isActive ? 'text-blue-900' : 'text-gray-800'}`}>
-            {title}...
-          </div>
-          <div className="flex items-center gap-2 mt-1">
-            <span className={`w-2 h-2 rounded-full ${getStatusColor(plan.status)}`} />
-            <span className="text-xs text-gray-500">{date}</span>
+      <button onClick={onClick} className="w-full text-left">
+        <div className="flex items-start gap-2">
+          <MessageSquare className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isActive ? 'text-blue-600' : 'text-gray-400'}`} />
+          <div className="flex-1 min-w-0">
+            <div className={`text-sm font-medium truncate ${isActive ? 'text-blue-900' : 'text-gray-800'}`}>
+              {preview.length > 40 ? `${preview.slice(0, 40)}...` : preview}
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className={`w-2 h-2 rounded-full ${getStatusColor(session.status)}`} />
+              <span className="text-xs text-gray-500">{date}</span>
+              {session.project_name && (
+                <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded truncate max-w-[80px]">
+                  {session.project_name}
+                </span>
+              )}
+            </div>
           </div>
         </div>
+      </button>
+      {/* Debug link - visible on hover */}
+      <div className="flex justify-end mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onDebug(session.id)
+          }}
+          className="text-xs text-gray-500 hover:text-orange-600 flex items-center gap-1"
+          title="View debug trace"
+        >
+          <Bug className="w-3 h-3" />
+          Debug
+        </button>
       </div>
-    </button>
+    </div>
   )
 }
 
 // Conversation History Sidebar
-const ConversationSidebar = ({ plans, activePlanId, onSelectPlan, onNewChat }) => {
+const ConversationSidebar = ({ sessions, activeSessionId, onSelectSession, onNewChat, onDebugSession, isCollapsed, onToggleCollapse }) => {
+  // Extract sessions array from paginated response or use directly if already an array
+  const sessionList = Array.isArray(sessions) ? sessions : (sessions?.sessions || [])
+  const totalSessions = Array.isArray(sessions) ? sessions.length : (sessions?.total || 0)
+
+  if (isCollapsed) {
+    return (
+      <div className="w-12 bg-white border-r border-gray-200 flex flex-col h-full">
+        {/* Collapsed header with expand button */}
+        <div className="p-2 border-b border-gray-200">
+          <button
+            onClick={onToggleCollapse}
+            className="w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+            title="Expand sidebar"
+          >
+            <ChevronRight className="w-4 h-4 text-gray-600" />
+          </button>
+        </div>
+        {/* Collapsed new chat button */}
+        <div className="p-2">
+          <button
+            onClick={onNewChat}
+            className="w-8 h-8 flex items-center justify-center bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all shadow-md"
+            title="New Chat"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+        {/* Collapsed session indicators */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-2">
+          {sessionList.slice(0, 10).map((session) => (
+            <button
+              key={session.id}
+              onClick={() => onSelectSession(session)}
+              className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${
+                session.id === activeSessionId
+                  ? 'bg-blue-100 border border-blue-300'
+                  : 'bg-gray-50 hover:bg-gray-100'
+              }`}
+              title={session.preview || 'Session'}
+            >
+              <MessageSquare className={`w-4 h-4 ${session.id === activeSessionId ? 'text-blue-600' : 'text-gray-400'}`} />
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="w-72 bg-white border-r border-gray-200 flex flex-col h-full">
-      {/* Header */}
+      {/* Header with collapse button */}
       <div className="p-4 border-b border-gray-200">
+        <div className="flex items-center gap-2 mb-3">
+          <button
+            onClick={onToggleCollapse}
+            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Collapse sidebar"
+          >
+            <ChevronDown className="w-4 h-4 text-gray-500 rotate-90" />
+          </button>
+          <span className="text-sm font-medium text-gray-700">Session History</span>
+          {totalSessions > 0 && (
+            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full ml-auto">
+              {totalSessions}
+            </span>
+          )}
+        </div>
         <button
           onClick={onNewChat}
           className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all shadow-md"
@@ -1069,13 +1154,14 @@ const ConversationSidebar = ({ plans, activePlanId, onSelectPlan, onNewChat }) =
           Recent Conversations
         </div>
         <div className="space-y-1">
-          {plans?.length > 0 ? (
-            plans.map((plan) => (
+          {sessionList.length > 0 ? (
+            sessionList.map((session) => (
               <ConversationItem
-                key={plan.id}
-                plan={plan}
-                isActive={plan.id === activePlanId}
-                onClick={() => onSelectPlan(plan)}
+                key={session.id}
+                session={session}
+                isActive={session.id === activeSessionId}
+                onClick={() => onSelectSession(session)}
+                onDebug={onDebugSession}
               />
             ))
           ) : (
@@ -1646,13 +1732,14 @@ const Chat = () => {
   const [debugWorkflowEvents, setDebugWorkflowEvents] = useState([]) // Persisted events for debug panel
   const [debugLLMCalls, setDebugLLMCalls] = useState([]) // LLM calls for debug panel
   const [workspaceInfo, setWorkspaceInfo] = useState(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const messagesEndRef = useRef(null)
   const queryClient = useQueryClient()
 
-  // Fetch conversation history (plans)
-  const { data: plans = [] } = useQuery({
-    queryKey: ['plans'],
-    queryFn: getPlans,
+  // Fetch session history with pagination
+  const { data: sessionsData } = useQuery({
+    queryKey: ['sessions'],
+    queryFn: () => getSessions(1, 20),
     refetchInterval: 30000,
   })
 
@@ -1800,7 +1887,7 @@ What would you like to build today?`,
       )
 
       // Invalidate plans query to refresh sidebar
-      queryClient.invalidateQueries({ queryKey: ['plans'] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
     }
 
     // Handler for task_rejected events
@@ -1835,7 +1922,7 @@ What would you like to build today?`,
       )
 
       // Invalidate plans query to refresh sidebar
-      queryClient.invalidateQueries({ queryKey: ['plans'] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
     }
 
     // Subscribe to events
@@ -2079,7 +2166,7 @@ What would you like to build today?`,
         })
       }
       queryClient.invalidateQueries(['projects'])
-      queryClient.invalidateQueries(['plans'])
+      queryClient.invalidateQueries(['sessions'])
       queryClient.invalidateQueries(['tasks'])
       queryClient.invalidateQueries(['questions'])
     },
@@ -2139,7 +2226,7 @@ What would you like to build today?`,
 
       // Invalidate queries to refresh data
       queryClient.invalidateQueries(['tasks'])
-      queryClient.invalidateQueries(['plans'])
+      queryClient.invalidateQueries(['sessions'])
     },
     onError: (error) => {
       setMessages((prev) => [
@@ -2178,7 +2265,7 @@ What would you like to build today?`,
 
       // Invalidate queries
       queryClient.invalidateQueries(['tasks'])
-      queryClient.invalidateQueries(['plans'])
+      queryClient.invalidateQueries(['sessions'])
     },
     onError: (error) => {
       setMessages((prev) => [
@@ -2227,7 +2314,7 @@ What would you like to build today?`,
       }
 
       queryClient.invalidateQueries(['questions'])
-      queryClient.invalidateQueries(['plans'])
+      queryClient.invalidateQueries(['sessions'])
       queryClient.invalidateQueries(['projects'])
       setCurrentStep(null)
     },
@@ -2358,33 +2445,17 @@ What would you like to build today?`,
     ])
   }
 
-  const handleSelectPlan = async (plan) => {
-    setCurrentPlanId(plan.id)
-    setLiveWorkflowEvents([]) // Clear live events when selecting plan
+  const handleSelectPlan = async (session) => {
+    setCurrentPlanId(session.id)
+    setLiveWorkflowEvents([]) // Clear live events when selecting session
 
-    // Load persisted workflow events and LLM calls from plan.result
-    const workflowEvents = plan.result?.workflow_events || []
-    const llmCalls = plan.result?.llm_calls || []
-
-    // Load into debug panel with normalized events
-    const normalizedEvents = workflowEvents.map(event => ({
-      ...event,
-      event_type: event.type || event.event_type,
-      title: event.title || formatEventTitle({ ...event, event_type: event.type }),
-      description: event.data?.description || event.description || '',
-      status: event.status || 'info',
-      data: event.data || event,
-    }))
-    setDebugWorkflowEvents(normalizedEvents)
-    setDebugLLMCalls(llmCalls)
-    setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
-
-    // Fetch full plan details with tasks to get pending approvals
+    // Fetch full session details (needed for workflow_events, llm_calls, pending approvals)
+    let fullSession = session
     let pendingApprovals = []
     try {
-      const fullPlan = await getPlan(plan.id)
-      if (fullPlan.tasks) {
-        pendingApprovals = fullPlan.tasks
+      fullSession = await getPlan(session.id)
+      if (fullSession.tasks) {
+        pendingApprovals = fullSession.tasks
           .filter(task => task.status === 'pending_approval')
           .map(task => ({
             task_id: task.id,
@@ -2400,27 +2471,45 @@ What would you like to build today?`,
           }))
       }
     } catch (err) {
-      console.error('Error fetching plan details:', err)
+      console.error('Error fetching session details:', err)
     }
 
-    // Reconstruct messages from plan
+    // Load persisted workflow events and LLM calls from full session result
+    const workflowEvents = fullSession.result?.workflow_events || []
+    const llmCalls = fullSession.result?.llm_calls || []
+
+    // Load into debug panel with normalized events
+    const normalizedEvents = workflowEvents.map(event => ({
+      ...event,
+      event_type: event.type || event.event_type,
+      title: event.title || formatEventTitle({ ...event, event_type: event.type }),
+      description: event.data?.description || event.description || '',
+      status: event.status || 'info',
+      data: event.data || event,
+    }))
+    setDebugWorkflowEvents(normalizedEvents)
+    setDebugLLMCalls(llmCalls)
+    setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
+
+    // Reconstruct messages from session
     const reconstructedMessages = []
 
-    // Add the original user message
-    if (plan.description) {
+    // Add the original user message (use preview from sidebar data or description from full data)
+    const userMessage = fullSession.description || session.preview
+    if (userMessage) {
       reconstructedMessages.push({
         role: 'user',
-        content: plan.description,
+        content: userMessage,
       })
     }
 
-    // Add a response based on plan result with workflow events and pending approvals
-    const resultMessage = plan.result?.response || `Plan "${plan.name}" - Status: ${plan.status}`
+    // Add a response based on session result with workflow events and pending approvals
+    const resultMessage = fullSession.result?.response || `Session - Status: ${fullSession.status || session.status}`
     reconstructedMessages.push({
       role: 'assistant',
       content: resultMessage,
-      planId: plan.id,
-      status: plan.status,
+      planId: session.id,
+      status: fullSession.status || session.status,
       workflowEvents: workflowEvents, // Include persisted workflow events
       pendingApprovals: pendingApprovals, // Include current pending approvals
     })
@@ -2428,8 +2517,8 @@ What would you like to build today?`,
     setMessages(reconstructedMessages.length > 0 ? reconstructedMessages : [
       {
         role: 'assistant',
-        content: `Continuing conversation: ${plan.name}`,
-        planId: plan.id,
+        content: `Continuing conversation...`,
+        planId: session.id,
       }
     ])
   }
@@ -2441,14 +2530,28 @@ What would you like to build today?`,
     'Create a weather dashboard',
   ]
 
+  // Handle opening debug panel for a specific session
+  const handleDebugSession = (sessionId) => {
+    // Navigate to the Debug page with the session ID
+    // For now, just open the debug panel after selecting the session
+    const session = sessionsData?.sessions?.find(s => s.id === sessionId)
+    if (session) {
+      handleSelectPlan(session)
+      setTimeout(() => setDebugPanelOpen(true), 100)
+    }
+  }
+
   return (
     <div className="flex h-[calc(100vh-10rem)] -mx-4 sm:-mx-6 lg:-mx-8">
-      {/* Sidebar */}
+      {/* Collapsible Session History Sidebar */}
       <ConversationSidebar
-        plans={plans}
-        activePlanId={currentPlanId}
-        onSelectPlan={handleSelectPlan}
+        sessions={sessionsData}
+        activeSessionId={currentPlanId}
+        onSelectSession={handleSelectPlan}
         onNewChat={handleNewChat}
+        onDebugSession={handleDebugSession}
+        isCollapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
       />
 
       {/* Main Chat Area */}

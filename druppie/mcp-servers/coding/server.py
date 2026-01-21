@@ -559,6 +559,89 @@ async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
 
 
 @mcp.tool()
+async def batch_write_files(
+    workspace_id: str,
+    files: dict[str, str],
+    commit_message: str = "Create multiple files",
+) -> dict:
+    """Write multiple files to workspace in a single operation with one git commit.
+
+    This is more efficient than calling write_file multiple times when creating
+    a project structure or scaffolding multiple files at once.
+
+    Args:
+        workspace_id: Workspace ID
+        files: Dict mapping file paths (relative to workspace) to their contents
+        commit_message: Commit message for all files (default: "Create multiple files")
+
+    Returns:
+        Dict with success, files_created list, committed status, and commit_message
+
+    Example:
+        batch_write_files(
+            workspace_id="...",
+            files={
+                "src/index.js": "console.log('hello');",
+                "src/utils.js": "export const add = (a, b) => a + b;",
+                "package.json": '{"name": "myapp"}'
+            },
+            commit_message="Create initial project structure"
+        )
+    """
+    try:
+        ws = get_workspace(workspace_id)
+        workspace_path = Path(ws["path"])
+
+        files_created = []
+        errors = []
+
+        # Write all files
+        for path, content in files.items():
+            try:
+                file_path = resolve_path(path, workspace_path)
+
+                # Ensure parent directory exists
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Write file
+                file_path.write_text(content, encoding="utf-8")
+                files_created.append(str(file_path.relative_to(workspace_path)))
+
+            except Exception as e:
+                errors.append({"path": path, "error": str(e)})
+
+        # If no files were created, return error
+        if not files_created:
+            return {
+                "success": False,
+                "error": "No files were created",
+                "errors": errors,
+            }
+
+        result = {
+            "success": True,
+            "files_created": files_created,
+            "file_count": len(files_created),
+        }
+
+        # Add errors if any files failed
+        if errors:
+            result["errors"] = errors
+            result["partial_success"] = True
+
+        # Commit all changes with a single commit
+        commit_result = await _do_commit_and_push(workspace_id, commit_message)
+        result["committed"] = commit_result.get("success", False)
+        if commit_result.get("success"):
+            result["commit_message"] = commit_message
+
+        return result
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
 async def commit_and_push(workspace_id: str, message: str) -> dict:
     """Commit all changes and push to Gitea.
 

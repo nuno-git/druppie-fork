@@ -5,11 +5,12 @@ Endpoints for managing chat sessions.
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session as DBSession
 import structlog
 
 from druppie.api.deps import get_current_user, get_db
 from druppie.db import crud
+from druppie.db.models import Session as SessionModel
 
 logger = structlog.get_logger()
 
@@ -44,6 +45,25 @@ class SessionListResponse(BaseModel):
 
     sessions: list[SessionResponse]
     total: int
+
+
+class SessionSummary(BaseModel):
+    """Compact session summary for sidebar listing."""
+
+    id: str
+    created_at: str | None
+    status: str
+    preview: str  # First 50 chars of initial message
+    project_name: str | None = None  # If linked to a project
+
+
+class PaginatedSessionsResponse(BaseModel):
+    """Paginated sessions response for session history sidebar."""
+
+    sessions: list[SessionSummary]
+    total: int
+    page: int
+    limit: int
 
 
 # =============================================================================
@@ -84,14 +104,79 @@ def _session_to_response(session) -> SessionResponse:
     )
 
 
-@router.get("/sessions")
-async def list_sessions(
+def _session_to_summary(session) -> SessionSummary:
+    """Convert a DB session to a compact summary for sidebar listing."""
+    state = session.state or {}
+    context = state.get("context", {})
+
+    # Extract preview from initial message (first 50 chars)
+    message = context.get("message") or context.get("user_message", "")
+    preview = message[:50] if message else "No message"
+
+    # Try to extract project name from state
+    project_name = context.get("project_name") or state.get("project_name")
+
+    return SessionSummary(
+        id=session.id,
+        created_at=session.created_at.isoformat() if session.created_at else None,
+        status=session.status,
+        preview=preview,
+        project_name=project_name,
+    )
+
+
+@router.get("/sessions", response_model=PaginatedSessionsResponse)
+async def list_sessions_paginated(
+    page: int = 1,
+    limit: int = 20,
+    status: str | None = None,
+    user: dict = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+):
+    """List sessions for the current user with pagination.
+
+    Returns paginated sessions with preview and project info for sidebar display.
+    """
+    user_id = user.get("sub")
+    roles = user.get("realm_access", {}).get("roles", [])
+
+    # Admin can see all sessions
+    if "admin" in roles:
+        user_id = None
+
+    # Get total count
+    query = db.query(SessionModel)
+    if user_id:
+        query = query.filter(SessionModel.user_id == user_id)
+    if status:
+        query = query.filter(SessionModel.status == status)
+    total = query.count()
+
+    # Get paginated sessions
+    offset = (page - 1) * limit
+    sessions = (
+        query.order_by(SessionModel.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return PaginatedSessionsResponse(
+        sessions=[_session_to_summary(s) for s in sessions],
+        total=total,
+        page=page,
+        limit=limit,
+    )
+
+
+@router.get("/sessions/list")
+async def list_sessions_legacy(
     status: str | None = None,
     limit: int = 50,
     user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: DBSession = Depends(get_db),
 ):
-    """List sessions for the current user.
+    """List sessions for the current user (legacy format).
 
     Returns as a list directly for backwards compatibility with getPlans.
     """
@@ -112,7 +197,7 @@ async def list_sessions(
 async def get_session(
     session_id: str,
     user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: DBSession = Depends(get_db),
 ):
     """Get a specific session."""
     session = crud.get_session(db, session_id)
@@ -150,7 +235,7 @@ async def get_session(
 async def delete_session(
     session_id: str,
     user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: DBSession = Depends(get_db),
 ):
     """Delete a session."""
     session = crud.get_session(db, session_id)
@@ -172,7 +257,7 @@ async def delete_session(
 async def get_session_state(
     session_id: str,
     user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: DBSession = Depends(get_db),
 ):
     """Get the execution state of a session."""
     session = crud.get_session(db, session_id)
@@ -189,3 +274,203 @@ async def get_session_state(
         "status": session.status,
         "state": session.state,
     }
+
+
+# =============================================================================
+# TRACE RESPONSE MODELS
+# =============================================================================
+
+
+class TraceEvent(BaseModel):
+    """A single event in the execution trace."""
+
+    id: str
+    type: str
+    agent: str | None = None
+    timestamp: str
+    data: dict = {}
+    # For tool_call events
+    tool: str | None = None
+    args: dict | None = None
+    result: dict | None = None
+    duration_ms: int | None = None
+
+
+class TraceSummary(BaseModel):
+    """Summary statistics for an execution trace."""
+
+    total_events: int
+    agents_used: list[str]
+    tools_called: int
+    llm_calls: int
+    total_duration_ms: int
+
+
+class TraceData(BaseModel):
+    """Full trace data with events and summary."""
+
+    events: list[TraceEvent]
+    summary: TraceSummary
+
+
+class SessionTraceResponse(BaseModel):
+    """Response model for session trace endpoint."""
+
+    session_id: str
+    status: str
+    trace: TraceData
+
+
+def _build_trace_events(state: dict) -> list[TraceEvent]:
+    """Build a list of trace events from session state.
+
+    Combines workflow_events and llm_calls into a unified timeline.
+    """
+    events = []
+    event_counter = 0
+
+    workflow_events = state.get("workflow_events", [])
+    llm_calls = state.get("llm_calls", [])
+
+    # Process workflow events
+    for evt in workflow_events:
+        event_counter += 1
+        event_type = evt.get("type", "unknown")
+
+        # Extract agent info from various event fields
+        agent = evt.get("agent_id") or evt.get("agent")
+
+        trace_event = TraceEvent(
+            id=f"evt-{event_counter}",
+            type=event_type,
+            agent=agent,
+            timestamp=evt.get("timestamp", ""),
+            data={k: v for k, v in evt.items() if k not in ["type", "timestamp", "session_id", "agent_id", "agent"]},
+        )
+
+        # Enrich tool_call events
+        if event_type == "tool_call":
+            trace_event.tool = evt.get("tool_name")
+            trace_event.args = {"preview": evt.get("args_preview", "")}
+
+        events.append(trace_event)
+
+    # Process LLM calls as separate events
+    for call in llm_calls:
+        event_counter += 1
+        trace_event = TraceEvent(
+            id=f"evt-{event_counter}",
+            type="llm_call",
+            agent=call.get("agent_id"),
+            timestamp=call.get("timestamp", ""),
+            duration_ms=call.get("duration_ms", 0),
+            data={
+                "iteration": call.get("iteration"),
+                "has_tool_calls": bool(call.get("response", {}).get("tool_calls")),
+                "message_count": len(call.get("messages", [])),
+                "tools_provided": len(call.get("tools", []) or []),
+                "usage": call.get("usage", {}),
+                "response_preview": (call.get("response", {}).get("content") or "")[:200],
+            },
+        )
+        events.append(trace_event)
+
+    # Sort events by timestamp
+    events.sort(key=lambda e: e.timestamp or "")
+
+    return events
+
+
+def _build_trace_summary(events: list[TraceEvent], state: dict) -> TraceSummary:
+    """Build summary statistics from trace events."""
+    agents_used = set()
+    tools_called = 0
+    llm_calls_count = 0
+
+    for evt in events:
+        if evt.agent:
+            agents_used.add(evt.agent)
+        if evt.type == "tool_call":
+            tools_called += 1
+        if evt.type == "llm_call":
+            llm_calls_count += 1
+
+    # Calculate total duration from timestamps or stored value
+    total_duration_ms = 0
+    if events:
+        try:
+            from datetime import datetime
+
+            first_ts = events[0].timestamp
+            last_ts = events[-1].timestamp
+            if first_ts and last_ts:
+                first_dt = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
+                last_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+                total_duration_ms = int((last_dt - first_dt).total_seconds() * 1000)
+        except (ValueError, TypeError):
+            pass
+
+    # Use stored duration if available and larger
+    stored_duration = state.get("duration_ms", 0)
+    if stored_duration > total_duration_ms:
+        total_duration_ms = stored_duration
+
+    return TraceSummary(
+        total_events=len(events),
+        agents_used=sorted(list(agents_used)),
+        tools_called=tools_called,
+        llm_calls=llm_calls_count,
+        total_duration_ms=total_duration_ms,
+    )
+
+
+@router.get("/sessions/{session_id}/trace", response_model=SessionTraceResponse)
+async def get_session_trace(
+    session_id: str,
+    user: dict = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+):
+    """Get the full execution trace for a session.
+
+    Returns a structured trace with all workflow events, LLM calls,
+    and tool executions in a format suitable for the frontend Debug Panel.
+
+    The trace includes:
+    - All workflow_events (agent starts, completions, errors)
+    - All llm_calls (model calls with inputs/outputs)
+    - All tool_calls (MCP tool executions with args)
+    - Timeline data (timestamps for each event)
+    - Agent information (which agent executed what)
+    """
+    session = crud.get_session(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Check ownership (unless admin)
+    roles = user.get("realm_access", {}).get("roles", [])
+    if "admin" not in roles and session.user_id != user.get("sub"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    state = session.state or {}
+
+    # Build trace events from state
+    events = _build_trace_events(state)
+
+    # Build summary
+    summary = _build_trace_summary(events, state)
+
+    logger.info(
+        "session_trace_retrieved",
+        session_id=session_id,
+        total_events=summary.total_events,
+        agents_used=summary.agents_used,
+    )
+
+    return SessionTraceResponse(
+        session_id=session_id,
+        status=session.status,
+        trace=TraceData(
+            events=events,
+            summary=summary,
+        ),
+    )

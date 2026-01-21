@@ -13,6 +13,7 @@ import {
   Shield,
   MessageSquare,
   FolderOpen,
+  Bug,
 } from 'lucide-react'
 
 import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole } from './services/keycloak'
@@ -23,6 +24,7 @@ import Dashboard from './pages/Dashboard'
 import Tasks from './pages/Tasks'
 import Chat from './pages/Chat'
 import Projects from './pages/Projects'
+import Debug from './pages/Debug'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -242,6 +244,14 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <Projects />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/debug/:sessionId"
+                  element={
+                    <ProtectedRoute>
+                      <Debug />
                     </ProtectedRoute>
                   }
                 />
