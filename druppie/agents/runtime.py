@@ -108,13 +108,13 @@ class Agent:
 
     @property
     def llm(self):
-        """Get LLM service (lazy loaded)."""
+        """Get LLM service (lazy loaded).
+
+        Note: Currently uses global LLM config from environment.
+        Agent-specific model/temperature settings in YAML are ignored.
+        """
         if self._llm is None:
-            self._llm = get_llm_service().get_llm(
-                model=self.definition.model,
-                temperature=self.definition.temperature,
-                max_tokens=self.definition.max_tokens,
-            )
+            self._llm = get_llm_service().get_llm()
         return self._llm
 
     @property
