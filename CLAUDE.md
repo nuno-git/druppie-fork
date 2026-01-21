@@ -314,6 +314,30 @@ python scripts/setup_keycloak.py
 
 ## Key Learnings & Common Issues
 
+### Issue: Session Status Endpoint Using Non-Existent _state_manager
+**Symptom**: `/chat/{session_id}/status` crashes with AttributeError
+**Cause**: New LangGraph architecture doesn't use _state_manager
+**Fix**: Query database directly for session state, approvals, and questions
+
+### Issue: Approval Errors Return success: true
+**Symptom**: Frontend shows approval succeeded when MCP execution failed
+**Cause**: Exception handler returned `{"success": True}` even on error
+**Fix**: Return `{"success": False, "status": "execution_failed"}` on errors
+
+### Issue: Database Connection Leaks in loop.py
+**Symptom**: Connection pool exhaustion under load
+**Cause**: `next(get_db())` not properly closed on exceptions
+**Fix**: Use context manager with comprehensive finally block
+
+### Issue: MCP Tool Errors Not Properly Handled in runtime.py
+**Symptom**: Agents don't distinguish tool success from failure
+**Cause**: Only checking for "paused" status, not error status
+**Fix**: Check `success=False` or `error` field, emit tool_error event
+
+### Issue: Approvals Without Roles Approvable by Anyone
+**Symptom**: Security issue - any user can approve if required_roles is empty
+**Fix**: Default to `["admin"]` if required_roles is None or empty
+
 ### Issue: Router Agent Asking Unnecessary HITL Questions
 **Symptom**: Router uses `hitl:ask_question` for simple tasks like "Create a hello.txt file"
 **Fix**: Update router.yaml system prompt to be decisive - only ask HITL for truly ambiguous requests
@@ -397,6 +421,13 @@ Auto-detects and runs test frameworks:
 - Go: go test
 - Returns structured pass/fail counts
 
+### Workspace API (`/api/workspace`)
+REST API for browsing workspace files:
+- `GET /api/workspace` - List files for a session
+- `GET /api/workspace/file` - Get file content
+- `GET /api/workspace/{id}` - Get workspace details
+- Includes path traversal protection
+
 ### Project Detail Page (`/projects/:projectId`)
 Comprehensive project view with tabs:
 - Overview: Project info, repo URL, build/run actions
@@ -423,3 +454,32 @@ Admin configuration page with:
 | Plans | /plans | Execution plans |
 | Debug | /debug/:id | Execution trace viewer |
 | Settings | /settings | System configuration |
+
+## Development Best Practices
+
+### DB Session Management
+Use the `db_session()` context manager in loop.py for guaranteed cleanup:
+```python
+with db_session() as db:
+    # Database operations here - always cleaned up
+```
+
+### MCP Error Handling
+Always check MCP tool results for errors:
+```python
+result = await mcp_client.call_tool(...)
+if result.get("success") is False or "error" in result:
+    # Handle error - log, emit event, format for agent
+```
+
+### Security: Approval Role Defaults
+If a tool approval doesn't specify required_roles, default to admin:
+```python
+required_roles = approval.required_roles if approval.required_roles else ["admin"]
+```
+
+### Context Injection
+Only inject fields the MCP tool actually accepts:
+- For coding tools: inject `workspace_id`
+- For hitl tools: inject `session_id`
+- Don't inject project_id, workspace_path, branch to MCP tools

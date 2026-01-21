@@ -138,6 +138,20 @@ class ExecutionContext:
             "args_preview": str(args)[:100] if args else "",
         })
 
+    def tool_error(self, agent_id: str, tool_name: str, error: str) -> None:
+        """Record tool error event.
+
+        Args:
+            agent_id: ID of the calling agent
+            tool_name: Name of the tool that failed
+            error: Error message
+        """
+        self.emit("tool_error", {
+            "agent_id": agent_id,
+            "tool_name": tool_name,
+            "error": error[:500] if error else "",  # Truncate long errors
+        })
+
     def step_started(self, step_id: str, step_type: str, agent_id: str = None) -> None:
         """Record step started event."""
         self.emit("step_started", {

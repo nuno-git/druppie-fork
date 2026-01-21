@@ -87,9 +87,11 @@ async def list_approvals(
     # Filter to approvals user can act on
     filtered = []
     for a in approvals:
-        required_roles = a.required_roles or []
-        # Admin can approve anything, or user has required role
-        if "admin" in user_roles or not required_roles or any(r in user_roles for r in required_roles):
+        # Security policy: If no required_roles are specified, default to requiring "admin" role.
+        # This prevents approvals without explicit role requirements from being approvable by anyone.
+        required_roles = a.required_roles if a.required_roles else ["admin"]
+        # Admin can approve anything, or user has one of the required roles
+        if "admin" in user_roles or any(r in user_roles for r in required_roles):
             filtered.append(a)
 
     # Return as a list for backwards compatibility with frontend getTasks
@@ -156,10 +158,12 @@ async def approve_request(
         raise HTTPException(status_code=400, detail="Approval is not pending")
 
     user_roles = user.get("realm_access", {}).get("roles", [])
-    required_roles = approval.required_roles or []
+    # Security policy: If no required_roles are specified, default to requiring "admin" role.
+    # This prevents approvals without explicit role requirements from being approvable by anyone.
+    required_roles = approval.required_roles if approval.required_roles else ["admin"]
 
-    # Check authorization
-    if required_roles and "admin" not in user_roles:
+    # Check authorization - admin can approve anything, otherwise need a required role
+    if "admin" not in user_roles:
         if not any(r in user_roles for r in required_roles):
             raise HTTPException(
                 status_code=403,
@@ -226,6 +230,24 @@ async def approve_request(
                         session_id=approval.session_id,
                     )
 
+            # Validate that we have workspace context - required for tool execution
+            if not workspace_id:
+                logger.error(
+                    "workspace_context_missing",
+                    approval_id=approval_id,
+                    session_id=approval.session_id,
+                    tool_name=approval.tool_name,
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Cannot execute tool '{approval.tool_name}': workspace context not found. "
+                        f"No workspace_id in approval arguments and no workspace associated with "
+                        f"session '{approval.session_id}'. The approval may have been created "
+                        "before workspace tracking was implemented."
+                    ),
+                )
+
             logger.info(
                 "creating_execution_context_for_approval",
                 approval_id=approval_id,
@@ -271,9 +293,17 @@ async def approve_request(
 
         except Exception as e:
             logger.error("approval_execution_error", error=str(e))
+            # Update approval status to reflect execution failure
+            crud.update_approval(
+                db,
+                approval_id,
+                {
+                    "status": "execution_failed",
+                },
+            )
             return {
-                "success": True,
-                "status": "approved",
+                "success": False,
+                "status": "execution_failed",
                 "session_resumed": False,
                 "error": str(e),
             }

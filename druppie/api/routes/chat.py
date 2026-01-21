@@ -11,7 +11,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_current_user, get_loop, get_optional_user
+from sqlalchemy.orm import Session as DBSession
+
+from druppie.api.deps import get_current_user, get_db, get_loop, get_optional_user
 from druppie.api.websocket import manager
 from druppie.core.loop import MainLoop
 
@@ -267,20 +269,54 @@ async def resume_chat(
 async def get_chat_status(
     session_id: str,
     user: dict = Depends(get_current_user),
-    loop: MainLoop = Depends(get_loop),
+    db: "DBSession" = Depends(get_db),
 ):
-    """Get the status of a chat session."""
-    state = loop._state_manager.get_state(session_id)
+    """Get the status of a chat session.
 
-    if not state:
+    Returns session state including:
+    - Session status (active, paused, completed, failed)
+    - Current agent (if any)
+    - Pending approval (if any)
+    - Pending HITL questions (if any)
+    - Last activity timestamp
+    """
+    from druppie.db.crud import (
+        get_session,
+        list_pending_approvals,
+        get_hitl_questions_for_session,
+    )
+
+    session = get_session(db, session_id)
+
+    if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # Get pending approvals for this session
+    pending_approvals = list_pending_approvals(db, session_id=session_id)
+
+    # Get pending HITL questions for this session
+    pending_questions = get_hitl_questions_for_session(db, session_id, status="pending")
+
+    # Extract current agent from state if available
+    current_agent = None
+    if session.state:
+        # Check for current step info in workflow events
+        workflow_events = session.state.get("workflow_events", [])
+        for event in reversed(workflow_events):
+            if event.get("type") == "step_started" and event.get("data", {}).get("agent_id"):
+                current_agent = event["data"]["agent_id"]
+                break
 
     return {
         "session_id": session_id,
-        "status": state.status.value,
-        "current_index": state.current_index,
-        "has_pending_question": state.pending_question is not None,
-        "has_pending_approval": state.pending_approval is not None,
+        "status": session.status,
+        "current_agent": current_agent,
+        "has_pending_approval": len(pending_approvals) > 0,
+        "has_pending_question": len(pending_questions) > 0,
+        "pending_approvals": [a.to_dict() for a in pending_approvals],
+        "pending_questions": [q.to_dict() for q in pending_questions],
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+        "created_at": session.created_at.isoformat() if session.created_at else None,
     }
 
 
