@@ -13,6 +13,7 @@ Architecture:
 import json
 import os
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,9 @@ import yaml
 from .llm_service import LLMService
 
 logger = structlog.get_logger()
+
+# Druppie Core templates directory
+CORE_TEMPLATES_DIR = Path(__file__).parent / "core_templates"
 
 
 def load_code_generator_prompt() -> str:
@@ -258,7 +262,75 @@ Generate ALL the files needed."""
             logger.debug("file_written", path=file_path)
 
         logger.info("files_generated", count=len(files_created))
+
+        # Add Druppie Core files based on app type
+        core_files = self._add_druppie_core(workspace, app_type)
+        files_created.extend(core_files)
+
         return files_created
+
+    def _add_druppie_core(self, workspace: Path, app_type: str) -> list[str]:
+        """Add Druppie Core integration files based on detected project type.
+
+        Detects project type by checking existing files in the workspace.
+
+        Args:
+            workspace: The workspace directory
+            app_type: Type of application hint (may not be accurate)
+
+        Returns:
+            List of core files added
+        """
+        files_added = []
+        app_type_lower = app_type.lower()
+
+        try:
+            # Detect Flask/Python project by checking for common files
+            has_flask = (
+                (workspace / "app.py").exists() or
+                (workspace / "requirements.txt").exists() or
+                "flask" in app_type_lower or
+                "python" in app_type_lower
+            )
+
+            # Detect React/Node project by checking for common files
+            has_react = (
+                (workspace / "package.json").exists() or
+                (workspace / "src" / "main.jsx").exists() or
+                (workspace / "src" / "App.jsx").exists() or
+                "react" in app_type_lower or
+                "vite" in app_type_lower or
+                "node" in app_type_lower
+            )
+
+            if has_flask and not has_react:
+                # Add Flask Druppie Core
+                flask_core = CORE_TEMPLATES_DIR / "flask" / "druppie_core.py"
+                if flask_core.exists():
+                    dest = workspace / "druppie_core.py"
+                    shutil.copy(flask_core, dest)
+                    files_added.append("druppie_core.py")
+                    logger.info("druppie_core_added", file="druppie_core.py", project_type="flask")
+
+            elif has_react:
+                # Add React Druppie Core
+                react_core = CORE_TEMPLATES_DIR / "react" / "useDruppie.js"
+                if react_core.exists():
+                    # Create druppie subdirectory in src
+                    druppie_dir = workspace / "src" / "druppie"
+                    druppie_dir.mkdir(parents=True, exist_ok=True)
+                    dest = druppie_dir / "useDruppie.js"
+                    shutil.copy(react_core, dest)
+                    files_added.append("src/druppie/useDruppie.js")
+                    logger.info("druppie_core_added", file="src/druppie/useDruppie.js", project_type="react")
+
+            else:
+                logger.debug("druppie_core_skipped", app_type=app_type, reason="unknown project type")
+
+        except Exception as e:
+            logger.warning("druppie_core_add_failed", error=str(e), app_type=app_type)
+
+        return files_added
 
     def update_app(
         self,

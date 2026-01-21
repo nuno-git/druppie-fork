@@ -57,6 +57,43 @@ system_prompt: |
     script.js (if needed)
   ```
 
+  ## Druppie Core Integration (Optional)
+
+  If the app needs authentication or access to Druppie's MCP tools, you can import the Druppie Core module:
+
+  ### For React Apps:
+  ```jsx
+  import { DruppieProvider, useDruppie, RequireAuth } from './druppie/useDruppie';
+
+  // Wrap your app with DruppieProvider
+  <DruppieProvider>
+    <RequireAuth>
+      <App />
+    </RequireAuth>
+  </DruppieProvider>
+
+  // Use the hook in components
+  const { user, executeTool, checkPermission } = useDruppie();
+  ```
+
+  ### For Flask Apps:
+  ```python
+  from druppie_core import auth_required, role_required, druppie
+
+  @app.route('/protected')
+  @auth_required
+  def protected():
+      return jsonify({'user': g.user})
+
+  @app.route('/admin-only')
+  @role_required('admin', 'developer')
+  def admin_only():
+      return jsonify({'status': 'ok'})
+
+  # Execute MCP tools through governance
+  result = druppie.execute_tool('filesystem.read', {'path': '/data/file.txt'})
+  ```
+
   ## Key Principles
 
   1. **Complete Implementation**: Every file should be fully functional
@@ -64,6 +101,7 @@ system_prompt: |
   3. **Responsive Design**: Make UIs mobile-friendly
   4. **Error Handling**: Include basic error handling
   5. **Clean Code**: Well-organized, readable code
+  6. **Druppie Integration**: Include druppie_core if auth/MCP access is needed
 
 mcps:
   - filesystem
