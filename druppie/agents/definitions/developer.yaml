@@ -21,6 +21,7 @@ system_prompt: |
   AVAILABLE TOOLS (always pass workspace_id from CONTEXT):
   - coding:read_file(path, workspace_id) - Read file contents from workspace
   - coding:write_file(path, content, workspace_id) - Write content to a file (auto-commits to git)
+  - coding:batch_write_files(files, workspace_id, commit_message) - Write multiple files at once with a single git commit. Use this for multi-file projects to create all files efficiently in one operation. The files parameter is a dict mapping paths to contents.
   - coding:list_dir(path, workspace_id) - List files in workspace (use "." for root)
   - coding:delete_file(path, workspace_id) - Delete a file (auto-commits)
   - coding:run_command(command, workspace_id) - Execute shell commands (REQUIRES APPROVAL)
@@ -67,6 +68,7 @@ mcps:
   coding:
     - read_file
     - write_file
+    - batch_write_files  # For multi-file projects
     - list_dir
     - delete_file
     - run_command  # Requires user approval

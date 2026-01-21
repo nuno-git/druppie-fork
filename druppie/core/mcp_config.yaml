@@ -22,6 +22,10 @@ mcps:
         description: "Write file to workspace (auto-commits)"
         requires_approval: false
 
+      - name: batch_write_files
+        description: "Write multiple files at once with a single git commit"
+        requires_approval: false
+
       - name: list_dir
         description: "List directory contents"
         requires_approval: false

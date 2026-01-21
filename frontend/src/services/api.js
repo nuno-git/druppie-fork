@@ -49,7 +49,9 @@ export const sendChat = (message, sessionId = null, conversationHistory = null) 
   })
 
 // ============ Sessions (replaces Plans) ============
-export const getSessions = () => request('/api/sessions')
+// Paginated sessions for sidebar (new format with preview & project_name)
+export const getSessions = (page = 1, limit = 20) =>
+  request(`/api/sessions?page=${page}&limit=${limit}`)
 export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
 export const resumeSession = (sessionId, answer = null) =>
   request(`/api/sessions/${sessionId}/resume`, {
@@ -57,8 +59,8 @@ export const resumeSession = (sessionId, answer = null) =>
     body: JSON.stringify({ answer }),
   })
 
-// Legacy plan endpoints (mapped to sessions for backwards compatibility)
-export const getPlans = () => request('/api/sessions')
+// Legacy plan endpoints (mapped to sessions/list for backwards compatibility)
+export const getPlans = () => request('/api/sessions/list')
 export const getPlan = (planId) => request(`/api/sessions/${planId}`)
 export const createPlan = (data) =>
   request('/api/sessions', { method: 'POST', body: JSON.stringify(data) })
