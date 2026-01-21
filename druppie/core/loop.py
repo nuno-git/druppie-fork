@@ -28,11 +28,13 @@ Workspace is initialized at conversation start (git-first architecture).
 
 import os
 import uuid
-from typing import Any, Callable, TypedDict
+from contextlib import contextmanager
+from typing import Any, Callable, Generator, TypedDict
 
 import structlog
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from sqlalchemy.orm import Session
 
 from druppie.agents import Agent
 from druppie.workflows import Workflow
@@ -45,6 +47,47 @@ from druppie.core.execution_context import (
 from druppie.core.mcp_client import get_mcp_client
 
 logger = structlog.get_logger()
+
+
+# =============================================================================
+# DATABASE SESSION HELPER
+# =============================================================================
+
+
+@contextmanager
+def db_session() -> Generator[Session, None, None]:
+    """Context manager for database sessions with guaranteed cleanup.
+
+    This ensures database connections are always properly closed, even when
+    exceptions occur. Using this instead of `next(get_db())` prevents
+    connection pool exhaustion.
+
+    Usage:
+        with db_session() as db:
+            # use db...
+            db.commit()  # if needed
+        # db is automatically closed here
+
+    Yields:
+        SQLAlchemy Session instance
+    """
+    from druppie.api.deps import get_db
+
+    db_gen = get_db()
+    db = next(db_gen)
+    try:
+        yield db
+    except Exception as e:
+        logger.error("db_session_error", error=str(e), error_type=type(e).__name__)
+        raise
+    finally:
+        try:
+            # Try to exhaust the generator to trigger its finally block
+            next(db_gen, None)
+        except StopIteration:
+            pass
+        # Explicit close as safety net (idempotent operation)
+        db.close()
 
 
 # =============================================================================
@@ -234,32 +277,37 @@ async def execute_node(state: GraphState) -> dict:
 
                 if ctx:
                     # Use MCPClient for HTTP calls to MCP microservices
-                    from druppie.api.deps import get_db
+                    # Parse tool name first (format: server:tool)
+                    if ":" in tool:
+                        server, tool_name = tool.split(":", 1)
+                    else:
+                        server = "coding"
+                        tool_name = tool
 
-                    db = next(get_db())
-                    try:
-                        mcp_client = get_mcp_client(db)
+                    with db_session() as db:
+                        try:
+                            mcp_client = get_mcp_client(db)
+                            result = await mcp_client.call_tool(server, tool_name, inputs, ctx)
 
-                        # Parse tool name (format: server:tool)
-                        if ":" in tool:
-                            server, tool_name = tool.split(":", 1)
-                        else:
-                            server = "coding"
-                            tool_name = tool
-
-                        result = await mcp_client.call_tool(server, tool_name, inputs, ctx)
-
-                        # Check if paused for approval
-                        if result.get("status") == "paused":
-                            # Return paused state - execution will resume after approval
-                            return {
-                                "results": results,
-                                "response": f"Waiting for approval: {result.get('tool')}",
-                                "paused": True,
-                                "approval_id": result.get("approval_id"),
-                            }
-                    finally:
-                        db.close()
+                            # Check if paused for approval
+                            if result.get("status") == "paused":
+                                # Return paused state - execution will resume after approval
+                                return {
+                                    "results": results,
+                                    "response": f"Waiting for approval: {result.get('tool')}",
+                                    "paused": True,
+                                    "approval_id": result.get("approval_id"),
+                                }
+                        except Exception as mcp_error:
+                            logger.error(
+                                "mcp_tool_call_error",
+                                step_id=step_id,
+                                tool=tool,
+                                server=server,
+                                error=str(mcp_error),
+                                error_type=type(mcp_error).__name__,
+                            )
+                            raise
                 else:
                     result = {"error": "No execution context available for MCP call"}
             else:
@@ -634,16 +682,13 @@ class MainLoop:
         """
         try:
             from druppie.core.workspace import get_workspace_service, WORKSPACE_ROOT
-            from druppie.api.deps import get_db
 
             exec_ctx.emit("workspace_initializing", {
                 "project_id": project_id,
                 "project_name": project_name,
             })
 
-            # Get database session
-            db = next(get_db())
-            try:
+            with db_session() as db:
                 workspace_service = get_workspace_service(db)
 
                 # Initialize workspace (creates project/repo if needed)
@@ -697,11 +742,14 @@ class MainLoop:
                     "is_new_project": workspace.is_new_project,
                 }
 
-            finally:
-                db.close()
-
         except Exception as e:
-            logger.error("workspace_initialization_failed", error=str(e))
+            logger.error(
+                "workspace_initialization_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                session_id=session_id,
+                project_id=project_id,
+            )
             exec_ctx.emit("workspace_error", {"error": str(e)})
             # Return empty workspace info - execution can continue without workspace
             return {
@@ -737,10 +785,7 @@ class MainLoop:
             exec_ctx: Execution context for logging
         """
         try:
-            from druppie.api.deps import get_db
-
-            db = next(get_db())
-            try:
+            with db_session() as db:
                 mcp_client = get_mcp_client(db)
 
                 result = await mcp_client._execute_tool(
@@ -769,9 +814,6 @@ class MainLoop:
                         workspace_id=workspace_id,
                         error=result.get("error"),
                     )
-
-            finally:
-                db.close()
 
         except Exception as e:
             # Log but don't fail - workspace still exists, just MCP might not find it
@@ -804,7 +846,6 @@ class MainLoop:
         """
         try:
             from druppie.db.crud import upsert_session
-            from druppie.api.deps import get_db
 
             # Build state to store
             state = {
@@ -827,18 +868,20 @@ class MainLoop:
                 "error": error,
             }
 
-            # Get database session
-            db = next(get_db())
-            try:
+            with db_session() as db:
                 upsert_session(db, session_id, user_id, status, state)
                 db.commit()
-            finally:
-                db.close()
 
             logger.debug("session_saved", session_id=session_id, status=status)
 
         except Exception as e:
-            logger.error("session_save_error", session_id=session_id, error=str(e))
+            logger.error(
+                "session_save_error",
+                session_id=session_id,
+                status=status,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
 
 
 # =============================================================================

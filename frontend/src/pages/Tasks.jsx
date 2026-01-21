@@ -175,8 +175,8 @@ const TaskCard = ({ task, onApprove, onReject }) => {
       {/* Context info - simplified */}
       <div className="grid grid-cols-2 gap-4 mb-4 text-sm bg-gray-50 rounded-lg p-3">
         <div>
-          <span className="text-gray-500">Conversation:</span>
-          <span className="ml-2 font-medium">{task.plan?.name || task.plan_id?.substring(0, 8) + '...'}</span>
+          <span className="text-gray-500">Session:</span>
+          <span className="ml-2 font-medium font-mono text-xs">{task.session_id ? task.session_id.substring(0, 8) + '...' : 'N/A'}</span>
         </div>
         <div>
           <span className="text-gray-500">Created:</span>
@@ -295,11 +295,11 @@ const QuestionCard = ({ question, onAnswer, isAnswering }) => {
         </span>
       </div>
 
-      {/* Plan info */}
-      {question.plan && (
+      {/* Session info */}
+      {question.session_id && (
         <div className="mb-4 text-sm">
-          <span className="text-gray-500">Conversation:</span>
-          <span className="ml-2 font-medium">{question.plan.name}</span>
+          <span className="text-gray-500">Session:</span>
+          <span className="ml-2 font-medium font-mono text-xs">{question.session_id.substring(0, 8)}...</span>
         </div>
       )}
 

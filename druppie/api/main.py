@@ -8,11 +8,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 import structlog
 
-from druppie.api.routes import chat, sessions, approvals, mcps, projects, questions
+from druppie.api.routes import chat, sessions, approvals, mcps, projects, questions, workspace
 from druppie.api.websocket import handle_websocket
 from druppie.core.loop import get_main_loop
+from druppie.core.auth import get_auth_service
 from druppie.agents import Agent
 from druppie.workflows import Workflow
 
@@ -67,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(mcps.router, prefix="/api", tags=["MCPs"])
     app.include_router(projects.router, prefix="/api", tags=["Projects"])
     app.include_router(questions.router, prefix="/api/questions", tags=["Questions"])
+    app.include_router(workspace.router, prefix="/api", tags=["Workspace"])
 
     @app.get("/health")
     async def health_check():
@@ -75,13 +78,60 @@ def create_app() -> FastAPI:
 
     @app.get("/api/status")
     async def api_status():
-        """API status endpoint for frontend dashboard."""
+        """API status endpoint for frontend dashboard.
+
+        Checks health of all dependent services:
+        - Keycloak: Authentication service
+        - Database: PostgreSQL/SQLite database
+        - LLM: Language model provider
+        - Gitea: Git repository service
+        """
+        # Check Keycloak health
+        auth_service = get_auth_service()
+        keycloak_healthy = auth_service.is_keycloak_available()
+
+        # Check database health
+        database_healthy = False
+        try:
+            from druppie.api.deps import engine
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+                database_healthy = True
+        except Exception as e:
+            logger.warning("database_health_check_failed", error=str(e))
+
+        # Check LLM provider configuration
+        llm_provider = os.getenv("LLM_PROVIDER", "auto")
+        llm_healthy = False
+        if llm_provider == "mock":
+            llm_healthy = True
+        elif llm_provider in ("zai", "auto"):
+            # Check if API key is configured
+            zai_key = os.getenv("ZAI_API_KEY", "")
+            llm_healthy = bool(zai_key)
+
+        # Check Gitea health
+        gitea_healthy = False
+        gitea_url = os.getenv("GITEA_INTERNAL_URL", os.getenv("GITEA_URL", "http://gitea:3000"))
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{gitea_url}/api/v1/version")
+                gitea_healthy = response.status_code == 200
+        except Exception as e:
+            logger.warning("gitea_health_check_failed", error=str(e))
+
         return {
             "status": "healthy",
             "version": "2.0.0",
+            "environment": os.getenv("ENVIRONMENT", "development"),
+            "keycloak": keycloak_healthy,
+            "database": database_healthy,
+            "llm": llm_healthy,
+            "gitea": gitea_healthy,
             "agents": Agent.list_agents(),
             "workflows": Workflow.list_workflows(),
-            "llm_provider": os.getenv("LLM_PROVIDER", "auto"),
+            "llm_provider": llm_provider,
         }
 
     @app.get("/")

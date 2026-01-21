@@ -298,6 +298,39 @@ class Agent:
                         "iteration": iteration,
                     }
 
+                # Check for MCP tool errors (success=False or error field)
+                is_error = result.get("success") is False or "error" in result
+                if is_error:
+                    error_msg = result.get("error", "Unknown MCP tool error")
+                    error_type = result.get("error_type", "mcp_error")
+                    is_recoverable = result.get("recoverable", True)
+
+                    logger.warning(
+                        "agent_tool_error",
+                        agent_id=self.id,
+                        tool=mcp_tool_name,
+                        error=error_msg,
+                        error_type=error_type,
+                        recoverable=is_recoverable,
+                        iteration=iteration,
+                    )
+
+                    # Emit tool error event
+                    if exec_ctx:
+                        exec_ctx.tool_error(self.id, mcp_tool_name, error_msg)
+
+                    # Format error result clearly for the agent
+                    # This helps the agent understand what went wrong and decide how to proceed
+                    result = {
+                        "success": False,
+                        "error": error_msg,
+                        "error_type": error_type,
+                        "recoverable": is_recoverable,
+                        "tool": mcp_tool_name,
+                        "original_args": tool_args,
+                        "hint": "Check the error message and either retry with corrected arguments or try a different approach.",
+                    }
+
                 # Add tool result to messages
                 messages.append({
                     "role": "assistant",
