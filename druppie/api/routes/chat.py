@@ -4,7 +4,7 @@ Main endpoint for processing user messages.
 """
 
 import asyncio
-from typing import Any
+from typing import Any, Callable
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,9 +12,35 @@ from pydantic import BaseModel, Field
 import structlog
 
 from druppie.api.deps import get_current_user, get_loop, get_optional_user
+from druppie.api.websocket import manager
 from druppie.core.loop import MainLoop
 
 logger = structlog.get_logger()
+
+
+def create_emit_event(session_id: str) -> Callable[[dict], None]:
+    """Create an emit_event callback for ExecutionContext.
+
+    This bridges the sync callback interface expected by ExecutionContext
+    with the async WebSocket manager.
+    """
+    def emit_event(event: dict) -> None:
+        """Emit event to WebSocket (sync wrapper)."""
+        try:
+            # Get the current event loop or create a new one
+            try:
+                loop = asyncio.get_running_loop()
+                # If we're in an async context, schedule the coroutine
+                asyncio.create_task(
+                    manager.broadcast_to_session(session_id, event)
+                )
+            except RuntimeError:
+                # No running loop - this shouldn't happen in FastAPI but handle it
+                pass
+        except Exception as e:
+            logger.debug("emit_event_error", error=str(e))
+
+    return emit_event
 
 router = APIRouter()
 
@@ -98,16 +124,14 @@ async def chat(
     )
 
     try:
-        # Convert conversation history to dict format
-        history = [
-            {"role": msg.role, "content": msg.content}
-            for msg in request.conversation_history
-        ]
+        # Create emit_event callback for real-time updates
+        emit_event = create_emit_event(session_id)
 
         result = await loop.process_message(
             message=request.message,
             session_id=session_id,
             user_id=user.get("sub") if user else None,
+            emit_event=emit_event,
         )
 
         result_session_id = result.get("session_id", session_id)
@@ -160,6 +184,9 @@ async def resume_chat(
     )
 
     try:
+        # Create emit_event callback for real-time updates
+        emit_event = create_emit_event(session_id)
+
         # Determine the response value based on what's provided
         if request.approved is not None:
             response_value = {"approved": request.approved}
@@ -169,6 +196,7 @@ async def resume_chat(
         result = await loop.resume_session(
             session_id=session_id,
             response=response_value,
+            emit_event=emit_event,
         )
 
         return ChatResponse(

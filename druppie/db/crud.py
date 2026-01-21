@@ -122,6 +122,41 @@ def list_sessions(
     return query.order_by(Session.created_at.desc()).limit(limit).all()
 
 
+def upsert_session(
+    db: DBSession,
+    session_id: str,
+    user_id: str | None = None,
+    status: str = "active",
+    state: dict | None = None,
+) -> Session:
+    """Create or update a session.
+
+    This is the preferred method for saving sessions from the main loop.
+    """
+    session = get_session(db, session_id)
+
+    if session:
+        # Update existing session
+        if user_id is not None:
+            session.user_id = user_id
+        session.status = status
+        if state is not None:
+            session.state = state
+        session.updated_at = datetime.utcnow()
+    else:
+        # Create new session
+        session = Session(
+            id=session_id,
+            user_id=user_id,
+            status=status,
+            state=state,
+        )
+        db.add(session)
+
+    db.flush()
+    return session
+
+
 # =============================================================================
 # APPROVAL CRUD
 # =============================================================================
