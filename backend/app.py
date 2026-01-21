@@ -406,6 +406,45 @@ def approve_task(task_id):
     socketio.emit("task_approved", task.to_dict(include_approvals=True), room=f"approvals:{approving_role}")
     socketio.emit("plan_updated", task.plan.to_dict(), room=f"plan:{task.plan_id}")
 
+    # If task is now approved, check if the plan can be executed
+    if task.status == "approved":
+        plan = task.plan
+
+        # Check if there are any remaining pending_approval tasks
+        remaining_pending = Task.query.filter(
+            Task.plan_id == plan.id,
+            Task.status == "pending_approval"
+        ).count()
+
+        if remaining_pending == 0 and plan.status == "pending_approval":
+            # All approvals complete - execute the plan
+            logger.info("all_approvals_complete_executing_plan", plan_id=plan.id, task_id=task_id)
+
+            # Create event emitter for real-time updates
+            def emit_workflow_event(event: dict):
+                socketio.emit("workflow_event", {
+                    "plan_id": plan.id,
+                    "event": event,
+                })
+
+            # Execute the plan
+            try:
+                execution_result = plan_service.execute(plan, user.get("sub"), emit_event=emit_workflow_event)
+                response_data["execution_result"] = execution_result
+                response_data["plan_status"] = plan.status
+
+                # Broadcast final plan update
+                socketio.emit("plan_updated", plan.to_dict(), room=f"plan:{plan.id}")
+
+                logger.info("plan_executed_after_approval",
+                           plan_id=plan.id,
+                           status=execution_result.get("status"))
+            except Exception as e:
+                logger.error("plan_execution_failed_after_approval",
+                            plan_id=plan.id,
+                            error=str(e))
+                response_data["execution_error"] = str(e)
+
     return jsonify(response_data)
 
 

@@ -559,6 +559,111 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
   )
 }
 
+// Agent name formatting and icons
+const AGENT_CONFIG = {
+  router: { name: 'Router', icon: Brain, color: 'purple', description: 'Intent analysis' },
+  router_agent: { name: 'Router', icon: Brain, color: 'purple', description: 'Intent analysis' },
+  planner: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning' },
+  planner_agent: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning' },
+  developer: { name: 'Developer', icon: FileCode, color: 'green', description: 'Code generation' },
+  developer_agent: { name: 'Developer', icon: FileCode, color: 'green', description: 'Code generation' },
+  code_generator: { name: 'Code Generator', icon: FileCode, color: 'green', description: 'Code generation' },
+  code_generator_agent: { name: 'Code Generator', icon: FileCode, color: 'green', description: 'Code generation' },
+  devops: { name: 'DevOps', icon: Hammer, color: 'orange', description: 'Build & deploy' },
+  devops_agent: { name: 'DevOps', icon: Hammer, color: 'orange', description: 'Build & deploy' },
+  git_agent: { name: 'Git', icon: GitBranch, color: 'gray', description: 'Version control' },
+  reviewer: { name: 'Reviewer', icon: CheckCircle, color: 'teal', description: 'Code review' },
+  reviewer_agent: { name: 'Reviewer', icon: CheckCircle, color: 'teal', description: 'Code review' },
+}
+
+const getAgentConfig = (agentId) => {
+  return AGENT_CONFIG[agentId] || {
+    name: agentId.replace('_agent', '').replace(/_/g, ' '),
+    icon: Bot,
+    color: 'gray',
+    description: 'AI Agent',
+  }
+}
+
+const getAgentColorClasses = (color) => {
+  const colors = {
+    purple: 'bg-purple-100 text-purple-700 border-purple-200',
+    blue: 'bg-blue-100 text-blue-700 border-blue-200',
+    green: 'bg-green-100 text-green-700 border-green-200',
+    orange: 'bg-orange-100 text-orange-700 border-orange-200',
+    gray: 'bg-gray-100 text-gray-700 border-gray-200',
+    teal: 'bg-teal-100 text-teal-700 border-teal-200',
+  }
+  return colors[color] || colors.gray
+}
+
+// Agent Attribution Header - Shows prominently which agents contributed to the response
+const AgentAttributionHeader = ({ events }) => {
+  if (!events || events.length === 0) return null
+
+  // Extract unique agents from events
+  const agents = [...new Set(events
+    .filter(e => e.data?.agent_id)
+    .map(e => e.data.agent_id)
+  )]
+
+  // Also check for specific event types that indicate agent work
+  const hasRouter = events.some(e =>
+    e.event_type === 'router_analyzing' ||
+    e.event_type === 'intent_detected' ||
+    e.data?.agent_id?.includes('router')
+  )
+  const hasPlanner = events.some(e =>
+    e.event_type === 'plan_ready' ||
+    e.event_type === 'plan_creating' ||
+    e.data?.agent_id?.includes('planner')
+  )
+  const hasCodeGen = events.some(e =>
+    e.event_type === 'llm_generating' ||
+    e.event_type === 'files_created' ||
+    e.data?.agent_id?.includes('developer') ||
+    e.data?.agent_id?.includes('code_generator')
+  )
+
+  // Add inferred agents if not already present
+  if (hasRouter && !agents.some(a => a.includes('router'))) {
+    agents.unshift('router_agent')
+  }
+  if (hasPlanner && !agents.some(a => a.includes('planner'))) {
+    agents.push('planner_agent')
+  }
+  if (hasCodeGen && !agents.some(a => a.includes('developer') || a.includes('code'))) {
+    agents.push('developer_agent')
+  }
+
+  if (agents.length === 0) return null
+
+  return (
+    <div className="flex items-center gap-2 mb-2 flex-wrap">
+      <span className="text-xs text-gray-500 font-medium">Powered by:</span>
+      {agents.slice(0, 4).map(agentId => {
+        const config = getAgentConfig(agentId)
+        const AgentIcon = config.icon
+        const colorClasses = getAgentColorClasses(config.color)
+
+        return (
+          <span
+            key={agentId}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full border ${colorClasses}`}
+            title={config.description}
+          >
+            <AgentIcon className="w-3.5 h-3.5" />
+            {config.name}
+          </span>
+        )
+      })}
+      {agents.length > 4 && (
+        <span className="text-xs text-gray-400">+{agents.length - 4} more</span>
+      )}
+    </div>
+  )
+}
+
 const Message = ({ message, onAnswerQuestion, isAnsweringQuestion, onApproveTask, onRejectTask, isApprovingTask, currentUserId }) => {
   const isUser = message.role === 'user'
   const [eventsExpanded, setEventsExpanded] = useState(true)
@@ -579,22 +684,9 @@ const Message = ({ message, onAnswerQuestion, isAnsweringQuestion, onApproveTask
             </div>
           )}
           <div className="flex-1 min-w-0">
-            {/* Agent attribution badges */}
+            {/* Agent attribution header - prominent display of which agents contributed */}
             {!isUser && message.workflowEvents && message.workflowEvents.length > 0 && (
-              <div className="flex items-center gap-2 mb-2 flex-wrap">
-                {[...new Set(message.workflowEvents
-                  .filter(e => e.data?.agent_id)
-                  .map(e => e.data.agent_id)
-                )].map(agentId => (
-                  <span
-                    key={agentId}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full"
-                  >
-                    <Bot className="w-3 h-3" />
-                    {agentId.replace('_agent', '').replace(/_/g, ' ')}
-                  </span>
-                ))}
-              </div>
+              <AgentAttributionHeader events={message.workflowEvents} />
             )}
 
             {/* Main content */}
