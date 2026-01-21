@@ -36,7 +36,6 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from druppie.agents import Agent
 from druppie.workflows import Workflow
-from druppie.mcps.hitl import configure_hitl
 from druppie.core.execution_context import (
     ExecutionContext,
     set_current_context,
@@ -168,7 +167,14 @@ async def execute_node(state: GraphState) -> dict:
 
     plan = state["plan"]
     results = []
-    context = {}
+
+    # Pass workspace context to agents so they know where to work
+    context = {
+        "workspace_id": state.get("workspace_id"),
+        "workspace_path": state.get("workspace_path"),
+        "project_id": state.get("project_id"),
+        "branch": state.get("branch"),
+    }
 
     if ctx:
         ctx.emit("execution_started", {
@@ -224,10 +230,7 @@ async def execute_node(state: GraphState) -> dict:
                 tool = step.get("tool")
                 inputs = step.get("inputs", {})
 
-                # Check if we should use HTTP-based MCPClient (for microservices)
-                use_http_mcp = os.getenv("USE_MCP_MICROSERVICES", "false").lower() == "true"
-
-                if use_http_mcp and ctx:
+                if ctx:
                     # Use MCPClient for HTTP calls to MCP microservices
                     from druppie.api.deps import get_db
 
@@ -256,9 +259,7 @@ async def execute_node(state: GraphState) -> dict:
                     finally:
                         db.close()
                 else:
-                    # Use in-process MCP registry (legacy mode)
-                    from druppie.mcps import get_mcp_registry
-                    result = await get_mcp_registry().call_tool(tool, inputs)
+                    result = {"error": "No execution context available for MCP call"}
             else:
                 result = {"error": f"Unknown step type: {step_type}"}
 
@@ -419,9 +420,6 @@ class MainLoop:
         )
         set_current_context(exec_ctx)
 
-        # Configure HITL for this session
-        configure_hitl(emit_event, session_id)
-
         # Save session first (required for workspace foreign key)
         await self._save_session(session_id, user_id, "initializing", message, exec_ctx)
 
@@ -547,8 +545,6 @@ class MainLoop:
             emit_event=emit_event,
         )
         set_current_context(exec_ctx)
-
-        configure_hitl(emit_event, session_id)
 
         config = {"configurable": {"thread_id": session_id}}
 
