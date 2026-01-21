@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session as DBSession
 
-from .models import Approval, Build, Project, Session, Workspace
+from .models import Approval, Build, HitlQuestion, Project, Session, Workspace
 
 
 # =============================================================================
@@ -537,3 +537,118 @@ def delete_workspace(db: DBSession, workspace_id: str) -> bool:
     db.delete(workspace)
     db.commit()
     return True
+
+
+# =============================================================================
+# HITL QUESTION CRUD
+# =============================================================================
+
+
+def create_hitl_question(
+    db: DBSession,
+    question_id: str,
+    session_id: str,
+    agent_id: str,
+    question: str,
+    question_type: str = "text",
+    choices: list[str] | None = None,
+) -> HitlQuestion:
+    """Create a new HITL question."""
+    hitl_question = HitlQuestion(
+        id=question_id,
+        session_id=session_id,
+        agent_id=agent_id,
+        question=question,
+        question_type=question_type,
+        choices=choices,
+        status="pending",
+    )
+    db.add(hitl_question)
+    db.commit()
+    db.refresh(hitl_question)
+    return hitl_question
+
+
+def get_hitl_question(db: DBSession, question_id: str) -> HitlQuestion | None:
+    """Get a HITL question by ID."""
+    return db.query(HitlQuestion).filter(HitlQuestion.id == question_id).first()
+
+
+def get_hitl_questions_for_session(
+    db: DBSession,
+    session_id: str,
+    status: str | None = None,
+) -> list[HitlQuestion]:
+    """Get all HITL questions for a session."""
+    query = db.query(HitlQuestion).filter(HitlQuestion.session_id == session_id)
+
+    if status:
+        query = query.filter(HitlQuestion.status == status)
+
+    return query.order_by(HitlQuestion.created_at.desc()).all()
+
+
+def list_pending_hitl_questions(
+    db: DBSession,
+    user_id: str | None = None,
+    limit: int = 50,
+) -> list[HitlQuestion]:
+    """List all pending HITL questions.
+
+    If user_id is provided, filter by sessions owned by that user.
+    """
+    query = db.query(HitlQuestion).filter(HitlQuestion.status == "pending")
+
+    if user_id:
+        # Join with sessions to filter by user
+        query = query.join(Session, HitlQuestion.session_id == Session.id).filter(
+            Session.user_id == user_id
+        )
+
+    return query.order_by(HitlQuestion.created_at.desc()).limit(limit).all()
+
+
+def answer_hitl_question(
+    db: DBSession,
+    question_id: str,
+    answer: str,
+) -> HitlQuestion | None:
+    """Answer a HITL question."""
+    question = get_hitl_question(db, question_id)
+    if not question:
+        return None
+
+    question.answer = answer
+    question.answered_at = datetime.utcnow()
+    question.status = "answered"
+
+    db.commit()
+    db.refresh(question)
+    return question
+
+
+def expire_hitl_question(db: DBSession, question_id: str) -> HitlQuestion | None:
+    """Mark a HITL question as expired."""
+    question = get_hitl_question(db, question_id)
+    if not question:
+        return None
+
+    question.status = "expired"
+
+    db.commit()
+    db.refresh(question)
+    return question
+
+
+def list_hitl_questions(
+    db: DBSession,
+    status: str | None = None,
+    limit: int = 50,
+) -> list[HitlQuestion]:
+    """List all HITL questions with optional status filter."""
+    query = db.query(HitlQuestion)
+
+    if status:
+        query = query.filter(HitlQuestion.status == status)
+
+    return query.order_by(HitlQuestion.created_at.desc()).limit(limit).all()

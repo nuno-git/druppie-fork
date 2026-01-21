@@ -1,6 +1,6 @@
 """Database module for Druppie platform."""
 
-from .models import Base, Session, Approval, Project, Build, Workspace
+from .models import Base, Session, Approval, Project, Build, Workspace, HitlQuestion
 from .crud import (
     # Session CRUD
     create_session,
@@ -40,6 +40,14 @@ from .crud import (
     list_workspaces,
     update_workspace,
     delete_workspace,
+    # HITL Question CRUD
+    create_hitl_question,
+    get_hitl_question,
+    get_hitl_questions_for_session,
+    list_pending_hitl_questions,
+    answer_hitl_question,
+    expire_hitl_question,
+    list_hitl_questions,
 )
 
 __all__ = [
@@ -50,6 +58,7 @@ __all__ = [
     "Project",
     "Build",
     "Workspace",
+    "HitlQuestion",
     # Session CRUD
     "create_session",
     "get_session",
@@ -88,4 +97,12 @@ __all__ = [
     "list_workspaces",
     "update_workspace",
     "delete_workspace",
+    # HITL Question CRUD
+    "create_hitl_question",
+    "get_hitl_question",
+    "get_hitl_questions_for_session",
+    "list_pending_hitl_questions",
+    "answer_hitl_question",
+    "expire_hitl_question",
+    "list_hitl_questions",
 ]
