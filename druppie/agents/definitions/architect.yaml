@@ -32,7 +32,8 @@ system_prompt: |
   - Data models
   - Technology choices with rationale
 
-  When done, call done() with summary and list the spec files created.
+  COMPLETION:
+  When done, STOP calling tools and return a text summary listing the spec files created.
 
 # MCP tools this agent can use
 mcps:

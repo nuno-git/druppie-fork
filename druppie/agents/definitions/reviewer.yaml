@@ -42,7 +42,8 @@ system_prompt: |
   - Recommendations
   - Positive observations
 
-  Call done() when review is complete.
+  COMPLETION:
+  When review is complete, STOP calling tools and return a text summary of your findings.
 
 # MCP tools this agent can use
 mcps:
