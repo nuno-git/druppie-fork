@@ -2,8 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install git for git operations
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+# Install git and curl for git operations and health checks
+RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
 COPY requirements.txt .
