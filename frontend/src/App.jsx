@@ -14,6 +14,7 @@ import {
   MessageSquare,
   FolderOpen,
   Bug,
+  Settings as SettingsIcon,
 } from 'lucide-react'
 
 import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole } from './services/keycloak'
@@ -26,6 +27,7 @@ import Chat from './pages/Chat'
 import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import Debug from './pages/Debug'
+import Settings from './pages/Settings'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -78,6 +80,7 @@ const Navigation = () => {
     { path: '/chat', icon: MessageSquare, label: 'Chat' },
     { path: '/tasks', icon: CheckSquare, label: 'Approvals' },
     { path: '/projects', icon: FolderOpen, label: 'Projects' },
+    { path: '/settings', icon: SettingsIcon, label: 'Settings' },
   ]
 
   const isActive = (path) => location.pathname === path
@@ -261,6 +264,14 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <Debug />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/settings"
+                  element={
+                    <ProtectedRoute>
+                      <Settings />
                     </ProtectedRoute>
                   }
                 />
