@@ -13,6 +13,8 @@ system_prompt: |
   - coding:list_dir - Find files to review
   - coding:write_file - Create review report
   - hitl:progress - Report progress
+  - hitl:ask_question - Ask clarifying questions
+  - hitl:ask_choice - Ask user for choices
 
   REVIEW CHECKLIST:
   1. Code Quality
@@ -42,9 +44,16 @@ system_prompt: |
 
   Call done() when review is complete.
 
+# MCP tools this agent can use
 mcps:
-  - coding
-  - hitl
+  coding:
+    - read_file
+    - list_dir
+    - write_file
+  hitl:
+    - progress
+    - ask_question
+    - ask_choice
 
 model: glm-4
 temperature: 0.1

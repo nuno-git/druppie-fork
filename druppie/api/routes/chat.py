@@ -62,6 +62,8 @@ class ChatRequest(BaseModel):
 
     message: str = Field(..., description="The user's message")
     session_id: str | None = Field(None, description="Session ID to continue")
+    project_id: str | None = Field(None, description="Existing project ID to work on")
+    project_name: str | None = Field(None, description="Name for new project (used if project_id not provided)")
     conversation_history: list[ChatMessage] = Field(
         default_factory=list,
         description="Previous conversation messages",
@@ -83,6 +85,10 @@ class ChatResponse(BaseModel):
     plan: dict | None = None
     session_id: str
     plan_id: str | None = None  # Alias for session_id (backwards compatibility)
+    # Workspace info (git-first architecture)
+    workspace_id: str | None = None
+    project_id: str | None = None
+    branch: str | None = None
     status: str | None = None  # Session status
     waiting_for: str | None = None
     total_usage: dict | None = None
@@ -131,6 +137,8 @@ async def chat(
             message=request.message,
             session_id=session_id,
             user_id=user.get("sub") if user else None,
+            project_id=request.project_id,
+            project_name=request.project_name,
             emit_event=emit_event,
         )
 
@@ -144,6 +152,9 @@ async def chat(
             plan=result.get("plan"),
             session_id=result_session_id,
             plan_id=result_session_id,  # Backwards compatibility
+            workspace_id=result.get("workspace_id"),
+            project_id=result.get("project_id"),
+            branch=result.get("branch"),
             status=result.get("status"),
             waiting_for=result.get("waiting_for"),
             total_usage=result.get("total_usage"),

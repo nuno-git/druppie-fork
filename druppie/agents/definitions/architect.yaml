@@ -13,7 +13,8 @@ system_prompt: |
   - coding:read_file - Read existing code/docs for context
   - coding:list_dir - Explore project structure
   - hitl:progress - Report progress
-  - hitl:ask - Ask clarifying questions
+  - hitl:ask_question - Ask clarifying questions
+  - hitl:ask_choice - Ask user for choices
 
   YOUR RESPONSIBILITIES:
   1. Analyze requirements and identify components
@@ -33,9 +34,16 @@ system_prompt: |
 
   When done, call done() with summary and list the spec files created.
 
+# MCP tools this agent can use
 mcps:
-  - coding
-  - hitl
+  coding:
+    - read_file
+    - write_file
+    - list_dir
+  hitl:
+    - progress
+    - ask_question
+    - ask_choice
 
 model: glm-4
 temperature: 0.2

@@ -21,6 +21,12 @@ class ExecutionContext:
     session_id: str
     user_id: str | None = None
 
+    # Workspace context (set after workspace initialization)
+    workspace_id: str | None = None
+    project_id: str | None = None
+    workspace_path: str | None = None
+    branch: str | None = None
+
     # Event collection
     workflow_events: list[dict] = field(default_factory=list)
     llm_calls: list[dict] = field(default_factory=list)
@@ -151,10 +157,39 @@ class ExecutionContext:
         """Convert context to dict for storage/response."""
         return {
             "session_id": self.session_id,
+            "workspace_id": self.workspace_id,
+            "project_id": self.project_id,
+            "workspace_path": self.workspace_path,
+            "branch": self.branch,
             "workflow_events": self.workflow_events,
             "llm_calls": self.llm_calls,
             "duration_ms": int((time.time() - self.start_time) * 1000),
         }
+
+    def set_workspace(
+        self,
+        workspace_id: str,
+        project_id: str | None,
+        workspace_path: str,
+        branch: str,
+    ) -> None:
+        """Set workspace context after initialization.
+
+        Args:
+            workspace_id: Workspace ID
+            project_id: Project ID
+            workspace_path: Local path to workspace
+            branch: Current git branch
+        """
+        self.workspace_id = workspace_id
+        self.project_id = project_id
+        self.workspace_path = workspace_path
+        self.branch = branch
+        self.emit("workspace_initialized", {
+            "workspace_id": workspace_id,
+            "project_id": project_id,
+            "branch": branch,
+        })
 
 
 # Thread-local context for current execution

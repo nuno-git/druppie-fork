@@ -1,0 +1,131 @@
+# MCP Server Configuration
+# Defines all MCPs, their URLs, and tool approval requirements
+
+mcps:
+  coding:
+    url: ${MCP_CODING_URL:-http://mcp-coding:9001}
+    description: "File operations and git within workspace sandbox"
+    tools:
+      - name: initialize_workspace
+        description: "Initialize workspace for user/project/session"
+        requires_approval: false
+
+      - name: read_file
+        description: "Read file from workspace"
+        requires_approval: false
+
+      - name: write_file
+        description: "Write file to workspace (auto-commits)"
+        requires_approval: false
+
+      - name: list_dir
+        description: "List directory contents"
+        requires_approval: false
+
+      - name: delete_file
+        description: "Delete file from workspace"
+        requires_approval: false
+
+      - name: run_command
+        description: "Execute shell command in workspace"
+        requires_approval: true
+        required_roles:
+          - developer
+          - admin
+        danger_level: high
+
+      - name: commit_and_push
+        description: "Commit and push changes to Gitea"
+        requires_approval: false
+
+      - name: create_branch
+        description: "Create a new git branch"
+        requires_approval: false
+
+      - name: merge_to_main
+        description: "Merge feature branch to main"
+        requires_approval: true
+        required_roles:
+          - architect
+          - admin
+        danger_level: medium
+
+      - name: get_git_status
+        description: "Get git status for workspace"
+        requires_approval: false
+
+  docker:
+    url: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
+    description: "Docker container operations"
+    tools:
+      - name: build
+        description: "Build Docker image"
+        requires_approval: true
+        required_roles:
+          - developer
+          - admin
+        danger_level: medium
+
+      - name: run
+        description: "Run Docker container"
+        requires_approval: true
+        required_roles:
+          - developer
+          - admin
+        danger_level: medium
+
+      - name: stop
+        description: "Stop running container"
+        requires_approval: false
+
+      - name: logs
+        description: "Get container logs"
+        requires_approval: false
+
+      - name: remove
+        description: "Remove container"
+        requires_approval: true
+        required_roles:
+          - developer
+          - admin
+        danger_level: low
+
+      - name: list_containers
+        description: "List Docker containers"
+        requires_approval: false
+
+      - name: inspect
+        description: "Inspect container details"
+        requires_approval: false
+
+      - name: exec_command
+        description: "Execute command in running container"
+        requires_approval: true
+        required_roles:
+          - developer
+          - admin
+        danger_level: high
+
+  hitl:
+    url: ${MCP_HITL_URL:-http://mcp-hitl:9003}
+    description: "Human-in-the-loop - ask user questions"
+    tools:
+      - name: ask_question
+        description: "Ask user a free-form text question"
+        requires_approval: false
+
+      - name: ask_choice
+        description: "Ask user a multiple choice question"
+        requires_approval: false
+
+      - name: progress
+        description: "Send progress update to user"
+        requires_approval: false
+
+      - name: submit_response
+        description: "Submit user response (internal use)"
+        requires_approval: false
+
+      - name: notify
+        description: "Send notification to user"
+        requires_approval: false
