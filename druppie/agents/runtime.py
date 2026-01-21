@@ -14,7 +14,6 @@ import yaml
 
 from druppie.agents.models import AgentDefinition
 from druppie.llm import get_llm_service
-from druppie.mcps import get_mcp_registry
 from druppie.core.execution_context import get_current_context
 
 logger = structlog.get_logger()
@@ -61,7 +60,7 @@ class Agent:
         self.id = agent_id
         self.definition = self._load_definition(agent_id)
         self._llm = None
-        self._registry = None
+        self._mcp_client = None
 
     @classmethod
     def set_definitions_path(cls, path: str) -> None:
@@ -121,11 +120,14 @@ class Agent:
         return self._llm
 
     @property
-    def registry(self):
-        """Get MCP registry (lazy loaded)."""
-        if self._registry is None:
-            self._registry = get_mcp_registry()
-        return self._registry
+    def mcp_client(self):
+        """Get MCP client (lazy loaded)."""
+        if self._mcp_client is None:
+            from druppie.api.deps import get_db
+            from druppie.core.mcp_client import get_mcp_client
+            db = next(get_db())
+            self._mcp_client = get_mcp_client(db)
+        return self._mcp_client
 
     async def run(self, prompt: str, context: dict = None) -> Any:
         """Run the agent with the given prompt.
@@ -149,8 +151,9 @@ class Agent:
             {"role": "user", "content": self._build_prompt(prompt, context)},
         ]
 
-        # Get tools for this agent's MCPs
-        tools = self.registry.to_openai_tools(self.definition.mcps)
+        # Get tools for this agent's MCPs with full schemas from servers
+        mcp_ids = self.definition.get_mcp_names() if hasattr(self.definition, 'get_mcp_names') else self.definition.mcps
+        tools = await self.mcp_client.to_openai_tools_async(mcp_ids)
 
         max_iterations = self.definition.max_iterations or 10
 
@@ -211,9 +214,26 @@ class Agent:
                 # Convert OpenAI format to MCP format (hitl_ask -> hitl:ask)
                 mcp_tool_name = tool_name.replace("_", ":", 1)
 
-                # Execute tool - if it's hitl:ask, interrupt() is called
-                # inside and this whole function pauses automatically
-                result = await self.registry.call_tool(mcp_tool_name, tool_args)
+                # Parse server:tool format
+                if ":" in mcp_tool_name:
+                    server, tool = mcp_tool_name.split(":", 1)
+                else:
+                    server = "coding"
+                    tool = mcp_tool_name
+
+                # Execute tool via MCP client
+                result = await self.mcp_client.call_tool(server, tool, tool_args, exec_ctx)
+
+                # Check if paused for approval
+                if result.get("status") == "paused":
+                    # Return paused state - execution will resume after approval
+                    logger.info("agent_paused_for_approval", agent_id=self.id, tool=mcp_tool_name)
+                    return {
+                        "paused": True,
+                        "approval_id": result.get("approval_id"),
+                        "tool": mcp_tool_name,
+                        "iteration": iteration,
+                    }
 
                 # Add tool result to messages
                 messages.append({

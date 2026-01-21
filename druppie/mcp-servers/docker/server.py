@@ -442,11 +442,23 @@ async def exec_command(
 
 if __name__ == "__main__":
     import uvicorn
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    # Get MCP app with HTTP transport
+    app = mcp.http_app()
+
+    # Add health endpoint
+    async def health(request):
+        """Health check endpoint."""
+        return JSONResponse({"status": "healthy", "service": "docker-mcp"})
+
+    app.routes.insert(0, Route("/health", health, methods=["GET"]))
 
     port = int(os.getenv("MCP_PORT", "9002"))
 
     uvicorn.run(
-        mcp.get_app(),
+        app,
         host="0.0.0.0",
         port=port,
         log_level="info",

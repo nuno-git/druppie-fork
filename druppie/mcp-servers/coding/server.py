@@ -636,13 +636,23 @@ async def get_git_status(workspace_id: str) -> dict:
 
 if __name__ == "__main__":
     import uvicorn
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
 
-    # Get port from environment or default
+    # Get MCP app with HTTP transport
+    app = mcp.http_app()
+
+    # Add health endpoint
+    async def health(request):
+        """Health check endpoint."""
+        return JSONResponse({"status": "healthy", "service": "coding-mcp"})
+
+    app.routes.insert(0, Route("/health", health, methods=["GET"]))
+
     port = int(os.getenv("MCP_PORT", "9001"))
 
-    # Run with uvicorn for production
     uvicorn.run(
-        mcp.get_app(),
+        app,
         host="0.0.0.0",
         port=port,
         log_level="info",
