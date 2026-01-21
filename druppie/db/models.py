@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
@@ -172,5 +172,36 @@ class Workspace(Base):
             "branch": self.branch,
             "local_path": self.local_path,
             "is_new_project": self.is_new_project,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class HitlQuestion(Base):
+    """HITL question from an agent to the user."""
+
+    __tablename__ = "hitl_questions"
+
+    id = Column(String(36), primary_key=True)  # UUID
+    session_id = Column(String(36), ForeignKey("sessions.id"), nullable=False, index=True)
+    agent_id = Column(String(255), nullable=False)
+    question = Column(Text, nullable=False)
+    question_type = Column(String(20), default="text")  # text, choice
+    choices = Column(JSON, nullable=True)  # For choice questions
+    answer = Column(Text, nullable=True)
+    answered_at = Column(DateTime, nullable=True)
+    status = Column(String(20), default="pending", index=True)  # pending, answered, expired
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "agent_id": self.agent_id,
+            "question": self.question,
+            "question_type": self.question_type,
+            "choices": self.choices,
+            "answer": self.answer,
+            "answered_at": self.answered_at.isoformat() if self.answered_at else None,
+            "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
