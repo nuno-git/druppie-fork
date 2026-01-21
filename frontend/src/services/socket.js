@@ -23,6 +23,7 @@ const eventCallbacks = {
   workflow_event: [],
   approval_requested: [],
   approval_required: [],  // MCP microservices approval
+  approval_status_changed: [],  // Approval status updates
   session_updated: [],
   question_pending: [],
   question: [],  // HITL MCP question events
@@ -230,6 +231,20 @@ export const onHITLQuestion = (callback) => {
  */
 export const onApprovalRequired = (callback) => {
   return registerCallback('approval_required', callback)
+}
+
+/**
+ * Subscribe to approval status changed events
+ */
+export const onApprovalStatusChanged = (callback) => {
+  return registerCallback('approval_status_changed', callback)
+}
+
+/**
+ * Check if socket is connected
+ */
+export const isSocketConnected = () => {
+  return socket && socket.readyState === WebSocket.OPEN
 }
 
 /**
