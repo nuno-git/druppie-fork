@@ -495,8 +495,20 @@ class MCPClient:
 
         tool_name = f"{server}:{tool}"
 
-        # Extract workspace_id from args if present for better log context
-        workspace_id = args.get("workspace_id")
+        # Include workspace context from ExecutionContext in the arguments
+        # This ensures workspace_id is available when resuming after approval
+        args_with_context = dict(args)
+        if context.workspace_id and "workspace_id" not in args_with_context:
+            args_with_context["workspace_id"] = context.workspace_id
+        if context.project_id and "project_id" not in args_with_context:
+            args_with_context["project_id"] = context.project_id
+        if context.workspace_path and "workspace_path" not in args_with_context:
+            args_with_context["workspace_path"] = context.workspace_path
+        if context.branch and "branch" not in args_with_context:
+            args_with_context["branch"] = context.branch
+
+        # Extract workspace_id from args for logging
+        workspace_id = args_with_context.get("workspace_id")
 
         # Create approval record in DB
         approval_id = str(uuid.uuid4())
@@ -519,10 +531,10 @@ class MCPClient:
                 "id": approval_id,
                 "session_id": context.session_id,
                 "tool_name": tool_name,
-                "arguments": args,
+                "arguments": args_with_context,
                 "required_roles": required_roles or ["developer", "admin"],
                 "danger_level": danger_level,
-                "description": f"Execute {tool_name} with args: {json.dumps(args)[:200]}",
+                "description": f"Execute {tool_name} with args: {json.dumps(args_with_context)[:200]}",
                 "status": "pending",
                 "agent_state": agent_state,
             },
@@ -547,7 +559,7 @@ class MCPClient:
                 "event_type": "approval_required",
                 "approval_id": approval_id,
                 "tool": tool_name,
-                "args": args,
+                "args": args_with_context,
                 "required_roles": required_roles,
                 "danger_level": danger_level,
             })
