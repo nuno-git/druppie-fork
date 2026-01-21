@@ -143,7 +143,15 @@ class Task(db.Model):
             data["plan"] = {"id": self.plan.id, "name": self.plan.name, "status": self.plan.status}
 
         if include_approvals:
-            data["approvals"] = [a.to_dict() for a in self.approvals.all()]
+            approvals_list = list(self.approvals.all())
+            data["approvals"] = [a.to_dict() for a in approvals_list]
+
+            # Add MULTI approval computed fields
+            if self.approval_type == "multi":
+                approved_approvals = [a for a in approvals_list if a.decision == "approved"]
+                data["current_approvals"] = len(approved_approvals)
+                data["approved_by_roles"] = list(set(a.role for a in approved_approvals if a.role))
+                data["approved_by_ids"] = [a.approved_by for a in approved_approvals]
 
         return data
 
