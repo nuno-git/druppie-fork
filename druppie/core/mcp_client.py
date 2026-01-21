@@ -169,12 +169,16 @@ class MCPClient:
         """Execute tool via FastMCP client to MCP server."""
         url = self.get_mcp_url(server)
 
+        # Extract workspace_id from args if present for better log context
+        workspace_id = args.get("workspace_id")
+
         logger.info(
             "mcp_tool_executing",
             server=server,
             tool=tool,
             url=url,
             session_id=context.session_id,
+            workspace_id=workspace_id,
             args=args,
         )
 
@@ -232,20 +236,45 @@ class MCPClient:
                 if not isinstance(result_dict, dict):
                     result_dict = {"success": True, "data": result_dict}
 
-                logger.info(
-                    "mcp_tool_completed",
-                    server=server,
-                    tool=tool,
-                    success=result_dict.get("success", True),
-                    result_preview=str(result_dict)[:200],
-                )
+                # Check if the result indicates an error
+                is_success = result_dict.get("success", True)
+                if is_success:
+                    logger.info(
+                        "mcp_tool_completed",
+                        server=server,
+                        tool=tool,
+                        workspace_id=workspace_id,
+                        success=True,
+                        result_preview=str(result_dict)[:200],
+                    )
+                else:
+                    logger.warning(
+                        "mcp_tool_returned_error",
+                        server=server,
+                        tool=tool,
+                        workspace_id=workspace_id,
+                        success=False,
+                        error=result_dict.get("error", "Unknown error"),
+                        result_preview=str(result_dict)[:200],
+                    )
                 return result_dict
 
         except TimeoutError:
-            logger.error("mcp_tool_timeout", server=server, tool=tool)
+            logger.error(
+                "mcp_tool_timeout",
+                server=server,
+                tool=tool,
+                workspace_id=workspace_id,
+            )
             return {"success": False, "error": "MCP call timed out"}
         except Exception as e:
-            logger.error("mcp_tool_error", server=server, tool=tool, error=str(e))
+            logger.error(
+                "mcp_tool_error",
+                server=server,
+                tool=tool,
+                workspace_id=workspace_id,
+                error=str(e),
+            )
             return {"success": False, "error": str(e)}
 
     async def _request_approval(
@@ -262,8 +291,24 @@ class MCPClient:
 
         tool_name = f"{server}:{tool}"
 
+        # Extract workspace_id from args if present for better log context
+        workspace_id = args.get("workspace_id")
+
         # Create approval record in DB
         approval_id = str(uuid.uuid4())
+
+        # Get agent state for resumption
+        agent_state = context.get_state() if hasattr(context, "get_state") else None
+
+        logger.info(
+            "approval_creating_record",
+            tool=tool_name,
+            session_id=context.session_id,
+            workspace_id=workspace_id,
+            danger_level=danger_level,
+            has_agent_state=agent_state is not None,
+        )
+
         approval = crud.create_approval(
             self.db,
             {
@@ -275,7 +320,7 @@ class MCPClient:
                 "danger_level": danger_level,
                 "description": f"Execute {tool_name} with args: {json.dumps(args)[:200]}",
                 "status": "pending",
-                "agent_state": context.get_state() if hasattr(context, "get_state") else None,
+                "agent_state": agent_state,
             },
         )
 
@@ -284,7 +329,9 @@ class MCPClient:
             approval_id=approval_id,
             tool=tool_name,
             session_id=context.session_id,
+            workspace_id=workspace_id,
             required_roles=required_roles,
+            danger_level=danger_level,
         )
 
         # Emit event to frontend via Redis pub/sub
