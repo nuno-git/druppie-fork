@@ -396,3 +396,30 @@ Auto-detects and runs test frameworks:
 - Node.js: jest, mocha, vitest
 - Go: go test
 - Returns structured pass/fail counts
+
+### Project Detail Page (`/projects/:projectId`)
+Comprehensive project view with tabs:
+- Overview: Project info, repo URL, build/run actions
+- Repository: Branch list, recent commits from Gitea
+- Conversations: Sessions linked to project
+- Settings: Edit project name/description
+
+### Settings Page (`/settings`)
+Admin configuration page with:
+- User Profile: Current user info and roles
+- System Info: Service health status
+- MCP Servers: List with health checks
+- Configured Agents: Agent list with descriptions
+
+## Frontend Pages
+
+| Page | Route | Description |
+|------|-------|-------------|
+| Dashboard | / | Overview and stats |
+| Chat | /chat | Main agent interaction |
+| Projects | /projects | Project list |
+| Project Detail | /projects/:id | Comprehensive project view |
+| Tasks | /tasks | Pending approvals |
+| Plans | /plans | Execution plans |
+| Debug | /debug/:id | Execution trace viewer |
+| Settings | /settings | System configuration |
