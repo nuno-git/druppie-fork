@@ -257,11 +257,33 @@ async def notify(
 
 if __name__ == "__main__":
     import uvicorn
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    # Get MCP app with HTTP transport
+    app = mcp.http_app()
+
+    # Add health endpoint
+    async def health(request):
+        """Health check endpoint."""
+        try:
+            redis_client.ping()
+            redis_ok = True
+        except Exception:
+            redis_ok = False
+
+        return JSONResponse({
+            "status": "healthy" if redis_ok else "degraded",
+            "service": "hitl-mcp",
+            "redis": "connected" if redis_ok else "disconnected",
+        })
+
+    app.routes.insert(0, Route("/health", health, methods=["GET"]))
 
     port = int(os.getenv("MCP_PORT", "9003"))
 
     uvicorn.run(
-        mcp.get_app(),
+        app,
         host="0.0.0.0",
         port=port,
         log_level="info",

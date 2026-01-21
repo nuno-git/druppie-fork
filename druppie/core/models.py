@@ -252,13 +252,27 @@ class AgentDefinition(BaseModel):
     system_prompt: str = ""
 
     # MCP servers this agent can use
-    mcps: list[str] = Field(default_factory=list)
+    # Can be a simple list of MCP names: ["coding", "hitl"]
+    # Or a dict mapping MCP names to allowed tools: {"coding": ["read_file"], "hitl": ["ask_question"]}
+    mcps: list[str] | dict[str, list[str]] = Field(default_factory=list)
 
     # LLM settings
     model: str | None = None
     temperature: float = 0.1
     max_tokens: int = 4096
     max_iterations: int = 10  # Max tool-calling iterations
+
+    def get_mcp_names(self) -> list[str]:
+        """Get list of MCP server names this agent can use."""
+        if isinstance(self.mcps, dict):
+            return list(self.mcps.keys())
+        return self.mcps
+
+    def get_allowed_tools(self, mcp_name: str) -> list[str] | None:
+        """Get list of allowed tools for an MCP, or None if all tools allowed."""
+        if isinstance(self.mcps, dict):
+            return self.mcps.get(mcp_name)
+        return None  # All tools allowed when using simple list format
 
 
 class AgentResult(BaseModel):

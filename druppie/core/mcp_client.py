@@ -1,23 +1,25 @@
-"""MCP Client - HTTP client for MCP servers with approval checking.
+"""MCP Client - FastMCP client for MCP servers with approval checking.
 
 This client:
 1. Loads MCP configuration from mcp_config.yaml
 2. Checks tool approval requirements before execution
 3. Pauses execution and creates approval records when needed
-4. Executes tools via HTTP to MCP server containers
+4. Executes tools via FastMCP Client to MCP server containers
 """
 
 import json
 import os
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-import httpx
 import redis
 import structlog
 import yaml
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DBSession
@@ -27,7 +29,7 @@ logger = structlog.get_logger()
 
 
 class MCPClient:
-    """HTTP client for MCP servers with approval checking."""
+    """FastMCP client for MCP servers with approval checking."""
 
     def __init__(self, db: "DBSession", redis_url: str | None = None):
         """Initialize MCP client.
@@ -40,6 +42,7 @@ class MCPClient:
         self.redis_url = redis_url or os.getenv("REDIS_URL", "redis://redis:6379/0")
         self._redis: redis.Redis | None = None
         self._config: dict | None = None
+        self._clients: dict[str, Client] = {}
 
     @property
     def redis(self) -> redis.Redis:
@@ -61,27 +64,39 @@ class MCPClient:
         with open(config_path) as f:
             content = f.read()
 
-        # Substitute environment variables
-        for key, value in os.environ.items():
-            content = content.replace(f"${{{key}}}", value)
-            content = content.replace(f"${{{key}:-", f"{{{key}:-")
-
-        # Handle default values ${VAR:-default}
-        import re
-
-        def replace_default(match):
+        # Handle ${VAR:-default} syntax (with default values)
+        def replace_with_default(match):
             var_name = match.group(1)
             default = match.group(2)
             return os.getenv(var_name, default)
 
-        content = re.sub(r"\$\{(\w+):-([^}]+)\}", replace_default, content)
+        content = re.sub(r"\$\{(\w+):-([^}]+)\}", replace_with_default, content)
+
+        # Handle ${VAR} syntax (without default)
+        def replace_simple(match):
+            var_name = match.group(1)
+            return os.getenv(var_name, "")
+
+        content = re.sub(r"\$\{(\w+)\}", replace_simple, content)
 
         return yaml.safe_load(content)
 
     def get_mcp_url(self, server: str) -> str:
         """Get URL for an MCP server."""
         mcp = self.config.get("mcps", {}).get(server, {})
-        return mcp.get("url", f"http://mcp-{server}:9001")
+        url = mcp.get("url", f"http://mcp-{server}:9001")
+        # Ensure URL ends with /mcp for FastMCP HTTP transport
+        if not url.endswith("/mcp"):
+            url = url.rstrip("/") + "/mcp"
+        return url
+
+    def _get_client(self, server: str) -> Client:
+        """Get or create FastMCP client for a server."""
+        if server not in self._clients:
+            url = self.get_mcp_url(server)
+            transport = StreamableHttpTransport(url)
+            self._clients[server] = Client(transport)
+        return self._clients[server]
 
     def get_tool_config(self, server: str, tool: str) -> dict:
         """Get tool configuration including approval requirements."""
@@ -151,7 +166,7 @@ class MCPClient:
         args: dict[str, Any],
         context: "ExecutionContext",
     ) -> dict[str, Any]:
-        """Execute tool via HTTP to MCP server."""
+        """Execute tool via FastMCP client to MCP server."""
         url = self.get_mcp_url(server)
 
         logger.info(
@@ -160,42 +175,73 @@ class MCPClient:
             tool=tool,
             url=url,
             session_id=context.session_id,
+            args=args,
         )
 
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                # FastMCP uses POST /tools/{tool_name}
-                response = await client.post(
-                    f"{url}/tools/{tool}",
-                    json=args,
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-Session-ID": context.session_id or "",
-                        "X-User-ID": context.user_id or "",
-                    },
+            client = self._get_client(server)
+
+            # Use FastMCP client to call the tool
+            async with client:
+                result = await client.call_tool(tool, args)
+
+                logger.debug(
+                    "mcp_raw_result",
+                    server=server,
+                    tool=tool,
+                    result_type=type(result).__name__,
+                    result=str(result)[:500],
                 )
 
-                if response.status_code == 200:
-                    result = response.json()
-                    logger.info(
-                        "mcp_tool_completed",
-                        server=server,
-                        tool=tool,
-                        success=result.get("success", True),
-                    )
-                    return result
-                else:
-                    error_msg = f"MCP call failed: {response.status_code} {response.text}"
-                    logger.error(
-                        "mcp_tool_failed",
-                        server=server,
-                        tool=tool,
-                        status=response.status_code,
-                        error=response.text,
-                    )
-                    return {"success": False, "error": error_msg}
+                # FastMCP call_tool returns a list of content items
+                # Each item typically has: type="text" and text=<json_string>
+                result_dict = {"success": True}
 
-        except httpx.TimeoutException:
+                if isinstance(result, list) and len(result) > 0:
+                    # Get first content item
+                    first_item = result[0]
+                    if hasattr(first_item, "text"):
+                        # Parse JSON from text content
+                        try:
+                            result_dict = json.loads(first_item.text)
+                        except json.JSONDecodeError:
+                            result_dict = {"success": True, "content": first_item.text}
+                    elif hasattr(first_item, "content"):
+                        result_dict = {"success": True, "content": str(first_item.content)}
+                    else:
+                        result_dict = {"success": True, "data": str(first_item)}
+                elif hasattr(result, "data"):
+                    result_dict = result.data if isinstance(result.data, dict) else {"success": True, "data": result.data}
+                elif hasattr(result, "content"):
+                    # Handle text content response
+                    if isinstance(result.content, list) and len(result.content) > 0:
+                        first_content = result.content[0]
+                        if hasattr(first_content, "text"):
+                            try:
+                                result_dict = json.loads(first_content.text)
+                            except json.JSONDecodeError:
+                                result_dict = {"success": True, "content": first_content.text}
+                        else:
+                            result_dict = {"success": True, "content": str(first_content)}
+                    else:
+                        result_dict = {"success": True, "content": str(result.content)}
+                else:
+                    result_dict = {"success": True, "result": str(result)}
+
+                # Ensure we return a dict
+                if not isinstance(result_dict, dict):
+                    result_dict = {"success": True, "data": result_dict}
+
+                logger.info(
+                    "mcp_tool_completed",
+                    server=server,
+                    tool=tool,
+                    success=result_dict.get("success", True),
+                    result_preview=str(result_dict)[:200],
+                )
+                return result_dict
+
+        except TimeoutError:
             logger.error("mcp_tool_timeout", server=server, tool=tool)
             return {"success": False, "error": "MCP call timed out"}
         except Exception as e:
@@ -338,8 +384,41 @@ class MCPClient:
                 })
         return tools
 
+    async def fetch_tools_from_server(self, server: str) -> list[dict]:
+        """Fetch tool definitions from an MCP server.
+
+        Uses FastMCP client to get actual tool schemas.
+
+        Args:
+            server: MCP server name
+
+        Returns:
+            List of tool definitions with proper schemas
+        """
+        try:
+            client = self._get_client(server)
+            async with client:
+                tools = await client.list_tools()
+                return [
+                    {
+                        "name": tool.name,
+                        "description": tool.description or f"Execute {tool.name}",
+                        "parameters": tool.inputSchema if hasattr(tool, 'inputSchema') else {
+                            "type": "object",
+                            "properties": {},
+                        },
+                    }
+                    for tool in tools
+                ]
+        except Exception as e:
+            logger.warning("fetch_tools_failed", server=server, error=str(e))
+            return []
+
     def to_openai_tools(self, mcp_ids: list[str] | None = None) -> list[dict]:
         """Convert tools to OpenAI function calling format.
+
+        Note: This is a synchronous fallback using config-defined tools.
+        For full schemas, use to_openai_tools_async().
 
         Args:
             mcp_ids: Optional list of MCP IDs. If None, include all.
@@ -354,20 +433,73 @@ class MCPClient:
         for mcp_id in mcp_ids:
             mcp = self.config.get("mcps", {}).get(mcp_id, {})
             for tool in mcp.get("tools", []):
-                # Generate a basic schema based on tool name
-                # In production, you'd want more detailed schemas
+                # Get parameters from config if available, otherwise empty
+                params = tool.get("parameters", {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                })
                 openai_tools.append({
                     "type": "function",
                     "function": {
                         "name": f"{mcp_id}_{tool['name']}",
                         "description": tool.get("description", f"Execute {tool['name']}"),
-                        "parameters": {
-                            "type": "object",
-                            "properties": {},
-                            "required": [],
-                        },
+                        "parameters": params,
                     },
                 })
+
+        return openai_tools
+
+    async def to_openai_tools_async(self, mcp_ids: list[str] | None = None) -> list[dict]:
+        """Convert tools to OpenAI function calling format with full schemas.
+
+        Fetches actual tool schemas from MCP servers.
+
+        Args:
+            mcp_ids: Optional list of MCP IDs. If None, include all.
+
+        Returns:
+            List of tool definitions in OpenAI format
+        """
+        if mcp_ids is None:
+            mcp_ids = list(self.config.get("mcps", {}).keys())
+
+        openai_tools = []
+        for mcp_id in mcp_ids:
+            # Fetch actual tool schemas from MCP server
+            server_tools = await self.fetch_tools_from_server(mcp_id)
+
+            if server_tools:
+                # Use actual schemas from server
+                for tool in server_tools:
+                    openai_tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": f"{mcp_id}_{tool['name']}",
+                            "description": tool.get("description", f"Execute {tool['name']}"),
+                            "parameters": tool.get("parameters", {
+                                "type": "object",
+                                "properties": {},
+                            }),
+                        },
+                    })
+            else:
+                # Fallback to config-defined tools
+                mcp = self.config.get("mcps", {}).get(mcp_id, {})
+                for tool in mcp.get("tools", []):
+                    params = tool.get("parameters", {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    })
+                    openai_tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": f"{mcp_id}_{tool['name']}",
+                            "description": tool.get("description", f"Execute {tool['name']}"),
+                            "parameters": params,
+                        },
+                    })
 
         return openai_tools
 
