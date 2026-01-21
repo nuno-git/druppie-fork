@@ -1239,7 +1239,11 @@ class LLMService:
         """Parse JSON from an LLM response.
 
         This is a utility method for parsing structured responses.
-        The actual parsing logic depends on the agent's output_schema.
+        Handles various LLM output formats including:
+        - Raw JSON
+        - Markdown code blocks (```json ... ```)
+        - Think tags (<think>...</think>)
+        - JSON embedded in text
 
         Args:
             text: The raw LLM response text
@@ -1247,17 +1251,67 @@ class LLMService:
         Returns:
             Parsed dict, or empty dict if parsing fails
         """
+        if not text:
+            return {}
+
+        # First, try direct JSON parse
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            # Try to extract JSON from response
-            json_match = re.search(r"\{[\s\S]*\}", text)
-            if json_match:
-                try:
-                    return json.loads(json_match.group())
-                except json.JSONDecodeError:
-                    pass
-            return {}
+            pass
+
+        # Remove think tags if present
+        cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text)
+
+        # Try to extract JSON from markdown code blocks
+        # Handle ```json ... ``` blocks
+        code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", cleaned)
+        if code_block_match:
+            try:
+                return json.loads(code_block_match.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+
+        # Try to find a JSON object in the response
+        # Use greedy matching to find the largest JSON object
+        json_matches = re.findall(r"\{[\s\S]*\}", cleaned)
+        for json_str in json_matches:
+            # Try to parse progressively smaller substrings
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                # Try to find properly nested JSON
+                depth = 0
+                start = None
+                for i, char in enumerate(json_str):
+                    if char == "{":
+                        if start is None:
+                            start = i
+                        depth += 1
+                    elif char == "}":
+                        depth -= 1
+                        if depth == 0 and start is not None:
+                            try:
+                                return json.loads(json_str[start : i + 1])
+                            except json.JSONDecodeError:
+                                start = None
+                                continue
+
+        # Last resort: try to parse as JSON after cleaning common issues
+        try:
+            # Remove leading/trailing non-JSON content
+            cleaned = cleaned.strip()
+            if cleaned.startswith("{") and cleaned.endswith("}"):
+                return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        logger.warning(
+            "json_parse_failed",
+            text_length=len(text),
+            text_preview=text[:200] if text else "",
+        )
+        return {}
 
 
 # Global singleton for backward compatibility

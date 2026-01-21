@@ -43,6 +43,7 @@ import {
   onTaskApproved,
   onTaskRejected,
   onPlanUpdated,
+  onWorkflowEvent,
   disconnectSocket,
 } from '../services/socket'
 import { useToast } from '../components/Toast'
@@ -740,80 +741,173 @@ const Message = ({ message, onAnswerQuestion, isAnsweringQuestion, onApproveTask
   )
 }
 
-// Typing indicator with workflow step
-const TypingIndicator = ({ currentStep }) => {
-  // Define workflow steps for visual progress
-  const workflowSteps = [
-    { id: 'analyzing', label: 'Analyzing', icon: Brain },
-    { id: 'planning', label: 'Planning', icon: Clock },
-    { id: 'executing', label: 'Executing', icon: Zap },
-  ]
+// Format event title for display
+const formatEventTitle = (event) => {
+  const type = event.event_type || ''
+  const title = event.title || ''
+  const data = event.data || {}
 
-  // Determine current step from message
-  const getCurrentStepIndex = () => {
-    const step = (currentStep || '').toLowerCase()
-    if (step.includes('analyz') || step.includes('router') || step.includes('intent')) return 0
-    if (step.includes('plan') || step.includes('creat')) return 1
-    if (step.includes('execut') || step.includes('generat') || step.includes('build') || step.includes('answer')) return 2
-    return 0
+  // Create descriptive titles based on event type
+  if (type === 'router_analyzing' || type.includes('intent')) {
+    return 'Analyzing your request'
+  }
+  if (type === 'plan_creating' || type === 'plan_ready') {
+    return 'Creating execution plan'
+  }
+  if (type === 'agent_started' && data.agent_id) {
+    const agentName = data.agent_id.replace('_agent', '').replace(/_/g, ' ')
+    return `Running ${agentName} agent`
+  }
+  if (type === 'llm_generating' || type === 'llm_calling') {
+    return 'Generating response'
+  }
+  if (type === 'files_created') {
+    const count = data.file_count || data.files?.length || 0
+    return count > 0 ? `Creating ${count} files` : 'Creating files'
+  }
+  if (type === 'git_pushed' || title.toLowerCase().includes('git')) {
+    return 'Pushing to Git repository'
+  }
+  if (type === 'tool_executing' && data.tool) {
+    return `Running ${data.tool}`
+  }
+  if (type === 'build_complete' || title.toLowerCase().includes('build')) {
+    return 'Building application'
+  }
+  if (type === 'app_running') {
+    return 'Starting application'
   }
 
-  const currentStepIndex = getCurrentStepIndex()
+  // Fall back to the title
+  return title || 'Processing'
+}
+
+// Typing indicator with real-time workflow steps
+const TypingIndicator = ({ currentStep, liveEvents = [] }) => {
+  // Process live events to show completed and current steps
+  const processedEvents = liveEvents.map((event, index) => {
+    const isLast = index === liveEvents.length - 1
+    return {
+      ...event,
+      displayTitle: formatEventTitle(event),
+      isComplete: !isLast || event.status === 'success',
+      isCurrent: isLast && event.status !== 'success',
+    }
+  })
+
+  // Deduplicate consecutive similar events
+  const uniqueEvents = processedEvents.reduce((acc, event) => {
+    const lastEvent = acc[acc.length - 1]
+    if (!lastEvent || lastEvent.displayTitle !== event.displayTitle) {
+      acc.push(event)
+    } else if (event.isComplete && !lastEvent.isComplete) {
+      // Update last event to complete
+      acc[acc.length - 1] = { ...lastEvent, isComplete: true, isCurrent: false }
+    }
+    return acc
+  }, [])
+
+  // Keep last 6 events for display
+  const displayEvents = uniqueEvents.slice(-6)
 
   return (
     <div className="flex justify-start mb-4">
-      <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-none px-4 py-4 shadow-sm min-w-[300px]">
+      <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-none px-4 py-4 shadow-sm min-w-[320px] max-w-[400px]">
+        {/* Header with animated spinner */}
         <div className="flex items-center space-x-3 mb-3">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
             <Loader2 className="w-5 h-5 text-white animate-spin" />
           </div>
           <div className="flex-1">
             <div className="text-sm font-medium text-gray-800">
-              {currentStep || 'Processing...'}
+              {currentStep || 'Processing your request...'}
             </div>
           </div>
         </div>
 
-        {/* Progress steps */}
-        <div className="flex items-center justify-between px-2">
-          {workflowSteps.map((step, idx) => {
-            const StepIcon = step.icon
-            const isActive = idx === currentStepIndex
-            const isComplete = idx < currentStepIndex
-
-            return (
-              <div key={step.id} className="flex items-center">
-                <div className="flex flex-col items-center">
-                  <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
-                      isActive
-                        ? 'bg-blue-500 text-white animate-pulse'
-                        : isComplete
-                        ? 'bg-green-500 text-white'
-                        : 'bg-gray-200 text-gray-400'
-                    }`}
-                  >
-                    {isComplete ? (
-                      <CheckCircle className="w-4 h-4" />
-                    ) : (
-                      <StepIcon className={`w-4 h-4 ${isActive ? 'animate-pulse' : ''}`} />
-                    )}
-                  </div>
-                  <span className={`text-xs mt-1 ${isActive ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
-                    {step.label}
-                  </span>
-                </div>
-                {idx < workflowSteps.length - 1 && (
-                  <div
-                    className={`w-12 h-0.5 mx-1 ${
-                      isComplete ? 'bg-green-500' : 'bg-gray-200'
-                    }`}
-                  />
+        {/* Live progress steps with checkmarks */}
+        {displayEvents.length > 0 ? (
+          <div className="space-y-2 border-l-2 border-blue-200 pl-3 ml-3">
+            {displayEvents.map((event, idx) => (
+              <div
+                key={idx}
+                className={`flex items-center gap-2 text-sm transition-all duration-300 ${
+                  event.isCurrent ? 'text-blue-700' : event.isComplete ? 'text-green-700' : 'text-gray-600'
+                }`}
+              >
+                {event.isCurrent ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-500 flex-shrink-0" />
+                ) : event.isComplete ? (
+                  <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                ) : (
+                  <div className="w-4 h-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                )}
+                <span className={event.isCurrent ? 'font-medium' : ''}>
+                  {event.displayTitle}
+                </span>
+                {event.isComplete && (
+                  <span className="text-green-500 ml-auto">✓</span>
                 )}
               </div>
-            )
-          })}
-        </div>
+            ))}
+          </div>
+        ) : (
+          /* Fallback: Generic progress steps when no live events */
+          <div className="flex items-center justify-between px-2 pt-2">
+            {[
+              { id: 'analyzing', label: 'Analyzing', icon: Brain },
+              { id: 'planning', label: 'Planning', icon: Clock },
+              { id: 'executing', label: 'Executing', icon: Zap },
+            ].map((step, idx) => {
+              const StepIcon = step.icon
+              const stepLower = (currentStep || '').toLowerCase()
+              let isActive = false
+              let isComplete = false
+
+              if (stepLower.includes('analyz') || stepLower.includes('router')) {
+                isActive = idx === 0
+              } else if (stepLower.includes('plan')) {
+                isComplete = idx === 0
+                isActive = idx === 1
+              } else if (stepLower.includes('execut') || stepLower.includes('generat')) {
+                isComplete = idx < 2
+                isActive = idx === 2
+              }
+
+              return (
+                <div key={step.id} className="flex items-center">
+                  <div className="flex flex-col items-center">
+                    <div
+                      className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                        isActive
+                          ? 'bg-blue-500 text-white animate-pulse'
+                          : isComplete
+                          ? 'bg-green-500 text-white'
+                          : 'bg-gray-200 text-gray-400'
+                      }`}
+                    >
+                      {isComplete ? (
+                        <CheckCircle className="w-4 h-4" />
+                      ) : (
+                        <StepIcon className={`w-4 h-4 ${isActive ? 'animate-pulse' : ''}`} />
+                      )}
+                    </div>
+                    <span className={`text-xs mt-1 ${isActive ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
+                      {step.label}
+                    </span>
+                  </div>
+                  {idx < 2 && (
+                    <div
+                      className={`w-12 h-0.5 mx-1 ${
+                        isComplete ? 'bg-green-500' : 'bg-gray-200'
+                      }`}
+                    />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1327,6 +1421,7 @@ const Chat = () => {
   const [currentStep, setCurrentStep] = useState(null)
   const [debugPanelOpen, setDebugPanelOpen] = useState(false)
   const [apiCalls, setApiCalls] = useState([])
+  const [liveWorkflowEvents, setLiveWorkflowEvents] = useState([])
   const messagesEndRef = useRef(null)
   const queryClient = useQueryClient()
 
@@ -1376,6 +1471,36 @@ What would you like to build today?`,
   useEffect(() => {
     if (currentPlanId) {
       joinPlanRoom(currentPlanId)
+    }
+  }, [currentPlanId])
+
+  // Listen for real-time workflow events during processing
+  useEffect(() => {
+    const handleWorkflowEvent = (data) => {
+      console.log('[Socket] Workflow event:', data)
+
+      // Only process events for the current plan (or if no plan yet, any event)
+      if (data.plan_id && currentPlanId && data.plan_id !== currentPlanId) {
+        return
+      }
+
+      const event = data.event
+      if (!event) return
+
+      // Update current step description
+      if (event.title) {
+        setCurrentStep(event.title)
+      }
+
+      // Add to live events list
+      setLiveWorkflowEvents((prev) => [...prev, event])
+    }
+
+    // Subscribe to workflow events
+    const unsubscribe = onWorkflowEvent(handleWorkflowEvent)
+
+    return () => {
+      unsubscribe()
     }
   }, [currentPlanId])
 
@@ -1566,6 +1691,7 @@ What would you like to build today?`,
       ])
       setCurrentPlanId(data.plan_id)
       setCurrentStep(null)
+      setLiveWorkflowEvents([]) // Clear live events after completion
       queryClient.invalidateQueries(['projects'])
       queryClient.invalidateQueries(['plans'])
       queryClient.invalidateQueries(['tasks'])
@@ -1580,6 +1706,7 @@ What would you like to build today?`,
         },
       ])
       setCurrentStep(null)
+      setLiveWorkflowEvents([]) // Clear live events on error
     },
   })
 
@@ -1752,6 +1879,7 @@ What would you like to build today?`,
 
     // Show processing indicator
     setCurrentStep('Processing your answer...')
+    setLiveWorkflowEvents([]) // Clear live events for new processing
 
     // Make the API call
     answerMutation.mutate({ questionId, answer })
@@ -1764,6 +1892,7 @@ What would you like to build today?`,
     const userMessage = input.trim()
     setInput('')
     setCurrentStep('Processing your request...')
+    setLiveWorkflowEvents([]) // Clear live events for new request
 
     // Build conversation history from CURRENT messages BEFORE adding the new one
     // This ensures we capture previous exchanges, not the message being sent
@@ -1789,6 +1918,7 @@ What would you like to build today?`,
   const handleNewChat = () => {
     setCurrentPlanId(null)
     setApiCalls([]) // Clear debug data for new chat
+    setLiveWorkflowEvents([]) // Clear live events for new chat
     setMessages([
       {
         role: 'assistant',
@@ -1806,6 +1936,7 @@ What would you like to build today?`,
 
   const handleSelectPlan = async (plan) => {
     setCurrentPlanId(plan.id)
+    setLiveWorkflowEvents([]) // Clear live events when selecting plan
 
     // Load persisted workflow events and LLM calls from plan.result
     const workflowEvents = plan.result?.workflow_events || []
@@ -1931,7 +2062,7 @@ What would you like to build today?`,
           ))}
 
           {chatMutation.isPending && (
-            <TypingIndicator currentStep={currentStep} />
+            <TypingIndicator currentStep={currentStep} liveEvents={liveWorkflowEvents} />
           )}
 
           <div ref={messagesEndRef} />
