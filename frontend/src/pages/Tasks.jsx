@@ -5,8 +5,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Wifi, WifiOff, Bot, ExternalLink } from 'lucide-react'
-import { getTasks, approveTask, rejectTask, getQuestions, answerQuestion } from '../services/api'
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Wifi, WifiOff, Bot, ExternalLink, ChevronDown, ChevronRight, History, User } from 'lucide-react'
+import { getTasks, approveTask, rejectTask, getQuestions, answerQuestion, getApprovalHistory } from '../services/api'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
 import { useToast } from '../components/Toast'
@@ -411,11 +411,20 @@ const Tasks = () => {
   const queryClient = useQueryClient()
   const toast = useToast()
   const [isConnected, setIsConnected] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
 
   const { data: tasksResponse, isLoading, isError, error, refetch: refetchTasks } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
     refetchInterval: 10000,
+  })
+
+  // Fetch approval history (completed approvals)
+  const { data: historyResponse, isLoading: historyLoading } = useQuery({
+    queryKey: ['approvalHistory'],
+    queryFn: () => getApprovalHistory(20),
+    enabled: showHistory, // Only fetch when history section is expanded
+    staleTime: 30000, // Consider data fresh for 30 seconds
   })
 
   // Extract tasks array from paginated response
@@ -703,6 +712,84 @@ const Tasks = () => {
           ))}
         </div>
       )}
+
+      {/* Approval History Section */}
+      <div className="mt-8 border-t pt-6">
+        <button
+          onClick={() => setShowHistory(!showHistory)}
+          className="flex items-center gap-2 text-lg font-semibold text-gray-700 hover:text-gray-900 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+          aria-expanded={showHistory}
+          aria-controls="approval-history"
+        >
+          {showHistory ? (
+            <ChevronDown className="w-5 h-5" />
+          ) : (
+            <ChevronRight className="w-5 h-5" />
+          )}
+          <History className="w-5 h-5 text-blue-500" />
+          Approval History
+        </button>
+
+        {showHistory && (
+          <div id="approval-history" className="mt-4">
+            {historyLoading ? (
+              <div className="flex items-center justify-center h-32 bg-white rounded-xl border border-gray-200">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+                <span className="ml-2 text-gray-600">Loading history...</span>
+              </div>
+            ) : historyResponse?.approvals?.length > 0 ? (
+              <div className="space-y-3">
+                {historyResponse.approvals.map((approval) => (
+                  <div
+                    key={approval.id}
+                    className="bg-white rounded-lg border border-gray-200 p-4 hover:border-gray-300 transition-colors"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{approval.tool_name || 'Unknown tool'}</span>
+                          <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full flex items-center">
+                            <CheckCircle className="w-3 h-3 mr-1" />
+                            Approved
+                          </span>
+                          {approval.agent_id && (
+                            <span className="px-2 py-0.5 bg-purple-100 text-purple-600 text-xs rounded-full flex items-center">
+                              <Bot className="w-3 h-3 mr-1" />
+                              {formatAgentName(approval.agent_id)}
+                            </span>
+                          )}
+                        </div>
+                        {approval.description && (
+                          <p className="text-gray-500 text-sm mt-1">{approval.description}</p>
+                        )}
+                        <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                          {approval.approved_by && (
+                            <span className="flex items-center gap-1">
+                              <User className="w-3 h-3" />
+                              Approved by: {approval.approved_by}
+                            </span>
+                          )}
+                          {approval.approved_at && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {new Date(approval.approved_at).toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 bg-white rounded-xl border border-gray-200">
+                <History className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                <p className="text-gray-500 text-sm">No approval history found.</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
