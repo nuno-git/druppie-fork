@@ -150,9 +150,13 @@ const JsonViewer = ({ data, label }) => {
 
   const handleCopy = async (e) => {
     e.stopPropagation()
-    await navigator.clipboard.writeText(jsonString)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      await navigator.clipboard.writeText(jsonString)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy to clipboard:', err)
+    }
   }
 
   return (
