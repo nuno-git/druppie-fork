@@ -869,7 +869,15 @@ class MainLoop:
             }
 
             with db_session() as db:
-                upsert_session(db, session_id, user_id, status, state)
+                upsert_session(
+                    db,
+                    session_id,
+                    user_id,
+                    status,
+                    state,
+                    project_id=exec_ctx.project_id,
+                    workspace_id=exec_ctx.workspace_id,
+                )
                 db.commit()
 
             logger.debug("session_saved", session_id=session_id, status=status)

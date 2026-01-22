@@ -128,10 +128,21 @@ def upsert_session(
     user_id: str | None = None,
     status: str = "active",
     state: dict | None = None,
+    project_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> Session:
     """Create or update a session.
 
     This is the preferred method for saving sessions from the main loop.
+
+    Args:
+        db: Database session
+        session_id: Session ID
+        user_id: User ID
+        status: Session status
+        state: Session state dict
+        project_id: Optional project ID to link session to
+        workspace_id: Optional workspace ID to link session to
     """
     session = get_session(db, session_id)
 
@@ -142,6 +153,11 @@ def upsert_session(
         session.status = status
         if state is not None:
             session.state = state
+        # Only update project_id/workspace_id if provided (don't overwrite with None)
+        if project_id is not None:
+            session.project_id = project_id
+        if workspace_id is not None:
+            session.workspace_id = workspace_id
         session.updated_at = datetime.utcnow()
     else:
         # Create new session
@@ -150,6 +166,8 @@ def upsert_session(
             user_id=user_id,
             status=status,
             state=state,
+            project_id=project_id,
+            workspace_id=workspace_id,
         )
         db.add(session)
 

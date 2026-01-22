@@ -19,6 +19,10 @@ class Session(Base):
 
     id = Column(String(36), primary_key=True)  # UUID
     user_id = Column(String(255), nullable=True, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
+    # Note: workspace_id doesn't have FK constraint to avoid circular reference
+    # (Workspace.session_id -> sessions.id and Session.workspace_id -> workspaces.id)
+    workspace_id = Column(String(36), nullable=True, index=True)
     status = Column(
         String(20),
         default="active",
@@ -32,6 +36,8 @@ class Session(Base):
         return {
             "id": self.id,
             "user_id": self.user_id,
+            "project_id": self.project_id,
+            "workspace_id": self.workspace_id,
             "status": self.status,
             "state": self.state,
             "created_at": self.created_at.isoformat() if self.created_at else None,

@@ -599,6 +599,44 @@ networks:
             .all()
         )
 
+    def get_builds_for_projects(
+        self, project_ids: list[str]
+    ) -> dict[str, dict[str, Build | list[Build]]]:
+        """Batch load all builds for multiple projects.
+
+        Returns a dict mapping project_id to {"main": Build|None, "previews": list[Build]}
+        This avoids N+1 queries when listing projects.
+        """
+        if not project_ids:
+            return {}
+
+        # Fetch all builds for all projects in one query
+        builds = (
+            self.db.query(Build)
+            .filter(Build.project_id.in_(project_ids))
+            .order_by(Build.created_at.desc())
+            .all()
+        )
+
+        # Group builds by project_id
+        result: dict[str, dict[str, Build | list[Build]]] = {
+            pid: {"main": None, "previews": []} for pid in project_ids
+        }
+
+        for build in builds:
+            pid = build.project_id
+            if pid not in result:
+                continue
+
+            if not build.is_preview and build.status == "running":
+                # Only set main if not already set (first one wins due to desc order)
+                if result[pid]["main"] is None:
+                    result[pid]["main"] = build
+            elif build.is_preview:
+                result[pid]["previews"].append(build)
+
+        return result
+
 
 def get_builder_service(db: DBSession) -> BuilderService:
     """Get a BuilderService instance for the given DB session."""
