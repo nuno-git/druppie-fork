@@ -36,10 +36,17 @@ run_migrations(engine)
 
 
 def get_db() -> Generator[Session, None, None]:
-    """Get database session."""
+    """Get database session with proper cleanup.
+
+    Ensures transactions are rolled back on errors and connections
+    are properly closed to prevent connection pool exhaustion.
+    """
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

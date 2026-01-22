@@ -69,14 +69,14 @@ class ConnectionManager:
         for role in roles:
             if websocket not in self.role_connections[role]:
                 self.role_connections[role].append(websocket)
-        logger.debug(f"WebSocket joined approval rooms for roles: {roles}")
+        logger.debug("websocket_joined_roles", roles=roles)
 
     async def send_personal(self, websocket: WebSocket, message: dict):
         """Send a message to a specific WebSocket."""
         try:
             await websocket.send_json(message)
         except Exception as e:
-            logger.error(f"Error sending personal message: {e}")
+            logger.error("websocket_send_error", error=str(e), exc_info=True)
 
     async def broadcast_to_session(self, session_id: str, message: dict):
         """Broadcast a message to all connections in a session."""
@@ -85,7 +85,7 @@ class ConnectionManager:
             try:
                 await websocket.send_json(message)
             except Exception as e:
-                logger.error(f"Error broadcasting to session {session_id}: {e}")
+                logger.error("websocket_broadcast_session_error", session_id=session_id, error=str(e), exc_info=True)
 
     async def broadcast_to_roles(self, roles: list[str], message: dict):
         """Broadcast a message to all connections with the given roles."""
@@ -97,7 +97,7 @@ class ConnectionManager:
                         await websocket.send_json(message)
                         sent_to.add(id(websocket))
                     except Exception as e:
-                        logger.error(f"Error broadcasting to role {role}: {e}")
+                        logger.error("websocket_broadcast_role_error", role=role, error=str(e), exc_info=True)
 
     async def broadcast_all(self, message: dict):
         """Broadcast a message to all active connections."""
@@ -105,7 +105,7 @@ class ConnectionManager:
             try:
                 await websocket.send_json(message)
             except Exception as e:
-                logger.error(f"Error broadcasting to all: {e}")
+                logger.error("websocket_broadcast_all_error", error=str(e), exc_info=True)
 
     def store_missed_event(self, session_id: str, event: dict):
         """Store an event that failed to broadcast for later retrieval.
@@ -118,13 +118,15 @@ class ConnectionManager:
             # Remove oldest event to make room
             events.pop(0)
             logger.warning(
-                f"Missed events buffer full for session {session_id}, "
-                "dropping oldest event"
+                "missed_events_buffer_full",
+                session_id=session_id,
+                action="dropping_oldest",
             )
         events.append(event)
         logger.debug(
-            f"Stored missed event for session {session_id}, "
-            f"total: {len(events)}"
+            "missed_event_stored",
+            session_id=session_id,
+            total_events=len(events),
         )
 
     def get_missed_events(self, session_id: str, clear: bool = True) -> list[dict]:
@@ -236,12 +238,12 @@ async def handle_websocket(websocket: WebSocket, session_id: str | None = None):
                 await manager.send_personal(websocket, {"type": "pong"})
 
             else:
-                logger.warning(f"Unknown WebSocket message type: {msg_type}")
+                logger.warning("websocket_unknown_message_type", msg_type=msg_type)
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, session_id)
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error("websocket_error", session_id=session_id, error=str(e), exc_info=True)
         manager.disconnect(websocket, session_id)
 
 

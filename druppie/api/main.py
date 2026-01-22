@@ -167,6 +167,10 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.warning("gitea_health_check_failed", error=str(e))
 
+        # Return status counts instead of internal names to avoid information disclosure
+        agents = Agent.list_agents()
+        workflows = Workflow.list_workflows()
+
         return {
             "status": "healthy",
             "version": "2.0.0",
@@ -175,8 +179,8 @@ def create_app() -> FastAPI:
             "database": database_healthy,
             "llm": llm_healthy,
             "gitea": gitea_healthy,
-            "agents": Agent.list_agents(),
-            "workflows": Workflow.list_workflows(),
+            "agents_count": len(agents),
+            "workflows_count": len(workflows),
             "llm_provider": llm_provider,
         }
 

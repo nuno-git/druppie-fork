@@ -378,7 +378,7 @@ async def build_project(
         build = await builder.build_project(project_id, branch, is_preview)
         return build_to_response(build)
     except Exception as e:
-        logger.error("build_failed", project_id=project_id, error=str(e))
+        logger.error("build_failed", project_id=project_id, error=str(e), exc_info=True)
         from druppie.api.errors import ExternalServiceError
         raise ExternalServiceError("builder", f"Build failed: {str(e)}", str(e))
 
@@ -420,7 +420,7 @@ async def run_project(
     except NotFoundError:
         raise
     except Exception as e:
-        logger.error("run_failed", project_id=project_id, error=str(e))
+        logger.error("run_failed", project_id=project_id, error=str(e), exc_info=True)
         from druppie.api.errors import ExternalServiceError
         raise ExternalServiceError("builder", f"Run failed: {str(e)}", str(e))
 
@@ -464,7 +464,7 @@ async def stop_project(
     except NotFoundError:
         raise
     except Exception as e:
-        logger.error("stop_failed", project_id=project_id, error=str(e))
+        logger.error("stop_failed", project_id=project_id, error=str(e), exc_info=True)
         from druppie.api.errors import ExternalServiceError
         raise ExternalServiceError("builder", f"Stop failed: {str(e)}", str(e))
 
