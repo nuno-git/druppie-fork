@@ -29,6 +29,7 @@ Workspace is initialized at conversation start (git-first architecture).
 import os
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any, Callable, Generator, TypedDict
 
 import structlog
@@ -40,6 +41,7 @@ from druppie.agents import Agent
 from druppie.workflows import Workflow
 from druppie.core.execution_context import (
     ExecutionContext,
+    CancelledException,
     set_current_context,
     get_current_context,
     clear_current_context,
@@ -47,6 +49,74 @@ from druppie.core.execution_context import (
 from druppie.core.mcp_client import get_mcp_client
 
 logger = structlog.get_logger()
+
+
+# =============================================================================
+# PROJECT NAME EXTRACTION
+# =============================================================================
+
+
+def extract_project_name_from_message(message: str) -> str | None:
+    """Extract a friendly project name from the user's message.
+
+    This is used when no project_name is provided, to generate a meaningful
+    name instead of using UUID-based names like "Project 2a161".
+
+    Examples:
+        "Create a to-do app" -> "to-do-app"
+        "Build a weather dashboard" -> "weather-dashboard"
+        "Make a simple calculator" -> "simple-calculator"
+        "Write a Python script for data analysis" -> "data-analysis"
+
+    Args:
+        message: User's message describing what they want to build
+
+    Returns:
+        A friendly project name, or None if extraction fails
+    """
+    import re
+
+    message_lower = message.lower().strip()
+
+    # Common patterns for project requests
+    # Pattern: "create/build/make/write a [adjective] <project name> [with/using/for...]"
+    patterns = [
+        # "create a to-do app", "build a weather dashboard"
+        r"(?:create|build|make|write|develop|generate)\s+(?:a\s+)?(?:simple\s+|basic\s+|new\s+)?(.+?)(?:\s+(?:app|application|website|web app|webapp|site|service|api|tool|script|program|project|dashboard|system|platform))?(?:\s+(?:with|using|for|in|that|which)|\s*$)",
+        # "to-do app", "weather dashboard" (direct object)
+        r"^(?:a\s+)?(?:simple\s+|basic\s+|new\s+)?(.+?)\s+(?:app|application|website|web app|webapp|site|service|api|tool|script|program|project|dashboard|system|platform)(?:\s|$)",
+        # Just grab the main nouns if nothing else matches
+        r"(?:create|build|make|write|develop)\s+(?:a\s+)?(.+?)(?:\s+(?:with|using|for|in|that|which)|\s*$)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, message_lower)
+        if match:
+            name = match.group(1).strip()
+
+            # Clean up the name
+            # Remove common filler words at the start
+            name = re.sub(r"^(?:a|an|the|my|new|simple|basic)\s+", "", name)
+
+            # Remove technical details at the end
+            name = re.sub(r"\s+(?:using|with|in|for|that|which).*$", "", name)
+
+            # Convert to slug format
+            name = name.strip()
+            name = re.sub(r"[^a-z0-9\s-]", "", name)  # Keep only alphanumeric, space, hyphen
+            name = re.sub(r"[\s_]+", "-", name)  # Replace spaces/underscores with hyphens
+            name = re.sub(r"-+", "-", name)  # Collapse multiple hyphens
+            name = name.strip("-")
+
+            # Limit length
+            if len(name) > 50:
+                # Try to cut at word boundary
+                name = name[:50].rsplit("-", 1)[0]
+
+            if name and len(name) >= 2:
+                return name
+
+    return None
 
 
 # =============================================================================
@@ -138,7 +208,10 @@ async def router_node(state: GraphState) -> dict:
 
     # Emit step event
     ctx = get_current_context()
+
+    # Check for cancellation before starting
     if ctx:
+        ctx.check_cancelled()
         ctx.emit("step_started", {"step": "router", "description": "Analyzing your request..."})
 
     try:
@@ -192,7 +265,10 @@ async def planner_node(state: GraphState) -> dict:
     logger.info("planner_node_start", intent=intent)
 
     ctx = get_current_context()
+
+    # Check for cancellation before starting
     if ctx:
+        ctx.check_cancelled()
         ctx.emit("step_started", {"step": "planner", "description": "Creating execution plan..."})
 
     if not state.get("intent"):
@@ -292,6 +368,10 @@ async def execute_node(state: GraphState) -> dict:
 
     ctx = get_current_context()
 
+    # Check for cancellation before starting
+    if ctx:
+        ctx.check_cancelled()
+
     if not state.get("plan"):
         logger.debug("execute_node_no_plan", response=state.get("response"))
         return {"results": [], "response": state.get("response", "No plan to execute")}
@@ -341,6 +421,10 @@ async def execute_node(state: GraphState) -> dict:
     # Execute individual steps
     total_steps = len(plan.get("steps", []))
     for i, step in enumerate(plan.get("steps", [])):
+        # Check for cancellation before each step
+        if ctx:
+            ctx.check_cancelled()
+
         step_type = step.get("type", "agent")
         step_id = step.get("id", f"step_{i}")
         agent_id = step.get("agent_id") if step_type == "agent" else None
@@ -421,6 +505,24 @@ async def execute_node(state: GraphState) -> dict:
                     else:
                         server = "coding"
                         tool_name = tool
+
+                    # Inject context into inputs based on server type
+                    if server == "coding" and "workspace_id" not in inputs:
+                        if context.get("workspace_id"):
+                            inputs["workspace_id"] = context["workspace_id"]
+                    if server == "hitl" and "session_id" not in inputs:
+                        if context.get("session_id"):
+                            inputs["session_id"] = context["session_id"]
+                    if server == "docker" and "workspace_id" not in inputs:
+                        if context.get("workspace_id"):
+                            inputs["workspace_id"] = context["workspace_id"]
+
+                    logger.debug(
+                        "mcp_step_inputs",
+                        step_id=step_id,
+                        tool=tool,
+                        inputs=inputs,
+                    )
 
                     with db_session() as db:
                         try:
@@ -585,6 +687,7 @@ class MainLoop:
         project_id: str | None = None,
         project_name: str | None = None,
         emit_event: Callable[[dict], None] | None = None,
+        conversation_history: list[dict] | None = None,
     ) -> dict[str, Any]:
         """Process a user message through the LangGraph flow.
 
@@ -595,6 +698,7 @@ class MainLoop:
             project_id: Optional existing project ID to work on
             project_name: Optional name for new project (used if project_id not provided)
             emit_event: Callback for real-time events
+            conversation_history: Previous conversation messages for context
 
         Returns:
             Response dict with results
@@ -609,15 +713,46 @@ class MainLoop:
         )
         set_current_context(exec_ctx)
 
+        # Load existing messages from session state or use provided history
+        existing_messages = await self._load_messages(session_id)
+        if not existing_messages and conversation_history:
+            # Use provided history if no stored messages
+            existing_messages = conversation_history
+
+        # Add new user message
+        messages = list(existing_messages) if existing_messages else []
+        messages.append({
+            "role": "user",
+            "content": message,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+
+        # Store messages in context for later saving
+        exec_ctx.messages = messages
+
         # Save session first (required for workspace foreign key)
         await self._save_session(session_id, user_id, "initializing", message, exec_ctx)
+
+        # Extract friendly project name from message if not provided
+        # This prevents ugly names like "Project 2a161" and instead uses
+        # friendly names like "to-do-app" based on the user's request
+        effective_project_name = project_name
+        if not project_id and not project_name:
+            extracted_name = extract_project_name_from_message(message)
+            if extracted_name:
+                effective_project_name = extracted_name
+                logger.info(
+                    "extracted_project_name",
+                    message_preview=message[:50],
+                    extracted_name=extracted_name,
+                )
 
         # Initialize workspace (git-first architecture)
         workspace_info = await self._initialize_workspace(
             session_id=session_id,
             user_id=user_id,
             project_id=project_id,
-            project_name=project_name,
+            project_name=effective_project_name,
             exec_ctx=exec_ctx,
         )
 
@@ -678,9 +813,20 @@ class MainLoop:
                     "llm_calls": exec_ctx.llm_calls,
                 }
 
-            # Success
+            # Success - add assistant message to history with workflow events
+            response_text = final_state.get("response", "")
+            if response_text and exec_ctx.messages is not None:
+                exec_ctx.messages.append({
+                    "role": "assistant",
+                    "content": response_text,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    # Attach workflow events to this message for persistence
+                    "workflow_events": exec_ctx.workflow_events.copy(),
+                    "llm_calls": exec_ctx.llm_calls.copy(),
+                })
+
             await self._save_session(session_id, user_id, "completed", message, exec_ctx, final_state)
-            exec_ctx.emit("processing_completed", {"response_preview": str(final_state.get("response", ""))[:100]})
+            exec_ctx.emit("processing_completed", {"response_preview": str(response_text)[:100]})
             clear_current_context()
 
             return {
@@ -693,7 +839,22 @@ class MainLoop:
                 "session_id": session_id,
                 "workspace_id": exec_ctx.workspace_id,
                 "project_id": exec_ctx.project_id,
+                "project_name": exec_ctx.project_name,
                 "branch": exec_ctx.branch,
+                "workflow_events": exec_ctx.workflow_events,
+                "llm_calls": exec_ctx.llm_calls,
+            }
+
+        except CancelledException:
+            # User cancelled the execution
+            logger.info("main_loop_cancelled", session_id=session_id)
+            await self._save_session(session_id, user_id, "cancelled", message, exec_ctx)
+            clear_current_context()
+            return {
+                "success": False,
+                "error": "Execution was cancelled by user",
+                "cancelled": True,
+                "session_id": session_id,
                 "workflow_events": exec_ctx.workflow_events,
                 "llm_calls": exec_ctx.llm_calls,
             }
@@ -792,6 +953,26 @@ class MainLoop:
                 "llm_calls": exec_ctx.llm_calls,
             }
 
+    async def _load_messages(self, session_id: str) -> list[dict]:
+        """Load existing messages from session state.
+
+        Args:
+            session_id: Session ID to load messages from
+
+        Returns:
+            List of message dicts or empty list if no session/messages
+        """
+        try:
+            from druppie.db.crud import get_session
+
+            with db_session() as db:
+                session = get_session(db, session_id)
+                if session and session.state:
+                    return session.state.get("messages", [])
+        except Exception as e:
+            logger.warning("load_messages_error", session_id=session_id, error=str(e))
+        return []
+
     async def _initialize_workspace(
         self,
         session_id: str,
@@ -809,6 +990,9 @@ class MainLoop:
         After creating the workspace, registers it with the MCP coding server
         so that coding tools (read_file, write_file, etc.) can access it.
 
+        Only emits workspace_initializing/workspace_initialized events on first
+        message of a session. Subsequent messages reuse the existing workspace.
+
         Args:
             session_id: Session ID
             user_id: User ID
@@ -821,7 +1005,61 @@ class MainLoop:
         """
         try:
             from druppie.core.workspace import get_workspace_service, WORKSPACE_ROOT
+            from druppie.db.crud import get_workspace_by_session
 
+            # Check if workspace already exists for this session (subsequent messages)
+            with db_session() as db:
+                existing_workspace = get_workspace_by_session(db, session_id)
+                if existing_workspace:
+                    # Workspace already exists - skip initialization events
+                    logger.info(
+                        "workspace_reusing_existing",
+                        session_id=session_id,
+                        workspace_id=existing_workspace.id,
+                    )
+
+                    # Get project name for the existing workspace
+                    from druppie.db.models import Project
+                    existing_project_name = None
+                    if existing_workspace.project_id:
+                        project_record = db.query(Project).filter(
+                            Project.id == existing_workspace.project_id
+                        ).first()
+                        if project_record:
+                            existing_project_name = project_record.name
+
+                    # Update execution context with existing workspace info (silently, no events)
+                    exec_ctx.workspace_id = existing_workspace.id
+                    exec_ctx.project_id = existing_workspace.project_id
+                    exec_ctx.project_name = existing_project_name
+                    exec_ctx.workspace_path = existing_workspace.local_path
+                    exec_ctx.branch = existing_workspace.branch
+
+                    # Re-register with MCP (in case server restarted)
+                    mcp_workspace_path = existing_workspace.local_path.replace(
+                        str(WORKSPACE_ROOT), "/workspaces"
+                    )
+                    await self._register_workspace_with_mcp(
+                        workspace_id=existing_workspace.id,
+                        workspace_path=mcp_workspace_path,
+                        project_id=existing_workspace.project_id,
+                        branch=existing_workspace.branch,
+                        user_id=user_id,
+                        session_id=session_id,
+                        exec_ctx=exec_ctx,
+                    )
+
+                    return {
+                        "workspace_id": existing_workspace.id,
+                        "project_id": existing_workspace.project_id,
+                        "project_name": existing_project_name,
+                        "workspace_path": existing_workspace.local_path,
+                        "branch": existing_workspace.branch,
+                        "is_new_project": False,
+                        "reused": True,
+                    }
+
+            # First message in session - emit initialization events
             exec_ctx.emit("workspace_initializing", {
                 "project_id": project_id,
                 "project_name": project_name,
@@ -838,12 +1076,24 @@ class MainLoop:
                     project_name=project_name,
                 )
 
+                # Get the actual project name from the database
+                # (may differ from input if sanitized or unique suffix added)
+                from druppie.db.models import Project
+                actual_project_name = None
+                if workspace.project_id:
+                    project_record = db.query(Project).filter(
+                        Project.id == workspace.project_id
+                    ).first()
+                    if project_record:
+                        actual_project_name = project_record.name
+
                 # Update execution context with workspace info
                 exec_ctx.set_workspace(
                     workspace_id=workspace.id,
                     project_id=workspace.project_id,
                     workspace_path=workspace.local_path,
                     branch=workspace.branch,
+                    project_name=actual_project_name,
                 )
 
                 db.commit()
@@ -876,6 +1126,7 @@ class MainLoop:
                 return {
                     "workspace_id": workspace.id,
                     "project_id": workspace.project_id,
+                    "project_name": actual_project_name,
                     "workspace_path": workspace.local_path,
                     "branch": workspace.branch,
                     "is_new_project": workspace.is_new_project,
@@ -895,6 +1146,7 @@ class MainLoop:
             return {
                 "workspace_id": None,
                 "project_id": project_id,
+                "project_name": None,
                 "workspace_path": None,
                 "branch": None,
             }
@@ -909,11 +1161,11 @@ class MainLoop:
         session_id: str,
         exec_ctx: ExecutionContext,
     ) -> None:
-        """Register workspace with MCP coding server.
+        """Register workspace with MCP servers (coding and docker).
 
-        The MCP coding server maintains an in-memory registry of workspaces.
+        The MCP servers maintain in-memory registries of workspaces.
         This must be called after backend workspace initialization so that
-        coding tools (read_file, write_file, etc.) can find the workspace.
+        tools (read_file, write_file, docker build, etc.) can find the workspace.
 
         Args:
             workspace_id: Workspace ID from backend
@@ -928,6 +1180,7 @@ class MainLoop:
             with db_session() as db:
                 mcp_client = get_mcp_client(db)
 
+                # Register with coding MCP
                 result = await mcp_client._execute_tool(
                     server="coding",
                     tool="register_workspace",
@@ -944,15 +1197,41 @@ class MainLoop:
 
                 if result.get("success"):
                     logger.info(
-                        "workspace_registered_with_mcp",
+                        "workspace_registered_with_coding_mcp",
                         workspace_id=workspace_id,
                         mcp_path=workspace_path,
                     )
                 else:
                     logger.warning(
-                        "workspace_mcp_registration_failed",
+                        "workspace_coding_mcp_registration_failed",
                         workspace_id=workspace_id,
                         error=result.get("error"),
+                    )
+
+                # Also register with Docker MCP for docker:build to find workspace
+                docker_result = await mcp_client._execute_tool(
+                    server="docker",
+                    tool="register_workspace",
+                    args={
+                        "workspace_id": workspace_id,
+                        "workspace_path": workspace_path,
+                        "project_id": project_id,
+                        "branch": branch,
+                    },
+                    context=exec_ctx,
+                )
+
+                if docker_result.get("success"):
+                    logger.info(
+                        "workspace_registered_with_docker_mcp",
+                        workspace_id=workspace_id,
+                        mcp_path=workspace_path,
+                    )
+                else:
+                    logger.warning(
+                        "workspace_docker_mcp_registration_failed",
+                        workspace_id=workspace_id,
+                        error=docker_result.get("error"),
                     )
 
         except Exception as e:
@@ -1000,6 +1279,7 @@ class MainLoop:
                     "workspace_path": exec_ctx.workspace_path,
                     "branch": exec_ctx.branch,
                 },
+                "messages": exec_ctx.messages,  # Store full conversation history
                 "workflow_events": exec_ctx.workflow_events,
                 "llm_calls": exec_ctx.llm_calls,
                 "intent": final_state.get("intent") if final_state else None,

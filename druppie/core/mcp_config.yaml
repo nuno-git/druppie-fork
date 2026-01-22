@@ -70,13 +70,34 @@ mcps:
     url: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
     description: "Docker container operations"
     tools:
+      - name: register_workspace
+        description: "Register a workspace for Docker operations"
+        requires_approval: false
+
       - name: build
-        description: "Build Docker image"
+        description: "Build Docker image from workspace"
         requires_approval: true
         required_roles:
           - developer
           - admin
         danger_level: medium
+        parameters:
+          type: object
+          properties:
+            image_name:
+              type: string
+              description: "Name for the built image (e.g., myapp:latest)"
+            workspace_id:
+              type: string
+              description: "Workspace ID (will resolve to path)"
+            workspace_path:
+              type: string
+              description: "Direct path to workspace with Dockerfile"
+            dockerfile:
+              type: string
+              description: "Dockerfile name (default: Dockerfile)"
+          required:
+            - image_name
 
       - name: run
         description: "Run Docker container"
@@ -85,6 +106,27 @@ mcps:
           - developer
           - admin
         danger_level: medium
+        parameters:
+          type: object
+          properties:
+            image_name:
+              type: string
+              description: "Docker image to run"
+            container_name:
+              type: string
+              description: "Name for the container"
+            port:
+              type: integer
+              description: "Host port to expose"
+            container_port:
+              type: integer
+              description: "Container port (default: 3000)"
+            port_mapping:
+              type: string
+              description: "Port mapping (e.g., 8080:3000)"
+          required:
+            - image_name
+            - container_name
 
       - name: stop
         description: "Stop running container"

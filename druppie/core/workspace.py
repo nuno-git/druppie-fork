@@ -122,8 +122,10 @@ class WorkspaceService:
             )
         else:
             # Creating new project
+            # Note: The loop.py should extract a friendly name from the user's message
+            # before calling this. The fallback here is only for edge cases.
             project = await self._create_project(
-                name=project_name or f"Project {session_id[:8]}",
+                name=project_name or "new-project",
                 description="",
                 user_id=user_id,
             )

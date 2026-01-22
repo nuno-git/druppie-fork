@@ -48,6 +48,9 @@ export const sendChat = (message, sessionId = null, conversationHistory = null) 
     }),
   })
 
+export const cancelChat = (sessionId) =>
+  request(`/api/chat/${sessionId}/cancel`, { method: 'POST' })
+
 // ============ Sessions (replaces Plans) ============
 // Paginated sessions for sidebar (new format with preview & project_name)
 export const getSessions = (page = 1, limit = 20) =>
@@ -182,3 +185,41 @@ export const getRunningApps = () => request('/api/apps/running')
 // ============ Health ============
 export const getHealth = () => request('/health')
 export const getStatus = () => request('/api/status')
+
+// ============ Admin Database Viewer ============
+export const getAdminStats = () => request('/api/admin/stats')
+export const getAdminSessions = (page = 1, limit = 20, status = null, search = null) => {
+  const params = new URLSearchParams({ page, limit })
+  if (status) params.append('status', status)
+  if (search) params.append('search', search)
+  return request(`/api/admin/sessions?${params.toString()}`)
+}
+export const getAdminApprovals = (page = 1, limit = 20, status = null, search = null) => {
+  const params = new URLSearchParams({ page, limit })
+  if (status) params.append('status', status)
+  if (search) params.append('search', search)
+  return request(`/api/admin/approvals?${params.toString()}`)
+}
+export const getAdminProjects = (page = 1, limit = 20, status = null, search = null) => {
+  const params = new URLSearchParams({ page, limit })
+  if (status) params.append('status', status)
+  if (search) params.append('search', search)
+  return request(`/api/admin/projects?${params.toString()}`)
+}
+export const getAdminWorkspaces = (page = 1, limit = 20, search = null) => {
+  const params = new URLSearchParams({ page, limit })
+  if (search) params.append('search', search)
+  return request(`/api/admin/workspaces?${params.toString()}`)
+}
+export const getAdminHitlQuestions = (page = 1, limit = 20, status = null, search = null) => {
+  const params = new URLSearchParams({ page, limit })
+  if (status) params.append('status', status)
+  if (search) params.append('search', search)
+  return request(`/api/admin/hitl-questions?${params.toString()}`)
+}
+export const getAdminBuilds = (page = 1, limit = 20, status = null, search = null) => {
+  const params = new URLSearchParams({ page, limit })
+  if (status) params.append('status', status)
+  if (search) params.append('search', search)
+  return request(`/api/admin/builds?${params.toString()}`)
+}

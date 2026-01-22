@@ -239,8 +239,12 @@ class Agent:
                 if exec_ctx:
                     injected = {}
                     if server == "coding":
-                        # Coding tools only accept: workspace_id, path, content
-                        # Do NOT inject project_id, workspace_path, branch - not in MCP schemas
+                        # Coding tools accept: workspace_id, path, content
+                        if "workspace_id" not in tool_args and exec_ctx.workspace_id:
+                            tool_args["workspace_id"] = exec_ctx.workspace_id
+                            injected["workspace_id"] = exec_ctx.workspace_id
+                    if server == "docker":
+                        # Docker tools accept: workspace_id for build
                         if "workspace_id" not in tool_args and exec_ctx.workspace_id:
                             tool_args["workspace_id"] = exec_ctx.workspace_id
                             injected["workspace_id"] = exec_ctx.workspace_id

@@ -314,6 +314,24 @@ services:
       start_period: 10s
 
   # =============================================================================
+  # DATABASE ADMIN (Adminer)
+  # =============================================================================
+
+  adminer:
+    image: adminer:latest
+    container_name: druppie-adminer
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: druppie-db
+      ADMINER_DESIGN: pepa-linha-dark
+    depends_on:
+      druppie-db:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
+
+  # =============================================================================
   # FRONTEND (Vite + React)
   # =============================================================================
 

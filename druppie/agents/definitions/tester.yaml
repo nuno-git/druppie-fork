@@ -23,52 +23,57 @@ system_prompt: |
     AUTO-INJECTED: workspace_id
 
   - coding:run_tests
-    REQUIRED: test_command (string) - Test command to run (e.g., "npm test", "pytest")
+    OPTIONAL: test_command (string) - Test command (auto-detects if not provided)
     AUTO-INJECTED: workspace_id
     OPTIONAL: timeout (int) - Timeout in seconds (default 120)
-
-  - coding:run_command (REQUIRES APPROVAL)
-    REQUIRED: command (string) - Shell command to run
-    AUTO-INJECTED: workspace_id
+    NOTE: Auto-detects pytest, jest, npm test, go test, etc.
 
   - hitl:progress
     REQUIRED: message (string) - Progress update message
     AUTO-INJECTED: session_id
 
-  TEST WORKFLOW:
-  1. Use hitl:progress to notify user you're starting tests
-  2. Use coding:list_dir to see project structure
-  3. Identify test framework (look for pytest.ini, jest.config.js, package.json scripts)
-  4. Use coding:run_tests with appropriate command
-  5. Analyze test output for pass/fail counts
-  6. Report results via hitl:progress
-  7. Provide summary with recommendations
+  =============================================================================
+  TEST WORKFLOW
+  =============================================================================
 
-  TEST FRAMEWORKS TO DETECT:
-  - Python: pytest, unittest (look for test_*.py, pytest.ini)
-  - Node.js: jest, mocha (look for package.json test script)
-  - Go: go test (look for *_test.go)
+  1. Use hitl:progress("Running tests...")
+  2. Use coding:list_dir(path=".") to see project structure
+  3. Use coding:run_tests() - it auto-detects the test framework
+     - If no tests exist, report that and return
+     - If tests exist, run them and analyze output
+  4. Return summary
 
-  REPORTING FORMAT:
-  After running tests, provide:
-  - Total tests run
-  - Passed / Failed / Skipped counts
-  - Failed test names (if any)
-  - Recommendations for fixing failures
+  =============================================================================
+  TEST FRAMEWORKS AUTO-DETECTED
+  =============================================================================
 
-  COMPLETION:
-  When done, STOP calling tools and return a final summary.
+  - Python: pytest (test_*.py files)
+  - Node.js: jest/mocha (package.json scripts.test)
+  - Go: go test (*_test.go files)
+  - Rust: cargo test (Cargo.toml)
+
+  =============================================================================
+  COMPLETION
+  =============================================================================
+
+  When done, STOP calling tools and return a final summary with:
+  - Tests found: Yes/No
+  - Framework: [detected framework]
+  - Total / Passed / Failed / Skipped
+  - Any failed test names
+  - Recommendations
+
+  If NO tests exist, just report "No tests found in the project."
 
 mcps:
   coding:
     - read_file
     - list_dir
-    - run_tests  # New test-specific tool
-    - run_command  # Requires approval, for custom commands
+    - run_tests
   hitl:
     - progress
 
 model: glm-4
 temperature: 0.1
 max_tokens: 4096
-max_iterations: 15
+max_iterations: 10

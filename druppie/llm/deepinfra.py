@@ -315,9 +315,9 @@ class ChatDeepInfra(BaseLLM):
 
         choice = data["choices"][0]
         message = choice.get("message", {})
-        content = self._clean_response(message.get("content", ""))
+        raw_content = message.get("content", "")
 
-        # Parse tool calls
+        # Parse tool calls from OpenAI format first
         tool_calls = []
         if message.get("tool_calls"):
             for tc in message["tool_calls"]:
@@ -343,6 +343,21 @@ class ChatDeepInfra(BaseLLM):
                     "name": func.get("name", ""),
                     "args": args,
                 })
+
+        # If no tool calls from OpenAI format, check for <tool_call> tags in content
+        # Some models (like Qwen) output tool calls as text
+        if not tool_calls and raw_content:
+            extracted_calls, cleaned_content = self._extract_tool_calls_from_text(raw_content)
+            if extracted_calls:
+                tool_calls = extracted_calls
+                raw_content = cleaned_content
+                logger.info(
+                    "extracted_tool_calls_from_text",
+                    count=len(tool_calls),
+                    tool_names=[tc.get("name") for tc in tool_calls],
+                )
+
+        content = self._clean_response(raw_content)
 
         # Extract usage
         usage = data.get("usage", {})
@@ -387,6 +402,63 @@ class ChatDeepInfra(BaseLLM):
                 text = text[:-3]
 
         return text.strip()
+
+    def _extract_tool_calls_from_text(self, content: str) -> tuple[list[dict], str]:
+        """Extract tool calls from text content.
+
+        Some models (like Qwen) output tool calls in text format like:
+        <tool_call>{"name": "coding_write_file", "arguments": {...}}</tool_call>
+
+        Args:
+            content: Raw content from LLM response
+
+        Returns:
+            Tuple of (list of tool calls, cleaned content without tool call tags)
+        """
+        tool_calls = []
+        cleaned_content = content
+
+        # Pattern to match <tool_call>...</tool_call> blocks
+        tool_call_pattern = re.compile(
+            r'<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>',
+            re.MULTILINE | re.DOTALL
+        )
+
+        matches = tool_call_pattern.findall(content)
+
+        for i, match in enumerate(matches):
+            try:
+                # Try to parse the JSON
+                tool_data = json.loads(match)
+
+                name = tool_data.get("name", "")
+                args = tool_data.get("arguments", {})
+
+                # Handle case where arguments is a string
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {"raw": args}
+
+                if name:
+                    tool_calls.append({
+                        "id": f"text_call_{i}",
+                        "name": name,
+                        "args": args if isinstance(args, dict) else {},
+                    })
+            except json.JSONDecodeError:
+                logger.warning(
+                    "failed_to_parse_text_tool_call",
+                    match_preview=match[:200] if len(match) > 200 else match,
+                )
+                continue
+
+        # Remove the tool_call tags from content if we found any
+        if tool_calls:
+            cleaned_content = tool_call_pattern.sub("", content).strip()
+
+        return tool_calls, cleaned_content
 
     def _parse_malformed_args(self, args_str: str, tool_name: str) -> dict[str, Any]:
         """Attempt to parse malformed tool arguments from LLM."""

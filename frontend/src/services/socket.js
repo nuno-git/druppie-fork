@@ -90,6 +90,7 @@ const eventCallbacks = {
   question: [],  // HITL MCP question events
   progress: [],  // HITL MCP progress events
   notification: [],  // HITL MCP notification events
+  execution_cancelled: [],  // Execution cancelled by user
 }
 
 /**
@@ -317,6 +318,13 @@ export const onHITLProgress = (callback) => {
  */
 export const onHITLNotification = (callback) => {
   return registerCallback('notification', callback)
+}
+
+/**
+ * Subscribe to execution cancelled events
+ */
+export const onExecutionCancelled = (callback) => {
+  return registerCallback('execution_cancelled', callback)
 }
 
 /**
