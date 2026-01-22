@@ -5,11 +5,12 @@ Now reads from mcp_config.yaml via MCPClient.
 """
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 import structlog
 
 from druppie.api.deps import get_current_user, get_db
+from druppie.api.errors import NotFoundError, ValidationError
 from druppie.core.mcp_client import get_mcp_client
 from sqlalchemy.orm import Session
 
@@ -242,13 +243,13 @@ async def get_tool(
 
     # Parse tool_id (format: server:tool_name)
     if ":" not in tool_id:
-        raise HTTPException(status_code=400, detail="Invalid tool ID format. Use server:tool_name")
+        raise ValidationError("Invalid tool ID format. Use server:tool_name", field="tool_id")
 
     server_id, tool_name = tool_id.split(":", 1)
     tool_config = mcp_client.get_tool_config(server_id, tool_name)
 
     if not tool_config:
-        raise HTTPException(status_code=404, detail="Tool not found")
+        raise NotFoundError("tool", tool_id)
 
     user_roles = user.get("realm_access", {}).get("roles", [])
     required_roles = tool_config.get("required_roles", [])
@@ -287,7 +288,7 @@ async def get_mcp_server(
 
     server_config = config.get("mcps", {}).get(server_id)
     if not server_config:
-        raise HTTPException(status_code=404, detail="Server not found")
+        raise NotFoundError("mcp_server", server_id)
 
     user_roles = user.get("realm_access", {}).get("roles", [])
 

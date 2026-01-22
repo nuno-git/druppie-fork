@@ -78,7 +78,7 @@ def db_session() -> Generator[Session, None, None]:
     try:
         yield db
     except Exception as e:
-        logger.error("db_session_error", error=str(e), error_type=type(e).__name__)
+        logger.error("db_session_error", error=str(e), error_type=type(e).__name__, exc_info=True)
         raise
     finally:
         try:
@@ -148,7 +148,7 @@ async def router_node(state: GraphState) -> dict:
             ctx.emit("step_completed", {"step": "router", "action": result.get("action")})
         return {"intent": result}
     except Exception as e:
-        logger.error("router_node_error", error=str(e))
+        logger.error("router_node_error", error=str(e), exc_info=True)
         if ctx:
             ctx.emit("step_error", {"step": "router", "error": str(e)})
         return {"error": f"Router failed: {e}"}
@@ -191,7 +191,7 @@ Context: {state['intent'].get('project_context', {})}"""
             ctx.emit("step_completed", {"step": "planner", "steps_count": steps_count})
         return {"plan": result}
     except Exception as e:
-        logger.error("planner_node_error", error=str(e))
+        logger.error("planner_node_error", error=str(e), exc_info=True)
         if ctx:
             ctx.emit("step_error", {"step": "planner", "error": str(e)})
         return {"error": f"Planner failed: {e}"}
@@ -242,7 +242,7 @@ async def execute_node(state: GraphState) -> dict:
                 "response": f"Workflow {plan['workflow_id']} completed",
             }
         except Exception as e:
-            logger.error("workflow_error", workflow=plan["workflow_id"], error=str(e))
+            logger.error("workflow_error", workflow=plan["workflow_id"], error=str(e), exc_info=True)
             if ctx:
                 ctx.emit("workflow_error", {"workflow_id": plan["workflow_id"], "error": str(e)})
             return {"error": f"Workflow failed: {e}"}
@@ -306,6 +306,7 @@ async def execute_node(state: GraphState) -> dict:
                                 server=server,
                                 error=str(mcp_error),
                                 error_type=type(mcp_error).__name__,
+                                exc_info=True,
                             )
                             raise
                 else:
@@ -320,7 +321,7 @@ async def execute_node(state: GraphState) -> dict:
                 ctx.step_completed(step_id, success=True)
 
         except Exception as e:
-            logger.error("step_error", step_id=step_id, error=str(e))
+            logger.error("step_error", step_id=step_id, error=str(e), exc_info=True)
             results.append({"step_id": step_id, "success": False, "error": str(e)})
             if ctx:
                 ctx.step_completed(step_id, success=False)
@@ -560,7 +561,7 @@ class MainLoop:
             }
 
         except Exception as e:
-            logger.error("main_loop_error", error=str(e))
+            logger.error("main_loop_error", error=str(e), exc_info=True)
             await self._save_session(session_id, user_id, "failed", message, exec_ctx, error=str(e))
             clear_current_context()
             return {
@@ -643,7 +644,7 @@ class MainLoop:
             }
 
         except Exception as e:
-            logger.error("main_loop_resume_error", error=str(e))
+            logger.error("main_loop_resume_error", error=str(e), exc_info=True)
             clear_current_context()
             return {
                 "success": False,
@@ -749,6 +750,7 @@ class MainLoop:
                 error_type=type(e).__name__,
                 session_id=session_id,
                 project_id=project_id,
+                exc_info=True,
             )
             exec_ctx.emit("workspace_error", {"error": str(e)})
             # Return empty workspace info - execution can continue without workspace
@@ -889,6 +891,7 @@ class MainLoop:
                 status=status,
                 error=str(e),
                 error_type=type(e).__name__,
+                exc_info=True,
             )
 
 

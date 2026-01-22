@@ -106,7 +106,7 @@ class AuthService:
             logger.warning("token_invalid", error=str(e))
             return None
         except Exception as e:
-            logger.error("token_decode_error", error=str(e))
+            logger.error("token_decode_error", error=str(e), exc_info=True)
             return None
 
     def validate_request(self, authorization: str | None) -> dict[str, Any] | None:
