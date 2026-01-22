@@ -636,3 +636,67 @@ if not project:
 if not result.get("success"):
     raise ExternalServiceError("gitea", f"Failed: {result.get('error')}")
 ```
+
+### Datetime Best Practices
+Use timezone-aware datetime instead of deprecated `datetime.utcnow()`:
+```python
+from datetime import datetime, timezone
+
+# Bad - deprecated in Python 3.12+
+timestamp = datetime.utcnow()
+
+# Good - timezone-aware
+timestamp = datetime.now(timezone.utc)
+```
+
+### Consistent Logging with structlog
+Use `structlog` throughout the codebase, not the `logging` module:
+```python
+import structlog
+logger = structlog.get_logger()
+
+# Use kwargs-style (not f-strings)
+logger.info("event_name", key1=value1, key2=value2)
+logger.error("error_occurred", error=str(e), exc_info=True)
+```
+
+### Safe Array Access
+Use `next(iter())` pattern for safe array access:
+```python
+# Bad - potential IndexError
+role = user_roles[0] if user_roles else "user"
+
+# Good - safe and readable
+role = next(iter(user_roles), "user")
+```
+
+### Input Validation on Request Models
+Always add validation to Pydantic request models:
+```python
+from pydantic import BaseModel, Field
+from typing import Literal
+
+class QuestionRequest(BaseModel):
+    answer: str = Field(..., min_length=1, max_length=10000)
+    question_type: Literal["text", "choice"] = "text"
+    comment: str | None = Field(None, max_length=2000)
+```
+
+### WebSocket Memory Management
+The ConnectionManager has bounded buffers to prevent memory leaks:
+- `MAX_MISSED_EVENTS_PER_SESSION = 100` - Oldest events dropped when full
+- `cleanup_stale_sessions()` - Call periodically to remove orphaned data
+- `get_stats()` - Monitor connection and buffer statistics
+
+### Configuration Without Hardcoded Credentials
+Never hardcode default passwords in config. Use empty defaults and warn:
+```python
+admin_password: str = Field(
+    default="",  # No default value!
+    description="Admin password (required)",
+)
+
+@property
+def is_configured(self) -> bool:
+    return bool(self.admin_password)
+```
