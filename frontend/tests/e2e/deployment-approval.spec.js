@@ -57,8 +57,8 @@ test.describe('Deployment from Chat', () => {
   test('can access chat and send deployment request', async ({ page }) => {
     await login(page, users.infra.username, users.infra.password)
 
-    // Navigate to chat
-    await page.getByRole('link', { name: /chat/i }).click()
+    // Navigate to chat (use exact match to avoid matching session links)
+    await page.getByRole('link', { name: 'Chat', exact: true }).click()
     await expect(page.getByText(/I'm Druppie/i)).toBeVisible({ timeout: 15000 })
 
     // Request deployment
@@ -79,8 +79,8 @@ test.describe('Deployment from Chat', () => {
   test('developer can request staging deployment', async ({ page }) => {
     await login(page, users.developer.username, users.developer.password)
 
-    // Navigate to chat
-    await page.getByRole('link', { name: /chat/i }).click()
+    // Navigate to chat (use exact match to avoid matching session links)
+    await page.getByRole('link', { name: 'Chat', exact: true }).click()
     await expect(page.getByText(/I'm Druppie/i)).toBeVisible({ timeout: 15000 })
 
     // Request staging deployment
@@ -235,8 +235,8 @@ test.describe('Workflow Events Display', () => {
   test('chat page shows execution events', async ({ page }) => {
     await login(page, users.developer.username, users.developer.password)
 
-    // Navigate to chat
-    await page.getByRole('link', { name: /chat/i }).click()
+    // Navigate to chat (use exact match to avoid matching session links)
+    await page.getByRole('link', { name: 'Chat', exact: true }).click()
     await expect(page.getByText(/I'm Druppie/i)).toBeVisible({ timeout: 15000 })
 
     // Request deployment

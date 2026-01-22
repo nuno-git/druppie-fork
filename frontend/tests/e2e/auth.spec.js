@@ -62,18 +62,27 @@ test.describe('Authentication', () => {
   test('should show login button when not authenticated', async ({ page }) => {
     await page.goto('/')
 
-    // Wait for page to load and show login state
-    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {})
-    await page.waitForTimeout(3000) // Extra wait for Keycloak init
+    // Wait for Keycloak init to complete (can be slow)
+    // The connecting message should disappear
+    await page.waitForFunction(
+      () => !document.body.textContent?.includes('Connecting to authentication'),
+      { timeout: 20000 }
+    ).catch(() => {})
 
-    // Should see a login button (either in nav or main content)
-    // The page might auto-login if Keycloak is configured, so check for either state
+    // Wait for either login button or welcome message
     const loginButton = page.locator('button').filter({ hasText: /login|log in/i }).first()
     const welcomeText = page.getByText(/welcome back/i)
 
-    // Either we see login button OR we're already authenticated
-    const isLoginVisible = await loginButton.isVisible({ timeout: 5000 }).catch(() => false)
-    const isWelcomeVisible = await welcomeText.isVisible({ timeout: 1000 }).catch(() => false)
+    // Wait up to 15s for either state
+    let isLoginVisible = false
+    let isWelcomeVisible = false
+
+    for (let i = 0; i < 15; i++) {
+      isLoginVisible = await loginButton.isVisible().catch(() => false)
+      isWelcomeVisible = await welcomeText.isVisible().catch(() => false)
+      if (isLoginVisible || isWelcomeVisible) break
+      await page.waitForTimeout(1000)
+    }
 
     expect(isLoginVisible || isWelcomeVisible).toBeTruthy()
   })
