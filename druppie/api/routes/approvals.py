@@ -439,7 +439,7 @@ async def approve_request(
                 + [
                     {
                         "user_id": user_id,
-                        "role": user_roles[0] if user_roles else "user",
+                        "role": next(iter(user_roles), "user"),
                         "approved": True,
                         "comment": decision.comment,
                         "timestamp": datetime.utcnow().isoformat(),
@@ -672,7 +672,7 @@ async def approve_request(
                 + [
                     {
                         "user_id": user_id,
-                        "role": user_roles[0] if user_roles else "user",
+                        "role": next(iter(user_roles), "user"),
                         "approved": False,
                         "comment": decision.comment,
                         "timestamp": datetime.utcnow().isoformat(),
@@ -770,7 +770,7 @@ async def approve_merge(
             + [
                 {
                     "user_id": user.get("sub"),
-                    "role": user_roles[0] if user_roles else "user",
+                    "role": next(iter(user_roles), "user"),
                     "approved": True,
                     "action": "merge",
                 }
