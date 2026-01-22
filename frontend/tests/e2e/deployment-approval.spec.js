@@ -88,8 +88,8 @@ test.describe('Deployment from Chat', () => {
     await input.fill('Deploy to staging environment')
     await input.press('Enter')
 
-    // Should see user message
-    await expect(page.getByText('Deploy to staging environment')).toBeVisible()
+    // Should see user message in the chat (use first() to avoid matching session sidebar)
+    await expect(page.getByText('Deploy to staging environment').first()).toBeVisible()
   })
 })
 
