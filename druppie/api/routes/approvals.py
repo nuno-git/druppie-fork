@@ -7,12 +7,20 @@ Supports MCP microservices architecture with resume execution.
 from datetime import datetime
 from enum import Enum
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import structlog
 
 from druppie.api.deps import get_current_user, get_db, get_loop
+from druppie.api.errors import (
+    APIError,
+    NotFoundError,
+    ValidationError,
+    ConflictError,
+    AuthorizationError,
+    ExternalServiceError,
+)
 from druppie.core.loop import MainLoop
 from druppie.core.mcp_client import get_mcp_client, MCPErrorType
 from druppie.core.execution_context import ExecutionContext
@@ -343,7 +351,7 @@ async def get_approval(
     """Get a specific approval request."""
     approval = crud.get_approval(db, approval_id)
     if not approval:
-        raise HTTPException(status_code=404, detail="Approval not found")
+        raise NotFoundError("approval", approval_id)
 
     return ApprovalResponse(
         id=approval.id,
@@ -371,10 +379,10 @@ async def approve_request(
     """Approve or reject an approval request and resume execution."""
     approval = crud.get_approval(db, approval_id)
     if not approval:
-        raise HTTPException(status_code=404, detail="Approval not found")
+        raise NotFoundError("approval", approval_id)
 
     if approval.status != "pending":
-        raise HTTPException(status_code=400, detail="Approval is not pending")
+        raise ConflictError(f"Approval {approval_id} is not pending (status: {approval.status})")
 
     user_roles = user.get("realm_access", {}).get("roles", [])
     # Security policy: If no required_roles are specified, default to requiring "admin" role.
@@ -384,9 +392,9 @@ async def approve_request(
     # Check authorization - admin can approve anything, otherwise need a required role
     if "admin" not in user_roles:
         if not any(r in user_roles for r in required_roles):
-            raise HTTPException(
-                status_code=403,
-                detail=f"Requires one of: {', '.join(required_roles)}",
+            raise AuthorizationError(
+                f"Requires one of roles: {', '.join(required_roles)}",
+                required_roles=required_roles,
             )
 
     user_id = user.get("sub")
@@ -578,8 +586,8 @@ async def approve_request(
                     "retryable": False,
                 }
 
-        except HTTPException:
-            # Re-raise HTTP exceptions as-is
+        except APIError:
+            # Re-raise API errors as-is
             raise
         except Exception as e:
             # Parse server from tool_name for error context
@@ -605,6 +613,7 @@ async def approve_request(
                 error_type=error_type.value,
                 error_class=type(e).__name__,
                 retryable=is_retryable,
+                exc_info=True,
             )
 
             # Update approval status to reflect execution failure
@@ -696,10 +705,10 @@ async def approve_merge(
 
     approval = crud.get_approval(db, approval_id)
     if not approval:
-        raise HTTPException(status_code=404, detail="Approval not found")
+        raise NotFoundError("approval", approval_id)
 
     if approval.status != "pending":
-        raise HTTPException(status_code=400, detail="Approval is not pending")
+        raise ConflictError(f"Approval {approval_id} is not pending (status: {approval.status})")
 
     # Check user has required role
     user_roles = user.get("realm_access", {}).get("roles", [])
@@ -707,18 +716,18 @@ async def approve_merge(
 
     if "admin" not in user_roles:
         if not any(r in user_roles for r in required_roles):
-            raise HTTPException(
-                status_code=403,
-                detail=f"Requires one of: {', '.join(required_roles)}",
+            raise AuthorizationError(
+                f"Requires one of roles: {', '.join(required_roles)}",
+                required_roles=required_roles,
             )
 
     # Get workspace for this session
     workspace = db.query(Workspace).filter(Workspace.session_id == approval.session_id).first()
     if not workspace:
-        raise HTTPException(status_code=404, detail="Workspace not found for session")
+        raise NotFoundError("workspace", approval.session_id, "Workspace not found for session")
 
     if workspace.branch == "main":
-        raise HTTPException(status_code=400, detail="Already on main branch, nothing to merge")
+        raise ValidationError("Already on main branch, nothing to merge", field="branch")
 
     # Mark approval as approved
     crud.update_approval(
@@ -744,7 +753,7 @@ async def approve_merge(
         merge_success = await workspace_service.merge_to_main(workspace)
 
         if not merge_success:
-            raise HTTPException(status_code=500, detail="Failed to merge branch to main")
+            raise ExternalServiceError("git", "Failed to merge branch to main")
 
         logger.info(
             "branch_merged",
@@ -773,11 +782,11 @@ async def approve_merge(
             "app_url": build.app_url,
         }
 
-    except HTTPException:
+    except (NotFoundError, ValidationError, ConflictError, AuthorizationError, ExternalServiceError):
         raise
     except Exception as e:
-        logger.error("merge_approval_error", approval_id=approval_id, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("merge_approval_error", approval_id=approval_id, error=str(e), exc_info=True)
+        raise ExternalServiceError("merge", f"Merge operation failed: {str(e)}")
 
 
 @router.post("/sessions/{session_id}/request-merge")
@@ -797,10 +806,10 @@ async def request_merge(
     # Get workspace
     workspace = db.query(Workspace).filter(Workspace.session_id == session_id).first()
     if not workspace:
-        raise HTTPException(status_code=404, detail="Workspace not found for session")
+        raise NotFoundError("workspace", session_id, "Workspace not found for session")
 
     if workspace.branch == "main":
-        raise HTTPException(status_code=400, detail="Already on main branch, no merge needed")
+        raise ValidationError("Already on main branch, no merge needed", field="branch")
 
     # Check if there's already a pending merge request
     existing = (
@@ -895,16 +904,17 @@ async def submit_hitl_response(
             "redis_connection_failed",
             error=str(e),
             redis_url=redis_url.split("@")[-1],  # Log URL without credentials
+            exc_info=True,
         )
-        raise HTTPException(
-            status_code=503,
-            detail="Unable to connect to Redis. The service may be temporarily unavailable.",
+        raise ExternalServiceError(
+            "redis",
+            "Unable to connect to Redis. The service may be temporarily unavailable.",
         )
     except redis.TimeoutError as e:
-        logger.error("redis_timeout", error=str(e))
-        raise HTTPException(
-            status_code=503,
-            detail="Redis connection timed out. Please try again.",
+        logger.error("redis_timeout", error=str(e), exc_info=True)
+        raise ExternalServiceError(
+            "redis",
+            "Redis connection timed out. Please try again.",
         )
 
     try:
@@ -936,11 +946,12 @@ async def submit_hitl_response(
             "hitl_response_redis_error",
             error=str(e),
             request_id=response.request_id,
+            exc_info=True,
         )
-        raise HTTPException(
-            status_code=503,
-            detail="Failed to submit response to Redis. Please try again.",
+        raise ExternalServiceError(
+            "redis",
+            "Failed to submit response to Redis. Please try again.",
         )
     except Exception as e:
-        logger.error("hitl_response_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("hitl_response_error", error=str(e), exc_info=True)
+        raise ExternalServiceError("hitl", f"Failed to process HITL response: {str(e)}")

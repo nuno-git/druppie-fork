@@ -267,7 +267,7 @@ async def chat(
         )
 
     except Exception as e:
-        logger.error("chat_error", session_id=session_id, error=str(e))
+        logger.error("chat_error", session_id=session_id, error=str(e), exc_info=True)
         return ChatResponse(
             success=False,
             type="error",
@@ -330,7 +330,7 @@ async def resume_chat(
         )
 
     except Exception as e:
-        logger.error("chat_resume_error", session_id=session_id, error=str(e))
+        logger.error("chat_resume_error", session_id=session_id, error=str(e), exc_info=True)
         return ChatResponse(
             success=False,
             type="error",
