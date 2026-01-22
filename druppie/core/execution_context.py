@@ -55,6 +55,10 @@ class ExecutionContext:
     # Used when resuming after MCP tool approval to avoid re-executing
     completed_tool_results: dict[str, Any] = field(default_factory=dict)
 
+    # HITL clarifications from user
+    # Used when resuming after HITL question to pass user's answer to agents
+    hitl_clarifications: list[dict] = field(default_factory=list)
+
     # Timing
     start_time: float = field(default_factory=time.time)
 
