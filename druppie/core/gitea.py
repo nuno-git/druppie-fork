@@ -256,7 +256,8 @@ class GiteaClient:
                 try:
                     content = base64.b64decode(file_data["content"]).decode("utf-8")
                     result["content"] = content
-                except Exception:
+                except (UnicodeDecodeError, ValueError):
+                    # Binary file or invalid encoding - mark as binary
                     result["content"] = None
                     result["binary"] = True
 

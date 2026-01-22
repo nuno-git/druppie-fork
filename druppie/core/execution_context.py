@@ -11,6 +11,10 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 import time
 
+import structlog
+
+logger = structlog.get_logger()
+
 
 @dataclass
 class ExecutionContext:
@@ -62,8 +66,9 @@ class ExecutionContext:
                     "session_id": self.session_id,
                     "event": event,
                 })
-            except Exception:
-                pass  # Don't fail execution due to emit errors
+            except Exception as e:
+                # Don't fail execution due to emit errors, but log for debugging
+                logger.warning("emit_event_failed", error=str(e), session_id=self.session_id)
 
     def add_llm_call(
         self,
