@@ -7,12 +7,13 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 import structlog
 
-from druppie.api.deps import get_current_user, get_db
+from druppie.api.deps import get_current_user, get_db, check_resource_ownership, get_user_roles
+from druppie.api.errors import NotFoundError, AuthorizationError
 from druppie.db import crud
 from druppie.db.models import Project, Build, Workspace
 from druppie.core.gitea import get_gitea_client, GiteaClient
@@ -180,13 +181,10 @@ async def get_project(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     # Check ownership (admin can see all)
-    user_id = user.get("sub")
-    roles = user.get("realm_access", {}).get("roles", [])
-    if "admin" not in roles and project.owner_id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized to view this project")
+    check_resource_ownership(user, project.owner_id)
 
     builder = get_builder_service(db)
     main_build = builder.get_main_build(project.id)
@@ -205,13 +203,10 @@ async def delete_project(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     # Check ownership
-    user_id = user.get("sub")
-    roles = user.get("realm_access", {}).get("roles", [])
-    if "admin" not in roles and project.owner_id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized to delete this project")
+    check_resource_ownership(user, project.owner_id)
 
     # Stop any running builds
     builder = get_builder_service(db)
@@ -246,7 +241,7 @@ async def list_project_files(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     gitea = get_gitea_client()
     result = await gitea.list_files(project.repo_name, path, branch)
@@ -288,7 +283,7 @@ async def get_project_file(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     gitea = get_gitea_client()
     result = await gitea.get_file(project.repo_name, path, branch)
@@ -320,7 +315,7 @@ async def list_project_branches(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     gitea = get_gitea_client()
     result = await gitea.list_branches(project.repo_name)
@@ -353,7 +348,7 @@ async def list_project_builds(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     builder = get_builder_service(db)
     builds = builder.get_builds_for_project(project_id)
@@ -373,13 +368,10 @@ async def build_project(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     # Check ownership
-    user_id = user.get("sub")
-    roles = user.get("realm_access", {}).get("roles", [])
-    if "admin" not in roles and project.owner_id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized to build this project")
+    check_resource_ownership(user, project.owner_id)
 
     try:
         builder = get_builder_service(db)
@@ -387,7 +379,8 @@ async def build_project(
         return build_to_response(build)
     except Exception as e:
         logger.error("build_failed", project_id=project_id, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        from druppie.api.errors import ExternalServiceError
+        raise ExternalServiceError("builder", f"Build failed: {str(e)}", str(e))
 
 
 @router.post("/projects/{project_id}/run")
@@ -404,13 +397,10 @@ async def run_project(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     # Check ownership
-    user_id = user.get("sub")
-    roles = user.get("realm_access", {}).get("roles", [])
-    if "admin" not in roles and project.owner_id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized to run this project")
+    check_resource_ownership(user, project.owner_id)
 
     try:
         builder = get_builder_service(db)
@@ -418,7 +408,7 @@ async def run_project(
         if build_id:
             build = builder.get_build(build_id)
             if not build or build.project_id != project_id:
-                raise HTTPException(status_code=404, detail="Build not found")
+                raise NotFoundError("build", build_id or "unknown")
         else:
             # Build first if no build_id provided
             build = await builder.build_project(project_id, "main", is_preview=False)
@@ -427,11 +417,12 @@ async def run_project(
         build = await builder.run_project(build.id)
         return build_to_response(build)
 
-    except HTTPException:
+    except NotFoundError:
         raise
     except Exception as e:
         logger.error("run_failed", project_id=project_id, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        from druppie.api.errors import ExternalServiceError
+        raise ExternalServiceError("builder", f"Run failed: {str(e)}", str(e))
 
 
 @router.post("/projects/{project_id}/stop")
@@ -448,13 +439,10 @@ async def stop_project(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     # Check ownership
-    user_id = user.get("sub")
-    roles = user.get("realm_access", {}).get("roles", [])
-    if "admin" not in roles and project.owner_id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized to stop this project")
+    check_resource_ownership(user, project.owner_id)
 
     try:
         builder = get_builder_service(db)
@@ -462,22 +450,23 @@ async def stop_project(
         if build_id:
             build = builder.get_build(build_id)
             if not build or build.project_id != project_id:
-                raise HTTPException(status_code=404, detail="Build not found")
+                raise NotFoundError("build", build_id or "unknown")
         else:
             # Stop main build
             build = builder.get_main_build(project_id)
             if not build:
-                raise HTTPException(status_code=404, detail="No running build found")
+                raise NotFoundError("build", "main")
 
         success = await builder.stop_project(build.id)
 
         return {"success": success, "message": "Project stopped" if success else "Failed to stop"}
 
-    except HTTPException:
+    except NotFoundError:
         raise
     except Exception as e:
         logger.error("stop_failed", project_id=project_id, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        from druppie.api.errors import ExternalServiceError
+        raise ExternalServiceError("builder", f"Stop failed: {str(e)}", str(e))
 
 
 @router.get("/projects/{project_id}/status")
@@ -490,7 +479,7 @@ async def get_project_status(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     builder = get_builder_service(db)
     main_build = builder.get_main_build(project_id)
@@ -532,7 +521,7 @@ async def get_project_commits(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     gitea = get_gitea_client()
 
@@ -597,7 +586,7 @@ async def get_project_sessions(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     # Query sessions that have this project_id
     sessions = (
@@ -647,13 +636,10 @@ async def update_project(
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise NotFoundError("project", project_id)
 
     # Check ownership
-    user_id = user.get("sub")
-    roles = user.get("realm_access", {}).get("roles", [])
-    if "admin" not in roles and project.owner_id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized to update this project")
+    check_resource_ownership(user, project.owner_id)
 
     # Update fields if provided
     if update_data.name is not None:
