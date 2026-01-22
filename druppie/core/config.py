@@ -92,8 +92,8 @@ class GiteaSettings(BaseSettings):
         description="Gitea admin username",
     )
     admin_password: str = Field(
-        default="GiteaAdmin123",
-        description="Gitea admin password",
+        default="",
+        description="Gitea admin password (required for Gitea operations)",
     )
     org: str = Field(
         default="druppie",
@@ -108,6 +108,11 @@ class GiteaSettings(BaseSettings):
     def effective_internal_url(self) -> str:
         """Get the effective internal URL."""
         return self.internal_url or self.url
+
+    @property
+    def is_configured(self) -> bool:
+        """Check if Gitea credentials are configured."""
+        return bool(self.admin_password or self.token)
 
 
 class LLMSettings(BaseSettings):
@@ -235,11 +240,19 @@ class Settings(BaseSettings):
             keycloak_url=self.keycloak.url,
             keycloak_realm=self.keycloak.realm,
             gitea_url=self.gitea.url,
+            gitea_configured=self.gitea.is_configured,
             llm_provider=self.llm.provider,
             llm_model=self.llm.zai_model,
             dev_mode=self.api.dev_mode,
             workspace_root=str(self.workspace.root),
         )
+
+        # Security warnings for missing credentials
+        if not self.gitea.is_configured:
+            logger.warning(
+                "gitea_credentials_not_configured",
+                message="GITEA_ADMIN_PASSWORD or GITEA_TOKEN not set - Gitea operations will fail",
+            )
 
 
 @lru_cache()

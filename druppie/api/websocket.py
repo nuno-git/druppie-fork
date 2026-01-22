@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from collections import defaultdict
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class ConnectionManager:
@@ -44,7 +44,7 @@ class ConnectionManager:
         self.active_connections.append(websocket)
         if session_id:
             self.session_connections[session_id].append(websocket)
-        logger.info(f"WebSocket connected. Total: {len(self.active_connections)}")
+        logger.info("websocket_connected", total_connections=len(self.active_connections))
 
     def disconnect(self, websocket: WebSocket, session_id: str | None = None):
         """Remove a WebSocket connection."""
@@ -56,13 +56,13 @@ class ConnectionManager:
         for role in list(self.role_connections.keys()):
             if websocket in self.role_connections[role]:
                 self.role_connections[role].remove(websocket)
-        logger.info(f"WebSocket disconnected. Total: {len(self.active_connections)}")
+        logger.info("websocket_disconnected", total_connections=len(self.active_connections))
 
     def join_session(self, websocket: WebSocket, session_id: str):
         """Join a session room for targeted updates."""
         if websocket not in self.session_connections[session_id]:
             self.session_connections[session_id].append(websocket)
-        logger.debug(f"WebSocket joined session {session_id}")
+        logger.debug("websocket_joined_session", session_id=session_id)
 
     def join_approval_rooms(self, websocket: WebSocket, roles: list[str]):
         """Join approval rooms for the given roles."""

@@ -4,8 +4,10 @@ Endpoints for listing and answering pending HITL questions for the current user.
 Also includes internal endpoints for MCP servers to create questions.
 """
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from druppie.api.deps import get_current_user, get_db, verify_internal_api_key
@@ -30,18 +32,35 @@ class QuestionListResponse(BaseModel):
 class AnswerRequest(BaseModel):
     """Request body for answering a question."""
 
-    answer: str
+    answer: str = Field(
+        ...,
+        min_length=1,
+        max_length=10000,
+        description="User's answer (1-10000 characters)",
+    )
 
 
 class CreateQuestionRequest(BaseModel):
     """Request body for creating a HITL question (from MCP server)."""
 
-    question_id: str
-    session_id: str
-    agent_id: str
-    question: str
-    question_type: str = "text"  # "text" or "choice"
-    choices: list[str] | None = None
+    question_id: str = Field(..., description="Unique question ID")
+    session_id: str = Field(..., description="Session this question belongs to")
+    agent_id: str = Field(..., description="Agent that asked the question")
+    question: str = Field(
+        ...,
+        min_length=1,
+        max_length=5000,
+        description="The question text (1-5000 characters)",
+    )
+    question_type: Literal["text", "choice"] = Field(
+        default="text",
+        description="Question type: text for free-form, choice for multiple choice",
+    )
+    choices: list[str] | None = Field(
+        default=None,
+        max_length=20,
+        description="Available choices for choice questions (max 20 options)",
+    )
 
 
 @router.get("")
