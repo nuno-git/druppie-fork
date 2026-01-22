@@ -238,7 +238,11 @@ class ApprovalDecision(BaseModel):
     """Approval decision request."""
 
     approved: bool = Field(..., description="Whether to approve or reject")
-    comment: str | None = Field(None, description="Optional comment")
+    comment: str | None = Field(
+        None,
+        max_length=2000,
+        description="Optional comment (max 2000 characters)",
+    )
 
 
 # =============================================================================
@@ -283,8 +287,9 @@ async def list_approvals(
         limit = MAX_LIMIT
 
     user_roles = user.get("realm_access", {}).get("roles", [])
+    is_admin = "admin" in user_roles
 
-    # Build base query
+    # Build base query with filters
     query = db.query(Approval)
 
     if status == "pending":
@@ -295,26 +300,48 @@ async def list_approvals(
     if session_id:
         query = query.filter(Approval.session_id == session_id)
 
-    # Get all matching approvals for role filtering
-    # Note: Role filtering is done in Python since required_roles is a JSON array
-    all_approvals = query.order_by(Approval.created_at.desc()).all()
+    # Order by creation date (newest first)
+    query = query.order_by(Approval.created_at.desc())
 
-    # Filter to approvals user can act on
-    filtered = []
-    for a in all_approvals:
-        # Security policy: If no required_roles are specified, default to requiring "admin" role.
-        # This prevents approvals without explicit role requirements from being approvable by anyone.
-        required_roles = a.required_roles if a.required_roles else ["admin"]
-        # Admin can approve anything, or user has one of the required roles
-        if "admin" in user_roles or any(r in user_roles for r in required_roles):
-            filtered.append(a)
+    # Optimization: Admin can approve anything, skip filtering
+    if is_admin:
+        total = query.count()
+        offset = (page - 1) * limit
+        paginated = query.offset(offset).limit(limit).all()
+    else:
+        # For non-admin users, we need to filter by role
+        # Use streaming to avoid loading all into memory at once
+        # Fetch in batches to find approvals user can act on
+        BATCH_SIZE = 500
+        filtered = []
+        total_scanned = 0
+        offset = (page - 1) * limit
+        target_count = offset + limit  # We need at least this many matching records
 
-    # Get total count after role filtering
-    total = len(filtered)
+        # Stream through results in batches
+        batch_offset = 0
+        while True:
+            batch = query.offset(batch_offset).limit(BATCH_SIZE).all()
+            if not batch:
+                break
 
-    # Apply pagination after role filtering
-    offset = (page - 1) * limit
-    paginated = filtered[offset : offset + limit]
+            for a in batch:
+                # Security policy: If no required_roles, default to admin only
+                required_roles = a.required_roles if a.required_roles else ["admin"]
+                if any(r in user_roles for r in required_roles):
+                    filtered.append(a)
+                    # Stop early if we have enough for this page plus some buffer
+                    if len(filtered) >= target_count + BATCH_SIZE:
+                        break
+
+            batch_offset += BATCH_SIZE
+
+            # Stop if we have enough records or exhausted the query
+            if len(batch) < BATCH_SIZE:
+                break
+
+        total = len(filtered)
+        paginated = filtered[offset : offset + limit]
 
     # Build response
     approvals_response = [
@@ -684,7 +711,11 @@ class MergeApprovalRequest(BaseModel):
     """Merge approval request body."""
 
     session_id: str = Field(..., description="Session ID with the feature branch to merge")
-    comment: str | None = Field(None, description="Optional comment")
+    comment: str | None = Field(
+        None,
+        max_length=2000,
+        description="Optional comment (max 2000 characters)",
+    )
 
 
 @router.post("/approvals/{approval_id}/merge")
@@ -872,8 +903,17 @@ class HITLResponseRequest(BaseModel):
     """HITL response request body."""
 
     request_id: str = Field(..., description="The request ID from the question")
-    answer: str = Field(..., description="User's answer text")
-    selected: str | None = Field(None, description="Selected option for choice questions")
+    answer: str = Field(
+        ...,
+        min_length=1,
+        max_length=10000,
+        description="User's answer text (1-10000 characters)",
+    )
+    selected: str | None = Field(
+        None,
+        max_length=500,
+        description="Selected option for choice questions",
+    )
 
 
 @router.post("/hitl/response")

@@ -79,13 +79,28 @@ class ConnectionManager:
             logger.error("websocket_send_error", error=str(e), exc_info=True)
 
     async def broadcast_to_session(self, session_id: str, message: dict):
-        """Broadcast a message to all connections in a session."""
+        """Broadcast a message to all connections in a session.
+
+        If no connections exist or all broadcasts fail, the event is stored
+        in the missed events buffer for later retrieval.
+        """
         connections = self.session_connections.get(session_id, [])
+        if not connections:
+            # No connections - store for later retrieval
+            self.store_missed_event(session_id, message)
+            return
+
+        success_count = 0
         for websocket in connections:
             try:
                 await websocket.send_json(message)
+                success_count += 1
             except Exception as e:
                 logger.error("websocket_broadcast_session_error", session_id=session_id, error=str(e), exc_info=True)
+
+        # If all broadcasts failed, store the event
+        if success_count == 0:
+            self.store_missed_event(session_id, message)
 
     async def broadcast_to_roles(self, roles: list[str], message: dict):
         """Broadcast a message to all connections with the given roles."""
@@ -148,6 +163,67 @@ class ConnectionManager:
         """Clear all missed events for a session."""
         if session_id in self.missed_events:
             del self.missed_events[session_id]
+
+    def cleanup_stale_sessions(self) -> int:
+        """Clean up stale session data with no active connections.
+
+        Removes:
+        - Session connection entries with empty connection lists
+        - Missed events for sessions with no connections
+
+        Returns:
+            Number of sessions cleaned up
+        """
+        cleaned = 0
+
+        # Clean empty session connections
+        empty_sessions = [
+            session_id
+            for session_id, connections in self.session_connections.items()
+            if not connections
+        ]
+        for session_id in empty_sessions:
+            del self.session_connections[session_id]
+            cleaned += 1
+
+        # Clean missed events for sessions that no longer exist
+        # and have been orphaned (no active connections)
+        orphaned_missed = [
+            session_id
+            for session_id in self.missed_events.keys()
+            if session_id not in self.session_connections
+        ]
+        for session_id in orphaned_missed:
+            event_count = len(self.missed_events[session_id])
+            del self.missed_events[session_id]
+            logger.info(
+                "cleaned_orphaned_missed_events",
+                session_id=session_id,
+                event_count=event_count,
+            )
+
+        if cleaned > 0:
+            logger.info("cleanup_stale_sessions", cleaned_count=cleaned)
+
+        return cleaned
+
+    def get_stats(self) -> dict:
+        """Get connection manager statistics for monitoring.
+
+        Returns:
+            Dictionary with connection and buffer statistics
+        """
+        total_missed_events = sum(
+            len(events) for events in self.missed_events.values()
+        )
+        return {
+            "active_connections": len(self.active_connections),
+            "session_count": len(self.session_connections),
+            "role_room_count": len(self.role_connections),
+            "missed_events_sessions": len(self.missed_events),
+            "missed_events_total": total_missed_events,
+            "max_missed_per_session": self.MAX_MISSED_EVENTS_PER_SESSION,
+        }
 
 
 # Singleton connection manager
