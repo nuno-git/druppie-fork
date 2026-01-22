@@ -58,6 +58,12 @@ cleaner-druppie/
 │  │ Main Loop   │───▶│  MCP Client  │───▶│  HTTP + Bearer Token   │ │
 │  │ (LangGraph) │    │(mcp_config)  │    │                        │ │
 │  └─────────────┘    └──────────────┘    └────────────────────────┘ │
+│         │                                                           │
+│         ▼                                                           │
+│  ┌─────────────┐   Built-in HITL tools (no separate server)        │
+│  │ Agent       │   - hitl_ask_question                             │
+│  │ Runtime     │   - hitl_ask_multiple_choice_question             │
+│  └─────────────┘                                                   │
 └─────────────────────────────────────────────────────────────────────┘
                                 │
                     ┌───────────┴───────────┐
@@ -73,18 +79,6 @@ cleaner-druppie/
          │  - Git ops       │    │  - Docker socket │
          │  - Auto-commit   │    │                  │
          └──────────────────┘    └──────────────────┘
-                    │
-                    ▼
-         ┌──────────────────┐
-         │  HITL MCP        │
-         │  (FastMCP)       │
-         │  Port 9003       │
-         │                  │
-         │  - ask_question  │
-         │  - ask_choice    │
-         │  - progress      │
-         │  - Redis pub/sub │
-         └──────────────────┘
 ```
 
 **Key Principle**: Agents can ONLY act through MCP tools. No direct code output.
@@ -117,23 +111,71 @@ MCP servers run as separate Docker containers. Configuration is in `druppie/core
 |--------|------|-------|-------------|
 | coding | 9001 | read_file, write_file, batch_write_files, list_dir, run_command, run_tests, commit_and_push | File, git, and test operations in workspace |
 | docker | 9002 | build, run, stop, logs, list_containers | Container operations |
-| hitl | 9003 | ask_question, ask_choice, progress, notify | Human-in-the-loop via Redis |
 
-### 3. MCP Configuration (`druppie/core/mcp_config.yaml`)
+**NOTE**: HITL (Human-in-the-Loop) is now built into the agent runtime (`druppie/agents/hitl.py`). No separate MCP server is needed. Built-in tools: `hitl_ask_question`, `hitl_ask_multiple_choice_question`.
 
-Defines tools, approval requirements, and danger levels:
+### 3. MCP Configuration & Layered Approval System (per goal.md)
+
+**Two layers of approval rules:**
+
+1. **mcp_config.yaml** = Global defaults for ALL agents
+2. **agent.yaml** = Agent-specific overrides
+
+#### Layer 1: Global Defaults (`druppie/core/mcp_config.yaml`)
 
 ```yaml
 mcps:
   coding:
     url: ${MCP_CODING_URL:-http://mcp-coding:9001}
     tools:
+      - name: write_file
+        requires_approval: false  # DEFAULT: no approval
       - name: run_command
-        description: "Execute shell command in workspace"
         requires_approval: true
-        required_roles: [developer, admin]
-        danger_level: high
+        required_role: developer  # Singular, not array
+
+  docker:
+    tools:
+      - name: build
+        requires_approval: true
+        required_role: developer  # ALWAYS needs developer approval
+      - name: run
+        requires_approval: true
+        required_role: developer  # ALWAYS needs developer approval
 ```
+
+#### Layer 2: Agent Overrides (`druppie/agents/definitions/*.yaml`)
+
+```yaml
+# architect.yaml - OVERRIDES write_file to require architect approval
+approval_overrides:
+  "coding:write_file":
+    requires_approval: true
+    required_role: architect
+
+# developer.yaml - NO overrides, uses global defaults
+# write_file: no approval (default)
+# docker:build/run: developer approval (global)
+```
+
+#### How It Works
+
+```
+Agent calls tool (e.g., coding:write_file)
+    │
+    ▼
+Check agent's approval_overrides for this tool
+    │
+    ├─► Override exists? → Use override rules
+    │
+    └─► No override? → Use mcp_config.yaml defaults
+```
+
+| Agent | Tool | Override? | Result |
+|-------|------|-----------|--------|
+| architect | write_file | YES | Needs architect approval |
+| developer | write_file | NO | No approval (default) |
+| developer | docker:build | NO | Needs developer approval (global) |
 
 ### 4. LLM Service (`druppie/llm/`)
 
