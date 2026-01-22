@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
@@ -183,10 +183,7 @@ def resolve_safe_path(base_path: Path, relative_path: str) -> Path:
     try:
         resolved.relative_to(base_path.resolve())
     except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid path: path traversal not allowed",
-        )
+        raise ValidationError("Invalid path: path traversal not allowed", field="path")
 
     return resolved
 

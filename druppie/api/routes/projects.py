@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session as DBSession
 import structlog
 
 from druppie.api.deps import get_current_user, get_db, check_resource_ownership, get_user_roles
-from druppie.api.errors import NotFoundError, AuthorizationError
+from druppie.api.errors import NotFoundError, AuthorizationError, ExternalServiceError
 from druppie.db import crud
 from druppie.db.models import Project, Build, Workspace
 from druppie.core.gitea import get_gitea_client, GiteaClient
@@ -247,10 +247,7 @@ async def list_project_files(
     result = await gitea.list_files(project.repo_name, path, branch)
 
     if not result.get("success"):
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to list files: {result.get('error', 'Unknown error')}",
-        )
+        raise ExternalServiceError("gitea", f"Failed to list files: {result.get('error', 'Unknown error')}")
 
     files = [
         FileInfo(
@@ -289,10 +286,9 @@ async def get_project_file(
     result = await gitea.get_file(project.repo_name, path, branch)
 
     if not result.get("success"):
-        raise HTTPException(
-            status_code=404 if result.get("status_code") == 404 else 500,
-            detail=f"Failed to get file: {result.get('error', 'Unknown error')}",
-        )
+        if result.get("status_code") == 404:
+            raise NotFoundError("file", path, f"File not found: {path}")
+        raise ExternalServiceError("gitea", f"Failed to get file: {result.get('error', 'Unknown error')}")
 
     return FileContentResponse(
         project_id=project_id,
@@ -321,10 +317,7 @@ async def list_project_branches(
     result = await gitea.list_branches(project.repo_name)
 
     if not result.get("success"):
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to list branches: {result.get('error', 'Unknown error')}",
-        )
+        raise ExternalServiceError("gitea", f"Failed to list branches: {result.get('error', 'Unknown error')}")
 
     return {
         "project_id": project_id,
@@ -533,10 +526,7 @@ async def get_project_commits(
     )
 
     if not result.get("success"):
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to fetch commits: {result.get('error', 'Unknown error')}",
-        )
+        raise ExternalServiceError("gitea", f"Failed to fetch commits: {result.get('error', 'Unknown error')}")
 
     commits = []
     for commit_data in result.get("data", []):
