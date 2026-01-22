@@ -66,19 +66,19 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   const [showDetails, setShowDetails] = useState(false)
   const { user } = useAuth()
 
-  // For MULTI approval, check if user has any of the required roles
-  const canApprove = task.approval_type === 'multi' && task.required_roles
-    ? task.required_roles.some(role => hasRole(role))
-    : hasRole(task.required_role)
+  // Normalize: derive required_role from required_roles array if not present
+  const requiredRoles = task.required_roles || (task.required_role ? [task.required_role] : ['admin'])
+  const requiredRole = task.required_role || (requiredRoles.length > 0 ? requiredRoles[0] : 'admin')
+
+  // Check if user has any of the required roles
+  const canApprove = requiredRoles.some(role => hasRole(role))
 
   // MULTI approval state
   const isMultiApproval = task.approval_type === 'multi'
   const requiredApprovals = task.required_approvals || 2
   const currentApprovals = task.current_approvals || 0
   const approvedByRoles = task.approved_by_roles || []
-  const remainingRoles = isMultiApproval && task.required_roles
-    ? task.required_roles.filter(role => !approvedByRoles.includes(role))
-    : []
+  const remainingRoles = requiredRoles.filter(role => !approvedByRoles.includes(role))
 
   // Get tool info
   const toolName = task.mcp_tool || task.tool_name || 'unknown'
@@ -230,7 +230,7 @@ const TaskCard = ({ task, onApprove, onReject }) => {
                 canApprove ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
               }`}
             >
-              {task.required_role}
+              {requiredRoles.join(', ')}
             </span>
             {canApprove && <span className="ml-1 text-green-600">(you can approve)</span>}
           </span>
@@ -297,9 +297,9 @@ const TaskCard = ({ task, onApprove, onReject }) => {
       ) : (
         <div className="flex items-center p-3 bg-gray-50 rounded-lg text-gray-600">
           <Shield className="w-5 h-5 mr-2" />
-          {task.approval_type === 'multi' && task.required_roles
-            ? `You need one of these roles to approve: ${task.required_roles.join(', ')}`
-            : `You need the "${task.required_role}" role to approve this task.`
+          {requiredRoles.length > 1
+            ? `You need one of these roles to approve: ${requiredRoles.join(', ')}`
+            : `You need the "${requiredRole}" role to approve this task.`
           }
         </div>
       )}
@@ -533,9 +533,10 @@ const Tasks = () => {
     answerMutation.mutate({ questionId, answer })
   }
 
-  // Group tasks by required role
+  // Group tasks by required role (use first role from required_roles array)
   const tasksByRole = tasks.reduce((acc, task) => {
-    const role = task.required_role || 'other'
+    const roles = task.required_roles || (task.required_role ? [task.required_role] : ['admin'])
+    const role = roles[0] || 'other'
     if (!acc[role]) acc[role] = []
     acc[role].push(task)
     return acc

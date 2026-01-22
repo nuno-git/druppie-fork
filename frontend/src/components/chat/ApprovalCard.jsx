@@ -29,7 +29,9 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
   const currentApprovals = approval.current_approvals || 0
   const approvedByRoles = approval.approved_by_roles || []
   const approvedByIds = approval.approved_by_ids || []
-  const requiredRoles = approval.required_roles || [approval.required_role]
+  // Normalize: derive requiredRoles from required_roles array or required_role string
+  const requiredRoles = approval.required_roles || (approval.required_role ? [approval.required_role] : ['admin'])
+  const requiredRole = approval.required_role || (requiredRoles.length > 0 ? requiredRoles[0] : 'admin')
   const remainingRoles = requiredRoles.filter(r => !approvedByRoles.includes(r))
   const progressPercent = Math.round((currentApprovals / requiredApprovals) * 100)
 
@@ -98,7 +100,7 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
           {/* Single approval role display */}
           {!isMultiApproval && (
             <div className="text-sm text-amber-700 mb-3">
-              This action requires approval from <span className="font-semibold">{approval.required_role}</span> role.
+              This action requires approval from <span className="font-semibold">{requiredRoles.join(' or ')}</span> role.
             </div>
           )}
 
