@@ -17,7 +17,7 @@ import {
   Settings as SettingsIcon,
 } from 'lucide-react'
 
-import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole } from './services/keycloak'
+import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole, isKeycloakAvailable } from './services/keycloak'
 import { ToastProvider } from './components/Toast'
 import ErrorBoundary from './components/ErrorBoundary'
 import ConnectionStatus from './components/ConnectionStatus'
@@ -187,7 +187,8 @@ function App() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-600">Loading...</p>
+          <p className="text-gray-600">Connecting to authentication server...</p>
+          <p className="text-gray-400 text-sm mt-2">This may take a moment on first load</p>
         </div>
       </div>
     )
@@ -197,17 +198,26 @@ function App() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
-          <div className="text-red-500 mb-4">
+          <div className="text-yellow-500 mb-4">
             <Shield className="w-16 h-16 mx-auto" />
           </div>
-          <h2 className="text-xl font-bold mb-2">Authentication Error</h2>
+          <h2 className="text-xl font-bold mb-2">Authentication Server Unavailable</h2>
           <p className="text-gray-600 mb-4">{error}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg"
-          >
-            Retry
-          </button>
+          <div className="flex gap-3 justify-center">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+            >
+              Retry Connection
+            </button>
+            <button
+              onClick={login}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              <LogIn className="w-4 h-4 inline mr-1" />
+              Try Login Anyway
+            </button>
+          </div>
         </div>
       </div>
     )
