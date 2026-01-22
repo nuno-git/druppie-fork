@@ -80,16 +80,38 @@ router = APIRouter()
 class ChatMessage(BaseModel):
     """A message in conversation history."""
 
-    role: str  # user, assistant, system
-    content: str
+    role: str = Field(..., description="Message role: user, assistant, or system")
+    content: str = Field(..., description="Message content")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"role": "user", "content": "Create a todo app with React"},
+                {"role": "assistant", "content": "I'll help you create a todo app..."},
+            ]
+        }
+    }
 
 
 class ChatRequest(BaseModel):
-    """Request for chat endpoint."""
+    """Request for chat endpoint.
 
-    message: str = Field(..., description="The user's message", max_length=5000)
-    session_id: str | None = Field(None, description="Session ID to continue")
-    project_id: str | None = Field(None, description="Existing project ID to work on")
+    Send a message to start or continue a conversation with Druppie.
+    """
+
+    message: str = Field(
+        ...,
+        description="The user's message describing what they want to build or do",
+        max_length=5000,
+    )
+    session_id: str | None = Field(
+        None,
+        description="Session ID to continue an existing conversation",
+    )
+    project_id: str | None = Field(
+        None,
+        description="Existing project ID to work on",
+    )
     project_name: str | None = Field(
         None,
         description="Name for new project (used if project_id not provided)",
@@ -98,36 +120,83 @@ class ChatRequest(BaseModel):
     )
     conversation_history: list[ChatMessage] = Field(
         default_factory=list,
-        description="Previous conversation messages",
+        description="Previous conversation messages for context",
     )
     user_projects: list[dict] = Field(
         default_factory=list,
         description="User's existing projects for context",
     )
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "message": "Create a simple todo app with React",
+                    "project_name": "my-todo-app",
+                },
+                {
+                    "message": "Add dark mode support",
+                    "session_id": "abc-123",
+                    "project_id": "proj-456",
+                },
+            ]
+        }
+    }
+
 
 class ChatResponse(BaseModel):
-    """Response from chat endpoint."""
+    """Response from chat endpoint.
 
-    success: bool
-    type: str  # chat, question, result, paused, error
-    response: str | None = None
-    question: str | None = None
-    intent: dict | None = None
-    plan: dict | None = None
-    session_id: str
-    plan_id: str | None = None  # Alias for session_id (backwards compatibility)
+    Contains the result of processing a chat message including any
+    AI response, questions for the user, and execution status.
+    """
+
+    success: bool = Field(..., description="Whether the request was processed successfully")
+    type: str = Field(
+        ...,
+        description="Response type: chat, question, result, paused, or error",
+    )
+    response: str | None = Field(None, description="AI response message")
+    question: str | None = Field(None, description="Question for the user (if type=question)")
+    intent: dict | None = Field(None, description="Detected intent from the message")
+    plan: dict | None = Field(None, description="Execution plan if generated")
+    session_id: str = Field(..., description="Session ID for this conversation")
+    plan_id: str | None = Field(None, description="Alias for session_id (deprecated)")
     # Workspace info (git-first architecture)
-    workspace_id: str | None = None
-    project_id: str | None = None
-    branch: str | None = None
-    status: str | None = None  # Session status
-    waiting_for: str | None = None
-    total_usage: dict | None = None
-    llm_calls: list[dict] = Field(default_factory=list)
-    workflow_events: list[dict] = Field(default_factory=list)
-    pending_approvals: list[dict] = Field(default_factory=list)
-    pending_questions: list[dict] = Field(default_factory=list)
+    workspace_id: str | None = Field(None, description="Workspace ID if initialized")
+    project_id: str | None = Field(None, description="Project ID if assigned")
+    branch: str | None = Field(None, description="Git branch name")
+    status: str | None = Field(None, description="Session status: active, paused, completed")
+    waiting_for: str | None = Field(None, description="What the session is waiting for")
+    total_usage: dict | None = Field(None, description="Token usage statistics")
+    llm_calls: list[dict] = Field(default_factory=list, description="LLM call history")
+    workflow_events: list[dict] = Field(default_factory=list, description="Workflow events")
+    pending_approvals: list[dict] = Field(default_factory=list, description="Pending approval requests")
+    pending_questions: list[dict] = Field(default_factory=list, description="Pending HITL questions")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "success": True,
+                    "type": "chat",
+                    "response": "I'll help you create a todo app. Let me set up the project...",
+                    "session_id": "abc-123",
+                    "workspace_id": "ws-456",
+                    "project_id": "proj-789",
+                    "status": "active",
+                },
+                {
+                    "success": True,
+                    "type": "question",
+                    "question": "Which database would you like to use: PostgreSQL, MySQL, or SQLite?",
+                    "session_id": "abc-123",
+                    "status": "paused",
+                    "waiting_for": "user_input",
+                },
+            ]
+        }
+    }
 
 
 class ResumeRequest(BaseModel):
