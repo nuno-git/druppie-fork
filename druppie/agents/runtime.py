@@ -369,8 +369,12 @@ class Agent:
                         "suggested_fix": f"Please call {tool_name} again with argument: {missing_field}",
                     }
                 else:
-                    # Execute tool via MCP client
-                    result = await self.mcp_client.call_tool(server, tool, tool_args, exec_ctx, agent_id=self.id)
+                    # Execute tool via MCP client with agent definition for layered approval
+                    result = await self.mcp_client.call_tool(
+                        server, tool, tool_args, exec_ctx,
+                        agent_id=self.id,
+                        agent_definition=self.definition,
+                    )
 
                 # Check if paused for approval
                 if result.get("status") == "paused":

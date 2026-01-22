@@ -5,10 +5,15 @@ import { test, expect } from '@playwright/test'
 const KEYCLOAK_URL = process.env.KEYCLOAK_URL || 'http://localhost:8180'
 const BASE_URL = process.env.BASE_URL || 'http://localhost:5273'
 
-// Test users with compliant passwords (from iac/users.yaml)
+// Test users with compliant passwords (from iac/users.yaml, per goal.md)
 const users = {
+  // Primary users per goal.md
+  normalUser: { username: 'normal_user', password: 'User123!' },
+  architect: { username: 'architect', password: 'Architect123!' },
+  developer: { username: 'developer', password: 'Developer123!' },
   admin: { username: 'admin', password: 'Admin123!' },
-  developer: { username: 'seniordev', password: 'Developer123!' },
+  // Legacy users
+  seniorDev: { username: 'seniordev', password: 'Developer123!' },
   infra: { username: 'infra', password: 'Infra123!' },
   productOwner: { username: 'productowner', password: 'Product123!' },
   juniorDev: { username: 'juniordev', password: 'Developer123!' },
@@ -52,7 +57,8 @@ test.beforeEach(async ({ page }) => {
 
 test.describe('Chat and Plan Creation', () => {
   test('can send a chat message', async ({ page }) => {
-    await login(page, users.developer.username, users.developer.password)
+    // Use seniorDev for backward compatibility in existing tests
+    await login(page, users.seniorDev.username, users.seniorDev.password)
 
     // Navigate to chat (use exact match to avoid matching session links)
     await page.getByRole('link', { name: 'Chat', exact: true }).click()
@@ -74,7 +80,7 @@ test.describe('Chat and Plan Creation', () => {
   })
 
   test('shows suggestion buttons on empty chat', async ({ page }) => {
-    await login(page, users.developer.username, users.developer.password)
+    await login(page, users.seniorDev.username, users.seniorDev.password)
 
     await page.getByRole('link', { name: 'Chat', exact: true }).click()
 
@@ -113,7 +119,7 @@ test.describe('Deployment Approval Workflow', () => {
   })
 
   test('developer can view approvals page', async ({ page }) => {
-    await login(page, users.developer.username, users.developer.password)
+    await login(page, users.seniorDev.username, users.seniorDev.password)
 
     await page.getByRole('link', { name: 'Approvals', exact: true }).click()
 
@@ -133,7 +139,7 @@ test.describe('Multi-user Approval Flow', () => {
 
     try {
       // Developer logs in and checks approvals
-      await login(developerPage, users.developer.username, users.developer.password)
+      await login(developerPage, users.seniorDev.username, users.seniorDev.password)
       await developerPage.getByRole('link', { name: 'Approvals', exact: true }).click()
       await expect(developerPage.getByRole('heading', { level: 1, name: 'Pending Approvals' })).toBeVisible()
 
@@ -145,6 +151,33 @@ test.describe('Multi-user Approval Flow', () => {
       await developerContext.close()
       await infraContext.close()
     }
+  })
+})
+
+test.describe('Layered Approval System (per goal.md)', () => {
+  test('normal_user can login and access chat', async ({ page }) => {
+    // Test the new normal_user from goal.md
+    await login(page, users.normalUser.username, users.normalUser.password)
+
+    // Should be logged in and see the app
+    await page.getByRole('link', { name: 'Chat', exact: true }).click()
+    await expect(page.getByText(/I'm Druppie/i)).toBeVisible({ timeout: 15000 })
+  })
+
+  test('architect user can login and access chat', async ({ page }) => {
+    // Test the architect user from goal.md
+    await login(page, users.architect.username, users.architect.password)
+
+    await page.getByRole('link', { name: 'Chat', exact: true }).click()
+    await expect(page.getByText(/I'm Druppie/i)).toBeVisible({ timeout: 15000 })
+  })
+
+  test('developer user can login and access chat', async ({ page }) => {
+    // Test the developer user from goal.md
+    await login(page, users.developer.username, users.developer.password)
+
+    await page.getByRole('link', { name: 'Chat', exact: true }).click()
+    await expect(page.getByText(/I'm Druppie/i)).toBeVisible({ timeout: 15000 })
   })
 })
 
@@ -175,7 +208,7 @@ test.describe('App Creation E2E', () => {
   })
 
   test('developer can send chat message', async ({ page }) => {
-    await login(page, users.developer.username, users.developer.password)
+    await login(page, users.seniorDev.username, users.seniorDev.password)
 
     await page.getByRole('link', { name: 'Chat', exact: true }).click()
     await expect(page.getByText(/I'm Druppie/i)).toBeVisible({ timeout: 15000 })

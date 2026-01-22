@@ -158,6 +158,12 @@ mcps:
     - delete_file
     - run_command
 
+# NO approval_overrides needed!
+# Per goal.md:
+# - write_file uses global default (no approval required)
+# - docker:build and docker:run use global config (developer approval required)
+# This is the LAYERED APPROVAL SYSTEM working as designed.
+
 model: glm-4
 temperature: 0.1
 max_tokens: 4096
