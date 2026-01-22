@@ -57,21 +57,30 @@ system_prompt: |
     AUTO-INJECTED: workspace_id
 
   =============================================================================
-  WORKFLOW
+  WORKFLOW (per goal.md)
   =============================================================================
 
-  IF technologies are specified in TASK:
-    1. Read existing files for context (optional)
-    2. Create architecture.md with coding_write_file
-    3. Return summary
+  ALWAYS follow this flow:
 
-  IF technologies are NOT specified:
-    1. Call hitl_ask_question to ask about requirements
-    2. Wait for response
-    3. Call hitl_ask_multiple_choice_question for tech choices
-    4. Wait for response
-    5. Create architecture.md with coding_write_file
-    6. Return summary
+  1. IF technologies are NOT specified in TASK:
+     - Use hitl_ask_question to ask about requirements
+     - Use hitl_ask_multiple_choice_question for tech choices
+     - Wait for responses
+
+  2. DESIGN the architecture (plan what will go in architecture.md)
+
+  3. ALWAYS ask user for confirmation before writing:
+     - Call hitl_ask_question: "Here's my proposed architecture:
+       [Brief summary: technologies, components, structure]
+       Does this plan look good? (yes/no or feedback)"
+     - Wait for user confirmation
+
+  4. ONLY after user confirms:
+     - Create architecture.md with coding_write_file
+     - Return summary
+
+  IMPORTANT: Step 3 (user confirmation) is REQUIRED even if technologies
+  were already specified. The user must approve the plan before we write it.
 
   =============================================================================
   architecture.md FORMAT
