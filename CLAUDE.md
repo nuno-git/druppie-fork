@@ -425,6 +425,38 @@ if exec_ctx and server == "coding" and "workspace_id" not in tool_args:
 **Fix**: Check existing containers with `docker ps` and use a different port mapping
 **Prevention**: Deployer should check for port availability or use dynamic port allocation
 
+### Issue: Architect Doesn't Ask HITL Confirmation Before Writing
+**Symptom**: Architect agent writes architecture.md immediately without asking user confirmation
+**Expected**: Per architect.yaml, should ask "Does this plan look good?" via hitl_ask_question
+**Cause**: The architect.yaml system prompt says to ask, but the agent doesn't follow it
+**Impact**: User loses the chance to provide feedback before the architecture is committed
+**Note**: The approval gate still catches the write_file, but it's after the design is done
+
+### Issue: Multi-Approval UI Shows Confusing Information
+**Symptom**: Chat page shows "Multi-Approval Required - 0 of 2 approvals" with "Still needed: developer, admin"
+**Observation**: Approvals page shows "Required Role: developer, admin (you can approve)" suggesting OR logic
+**Confusion**: Is it AND (need both) or OR (need any one)?
+**Impact**: Users unsure how many people need to approve
+**Investigate**: Check how required_roles is interpreted in approval code
+
+### Issue: Session Ownership Restricts Cross-User Viewing
+**Symptom**: Users can approve tasks from Approvals page but get 403 when trying to view other users' sessions
+**Example**: seniordev can approve tasks for normal_user's session but can't navigate to that session
+**Behavior**: This is security by design - sessions are private to their owners
+**Workaround**: Approve from Approvals page, not from Chat page
+**Note**: The "View Conversation" link in Approvals page shows 403 for non-owners
+
+### Workflow: Full Architect Flow Testing
+To test the complete architect workflow (including HITL questions and architect approval):
+1. Log in as `normal_user`
+2. Send "Build me a todo app" (complex app triggers architect)
+3. Planner creates plan: architect → approval:step_2 → developer → deployer
+4. Architect calls coding:write_file → requires architect role approval
+5. Log in as `architect` user, go to Approvals, approve the write_file
+6. Session continues to approval:step_2 → requires developer role approval
+7. Log in as `seniordev` user, go to Approvals, approve step_2
+8. Session continues with developer agent, then deployer
+
 ### Architecture Reminder
 - `loop.py` - Keep simple/abstract, orchestrates LangGraph states
 - `agents/runtime.py` - Tool-calling loop, injects context
