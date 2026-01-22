@@ -73,6 +73,18 @@ def create_emit_event(session_id: str) -> Callable[[dict], None]:
 router = APIRouter()
 
 
+def _extract_provider(error_str: str) -> str | None:
+    """Extract LLM provider name from error string."""
+    error_lower = error_str.lower()
+    if "z.ai" in error_lower or "zai" in error_lower:
+        return "zai"
+    elif "deepinfra" in error_lower:
+        return "deepinfra"
+    elif "openai" in error_lower:
+        return "openai"
+    return None
+
+
 # =============================================================================
 # REQUEST/RESPONSE MODELS
 # =============================================================================
@@ -145,6 +157,16 @@ class ChatRequest(BaseModel):
     }
 
 
+class ErrorInfo(BaseModel):
+    """Detailed error information for frontend display."""
+
+    message: str = Field(..., description="Human-readable error message")
+    error_type: str = Field(..., description="Type of error: rate_limit, auth, server, or general")
+    retryable: bool = Field(..., description="Whether the operation can be retried")
+    retry_after: int | None = Field(None, description="Seconds to wait before retry (if known)")
+    provider: str | None = Field(None, description="LLM provider that returned the error")
+
+
 class ChatResponse(BaseModel):
     """Response from chat endpoint.
 
@@ -174,6 +196,8 @@ class ChatResponse(BaseModel):
     workflow_events: list[dict] = Field(default_factory=list, description="Workflow events")
     pending_approvals: list[dict] = Field(default_factory=list, description="Pending approval requests")
     pending_questions: list[dict] = Field(default_factory=list, description="Pending HITL questions")
+    # Error details for retryable errors
+    error_info: ErrorInfo | None = Field(None, description="Detailed error information")
 
     model_config = {
         "json_schema_extra": {
@@ -245,10 +269,40 @@ async def chat(
         )
 
         result_session_id = result.get("session_id", session_id)
+
+        # Check if there's an error in the result and extract error info
+        error_info = None
+        error_str = result.get("error", "")
+
+        if error_str and not result.get("success", True):
+            # Parse error string to detect error type
+            error_lower = error_str.lower()
+            if "rate limit" in error_lower or "429" in error_str or "too many" in error_lower:
+                error_info = ErrorInfo(
+                    message="Rate limit exceeded. Please wait a moment and try again.",
+                    error_type="rate_limit",
+                    retryable=True,
+                    provider=_extract_provider(error_str),
+                )
+            elif "api key" in error_lower or "401" in error_str or "authentication" in error_lower:
+                error_info = ErrorInfo(
+                    message="Authentication failed. Please check the API configuration.",
+                    error_type="auth",
+                    retryable=False,
+                    provider=_extract_provider(error_str),
+                )
+            elif "server error" in error_lower or "500" in error_str or "502" in error_str:
+                error_info = ErrorInfo(
+                    message="Server error. Please try again.",
+                    error_type="server",
+                    retryable=True,
+                    provider=_extract_provider(error_str),
+                )
+
         return ChatResponse(
             success=result.get("success", False),
-            type=result.get("type", "error"),
-            response=result.get("response"),
+            type=result.get("type", "error") if not error_str else "error",
+            response=result.get("response") or error_str,
             question=result.get("question"),
             intent=result.get("intent"),
             plan=result.get("plan"),
@@ -264,16 +318,59 @@ async def chat(
             workflow_events=result.get("workflow_events", []),
             pending_approvals=result.get("pending_approvals", []),
             pending_questions=result.get("pending_questions", []),
+            error_info=error_info,
         )
 
     except Exception as e:
         logger.error("chat_error", session_id=session_id, error=str(e), exc_info=True)
+
+        # Check for LLM-specific errors
+        from druppie.llm import LLMError, RateLimitError, AuthenticationError, ServerError
+
+        error_info = None
+        error_message = str(e)
+
+        if isinstance(e, RateLimitError):
+            error_info = ErrorInfo(
+                message="Rate limit exceeded. Please wait a moment and try again.",
+                error_type="rate_limit",
+                retryable=True,
+                retry_after=e.retry_after,
+                provider=e.provider,
+            )
+            error_message = str(e)
+        elif isinstance(e, AuthenticationError):
+            error_info = ErrorInfo(
+                message="Authentication failed. Please check the API key configuration.",
+                error_type="auth",
+                retryable=False,
+                provider=e.provider,
+            )
+            error_message = str(e)
+        elif isinstance(e, ServerError):
+            error_info = ErrorInfo(
+                message="Server error. Please try again in a moment.",
+                error_type="server",
+                retryable=True,
+                provider=e.provider,
+            )
+            error_message = str(e)
+        elif isinstance(e, LLMError):
+            error_info = ErrorInfo(
+                message=str(e),
+                error_type="llm",
+                retryable=e.retryable,
+                provider=e.provider,
+            )
+            error_message = str(e)
+
         return ChatResponse(
             success=False,
             type="error",
-            response=f"Error processing request: {str(e)}",
+            response=f"Error processing request: {error_message}",
             session_id=session_id,
             plan_id=session_id,
+            error_info=error_info,
         )
 
 
@@ -331,12 +428,50 @@ async def resume_chat(
 
     except Exception as e:
         logger.error("chat_resume_error", session_id=session_id, error=str(e), exc_info=True)
+
+        # Check for LLM-specific errors
+        from druppie.llm import LLMError, RateLimitError, AuthenticationError, ServerError
+
+        error_info = None
+        error_message = str(e)
+
+        if isinstance(e, RateLimitError):
+            error_info = ErrorInfo(
+                message="Rate limit exceeded. Please wait a moment and try again.",
+                error_type="rate_limit",
+                retryable=True,
+                retry_after=e.retry_after,
+                provider=e.provider,
+            )
+        elif isinstance(e, AuthenticationError):
+            error_info = ErrorInfo(
+                message="Authentication failed. Please check the API key configuration.",
+                error_type="auth",
+                retryable=False,
+                provider=e.provider,
+            )
+        elif isinstance(e, ServerError):
+            error_info = ErrorInfo(
+                message="Server error. Please try again in a moment.",
+                error_type="server",
+                retryable=True,
+                provider=e.provider,
+            )
+        elif isinstance(e, LLMError):
+            error_info = ErrorInfo(
+                message=str(e),
+                error_type="llm",
+                retryable=e.retryable,
+                provider=e.provider,
+            )
+
         return ChatResponse(
             success=False,
             type="error",
-            response=f"Error resuming session: {str(e)}",
+            response=f"Error resuming session: {error_message}",
             session_id=session_id,
             plan_id=session_id,
+            error_info=error_info,
         )
 
 

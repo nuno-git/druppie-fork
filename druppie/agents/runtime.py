@@ -5,6 +5,7 @@ Usage:
     result = await Agent("developer").run("Implement the API", context={...})
 """
 
+import json
 import os
 import time
 from typing import Any
@@ -332,6 +333,7 @@ class Agent:
                     }
 
                 # Add tool result to messages
+                # IMPORTANT: Use json.dumps for proper JSON format (not Python repr)
                 messages.append({
                     "role": "assistant",
                     "content": "",
@@ -340,14 +342,14 @@ class Agent:
                         "type": "function",
                         "function": {
                             "name": tool_name,
-                            "arguments": str(tool_args),
+                            "arguments": json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args),
                         },
                     }],
                 })
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.get("id", f"call_{iteration}"),
-                    "content": str(result),
+                    "content": json.dumps(result) if isinstance(result, (dict, list)) else str(result),
                 })
 
         logger.warning("agent_max_iterations", agent_id=self.id)

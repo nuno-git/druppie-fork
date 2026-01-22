@@ -9,6 +9,51 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+# =============================================================================
+# CUSTOM EXCEPTIONS
+# =============================================================================
+
+
+class LLMError(Exception):
+    """Base exception for LLM errors."""
+
+    def __init__(self, message: str, provider: str = "", retryable: bool = False):
+        super().__init__(message)
+        self.provider = provider
+        self.retryable = retryable
+
+
+class RateLimitError(LLMError):
+    """Rate limit exceeded (429 status code).
+
+    This error is retryable - user should wait and try again.
+    """
+
+    def __init__(self, message: str, provider: str = "", retry_after: int | None = None):
+        super().__init__(message, provider, retryable=True)
+        self.retry_after = retry_after  # Seconds to wait before retry
+
+
+class AuthenticationError(LLMError):
+    """Authentication failed (401/403 status code).
+
+    API key is invalid or missing.
+    """
+
+    def __init__(self, message: str, provider: str = ""):
+        super().__init__(message, provider, retryable=False)
+
+
+class ServerError(LLMError):
+    """Server error (5xx status code).
+
+    Temporary server issue - retryable after backoff.
+    """
+
+    def __init__(self, message: str, provider: str = ""):
+        super().__init__(message, provider, retryable=True)
+
+
 class LLMResponse(BaseModel):
     """Response from an LLM call."""
 

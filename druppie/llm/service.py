@@ -1,6 +1,11 @@
 """LLM Service for managing LLM instances.
 
 Provides factory methods and singleton access to LLM providers.
+
+Supported providers:
+- zai: Z.AI GLM models (default)
+- deepinfra: DeepInfra OpenAI-compatible API (Qwen, Llama, etc.)
+- mock: Mock provider for testing
 """
 
 import os
@@ -12,6 +17,7 @@ import structlog
 from .base import BaseLLM
 from .mock import ChatMock
 from .zai import ChatZAI
+from .deepinfra import ChatDeepInfra
 
 logger = structlog.get_logger()
 
@@ -20,6 +26,15 @@ class LLMService:
     """Service for managing LLM instances.
 
     Handles provider selection and lazy initialization.
+
+    Environment variables:
+        LLM_PROVIDER: Provider to use (zai, deepinfra, mock, auto)
+        ZAI_API_KEY: API key for Z.AI
+        ZAI_MODEL: Model name for Z.AI (default: GLM-4.7)
+        ZAI_BASE_URL: Base URL for Z.AI API
+        DEEPINFRA_API_KEY: API key for DeepInfra
+        DEEPINFRA_MODEL: Model name for DeepInfra (default: Qwen/Qwen3-Next-80B-A3B-Instruct)
+        DEEPINFRA_BASE_URL: Base URL for DeepInfra API
     """
 
     def __init__(self):
@@ -34,21 +49,31 @@ class LLMService:
 
         provider = os.getenv("LLM_PROVIDER", "auto").lower()
         zai_key = os.getenv("ZAI_API_KEY", "")
+        deepinfra_key = os.getenv("DEEPINFRA_API_KEY", "")
 
         if provider == "mock":
             self._provider = "mock"
         elif provider == "zai" and zai_key:
             self._provider = "zai"
+        elif provider == "deepinfra" and deepinfra_key:
+            self._provider = "deepinfra"
         elif provider == "auto":
-            # Auto-detect: prefer Z.AI if key is set, otherwise mock
-            if zai_key:
+            # Auto-detect: prefer DeepInfra, then Z.AI, then mock
+            if deepinfra_key:
+                self._provider = "deepinfra"
+            elif zai_key:
                 self._provider = "zai"
             else:
                 logger.warning("no_llm_provider_configured", using="mock")
                 self._provider = "mock"
         else:
-            # Default to mock if no Z.AI key
-            self._provider = "mock" if not zai_key else "zai"
+            # Fallback logic
+            if deepinfra_key:
+                self._provider = "deepinfra"
+            elif zai_key:
+                self._provider = "zai"
+            else:
+                self._provider = "mock"
 
         logger.info("llm_provider_selected", provider=self._provider)
         return self._provider
@@ -63,7 +88,21 @@ class LLMService:
         if provider == "mock":
             self._llm = ChatMock()
             logger.info("using_mock_llm")
+        elif provider == "deepinfra":
+            self._llm = ChatDeepInfra(
+                api_key=os.getenv("DEEPINFRA_API_KEY"),
+                model=os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct"),
+                base_url=os.getenv(
+                    "DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"
+                ),
+            )
+            logger.info(
+                "using_deepinfra_llm",
+                model=self._llm.model,
+                base_url=self._llm.base_url,
+            )
         else:
+            # Default to Z.AI
             self._llm = ChatZAI(
                 api_key=os.getenv("ZAI_API_KEY"),
                 model=os.getenv("ZAI_MODEL", "GLM-4.7"),
