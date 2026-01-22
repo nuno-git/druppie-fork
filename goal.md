@@ -34,6 +34,7 @@ User Request
 │  b) User confirms                                       │
 │  c) Architect calls write_file (architecture.md)       │
 │  d) APPROVAL GATE: needs "architect" role to approve   │
+│     (because architect.yaml overrides write_file)      │
 │  e) Architect user approves → continues                │
 └─────────────────────────────────────────────────────────┘
     │
@@ -43,10 +44,13 @@ User Request
 │                                                         │
 │  a) Reads architecture.md                               │
 │  b) Implements code (write_file, batch_write_files)    │
-│  c) ALL MCP tools need "developer" role approval       │
-│  d) Builds Docker container                             │
-│  e) APPROVAL GATE: needs "developer" role to approve   │
-│  f) Developer user approves → deployment complete      │
+│     → NO approval needed (mcp_config default)          │
+│  c) Builds Docker container (docker:build)             │
+│  d) APPROVAL GATE: needs "developer" role to approve   │
+│     (because mcp_config.yaml requires it globally)     │
+│  e) Runs container (docker:run)                        │
+│  f) APPROVAL GATE: needs "developer" role to approve   │
+│  g) Developer user approves → deployment complete      │
 └─────────────────────────────────────────────────────────┘
     │
     ▼
@@ -55,14 +59,16 @@ Done - App Running
 
 ---
 
-## MCP Permission Gateway (Clean Architecture)
+## MCP Permission Gateway (Layered Architecture)
 
-### Key Insight: Approval is AGENT-SPECIFIC, not TOOL-SPECIFIC
+### Two Layers of Approval Rules
 
-The same tool (e.g., `write_file`) can require different approvals depending on **which agent** is using it.
+1. **mcp_config.yaml** = Global defaults for ALL agents
+2. **agent.yaml** = Agent-specific overrides
 
-### MCP-Level Config (`core/mcp_config.yaml`)
-**Tools are defined here, but NO approval rules.** Just the tool definitions:
+### Layer 1: MCP-Level Config (`core/mcp_config.yaml`)
+**Global defaults. Some tools ALWAYS need approval:**
+
 ```yaml
 mcps:
   coding:
@@ -70,24 +76,32 @@ mcps:
     tools:
       - name: write_file
         description: "Write file to workspace"
-        # NO requires_approval here - that's agent-specific
+        requires_approval: false  # DEFAULT: no approval needed
       - name: batch_write_files
         description: "Write multiple files"
+        requires_approval: false  # DEFAULT: no approval needed
       - name: read_file
         description: "Read file from workspace"
+        requires_approval: false
       - name: run_command
         description: "Execute shell command"
+        requires_approval: false
+
   docker:
     url: ${MCP_DOCKER_URL}
     tools:
       - name: build
         description: "Build Docker image"
+        requires_approval: true
+        required_role: developer  # ALWAYS needs developer approval
       - name: run
         description: "Run Docker container"
+        requires_approval: true
+        required_role: developer  # ALWAYS needs developer approval
 ```
 
-### Agent-Level Config (`agents/definitions/*.yaml`)
-**Approval rules live HERE, per agent:**
+### Layer 2: Agent-Level Overrides (`agents/definitions/*.yaml`)
+**Agents can OVERRIDE defaults for specific tools:**
 
 ```yaml
 # architect.yaml
@@ -96,9 +110,10 @@ description: Designs system architecture
 mcps:
   - coding
   - hitl
-approval_rules:
+approval_overrides:
   coding:write_file:
-    required_role: architect  # When architect uses write_file, needs architect approval
+    requires_approval: true
+    required_role: architect  # OVERRIDE: when architect uses write_file, needs architect approval
 ```
 
 ```yaml
@@ -109,31 +124,37 @@ mcps:
   - coding
   - docker
   - hitl
-approval_rules:
-  coding:write_file:
-    required_role: developer
-  coding:batch_write_files:
-    required_role: developer
-  coding:run_command:
-    required_role: developer
-  docker:build:
-    required_role: developer
-  docker:run:
-    required_role: developer
+# NO approval_overrides needed!
+# - write_file uses default (no approval)
+# - docker:build/run use global config (developer approval)
 ```
 
 ### How It Works
 
-1. Agent calls a tool (e.g., `coding:write_file`)
-2. System checks agent's `approval_rules` for that tool
-3. If rule exists → pause and request approval from that role
-4. If no rule → execute immediately (no approval needed)
+```
+Agent calls tool (e.g., coding:write_file)
+    │
+    ▼
+Check agent's approval_overrides for this tool
+    │
+    ├─► Override exists? → Use override rules
+    │
+    └─► No override? → Use mcp_config.yaml defaults
+```
+
+**Examples:**
+
+| Agent | Tool | Override? | Result |
+|-------|------|-----------|--------|
+| architect | write_file | YES (architect.yaml) | Needs architect approval |
+| developer | write_file | NO | No approval (mcp_config default) |
+| developer | docker:build | NO | Needs developer approval (mcp_config global) |
+| developer | docker:run | NO | Needs developer approval (mcp_config global) |
 
 ### What We Remove
 - ❌ `danger_level` - unnecessary complexity
 - ❌ `required_roles: [array]` - just use single `required_role: string`
 - ❌ Multiple approval requirement - one role approves, done
-- ❌ Global tool approval rules - approvals are agent-specific
 
 ---
 
@@ -189,11 +210,12 @@ Run the full flow with:
 1. Login as `normal_user`
 2. Request: "Build me a todo app"
 3. Architect agent asks user if plan looks good (HITL)
-4. Architect writes architecture.md → **approval needed from architect role**
+4. Architect writes architecture.md → **approval needed from architect role** (override)
 5. Login as `architect`, approve
-6. Developer implements → **approval needed from developer role**
-7. Login as `developer`, approve
-8. App is built and running
+6. Developer implements (write_file) → **no approval needed** (default)
+7. Developer builds Docker → **approval needed from developer role** (global)
+8. Login as `developer`, approve
+9. App is built and running
 
 ---
 
@@ -203,10 +225,10 @@ Run the full flow with:
 |-----------|----------------|
 | Simple users | 4 users: normal_user, architect, developer, admin |
 | Simple roles | 4 roles checked via Keycloak |
-| Agent-specific approval | Each agent defines its own approval rules |
-| Tools have no global approval | mcp_config.yaml just defines tools |
-| Simple agents | Architect designs, Developer builds |
+| Layered approval | mcp_config = defaults, agent yaml = overrides |
+| Docker always needs approval | Defined globally in mcp_config.yaml |
+| Architect write needs approval | Override in architect.yaml |
+| Developer write no approval | Uses default from mcp_config.yaml |
 | Full traceability | Debug panel shows everything |
-| Clean architecture | Approval rules in agent files, tool definitions in mcp_config |
 
 **This is it.** Nothing more until this works perfectly.
