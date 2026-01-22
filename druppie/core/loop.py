@@ -494,6 +494,38 @@ async def execute_node(state: GraphState) -> dict:
             if step_type == "agent":
                 prompt = step.get("prompt", "")
 
+                # CRITICAL: Check for HITL clarifications that should be passed to this agent
+                # This allows agents to know if the user has already confirmed/answered
+                # FIRST check the execution context (most reliable - passed directly from resume)
+                # THEN fall back to database (for other cases)
+                clarifications = []
+
+                # Check execution context first (this is the reliable path for resumption)
+                if ctx and ctx.hitl_clarifications:
+                    clarifications = ctx.hitl_clarifications
+                    logger.info(
+                        "clarifications_from_context",
+                        agent_id=agent_id,
+                        clarifications_count=len(clarifications),
+                    )
+
+                # Filter to only this agent's clarifications
+                agent_clarifications = [c for c in clarifications if c.get("agent_id") == agent_id]
+                if agent_clarifications:
+                    # Append clarification context to prompt
+                    clarification_text = "\n\n--- USER CONFIRMATION ---\n"
+                    for c in agent_clarifications:
+                        clarification_text += f"The user was asked: \"{c.get('question', '')[:200]}...\"\n"
+                        clarification_text += f"User responded: \"{c.get('answer', '')}\"\n"
+                    clarification_text += "\nIMPORTANT: The user has already confirmed! Proceed with the action (write the file) without asking again.\n"
+                    clarification_text += "--- END USER CONFIRMATION ---"
+                    prompt = prompt + clarification_text
+                    logger.info(
+                        "clarification_appended_to_prompt",
+                        agent_id=agent_id,
+                        clarifications_count=len(agent_clarifications),
+                    )
+
                 logger.info(
                     "execute_agent_step",
                     step_id=step_id,
@@ -859,6 +891,7 @@ class MainLoop:
         project_name: str | None = None,
         emit_event: Callable[[dict], None] | None = None,
         conversation_history: list[dict] | None = None,
+        hitl_clarifications: list[dict] | None = None,
     ) -> dict[str, Any]:
         """Process a user message through the LangGraph flow.
 
@@ -881,8 +914,16 @@ class MainLoop:
             session_id=session_id,
             user_id=user_id,
             emit_event=emit_event,
+            hitl_clarifications=hitl_clarifications or [],
         )
         set_current_context(exec_ctx)
+
+        if hitl_clarifications:
+            logger.info(
+                "process_message_with_clarifications",
+                session_id=session_id,
+                clarifications_count=len(hitl_clarifications),
+            )
 
         # Load existing messages from session state or use provided history
         existing_messages = await self._load_messages(session_id)
@@ -1696,21 +1737,53 @@ class MainLoop:
             else:
                 new_message = f"{original_message}\n\nUser clarification: {answer}"
 
+            # CRITICAL: Build clarification info to pass directly to process_message
+            # We also save to session state as backup, but the direct parameter is reliable
+            clarification_info = {
+                "question_id": question_id,
+                "question": question.question,
+                "answer": answer,
+                "agent_id": question.agent_id,
+            }
+
+            # Collect all clarifications (including this new one)
+            all_clarifications = [clarification_info]
+
+            # Also save to session state as backup (though this may get overwritten)
+            with db_session() as db:
+                from druppie.db.crud import get_session, save_session_state
+                session_obj = get_session(db, session_id)
+                if session_obj:
+                    current_state = session_obj.state or {}
+                    # Get existing clarifications
+                    existing = current_state.get("hitl_clarifications", [])
+                    all_clarifications = existing + [clarification_info]
+                    current_state["hitl_clarifications"] = all_clarifications
+                    save_session_state(db, session_id, current_state)
+                    logger.info(
+                        "clarification_saved_to_session",
+                        session_id=session_id,
+                        agent_id=question.agent_id,
+                        clarifications_count=len(all_clarifications),
+                    )
+
             logger.info(
                 "resuming_with_clarification",
                 session_id=session_id,
                 original_message=original_message[:50],
                 clarification=answer[:50],
+                clarifications_to_pass=len(all_clarifications),
             )
 
             # Process the message again with the clarification
-            # This will re-run the router which should now have enough context
+            # Pass clarifications directly to avoid database race conditions
             result = await self.process_message(
                 message=new_message,
                 session_id=session_id,
                 user_id=session.user_id,
                 project_id=exec_ctx.project_id,
                 emit_event=emit_event,
+                hitl_clarifications=all_clarifications,  # Direct path for reliability
             )
 
             clear_current_context()
@@ -2049,7 +2122,7 @@ class MainLoop:
             error: Error message if any
         """
         try:
-            from druppie.db.crud import upsert_session
+            from druppie.db.crud import upsert_session, get_session
 
             # Build state to store
             state = {
@@ -2072,6 +2145,33 @@ class MainLoop:
                 "results": final_state.get("results") if final_state else None,
                 "error": error,
             }
+
+            # CRITICAL: Preserve hitl_clarifications from existing state
+            # These are saved by resume_from_question_answer and must not be lost
+            with db_session() as db:
+                existing_session = get_session(db, session_id)
+                logger.info(
+                    "checking_existing_session_for_clarifications",
+                    session_id=session_id,
+                    has_session=existing_session is not None,
+                    has_state=existing_session.state is not None if existing_session else False,
+                )
+                if existing_session and existing_session.state:
+                    existing_clarifications = existing_session.state.get("hitl_clarifications")
+                    logger.info(
+                        "existing_session_state",
+                        session_id=session_id,
+                        has_clarifications=existing_clarifications is not None,
+                        clarifications_count=len(existing_clarifications) if existing_clarifications else 0,
+                        state_keys=list(existing_session.state.keys()) if existing_session.state else [],
+                    )
+                    if existing_clarifications:
+                        state["hitl_clarifications"] = existing_clarifications
+                        logger.info(
+                            "preserving_hitl_clarifications",
+                            session_id=session_id,
+                            count=len(existing_clarifications),
+                        )
 
             with db_session() as db:
                 upsert_session(
