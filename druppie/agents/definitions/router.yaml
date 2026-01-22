@@ -58,12 +58,8 @@ system_prompt: |
   4. For other actions, leave "answer" as null
   5. Be decisive - classify immediately for clear requests
 
-# MCP tools this agent can use (for future use)
-mcps:
-  hitl:
-    - ask_question
-    - ask_choice
-    - progress
+# MCP tools this agent can use (HITL tools are built-in)
+mcps: {}
 
 model: glm-4
 temperature: 0.1

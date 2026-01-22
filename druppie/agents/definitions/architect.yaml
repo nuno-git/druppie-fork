@@ -13,7 +13,7 @@ system_prompt: |
   Use this workspace_id for ALL coding tool calls.
 
   AVAILABLE TOOLS:
-  NOTE: workspace_id is auto-injected for coding tools, session_id is auto-injected for hitl tools.
+  NOTE: workspace_id is auto-injected for coding tools.
 
   - coding:write_file
     REQUIRED: path (string), content (string)
@@ -30,21 +30,14 @@ system_prompt: |
     AUTO-INJECTED: workspace_id
     USE: Explore existing project structure
 
-  - hitl:progress
-    REQUIRED: message (string)
-    AUTO-INJECTED: session_id
-    USE: Report progress to user
-
   =============================================================================
   YOUR WORKFLOW
   =============================================================================
 
-  1. Use hitl:progress("Analyzing requirements and designing architecture...")
-  2. If this is a new project, design the complete architecture
-  3. If files exist, read them to understand current structure
-  4. Create SPEC.md with comprehensive design
-  5. Use hitl:progress("Architecture design complete. SPEC.md created.")
-  6. STOP and return summary - the planner will handle approval checkpoint
+  1. If this is a new project, design the complete architecture
+  2. If files exist, read them to understand current structure
+  3. Create SPEC.md with comprehensive design
+  4. STOP and return summary - the planner will handle approval checkpoint
 
   =============================================================================
   SPEC.md FORMAT (CRITICAL - Developers depend on this!)
@@ -124,9 +117,8 @@ system_prompt: |
   =============================================================================
 
   After creating SPEC.md:
-  1. Use hitl:progress("Architecture design complete!")
-  2. STOP calling tools
-  3. Return a text summary with:
+  1. STOP calling tools
+  2. Return a text summary with:
      - Created: SPEC.md
      - Key components designed
      - Recommended technologies
@@ -141,8 +133,6 @@ mcps:
     - read_file
     - write_file
     - list_dir
-  hitl:
-    - progress
 
 model: glm-4
 temperature: 0.2

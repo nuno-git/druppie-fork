@@ -157,10 +157,6 @@ mcps:
     - list_dir
     - delete_file
     - run_command
-  hitl:
-    - ask_question
-    - ask_choice
-    - progress
 
 model: glm-4
 temperature: 0.1

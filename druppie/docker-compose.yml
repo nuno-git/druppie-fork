@@ -49,21 +49,8 @@ services:
     networks:
       - druppie-new-network
 
-  redis:
-    image: redis:7-alpine
-    container_name: druppie-new-redis
-    command: redis-server --appendonly yes
-    volumes:
-      - druppie_new_redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    ports:
-      - "6480:6379"
-    networks:
-      - druppie-new-network
+  # NOTE: Redis removed - no longer needed for HITL
+  # HITL questions are now stored directly in the database
 
   # =============================================================================
   # GITEA
@@ -169,7 +156,6 @@ services:
     environment:
       # Database
       DATABASE_URL: postgresql://druppie:druppie_secret@druppie-db:5432/druppie
-      REDIS_URL: redis://redis:6379/0
 
       # Auth - Use DEV_MODE from .env (set to true for dev without Keycloak)
       DEV_MODE: ${DEV_MODE:-false}
@@ -209,11 +195,10 @@ services:
       # Internal API key for MCP servers
       INTERNAL_API_KEY: druppie-internal-secret-key
 
-      # MCP Microservices
+      # MCP Microservices (HITL removed - now built into backend)
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: http://mcp-coding:9001
       MCP_DOCKER_URL: http://mcp-docker:9002
-      MCP_HITL_URL: http://mcp-hitl:9003
     volumes:
       - druppie_new_workspace:/app/workspace
       - /var/run/docker.sock:/var/run/docker.sock
@@ -221,8 +206,6 @@ services:
       - "8100:8000"
     depends_on:
       druppie-db:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       keycloak:
         condition: service_healthy
@@ -293,32 +276,8 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-hitl:
-    build:
-      context: ./mcp-servers/hitl
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-hitl
-    environment:
-      MCP_PORT: "9003"
-      REDIS_URL: redis://redis:6379/0
-      HITL_TIMEOUT: "300"
-      BACKEND_URL: http://druppie-backend:8000
-      INTERNAL_API_KEY: druppie-internal-secret-key
-    ports:
-      - "9003:9003"
-    depends_on:
-      redis:
-        condition: service_healthy
-      druppie-backend:
-        condition: service_healthy
-    networks:
-      - druppie-new-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9003/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+  # NOTE: mcp-hitl removed - HITL is now built into the backend
+  # Questions are stored directly in the database
 
   # =============================================================================
   # DATABASE ADMIN (Adminer)
@@ -364,8 +323,6 @@ volumes:
     name: druppie_new_postgres
   druppie_new_keycloak_postgres:
     name: druppie_new_keycloak_postgres
-  druppie_new_redis:
-    name: druppie_new_redis
   druppie_new_workspace:
     name: druppie_new_workspace
   druppie_new_gitea:

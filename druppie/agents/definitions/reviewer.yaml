@@ -51,10 +51,6 @@ mcps:
     - read_file
     - list_dir
     - write_file
-  hitl:
-    - progress
-    - ask_question
-    - ask_choice
 
 model: glm-4
 temperature: 0.1
