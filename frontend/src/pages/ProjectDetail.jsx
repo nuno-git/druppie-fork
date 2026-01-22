@@ -152,6 +152,13 @@ const OverviewTab = ({ project, projectStatus, onBuild, onRun, onStop, buildPend
             <p className="text-gray-300">{project?.description || 'No description provided'}</p>
           </div>
           <div>
+            <span className="text-sm text-gray-400">Created By</span>
+            <p className="text-gray-300 flex items-center">
+              <User className="w-4 h-4 mr-1 text-gray-500" />
+              {project?.owner_id || 'Unknown'}
+            </p>
+          </div>
+          <div>
             <span className="text-sm text-gray-400">Created</span>
             <p className="text-gray-300 flex items-center">
               <Calendar className="w-4 h-4 mr-1 text-gray-500" />

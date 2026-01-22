@@ -40,9 +40,14 @@ class ProjectResponse(BaseModel):
     status: str = "active"
     created_at: str | None = None
     updated_at: str | None = None
+    # Owner info
+    owner_id: str | None = None
     # Build info
     main_build: dict | None = None
     preview_builds: list[dict] = []
+    # Convenience fields for running apps
+    is_running: bool = False
+    app_url: str | None = None
 
 
 class BuildResponse(BaseModel):
@@ -101,6 +106,10 @@ def project_to_response(
     preview_builds: list[Build] | None = None,
 ) -> ProjectResponse:
     """Convert Project model to response."""
+    # Check if main build is running and get app URL
+    is_running = main_build.status == "running" if main_build else False
+    app_url = main_build.app_url if main_build and is_running else None
+
     return ProjectResponse(
         id=project.id,
         name=project.name,
@@ -110,8 +119,11 @@ def project_to_response(
         status=project.status,
         created_at=project.created_at.isoformat() if project.created_at else None,
         updated_at=project.updated_at.isoformat() if project.updated_at else None,
+        owner_id=project.owner_id,
         main_build=main_build.to_dict() if main_build else None,
         preview_builds=[b.to_dict() for b in (preview_builds or [])],
+        is_running=is_running,
+        app_url=app_url,
     )
 
 

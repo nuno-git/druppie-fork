@@ -26,6 +26,7 @@ import {
   Trash2,
   Hammer,
   Loader2,
+  User,
 } from 'lucide-react'
 import { getWorkspaceFiles, getWorkspaceFile, getWorkspaceDownloadUrl, getProjectStatus, getProjects, deleteProject, buildProject, runProject, stopProject } from '../services/api'
 import { useToast } from '../components/Toast'
@@ -162,12 +163,13 @@ const FilePreview = ({ path, planId, onClose }) => {
   )
 }
 
-const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDeleting, onViewDetails }) => {
-  // Projects from /api/projects have repo_url and app_url directly (not nested in result)
+const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDeleting, onViewDetails, onStop, isStopping }) => {
+  // Projects from /api/projects have repo_url, app_url, is_running directly
   const repoUrl = plan.repo_url
   const appUrl = plan.app_url || projectStatus?.url
   const hasRepo = !!repoUrl
-  const isRunning = projectStatus?.status === 'running'
+  const isRunning = plan.is_running || projectStatus?.status === 'running'
+  const ownerId = plan.owner_id
 
   const handleDelete = (e) => {
     e.stopPropagation()
@@ -285,7 +287,15 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
 
       {/* Footer */}
       <div className="flex items-center justify-between text-xs text-gray-500">
-        <span>{new Date(plan.created_at).toLocaleDateString()}</span>
+        <div className="flex items-center space-x-2">
+          <span>{new Date(plan.created_at).toLocaleDateString()}</span>
+          {ownerId && (
+            <span className="flex items-center text-gray-400" title={`Created by: ${ownerId}`}>
+              <User className="w-3 h-3 mr-0.5" />
+              <span className="truncate max-w-[80px]">{ownerId.split('-')[0]}</span>
+            </span>
+          )}
+        </div>
         <div className="flex items-center space-x-2">
           {hasRepo && (
             <span className="flex items-center text-green-600">
@@ -302,15 +312,34 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
         </div>
       </div>
 
-      {/* View Details Button */}
-      <button
-        onClick={handleViewDetails}
-        className="mt-3 w-full py-2 px-3 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-        aria-label={`View details for ${plan.name}`}
-      >
-        <Eye className="w-4 h-4 mr-1.5" aria-hidden="true" />
-        View Details
-      </button>
+      {/* Action Buttons */}
+      <div className="mt-3 flex items-center space-x-2">
+        <button
+          onClick={handleViewDetails}
+          className="flex-1 py-2 px-3 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          aria-label={`View details for ${plan.name}`}
+        >
+          <Eye className="w-4 h-4 mr-1.5" aria-hidden="true" />
+          Details
+        </button>
+        {isRunning && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onStop(plan.id)
+            }}
+            disabled={isStopping}
+            className="py-2 px-3 text-sm text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
+            aria-label={`Stop ${plan.name}`}
+          >
+            {isStopping ? (
+              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Square className="w-4 h-4" aria-hidden="true" />
+            )}
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -322,6 +351,7 @@ const Projects = () => {
   const [previewPlanId, setPreviewPlanId] = useState(null)
   const [viewMode, setViewMode] = useState('grid') // 'grid' or 'list'
   const [deletingId, setDeletingId] = useState(null)
+  const [stoppingId, setStoppingId] = useState(null)
 
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -376,11 +406,17 @@ const Projects = () => {
 
   const stopMutation = useMutation({
     mutationFn: stopProject,
+    onMutate: (projectId) => {
+      setStoppingId(projectId)
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projectStatus', selectedPlan] })
       queryClient.invalidateQueries({ queryKey: ['allProjectStatuses'] })
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
+      setStoppingId(null)
     },
     onError: (error) => {
+      setStoppingId(null)
       toast.error('Stop Failed', `Could not stop project: ${error.message}`)
     },
   })
@@ -500,6 +536,8 @@ const Projects = () => {
               onDelete={handleDelete}
               isDeleting={deletingId === plan.id}
               onViewDetails={handleViewDetails}
+              onStop={handleStop}
+              isStopping={stoppingId === plan.id}
             />
           ))}
 
