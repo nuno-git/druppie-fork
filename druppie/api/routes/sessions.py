@@ -44,6 +44,14 @@ class MessageResponse(BaseModel):
     container_name: str | None = None
 
 
+class TokenUsage(BaseModel):
+    """Token usage tracking for transparency."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
 class SessionResponse(BaseModel):
     """Session response model."""
 
@@ -63,6 +71,8 @@ class SessionResponse(BaseModel):
     tasks: list[dict] | None = None
     # Full conversation history
     messages: list[MessageResponse] | None = None
+    # Token usage for transparency
+    token_usage: TokenUsage | None = None
 
 
 class SessionListResponse(BaseModel):
@@ -85,6 +95,7 @@ class SessionSummary(BaseModel):
     project_id: str | None = None  # If linked to a project
     project_name: str | None = None  # If linked to a project
     workspace_id: str | None = None  # If linked to a workspace
+    total_tokens: int = 0  # Token usage for transparency
 
 
 class PaginatedSessionsResponse(BaseModel):
@@ -164,6 +175,13 @@ def _session_to_response(session, project=None) -> SessionResponse:
         for msg in messages_data
     ] if messages_data else None
 
+    # Token usage (transparency)
+    token_usage = TokenUsage(
+        prompt_tokens=session.prompt_tokens or 0,
+        completion_tokens=session.completion_tokens or 0,
+        total_tokens=session.total_tokens or 0,
+    )
+
     return SessionResponse(
         id=session.id,
         user_id=session.user_id,
@@ -178,6 +196,7 @@ def _session_to_response(session, project=None) -> SessionResponse:
         result=result,
         tasks=None,  # Approvals are fetched separately
         messages=messages,
+        token_usage=token_usage,
     )
 
 
@@ -206,6 +225,7 @@ def _session_to_summary(session, project_name: str | None = None) -> SessionSumm
         project_id=session.project_id,
         project_name=resolved_project_name,
         workspace_id=session.workspace_id,
+        total_tokens=session.total_tokens or 0,
     )
 
 
@@ -473,6 +493,10 @@ class TraceSummary(BaseModel):
     tools_called: int
     llm_calls: int
     total_duration_ms: int
+    # Token usage for transparency
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 class RawLLMCall(BaseModel):
@@ -600,12 +624,25 @@ def _build_trace_summary(events: list[TraceEvent], state: dict) -> TraceSummary:
     if stored_duration > total_duration_ms:
         total_duration_ms = stored_duration
 
+    # Get token usage from llm_calls
+    prompt_tokens = 0
+    completion_tokens = 0
+    total_tokens = 0
+    for call in state.get("llm_calls", []):
+        usage = call.get("usage", {})
+        prompt_tokens += usage.get("prompt_tokens", 0)
+        completion_tokens += usage.get("completion_tokens", 0)
+        total_tokens += usage.get("total_tokens", 0)
+
     return TraceSummary(
         total_events=len(events),
         agents_used=sorted(list(agents_used)),
         tools_called=tools_called,
         llm_calls=llm_calls_count,
         total_duration_ms=total_duration_ms,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
     )
 
 

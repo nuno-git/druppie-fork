@@ -65,6 +65,11 @@ class ExecutionContext:
     # Cancellation flag
     _cancelled: bool = field(default=False, repr=False)
 
+    # Token usage tracking (aggregated from all LLM calls)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
     def cancel(self) -> None:
         """Mark this execution as cancelled."""
         self._cancelled = True
@@ -133,6 +138,16 @@ class ExecutionContext:
             tools: Tools provided to LLM
             duration_ms: Call duration in milliseconds
         """
+        # Extract token usage from response
+        prompt_tokens = getattr(response, "prompt_tokens", 0)
+        completion_tokens = getattr(response, "completion_tokens", 0)
+        response_total_tokens = getattr(response, "total_tokens", 0)
+
+        # Aggregate token usage
+        self.prompt_tokens += prompt_tokens
+        self.completion_tokens += completion_tokens
+        self.total_tokens += response_total_tokens
+
         call = {
             "agent_id": agent_id,
             "iteration": iteration,
@@ -144,17 +159,22 @@ class ExecutionContext:
                 "content": getattr(response, "content", str(response)),
                 "tool_calls": getattr(response, "tool_calls", []),
             },
-            "usage": getattr(response, "usage", {}),
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": response_total_tokens,
+            },
         }
 
         self.llm_calls.append(call)
 
-        # Emit LLM call event
+        # Emit LLM call event with token info
         self.emit("llm_call", {
             "agent_id": agent_id,
             "iteration": iteration,
             "duration_ms": duration_ms,
             "has_tool_calls": bool(getattr(response, "tool_calls", [])),
+            "tokens": response_total_tokens,
         })
 
     def agent_started(self, agent_id: str, prompt: str) -> None:
@@ -229,6 +249,11 @@ class ExecutionContext:
             "llm_calls": self.llm_calls,
             "messages": self.messages,
             "duration_ms": int((time.time() - self.start_time) * 1000),
+            "token_usage": {
+                "prompt_tokens": self.prompt_tokens,
+                "completion_tokens": self.completion_tokens,
+                "total_tokens": self.total_tokens,
+            },
         }
 
     def get_state(self) -> dict:
