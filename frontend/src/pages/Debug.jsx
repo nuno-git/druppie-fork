@@ -186,6 +186,304 @@ const JsonViewer = ({ data, label }) => {
   )
 }
 
+// Copy button component for reuse
+const CopyButton = ({ text, label = "Copy" }) => {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy:', err)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="flex items-center gap-1 px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 rounded transition-colors"
+      title={label}
+    >
+      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+      <span>{copied ? 'Copied!' : label}</span>
+    </button>
+  )
+}
+
+// Raw LLM Call viewer component
+const RawLLMCallViewer = ({ call, index }) => {
+  const [isExpanded, setIsExpanded] = useState(false)
+  const [activeSection, setActiveSection] = useState('messages')
+
+  const fullRequestJson = JSON.stringify({
+    messages: call.messages,
+    tools: call.tools,
+  }, null, 2)
+
+  const fullResponseJson = JSON.stringify(call.response, null, 2)
+
+  const fullCallJson = JSON.stringify(call, null, 2)
+
+  return (
+    <div className="border-l-4 border-l-blue-400 bg-blue-50 rounded-r-lg mb-4 overflow-hidden">
+      {/* Header */}
+      <div
+        className="flex items-center justify-between p-4 bg-blue-100 cursor-pointer hover:bg-blue-200 transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-full bg-white shadow-sm">
+            <Brain className="w-5 h-5 text-blue-600" />
+          </div>
+          <div>
+            <div className="font-semibold text-gray-900">
+              LLM Call #{index + 1}
+              {call.agent_id && <span className="ml-2 text-blue-600">({call.agent_id})</span>}
+            </div>
+            <div className="text-xs text-gray-600 flex items-center gap-3">
+              {call.iteration !== undefined && <span>Iteration {call.iteration}</span>}
+              {call.duration_ms && (
+                <span className="flex items-center gap-1">
+                  <Timer className="w-3 h-3" />
+                  {formatDuration(call.duration_ms)}
+                </span>
+              )}
+              {call.usage?.total_tokens && (
+                <span className="bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded">
+                  {call.usage.total_tokens} tokens
+                </span>
+              )}
+              <span className="text-gray-500">
+                {call.messages?.length || 0} messages, {call.tools?.length || 0} tools
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <CopyButton text={fullCallJson} label="Copy All" />
+          {isExpanded ? <ChevronDown className="w-5 h-5 text-gray-500" /> : <ChevronRight className="w-5 h-5 text-gray-500" />}
+        </div>
+      </div>
+
+      {/* Expanded content */}
+      {isExpanded && (
+        <div className="p-4 space-y-4">
+          {/* Section tabs */}
+          <div className="flex gap-2 border-b border-blue-200 pb-2">
+            {['messages', 'tools', 'response', 'usage'].map((section) => (
+              <button
+                key={section}
+                onClick={() => setActiveSection(section)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+                  activeSection === section
+                    ? 'bg-white text-blue-700 border border-b-0 border-blue-200'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                {section.charAt(0).toUpperCase() + section.slice(1)}
+                {section === 'messages' && call.messages?.length > 0 && ` (${call.messages.length})`}
+                {section === 'tools' && call.tools?.length > 0 && ` (${call.tools.length})`}
+              </button>
+            ))}
+          </div>
+
+          {/* Messages section - Full request */}
+          {activeSection === 'messages' && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-semibold text-gray-700">Input Messages (Request)</h4>
+                <CopyButton text={JSON.stringify(call.messages, null, 2)} label="Copy Messages" />
+              </div>
+              {call.messages?.length > 0 ? (
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {call.messages.map((msg, msgIdx) => (
+                    <div
+                      key={msgIdx}
+                      className={`rounded-lg p-3 ${
+                        msg.role === 'system' ? 'bg-purple-100 border border-purple-200' :
+                        msg.role === 'user' ? 'bg-green-100 border border-green-200' :
+                        msg.role === 'assistant' ? 'bg-blue-100 border border-blue-200' :
+                        msg.role === 'tool' ? 'bg-orange-100 border border-orange-200' :
+                        'bg-gray-100 border border-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className={`text-xs font-semibold uppercase ${
+                          msg.role === 'system' ? 'text-purple-700' :
+                          msg.role === 'user' ? 'text-green-700' :
+                          msg.role === 'assistant' ? 'text-blue-700' :
+                          msg.role === 'tool' ? 'text-orange-700' :
+                          'text-gray-700'
+                        }`}>
+                          {msg.role}
+                        </span>
+                        <CopyButton text={JSON.stringify(msg, null, 2)} label="Copy" />
+                      </div>
+                      <pre className="text-xs text-gray-800 whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+                        {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
+                      </pre>
+                      {msg.tool_calls && (
+                        <div className="mt-2 pt-2 border-t border-gray-200">
+                          <span className="text-xs font-medium text-orange-600">Tool Calls:</span>
+                          <pre className="text-xs text-gray-700 mt-1">
+                            {JSON.stringify(msg.tool_calls, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500 text-sm">No messages in this call</p>
+              )}
+            </div>
+          )}
+
+          {/* Tools section */}
+          {activeSection === 'tools' && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-semibold text-gray-700">Available Tools (Schema)</h4>
+                <CopyButton text={JSON.stringify(call.tools, null, 2)} label="Copy Tools" />
+              </div>
+              {call.tools?.length > 0 ? (
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {call.tools.map((tool, toolIdx) => (
+                    <div key={toolIdx} className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-mono text-sm font-medium text-orange-800">
+                          {tool.function?.name || tool.name || `Tool ${toolIdx + 1}`}
+                        </span>
+                        <CopyButton text={JSON.stringify(tool, null, 2)} label="Copy" />
+                      </div>
+                      {(tool.function?.description || tool.description) && (
+                        <p className="text-xs text-gray-600 mb-2">
+                          {tool.function?.description || tool.description}
+                        </p>
+                      )}
+                      {(tool.function?.parameters || tool.parameters) && (
+                        <details className="text-xs">
+                          <summary className="cursor-pointer text-orange-600 font-medium">Parameters</summary>
+                          <pre className="mt-1 bg-gray-800 text-gray-100 p-2 rounded text-xs overflow-x-auto">
+                            {JSON.stringify(tool.function?.parameters || tool.parameters, null, 2)}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500 text-sm">No tools provided in this call</p>
+              )}
+            </div>
+          )}
+
+          {/* Response section */}
+          {activeSection === 'response' && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-semibold text-gray-700">LLM Response</h4>
+                <CopyButton text={fullResponseJson} label="Copy Response" />
+              </div>
+              {call.response ? (
+                <div className="space-y-3">
+                  {/* Content */}
+                  {call.response.content && (
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-semibold text-green-700 uppercase">Content</span>
+                        <CopyButton text={call.response.content} label="Copy" />
+                      </div>
+                      <pre className="text-xs text-gray-800 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+                        {call.response.content}
+                      </pre>
+                    </div>
+                  )}
+                  {/* Tool calls */}
+                  {call.response.tool_calls?.length > 0 && (
+                    <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-orange-700 uppercase">
+                          Tool Calls ({call.response.tool_calls.length})
+                        </span>
+                        <CopyButton text={JSON.stringify(call.response.tool_calls, null, 2)} label="Copy" />
+                      </div>
+                      <div className="space-y-2">
+                        {call.response.tool_calls.map((tc, tcIdx) => (
+                          <div key={tcIdx} className="bg-white rounded p-2 border border-orange-100">
+                            <div className="flex items-center justify-between">
+                              <span className="font-mono text-sm text-orange-800 font-medium">
+                                {tc.name || tc.function?.name}
+                              </span>
+                              <CopyButton text={JSON.stringify(tc, null, 2)} label="Copy" />
+                            </div>
+                            {(tc.args || tc.function?.arguments) && (
+                              <pre className="mt-1 text-xs bg-gray-100 p-2 rounded overflow-x-auto">
+                                {typeof (tc.args || tc.function?.arguments) === 'string'
+                                  ? tc.args || tc.function?.arguments
+                                  : JSON.stringify(tc.args || tc.function?.arguments, null, 2)}
+                              </pre>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-gray-500 text-sm">No response data</p>
+              )}
+            </div>
+          )}
+
+          {/* Usage section */}
+          {activeSection === 'usage' && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-semibold text-gray-700">Token Usage</h4>
+                <CopyButton text={JSON.stringify(call.usage, null, 2)} label="Copy Usage" />
+              </div>
+              {call.usage ? (
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-blue-700">{call.usage.prompt_tokens || 0}</div>
+                    <div className="text-xs text-gray-600">Prompt Tokens</div>
+                  </div>
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-green-700">{call.usage.completion_tokens || 0}</div>
+                    <div className="text-xs text-gray-600">Completion Tokens</div>
+                  </div>
+                  <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-purple-700">{call.usage.total_tokens || 0}</div>
+                    <div className="text-xs text-gray-600">Total Tokens</div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-gray-500 text-sm">No usage data</p>
+              )}
+            </div>
+          )}
+
+          {/* Raw JSON view */}
+          <details className="mt-4">
+            <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-700 font-medium">
+              View Raw JSON
+            </summary>
+            <div className="mt-2 relative">
+              <CopyButton text={fullCallJson} label="Copy All" />
+              <pre className="bg-gray-800 text-gray-100 p-3 rounded-lg text-xs overflow-x-auto max-h-64 overflow-y-auto mt-2">
+                {fullCallJson}
+              </pre>
+            </div>
+          </details>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Single trace event component
 const TraceEvent = ({ event, depth = 0 }) => {
   const [isExpanded, setIsExpanded] = useState(depth < 2)
@@ -530,6 +828,30 @@ const Debug = () => {
           ))}
         </div>
       </div>
+
+      {/* Raw LLM Calls Section */}
+      {trace.raw_llm_calls && trace.raw_llm_calls.length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Brain className="w-4 h-4 text-blue-600" />
+              Raw LLM Calls ({trace.raw_llm_calls.length})
+            </h2>
+            <CopyButton
+              text={JSON.stringify(trace.raw_llm_calls, null, 2)}
+              label="Copy All LLM Calls"
+            />
+          </div>
+          <p className="text-xs text-gray-500 mb-4">
+            Full request/response data for each LLM call. Click to expand and view messages, tools, and responses.
+          </p>
+          <div className="space-y-2">
+            {trace.raw_llm_calls.map((call, index) => (
+              <RawLLMCallViewer key={index} call={call} index={index} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
