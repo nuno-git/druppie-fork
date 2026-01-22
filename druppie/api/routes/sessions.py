@@ -32,6 +32,16 @@ class ProjectInfo(BaseModel):
     repo_url: str | None = None
 
 
+class MessageResponse(BaseModel):
+    """Message in conversation history."""
+
+    role: str
+    content: str
+    timestamp: str | None = None
+    workflow_events: list[dict] | None = None
+    llm_calls: list[dict] | None = None
+
+
 class SessionResponse(BaseModel):
     """Session response model."""
 
@@ -49,6 +59,8 @@ class SessionResponse(BaseModel):
     description: str | None = None
     result: dict | None = None
     tasks: list[dict] | None = None
+    # Full conversation history
+    messages: list[MessageResponse] | None = None
 
 
 class SessionListResponse(BaseModel):
@@ -135,6 +147,19 @@ def _session_to_response(session, project=None) -> SessionResponse:
             repo_url=project.repo_url,
         )
 
+    # Build messages list from stored history (including per-message workflow events)
+    messages_data = state.get("messages", [])
+    messages = [
+        MessageResponse(
+            role=msg.get("role", "user"),
+            content=msg.get("content", ""),
+            timestamp=msg.get("timestamp"),
+            workflow_events=msg.get("workflow_events"),
+            llm_calls=msg.get("llm_calls"),
+        )
+        for msg in messages_data
+    ] if messages_data else None
+
     return SessionResponse(
         id=session.id,
         user_id=session.user_id,
@@ -148,6 +173,7 @@ def _session_to_response(session, project=None) -> SessionResponse:
         description=description,
         result=result,
         tasks=None,  # Approvals are fetched separately
+        messages=messages,
     )
 
 

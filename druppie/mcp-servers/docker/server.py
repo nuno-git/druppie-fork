@@ -4,12 +4,20 @@ Docker container operations - build, run, stop, logs.
 Uses FastMCP framework for HTTP transport.
 """
 
+import logging
 import os
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger("docker-mcp")
 
 # Initialize FastMCP server
 mcp = FastMCP("Docker MCP Server")
@@ -22,6 +30,9 @@ PORT_RANGE_END = int(os.getenv("PORT_RANGE_END", "9199"))
 
 # Track used ports
 used_ports: set[int] = set()
+
+# In-memory workspace registry (shared with coding MCP or populated on build)
+workspaces: dict[str, dict] = {}
 
 
 def get_next_port() -> int:
@@ -38,6 +49,72 @@ def release_port(port: int) -> None:
     used_ports.discard(port)
 
 
+def resolve_workspace_path(workspace_id: str | None, workspace_path: str | None) -> Path | None:
+    """Resolve workspace path from workspace_id or direct path.
+
+    Args:
+        workspace_id: Workspace ID to look up
+        workspace_path: Direct path (takes precedence if provided)
+
+    Returns:
+        Resolved Path or None if not found
+    """
+    # Direct path takes precedence
+    if workspace_path:
+        p = Path(workspace_path)
+        if p.exists():
+            return p
+        # Try under workspace root
+        p = WORKSPACE_ROOT / workspace_path
+        if p.exists():
+            return p
+
+    # Look up workspace_id
+    if workspace_id:
+        if workspace_id in workspaces:
+            return Path(workspaces[workspace_id]["path"])
+        # Try to find by scanning workspace root
+        # Pattern: /workspaces/user_id/project_id/session_id
+        for user_dir in WORKSPACE_ROOT.iterdir():
+            if user_dir.is_dir():
+                for project_dir in user_dir.iterdir():
+                    if project_dir.is_dir():
+                        for session_dir in project_dir.iterdir():
+                            if session_dir.is_dir():
+                                # Check if this matches workspace_id pattern
+                                if workspace_id in str(session_dir):
+                                    return session_dir
+
+    return None
+
+
+@mcp.tool()
+async def register_workspace(
+    workspace_id: str,
+    workspace_path: str,
+    project_id: str | None = None,
+    branch: str | None = None,
+) -> dict:
+    """Register a workspace for Docker operations.
+
+    Args:
+        workspace_id: Workspace ID
+        workspace_path: Path to workspace
+        project_id: Optional project ID
+        branch: Optional git branch
+
+    Returns:
+        Dict with success status
+    """
+    workspaces[workspace_id] = {
+        "path": workspace_path,
+        "project_id": project_id,
+        "branch": branch,
+    }
+    logger.info("Registered workspace %s at %s", workspace_id, workspace_path)
+    return {"success": True, "workspace_id": workspace_id}
+
+
 # =============================================================================
 # MCP TOOLS
 # =============================================================================
@@ -45,16 +122,18 @@ def release_port(port: int) -> None:
 
 @mcp.tool()
 async def build(
-    workspace_path: str,
     image_name: str,
+    workspace_id: str | None = None,
+    workspace_path: str | None = None,
     dockerfile: str = "Dockerfile",
     build_args: dict[str, str] | None = None,
 ) -> dict:
     """Build Docker image from workspace.
 
     Args:
-        workspace_path: Path to workspace with Dockerfile
-        image_name: Name for the built image
+        image_name: Name for the built image (e.g., "myapp:latest")
+        workspace_id: Workspace ID (will resolve to path)
+        workspace_path: Direct path to workspace with Dockerfile (takes precedence)
         dockerfile: Dockerfile name (default: "Dockerfile")
         build_args: Optional build arguments
 
@@ -62,9 +141,18 @@ async def build(
         Dict with success, image_name, logs
     """
     try:
-        workspace = Path(workspace_path)
+        # Resolve workspace path
+        workspace = resolve_workspace_path(workspace_id, workspace_path)
+        if workspace is None:
+            return {
+                "success": False,
+                "error": f"Workspace not found: workspace_id={workspace_id}, workspace_path={workspace_path}",
+            }
+
+        logger.info("Building Docker image %s from %s", image_name, workspace)
+
         if not workspace.exists():
-            return {"success": False, "error": f"Workspace not found: {workspace_path}"}
+            return {"success": False, "error": f"Workspace not found: {workspace}"}
 
         dockerfile_path = workspace / dockerfile
         if not dockerfile_path.exists():
@@ -113,6 +201,8 @@ async def run(
     image_name: str,
     container_name: str,
     port: int | None = None,
+    container_port: int = 3000,
+    port_mapping: str | None = None,
     env_vars: dict[str, str] | None = None,
     volumes: list[str] | None = None,
     command: str | None = None,
@@ -123,6 +213,8 @@ async def run(
         image_name: Docker image to run
         container_name: Name for the container
         port: Host port to expose (auto-assigned if not provided)
+        container_port: Container port to map to (default: 3000)
+        port_mapping: Full port mapping string (e.g., "8080:3000") - overrides port/container_port
         env_vars: Environment variables
         volumes: Volume mounts (format: "host:container")
         command: Override command
@@ -131,15 +223,26 @@ async def run(
         Dict with success, container_name, port, url
     """
     try:
-        # Get port
-        host_port = port or get_next_port()
+        # Handle port mapping
+        if port_mapping:
+            # Parse "host:container" format
+            parts = port_mapping.split(":")
+            host_port = int(parts[0])
+            container_port = int(parts[1]) if len(parts) > 1 else 3000
+        else:
+            host_port = port or get_next_port()
+
+        logger.info(
+            "Running container %s from image %s (port %d:%d)",
+            container_name, image_name, host_port, container_port
+        )
 
         # Build run command
         cmd = [
             "docker", "run", "-d",
             "--name", container_name,
             "--network", DOCKER_NETWORK,
-            "-p", f"{host_port}:8000",  # Default container port 8000
+            "-p", f"{host_port}:{container_port}",
         ]
 
         # Add environment variables

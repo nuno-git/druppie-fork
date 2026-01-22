@@ -16,6 +16,15 @@ import structlog
 logger = structlog.get_logger()
 
 
+class CancelledException(Exception):
+    """Raised when execution is cancelled by user."""
+    pass
+
+
+# Registry of active executions by session ID
+_active_executions: dict[str, "ExecutionContext"] = {}
+
+
 @dataclass
 class ExecutionContext:
     """Context for tracking execution events and LLM calls.
@@ -28,6 +37,7 @@ class ExecutionContext:
     # Workspace context (set after workspace initialization)
     workspace_id: str | None = None
     project_id: str | None = None
+    project_name: str | None = None  # Friendly name like "to-do-app"
     workspace_path: str | None = None
     branch: str | None = None
 
@@ -35,11 +45,37 @@ class ExecutionContext:
     workflow_events: list[dict] = field(default_factory=list)
     llm_calls: list[dict] = field(default_factory=list)
 
+    # Conversation history (stored in session state)
+    messages: list[dict] = field(default_factory=list)
+
     # Real-time callback
     emit_event: Callable[[dict], None] | None = None
 
     # Timing
     start_time: float = field(default_factory=time.time)
+
+    # Cancellation flag
+    _cancelled: bool = field(default=False, repr=False)
+
+    def cancel(self) -> None:
+        """Mark this execution as cancelled."""
+        self._cancelled = True
+        self.emit("execution_cancelled", {"reason": "User requested cancellation"})
+        logger.info("execution_cancelled", session_id=self.session_id)
+
+    def check_cancelled(self) -> None:
+        """Check if execution was cancelled and raise if so.
+
+        Call this at checkpoints during execution (before LLM calls, before tool execution, etc.)
+        to allow graceful cancellation.
+        """
+        if self._cancelled:
+            raise CancelledException(f"Execution cancelled for session {self.session_id}")
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Check if execution is cancelled."""
+        return self._cancelled
 
     def emit(self, event_type: str, data: dict = None) -> None:
         """Emit an event and store it.
@@ -178,10 +214,12 @@ class ExecutionContext:
             "session_id": self.session_id,
             "workspace_id": self.workspace_id,
             "project_id": self.project_id,
+            "project_name": self.project_name,
             "workspace_path": self.workspace_path,
             "branch": self.branch,
             "workflow_events": self.workflow_events,
             "llm_calls": self.llm_calls,
+            "messages": self.messages,
             "duration_ms": int((time.time() - self.start_time) * 1000),
         }
 
@@ -191,6 +229,7 @@ class ExecutionContext:
         project_id: str | None,
         workspace_path: str,
         branch: str,
+        project_name: str | None = None,
     ) -> None:
         """Set workspace context after initialization.
 
@@ -199,14 +238,17 @@ class ExecutionContext:
             project_id: Project ID
             workspace_path: Local path to workspace
             branch: Current git branch
+            project_name: Friendly project name (e.g., "to-do-app")
         """
         self.workspace_id = workspace_id
         self.project_id = project_id
+        self.project_name = project_name
         self.workspace_path = workspace_path
         self.branch = branch
         self.emit("workspace_initialized", {
             "workspace_id": workspace_id,
             "project_id": project_id,
+            "project_name": project_name,
             "branch": branch,
         })
 
@@ -216,9 +258,11 @@ _current_context: ExecutionContext | None = None
 
 
 def set_current_context(ctx: ExecutionContext) -> None:
-    """Set the current execution context."""
+    """Set the current execution context and register it for cancellation."""
     global _current_context
     _current_context = ctx
+    # Register in active executions for cancellation support
+    _active_executions[ctx.session_id] = ctx
 
 
 def get_current_context() -> ExecutionContext | None:
@@ -227,6 +271,48 @@ def get_current_context() -> ExecutionContext | None:
 
 
 def clear_current_context() -> None:
-    """Clear the current execution context."""
+    """Clear the current execution context and remove from registry."""
     global _current_context
+    if _current_context:
+        # Remove from active executions
+        _active_executions.pop(_current_context.session_id, None)
     _current_context = None
+
+
+def get_active_execution(session_id: str) -> ExecutionContext | None:
+    """Get an active execution context by session ID.
+
+    Used for cancellation support.
+
+    Args:
+        session_id: Session ID to look up
+
+    Returns:
+        ExecutionContext if found, None otherwise
+    """
+    return _active_executions.get(session_id)
+
+
+def cancel_execution(session_id: str) -> bool:
+    """Cancel an active execution by session ID.
+
+    Args:
+        session_id: Session ID to cancel
+
+    Returns:
+        True if execution was found and cancelled, False otherwise
+    """
+    ctx = _active_executions.get(session_id)
+    if ctx:
+        ctx.cancel()
+        return True
+    return False
+
+
+def list_active_sessions() -> list[str]:
+    """List all active session IDs.
+
+    Returns:
+        List of session IDs with active executions
+    """
+    return list(_active_executions.keys())

@@ -188,6 +188,7 @@ class ChatResponse(BaseModel):
     # Workspace info (git-first architecture)
     workspace_id: str | None = Field(None, description="Workspace ID if initialized")
     project_id: str | None = Field(None, description="Project ID if assigned")
+    project_name: str | None = Field(None, description="Friendly project name (e.g., 'to-do-app')")
     branch: str | None = Field(None, description="Git branch name")
     status: str | None = Field(None, description="Session status: active, paused, completed")
     waiting_for: str | None = Field(None, description="What the session is waiting for")
@@ -259,6 +260,14 @@ async def chat(
         # Create emit_event callback for real-time updates
         emit_event = create_emit_event(session_id)
 
+        # Convert conversation history to plain dicts if provided
+        conversation_history = None
+        if request.conversation_history:
+            conversation_history = [
+                {"role": msg.role, "content": msg.content}
+                for msg in request.conversation_history
+            ]
+
         result = await loop.process_message(
             message=request.message,
             session_id=session_id,
@@ -266,6 +275,7 @@ async def chat(
             project_id=request.project_id,
             project_name=request.project_name,
             emit_event=emit_event,
+            conversation_history=conversation_history,
         )
 
         result_session_id = result.get("session_id", session_id)
@@ -310,6 +320,7 @@ async def chat(
             plan_id=result_session_id,  # Backwards compatibility
             workspace_id=result.get("workspace_id"),
             project_id=result.get("project_id"),
+            project_name=result.get("project_name"),  # Friendly name like "to-do-app"
             branch=result.get("branch"),
             status=result.get("status"),
             waiting_for=result.get("waiting_for"),
@@ -553,4 +564,69 @@ async def get_missed_events(
         "session_id": session_id,
         "events": events,
         "count": len(events),
+    }
+
+
+@router.post("/chat/{session_id}/cancel")
+async def cancel_chat_execution(
+    session_id: str,
+    user: dict = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+):
+    """Cancel an ongoing execution for a session.
+
+    This will attempt to gracefully stop the current execution.
+    The execution may complete its current step before stopping.
+
+    Args:
+        session_id: The session ID to cancel
+
+    Returns:
+        Status of cancellation attempt
+    """
+    from druppie.core.execution_context import cancel_execution, get_active_execution
+    from druppie.db.crud import get_session, update_session
+
+    logger.info("cancel_execution_request", session_id=session_id, user_id=user.get("sub"))
+
+    # Check if session exists
+    session = get_session(db, session_id)
+    if not session:
+        raise NotFoundError("session", session_id)
+
+    # Check if there's an active execution
+    active_ctx = get_active_execution(session_id)
+    if not active_ctx:
+        # No active execution - might already be completed or not started
+        return {
+            "session_id": session_id,
+            "cancelled": False,
+            "reason": "No active execution found for this session",
+            "session_status": session.status,
+        }
+
+    # Cancel the execution
+    cancelled = cancel_execution(session_id)
+
+    if cancelled:
+        # Update session status
+        update_session(db, session_id, status="cancelled")
+        db.commit()
+
+        # Emit cancellation event via WebSocket
+        try:
+            await manager.broadcast_to_session(session_id, {
+                "type": "execution_cancelled",
+                "session_id": session_id,
+                "message": "Execution was cancelled by user",
+            })
+        except Exception as e:
+            logger.warning("cancel_broadcast_failed", session_id=session_id, error=str(e))
+
+        logger.info("execution_cancelled", session_id=session_id)
+
+    return {
+        "session_id": session_id,
+        "cancelled": cancelled,
+        "message": "Execution cancellation requested" if cancelled else "Failed to cancel execution",
     }

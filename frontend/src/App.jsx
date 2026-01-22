@@ -15,6 +15,7 @@ import {
   FolderOpen,
   Bug,
   Settings as SettingsIcon,
+  Database,
 } from 'lucide-react'
 
 import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole, isKeycloakAvailable } from './services/keycloak'
@@ -30,6 +31,7 @@ import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import Debug from './pages/Debug'
 import Settings from './pages/Settings'
+import AdminDatabase from './pages/AdminDatabase'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -85,7 +87,12 @@ const Navigation = () => {
     { path: '/settings', icon: SettingsIcon, label: 'Settings' },
   ]
 
-  const isActive = (path) => location.pathname === path
+  // Add admin-only nav items
+  const adminNavItems = [
+    { path: '/admin/database', icon: Database, label: 'Database' },
+  ]
+
+  const isActive = (path) => location.pathname === path || location.pathname.startsWith(path + '/')
 
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
@@ -111,6 +118,21 @@ const Navigation = () => {
                   isActive(path)
                     ? 'bg-blue-100 text-blue-700'
                     : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <Icon className="w-4 h-4 inline mr-1" />
+                {label}
+              </Link>
+            ))}
+            {/* Admin-only navigation items */}
+            {user?.roles?.includes('admin') && adminNavItems.map(({ path, icon: Icon, label }) => (
+              <Link
+                key={path}
+                to={path}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  isActive(path)
+                    ? 'bg-purple-100 text-purple-700'
+                    : 'text-purple-600 hover:bg-purple-50'
                 }`}
               >
                 <Icon className="w-4 h-4 inline mr-1" />
@@ -285,6 +307,14 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <Settings />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/admin/database"
+                  element={
+                    <ProtectedRoute requiredRole="admin">
+                      <AdminDatabase />
                     </ProtectedRoute>
                   }
                 />
