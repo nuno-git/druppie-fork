@@ -7,7 +7,7 @@ This module provides a context object that collects:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable
 import time
 
@@ -46,7 +46,7 @@ class ExecutionContext:
         """
         event = {
             "type": event_type,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "session_id": self.session_id,
             **(data or {}),
         }
@@ -87,7 +87,7 @@ class ExecutionContext:
         call = {
             "agent_id": agent_id,
             "iteration": iteration,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "duration_ms": duration_ms,
             "messages": messages,
             "tools": tools,

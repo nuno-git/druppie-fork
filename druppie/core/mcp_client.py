@@ -12,7 +12,7 @@ import json
 import os
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -590,7 +590,7 @@ class MCPClient:
                     "args": approval.arguments,
                     "required_roles": approval.required_roles,
                     "danger_level": approval.danger_level,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 }),
             )
         except Exception as e:

@@ -3,7 +3,7 @@
 Simple database operations without complex ORM patterns.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session as DBSession
@@ -54,7 +54,7 @@ def update_session(
         session.status = status
     if state is not None:
         session.state = state
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(timezone.utc)
 
     db.commit()
     db.refresh(session)
@@ -88,7 +88,7 @@ def save_session_state(db: DBSession, session_id: str, state: dict) -> bool:
         session = create_session(db, session_id)
 
     session.state = state
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(timezone.utc)
     db.commit()
     return True
 
@@ -100,7 +100,7 @@ def delete_session_state(db: DBSession, session_id: str) -> bool:
         return False
 
     session.state = None
-    session.updated_at = datetime.utcnow()
+    session.updated_at = datetime.now(timezone.utc)
     db.commit()
     return True
 
@@ -158,7 +158,7 @@ def upsert_session(
             session.project_id = project_id
         if workspace_id is not None:
             session.workspace_id = workspace_id
-        session.updated_at = datetime.utcnow()
+        session.updated_at = datetime.now(timezone.utc)
     else:
         # Create new session
         session = Session(
@@ -370,7 +370,7 @@ def update_project(
         if hasattr(project, key):
             setattr(project, key, value)
 
-    project.updated_at = datetime.utcnow()
+    project.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(project)
     return project
@@ -452,7 +452,7 @@ def update_build(
         if hasattr(build, key):
             setattr(build, key, value)
 
-    build.updated_at = datetime.utcnow()
+    build.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(build)
     return build
@@ -638,7 +638,7 @@ def answer_hitl_question(
         return None
 
     question.answer = answer
-    question.answered_at = datetime.utcnow()
+    question.answered_at = datetime.now(timezone.utc)
     question.status = "answered"
 
     db.commit()

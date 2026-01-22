@@ -4,7 +4,7 @@ Handles persistence and recovery of execution state.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -102,7 +102,7 @@ class StateManager:
             raise ValueError(f"No state found for session {session_id}")
 
         question_request = QuestionRequest(
-            id=f"q_{session_id}_{datetime.utcnow().timestamp()}",
+            id=f"q_{session_id}_{datetime.now(timezone.utc).timestamp()}",
             session_id=session_id,
             question=question,
             options=options or [],
@@ -134,7 +134,7 @@ class StateManager:
             raise ValueError(f"No state found for session {session_id}")
 
         approval_request = ApprovalRequest(
-            id=f"a_{session_id}_{datetime.utcnow().timestamp()}",
+            id=f"a_{session_id}_{datetime.now(timezone.utc).timestamp()}",
             session_id=session_id,
             tool_name=tool_name,
             arguments=arguments,
@@ -170,7 +170,7 @@ class StateManager:
             raise ValueError("No pending question to answer")
 
         state.pending_question.response = answer
-        state.pending_question.responded_at = datetime.utcnow()
+        state.pending_question.responded_at = datetime.now(timezone.utc)
 
         # Store answer in context for the agent
         state.context["user_answer"] = answer
@@ -205,7 +205,7 @@ class StateManager:
             state.pending_approval.approvals_received.append({
                 "user_id": user_id,
                 "role": user_role,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
             state.pending_approval.status = "approved"
             state.status = ExecutionStatus.RUNNING

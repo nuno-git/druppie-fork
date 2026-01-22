@@ -4,7 +4,7 @@ Endpoints for managing approval requests and merge approvals.
 Supports MCP microservices architecture with resume execution.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from fastapi import APIRouter, Depends
@@ -434,7 +434,7 @@ async def approve_request(
             {
                 "status": "approved",
                 "approved_by": user_id,
-                "approved_at": datetime.utcnow(),
+                "approved_at": datetime.now(timezone.utc),
                 "approvals_received": (approval.approvals_received or [])
                 + [
                     {
@@ -442,7 +442,7 @@ async def approve_request(
                         "role": next(iter(user_roles), "user"),
                         "approved": True,
                         "comment": decision.comment,
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                 ],
             },
@@ -675,7 +675,7 @@ async def approve_request(
                         "role": next(iter(user_roles), "user"),
                         "approved": False,
                         "comment": decision.comment,
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
                 ],
             },
@@ -965,7 +965,7 @@ async def submit_hitl_response(
                 "answer": response.answer,
                 "selected": response.selected,
                 "user_id": user.get("sub"),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }),
         )
 
