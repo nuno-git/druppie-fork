@@ -156,10 +156,77 @@ def migrate_002_add_agent_state_to_approvals(engine: Engine) -> None:
     logger.info("migration_applied", migration=migration_name)
 
 
+def migrate_003_add_project_workspace_to_sessions(engine: Engine) -> None:
+    """Add project_id and workspace_id columns to sessions table.
+
+    These columns enable sessions to be linked to specific projects and workspaces,
+    allowing for better organization and filtering of sessions.
+    """
+    migration_name = "003_add_project_workspace_to_sessions"
+
+    if migration_applied(engine, migration_name):
+        return
+
+    with engine.connect() as conn:
+        # Add project_id column if it doesn't exist
+        if not column_exists(engine, "sessions", "project_id"):
+            try:
+                conn.execute(text("""
+                    ALTER TABLE sessions
+                    ADD COLUMN project_id VARCHAR(36)
+                """))
+                conn.commit()
+                logger.info("migration_column_added", migration=migration_name, column="project_id")
+            except (OperationalError, ProgrammingError) as e:
+                if "already exists" in str(e):
+                    conn.rollback()
+                    logger.info("migration_column_already_exists", migration=migration_name, column="project_id")
+                else:
+                    raise
+
+        # Add workspace_id column if it doesn't exist
+        if not column_exists(engine, "sessions", "workspace_id"):
+            try:
+                conn.execute(text("""
+                    ALTER TABLE sessions
+                    ADD COLUMN workspace_id VARCHAR(36)
+                """))
+                conn.commit()
+                logger.info("migration_column_added", migration=migration_name, column="workspace_id")
+            except (OperationalError, ProgrammingError) as e:
+                if "already exists" in str(e):
+                    conn.rollback()
+                    logger.info("migration_column_already_exists", migration=migration_name, column="workspace_id")
+                else:
+                    raise
+
+        # Create indexes for the new columns (SQLite compatible)
+        # Note: SQLite doesn't support IF NOT EXISTS for CREATE INDEX, so we try/except
+        try:
+            conn.execute(text("""
+                CREATE INDEX ix_sessions_project_id ON sessions (project_id)
+            """))
+            conn.commit()
+        except (OperationalError, ProgrammingError):
+            conn.rollback()  # Index already exists
+
+        try:
+            conn.execute(text("""
+                CREATE INDEX ix_sessions_workspace_id ON sessions (workspace_id)
+            """))
+            conn.commit()
+        except (OperationalError, ProgrammingError):
+            conn.rollback()  # Index already exists
+
+    mark_migration_applied(engine, migration_name)
+    logger.info("migration_applied", migration=migration_name)
+
+
 # List of all migrations in order
 MIGRATIONS = [
     migrate_001_add_agent_id_to_approvals,
     migrate_002_add_agent_state_to_approvals,
+    migrate_003_add_project_workspace_to_sessions,
 ]
 
 

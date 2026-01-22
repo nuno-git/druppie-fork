@@ -5,6 +5,7 @@ Supports MCP microservices architecture with resume execution.
 """
 
 from datetime import datetime
+from enum import Enum
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -13,7 +14,7 @@ import structlog
 
 from druppie.api.deps import get_current_user, get_db, get_loop
 from druppie.core.loop import MainLoop
-from druppie.core.mcp_client import get_mcp_client
+from druppie.core.mcp_client import get_mcp_client, MCPErrorType
 from druppie.core.execution_context import ExecutionContext
 from druppie.db import crud
 from druppie.db.models import Approval, Workspace
@@ -21,6 +22,178 @@ from druppie.db.models import Approval, Workspace
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+
+# =============================================================================
+# ERROR TYPES FOR APPROVAL EXECUTION
+# =============================================================================
+
+
+class ApprovalErrorType(str, Enum):
+    """Error types specific to approval execution.
+
+    These error types help the frontend distinguish between different
+    failure modes and display appropriate messages to users.
+    """
+
+    # Workspace/context errors
+    WORKSPACE_MISSING = "workspace_missing"
+    WORKSPACE_NOT_FOUND = "workspace_not_found"
+    CONTEXT_INVALID = "context_invalid"
+
+    # MCP/tool execution errors
+    MCP_UNAVAILABLE = "mcp_unavailable"
+    MCP_CONNECTION_FAILED = "mcp_connection_failed"
+    TOOL_NOT_FOUND = "tool_not_found"
+    TOOL_EXECUTION_FAILED = "tool_execution_failed"
+
+    # Argument/validation errors
+    INVALID_ARGUMENTS = "invalid_arguments"
+    MISSING_REQUIRED_ARGS = "missing_required_args"
+
+    # Session/resume errors
+    SESSION_RESUME_FAILED = "session_resume_failed"
+    SESSION_NOT_FOUND = "session_not_found"
+
+    # General errors
+    UNKNOWN_ERROR = "unknown_error"
+
+
+def classify_approval_error(
+    error: Exception,
+    tool_name: str | None = None,
+    server: str | None = None,
+) -> tuple[ApprovalErrorType, bool, str]:
+    """Classify an error that occurred during approval execution.
+
+    Args:
+        error: The exception that occurred
+        tool_name: Name of the tool being executed (for context)
+        server: MCP server name (for context)
+
+    Returns:
+        Tuple of (error_type, is_retryable, user_message)
+    """
+    error_str = str(error).lower()
+
+    # Workspace-related errors
+    workspace_indicators = [
+        "workspace context not found",
+        "workspace_id",
+        "no workspace",
+        "workspace not found",
+    ]
+    for indicator in workspace_indicators:
+        if indicator in error_str:
+            return (
+                ApprovalErrorType.WORKSPACE_MISSING,
+                False,
+                "Workspace context is missing. The session may need to be restarted.",
+            )
+
+    # MCP connection errors (potentially retryable)
+    connection_indicators = [
+        "connection refused",
+        "connection reset",
+        "connection error",
+        "timeout",
+        "timed out",
+        "service unavailable",
+        "503",
+        "502",
+        "504",
+        "econnrefused",
+        "econnreset",
+        "etimedout",
+    ]
+    for indicator in connection_indicators:
+        if indicator in error_str:
+            server_info = f" ({server})" if server else ""
+            return (
+                ApprovalErrorType.MCP_CONNECTION_FAILED,
+                True,
+                f"Could not connect to MCP server{server_info}. The service may be temporarily unavailable.",
+            )
+
+    # MCP unavailable
+    if "mcp" in error_str and ("unavailable" in error_str or "not running" in error_str):
+        return (
+            ApprovalErrorType.MCP_UNAVAILABLE,
+            True,
+            "The MCP service is not available. Please try again later.",
+        )
+
+    # Tool not found
+    tool_not_found_indicators = [
+        "tool not found",
+        "method not found",
+        "unknown tool",
+        "no such tool",
+    ]
+    for indicator in tool_not_found_indicators:
+        if indicator in error_str:
+            tool_info = f" '{tool_name}'" if tool_name else ""
+            return (
+                ApprovalErrorType.TOOL_NOT_FOUND,
+                False,
+                f"The requested tool{tool_info} was not found. It may have been removed or renamed.",
+            )
+
+    # Invalid arguments
+    arg_indicators = [
+        "invalid argument",
+        "missing required",
+        "validation error",
+        "required field",
+        "missing field",
+        "argument must be",
+        "parameter must be",
+        "expected type",
+    ]
+    for indicator in arg_indicators:
+        if indicator in error_str:
+            return (
+                ApprovalErrorType.INVALID_ARGUMENTS,
+                False,
+                "The tool arguments are invalid. This may be a bug in the request.",
+            )
+
+    # Session errors
+    if "session" in error_str and ("not found" in error_str or "missing" in error_str):
+        return (
+            ApprovalErrorType.SESSION_NOT_FOUND,
+            False,
+            "The session was not found. It may have expired or been deleted.",
+        )
+
+    # Check if it's a known exception type
+    if isinstance(error, (TimeoutError, ConnectionError, OSError)):
+        return (
+            ApprovalErrorType.MCP_CONNECTION_FAILED,
+            True,
+            "A connection error occurred. Please try again.",
+        )
+
+    if isinstance(error, (ValueError, TypeError)):
+        return (
+            ApprovalErrorType.INVALID_ARGUMENTS,
+            False,
+            f"Invalid data provided: {str(error)}",
+        )
+
+    if isinstance(error, KeyError):
+        return (
+            ApprovalErrorType.MISSING_REQUIRED_ARGS,
+            False,
+            f"A required field is missing: {str(error)}",
+        )
+
+    # Default to tool execution failed for unknown errors
+    return (
+        ApprovalErrorType.TOOL_EXECUTION_FAILED,
+        False,
+        f"Tool execution failed: {str(error)}",
+    )
 
 
 # =============================================================================
@@ -49,6 +222,8 @@ class ApprovalListResponse(BaseModel):
 
     approvals: list[ApprovalResponse]
     total: int
+    page: int
+    limit: int
 
 
 class ApprovalDecision(BaseModel):
@@ -63,31 +238,62 @@ class ApprovalDecision(BaseModel):
 # =============================================================================
 
 
-@router.get("/approvals")
+# Maximum limit for pagination to prevent excessive queries
+MAX_LIMIT = 100
+
+
+@router.get("/approvals", response_model=ApprovalListResponse)
 async def list_approvals(
     session_id: str | None = None,
     status: str = "pending",
+    page: int = 1,
+    limit: int = 20,
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List approval requests.
+    """List approval requests with pagination.
 
     By default, shows pending approvals that the user can approve.
-    Returns as a list directly for backwards compatibility with getTasks.
+
+    Args:
+        session_id: Optional filter by session ID
+        status: Filter by status (default: pending)
+        page: Page number (1-indexed, default: 1)
+        limit: Number of items per page (default: 20, max: 100)
+        user: Current authenticated user
+        db: Database session
+
+    Returns:
+        ApprovalListResponse with approvals, total count, page, and limit
     """
+    # Validate and enforce pagination limits
+    if page < 1:
+        page = 1
+    if limit < 1:
+        limit = 1
+    if limit > MAX_LIMIT:
+        limit = MAX_LIMIT
+
     user_roles = user.get("realm_access", {}).get("roles", [])
 
+    # Build base query
+    query = db.query(Approval)
+
     if status == "pending":
-        approvals = crud.list_pending_approvals(db, session_id=session_id)
-    elif session_id:
-        approvals = crud.list_approvals_for_session(db, session_id)
-    else:
-        # For non-pending, need to add more crud methods
-        approvals = crud.list_pending_approvals(db)
+        query = query.filter(Approval.status == "pending")
+    elif status:
+        query = query.filter(Approval.status == status)
+
+    if session_id:
+        query = query.filter(Approval.session_id == session_id)
+
+    # Get all matching approvals for role filtering
+    # Note: Role filtering is done in Python since required_roles is a JSON array
+    all_approvals = query.order_by(Approval.created_at.desc()).all()
 
     # Filter to approvals user can act on
     filtered = []
-    for a in approvals:
+    for a in all_approvals:
         # Security policy: If no required_roles are specified, default to requiring "admin" role.
         # This prevents approvals without explicit role requirements from being approvable by anyone.
         required_roles = a.required_roles if a.required_roles else ["admin"]
@@ -95,27 +301,37 @@ async def list_approvals(
         if "admin" in user_roles or any(r in user_roles for r in required_roles):
             filtered.append(a)
 
-    # Return as a list for backwards compatibility with frontend getTasks
-    return [
-        {
-            "id": a.id,
-            "session_id": a.session_id,
-            # Frontend expects 'name' for display
-            "name": a.tool_name,
-            "tool_name": a.tool_name,
-            "arguments": a.arguments,
-            "status": a.status,
-            "required_roles": a.required_roles,
-            # Frontend expects 'required_role' (singular)
-            "required_role": (a.required_roles or ["admin"])[0],
-            "approvals_received": a.approvals_received,
-            "danger_level": a.danger_level,
-            "description": a.description,
-            "agent_id": a.agent_id,
-            "created_at": a.created_at.isoformat() if a.created_at else None,
-        }
-        for a in filtered
+    # Get total count after role filtering
+    total = len(filtered)
+
+    # Apply pagination after role filtering
+    offset = (page - 1) * limit
+    paginated = filtered[offset : offset + limit]
+
+    # Build response
+    approvals_response = [
+        ApprovalResponse(
+            id=a.id,
+            session_id=a.session_id,
+            tool_name=a.tool_name,
+            arguments=a.arguments,
+            status=a.status,
+            required_roles=a.required_roles,
+            approvals_received=a.approvals_received,
+            danger_level=a.danger_level,
+            description=a.description,
+            agent_id=a.agent_id,
+            created_at=a.created_at.isoformat() if a.created_at else None,
+        )
+        for a in paginated
     ]
+
+    return ApprovalListResponse(
+        approvals=approvals_response,
+        total=total,
+        page=page,
+        limit=limit,
+    )
 
 
 @router.get("/approvals/{approval_id}", response_model=ApprovalResponse)
@@ -240,16 +456,28 @@ async def approve_request(
                     approval_id=approval_id,
                     session_id=approval.session_id,
                     tool_name=approval.tool_name,
+                    args_keys=list(args.keys()),
+                    error_type=ApprovalErrorType.WORKSPACE_MISSING.value,
                 )
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
+                # Update approval with error details
+                crud.update_approval(
+                    db,
+                    approval_id,
+                    {"status": "execution_failed"},
+                )
+                return {
+                    "success": False,
+                    "status": "execution_failed",
+                    "session_resumed": False,
+                    "error_type": ApprovalErrorType.WORKSPACE_MISSING.value,
+                    "error": (
                         f"Cannot execute tool '{approval.tool_name}': workspace context not found. "
                         f"No workspace_id in approval arguments and no workspace associated with "
-                        f"session '{approval.session_id}'. The approval may have been created "
-                        "before workspace tracking was implemented."
+                        f"session '{approval.session_id}'."
                     ),
-                )
+                    "user_message": "Workspace context is missing. The session may need to be restarted.",
+                    "retryable": False,
+                }
 
             logger.info(
                 "creating_execution_context_for_approval",
@@ -271,6 +499,48 @@ async def approve_request(
             # Execute the tool that was waiting for approval
             result = await mcp_client.execute_approved_tool(approval_id, context)
 
+            # Check if tool execution itself failed
+            if not result.get("success", True):
+                # Tool executed but returned an error
+                mcp_error_type = result.get("error_type", MCPErrorType.FATAL)
+                error_msg = result.get("error", "Unknown tool error")
+                is_retryable = result.get("retryable", False)
+
+                logger.warning(
+                    "tool_execution_returned_error",
+                    approval_id=approval_id,
+                    tool_name=approval.tool_name,
+                    mcp_error_type=mcp_error_type,
+                    error=error_msg,
+                    retryable=is_retryable,
+                )
+
+                # Map MCP error type to approval error type
+                if mcp_error_type == MCPErrorType.TRANSIENT:
+                    approval_error = ApprovalErrorType.MCP_CONNECTION_FAILED
+                elif mcp_error_type == MCPErrorType.VALIDATION:
+                    approval_error = ApprovalErrorType.INVALID_ARGUMENTS
+                elif mcp_error_type == MCPErrorType.PERMISSION:
+                    approval_error = ApprovalErrorType.TOOL_EXECUTION_FAILED
+                else:
+                    approval_error = ApprovalErrorType.TOOL_EXECUTION_FAILED
+
+                crud.update_approval(
+                    db,
+                    approval_id,
+                    {"status": "execution_failed"},
+                )
+                return {
+                    "success": False,
+                    "status": "execution_failed",
+                    "session_resumed": False,
+                    "error_type": approval_error.value,
+                    "error": error_msg,
+                    "user_message": f"Tool '{approval.tool_name}' failed: {error_msg}",
+                    "retryable": is_retryable,
+                    "tool_result": result,
+                }
+
             # Resume session with the result
             try:
                 resume_result = await loop.resume_session(
@@ -285,30 +555,72 @@ async def approve_request(
                     "resume_result": resume_result,
                 }
             except Exception as e:
-                logger.warning("session_resume_failed", error=str(e))
+                # Classify the session resume error
+                error_type, is_retryable, user_message = classify_approval_error(
+                    e, tool_name=approval.tool_name
+                )
+                logger.warning(
+                    "session_resume_failed",
+                    approval_id=approval_id,
+                    session_id=approval.session_id,
+                    error=str(e),
+                    error_type=ApprovalErrorType.SESSION_RESUME_FAILED.value,
+                    original_error_class=type(e).__name__,
+                )
                 return {
-                    "success": True,
+                    "success": True,  # Tool succeeded, but resume failed
                     "status": "approved",
                     "session_resumed": False,
                     "tool_result": result,
+                    "error_type": ApprovalErrorType.SESSION_RESUME_FAILED.value,
                     "resume_error": str(e),
+                    "user_message": "Tool executed successfully but session could not be resumed.",
+                    "retryable": False,
                 }
 
+        except HTTPException:
+            # Re-raise HTTP exceptions as-is
+            raise
         except Exception as e:
-            logger.error("approval_execution_error", error=str(e))
+            # Parse server from tool_name for error context
+            server = None
+            if approval.tool_name and ":" in approval.tool_name:
+                server = approval.tool_name.split(":")[0]
+
+            # Classify the error
+            error_type, is_retryable, user_message = classify_approval_error(
+                e, tool_name=approval.tool_name, server=server
+            )
+
+            # Log with full context
+            logger.error(
+                "approval_execution_error",
+                approval_id=approval_id,
+                session_id=approval.session_id,
+                tool_name=approval.tool_name,
+                server=server,
+                workspace_id=workspace_id if "workspace_id" in dir() else None,
+                project_id=project_id if "project_id" in dir() else None,
+                error=str(e),
+                error_type=error_type.value,
+                error_class=type(e).__name__,
+                retryable=is_retryable,
+            )
+
             # Update approval status to reflect execution failure
             crud.update_approval(
                 db,
                 approval_id,
-                {
-                    "status": "execution_failed",
-                },
+                {"status": "execution_failed"},
             )
             return {
                 "success": False,
                 "status": "execution_failed",
                 "session_resumed": False,
+                "error_type": error_type.value,
                 "error": str(e),
+                "user_message": user_message,
+                "retryable": is_retryable,
             }
 
     else:

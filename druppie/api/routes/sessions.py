@@ -22,6 +22,15 @@ router = APIRouter()
 # =============================================================================
 
 
+class ProjectInfo(BaseModel):
+    """Project info for session responses."""
+
+    id: str
+    name: str
+    repo_name: str | None = None
+    repo_url: str | None = None
+
+
 class SessionResponse(BaseModel):
     """Session response model."""
 
@@ -30,6 +39,10 @@ class SessionResponse(BaseModel):
     status: str
     created_at: str | None
     updated_at: str | None
+    # Project/workspace tracking
+    project_id: str | None = None
+    workspace_id: str | None = None
+    project: ProjectInfo | None = None
     # Backwards compatibility with "plan" naming
     name: str | None = None
     description: str | None = None
@@ -54,7 +67,9 @@ class SessionSummary(BaseModel):
     created_at: str | None
     status: str
     preview: str  # First 50 chars of initial message
+    project_id: str | None = None  # If linked to a project
     project_name: str | None = None  # If linked to a project
+    workspace_id: str | None = None  # If linked to a workspace
 
 
 class PaginatedSessionsResponse(BaseModel):
@@ -66,13 +81,31 @@ class PaginatedSessionsResponse(BaseModel):
     limit: int
 
 
+class SessionListLegacyResponse(BaseModel):
+    """Paginated sessions response for legacy endpoint."""
+
+    sessions: list[SessionResponse]
+    total: int
+    page: int
+    limit: int
+
+
+# Maximum limit for pagination to prevent excessive queries
+MAX_LIMIT = 100
+
+
 # =============================================================================
 # ROUTES
 # =============================================================================
 
 
-def _session_to_response(session) -> SessionResponse:
-    """Convert a DB session to response model."""
+def _session_to_response(session, project=None) -> SessionResponse:
+    """Convert a DB session to response model.
+
+    Args:
+        session: Session DB model
+        project: Optional project DB model for project info
+    """
     state = session.state or {}
     context = state.get("context", {})
 
@@ -91,12 +124,25 @@ def _session_to_response(session) -> SessionResponse:
         "plan": state.get("plan"),
     }
 
+    # Build project info if available
+    project_info = None
+    if project:
+        project_info = ProjectInfo(
+            id=project.id,
+            name=project.name,
+            repo_name=project.repo_name,
+            repo_url=project.repo_url,
+        )
+
     return SessionResponse(
         id=session.id,
         user_id=session.user_id,
         status=session.status,
         created_at=session.created_at.isoformat() if session.created_at else None,
         updated_at=session.updated_at.isoformat() if session.updated_at else None,
+        project_id=session.project_id,
+        workspace_id=session.workspace_id,
+        project=project_info,
         name=name,
         description=description,
         result=result,
@@ -104,8 +150,13 @@ def _session_to_response(session) -> SessionResponse:
     )
 
 
-def _session_to_summary(session) -> SessionSummary:
-    """Convert a DB session to a compact summary for sidebar listing."""
+def _session_to_summary(session, project_name: str | None = None) -> SessionSummary:
+    """Convert a DB session to a compact summary for sidebar listing.
+
+    Args:
+        session: Session DB model
+        project_name: Optional project name (fetched separately for efficiency)
+    """
     state = session.state or {}
     context = state.get("context", {})
 
@@ -113,15 +164,17 @@ def _session_to_summary(session) -> SessionSummary:
     message = context.get("message") or context.get("user_message", "")
     preview = message[:50] if message else "No message"
 
-    # Try to extract project name from state
-    project_name = context.get("project_name") or state.get("project_name")
+    # Use provided project_name or fallback to state
+    resolved_project_name = project_name or context.get("project_name") or state.get("project_name")
 
     return SessionSummary(
         id=session.id,
         created_at=session.created_at.isoformat() if session.created_at else None,
         status=session.status,
         preview=preview,
-        project_name=project_name,
+        project_id=session.project_id,
+        project_name=resolved_project_name,
+        workspace_id=session.workspace_id,
     )
 
 
@@ -130,13 +183,32 @@ async def list_sessions_paginated(
     page: int = 1,
     limit: int = 20,
     status: str | None = None,
+    project_id: str | None = None,
     user: dict = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ):
     """List sessions for the current user with pagination.
 
     Returns paginated sessions with preview and project info for sidebar display.
+
+    Args:
+        page: Page number (1-indexed, default: 1)
+        limit: Number of sessions per page (default: 20, max: 100)
+        status: Optional status filter
+        project_id: Optional project ID filter to list sessions for a specific project
+        user: Current authenticated user
+        db: Database session
     """
+    from druppie.db.models import Project
+
+    # Validate and enforce pagination limits
+    if page < 1:
+        page = 1
+    if limit < 1:
+        limit = 1
+    if limit > MAX_LIMIT:
+        limit = MAX_LIMIT
+
     user_id = user.get("sub")
     roles = user.get("realm_access", {}).get("roles", [])
 
@@ -150,6 +222,8 @@ async def list_sessions_paginated(
         query = query.filter(SessionModel.user_id == user_id)
     if status:
         query = query.filter(SessionModel.status == status)
+    if project_id:
+        query = query.filter(SessionModel.project_id == project_id)
     total = query.count()
 
     # Get paginated sessions
@@ -161,25 +235,56 @@ async def list_sessions_paginated(
         .all()
     )
 
+    # Fetch project names for sessions with project_id (batch query)
+    project_ids = {s.project_id for s in sessions if s.project_id}
+    project_names = {}
+    if project_ids:
+        projects = db.query(Project).filter(Project.id.in_(project_ids)).all()
+        project_names = {p.id: p.name for p in projects}
+
     return PaginatedSessionsResponse(
-        sessions=[_session_to_summary(s) for s in sessions],
+        sessions=[
+            _session_to_summary(s, project_name=project_names.get(s.project_id))
+            for s in sessions
+        ],
         total=total,
         page=page,
         limit=limit,
     )
 
 
-@router.get("/sessions/list")
+@router.get("/sessions/list", response_model=SessionListLegacyResponse)
 async def list_sessions_legacy(
     status: str | None = None,
-    limit: int = 50,
+    page: int = 1,
+    limit: int = 20,
+    project_id: str | None = None,
     user: dict = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ):
-    """List sessions for the current user (legacy format).
+    """List sessions for the current user with pagination.
 
-    Returns as a list directly for backwards compatibility with getPlans.
+    Args:
+        status: Optional status filter
+        page: Page number (1-indexed, default: 1)
+        limit: Number of sessions per page (default: 20, max: 100)
+        project_id: Optional project ID filter
+        user: Current authenticated user
+        db: Database session
+
+    Returns:
+        SessionListLegacyResponse with sessions, total count, page, and limit
     """
+    from druppie.db.models import Project
+
+    # Validate and enforce pagination limits
+    if page < 1:
+        page = 1
+    if limit < 1:
+        limit = 1
+    if limit > MAX_LIMIT:
+        limit = MAX_LIMIT
+
     user_id = user.get("sub")
     roles = user.get("realm_access", {}).get("roles", [])
 
@@ -187,10 +292,44 @@ async def list_sessions_legacy(
     if "admin" in roles:
         user_id = None
 
-    sessions = crud.list_sessions(db, user_id=user_id, status=status, limit=limit)
+    # Build query for total count and pagination
+    query = db.query(SessionModel)
+    if user_id:
+        query = query.filter(SessionModel.user_id == user_id)
+    if status:
+        query = query.filter(SessionModel.status == status)
+    if project_id:
+        query = query.filter(SessionModel.project_id == project_id)
 
-    # Return as a list for backwards compatibility with frontend getPlans
-    return [_session_to_response(s) for s in sessions]
+    # Get total count
+    total = query.count()
+
+    # Get paginated sessions
+    offset = (page - 1) * limit
+    sessions = (
+        query.order_by(SessionModel.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    # Fetch projects for all sessions with project_id (batch query)
+    project_ids = {s.project_id for s in sessions if s.project_id}
+    projects_map = {}
+    if project_ids:
+        projects = db.query(Project).filter(Project.id.in_(project_ids)).all()
+        projects_map = {p.id: p for p in projects}
+
+    # Build response with pagination info
+    return SessionListLegacyResponse(
+        sessions=[
+            _session_to_response(s, project=projects_map.get(s.project_id))
+            for s in sessions
+        ],
+        total=total,
+        page=page,
+        limit=limit,
+    )
 
 
 @router.get("/sessions/{session_id}")
@@ -209,7 +348,12 @@ async def get_session(
     if "admin" not in roles and session.user_id != user.get("sub"):
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    response = _session_to_response(session)
+    # Fetch project info if session has a project_id
+    project = None
+    if session.project_id:
+        project = crud.get_project(db, session.project_id)
+
+    response = _session_to_response(session, project=project)
 
     # Also include pending approvals (tasks) for the frontend
     pending_approvals = crud.list_pending_approvals(db, session_id=session_id)

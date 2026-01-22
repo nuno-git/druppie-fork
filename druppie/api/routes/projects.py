@@ -152,14 +152,20 @@ async def list_projects(
 
     projects = query.filter(Project.status == "active").order_by(Project.created_at.desc()).all()
 
-    # Get build info for each project
+    # Batch load all builds for all projects in one query (avoids N+1)
     builder = get_builder_service(db)
-    result = []
+    project_ids = [p.id for p in projects]
+    builds_by_project = builder.get_builds_for_projects(project_ids)
 
+    # Build response using pre-loaded builds
+    result = []
     for project in projects:
-        main_build = builder.get_main_build(project.id)
-        preview_builds = builder.get_preview_builds(project.id)
-        result.append(project_to_response(project, main_build, preview_builds))
+        build_info = builds_by_project.get(project.id, {"main": None, "previews": []})
+        result.append(project_to_response(
+            project,
+            build_info["main"],
+            build_info["previews"],
+        ))
 
     return result
 
