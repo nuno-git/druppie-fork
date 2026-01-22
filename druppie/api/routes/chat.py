@@ -7,13 +7,14 @@ import asyncio
 from typing import Any, Callable
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 import structlog
 
 from sqlalchemy.orm import Session as DBSession
 
 from druppie.api.deps import get_current_user, get_db, get_loop, get_optional_user
+from druppie.api.errors import NotFoundError
 from druppie.api.websocket import manager
 from druppie.core.loop import MainLoop
 
@@ -363,7 +364,7 @@ async def get_chat_status(
     session = get_session(db, session_id)
 
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFoundError("session", session_id)
 
     # Get pending approvals for this session
     pending_approvals = list_pending_approvals(db, session_id=session_id)
