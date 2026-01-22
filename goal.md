@@ -57,47 +57,83 @@ Done - App Running
 
 ## MCP Permission Gateway (Clean Architecture)
 
-### Agent-Level Config (`agents/definitions/*.yaml`)
-Agents specify which MCP tools they can use, but NOT approval rules:
-```yaml
-# architect.yaml
-name: architect
-mcps:
-  - coding
-  - hitl
-```
+### Key Insight: Approval is AGENT-SPECIFIC, not TOOL-SPECIFIC
+
+The same tool (e.g., `write_file`) can require different approvals depending on **which agent** is using it.
 
 ### MCP-Level Config (`core/mcp_config.yaml`)
-**All approval rules live here.** Simple structure:
+**Tools are defined here, but NO approval rules.** Just the tool definitions:
 ```yaml
 mcps:
   coding:
     url: ${MCP_CODING_URL}
     tools:
       - name: write_file
-        requires_approval: true
-        required_role: architect  # Single role, not array
+        description: "Write file to workspace"
+        # NO requires_approval here - that's agent-specific
       - name: batch_write_files
-        requires_approval: true
-        required_role: developer
+        description: "Write multiple files"
+      - name: read_file
+        description: "Read file from workspace"
       - name: run_command
-        requires_approval: true
-        required_role: developer
+        description: "Execute shell command"
   docker:
     url: ${MCP_DOCKER_URL}
     tools:
       - name: build
-        requires_approval: true
-        required_role: developer
+        description: "Build Docker image"
       - name: run
-        requires_approval: true
-        required_role: developer
+        description: "Run Docker container"
 ```
+
+### Agent-Level Config (`agents/definitions/*.yaml`)
+**Approval rules live HERE, per agent:**
+
+```yaml
+# architect.yaml
+name: architect
+description: Designs system architecture
+mcps:
+  - coding
+  - hitl
+approval_rules:
+  coding:write_file:
+    required_role: architect  # When architect uses write_file, needs architect approval
+```
+
+```yaml
+# developer.yaml
+name: developer
+description: Implements code
+mcps:
+  - coding
+  - docker
+  - hitl
+approval_rules:
+  coding:write_file:
+    required_role: developer
+  coding:batch_write_files:
+    required_role: developer
+  coding:run_command:
+    required_role: developer
+  docker:build:
+    required_role: developer
+  docker:run:
+    required_role: developer
+```
+
+### How It Works
+
+1. Agent calls a tool (e.g., `coding:write_file`)
+2. System checks agent's `approval_rules` for that tool
+3. If rule exists → pause and request approval from that role
+4. If no rule → execute immediately (no approval needed)
 
 ### What We Remove
 - ❌ `danger_level` - unnecessary complexity
 - ❌ `required_roles: [array]` - just use single `required_role: string`
 - ❌ Multiple approval requirement - one role approves, done
+- ❌ Global tool approval rules - approvals are agent-specific
 
 ---
 
@@ -167,9 +203,10 @@ Run the full flow with:
 |-----------|----------------|
 | Simple users | 4 users: normal_user, architect, developer, admin |
 | Simple roles | 4 roles checked via Keycloak |
-| Simple approval | One role per tool, configured in mcp_config.yaml |
+| Agent-specific approval | Each agent defines its own approval rules |
+| Tools have no global approval | mcp_config.yaml just defines tools |
 | Simple agents | Architect designs, Developer builds |
 | Full traceability | Debug panel shows everything |
-| Clean architecture | Approval rules in MCP config, not agent files |
+| Clean architecture | Approval rules in agent files, tool definitions in mcp_config |
 
 **This is it.** Nothing more until this works perfectly.
