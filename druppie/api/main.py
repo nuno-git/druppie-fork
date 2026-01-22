@@ -53,7 +53,11 @@ def create_app() -> FastAPI:
     )
 
     # CORS middleware
-    cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+    # Default origins include:
+    # - 5173: Vite dev server default
+    # - 5273: Full stack docker-compose frontend
+    # - 3000: Alternative dev port
+    cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5273,http://localhost:3000").split(",")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
