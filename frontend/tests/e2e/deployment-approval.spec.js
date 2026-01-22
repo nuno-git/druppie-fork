@@ -66,12 +66,13 @@ test.describe('Deployment from Chat', () => {
     await input.fill('Deploy my project to staging')
     await input.press('Enter')
 
-    // Should see user message
-    await expect(page.getByText('Deploy my project to staging')).toBeVisible()
+    // Should see user message (use first() to avoid strict mode)
+    await expect(page.getByText('Deploy my project to staging').first()).toBeVisible()
 
     // Wait for processing to start (loading indicator or response)
+    // Use first() to handle multiple processing indicators
     await expect(
-      page.locator('.animate-pulse').or(page.getByText(/working|processing|router/i))
+      page.locator('.animate-pulse').first().or(page.getByText(/working|processing|router/i).first())
     ).toBeVisible({ timeout: 60000 })
   })
 
@@ -243,12 +244,12 @@ test.describe('Workflow Events Display', () => {
     await input.fill('Deploy to staging')
     await input.press('Enter')
 
-    // Should see user message
-    await expect(page.getByText('Deploy to staging')).toBeVisible()
+    // Should see user message (use first() to avoid strict mode)
+    await expect(page.getByText('Deploy to staging').first()).toBeVisible()
 
-    // Wait for processing to start (don't wait full 60s)
+    // Wait for processing to start (use first() to handle multiple indicators)
     await expect(
-      page.locator('.animate-pulse').or(page.getByText(/working|processing|router/i))
+      page.locator('.animate-pulse').first().or(page.getByText(/working|processing|router/i).first())
     ).toBeVisible({ timeout: 30000 })
   })
 })
