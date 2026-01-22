@@ -21,6 +21,7 @@ from druppie.api.errors import (
     AuthorizationError,
     ExternalServiceError,
 )
+from druppie.api.websocket import emit_approval_decision
 from druppie.core.loop import MainLoop
 from druppie.core.mcp_client import get_mcp_client, MCPErrorType
 from druppie.core.execution_context import ExecutionContext
@@ -455,6 +456,15 @@ async def approve_request(
             tool=approval.tool_name,
         )
 
+        # Broadcast approval decision to WebSocket subscribers
+        await emit_approval_decision(
+            approval_id=approval_id,
+            session_id=approval.session_id,
+            approved=True,
+            approver_id=user_id,
+            approver_role=next(iter(user_roles), "user"),
+        )
+
         # Execute the approved tool via MCP client
         try:
             mcp_client = get_mcp_client(db)
@@ -686,6 +696,15 @@ async def approve_request(
             approval_id=approval_id,
             user_id=user_id,
             reason=decision.comment,
+        )
+
+        # Broadcast rejection decision to WebSocket subscribers
+        await emit_approval_decision(
+            approval_id=approval_id,
+            session_id=approval.session_id,
+            approved=False,
+            approver_id=user_id,
+            approver_role=next(iter(user_roles), "user"),
         )
 
         # Update session status
