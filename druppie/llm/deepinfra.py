@@ -1,6 +1,7 @@
-"""Z.AI LLM provider implementation.
+"""DeepInfra LLM provider implementation.
 
-Supports GLM-4.7 and other Z.AI models via OpenAI-compatible API.
+Supports various models via OpenAI-compatible API.
+Default model: Qwen/Qwen3-Next-80B-A3B-Instruct
 """
 
 import json
@@ -17,37 +18,37 @@ from .base import BaseLLM, LLMResponse, LLMError, RateLimitError, Authentication
 logger = structlog.get_logger()
 
 
-class ChatZAI(BaseLLM):
-    """Z.AI Chat Model using GLM API (OpenAI-compatible).
+class ChatDeepInfra(BaseLLM):
+    """DeepInfra Chat Model using OpenAI-compatible API.
 
-    This is the primary LLM provider for Druppie.
+    Alternative LLM provider for Druppie when Z.AI is unavailable.
     """
 
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "GLM-4.7",
-        base_url: str = "https://api.z.ai/api/coding/paas/v4",
+        model: str = "Qwen/Qwen3-Next-80B-A3B-Instruct",
+        base_url: str = "https://api.deepinfra.com/v1/openai",
         temperature: float = 0.7,
         max_tokens: int | None = None,
-        timeout: float = 500.0,
+        timeout: float = 300.0,
         max_retries: int = 3,
     ):
-        """Initialize the Z.AI client.
+        """Initialize the DeepInfra client.
 
         Args:
-            api_key: API key for authentication
-            model: Model name to use
+            api_key: API key for authentication (DEEPINFRA_API_KEY)
+            model: Model name to use (default: Qwen/Qwen3-Next-80B-A3B-Instruct)
             base_url: Base URL for the API
             temperature: Temperature for generation
             max_tokens: Maximum tokens to generate
-            timeout: Request timeout in seconds (default 500)
+            timeout: Request timeout in seconds (default 300)
             max_retries: Maximum retries for transient errors (default 3)
         """
-        self.api_key = api_key or os.getenv("ZAI_API_KEY", "")
-        self.model = model or os.getenv("ZAI_MODEL", "GLM-4.7")
+        self.api_key = api_key or os.getenv("DEEPINFRA_API_KEY", "")
+        self.model = model or os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct")
         self.base_url = base_url or os.getenv(
-            "ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4"
+            "DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"
         )
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -66,11 +67,11 @@ class ChatZAI(BaseLLM):
 
     @property
     def provider_name(self) -> str:
-        return "zai"
+        return "deepinfra"
 
-    def bind_tools(self, tools: list[dict[str, Any]]) -> "ChatZAI":
+    def bind_tools(self, tools: list[dict[str, Any]]) -> "ChatDeepInfra":
         """Create new instance with tools bound."""
-        new_instance = ChatZAI(
+        new_instance = ChatDeepInfra(
             api_key=self.api_key,
             model=self.model,
             base_url=self.base_url,
@@ -115,7 +116,7 @@ class ChatZAI(BaseLLM):
         call_record = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "model": self.model,
-            "provider": "zai",
+            "provider": "deepinfra",
             "status": "pending",
         }
 
@@ -187,7 +188,7 @@ class ChatZAI(BaseLLM):
             call_record = {
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "model": self.model,
-                "provider": "zai",
+                "provider": "deepinfra",
                 "status": "pending",
                 "attempt": attempt + 1,
             }
@@ -209,7 +210,7 @@ class ChatZAI(BaseLLM):
                         if attempt < self.max_retries - 1:
                             wait_time = (attempt + 1) * 5  # 5s, 10s, 15s backoff
                             logger.warning(
-                                "zai_api_error_retrying",
+                                "deepinfra_api_error_retrying",
                                 attempt=attempt + 1,
                                 max_retries=self.max_retries,
                                 wait_seconds=wait_time,
@@ -246,7 +247,7 @@ class ChatZAI(BaseLLM):
                 if attempt < self.max_retries - 1:
                     wait_time = (attempt + 1) * 5
                     logger.warning(
-                        "zai_timeout_retrying",
+                        "deepinfra_timeout_retrying",
                         attempt=attempt + 1,
                         max_retries=self.max_retries,
                         wait_seconds=wait_time,
@@ -274,8 +275,8 @@ class ChatZAI(BaseLLM):
 
         if response.status_code == 401:
             return AuthenticationError(
-                "Z.AI API key is missing or invalid. Set ZAI_API_KEY environment variable.",
-                provider="zai",
+                "DeepInfra API key is missing or invalid. Set DEEPINFRA_API_KEY environment variable.",
+                provider="deepinfra",
             )
         elif response.status_code == 429:
             # Try to parse retry-after header
@@ -287,19 +288,19 @@ class ChatZAI(BaseLLM):
                     pass
 
             return RateLimitError(
-                f"Z.AI rate limit exceeded. Please wait and try again. Details: {error_text}",
-                provider="zai",
+                f"DeepInfra rate limit exceeded. Please wait and try again. Details: {error_text}",
+                provider="deepinfra",
                 retry_after=retry_after,
             )
         elif response.status_code >= 500:
             return ServerError(
-                f"Z.AI server error ({response.status_code}): {error_text}",
-                provider="zai",
+                f"DeepInfra server error ({response.status_code}): {error_text}",
+                provider="deepinfra",
             )
         else:
             return LLMError(
-                f"Z.AI API error {response.status_code}: {error_text}",
-                provider="zai",
+                f"DeepInfra API error {response.status_code}: {error_text}",
+                provider="deepinfra",
             )
 
     def _parse_response(
@@ -310,7 +311,7 @@ class ChatZAI(BaseLLM):
             call_record["status"] = "error"
             call_record["error"] = "No choices in response"
             self.call_history.append(call_record)
-            raise ValueError("No response from Z.AI")
+            raise ValueError("No response from DeepInfra")
 
         choice = data["choices"][0]
         message = choice.get("message", {})
@@ -358,14 +359,16 @@ class ChatZAI(BaseLLM):
             completion_tokens=usage.get("completion_tokens", 0),
             total_tokens=usage.get("total_tokens", 0),
             model=self.model,
-            provider="zai",
+            provider="deepinfra",
         )
 
-    def _clean_response(self, text: str) -> str:
+    def _clean_response(self, text: str | None) -> str:
         """Clean the response text."""
+        if text is None:
+            return ""
         text = text.strip()
 
-        # Remove <think>...</think> blocks
+        # Remove <think>...</think> blocks (some models use this for reasoning)
         while "<think>" in text and "</think>" in text:
             start = text.find("<think>")
             end = text.find("</think>") + len("</think>")
@@ -386,10 +389,7 @@ class ChatZAI(BaseLLM):
         return text.strip()
 
     def _parse_malformed_args(self, args_str: str, tool_name: str) -> dict[str, Any]:
-        """Attempt to parse malformed tool arguments from LLM.
-
-        Some LLMs return malformed JSON with XML-like tags or other issues.
-        """
+        """Attempt to parse malformed tool arguments from LLM."""
         if not args_str:
             return {}
 
@@ -410,7 +410,7 @@ class ChatZAI(BaseLLM):
         # Fix missing commas between fields
         cleaned = re.sub(r'"\s+"', '", "', cleaned)
 
-        # Fix unquoted keys: {path: "..." -> {"path": "..."
+        # Fix unquoted keys
         cleaned = re.sub(r'{\s*(\w+):', r'{"\1":', cleaned)
         cleaned = re.sub(r',\s*(\w+):', r', "\1":', cleaned)
 
@@ -419,14 +419,8 @@ class ChatZAI(BaseLLM):
         if json_match:
             try:
                 result = json.loads(json_match.group())
-                if "data" in result and isinstance(result["data"], str):
-                    try:
-                        result["data"] = json.loads(result["data"])
-                    except json.JSONDecodeError:
-                        pass
                 return result
             except json.JSONDecodeError:
-                # Try to extract key-value pairs manually for common tools
                 pass
 
         # Tool-specific fallbacks
@@ -445,48 +439,6 @@ class ChatZAI(BaseLLM):
                 r'"?reason"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
             )
             return {"reason": reason_match.group(1) if reason_match else args_str[:100]}
-
-        if tool_name == "ask_human" or tool_name == "hitl_ask":
-            question_match = re.search(
-                r'"?question"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
-            )
-            return {
-                "question": question_match.group(1) if question_match else args_str[:100]
-            }
-
-        # Handle coding:write_file and similar tools
-        if "write_file" in tool_name or tool_name == "coding_write_file":
-            path_match = re.search(
-                r'"?path"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
-            )
-            # Try to extract content - could be between quotes or in a code block
-            content_match = re.search(
-                r'"?content"?\s*[=:]\s*"([\s\S]*?)"(?:\s*[,}]|$)', args_str, re.IGNORECASE
-            )
-            if not content_match:
-                # Try code block format
-                content_match = re.search(
-                    r'"?content"?\s*[=:]\s*```[\w]*\n?([\s\S]*?)```', args_str, re.IGNORECASE
-                )
-            if path_match and content_match:
-                return {
-                    "path": path_match.group(1),
-                    "content": content_match.group(1),
-                }
-            elif path_match:
-                logger.warning(
-                    "write_file_missing_content",
-                    tool_name=tool_name,
-                    path=path_match.group(1),
-                )
-
-        # Handle coding:read_file
-        if "read_file" in tool_name or tool_name == "coding_read_file":
-            path_match = re.search(
-                r'"?path"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
-            )
-            if path_match:
-                return {"path": path_match.group(1)}
 
         logger.warning(
             "could_not_parse_malformed_args", tool_name=tool_name, args=args_str[:200]
