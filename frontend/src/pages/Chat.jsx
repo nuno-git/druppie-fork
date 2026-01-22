@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Send,
@@ -141,89 +142,253 @@ const getIconBgColor = (status) => {
   }
 }
 
-// Workflow Event Component
-const WorkflowEvent = ({ event }) => {
-  const colors = getStatusColors(event.status)
-  const iconBg = getIconBgColor(event.status)
+// Event type categorization for visual distinction
+const EVENT_CATEGORIES = {
+  agent: ['agent_started', 'agent_completed', 'agent_error', 'agent_failed', 'agent_question'],
+  tool: ['tool_call', 'tool_executing', 'tool_completed', 'mcp_tool'],
+  llm: ['llm_generating', 'llm_calling', 'llm_call', 'llm_response'],
+  workflow: ['workflow_started', 'workflow_completed', 'workflow_failed', 'step_started', 'step_completed'],
+  approval: ['approval_required', 'question_pending'],
+  result: ['files_created', 'git_pushed', 'build_complete', 'app_running', 'workspace_initialized'],
+}
 
-  // Normalize event type (supports both type and event_type)
+const getEventCategory = (eventType) => {
+  for (const [category, types] of Object.entries(EVENT_CATEGORIES)) {
+    if (types.some(t => eventType?.includes(t) || eventType === t)) {
+      return category
+    }
+  }
+  return 'info'
+}
+
+const getCategoryStyles = (category, status) => {
+  if (status === 'error') {
+    return {
+      bg: 'bg-red-50',
+      border: 'border-red-200',
+      text: 'text-red-800',
+      iconBg: 'bg-red-100',
+      iconText: 'text-red-600',
+      badge: 'bg-red-100 text-red-700',
+    }
+  }
+  const styles = {
+    agent: {
+      bg: 'bg-purple-50',
+      border: 'border-purple-200',
+      text: 'text-purple-800',
+      iconBg: 'bg-purple-100',
+      iconText: 'text-purple-600',
+      badge: 'bg-purple-100 text-purple-700',
+    },
+    tool: {
+      bg: 'bg-orange-50',
+      border: 'border-orange-200',
+      text: 'text-orange-800',
+      iconBg: 'bg-orange-100',
+      iconText: 'text-orange-600',
+      badge: 'bg-orange-100 text-orange-700',
+    },
+    llm: {
+      bg: 'bg-indigo-50',
+      border: 'border-indigo-200',
+      text: 'text-indigo-800',
+      iconBg: 'bg-indigo-100',
+      iconText: 'text-indigo-600',
+      badge: 'bg-indigo-100 text-indigo-700',
+    },
+    workflow: {
+      bg: 'bg-blue-50',
+      border: 'border-blue-200',
+      text: 'text-blue-800',
+      iconBg: 'bg-blue-100',
+      iconText: 'text-blue-600',
+      badge: 'bg-blue-100 text-blue-700',
+    },
+    approval: {
+      bg: 'bg-amber-50',
+      border: 'border-amber-200',
+      text: 'text-amber-800',
+      iconBg: 'bg-amber-100',
+      iconText: 'text-amber-600',
+      badge: 'bg-amber-100 text-amber-700',
+    },
+    result: {
+      bg: 'bg-green-50',
+      border: 'border-green-200',
+      text: 'text-green-800',
+      iconBg: 'bg-green-100',
+      iconText: 'text-green-600',
+      badge: 'bg-green-100 text-green-700',
+    },
+    info: {
+      bg: 'bg-gray-50',
+      border: 'border-gray-200',
+      text: 'text-gray-800',
+      iconBg: 'bg-gray-100',
+      iconText: 'text-gray-600',
+      badge: 'bg-gray-100 text-gray-700',
+    },
+  }
+  return styles[category] || styles.info
+}
+
+// Enhanced Workflow Event Component with category-based styling
+const WorkflowEvent = ({ event, defaultExpanded = false }) => {
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
   const eventType = event.event_type || event.type || ''
-
-  // Check if this is an agent/LLM event for compact display
-  const isAgentEvent = eventType.includes('agent_') || eventType.includes('llm_') || eventType.includes('tool_')
-
-  // Get title and description using helper functions if not provided
+  const category = getEventCategory(eventType)
+  const styles = getCategoryStyles(category, event.status)
   const displayTitle = event.title || formatEventTitle({ ...event, event_type: eventType })
   const displayDescription = event.description || getEventDescription({ ...event, event_type: eventType })
+  const hasToolArgs = event.data?.args || event.data?.arguments || event.data?.args_preview
+  const hasToolResult = event.data?.result || event.data?.output
+  const hasExpandableContent = hasToolArgs || hasToolResult || (event.data?.error && event.data.error.length > 50)
+  const isToolEvent = category === 'tool'
+
+  const formatArgs = (args) => {
+    if (!args) return null
+    if (typeof args === 'string') return args.length > 100 ? args.substring(0, 100) + '...' : args
+    try {
+      const str = JSON.stringify(args, null, 2)
+      return str.length > 200 ? str.substring(0, 200) + '...' : str
+    } catch {
+      return String(args)
+    }
+  }
 
   return (
-    <div className={`flex items-start gap-2 p-2 rounded-lg border ${colors} mb-1 ${isAgentEvent ? 'text-xs' : ''}`}>
-      <div className={`p-1 rounded-full ${iconBg} flex-shrink-0`}>
+    <div className={`flex items-start gap-2 p-2.5 rounded-lg border ${styles.bg} ${styles.border} ${styles.text} mb-1.5 transition-all`}>
+      <div className={`p-1.5 rounded-full ${styles.iconBg} ${styles.iconText} flex-shrink-0`}>
         {getEventIcon(eventType, event.status)}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
+          <span className={`text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded ${styles.badge}`}>
+            {category}
+          </span>
           <span className="font-medium text-sm">{displayTitle}</span>
           {event.data?.agent_id && (
-            <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded">
+            <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-medium">
               {event.data.agent_id.replace('_agent', '')}
             </span>
           )}
           {event.data?.duration_ms && (
-            <span className="text-xs text-gray-500">
-              {event.data.duration_ms}ms
-            </span>
+            <span className="text-xs text-gray-500 font-mono">{event.data.duration_ms}ms</span>
           )}
+          {event.status === 'success' && <CheckCircle className="w-3.5 h-3.5 text-green-500" />}
+          {event.status === 'error' && <XCircle className="w-3.5 h-3.5 text-red-500" />}
         </div>
-        {displayDescription && (
-          <div className="text-xs opacity-80 mt-0.5 truncate">{displayDescription}</div>
+        {displayDescription && <div className="text-xs opacity-80 mt-1">{displayDescription}</div>}
+        {isToolEvent && (event.data?.tool || event.data?.tool_name) && (
+          <div className="flex items-center gap-2 mt-1.5">
+            <span className="inline-flex items-center gap-1 bg-orange-200 text-orange-800 px-2 py-0.5 rounded text-xs font-mono">
+              <Hammer className="w-3 h-3" />
+              {event.data.tool || event.data.tool_name}
+            </span>
+            {hasExpandableContent && (
+              <button onClick={() => setIsExpanded(!isExpanded)} className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1">
+                {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                {isExpanded ? 'Hide' : 'Show'} details
+              </button>
+            )}
+          </div>
+        )}
+        {isExpanded && hasExpandableContent && (
+          <div className="mt-2 space-y-2">
+            {hasToolArgs && (
+              <div className="bg-gray-900 rounded p-2 text-xs">
+                <div className="text-gray-400 text-[10px] uppercase mb-1">Arguments</div>
+                <pre className="text-green-400 font-mono whitespace-pre-wrap overflow-x-auto">
+                  {formatArgs(event.data?.args || event.data?.arguments || event.data?.args_preview)}
+                </pre>
+              </div>
+            )}
+            {hasToolResult && (
+              <div className={`rounded p-2 text-xs ${event.status === 'error' ? 'bg-red-900' : 'bg-gray-900'}`}>
+                <div className={`text-[10px] uppercase mb-1 ${event.status === 'error' ? 'text-red-400' : 'text-gray-400'}`}>
+                  {event.status === 'error' ? 'Error' : 'Result'}
+                </div>
+                <pre className={`font-mono whitespace-pre-wrap overflow-x-auto ${event.status === 'error' ? 'text-red-400' : 'text-blue-400'}`}>
+                  {formatArgs(event.data?.result || event.data?.output)}
+                </pre>
+              </div>
+            )}
+            {event.data?.error && !hasToolResult && (
+              <div className="bg-red-900 rounded p-2 text-xs">
+                <div className="text-red-400 text-[10px] uppercase mb-1">Error</div>
+                <pre className="text-red-300 font-mono whitespace-pre-wrap overflow-x-auto">{event.data.error}</pre>
+              </div>
+            )}
+          </div>
         )}
         {event.data?.tool_calls && event.data.tool_calls.length > 0 && (
-          <div className="text-xs mt-1 flex flex-wrap gap-1">
+          <div className="text-xs mt-1.5 flex flex-wrap gap-1">
+            <span className="text-gray-500 mr-1">Tools:</span>
             {event.data.tool_calls.map((tc, i) => (
-              <span key={i} className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
-                {tc}
+              <span key={i} className="inline-flex items-center gap-1 bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-mono">
+                <Hammer className="w-2.5 h-2.5" />
+                {typeof tc === 'string' ? tc : tc.name || tc}
               </span>
             ))}
           </div>
         )}
-        {(event.data?.tool || event.data?.tool_name) && (
-          <div className="text-xs mt-1">
-            <span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">
-              {event.data.tool || event.data.tool_name}
-            </span>
-          </div>
-        )}
         {event.data?.repo_url && (
-          <a
-            href={event.data.repo_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs mt-1 text-blue-600 hover:underline"
-          >
+          <a href={event.data.repo_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs mt-1.5 text-blue-600 hover:underline font-medium">
             <ExternalLink className="w-3 h-3" />
             View Repository
           </a>
         )}
         {event.data?.url && (
-          <a
-            href={event.data.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs mt-1 text-green-600 hover:underline"
-          >
+          <a href={event.data.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs mt-1.5 text-green-600 hover:underline font-medium">
             <ExternalLink className="w-3 h-3" />
             Open App
           </a>
         )}
         {event.data?.features && event.data.features.length > 0 && (
-          <div className="text-xs mt-1 opacity-70">
-            Features: {event.data.features.join(', ')}
-          </div>
+          <div className="text-xs mt-1 opacity-70">Features: {event.data.features.join(', ')}</div>
         )}
       </div>
     </div>
   )
+}
+
+// Agent name formatting and icons
+const AGENT_CONFIG = {
+  router: { name: 'Router', icon: Brain, color: 'purple', description: 'Intent analysis' },
+  router_agent: { name: 'Router', icon: Brain, color: 'purple', description: 'Intent analysis' },
+  planner: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning' },
+  planner_agent: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning' },
+  developer: { name: 'Developer', icon: FileCode, color: 'green', description: 'Code generation' },
+  developer_agent: { name: 'Developer', icon: FileCode, color: 'green', description: 'Code generation' },
+  code_generator: { name: 'Code Generator', icon: FileCode, color: 'green', description: 'Code generation' },
+  code_generator_agent: { name: 'Code Generator', icon: FileCode, color: 'green', description: 'Code generation' },
+  devops: { name: 'DevOps', icon: Hammer, color: 'orange', description: 'Build & deploy' },
+  devops_agent: { name: 'DevOps', icon: Hammer, color: 'orange', description: 'Build & deploy' },
+  git_agent: { name: 'Git', icon: GitBranch, color: 'gray', description: 'Version control' },
+  reviewer: { name: 'Reviewer', icon: CheckCircle, color: 'teal', description: 'Code review' },
+  reviewer_agent: { name: 'Reviewer', icon: CheckCircle, color: 'teal', description: 'Code review' },
+}
+
+const getAgentConfig = (agentId) => {
+  return AGENT_CONFIG[agentId] || {
+    name: agentId.replace('_agent', '').replace(/_/g, ' '),
+    icon: Bot,
+    color: 'gray',
+    description: 'AI Agent',
+  }
+}
+
+const getAgentColorClasses = (color) => {
+  const colors = {
+    purple: 'bg-purple-100 text-purple-700 border-purple-200',
+    blue: 'bg-blue-100 text-blue-700 border-blue-200',
+    green: 'bg-green-100 text-green-700 border-green-200',
+    orange: 'bg-orange-100 text-orange-700 border-orange-200',
+    gray: 'bg-gray-100 text-gray-700 border-gray-200',
+    teal: 'bg-teal-100 text-teal-700 border-teal-200',
+  }
+  return colors[color] || colors.gray
 }
 
 // Process workflow events to mark "working" events as complete if there are subsequent events
@@ -255,45 +420,78 @@ const processWorkflowEvents = (events) => {
 }
 
 // Workflow Events Timeline (collapsible) - Shows agent/LLM activity live
-const WorkflowTimeline = ({ events, isExpanded, onToggle }) => {
+const WorkflowTimeline = ({ events, isExpanded, onToggle, isWorking = false }) => {
   if (!events || events.length === 0) return null
 
   // Process events to update statuses
   const processedEvents = processWorkflowEvents(events)
 
-  // Group events by agent for a cleaner view
-  const agentEvents = processedEvents.filter(e =>
-    e.event_type?.includes('agent_') || e.event_type?.includes('llm_') || e.event_type?.includes('tool_')
-  )
-  const otherEvents = processedEvents.filter(e =>
-    !e.event_type?.includes('agent_') && !e.event_type?.includes('llm_') && !e.event_type?.includes('tool_')
-  )
-
-  // Count LLM calls and agents
-  const llmCalls = processedEvents.filter(e => e.event_type === 'llm_response').length
+  // Count LLM calls, tools, and agents
+  const llmCalls = processedEvents.filter(e => e.event_type === 'llm_response' || e.event_type === 'llm_call').length
+  const toolCalls = processedEvents.filter(e => e.event_type?.includes('tool_') || e.event_type === 'mcp_tool').length
   const agentsRun = [...new Set(processedEvents.filter(e => e.data?.agent_id).map(e => e.data.agent_id))].length
+  const hasErrors = processedEvents.some(e => e.status === 'error')
+
+  // Get the current active agent (from the last agent_started event without a corresponding completed)
+  const activeAgentEvent = processedEvents.filter(e => e.event_type === 'agent_started').pop()
+  const activeAgent = activeAgentEvent?.data?.agent_id
 
   return (
-    <div className="mt-3 border-t border-gray-100 pt-3">
+    <div className={`mt-3 border-t pt-3 ${isWorking ? 'border-blue-200 bg-blue-50/50 -mx-4 px-4 py-3 rounded-lg' : 'border-gray-100'}`}>
+      {/* Working indicator header when active */}
+      {isWorking && activeAgent && (
+        <div className="flex items-center gap-3 mb-3 pb-3 border-b border-blue-200">
+          <div className="relative">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+              <Loader2 className="w-5 h-5 text-white animate-spin" />
+            </div>
+            <span className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-white animate-pulse" />
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-blue-900 flex items-center gap-2">
+              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getAgentColorClasses(getAgentConfig(activeAgent).color)}`}>
+                {getAgentConfig(activeAgent).name}
+              </span>
+              is working...
+            </div>
+            <div className="text-xs text-blue-600">{getAgentConfig(activeAgent).description}</div>
+          </div>
+        </div>
+      )}
+
       <button
         onClick={onToggle}
-        className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+        className={`flex items-center gap-2 text-sm mb-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-500 rounded ${
+          isWorking ? 'text-blue-700 hover:text-blue-900' : 'text-gray-600 hover:text-gray-800'
+        }`}
         aria-expanded={isExpanded}
         aria-label={isExpanded ? 'Collapse execution log' : 'Expand execution log'}
       >
         {isExpanded ? <ChevronDown className="w-4 h-4" aria-hidden="true" /> : <ChevronRight className="w-4 h-4" aria-hidden="true" />}
         <span className="font-medium">Execution Log</span>
-        <div className="flex items-center gap-2 ml-auto">
+        <div className="flex items-center gap-2 ml-auto flex-wrap">
           {agentsRun > 0 && (
             <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full flex items-center gap-1">
               <Bot className="w-3 h-3" />
-              {agentsRun} agent(s)
+              {agentsRun}
             </span>
           )}
           {llmCalls > 0 && (
-            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+            <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full flex items-center gap-1">
               <Brain className="w-3 h-3" />
-              {llmCalls} LLM call(s)
+              {llmCalls}
+            </span>
+          )}
+          {toolCalls > 0 && (
+            <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <Hammer className="w-3 h-3" />
+              {toolCalls}
+            </span>
+          )}
+          {hasErrors && (
+            <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <XCircle className="w-3 h-3" />
+              errors
             </span>
           )}
           <span className="text-xs bg-gray-100 px-2 py-0.5 rounded-full">{processedEvents.length} events</span>
@@ -578,44 +776,6 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
   )
 }
 
-// Agent name formatting and icons
-const AGENT_CONFIG = {
-  router: { name: 'Router', icon: Brain, color: 'purple', description: 'Intent analysis' },
-  router_agent: { name: 'Router', icon: Brain, color: 'purple', description: 'Intent analysis' },
-  planner: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning' },
-  planner_agent: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning' },
-  developer: { name: 'Developer', icon: FileCode, color: 'green', description: 'Code generation' },
-  developer_agent: { name: 'Developer', icon: FileCode, color: 'green', description: 'Code generation' },
-  code_generator: { name: 'Code Generator', icon: FileCode, color: 'green', description: 'Code generation' },
-  code_generator_agent: { name: 'Code Generator', icon: FileCode, color: 'green', description: 'Code generation' },
-  devops: { name: 'DevOps', icon: Hammer, color: 'orange', description: 'Build & deploy' },
-  devops_agent: { name: 'DevOps', icon: Hammer, color: 'orange', description: 'Build & deploy' },
-  git_agent: { name: 'Git', icon: GitBranch, color: 'gray', description: 'Version control' },
-  reviewer: { name: 'Reviewer', icon: CheckCircle, color: 'teal', description: 'Code review' },
-  reviewer_agent: { name: 'Reviewer', icon: CheckCircle, color: 'teal', description: 'Code review' },
-}
-
-const getAgentConfig = (agentId) => {
-  return AGENT_CONFIG[agentId] || {
-    name: agentId.replace('_agent', '').replace(/_/g, ' '),
-    icon: Bot,
-    color: 'gray',
-    description: 'AI Agent',
-  }
-}
-
-const getAgentColorClasses = (color) => {
-  const colors = {
-    purple: 'bg-purple-100 text-purple-700 border-purple-200',
-    blue: 'bg-blue-100 text-blue-700 border-blue-200',
-    green: 'bg-green-100 text-green-700 border-green-200',
-    orange: 'bg-orange-100 text-orange-700 border-orange-200',
-    gray: 'bg-gray-100 text-gray-700 border-gray-200',
-    teal: 'bg-teal-100 text-teal-700 border-teal-200',
-  }
-  return colors[color] || colors.gray
-}
-
 // Agent Attribution Header - Shows prominently which agents contributed to the response
 const AgentAttributionHeader = ({ events }) => {
   if (!events || events.length === 0) return null
@@ -876,16 +1036,18 @@ const getEventDescription = (event) => {
   return event.description || ''
 }
 
-// Typing indicator with real-time workflow steps
+// Typing indicator with real-time workflow steps and active agent display
 const TypingIndicator = ({ currentStep, liveEvents = [] }) => {
   // Process live events to show completed and current steps
   const processedEvents = liveEvents.map((event, index) => {
     const isLast = index === liveEvents.length - 1
+    const category = getEventCategory(event.event_type || event.type || '')
     return {
       ...event,
       displayTitle: formatEventTitle(event),
       isComplete: !isLast || event.status === 'success',
       isCurrent: isLast && event.status !== 'success',
+      category,
     }
   })
 
@@ -895,63 +1057,109 @@ const TypingIndicator = ({ currentStep, liveEvents = [] }) => {
     if (!lastEvent || lastEvent.displayTitle !== event.displayTitle) {
       acc.push(event)
     } else if (event.isComplete && !lastEvent.isComplete) {
-      // Update last event to complete
       acc[acc.length - 1] = { ...lastEvent, isComplete: true, isCurrent: false }
     }
     return acc
   }, [])
 
-  // Keep last 6 events for display
-  const displayEvents = uniqueEvents.slice(-6)
+  // Keep last 8 events for display
+  const displayEvents = uniqueEvents.slice(-8)
+
+  // Find the current active agent
+  const activeAgentEvent = liveEvents.filter(e => e.event_type === 'agent_started' || e.data?.agent_id).pop()
+  const activeAgent = activeAgentEvent?.data?.agent_id
+  const agentConfig = activeAgent ? getAgentConfig(activeAgent) : null
+  const AgentIcon = agentConfig?.icon || Bot
+
+  // Count stats
+  const toolCalls = liveEvents.filter(e => e.event_type?.includes('tool_')).length
+  const llmCalls = liveEvents.filter(e => e.event_type?.includes('llm_')).length
 
   return (
     <div className="flex justify-start mb-4">
-      <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-none px-4 py-4 shadow-sm min-w-[320px] max-w-[400px]">
-        {/* Header with animated spinner */}
-        <div className="flex items-center space-x-3 mb-3">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-            <Loader2 className="w-5 h-5 text-white animate-spin" />
+      <div className="bg-white border-2 border-blue-200 rounded-2xl rounded-bl-none px-5 py-4 shadow-lg min-w-[380px] max-w-[480px]">
+        {/* Prominent Working Header */}
+        <div className="flex items-center gap-4 mb-4 pb-4 border-b border-gray-100">
+          <div className="relative">
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+              agentConfig ? getAgentColorClasses(agentConfig.color).replace('border-', 'bg-').split(' ')[0] : 'bg-gradient-to-br from-blue-500 to-purple-600'
+            }`}>
+              {agentConfig ? (
+                <AgentIcon className="w-6 h-6" />
+              ) : (
+                <Loader2 className="w-6 h-6 text-white animate-spin" />
+              )}
+            </div>
+            <span className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-white flex items-center justify-center">
+              <Loader2 className="w-2.5 h-2.5 text-white animate-spin" />
+            </span>
           </div>
           <div className="flex-1">
-            <div className="text-sm font-medium text-gray-800">
-              {currentStep || 'Processing your request...'}
+            <div className="flex items-center gap-2">
+              {agentConfig && (
+                <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${getAgentColorClasses(agentConfig.color)}`}>
+                  {agentConfig.name}
+                </span>
+              )}
+              <span className="text-sm font-semibold text-gray-800">
+                {agentConfig ? 'is working...' : 'Processing...'}
+              </span>
             </div>
+            <div className="text-xs text-gray-500 mt-0.5">
+              {agentConfig?.description || currentStep || 'Analyzing your request'}
+            </div>
+            {/* Mini stats */}
+            {(toolCalls > 0 || llmCalls > 0) && (
+              <div className="flex gap-2 mt-2">
+                {llmCalls > 0 && (
+                  <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded flex items-center gap-1">
+                    <Brain className="w-2.5 h-2.5" /> {llmCalls} LLM
+                  </span>
+                )}
+                {toolCalls > 0 && (
+                  <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded flex items-center gap-1">
+                    <Hammer className="w-2.5 h-2.5" /> {toolCalls} tools
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Live progress steps with checkmarks */}
+        {/* Live progress steps with category colors */}
         {displayEvents.length > 0 ? (
-          <div className="space-y-2 border-l-2 border-blue-200 pl-3 ml-3">
-            {displayEvents.map((event, idx) => (
-              <div
-                key={idx}
-                className={`flex items-center gap-2 text-sm transition-all duration-300 ${
-                  event.isCurrent ? 'text-blue-700' : event.isComplete ? 'text-green-700' : 'text-gray-600'
-                }`}
-              >
-                {event.isCurrent ? (
-                  <Loader2 className="w-4 h-4 animate-spin text-blue-500 flex-shrink-0" />
-                ) : event.isComplete ? (
-                  <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
-                ) : (
-                  <div className="w-4 h-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
-                )}
-                <span className={event.isCurrent ? 'font-medium' : ''}>
-                  {event.displayTitle}
-                </span>
-                {event.isComplete && (
-                  <span className="text-green-500 ml-auto">✓</span>
-                )}
-              </div>
-            ))}
+          <div className="space-y-2 pl-3 border-l-2 border-blue-200 ml-1 max-h-64 overflow-y-auto">
+            {displayEvents.map((event, idx) => {
+              const catStyles = getCategoryStyles(event.category, event.status)
+              return (
+                <div
+                  key={idx}
+                  className={`flex items-center gap-2 text-sm transition-all duration-300 ${
+                    event.isCurrent ? 'text-blue-700 font-medium' : event.isComplete ? 'text-gray-600' : 'text-gray-400'
+                  }`}
+                >
+                  {event.isCurrent ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-500 flex-shrink-0" />
+                  ) : event.isComplete ? (
+                    <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                  ) : (
+                    <div className="w-4 h-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                  )}
+                  <span className={`text-[10px] uppercase font-semibold px-1 py-0.5 rounded ${catStyles.badge}`}>
+                    {event.category}
+                  </span>
+                  <span className="truncate flex-1">{event.displayTitle}</span>
+                </div>
+              )
+            })}
           </div>
         ) : (
           /* Fallback: Generic progress steps when no live events */
           <div className="flex items-center justify-between px-2 pt-2">
             {[
-              { id: 'analyzing', label: 'Analyzing', icon: Brain },
-              { id: 'planning', label: 'Planning', icon: Clock },
-              { id: 'executing', label: 'Executing', icon: Zap },
+              { id: 'analyzing', label: 'Analyzing', icon: Brain, color: 'purple' },
+              { id: 'planning', label: 'Planning', icon: Clock, color: 'blue' },
+              { id: 'executing', label: 'Executing', icon: Zap, color: 'green' },
             ].map((step, idx) => {
               const StepIcon = step.icon
               const stepLower = (currentStep || '').toLowerCase()
@@ -963,7 +1171,7 @@ const TypingIndicator = ({ currentStep, liveEvents = [] }) => {
               } else if (stepLower.includes('plan')) {
                 isComplete = idx === 0
                 isActive = idx === 1
-              } else if (stepLower.includes('execut') || stepLower.includes('generat')) {
+              } else if (stepLower.includes('execut') || stepLower.includes('generat') || stepLower.includes('develop')) {
                 isComplete = idx < 2
                 isActive = idx === 2
               }
@@ -972,30 +1180,28 @@ const TypingIndicator = ({ currentStep, liveEvents = [] }) => {
                 <div key={step.id} className="flex items-center">
                   <div className="flex flex-col items-center">
                     <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                      className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
                         isActive
-                          ? 'bg-blue-500 text-white animate-pulse'
+                          ? `bg-${step.color}-500 text-white shadow-lg shadow-${step.color}-200`
                           : isComplete
                           ? 'bg-green-500 text-white'
                           : 'bg-gray-200 text-gray-400'
                       }`}
                     >
                       {isComplete ? (
-                        <CheckCircle className="w-4 h-4" />
+                        <CheckCircle className="w-5 h-5" />
+                      ) : isActive ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
                       ) : (
-                        <StepIcon className={`w-4 h-4 ${isActive ? 'animate-pulse' : ''}`} />
+                        <StepIcon className="w-5 h-5" />
                       )}
                     </div>
-                    <span className={`text-xs mt-1 ${isActive ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
+                    <span className={`text-xs mt-1.5 font-medium ${isActive ? `text-${step.color}-600` : isComplete ? 'text-green-600' : 'text-gray-400'}`}>
                       {step.label}
                     </span>
                   </div>
                   {idx < 2 && (
-                    <div
-                      className={`w-12 h-0.5 mx-1 ${
-                        isComplete ? 'bg-green-500' : 'bg-gray-200'
-                      }`}
-                    />
+                    <div className={`w-10 h-0.5 mx-2 rounded ${isComplete ? 'bg-green-500' : 'bg-gray-200'}`} />
                   )}
                 </div>
               )
@@ -1735,6 +1941,8 @@ const DebugPanel = ({ isOpen, onClose, apiCalls, workflowEvents, llmCalls: llmCa
 const Chat = () => {
   const { user } = useAuth()
   const toast = useToast()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [currentPlanId, setCurrentPlanId] = useState(null)
@@ -1746,6 +1954,7 @@ const Chat = () => {
   const [debugLLMCalls, setDebugLLMCalls] = useState([]) // LLM calls for debug panel
   const [workspaceInfo, setWorkspaceInfo] = useState(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [initialSessionLoaded, setInitialSessionLoaded] = useState(false)
   const messagesEndRef = useRef(null)
   const queryClient = useQueryClient()
 
@@ -1755,6 +1964,98 @@ const Chat = () => {
     queryFn: () => getSessions(1, 20),
     refetchInterval: 30000,
   })
+
+  // Load session from URL parameter on initial load
+  useEffect(() => {
+    if (initialSessionLoaded) return
+
+    const sessionIdFromUrl = searchParams.get('session')
+    if (!sessionIdFromUrl) {
+      setInitialSessionLoaded(true)
+      return
+    }
+
+    // Load the session directly by ID
+    const loadSessionFromUrl = async () => {
+      try {
+        const fullSession = await getPlan(sessionIdFromUrl)
+        if (fullSession) {
+          setCurrentPlanId(sessionIdFromUrl)
+          setInitialSessionLoaded(true)
+
+          // Load persisted workflow events and LLM calls
+          const workflowEvents = fullSession.result?.workflow_events || []
+          const llmCalls = fullSession.result?.llm_calls || []
+
+          const normalizedEvents = workflowEvents.map(event => ({
+            ...event,
+            event_type: event.type || event.event_type,
+            title: event.title || formatEventTitle({ ...event, event_type: event.type }),
+            description: event.data?.description || event.description || '',
+            status: event.status || 'info',
+            data: event.data || event,
+          }))
+          setDebugWorkflowEvents(normalizedEvents)
+          setDebugLLMCalls(llmCalls)
+          setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
+
+          // Build pending approvals from tasks
+          let pendingApprovals = []
+          if (fullSession.tasks) {
+            pendingApprovals = fullSession.tasks
+              .filter(task => task.status === 'pending_approval')
+              .map(task => ({
+                task_id: task.id,
+                task_name: task.name,
+                mcp_tool: task.mcp_tool,
+                required_role: task.required_role,
+                approval_type: task.approval_type,
+                required_roles: task.required_roles,
+                required_approvals: task.required_approvals || 1,
+                current_approvals: task.approvals?.filter(a => a.decision === 'approved').length || 0,
+                approved_by_roles: task.approvals?.filter(a => a.decision === 'approved').map(a => a.role) || [],
+                approved_by_ids: task.approvals?.filter(a => a.decision === 'approved').map(a => a.approved_by || a.approver_id) || [],
+              }))
+          }
+
+          // Reconstruct messages from session
+          const reconstructedMessages = []
+          const userMessage = fullSession.description || fullSession.preview
+          if (userMessage) {
+            reconstructedMessages.push({
+              role: 'user',
+              content: userMessage,
+            })
+          }
+
+          const resultMessage = fullSession.result?.response || `Session - Status: ${fullSession.status}`
+          reconstructedMessages.push({
+            role: 'assistant',
+            content: resultMessage,
+            planId: sessionIdFromUrl,
+            status: fullSession.status,
+            workflowEvents: workflowEvents,
+            pendingApprovals: pendingApprovals,
+          })
+
+          setMessages(reconstructedMessages.length > 0 ? reconstructedMessages : [
+            {
+              role: 'assistant',
+              content: `Continuing conversation...`,
+              planId: sessionIdFromUrl,
+            }
+          ])
+        }
+      } catch (err) {
+        console.error('Error loading session from URL:', err)
+        // Don't clear the URL parameter - preserve the session ID for retry/debugging
+        // The session may be temporarily unavailable or loading
+        setInitialSessionLoaded(true)
+      }
+    }
+
+    loadSessionFromUrl()
+  }, [searchParams, initialSessionLoaded])
 
   // Initialize with welcome message
   useEffect(() => {
@@ -2443,6 +2744,7 @@ What would you like to build today?`,
     setDebugWorkflowEvents([]) // Clear debug events for new chat
     setDebugLLMCalls([]) // Clear debug LLM calls for new chat
     setWorkspaceInfo(null) // Clear workspace info for new chat
+    setSearchParams({}) // Clear URL parameter for new chat
     setMessages([
       {
         role: 'assistant',
@@ -2461,6 +2763,7 @@ What would you like to build today?`,
   const handleSelectPlan = async (session) => {
     setCurrentPlanId(session.id)
     setLiveWorkflowEvents([]) // Clear live events when selecting session
+    setSearchParams({ session: session.id }) // Update URL for deep linking
 
     // Fetch full session details (needed for workflow_events, llm_calls, pending approvals)
     let fullSession = session

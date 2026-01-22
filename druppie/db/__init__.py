@@ -1,6 +1,7 @@
 """Database module for Druppie platform."""
 
 from .models import Base, Session, Approval, Project, Build, Workspace, HitlQuestion
+from .migrations import run_migrations
 from .crud import (
     # Session CRUD
     create_session,
@@ -59,6 +60,8 @@ __all__ = [
     "Build",
     "Workspace",
     "HitlQuestion",
+    # Migrations
+    "run_migrations",
     # Session CRUD
     "create_session",
     "get_session",
