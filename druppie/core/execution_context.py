@@ -231,6 +231,26 @@ class ExecutionContext:
             "duration_ms": int((time.time() - self.start_time) * 1000),
         }
 
+    def get_state(self) -> dict:
+        """Get state for saving during MCP tool approval.
+
+        This includes workspace context and HITL clarifications needed
+        to properly resume the agent after approval.
+
+        Returns:
+            Dict containing context and clarifications for resumption
+        """
+        return {
+            "context": {
+                "workspace_id": self.workspace_id,
+                "project_id": self.project_id,
+                "project_name": self.project_name,
+                "workspace_path": self.workspace_path,
+                "branch": self.branch,
+            },
+            "hitl_clarifications": self.hitl_clarifications,
+        }
+
     def set_workspace(
         self,
         workspace_id: str,

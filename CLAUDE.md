@@ -414,6 +414,23 @@ immediately after and overwrites the session state before the clarification can 
 3. In `execute_agent_step`, read clarifications from `ctx.hitl_clarifications` instead of database
 **Key**: Database commits may not be visible to other connections immediately; use direct parameter passing
 
+### Issue: HITL Clarifications Lost After MCP Tool Approval (architect asks same question AGAIN after approval)
+**Symptom**: After HITL resume works correctly (architect calls write_file), and user approves, the architect asks the same HITL question again instead of completing
+**Root Cause**: Two issues:
+1. `agent_state` saved in approval record doesn't include `hitl_clarifications`
+2. `execute_step_after_approval` doesn't append clarifications to the prompt before calling Agent.run()
+**Diagnosis**: Check logs for `prompt_length` - it will be ~295 without clarifications vs ~707 with clarifications
+**Fix**:
+1. In `resume_from_step_approval`, restore clarifications from `agent_state` to `exec_ctx.hitl_clarifications`
+2. Add clarification appending logic to `execute_step_after_approval` (same as in `execute_plan`)
+3. Update ALL 4 locations in loop.py where `agent_state` is saved to include `hitl_clarifications`:
+   - Line ~561: MCP tool approval in execute_plan
+   - Line ~697: Step approval creation
+   - Line ~1441: MCP tool approval in resume_from_step_approval
+   - Line ~1553: Step approval in resume_from_step_approval
+**Key Files**: `druppie/core/loop.py`, `druppie/core/execution_context.py`
+**Test**: Full flow: User request → HITL question → "yes" → write_file → approval → agent completes (not asks again)
+
 ### Issue: HITL MCP Not Configured (hitl:progress fails)
 **Symptom**: Deployer/developer agents fail with "Client failed to connect" when calling hitl:progress
 **Cause**: HITL MCP server running on port 9003 but not configured in mcp_config.yaml
