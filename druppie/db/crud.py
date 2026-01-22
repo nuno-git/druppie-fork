@@ -3,6 +3,7 @@
 Simple database operations without complex ORM patterns.
 """
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -181,9 +182,12 @@ def upsert_session(
 
 
 def create_approval(db: DBSession, data: dict[str, Any]) -> Approval:
-    """Create a new approval request."""
+    """Create a new approval request.
+
+    Auto-generates an ID if not provided.
+    """
     approval = Approval(
-        id=data.get("id"),
+        id=data.get("id") or str(uuid.uuid4()),
         session_id=data.get("session_id"),
         tool_name=data.get("tool_name"),
         arguments=data.get("arguments"),

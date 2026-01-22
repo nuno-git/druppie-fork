@@ -551,6 +551,72 @@ async def execute_node(state: GraphState) -> dict:
                             raise
                 else:
                     result = {"error": "No execution context available for MCP call"}
+            elif step_type == "approval":
+                # Approval checkpoint - pause and wait for user approval
+                approval_message = step.get("message", "Approval required to continue")
+                required_roles = step.get("required_roles", ["developer", "admin"])
+                approval_context = step.get("context", {})
+
+                logger.info(
+                    "approval_checkpoint",
+                    step_id=step_id,
+                    message=approval_message,
+                    required_roles=required_roles,
+                )
+
+                if ctx:
+                    # Create approval request
+                    from druppie.db.crud import create_approval
+                    with db_session() as db:
+                        approval = create_approval(
+                            db,
+                            {
+                                "session_id": context.get("session_id"),
+                                "tool_name": f"approval:{step_id}",
+                                "arguments": {"message": approval_message, **approval_context},
+                                "required_roles": required_roles,
+                                "description": approval_message,
+                                "agent_state": {
+                                    "plan": plan,
+                                    "current_step": i,
+                                    "results": results,
+                                    "context": context,
+                                },
+                            }
+                        )
+
+                    # Emit approval required event directly (not wrapped as workflow_event)
+                    # This ensures the frontend receives it with type="approval_required"
+                    if ctx.emit_event:
+                        ctx.emit_event({
+                            "type": "approval_required",
+                            "session_id": context.get("session_id"),
+                            "approval_id": str(approval.id),
+                            "message": approval_message,
+                            "required_roles": required_roles,
+                            "step_id": step_id,
+                            "context": approval_context,
+                        })
+                    # Also store it as a workflow event for the timeline
+                    ctx.emit("approval_required", {
+                        "approval_id": str(approval.id),
+                        "message": approval_message,
+                        "required_roles": required_roles,
+                        "step_id": step_id,
+                        "context": approval_context,
+                    })
+
+                    # Return paused state
+                    return {
+                        "results": results,
+                        "response": f"Waiting for approval: {approval_message}",
+                        "paused": True,
+                        "approval_id": str(approval.id),
+                    }
+                else:
+                    # No context - skip approval
+                    result = {"approved": True, "skipped": True}
+
             else:
                 result = {"error": f"Unknown step type: {step_type}"}
 
@@ -944,6 +1010,298 @@ class MainLoop:
 
         except Exception as e:
             logger.error("main_loop_resume_error", error=str(e), exc_info=True)
+            clear_current_context()
+            return {
+                "success": False,
+                "error": str(e),
+                "session_id": session_id,
+                "workflow_events": exec_ctx.workflow_events,
+                "llm_calls": exec_ctx.llm_calls,
+            }
+
+    async def resume_from_step_approval(
+        self,
+        session_id: str,
+        agent_state: dict,
+        emit_event: Callable[[dict], None] | None = None,
+    ) -> dict[str, Any]:
+        """Resume plan execution from a step approval checkpoint.
+
+        This is called when a step approval (type: "approval") is approved.
+        It continues executing the plan from the next step after the approval.
+
+        Args:
+            session_id: Session ID
+            agent_state: Saved state from the approval containing:
+                - plan: The execution plan
+                - current_step: Index of the approval step (0-indexed)
+                - results: Results from steps before the approval
+                - context: Workspace/session context
+            emit_event: Callback for real-time events
+
+        Returns:
+            Response dict with results
+        """
+        # Create execution context for tracking
+        exec_ctx = ExecutionContext(
+            session_id=session_id,
+            emit_event=emit_event,
+        )
+        set_current_context(exec_ctx)
+
+        # Extract saved state
+        plan = agent_state.get("plan", {})
+        current_step_idx = agent_state.get("current_step", 0)
+        results = agent_state.get("results", [])
+        context = agent_state.get("context", {})
+
+        # Update execution context with workspace info
+        exec_ctx.workspace_id = context.get("workspace_id")
+        exec_ctx.project_id = context.get("project_id")
+        exec_ctx.workspace_path = context.get("workspace_path")
+        exec_ctx.branch = context.get("branch")
+
+        steps = plan.get("steps", [])
+        total_steps = len(steps)
+
+        # Resume from the step AFTER the approval checkpoint
+        start_step = current_step_idx + 1
+
+        logger.info(
+            "resume_from_step_approval",
+            session_id=session_id,
+            current_step=current_step_idx,
+            start_step=start_step,
+            total_steps=total_steps,
+            plan_name=plan.get("name"),
+        )
+
+        exec_ctx.emit("execution_resumed", {
+            "plan_name": plan.get("name", "Unnamed plan"),
+            "resumed_from_step": start_step,
+            "total_steps": total_steps,
+        })
+
+        try:
+            # Execute remaining steps
+            for i in range(start_step, total_steps):
+                # Check for cancellation before each step
+                exec_ctx.check_cancelled()
+
+                step = steps[i]
+                step_type = step.get("type", "agent")
+                step_id = step.get("id", f"step_{i}")
+                agent_id = step.get("agent_id") if step_type == "agent" else None
+
+                logger.info("execute_step_after_approval", step_id=step_id, step_type=step_type)
+
+                exec_ctx.step_started(step_id, step_type, agent_id)
+                exec_ctx.emit("step_progress", {
+                    "current_step": i + 1,
+                    "total_steps": total_steps,
+                    "step_id": step_id,
+                    "step_type": step_type,
+                    "agent_id": agent_id,
+                    "description": step.get("prompt", step.get("tool", ""))[:100],
+                })
+
+                try:
+                    if step_type == "agent":
+                        prompt = step.get("prompt", "")
+
+                        logger.info(
+                            "execute_agent_step_resumed",
+                            step_id=step_id,
+                            agent_id=agent_id,
+                            prompt_preview=prompt[:100] if prompt else "",
+                        )
+
+                        exec_ctx.emit("agent_starting", {
+                            "step_id": step_id,
+                            "agent_id": agent_id,
+                            "prompt": prompt,
+                        })
+
+                        result = await Agent(agent_id).run(prompt, context)
+
+                        # Check if agent returned paused state (for another approval)
+                        if isinstance(result, dict) and result.get("paused"):
+                            logger.info("agent_paused_again", step_id=step_id, agent_id=agent_id)
+                            exec_ctx.emit("agent_paused", {
+                                "step_id": step_id,
+                                "agent_id": agent_id,
+                                "approval_id": result.get("approval_id"),
+                            })
+                            clear_current_context()
+                            return {
+                                "success": True,
+                                "type": "interrupt",
+                                "response": f"Waiting for approval in step {step_id}",
+                                "paused": True,
+                                "approval_id": result.get("approval_id"),
+                                "session_id": session_id,
+                                "workflow_events": exec_ctx.workflow_events,
+                                "llm_calls": exec_ctx.llm_calls,
+                            }
+
+                        exec_ctx.emit("agent_completed", {
+                            "step_id": step_id,
+                            "agent_id": agent_id,
+                            "result_preview": str(result)[:200] if result else "",
+                        })
+
+                    elif step_type == "mcp":
+                        tool = step.get("tool")
+                        inputs = step.get("inputs", {})
+
+                        # Parse tool name (format: server:tool)
+                        if ":" in tool:
+                            server, tool_name = tool.split(":", 1)
+                        else:
+                            server = "coding"
+                            tool_name = tool
+
+                        # Inject context into inputs
+                        if server == "coding" and "workspace_id" not in inputs:
+                            if context.get("workspace_id"):
+                                inputs["workspace_id"] = context["workspace_id"]
+                        if server == "hitl" and "session_id" not in inputs:
+                            if context.get("session_id"):
+                                inputs["session_id"] = context["session_id"]
+                        if server == "docker" and "workspace_id" not in inputs:
+                            if context.get("workspace_id"):
+                                inputs["workspace_id"] = context["workspace_id"]
+
+                        with db_session() as db:
+                            mcp_client = get_mcp_client(db)
+                            result = await mcp_client.call_tool(server, tool_name, inputs, exec_ctx)
+
+                            # Check if paused for approval
+                            if result.get("status") == "paused":
+                                clear_current_context()
+                                return {
+                                    "success": True,
+                                    "type": "interrupt",
+                                    "response": f"Waiting for approval: {result.get('tool')}",
+                                    "paused": True,
+                                    "approval_id": result.get("approval_id"),
+                                    "session_id": session_id,
+                                    "workflow_events": exec_ctx.workflow_events,
+                                    "llm_calls": exec_ctx.llm_calls,
+                                }
+
+                    elif step_type == "approval":
+                        # Another approval checkpoint
+                        approval_message = step.get("message", "Approval required to continue")
+                        required_roles = step.get("required_roles", ["developer", "admin"])
+                        approval_context = step.get("context", {})
+
+                        logger.info(
+                            "another_approval_checkpoint",
+                            step_id=step_id,
+                            message=approval_message,
+                        )
+
+                        # Create approval request
+                        from druppie.db.crud import create_approval
+                        with db_session() as db:
+                            approval = create_approval(
+                                db,
+                                {
+                                    "session_id": session_id,
+                                    "tool_name": f"approval:{step_id}",
+                                    "arguments": {"message": approval_message, **approval_context},
+                                    "required_roles": required_roles,
+                                    "description": approval_message,
+                                    "agent_state": {
+                                        "plan": plan,
+                                        "current_step": i,
+                                        "results": results,
+                                        "context": context,
+                                    },
+                                }
+                            )
+
+                        # Emit approval required event
+                        if exec_ctx.emit_event:
+                            exec_ctx.emit_event({
+                                "type": "approval_required",
+                                "session_id": session_id,
+                                "approval_id": str(approval.id),
+                                "message": approval_message,
+                                "required_roles": required_roles,
+                                "step_id": step_id,
+                                "context": approval_context,
+                            })
+
+                        clear_current_context()
+                        return {
+                            "success": True,
+                            "type": "interrupt",
+                            "response": f"Waiting for approval: {approval_message}",
+                            "paused": True,
+                            "approval_id": str(approval.id),
+                            "session_id": session_id,
+                            "workflow_events": exec_ctx.workflow_events,
+                            "llm_calls": exec_ctx.llm_calls,
+                        }
+                    else:
+                        result = {"error": f"Unknown step type: {step_type}"}
+
+                    results.append({"step_id": step_id, "success": True, "result": result})
+                    context[step_id] = result
+                    exec_ctx.step_completed(step_id, success=True)
+
+                except CancelledException:
+                    raise
+                except Exception as e:
+                    logger.error("step_error_after_approval", step_id=step_id, error=str(e), exc_info=True)
+                    results.append({"step_id": step_id, "success": False, "error": str(e)})
+                    exec_ctx.step_completed(step_id, success=False)
+                    exec_ctx.emit("step_error", {"step_id": step_id, "error": str(e)})
+                    if not step.get("continue_on_error", False):
+                        break
+
+            # Generate response
+            successful = sum(1 for r in results if r.get("success"))
+            total = len(results)
+
+            if successful == total and total > 0:
+                response = f"Successfully completed all {total} steps"
+            elif successful > 0:
+                response = f"Completed {successful}/{total} steps"
+            else:
+                response = "Failed to complete steps"
+
+            exec_ctx.emit("execution_completed", {
+                "successful_steps": successful,
+                "total_steps": total,
+            })
+
+            clear_current_context()
+            return {
+                "success": True,
+                "type": "result",
+                "response": response,
+                "results": results,
+                "session_id": session_id,
+                "workflow_events": exec_ctx.workflow_events,
+                "llm_calls": exec_ctx.llm_calls,
+            }
+
+        except CancelledException:
+            logger.info("step_approval_resume_cancelled", session_id=session_id)
+            clear_current_context()
+            return {
+                "success": False,
+                "error": "Execution was cancelled by user",
+                "cancelled": True,
+                "session_id": session_id,
+                "workflow_events": exec_ctx.workflow_events,
+                "llm_calls": exec_ctx.llm_calls,
+            }
+        except Exception as e:
+            logger.error("step_approval_resume_error", error=str(e), exc_info=True)
             clear_current_context()
             return {
                 "success": False,

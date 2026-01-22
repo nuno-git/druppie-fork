@@ -419,8 +419,9 @@ class ChatDeepInfra(BaseLLM):
         cleaned_content = content
 
         # Pattern to match <tool_call>...</tool_call> blocks
+        # Use greedy match for everything between tags, then parse JSON
         tool_call_pattern = re.compile(
-            r'<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>',
+            r'<tool_call>\s*([\s\S]*?)\s*</tool_call>',
             re.MULTILINE | re.DOTALL
         )
 
@@ -428,8 +429,26 @@ class ChatDeepInfra(BaseLLM):
 
         for i, match in enumerate(matches):
             try:
+                # Clean up the match - it should be JSON
+                json_str = match.strip()
+
+                # Try to find valid JSON by finding matching braces
+                if json_str.startswith('{'):
+                    brace_count = 0
+                    end_idx = 0
+                    for j, char in enumerate(json_str):
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                end_idx = j + 1
+                                break
+                    if end_idx > 0:
+                        json_str = json_str[:end_idx]
+
                 # Try to parse the JSON
-                tool_data = json.loads(match)
+                tool_data = json.loads(json_str)
 
                 name = tool_data.get("name", "")
                 args = tool_data.get("arguments", {})
@@ -447,9 +466,18 @@ class ChatDeepInfra(BaseLLM):
                         "name": name,
                         "args": args if isinstance(args, dict) else {},
                     })
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
                 logger.warning(
                     "failed_to_parse_text_tool_call",
+                    error=str(e),
+                    match_preview=match[:200] if len(match) > 200 else match,
+                    json_str_preview=json_str[:200] if json_str else None,
+                )
+                continue
+            except Exception as e:
+                logger.warning(
+                    "unexpected_error_parsing_tool_call",
+                    error=str(e),
                     match_preview=match[:200] if len(match) > 200 else match,
                 )
                 continue

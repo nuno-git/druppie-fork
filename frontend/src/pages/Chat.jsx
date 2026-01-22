@@ -233,17 +233,24 @@ const Chat = () => {
     }
 
     const handleApprovalRequired = (data) => {
+      // Handle both tool approvals (data.tool) and step approvals (data.message)
+      const isStepApproval = data.tool?.startsWith('approval:') || data.message
+      const taskName = isStepApproval
+        ? (data.message || 'Approval checkpoint')
+        : data.tool
+
       const approvalData = {
         task_id: data.approval_id,
-        task_name: `${data.tool}`,
-        mcp_tool: data.tool,
+        task_name: taskName,
+        mcp_tool: isStepApproval ? null : data.tool,
         required_roles: data.required_roles || ['developer'],
         approval_type: data.required_roles?.length > 1 ? 'multi' : 'self',
         current_approvals: 0,
         required_approvals: 1,
         approved_by_roles: [],
         approved_by_ids: [],
-        args: data.args,
+        args: data.args || data.context,
+        step_id: data.step_id,
       }
 
       setMessages((prev) => {
@@ -254,9 +261,12 @@ const Chat = () => {
             : msg
           )
         }
-        return [...prev, { role: 'assistant', content: `I need approval to run: ${data.tool}`, pendingApprovals: [approvalData], timestamp: new Date().toISOString() }]
+        const content = isStepApproval
+          ? taskName
+          : `I need approval to run: ${data.tool}`
+        return [...prev, { role: 'assistant', content, pendingApprovals: [approvalData], timestamp: new Date().toISOString() }]
       })
-      toast.warning('Approval Required', `Agent wants to run: ${data.tool}`)
+      toast.warning('Approval Required', taskName)
     }
 
     const handleHITLProgress = (data) => {
