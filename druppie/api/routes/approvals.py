@@ -465,7 +465,66 @@ async def approve_request(
             approver_role=next(iter(user_roles), "user"),
         )
 
-        # Execute the approved tool via MCP client
+        # Check if this is a step approval checkpoint (vs MCP tool approval)
+        # Step approvals have tool_name like "approval:step_2" and contain agent_state
+        if approval.tool_name and approval.tool_name.startswith("approval:"):
+            # This is a step approval checkpoint - resume plan execution from next step
+            logger.info(
+                "resuming_from_step_approval",
+                approval_id=approval_id,
+                tool_name=approval.tool_name,
+                session_id=approval.session_id,
+            )
+
+            try:
+                # Get the saved agent_state from the approval
+                agent_state = approval.agent_state
+                if not agent_state:
+                    logger.error(
+                        "step_approval_missing_agent_state",
+                        approval_id=approval_id,
+                        tool_name=approval.tool_name,
+                    )
+                    return {
+                        "success": False,
+                        "status": "execution_failed",
+                        "error_type": ApprovalErrorType.CONTEXT_INVALID.value,
+                        "error": "Step approval is missing saved agent state. Cannot resume execution.",
+                        "user_message": "Cannot resume execution: saved state is missing.",
+                        "retryable": False,
+                    }
+
+                # Resume plan execution from the next step
+                resume_result = await loop.resume_from_step_approval(
+                    session_id=approval.session_id,
+                    agent_state=agent_state,
+                    emit_event=None,  # Will emit via WebSocket automatically
+                )
+
+                return {
+                    "success": True,
+                    "status": "approved",
+                    "session_resumed": True,
+                    "resume_result": resume_result,
+                }
+
+            except Exception as e:
+                logger.error(
+                    "step_approval_resume_error",
+                    approval_id=approval_id,
+                    error=str(e),
+                    exc_info=True,
+                )
+                return {
+                    "success": False,
+                    "status": "execution_failed",
+                    "error_type": ApprovalErrorType.SESSION_RESUME_FAILED.value,
+                    "error": str(e),
+                    "user_message": f"Failed to resume execution: {str(e)}",
+                    "retryable": False,
+                }
+
+        # This is an MCP tool approval - execute the approved tool
         try:
             mcp_client = get_mcp_client(db)
 
