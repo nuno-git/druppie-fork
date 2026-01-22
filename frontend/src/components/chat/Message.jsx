@@ -18,6 +18,7 @@ const Message = ({
   onRejectTask,
   isApprovingTask,
   currentUserId,
+  sessionId,
 }) => {
   const isUser = message.role === 'user'
   const [eventsExpanded, setEventsExpanded] = useState(true)
@@ -75,6 +76,7 @@ const Message = ({
                   onReject={onRejectTask}
                   isProcessing={isApprovingTask}
                   currentUserId={currentUserId}
+                  sessionId={sessionId || message.planId}
                 />
               ))
             )}

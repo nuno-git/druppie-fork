@@ -243,9 +243,61 @@ def create_organization():
         return False
 
 
+def create_access_token() -> str | None:
+    """Create an access token for the admin user and return it."""
+    print("\n[STEP 5] Creating access token for MCP services...")
+
+    # Use a session for proper auth handling
+    session = requests.Session()
+    session.auth = (GITEA_ADMIN_USER, GITEA_ADMIN_PASSWORD)
+    session.headers.update({"Content-Type": "application/json"})
+
+    # List existing tokens
+    tokens_url = f"{GITEA_URL}/api/v1/users/{GITEA_ADMIN_USER}/tokens"
+
+    try:
+        response = session.get(tokens_url, timeout=10)
+        if response.status_code == 200:
+            existing_tokens = response.json()
+            # Check if our token already exists
+            for token in existing_tokens:
+                if token.get("name") == "druppie-mcp":
+                    print("  [OK] Token 'druppie-mcp' already exists")
+                    print("  [NOTE] Cannot retrieve existing token value - create a new one if needed")
+                    return None
+    except Exception as e:
+        print(f"  [DEBUG] Failed to list tokens: {e}")
+
+    # Create new access token
+    token_data = {
+        "name": "druppie-mcp",
+        "scopes": ["write:repository", "write:user", "read:organization"]
+    }
+
+    try:
+        response = session.post(tokens_url, json=token_data, timeout=10)
+
+        if response.status_code == 201:
+            token = response.json().get("sha1")
+            print(f"  [OK] Created access token 'druppie-mcp'")
+            print(f"\n  *** IMPORTANT: Add this to your .env file ***")
+            print(f"  GITEA_TOKEN={token}")
+            print(f"  ********************************************\n")
+            return token
+        elif response.status_code == 422:
+            print("  [OK] Token 'druppie-mcp' already exists")
+            return None
+        else:
+            print(f"  [WARN] Could not create token: {response.status_code} - {response.text[:100]}")
+            return None
+    except Exception as e:
+        print(f"  [WARN] Could not create token: {e}")
+        return None
+
+
 def create_sample_repo():
     """Create sample repository."""
-    print("\n[STEP 5] Creating sample repository...")
+    print("\n[STEP 6] Creating sample repository...")
 
     # Use a session for proper auth handling
     session = requests.Session()
@@ -303,6 +355,7 @@ def main():
     client_secret = get_keycloak_client_secret()
     configure_oauth2(client_secret)
     create_organization()
+    token = create_access_token()
     create_sample_repo()
 
     gitea_port = GITEA_URL.split(":")[-1] if ":" in GITEA_URL else "3100"
@@ -311,6 +364,14 @@ def main():
     print(f"  URL: {GITEA_URL}")
     print(f"  Admin: {GITEA_ADMIN_USER} / {GITEA_ADMIN_PASSWORD}")
     print("")
+    if token:
+        print("  IMPORTANT: Add this token to druppie/.env to enable git push:")
+        print(f"    GITEA_TOKEN={token}")
+        print("")
+    else:
+        print("  NOTE: If GITEA_TOKEN is not set in .env, commits won't be pushed.")
+        print("    You may need to manually create a token in Gitea settings.")
+        print("")
     print("  To login with Keycloak:")
     print("    1. Click 'Sign in with Keycloak'")
     print("    2. Use your Keycloak credentials (e.g., admin/Admin123!)")
