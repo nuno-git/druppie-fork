@@ -29,15 +29,19 @@ const StatCard = ({ title, value, icon: Icon, color, link }) => (
 const Dashboard = () => {
   const { user } = useAuth()
 
-  const { data: plans = [], isLoading: plansLoading } = useQuery({
+  const { data: plansResponse, isLoading: plansLoading } = useQuery({
     queryKey: ['plans'],
     queryFn: getPlans,
   })
 
-  const { data: tasks = [], isLoading: tasksLoading } = useQuery({
+  const { data: tasksResponse, isLoading: tasksLoading } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
   })
+
+  // Extract arrays from paginated responses
+  const plans = plansResponse?.sessions || []
+  const tasks = tasksResponse?.approvals || []
 
   const { data: status } = useQuery({
     queryKey: ['status'],
