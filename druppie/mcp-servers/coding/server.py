@@ -5,6 +5,7 @@ Uses FastMCP framework for HTTP transport.
 """
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -16,8 +17,78 @@ from typing import Any
 import httpx
 from fastmcp import FastMCP
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger("coding-mcp")
+
 # Initialize FastMCP server
 mcp = FastMCP("Coding MCP Server")
+
+# =============================================================================
+# SECURITY: COMMAND BLOCKLIST
+# =============================================================================
+
+# Dangerous command patterns that should never be executed
+BLOCKED_COMMAND_PATTERNS = [
+    # Destructive file operations
+    r"rm\s+(-[rf]+\s+)*\s*/\s*$",  # rm -rf / or rm /
+    r"rm\s+(-[rf]+\s+)*\s*/\*",  # rm -rf /*
+    r"rm\s+(-[rf]+\s+)+\s*/",  # rm -rf /anything at root
+    # Disk/filesystem operations
+    r"\bmkfs\b",  # mkfs (format filesystem)
+    r"\bdd\s+if=",  # dd if= (disk operations)
+    r"\bfdisk\b",  # fdisk (partition management)
+    r"\bparted\b",  # parted (partition management)
+    # Privilege escalation
+    r"\bsudo\b",  # sudo commands
+    r"\bsu\s+-",  # su - (switch user)
+    r"\bsu\s+root",  # su root
+    # Dangerous permission changes
+    r"\bchmod\s+777\b",  # chmod 777 (world-writable)
+    r"\bchmod\s+-R\s+777\b",  # chmod -R 777
+    r"\bchown\s+.*\s+/",  # chown on system directories
+    # System modification
+    r"\bshutdown\b",  # shutdown
+    r"\breboot\b",  # reboot
+    r"\binit\s+[0-6]",  # init runlevel changes
+    r"\bsystemctl\s+(stop|disable|mask)\s+(ssh|sshd|network)",  # Critical service disruption
+    # Network attacks
+    r":\(\)\s*{\s*:\|\s*:&\s*}\s*;",  # Fork bomb
+    r">\s*/dev/sd[a-z]",  # Write to disk devices
+    r">\s*/dev/null\s*2>&1\s*&",  # Background with hidden output (often malicious)
+    # Sensitive file access
+    r">\s*/etc/passwd",  # Overwrite passwd
+    r">\s*/etc/shadow",  # Overwrite shadow
+    r">\s*/etc/sudoers",  # Overwrite sudoers
+    # Reverse shells and remote execution
+    r"\bnc\s+-[elp]",  # netcat listener
+    r"\bbash\s+-i\s+>&\s+/dev/tcp",  # Bash reverse shell
+    r"\bcurl\s+.*\|\s*bash",  # Piping curl to bash
+    r"\bwget\s+.*\|\s*bash",  # Piping wget to bash
+    r"\bcurl\s+.*\|\s*sh",  # Piping curl to sh
+    r"\bwget\s+.*\|\s*sh",  # Piping wget to sh
+]
+
+# Compile patterns for performance
+BLOCKED_PATTERNS_COMPILED = [re.compile(p, re.IGNORECASE) for p in BLOCKED_COMMAND_PATTERNS]
+
+
+def is_command_blocked(command: str) -> tuple[bool, str | None]:
+    """Check if a command matches any blocked patterns.
+
+    Args:
+        command: The command string to check
+
+    Returns:
+        Tuple of (is_blocked, matched_pattern_description)
+    """
+    for i, pattern in enumerate(BLOCKED_PATTERNS_COMPILED):
+        if pattern.search(command):
+            return True, BLOCKED_COMMAND_PATTERNS[i]
+    return False, None
 
 # Configuration
 WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/workspaces"))
@@ -250,7 +321,10 @@ async def read_file(workspace_id: str, path: str) -> dict:
         workspace_path = Path(ws["path"])
         file_path = resolve_path(path, workspace_path)
 
+        logger.info("Reading file in workspace %s: %s", workspace_id, path)
+
         if not file_path.exists():
+            logger.debug("File not found in workspace %s: %s", workspace_id, path)
             return {"success": False, "error": f"File not found: {path}"}
 
         if not file_path.is_file():
@@ -259,10 +333,22 @@ async def read_file(workspace_id: str, path: str) -> dict:
         # Check size limit (10MB)
         size = file_path.stat().st_size
         if size > 10 * 1024 * 1024:
+            logger.warning(
+                "File too large in workspace %s: %s (%d bytes)",
+                workspace_id,
+                path,
+                size,
+            )
             return {"success": False, "error": f"File too large: {size} bytes"}
 
         try:
             content = file_path.read_text(encoding="utf-8")
+            logger.debug(
+                "Successfully read file in workspace %s: %s (%d bytes)",
+                workspace_id,
+                path,
+                size,
+            )
             return {
                 "success": True,
                 "content": content,
@@ -270,6 +356,11 @@ async def read_file(workspace_id: str, path: str) -> dict:
                 "size": size,
             }
         except UnicodeDecodeError:
+            logger.debug(
+                "Binary file detected in workspace %s: %s",
+                workspace_id,
+                path,
+            )
             return {
                 "success": True,
                 "binary": True,
@@ -279,8 +370,20 @@ async def read_file(workspace_id: str, path: str) -> dict:
             }
 
     except ValueError as e:
+        logger.warning(
+            "Path resolution error in workspace %s: %s - %s",
+            workspace_id,
+            path,
+            str(e),
+        )
         return {"success": False, "error": str(e)}
     except Exception as e:
+        logger.error(
+            "Error reading file in workspace %s: %s - %s",
+            workspace_id,
+            path,
+            str(e),
+        )
         return {"success": False, "error": str(e)}
 
 
@@ -309,11 +412,24 @@ async def write_file(
         workspace_path = Path(ws["path"])
         file_path = resolve_path(path, workspace_path)
 
+        logger.info(
+            "Writing file in workspace %s: %s (%d bytes)",
+            workspace_id,
+            path,
+            len(content),
+        )
+
         # Ensure parent directory exists
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Write file
         file_path.write_text(content, encoding="utf-8")
+
+        logger.debug(
+            "Successfully wrote file in workspace %s: %s",
+            workspace_id,
+            path,
+        )
 
         result = {
             "success": True,
@@ -333,7 +449,21 @@ async def write_file(
 
         return result
 
+    except ValueError as e:
+        logger.warning(
+            "Path resolution error writing file in workspace %s: %s - %s",
+            workspace_id,
+            path,
+            str(e),
+        )
+        return {"success": False, "error": str(e)}
     except Exception as e:
+        logger.error(
+            "Error writing file in workspace %s: %s - %s",
+            workspace_id,
+            path,
+            str(e),
+        )
         return {"success": False, "error": str(e)}
 
 
@@ -435,13 +565,18 @@ async def delete_file(
         workspace_path = Path(ws["path"])
         file_path = resolve_path(path, workspace_path)
 
+        logger.info("Deleting file in workspace %s: %s", workspace_id, path)
+
         if not file_path.exists():
+            logger.debug("File not found for deletion in workspace %s: %s", workspace_id, path)
             return {"success": False, "error": f"File not found: {path}"}
 
         if file_path.is_dir():
             return {"success": False, "error": f"Path is a directory: {path}"}
 
         file_path.unlink()
+
+        logger.info("Successfully deleted file in workspace %s: %s", workspace_id, path)
 
         result = {
             "success": True,
@@ -454,7 +589,21 @@ async def delete_file(
 
         return result
 
+    except ValueError as e:
+        logger.warning(
+            "Path resolution error deleting file in workspace %s: %s - %s",
+            workspace_id,
+            path,
+            str(e),
+        )
+        return {"success": False, "error": str(e)}
     except Exception as e:
+        logger.error(
+            "Error deleting file in workspace %s: %s - %s",
+            workspace_id,
+            path,
+            str(e),
+        )
         return {"success": False, "error": str(e)}
 
 
@@ -478,6 +627,28 @@ async def run_command(
         ws = get_workspace(workspace_id)
         workspace_path = ws["path"]
 
+        # Security: Check command against blocklist
+        is_blocked, matched_pattern = is_command_blocked(command)
+        if is_blocked:
+            logger.warning(
+                "Blocked dangerous command in workspace %s: %s (matched pattern: %s)",
+                workspace_id,
+                command,
+                matched_pattern,
+            )
+            return {
+                "success": False,
+                "error": "Command blocked for security reasons",
+                "blocked": True,
+                "reason": "This command matches a dangerous pattern and cannot be executed",
+            }
+
+        logger.info(
+            "Executing command in workspace %s: %s",
+            workspace_id,
+            command[:200] + "..." if len(command) > 200 else command,
+        )
+
         result = subprocess.run(
             command,
             shell=True,
@@ -485,6 +656,12 @@ async def run_command(
             capture_output=True,
             text=True,
             timeout=timeout,
+        )
+
+        logger.info(
+            "Command completed in workspace %s with return code %d",
+            workspace_id,
+            result.returncode,
         )
 
         return {
@@ -496,8 +673,19 @@ async def run_command(
         }
 
     except subprocess.TimeoutExpired:
+        logger.warning(
+            "Command timed out after %ds in workspace %s: %s",
+            timeout,
+            workspace_id,
+            command[:100],
+        )
         return {"success": False, "error": f"Command timed out after {timeout}s"}
     except Exception as e:
+        logger.error(
+            "Command execution failed in workspace %s: %s",
+            workspace_id,
+            str(e),
+        )
         return {"success": False, "error": str(e)}
 
 
