@@ -884,7 +884,28 @@ async def submit_hitl_response(
     import os
 
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
-    redis_client = redis.from_url(redis_url)
+
+    # Establish Redis connection with error handling
+    try:
+        redis_client = redis.from_url(redis_url, socket_connect_timeout=5)
+        # Test connection before proceeding
+        redis_client.ping()
+    except redis.ConnectionError as e:
+        logger.error(
+            "redis_connection_failed",
+            error=str(e),
+            redis_url=redis_url.split("@")[-1],  # Log URL without credentials
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to connect to Redis. The service may be temporarily unavailable.",
+        )
+    except redis.TimeoutError as e:
+        logger.error("redis_timeout", error=str(e))
+        raise HTTPException(
+            status_code=503,
+            detail="Redis connection timed out. Please try again.",
+        )
 
     try:
         # Push response to Redis (HITL MCP is waiting on this)
@@ -910,6 +931,16 @@ async def submit_hitl_response(
             "request_id": response.request_id,
         }
 
+    except redis.RedisError as e:
+        logger.error(
+            "hitl_response_redis_error",
+            error=str(e),
+            request_id=response.request_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to submit response to Redis. Please try again.",
+        )
     except Exception as e:
         logger.error("hitl_response_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
