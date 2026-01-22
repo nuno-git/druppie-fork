@@ -528,3 +528,12 @@ Distinct error types for frontend handling:
 All list endpoints should follow:
 - Parameters: `page` (1-indexed, default=1), `limit` (default=20, max=100)
 - Response: `{items: [...], total: N, page: N, limit: N}`
+
+### MCP Security
+The coding MCP blocks dangerous commands. Key blocked patterns:
+- Destructive: `rm -rf /`, `mkfs`, `dd if=`
+- Privilege: `sudo`, `su -`
+- Permissions: `chmod 777`, `chown` on system dirs
+- Reverse shells: `nc -e`, `curl|bash`, `wget|bash`
+
+All MCP servers use Python logging (not print) for production monitoring.
