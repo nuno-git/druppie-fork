@@ -106,8 +106,8 @@ def create_app() -> FastAPI:
             logger.warning("readiness_database_check_failed", error=str(e))
 
         # Check if agents are loaded
-        main_loop = get_main_loop()
-        agents_ready = bool(main_loop.agents)
+        agents = Agent.list_agents()
+        agents_ready = bool(agents)
 
         is_ready = database_ready and agents_ready
 
