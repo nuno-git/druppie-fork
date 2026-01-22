@@ -2,17 +2,54 @@
  * ApprovalCard - Inline approval/reject UI for tasks requiring authorization
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   AlertTriangle,
   CheckCircle,
   XCircle,
   Loader2,
+  FileText,
+  Eye,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
+import { getWorkspaceFile } from '../../services/api'
 
-const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUserId }) => {
+const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUserId, sessionId }) => {
   const [showRejectInput, setShowRejectInput] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
+  const [showFilePreview, setShowFilePreview] = useState(false)
+  const [fileContent, setFileContent] = useState(null)
+  const [fileLoading, setFileLoading] = useState(false)
+  const [fileError, setFileError] = useState(null)
+
+  // Extract file_path from approval context
+  const filePath = approval.context?.file_path || approval.arguments?.file_path
+  const contextDescription = approval.context?.description
+
+  // Load file content when preview is toggled
+  useEffect(() => {
+    if (showFilePreview && filePath && !fileContent && !fileLoading) {
+      loadFileContent()
+    }
+  }, [showFilePreview, filePath])
+
+  const loadFileContent = async () => {
+    if (!filePath || !sessionId) return
+
+    setFileLoading(true)
+    setFileError(null)
+
+    try {
+      const response = await getWorkspaceFile(filePath, sessionId)
+      setFileContent(response.content)
+    } catch (err) {
+      console.error('Failed to load file:', err)
+      setFileError(err.message || 'Failed to load file')
+    } finally {
+      setFileLoading(false)
+    }
+  }
 
   const handleReject = () => {
     if (showRejectInput && rejectReason.trim()) {
@@ -107,6 +144,57 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
           {approval.mcp_tool && (
             <div className="text-sm text-amber-700 mb-3">
               MCP Tool: <code className="bg-amber-100 px-1 rounded">{approval.mcp_tool}</code>
+            </div>
+          )}
+
+          {/* File preview section */}
+          {filePath && (
+            <div className="mb-3">
+              <button
+                onClick={() => setShowFilePreview(!showFilePreview)}
+                className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 transition-colors"
+              >
+                <FileText className="w-4 h-4" />
+                <span>View {filePath}</span>
+                {showFilePreview ? (
+                  <ChevronUp className="w-4 h-4" />
+                ) : (
+                  <ChevronDown className="w-4 h-4" />
+                )}
+              </button>
+
+              {showFilePreview && (
+                <div className="mt-2 bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
+                  {fileLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                      <span className="ml-2 text-sm text-gray-500">Loading file...</span>
+                    </div>
+                  ) : fileError ? (
+                    <div className="p-4 text-red-600 text-sm">
+                      <AlertTriangle className="w-4 h-4 inline mr-2" />
+                      {fileError}
+                    </div>
+                  ) : fileContent ? (
+                    <div className="max-h-96 overflow-auto">
+                      <pre className="p-4 text-sm text-gray-700 whitespace-pre-wrap font-mono">
+                        {fileContent}
+                      </pre>
+                    </div>
+                  ) : (
+                    <div className="p-4 text-gray-500 text-sm">
+                      No content available
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Context description */}
+          {contextDescription && (
+            <div className="text-sm text-amber-700 mb-3 italic">
+              {contextDescription}
             </div>
           )}
 

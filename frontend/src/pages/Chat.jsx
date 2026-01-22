@@ -731,6 +731,7 @@ const Chat = () => {
               onRejectTask={handleRejectTask}
               isApprovingTask={approveMutation.isPending || rejectMutation.isPending}
               currentUserId={user?.id}
+              sessionId={currentPlanId}
             />
           ))}
           {chatMutation.isPending && (
