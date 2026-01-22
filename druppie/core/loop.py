@@ -291,6 +291,59 @@ async def planner_node(state: GraphState) -> dict:
             "response": answer,
         }
 
+    # Handle ask_clarification - call HITL MCP to ask the user
+    if action == "ask_clarification":
+        question = state["intent"].get("question", "What would you like help with?")
+        logger.info("planner_node_ask_clarification", question=question[:100])
+
+        # Call HITL MCP to ask the question
+        try:
+            from druppie.api.deps import get_db
+            db = next(get_db())
+            mcp_client = get_mcp_client(db)
+
+            session_id = state.get("session_id", "unknown")
+            result = await mcp_client.call_tool(
+                server="hitl",
+                tool="ask_question",
+                args={
+                    "session_id": session_id,
+                    "question": question,
+                    "agent_id": "router",
+                },
+                context=ctx,
+            )
+
+            logger.info("planner_node_hitl_result", result=result)
+
+            if ctx:
+                ctx.emit("step_completed", {
+                    "step": "planner",
+                    "action": "ask_clarification",
+                    "question_asked": question,
+                })
+
+            # Return with pending state - the workflow will resume when user answers
+            return {
+                "plan": None,
+                "response": None,
+                "waiting_for_answer": True,
+                "question_id": result.get("question_id") if isinstance(result, dict) else None,
+            }
+        except Exception as e:
+            logger.error("planner_node_hitl_error", error=str(e), exc_info=True)
+            # Fallback: return the question as a response
+            if ctx:
+                ctx.emit("step_completed", {
+                    "step": "planner",
+                    "action": "ask_clarification",
+                    "fallback": True,
+                })
+            return {
+                "plan": None,
+                "response": question,
+            }
+
     try:
         # Build comprehensive prompt for planner
         project_context = state["intent"].get("project_context", {})
