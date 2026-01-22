@@ -370,11 +370,33 @@ if exec_ctx and server == "coding" and "workspace_id" not in tool_args:
 - Agent definitions - YAML files in `agents/definitions/`
 
 ### E2E Testing
-Always verify changes with Playwright E2E test:
-1. Login via Keycloak
-2. Send chat message
-3. Verify agent iterations and MCP tool calls in logs
-4. Check for "success": true in tool results
+Always verify changes with Playwright E2E tests:
+
+```bash
+cd frontend
+npm run test:e2e  # Full suite (25 tests)
+npx playwright test tests/e2e/chat.spec.js:54  # Specific test
+```
+
+**Playwright Strict Mode**: When multiple elements match a selector, use:
+- `.first()` to get the first match
+- `{ exact: true }` for exact text matching
+- More specific selectors (role, testid)
+
+Example fix:
+```javascript
+// Bad - fails if multiple matches
+await page.getByText('Deploy to staging').click()
+
+// Good - handles multiple matches
+await page.getByText('Deploy to staging').first().click()
+await page.getByRole('link', { name: 'Chat', exact: true }).click()
+```
+
+**Test Ports**: Full-stack deployment uses:
+- Frontend: 5273
+- Backend: 8100
+- Keycloak: 8180
 
 ## Current Agents (7 total)
 
@@ -389,6 +411,44 @@ Always verify changes with Playwright E2E test:
 | tester | Runs tests and validates | coding:run_tests, hitl |
 
 ## Recent Improvements
+
+### Centralized Configuration (`druppie/core/config.py`)
+Single source of truth for all configuration:
+- `Settings` class with nested Pydantic models
+- Environment variable support with sensible defaults
+- Database, Redis, Keycloak, Gitea, LLM, MCP, API settings
+- Access via `get_settings()` singleton
+
+```python
+from druppie.core.config import get_settings
+settings = get_settings()
+db_url = settings.database.url
+cors_origins = settings.api.cors_origins_list
+```
+
+### Standardized API Errors (`druppie/api/errors.py`)
+Consistent error responses across all endpoints:
+- `ErrorCode` enum with machine-readable codes (AUTH_REQUIRED, NOT_FOUND, etc.)
+- `ErrorResponse` model with code, message, details, timestamp, request_id
+- Exception classes: `NotFoundError`, `AuthenticationError`, `AuthorizationError`, `ValidationError`
+- Registered via `register_exception_handlers(app)`
+
+### Role-Based Authorization Helpers (`druppie/api/deps.py`)
+Clean authorization patterns:
+- `get_user_roles(user)` - Extract roles from token
+- `user_has_role(user, role)` - Check single role (admin bypass)
+- `require_role("admin")` - Dependency for route authorization
+- `require_any_role(["dev", "admin"])` - Multiple roles
+- `check_resource_ownership(user, owner_id)` - Ownership validation
+
+```python
+@router.delete("/resource/{id}")
+async def delete_resource(
+    user: dict = Depends(get_current_user),
+    _: bool = Depends(require_role("admin")),  # Admin only
+):
+    pass
+```
 
 ### Debug Panel (`/debug/:sessionId`)
 Full execution transparency with:
