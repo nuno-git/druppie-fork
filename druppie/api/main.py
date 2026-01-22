@@ -13,8 +13,10 @@ import structlog
 
 from druppie.api.routes import chat, sessions, approvals, mcps, projects, questions, workspace
 from druppie.api.websocket import handle_websocket
+from druppie.api.errors import register_exception_handlers
 from druppie.core.loop import get_main_loop
 from druppie.core.auth import get_auth_service
+from druppie.core.config import get_settings
 from druppie.agents import Agent
 from druppie.workflows import Workflow
 
@@ -45,6 +47,9 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    # Load configuration
+    settings = get_settings()
+
     app = FastAPI(
         title="Druppie Platform",
         description="AI-powered governance platform with MCP tool permissions",
@@ -52,12 +57,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS middleware
-    # Default origins include:
-    # - 5173: Vite dev server default
-    # - 5273: Full stack docker-compose frontend
-    # - 3000: Alternative dev port
-    cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5273,http://localhost:3000").split(",")
+    # Register standardized error handlers
+    register_exception_handlers(app)
+
+    # CORS middleware using centralized config
+    cors_origins = settings.api.cors_origins_list
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
