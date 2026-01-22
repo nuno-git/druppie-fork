@@ -54,7 +54,7 @@ const checkKeycloakHealth = async (timeout = 5000) => {
     return response.ok
   } catch (error) {
     clearTimeout(timeoutId)
-    console.log('Keycloak health check failed:', error.message)
+    // Health check failure is expected when Keycloak is unavailable
     return false
   }
 }
@@ -67,18 +67,14 @@ const checkKeycloakHealth = async (timeout = 5000) => {
  */
 const waitForKeycloak = async (maxRetries = 3, retryDelay = 2000) => {
   for (let i = 0; i < maxRetries; i++) {
-    console.log(`Checking Keycloak availability (attempt ${i + 1}/${maxRetries})...`)
     const isHealthy = await checkKeycloakHealth()
     if (isHealthy) {
-      console.log('Keycloak is available')
       return true
     }
     if (i < maxRetries - 1) {
-      console.log(`Keycloak not ready, retrying in ${retryDelay}ms...`)
       await new Promise(resolve => setTimeout(resolve, retryDelay))
     }
   }
-  console.log('Keycloak is not available after retries')
   return false
 }
 
@@ -91,7 +87,7 @@ export const initKeycloak = async () => {
   keycloakAvailable = await waitForKeycloak(3, 2000)
 
   if (!keycloakAvailable) {
-    console.log('Keycloak server is not available - app will run in unauthenticated mode')
+    // Keycloak unavailable - app will run in unauthenticated mode
     clearTokens()
     // Return a mock keycloak object that allows showing login button
     keycloakInstance = {
@@ -136,7 +132,6 @@ export const initKeycloak = async () => {
       // Save tokens on successful auth
       saveTokens(keycloakInstance.token, keycloakInstance.refreshToken)
     } else {
-      console.log('User is not authenticated')
       clearTokens()
     }
 
@@ -146,7 +141,7 @@ export const initKeycloak = async () => {
         // Save refreshed tokens
         saveTokens(keycloakInstance.token, keycloakInstance.refreshToken)
       }).catch(() => {
-        console.log('Failed to refresh token')
+        console.error('Failed to refresh Keycloak token')
         clearTokens()
         keycloakInstance.logout()
       })

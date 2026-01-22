@@ -99,22 +99,18 @@ export const initSocket = (sessionId = null) => {
   socket = new WebSocket(wsUrl)
 
   socket.onopen = () => {
-    console.log('[WebSocket] Connected')
     reconnectAttempts = 0
     setConnectionStatus('connected')
   }
 
   socket.onclose = (event) => {
-    console.log('[WebSocket] Disconnected:', event.code, event.reason)
-
     // Attempt reconnection
     if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
       reconnectAttempts++
-      console.log(`[WebSocket] Reconnecting (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`)
       setConnectionStatus('reconnecting')
       setTimeout(() => initSocket(sessionId), RECONNECT_DELAY * reconnectAttempts)
     } else {
-      console.error('[WebSocket] Max reconnection attempts reached')
+      console.error('[WebSocket] Max reconnection attempts reached, code:', event.code)
       setConnectionStatus('disconnected')
     }
   }
@@ -128,11 +124,8 @@ export const initSocket = (sessionId = null) => {
       const data = JSON.parse(event.data)
       const eventType = data.type
 
-      console.log('[WebSocket] Message received:', eventType, data)
-
-      // Handle connected confirmation
+      // Handle connected confirmation (no action needed)
       if (eventType === 'connected') {
-        console.log('[WebSocket] Server confirmed connection:', data)
         return
       }
 
@@ -178,9 +171,8 @@ const sendMessage = (message) => {
   const s = getSocket()
   if (s && s.readyState === WebSocket.OPEN) {
     s.send(JSON.stringify(message))
-  } else {
-    console.warn('[WebSocket] Cannot send message - not connected')
   }
+  // Silently ignore send attempts when not connected - connection status is tracked via UI
 }
 
 /**
@@ -189,7 +181,6 @@ const sendMessage = (message) => {
 export const joinPlanRoom = (planId) => {
   if (planId) {
     sendMessage({ type: 'join_session', session_id: planId })
-    console.log('[WebSocket] Joining session room:', planId)
   }
 }
 
@@ -199,7 +190,6 @@ export const joinPlanRoom = (planId) => {
 export const joinApprovalsRoom = (roles) => {
   if (roles?.length > 0) {
     sendMessage({ type: 'join_approvals', roles })
-    console.log('[WebSocket] Joining approvals rooms for roles:', roles)
   }
 }
 
@@ -321,6 +311,5 @@ export const disconnectSocket = () => {
     socket = null
     reconnectAttempts = 0
     setConnectionStatus('disconnected')
-    console.log('[WebSocket] Disconnected')
   }
 }

@@ -593,15 +593,39 @@ const Tasks = () => {
       </div>
 
       {/* Pending Questions Section */}
-      {questions.length > 0 && (
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold flex items-center">
-            <MessageSquare className="w-5 h-5 mr-2 text-purple-500" />
-            Pending Questions
+      <div className="space-y-4">
+        <h2 className="text-lg font-semibold flex items-center">
+          <MessageSquare className="w-5 h-5 mr-2 text-purple-500" />
+          Pending Questions
+          {!questionsLoading && !questionsError && (
             <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-600 text-sm rounded-full">
               {questions.length}
             </span>
-          </h2>
+          )}
+        </h2>
+
+        {/* Loading State for Questions */}
+        {questionsLoading ? (
+          <div className="flex items-center justify-center h-32 bg-white rounded-xl border border-gray-200">
+            <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+            <span className="ml-2 text-gray-600">Loading questions...</span>
+          </div>
+        ) : questionsError ? (
+          /* Error State for Questions */
+          <div className="flex flex-col items-center justify-center h-32 text-red-500 bg-white rounded-xl border border-red-200 p-4">
+            <AlertCircle className="w-8 h-8 mb-2" />
+            <p className="font-medium">Failed to load questions</p>
+            <p className="text-sm text-red-400">{questionsErrorData?.message || 'An unexpected error occurred'}</p>
+            <button
+              onClick={() => refetchQuestions()}
+              className="mt-3 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+              aria-label="Retry loading questions"
+            >
+              Retry
+            </button>
+          </div>
+        ) : questions.length > 0 ? (
+          /* Questions List */
           <div className="grid gap-4">
             {questions.map((question) => (
               <QuestionCard
@@ -612,32 +636,14 @@ const Tasks = () => {
               />
             ))}
           </div>
-        </div>
-      )}
-
-      {/* Loading State for Questions */}
-      {questionsLoading && (
-        <div className="flex items-center justify-center h-32">
-          <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
-          <span className="ml-2 text-gray-600">Loading questions...</span>
-        </div>
-      )}
-
-      {/* Error State for Questions */}
-      {questionsError && !questionsLoading && (
-        <div className="flex flex-col items-center justify-center h-32 text-red-500 bg-white rounded-xl border border-red-200 p-4">
-          <AlertCircle className="w-8 h-8 mb-2" />
-          <p className="font-medium">Failed to load questions</p>
-          <p className="text-sm text-red-400">{questionsErrorData?.message || 'An unexpected error occurred'}</p>
-          <button
-            onClick={() => refetchQuestions()}
-            className="mt-3 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
-            aria-label="Retry loading questions"
-          >
-            Retry
-          </button>
-        </div>
-      )}
+        ) : (
+          /* Empty State for Questions */
+          <div className="text-center py-8 bg-white rounded-xl border border-gray-200">
+            <HelpCircle className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+            <p className="text-gray-500 text-sm">No pending questions from agents.</p>
+          </div>
+        )}
+      </div>
 
       {/* Approval Tasks Section */}
       {isLoading ? (
@@ -658,13 +664,13 @@ const Tasks = () => {
             Retry
           </button>
         </div>
-      ) : tasks.length === 0 && questions.length === 0 ? (
+      ) : tasks.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
           <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-          <h3 className="text-lg font-medium">All caught up!</h3>
-          <p className="text-gray-500">No pending approvals or questions at the moment.</p>
+          <h3 className="text-lg font-medium">No pending approvals</h3>
+          <p className="text-gray-500">All approval requests have been handled.</p>
         </div>
-      ) : tasks.length > 0 && (
+      ) : (
         <div className="space-y-8">
           {Object.entries(tasksByRole).map(([role, roleTasks]) => (
             <div key={role}>
