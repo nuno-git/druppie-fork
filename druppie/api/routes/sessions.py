@@ -475,11 +475,27 @@ class TraceSummary(BaseModel):
     total_duration_ms: int
 
 
+class RawLLMCall(BaseModel):
+    """Raw LLM call with full request/response data for debugging."""
+
+    agent_id: str | None = None
+    iteration: int | None = None
+    timestamp: str | None = None
+    duration_ms: int | None = None
+    # Full request data
+    messages: list[dict] = []  # Full message history sent to LLM
+    tools: list[dict] | None = None  # Full tool schemas
+    # Full response data
+    response: dict | None = None  # Full response with content and tool_calls
+    usage: dict | None = None  # Token usage
+
+
 class TraceData(BaseModel):
     """Full trace data with events and summary."""
 
     events: list[TraceEvent]
     summary: TraceSummary
+    raw_llm_calls: list[RawLLMCall] = []  # Full raw LLM data for debugging
 
 
 class SessionTraceResponse(BaseModel):
@@ -633,11 +649,27 @@ async def get_session_trace(
         agents_used=summary.agents_used,
     )
 
+    # Build raw LLM calls list for full debugging data
+    raw_llm_calls = [
+        RawLLMCall(
+            agent_id=call.get("agent_id"),
+            iteration=call.get("iteration"),
+            timestamp=call.get("timestamp"),
+            duration_ms=call.get("duration_ms"),
+            messages=call.get("messages", []),
+            tools=call.get("tools"),
+            response=call.get("response"),
+            usage=call.get("usage"),
+        )
+        for call in state.get("llm_calls", [])
+    ]
+
     return SessionTraceResponse(
         session_id=session_id,
         status=session.status,
         trace=TraceData(
             events=events,
             summary=summary,
+            raw_llm_calls=raw_llm_calls,
         ),
     )
