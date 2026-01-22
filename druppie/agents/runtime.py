@@ -3,6 +3,14 @@
 Usage:
     result = await Agent("router").run("Create a todo app")
     result = await Agent("developer").run("Implement the API", context={...})
+
+HITL (Human-in-the-Loop):
+    Agents have built-in HITL tools that do NOT require a separate MCP server:
+    - hitl_ask_question: Ask user a free-form text question
+    - hitl_ask_multiple_choice_question: Ask user to select from choices
+
+    When an agent calls these tools, execution pauses and the question is
+    saved to the database. The workflow resumes when the user answers.
 """
 
 import json
@@ -14,6 +22,7 @@ import structlog
 import yaml
 
 from druppie.agents.models import AgentDefinition
+from druppie.agents.hitl import HITL_TOOLS, execute_hitl_tool, is_hitl_tool
 from druppie.llm import get_llm_service
 from druppie.core.execution_context import get_current_context
 
@@ -141,8 +150,9 @@ class Agent:
             Parsed result from agent's final response
 
         Note:
-            If agent calls hitl:ask, execution pauses automatically
-            via LangGraph's interrupt() inside the tool.
+            Built-in HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question)
+            cause execution to pause. The question is saved to the database and
+            the workflow resumes when the user answers.
         """
         # Get execution context for event tracking
         exec_ctx = get_current_context()
@@ -153,8 +163,13 @@ class Agent:
         ]
 
         # Get tools for this agent's MCPs with full schemas from servers
+        # Filter out 'hitl' from MCP IDs - we use built-in HITL tools instead
         mcp_ids = self.definition.get_mcp_names() if hasattr(self.definition, 'get_mcp_names') else self.definition.mcps
+        mcp_ids = [m for m in mcp_ids if m != "hitl"]
         tools = await self.mcp_client.to_openai_tools_async(mcp_ids)
+
+        # Add built-in HITL tools (always available to all agents)
+        tools.extend(HITL_TOOLS)
 
         # Build a mapping of tool_name -> required_fields for validation
         tool_schemas: dict[str, dict] = {}
@@ -224,7 +239,62 @@ class Agent:
                 if exec_ctx:
                     exec_ctx.tool_call(self.id, tool_name, tool_args)
 
-                # Convert OpenAI format to MCP format (hitl_ask -> hitl:ask)
+                # Check if this is a built-in HITL tool
+                if is_hitl_tool(tool_name):
+                    logger.info(
+                        "agent_hitl_tool_call",
+                        agent_id=self.id,
+                        tool=tool_name,
+                        question=tool_args.get("question", "")[:100],
+                    )
+                    result = await execute_hitl_tool(
+                        tool_name=tool_name,
+                        tool_args=tool_args,
+                        context=exec_ctx,
+                        agent_id=self.id,
+                    )
+
+                    # Check if paused for question
+                    if result.get("status") == "paused":
+                        logger.info(
+                            "agent_paused_for_question",
+                            agent_id=self.id,
+                            tool=tool_name,
+                            question_id=result.get("question_id"),
+                        )
+                        if exec_ctx:
+                            exec_ctx.agent_completed(self.id, iteration + 1, success=True)
+                        return {
+                            "paused": True,
+                            "question_id": result.get("question_id"),
+                            "question": result.get("question"),
+                            "question_type": result.get("question_type"),
+                            "choices": result.get("choices"),
+                            "tool": tool_name,
+                            "iteration": iteration,
+                        }
+
+                    # Add tool result to messages
+                    messages.append({
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": tool_call.get("id", f"call_{iteration}"),
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args),
+                            },
+                        }],
+                    })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.get("id", f"call_{iteration}"),
+                        "content": json.dumps(result) if isinstance(result, (dict, list)) else str(result),
+                    })
+                    continue
+
+                # Convert OpenAI format to MCP format (coding_read_file -> coding:read_file)
                 mcp_tool_name = tool_name.replace("_", ":", 1)
 
                 # Parse server:tool format
@@ -260,9 +330,7 @@ class Agent:
                                     agent_id=self.id,
                                     tool=mcp_tool_name,
                                 )
-                    if server == "hitl" and "session_id" not in tool_args:
-                        tool_args["session_id"] = exec_ctx.session_id
-                        injected["session_id"] = exec_ctx.session_id
+                    # Note: hitl MCP is no longer used - we use built-in HITL tools instead
 
                     if injected:
                         logger.debug(

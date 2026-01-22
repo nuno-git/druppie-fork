@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from druppie.api.deps import get_current_user, get_db, verify_internal_api_key
 from druppie.api.errors import NotFoundError, ConflictError, ExternalServiceError
+from druppie.api.routes.chat import create_emit_event
 from druppie.db import (
     list_pending_hitl_questions,
     get_hitl_question,
@@ -97,10 +98,13 @@ async def answer_question(
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Answer a pending HITL question.
+    """Answer a pending HITL question and resume workflow.
 
-    This submits the user's response to the agent's question.
+    This submits the user's response to the agent's question and
+    resumes the workflow execution with the provided answer.
     """
+    from druppie.core.loop import get_main_loop
+
     question = get_hitl_question(db, question_id)
     if not question:
         raise NotFoundError("question", question_id)
@@ -108,11 +112,28 @@ async def answer_question(
     if question.status != "pending":
         raise ConflictError(f"Question {question_id} is already {question.status}")
 
+    # Save the answer to database
     updated = answer_hitl_question(db, question_id, request.answer)
     if not updated:
         raise ExternalServiceError("database", "Failed to answer question")
 
-    return updated.to_dict()
+    # Resume the workflow with the answer
+    # Create emit_event callback for real-time updates
+    emit_event = create_emit_event(question.session_id)
+
+    main_loop = get_main_loop()
+    result = await main_loop.resume_from_question_answer(
+        session_id=question.session_id,
+        question_id=question_id,
+        answer=request.answer,
+        emit_event=emit_event,
+    )
+
+    # Return both the answered question and the workflow result
+    return {
+        "question": updated.to_dict(),
+        "workflow_result": result,
+    }
 
 
 @router.get("/session/{session_id}")

@@ -583,13 +583,9 @@ const Chat = () => {
     setDebugWorkflowEvents([])
     setDebugLLMCalls([])
 
-    const isHITLRequest = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(questionId)
-    if (isHITLRequest) {
-      try { await submitHITLResponse(questionId, answer, selected); setCurrentStep(null) }
-      catch { toast.error('Error', 'Failed to submit answer'); setCurrentStep(null) }
-    } else {
-      answerMutation.mutate({ questionId, answer })
-    }
+    // All questions now use the database-backed endpoint
+    // (Redis-based HITL MCP server has been removed)
+    answerMutation.mutate({ questionId, answer })
   }
 
   const handleSubmit = (e) => {

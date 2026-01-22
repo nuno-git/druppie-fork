@@ -17,9 +17,6 @@ fastmcp>=2.0.0
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
 
-# Redis for port registry
-redis>=5.0.0
-
 # Data Validation
 pydantic>=2.5.0
 pydantic-settings>=2.1.0

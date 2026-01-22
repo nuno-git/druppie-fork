@@ -291,27 +291,21 @@ async def planner_node(state: GraphState) -> dict:
             "response": answer,
         }
 
-    # Handle ask_clarification - call HITL MCP to ask the user
+    # Handle ask_clarification - use built-in HITL to ask the user
     if action == "ask_clarification":
         question = state["intent"].get("question", "What would you like help with?")
         logger.info("planner_node_ask_clarification", question=question[:100])
 
-        # Call HITL MCP to ask the question
+        # Use built-in HITL to ask the question (no MCP server needed)
         try:
-            from druppie.api.deps import get_db
-            db = next(get_db())
-            mcp_client = get_mcp_client(db)
+            from druppie.agents.hitl import ask_question
 
             session_id = state.get("session_id", "unknown")
-            result = await mcp_client.call_tool(
-                server="hitl",
-                tool="ask_question",
-                args={
-                    "session_id": session_id,
-                    "question": question,
-                    "agent_id": "router",
-                },
+            result = await ask_question(
+                question=question,
                 context=ctx,
+                agent_id="router",
+                question_context="Clarifying user intent",
             )
 
             logger.info("planner_node_hitl_result", result=result)
@@ -321,6 +315,7 @@ async def planner_node(state: GraphState) -> dict:
                     "step": "planner",
                     "action": "ask_clarification",
                     "question_asked": question,
+                    "question_id": result.get("question_id"),
                 })
 
             # Return with pending state - the workflow will resume when user answers
@@ -328,7 +323,7 @@ async def planner_node(state: GraphState) -> dict:
                 "plan": None,
                 "response": None,
                 "waiting_for_answer": True,
-                "question_id": result.get("question_id") if isinstance(result, dict) else None,
+                "question_id": result.get("question_id"),
             }
         except Exception as e:
             logger.error("planner_node_hitl_error", error=str(e), exc_info=True)
@@ -1607,6 +1602,133 @@ class MainLoop:
             }
         except Exception as e:
             logger.error("step_approval_resume_error", error=str(e), exc_info=True)
+            clear_current_context()
+            return {
+                "success": False,
+                "error": str(e),
+                "session_id": session_id,
+                "workflow_events": exec_ctx.workflow_events,
+                "llm_calls": exec_ctx.llm_calls,
+            }
+
+    async def resume_from_question_answer(
+        self,
+        session_id: str,
+        question_id: str,
+        answer: str,
+        emit_event: Callable[[dict], None] | None = None,
+    ) -> dict[str, Any]:
+        """Resume workflow after user answers a HITL question.
+
+        This is called when the user answers a question that was asked by an agent.
+        The workflow should continue from where it paused.
+
+        Args:
+            session_id: Session ID
+            question_id: ID of the answered question
+            answer: User's answer
+            emit_event: Callback for real-time events
+
+        Returns:
+            Response dict with results
+        """
+        from druppie.db.crud import get_session, get_hitl_question
+
+        # Create execution context for tracking
+        exec_ctx = ExecutionContext(
+            session_id=session_id,
+            emit_event=emit_event,
+        )
+        set_current_context(exec_ctx)
+
+        logger.info(
+            "resume_from_question_answer",
+            session_id=session_id,
+            question_id=question_id,
+            answer_preview=answer[:100] if answer else "",
+        )
+
+        try:
+            # Get the session and question
+            with db_session() as db:
+                session = get_session(db, session_id)
+                question = get_hitl_question(db, question_id)
+
+                if not session:
+                    clear_current_context()
+                    return {
+                        "success": False,
+                        "error": "Session not found",
+                        "session_id": session_id,
+                    }
+
+                if not question:
+                    clear_current_context()
+                    return {
+                        "success": False,
+                        "error": "Question not found",
+                        "session_id": session_id,
+                    }
+
+                # Get session state for context
+                session_state = session.state or {}
+                workspace_info = session_state.get("workspace", {})
+
+                # Update execution context with workspace info
+                exec_ctx.workspace_id = workspace_info.get("workspace_id")
+                exec_ctx.project_id = workspace_info.get("project_id")
+                exec_ctx.workspace_path = workspace_info.get("workspace_path")
+                exec_ctx.branch = workspace_info.get("branch")
+
+            # Emit event that we're resuming
+            exec_ctx.emit("question_answered", {
+                "question_id": question_id,
+                "answer": answer,
+            })
+
+            # Re-run the workflow with the original message plus the answer context
+            # The router should now have more context to make a decision
+            original_message = session_state.get("context", {}).get("message", "")
+
+            # Build a new message that includes the user's answer
+            if question.question_type == "choice":
+                new_message = f"{original_message}\n\nUser clarification: {answer}"
+            else:
+                new_message = f"{original_message}\n\nUser clarification: {answer}"
+
+            logger.info(
+                "resuming_with_clarification",
+                session_id=session_id,
+                original_message=original_message[:50],
+                clarification=answer[:50],
+            )
+
+            # Process the message again with the clarification
+            # This will re-run the router which should now have enough context
+            result = await self.process_message(
+                message=new_message,
+                session_id=session_id,
+                user_id=session.user_id,
+                project_id=exec_ctx.project_id,
+                emit_event=emit_event,
+            )
+
+            clear_current_context()
+            return result
+
+        except CancelledException:
+            logger.info("question_resume_cancelled", session_id=session_id)
+            clear_current_context()
+            return {
+                "success": False,
+                "error": "Execution was cancelled by user",
+                "cancelled": True,
+                "session_id": session_id,
+                "workflow_events": exec_ctx.workflow_events,
+                "llm_calls": exec_ctx.llm_calls,
+            }
+        except Exception as e:
+            logger.error("question_resume_error", error=str(e), exc_info=True)
             clear_current_context()
             return {
                 "success": False,

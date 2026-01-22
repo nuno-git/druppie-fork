@@ -160,26 +160,6 @@ mcps:
           - admin
         danger_level: high
 
-  hitl:
-    url: ${MCP_HITL_URL:-http://mcp-hitl:9003}
-    description: "Human-in-the-loop - ask user questions"
-    tools:
-      - name: ask_question
-        description: "Ask user a free-form text question"
-        requires_approval: false
-
-      - name: ask_choice
-        description: "Ask user a multiple choice question"
-        requires_approval: false
-
-      - name: progress
-        description: "Send progress update to user"
-        requires_approval: false
-
-      - name: submit_response
-        description: "Submit user response (internal use)"
-        requires_approval: false
-
-      - name: notify
-        description: "Send notification to user"
-        requires_approval: false
+# NOTE: HITL (Human-in-the-Loop) is now built into the agent runtime
+# directly (agents/hitl.py). No separate MCP server is needed.
+# Built-in tools: hitl_ask_question, hitl_ask_multiple_choice_question

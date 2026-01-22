@@ -70,8 +70,6 @@ mcps:
     - read_file
     - list_dir
     - run_tests
-  hitl:
-    - progress
 
 model: glm-4
 temperature: 0.1

@@ -142,12 +142,8 @@ system_prompt: |
   5. Output ONLY the JSON object, nothing else
   6. The deployer MUST return the access URL to the user
 
-# MCP tools this agent can use
-mcps:
-  hitl:
-    - ask_question
-    - ask_choice
-    - progress
+# MCP tools this agent can use (HITL tools are built-in)
+mcps: {}
 
 model: glm-4
 temperature: 0.1

@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-import redis
 import structlog
 import yaml
 from fastmcp import Client
@@ -148,25 +147,15 @@ logger = structlog.get_logger()
 class MCPClient:
     """FastMCP client for MCP servers with approval checking."""
 
-    def __init__(self, db: "DBSession", redis_url: str | None = None):
+    def __init__(self, db: "DBSession"):
         """Initialize MCP client.
 
         Args:
             db: Database session
-            redis_url: Redis URL for pub/sub events
         """
         self.db = db
-        self.redis_url = redis_url or os.getenv("REDIS_URL", "redis://redis:6379/0")
-        self._redis: redis.Redis | None = None
         self._config: dict | None = None
         self._clients: dict[str, Client] = {}
-
-    @property
-    def redis(self) -> redis.Redis:
-        """Get Redis client (lazy initialization)."""
-        if self._redis is None:
-            self._redis = redis.from_url(self.redis_url)
-        return self._redis
 
     @property
     def config(self) -> dict:
@@ -621,25 +610,10 @@ class MCPClient:
         }
 
     def _emit_approval_request(self, session_id: str, approval) -> None:
-        """Emit approval request via Redis pub/sub and schedule WebSocket broadcast."""
+        """Emit approval request via WebSocket broadcast."""
         try:
-            # Emit via Redis pub/sub (for session-specific listeners)
-            self.redis.publish(
-                f"session:{session_id}",
-                json.dumps({
-                    "type": "approval_required",
-                    "approval_id": approval.id,
-                    "tool": approval.tool_name,
-                    "args": approval.arguments,
-                    "required_roles": approval.required_roles,
-                    "danger_level": approval.danger_level,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }),
-            )
-
-            # Also broadcast to WebSocket role rooms for cross-user notifications
+            # Broadcast to WebSocket role rooms for cross-user notifications
             # This runs in a separate task to not block the current execution
-            import asyncio
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(self._broadcast_approval_to_roles(approval))
