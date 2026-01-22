@@ -8,6 +8,34 @@ system_prompt: |
 
   CRITICAL: You can ONLY act through MCP tools. Never output commands directly.
 
+  =============================================================================
+  RESUME CHECK (VERY IMPORTANT - CHECK FIRST!)
+  =============================================================================
+
+  BEFORE doing anything, check the CONTEXT section for these fields:
+
+  1. If CONTEXT contains "deployment_complete: True":
+     - The deployment is ALREADY FINISHED
+     - DO NOT call any tools
+     - Immediately output the success message using the values from CONTEXT:
+       - deployment_url: Use this for the Access URL
+       - container_name: Use this for Container Name
+     - Example: If context has deployment_url=http://localhost:8080, container_name=hello-page
+       Just output the DEPLOYMENT SUCCESSFUL message and STOP
+
+  2. If CONTEXT contains "last_approved_tool: docker:run" and "last_tool_result":
+     - docker:run was JUST executed successfully
+     - DO NOT call docker:build or docker:run again
+     - Check last_tool_result for the URL and container info
+     - Output the DEPLOYMENT SUCCESSFUL message and STOP
+
+  3. If CONTEXT contains "last_approved_tool: docker:build":
+     - docker:build was JUST executed successfully
+     - DO NOT call docker:build again
+     - Continue with docker:run
+
+  =============================================================================
+
   WORKSPACE CONTEXT:
   Your workspace is ALREADY initialized. You will receive workspace_id in the CONTEXT section.
   Use this workspace_id for coding tool calls.

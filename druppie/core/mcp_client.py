@@ -267,9 +267,25 @@ class MCPClient:
         Returns:
             Tool result or paused status if approval required
         """
+        tool_name = f"{server}:{tool}"
         needs_approval, required_roles, danger_level = self.requires_approval(server, tool)
 
         if needs_approval:
+            # Check if we have a cached result from a recently approved execution
+            # This happens when resuming after MCP tool approval - the agent re-runs
+            # and tries to call the same tool again
+            if hasattr(context, "completed_tool_results") and context.completed_tool_results:
+                cached_result = context.completed_tool_results.get(tool_name)
+                if cached_result is not None:
+                    logger.info(
+                        "returning_cached_tool_result",
+                        tool=tool_name,
+                        session_id=context.session_id,
+                    )
+                    # Clear the cached result so it's not reused again
+                    del context.completed_tool_results[tool_name]
+                    return cached_result
+
             # ALWAYS request approval - AI is executing, user must confirm
             return await self._request_approval(
                 server, tool, args, required_roles, danger_level, context, agent_id
@@ -500,15 +516,41 @@ class MCPClient:
 
         # Include workspace context from ExecutionContext in the arguments
         # This ensures workspace_id is available when resuming after approval
+        # IMPORTANT: Only inject for tools that actually accept these parameters!
         args_with_context = dict(args)
-        if context.workspace_id and "workspace_id" not in args_with_context:
-            args_with_context["workspace_id"] = context.workspace_id
-        if context.project_id and "project_id" not in args_with_context:
-            args_with_context["project_id"] = context.project_id
-        if context.workspace_path and "workspace_path" not in args_with_context:
-            args_with_context["workspace_path"] = context.workspace_path
-        if context.branch and "branch" not in args_with_context:
-            args_with_context["branch"] = context.branch
+
+        # Coding tools use workspace_id
+        # Docker:build and docker:register_workspace use workspace_id
+        # Docker:run, docker:stop, docker:logs, docker:list_containers do NOT use workspace_id
+        tools_with_workspace = {
+            "coding": True,  # All coding tools use workspace_id
+            "docker:build": True,
+            "docker:register_workspace": True,
+        }
+        should_inject_workspace = (
+            server == "coding" or
+            tool_name in tools_with_workspace
+        )
+
+        if should_inject_workspace:
+            if context.workspace_id and "workspace_id" not in args_with_context:
+                args_with_context["workspace_id"] = context.workspace_id
+            if context.project_id and "project_id" not in args_with_context:
+                args_with_context["project_id"] = context.project_id
+            if context.workspace_path and "workspace_path" not in args_with_context:
+                args_with_context["workspace_path"] = context.workspace_path
+            if context.branch and "branch" not in args_with_context:
+                args_with_context["branch"] = context.branch
+        else:
+            # Remove workspace_id if LLM incorrectly added it to a tool that doesn't use it
+            for field in ["workspace_id", "project_id", "workspace_path", "branch"]:
+                if field in args_with_context:
+                    del args_with_context[field]
+                    logger.debug(
+                        "removed_invalid_context_field",
+                        tool=tool_name,
+                        field=field,
+                    )
 
         # Extract workspace_id from args for logging
         workspace_id = args_with_context.get("workspace_id")
@@ -660,8 +702,17 @@ class MCPClient:
         # Parse tool name
         server, tool = approval.tool_name.split(":", 1)
 
-        # Execute the tool
-        return await self._execute_tool(server, tool, approval.arguments or {}, context)
+        # Filter out context parameters that were stored in approval for context
+        # but shouldn't be passed to the actual tool
+        # These are injected by the approval flow for audit/context purposes
+        context_params = {"project_id", "workspace_path", "branch"}
+        tool_args = {
+            k: v for k, v in (approval.arguments or {}).items()
+            if k not in context_params
+        }
+
+        # Execute the tool with filtered arguments
+        return await self._execute_tool(server, tool, tool_args, context)
 
     def get_tools_for_mcps(self, mcp_ids: list[str]) -> list[dict]:
         """Get tool definitions for specified MCPs.

@@ -104,13 +104,35 @@ system_prompt: |
   - "Implementation complete!"
 
   =============================================================================
+  STATIC WEB PAGES (HTML/CSS/JS only)
+  =============================================================================
+
+  For static web pages, counters, calculators, or any frontend-only app:
+  1. Create HTML, CSS, JS files as requested
+  2. ALWAYS create a Dockerfile using nginx to serve the static files
+
+  STATIC PAGE DOCKERFILE (use this template):
+  ```dockerfile
+  FROM nginx:alpine
+  COPY . /usr/share/nginx/html/
+  EXPOSE 80
+  CMD ["nginx", "-g", "daemon off;"]
+  ```
+
+  This Dockerfile:
+  - Uses lightweight nginx-alpine image
+  - Copies all files to nginx's html directory
+  - Exposes port 80
+  - Runs nginx in foreground mode
+
+  =============================================================================
   CODE QUALITY
   =============================================================================
 
   - Write clean, readable code with proper error handling
   - Follow language conventions (PEP 8 for Python, ESLint for JS)
   - Include docstrings and comments where helpful
-  - ALWAYS create a Dockerfile for deployable apps
+  - ALWAYS create a Dockerfile for deployable apps (including static pages!)
   - ALWAYS include package.json for Node.js apps
 
   =============================================================================
