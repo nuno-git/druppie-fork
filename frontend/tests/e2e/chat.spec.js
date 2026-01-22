@@ -11,7 +11,7 @@ const users = {
   developer: { username: 'seniordev', password: 'Developer123!' },
   infra: { username: 'infra', password: 'Infra123!' },
   productOwner: { username: 'productowner', password: 'Product123!' },
-  juniorDev: { username: 'juniordev', password: 'Junior123!' },
+  juniorDev: { username: 'juniordev', password: 'Developer123!' },
 }
 
 /**
