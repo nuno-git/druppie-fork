@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session as DBSession
 import structlog
 
 from druppie.api.deps import get_current_user, get_db
+from druppie.api.errors import NotFoundError, ValidationError
 from druppie.db import crud
 from druppie.db.models import Workspace, Project
 
@@ -286,33 +287,33 @@ async def get_workspace_file(
     Returns the content of a file within the session's workspace.
     """
     if not session_id:
-        raise HTTPException(status_code=400, detail="session_id is required")
+        raise ValidationError("session_id is required", field="session_id")
 
     # Get workspace for session
     workspace = crud.get_workspace_by_session(db, session_id)
 
     if not workspace:
-        raise HTTPException(status_code=404, detail="Workspace not found for session")
+        raise NotFoundError("workspace", session_id, "Workspace not found for session")
 
     # Get workspace path
     workspace_path = get_workspace_path(workspace)
 
     if not workspace_path.exists():
-        raise HTTPException(status_code=404, detail="Workspace directory not found")
+        raise NotFoundError("workspace", str(workspace_path), "Workspace directory not found")
 
     # Resolve file path safely
     file_path = resolve_safe_path(workspace_path, path)
 
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+        raise NotFoundError("file", path)
 
     if not file_path.is_file():
-        raise HTTPException(status_code=400, detail=f"Path is not a file: {path}")
+        raise ValidationError(f"Path is not a file: {path}", field="path")
 
     # Check file size (limit to 10MB)
     size = file_path.stat().st_size
     if size > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+        raise ValidationError("File too large (max 10MB)", field="path")
 
     # Try to read as text
     try:
@@ -345,28 +346,28 @@ async def download_workspace_file(
     Returns the file as a download response.
     """
     if not session_id:
-        raise HTTPException(status_code=400, detail="session_id is required")
+        raise ValidationError("session_id is required", field="session_id")
 
     # Get workspace for session
     workspace = crud.get_workspace_by_session(db, session_id)
 
     if not workspace:
-        raise HTTPException(status_code=404, detail="Workspace not found for session")
+        raise NotFoundError("workspace", session_id, "Workspace not found for session")
 
     # Get workspace path
     workspace_path = get_workspace_path(workspace)
 
     if not workspace_path.exists():
-        raise HTTPException(status_code=404, detail="Workspace directory not found")
+        raise NotFoundError("workspace", str(workspace_path), "Workspace directory not found")
 
     # Resolve file path safely
     file_path = resolve_safe_path(workspace_path, path)
 
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+        raise NotFoundError("file", path)
 
     if not file_path.is_file():
-        raise HTTPException(status_code=400, detail=f"Path is not a file: {path}")
+        raise ValidationError(f"Path is not a file: {path}", field="path")
 
     logger.info(
         "workspace_file_download",
@@ -391,7 +392,7 @@ async def get_workspace_by_id(
     workspace = crud.get_workspace(db, workspace_id)
 
     if not workspace:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+        raise NotFoundError("workspace", workspace_id)
 
     # Get associated project if any
     project = None
