@@ -316,7 +316,7 @@ class ChatZAI(BaseLLM):
         message = choice.get("message", {})
         content = self._clean_response(message.get("content", ""))
 
-        # Parse tool calls
+        # Parse tool calls from API response
         tool_calls = []
         if message.get("tool_calls"):
             for tc in message["tool_calls"]:
@@ -342,6 +342,20 @@ class ChatZAI(BaseLLM):
                     "name": func.get("name", ""),
                     "args": args,
                 })
+
+        # Fallback: Parse tool calls from content text if not in API response
+        # Some LLMs (like glm-4) output tool calls as <tool_call>...</tool_call> text
+        if not tool_calls and content:
+            text_tool_calls = self._parse_tool_calls_from_text(content)
+            if text_tool_calls:
+                tool_calls = text_tool_calls
+                # Clean the tool call markup from content
+                content = self._remove_tool_call_markup(content)
+                logger.info(
+                    "parsed_tool_calls_from_text",
+                    count=len(tool_calls),
+                    tool_names=[tc["name"] for tc in tool_calls],
+                )
 
         # Extract usage
         usage = data.get("usage", {})
@@ -492,6 +506,99 @@ class ChatZAI(BaseLLM):
             "could_not_parse_malformed_args", tool_name=tool_name, args=args_str[:200]
         )
         return {}
+
+    def _parse_tool_calls_from_text(self, content: str) -> list[dict[str, Any]]:
+        """Parse tool calls from text content (fallback for LLMs that output text format).
+
+        Handles formats like:
+        - <tool_call>"name": "tool_name", "arguments": {...}</tool_call>
+        - <tool_call>{"name": "tool_name", "arguments": {...}}</tool_call>
+        """
+        tool_calls = []
+
+        # Find all <tool_call>...</tool_call> blocks
+        pattern = r"<tool_call>([\s\S]*?)</tool_call>"
+        matches = re.findall(pattern, content, re.IGNORECASE)
+
+        if not matches:
+            # Also try without closing tag (some LLMs forget to close)
+            pattern = r"<tool_call>([\s\S]+?)(?=<tool_call>|$)"
+            matches = re.findall(pattern, content, re.IGNORECASE)
+
+        for i, match in enumerate(matches):
+            try:
+                tool_call = self._parse_single_tool_call(match.strip(), i)
+                if tool_call:
+                    tool_calls.append(tool_call)
+            except Exception as e:
+                logger.warning(
+                    "failed_to_parse_tool_call_from_text",
+                    error=str(e),
+                    content_preview=match[:200] if match else "",
+                )
+
+        return tool_calls
+
+    def _parse_single_tool_call(self, text: str, index: int) -> dict[str, Any] | None:
+        """Parse a single tool call from text."""
+        if not text:
+            return None
+
+        # Try to parse as JSON first
+        try:
+            # Handle format: {"name": "...", "arguments": {...}}
+            if text.strip().startswith("{"):
+                data = json.loads(text)
+                if "name" in data:
+                    args = data.get("arguments", data.get("args", {}))
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError:
+                            pass
+                    return {
+                        "id": f"text_call_{index}",
+                        "name": data["name"],
+                        "args": args if isinstance(args, dict) else {},
+                    }
+        except json.JSONDecodeError:
+            pass
+
+        # Handle format: "name": "tool_name", "arguments": {...}
+        name_match = re.search(r'"name"\s*:\s*"([^"]+)"', text)
+        args_match = re.search(r'"arguments"\s*:\s*(\{[\s\S]*\})', text)
+
+        if not args_match:
+            # Try "args" instead of "arguments"
+            args_match = re.search(r'"args"\s*:\s*(\{[\s\S]*\})', text)
+
+        if name_match:
+            tool_name = name_match.group(1)
+            args = {}
+
+            if args_match:
+                args_str = args_match.group(1)
+                try:
+                    args = json.loads(args_str)
+                except json.JSONDecodeError:
+                    # Try to extract individual fields
+                    args = self._parse_malformed_args(args_str, tool_name)
+
+            return {
+                "id": f"text_call_{index}",
+                "name": tool_name,
+                "args": args if isinstance(args, dict) else {},
+            }
+
+        return None
+
+    def _remove_tool_call_markup(self, content: str) -> str:
+        """Remove <tool_call>...</tool_call> markup from content."""
+        # Remove complete tool_call blocks
+        cleaned = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", content, flags=re.IGNORECASE)
+        # Remove any leftover unclosed tags
+        cleaned = re.sub(r"</?tool_call>", "", cleaned, flags=re.IGNORECASE)
+        return cleaned.strip()
 
     def get_call_history(self) -> list[dict]:
         """Get history of LLM calls for debugging."""
