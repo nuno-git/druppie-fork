@@ -670,7 +670,15 @@ const Debug = () => {
 
       try {
         const data = await getSessionTrace(sessionId)
-        setTrace(data)
+        // API returns {session_id, status, trace: {events, summary, raw_llm_calls}}
+        // Store the full response for access to session_id and status
+        setTrace({
+          session_id: data.session_id,
+          session_status: data.status,
+          events: data.trace?.events || [],
+          summary: data.trace?.summary || {},
+          raw_llm_calls: data.trace?.raw_llm_calls || [],
+        })
       } catch (err) {
         console.error('Failed to fetch trace:', err)
         setError(err.message || 'Failed to load execution trace')
