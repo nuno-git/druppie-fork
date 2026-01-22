@@ -157,6 +157,8 @@ mcps:
     - list_dir
     - delete_file
     - run_command
+  hitl:
+    - progress
 
 # NO approval_overrides needed!
 # Per goal.md:

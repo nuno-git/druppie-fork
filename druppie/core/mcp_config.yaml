@@ -160,6 +160,22 @@ mcps:
         requires_approval: true
         required_role: developer
 
-# NOTE: HITL (Human-in-the-Loop) is now built into the agent runtime
-# directly (agents/hitl.py). No separate MCP server is needed.
-# Built-in tools: hitl_ask_question, hitl_ask_multiple_choice_question
+  hitl:
+    url: ${MCP_HITL_URL:-http://mcp-hitl:9003}
+    description: "Human-in-the-loop interaction via Redis pub/sub"
+    tools:
+      - name: ask_question
+        description: "Ask user a free-form text question"
+        requires_approval: false
+
+      - name: ask_choice
+        description: "Ask user a multiple choice question"
+        requires_approval: false
+
+      - name: progress
+        description: "Send progress update to user (non-blocking)"
+        requires_approval: false
+
+      - name: notify
+        description: "Send notification to user"
+        requires_approval: false
