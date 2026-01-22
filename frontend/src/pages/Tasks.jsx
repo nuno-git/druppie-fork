@@ -401,11 +401,14 @@ const Tasks = () => {
   const toast = useToast()
   const [isConnected, setIsConnected] = useState(false)
 
-  const { data: tasks = [], isLoading, isError, error, refetch: refetchTasks } = useQuery({
+  const { data: tasksResponse, isLoading, isError, error, refetch: refetchTasks } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
     refetchInterval: 10000,
   })
+
+  // Extract tasks array from paginated response
+  const tasks = tasksResponse?.approvals || []
 
   const { data: questions = [], isLoading: questionsLoading, isError: questionsError, error: questionsErrorData, refetch: refetchQuestions } = useQuery({
     queryKey: ['questions'],
