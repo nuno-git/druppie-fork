@@ -404,6 +404,16 @@ if exec_ctx and server == "coding" and "workspace_id" not in tool_args:
     tool_args["workspace_id"] = exec_ctx.workspace_id
 ```
 
+### Issue: HITL Clarifications Lost on Workflow Resume (architect asks same question twice)
+**Symptom**: After user confirms with "yes", architect asks the same HITL question again
+**Cause**: `resume_from_question_answer` saves clarifications to database, but `_save_session` runs
+immediately after and overwrites the session state before the clarification can be read back
+**Fix**: Pass clarifications directly via ExecutionContext instead of relying on database:
+1. Add `hitl_clarifications` field to ExecutionContext
+2. Pass clarifications as parameter to `process_message()` from `resume_from_question_answer()`
+3. In `execute_agent_step`, read clarifications from `ctx.hitl_clarifications` instead of database
+**Key**: Database commits may not be visible to other connections immediately; use direct parameter passing
+
 ### Issue: HITL MCP Not Configured (hitl:progress fails)
 **Symptom**: Deployer/developer agents fail with "Client failed to connect" when calling hitl:progress
 **Cause**: HITL MCP server running on port 9003 but not configured in mcp_config.yaml
