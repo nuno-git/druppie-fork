@@ -85,6 +85,10 @@ export const rejectApproval = (approvalId, comment = '') =>
 // Legacy task endpoints (mapped to approvals for backwards compatibility)
 export const getTasks = () => request('/api/approvals')
 export const getTask = (taskId) => request(`/api/approvals/${taskId}`)
+export const getApprovalHistory = (limit = 20) =>
+  request(`/api/approvals?status=approved&limit=${limit}`)
+export const getRejectedApprovals = (limit = 20) =>
+  request(`/api/approvals?status=rejected&limit=${limit}`)
 export const approveTask = (taskId, comment = '') =>
   request(`/api/approvals/${taskId}/approve`, {
     method: 'POST',
