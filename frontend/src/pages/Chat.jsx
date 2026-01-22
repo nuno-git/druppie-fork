@@ -2121,8 +2121,6 @@ What would you like to build today?`,
   // Listen for real-time workflow events during processing
   useEffect(() => {
     const handleWorkflowEvent = (data) => {
-      console.log('[Socket] Workflow event:', data)
-
       // Only process events for the current session (or if no session yet, any event)
       // Backend sends session_id, not plan_id
       const eventSessionId = data.session_id || data.plan_id
@@ -2163,8 +2161,6 @@ What would you like to build today?`,
   useEffect(() => {
     // Handler for task_approved events
     const handleTaskApproved = (task) => {
-      console.log('[Socket] Task approved:', task)
-
       // Get the latest approval (most recent one)
       const approvals = task.approvals || []
       const latestApproval = approvals[approvals.length - 1]
@@ -2225,8 +2221,6 @@ What would you like to build today?`,
 
     // Handler for task_rejected events
     const handleTaskRejected = (task) => {
-      console.log('[Socket] Task rejected:', task)
-
       // Get rejection info
       const rejectionApproval = (task.approvals || []).find(a => a.decision === 'rejected')
       const rejectorRole = rejectionApproval?.approver_role || rejectionApproval?.role || 'someone'
@@ -2272,8 +2266,6 @@ What would you like to build today?`,
   useEffect(() => {
     // Handler for HITL questions from MCP microservices
     const handleHITLQuestion = (data) => {
-      console.log('[Socket] HITL Question:', data)
-
       // Add question to the current message or create a new one
       const questionData = {
         id: data.request_id,
@@ -2318,8 +2310,6 @@ What would you like to build today?`,
 
     // Handler for MCP approval required events
     const handleApprovalRequired = (data) => {
-      console.log('[Socket] Approval Required:', data)
-
       const approvalData = {
         task_id: data.approval_id,
         task_name: `${data.tool}`,
@@ -2365,8 +2355,6 @@ What would you like to build today?`,
 
     // Handler for progress updates
     const handleHITLProgress = (data) => {
-      console.log('[Socket] HITL Progress:', data)
-
       // Add progress event to workflow events
       setLiveWorkflowEvents((prev) => [
         ...prev,
@@ -2498,10 +2486,10 @@ What would you like to build today?`,
           workspace_path: data.workspace_path,
         })
       }
-      queryClient.invalidateQueries(['projects'])
-      queryClient.invalidateQueries(['sessions'])
-      queryClient.invalidateQueries(['tasks'])
-      queryClient.invalidateQueries(['questions'])
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      queryClient.invalidateQueries({ queryKey: ['questions'] })
     },
     onError: (error) => {
       setMessages((prev) => [
@@ -2558,8 +2546,8 @@ What would you like to build today?`,
       }
 
       // Invalidate queries to refresh data
-      queryClient.invalidateQueries(['tasks'])
-      queryClient.invalidateQueries(['sessions'])
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
     onError: (error) => {
       setMessages((prev) => [
@@ -2597,8 +2585,8 @@ What would you like to build today?`,
       ])
 
       // Invalidate queries
-      queryClient.invalidateQueries(['tasks'])
-      queryClient.invalidateQueries(['sessions'])
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
     onError: (error) => {
       setMessages((prev) => [
@@ -2646,9 +2634,9 @@ What would you like to build today?`,
         }
       }
 
-      queryClient.invalidateQueries(['questions'])
-      queryClient.invalidateQueries(['sessions'])
-      queryClient.invalidateQueries(['projects'])
+      queryClient.invalidateQueries({ queryKey: ['questions'] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
       setCurrentStep(null)
     },
     onError: (error, variables) => {
@@ -2727,7 +2715,6 @@ What would you like to build today?`,
 
     // Join the session room BEFORE making the API call to receive events
     // This ensures we receive all workflow events emitted during processing
-    console.log('[Chat] Joining session room before API call:', sessionId)
     joinPlanRoom(sessionId)
 
     // If this is a new session, set it immediately so event handlers work
