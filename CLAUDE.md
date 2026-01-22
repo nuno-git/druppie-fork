@@ -508,3 +508,23 @@ All interactive elements should have:
 - `aria-label` for icon-only buttons
 - `focus:ring` for visible focus states
 - `aria-expanded` for expandable sections
+
+### N+1 Query Prevention
+Batch load related data instead of querying per-item:
+```python
+# In builder.py
+builds_by_project = builder.get_builds_for_projects(project_ids)
+for project in projects:
+    builds = builds_by_project.get(project.id, {"main": None, "previews": []})
+```
+
+### Approval Error Types
+Distinct error types for frontend handling:
+- `workspace_missing`, `mcp_unavailable`, `tool_execution_failed`
+- `invalid_arguments`, `session_resume_failed`
+- Returns `error_type`, `user_message`, `retryable` in responses
+
+### Pagination Standards
+All list endpoints should follow:
+- Parameters: `page` (1-indexed, default=1), `limit` (default=20, max=100)
+- Response: `{items: [...], total: N, page: N, limit: N}`
