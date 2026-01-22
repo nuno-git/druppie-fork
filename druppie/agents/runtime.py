@@ -374,30 +374,64 @@ TASK:
     def _parse_output(self, content: str) -> Any:
         """Parse agent's final output.
 
-        Tries to parse as JSON, falls back to raw content.
+        Tries to parse as JSON using multiple extraction strategies,
+        falls back to raw content.
         """
+        import json
+        import re
+
         if not content:
             return {}
 
         content = content.strip()
 
-        # Try to extract JSON from markdown code blocks
-        if content.startswith("```"):
-            lines = content.split("\n")
-            # Remove first and last lines (``` markers)
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            content = "\n".join(lines)
-
-        # Try to parse as JSON
-        import json
+        # Strategy 1: Try direct JSON parse first (ideal case)
         try:
             return json.loads(content)
         except json.JSONDecodeError:
-            # Return as string if not valid JSON
-            return {"content": content}
+            pass
+
+        # Strategy 2: Extract JSON from markdown code blocks
+        # Handles ```json ... ``` or ``` ... ```
+        code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", content)
+        if code_block_match:
+            try:
+                return json.loads(code_block_match.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+
+        # Strategy 3: Find JSON object in text (look for {...})
+        # This handles cases where LLM adds text before/after JSON
+        json_match = re.search(r"\{[\s\S]*\}", content)
+        if json_match:
+            try:
+                return json.loads(json_match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+        # Strategy 4: Find JSON array in text (look for [...])
+        array_match = re.search(r"\[[\s\S]*\]", content)
+        if array_match:
+            try:
+                return json.loads(array_match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+        # Strategy 5: Try to fix common JSON issues
+        # Remove trailing commas before } or ]
+        fixed_content = re.sub(r",\s*([}\]])", r"\1", content)
+        try:
+            return json.loads(fixed_content)
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: Return as string content
+        logger.debug(
+            "json_parse_failed",
+            agent_id=self.id,
+            content_preview=content[:200] if len(content) > 200 else content,
+        )
+        return {"content": content}
 
     def __repr__(self) -> str:
         return f"Agent({self.id!r})"
