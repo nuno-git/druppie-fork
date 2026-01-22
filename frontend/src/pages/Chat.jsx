@@ -784,6 +784,7 @@ const Chat = () => {
       <DebugPanel
         isOpen={debugPanelOpen}
         onClose={() => setDebugPanelOpen(false)}
+        sessionId={currentPlanId}
         apiCalls={apiCalls}
         workflowEvents={liveWorkflowEvents.length > 0 ? liveWorkflowEvents : debugWorkflowEvents}
         llmCalls={debugLLMCalls}

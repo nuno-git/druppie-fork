@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   X,
   Copy,
@@ -19,10 +20,11 @@ import {
   Bug,
   MessageSquare,
   User,
+  ExternalLink,
 } from 'lucide-react'
 import { getStatusColors, getIconBgColor, getEventIcon } from '../../utils/eventUtils'
 
-const DebugPanel = ({ isOpen, onClose, apiCalls, workflowEvents, llmCalls: llmCallsProp, workspaceInfo, messages = [] }) => {
+const DebugPanel = ({ isOpen, onClose, sessionId, apiCalls, workflowEvents, llmCalls: llmCallsProp, workspaceInfo, messages = [] }) => {
   const [copiedIndex, setCopiedIndex] = useState(null)
   const [expandedItems, setExpandedItems] = useState({})
   const [allCopied, setAllCopied] = useState(false)
@@ -143,6 +145,16 @@ const DebugPanel = ({ isOpen, onClose, apiCalls, workflowEvents, llmCalls: llmCa
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {sessionId && (
+              <Link
+                to={`/debug/${sessionId}`}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs bg-purple-100 text-purple-700 hover:bg-purple-200 rounded-lg transition-colors"
+                title="Open full debug page with raw LLM calls"
+              >
+                <ExternalLink className="w-3 h-3" />
+                Full Debug Page
+              </Link>
+            )}
             <button
               onClick={copyAllToClipboard}
               className="flex items-center gap-1 px-3 py-1.5 text-xs bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors"
