@@ -4,7 +4,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Wifi, WifiOff, Bot } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Wifi, WifiOff, Bot, ExternalLink } from 'lucide-react'
 import { getTasks, approveTask, rejectTask, getQuestions, answerQuestion } from '../services/api'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
@@ -197,6 +198,16 @@ const TaskCard = ({ task, onApprove, onReject }) => {
         <div>
           <span className="text-gray-500">Session:</span>
           <span className="ml-2 font-medium font-mono text-xs">{task.session_id ? task.session_id.substring(0, 8) + '...' : 'N/A'}</span>
+          {task.session_id && (
+            <Link
+              to={`/chat?session=${task.session_id}`}
+              className="ml-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline"
+              aria-label="View conversation for this approval"
+            >
+              <ExternalLink className="w-3 h-3" />
+              View Conversation
+            </Link>
+          )}
         </div>
         <div>
           <span className="text-gray-500">Created:</span>

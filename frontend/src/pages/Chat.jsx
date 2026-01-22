@@ -34,8 +34,9 @@ import {
   Copy,
   Check,
   X,
+  FolderOpen,
 } from 'lucide-react'
-import { sendChat, getSessions, getPlan, answerQuestion, approveTask, rejectTask, submitHITLResponse } from '../services/api'
+import { sendChat, getSessions, getPlan, answerQuestion, approveTask, rejectTask, submitHITLResponse, getProject } from '../services/api'
 import { useAuth } from '../App'
 import {
   initSocket,
@@ -1955,6 +1956,7 @@ const Chat = () => {
   const [workspaceInfo, setWorkspaceInfo] = useState(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [initialSessionLoaded, setInitialSessionLoaded] = useState(false)
+  const [currentProject, setCurrentProject] = useState(null) // Project info for current session
   const messagesEndRef = useRef(null)
   const queryClient = useQueryClient()
 
@@ -1982,6 +1984,23 @@ const Chat = () => {
         if (fullSession) {
           setCurrentPlanId(sessionIdFromUrl)
           setInitialSessionLoaded(true)
+
+          // Load project info if session has a project
+          if (fullSession.project) {
+            // Session API already returns project info
+            setCurrentProject(fullSession.project)
+          } else if (fullSession.project_id) {
+            // Fetch project info if only ID is available
+            try {
+              const projectInfo = await getProject(fullSession.project_id)
+              setCurrentProject(projectInfo)
+            } catch (err) {
+              console.error('Error fetching project info:', err)
+              setCurrentProject(null)
+            }
+          } else {
+            setCurrentProject(null)
+          }
 
           // Load persisted workflow events and LLM calls
           const workflowEvents = fullSession.result?.workflow_events || []
@@ -2744,6 +2763,7 @@ What would you like to build today?`,
     setDebugWorkflowEvents([]) // Clear debug events for new chat
     setDebugLLMCalls([]) // Clear debug LLM calls for new chat
     setWorkspaceInfo(null) // Clear workspace info for new chat
+    setCurrentProject(null) // Clear project info for new chat
     setSearchParams({}) // Clear URL parameter for new chat
     setMessages([
       {
@@ -2786,8 +2806,26 @@ What would you like to build today?`,
             approved_by_ids: task.approvals?.filter(a => a.decision === 'approved').map(a => a.approved_by || a.approver_id) || [],
           }))
       }
+
+      // Load project info if session has a project
+      if (fullSession.project) {
+        // Session API already returns project info
+        setCurrentProject(fullSession.project)
+      } else if (fullSession.project_id) {
+        // Fetch project info if only ID is available
+        try {
+          const projectInfo = await getProject(fullSession.project_id)
+          setCurrentProject(projectInfo)
+        } catch (projectErr) {
+          console.error('Error fetching project info:', projectErr)
+          setCurrentProject(null)
+        }
+      } else {
+        setCurrentProject(null)
+      }
     } catch (err) {
       console.error('Error fetching session details:', err)
+      setCurrentProject(null)
     }
 
     // Load persisted workflow events and LLM calls from full session result
@@ -2872,16 +2910,33 @@ What would you like to build today?`,
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-gray-50">
-        {/* Header with Debug Button */}
+        {/* Header with Project Context and Debug Button */}
         <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-white">
-          <div className="text-sm text-gray-600">
-            {currentPlanId ? (
-              <span className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                Active Conversation
-              </span>
-            ) : (
-              <span>New Conversation</span>
+          <div className="flex items-center gap-4">
+            <div className="text-sm text-gray-600">
+              {currentPlanId ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                  Active Conversation
+                </span>
+              ) : (
+                <span>New Conversation</span>
+              )}
+            </div>
+            {/* Project Context */}
+            {currentProject && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-50 rounded-lg border border-purple-200">
+                <FolderOpen className="w-4 h-4 text-purple-600" />
+                <span className="text-sm font-medium text-purple-900">{currentProject.name}</span>
+                <button
+                  onClick={() => navigate(`/projects/${currentProject.id}`)}
+                  className="ml-1 flex items-center gap-1 text-xs text-purple-600 hover:text-purple-800 hover:underline focus:outline-none focus:ring-2 focus:ring-purple-500 rounded"
+                  aria-label={`View project: ${currentProject.name}`}
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  View Project
+                </button>
+              </div>
             )}
           </div>
           <button
