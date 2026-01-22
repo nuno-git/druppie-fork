@@ -243,8 +243,31 @@ class ExecutionState(BaseModel):
 # =============================================================================
 
 
+class ApprovalOverride(BaseModel):
+    """Override for tool approval requirements.
+
+    Used by agents to override the default approval rules from mcp_config.yaml.
+    Per goal.md: Uses required_role (singular) instead of required_roles (array).
+    """
+
+    requires_approval: bool = True
+    required_role: str | None = None  # Single role, not array (per goal.md)
+
+
 class AgentDefinition(BaseModel):
-    """Definition of an agent loaded from YAML."""
+    """Definition of an agent loaded from YAML.
+
+    LAYERED APPROVAL SYSTEM (per goal.md):
+    - mcp_config.yaml defines GLOBAL defaults for all agents
+    - Each agent can OVERRIDE defaults via approval_overrides
+    - Uses required_role (singular) not required_roles (array)
+
+    Example in architect.yaml:
+        approval_overrides:
+          coding:write_file:
+            requires_approval: true
+            required_role: architect
+    """
 
     id: str
     name: str
@@ -255,6 +278,11 @@ class AgentDefinition(BaseModel):
     # Can be a simple list of MCP names: ["coding", "hitl"]
     # Or a dict mapping MCP names to allowed tools: {"coding": ["read_file"], "hitl": ["ask_question"]}
     mcps: list[str] | dict[str, list[str]] = Field(default_factory=list)
+
+    # Approval overrides for specific tools (per goal.md layered system)
+    # Key format: "mcp:tool_name" (e.g., "coding:write_file")
+    # Value: ApprovalOverride with requires_approval and required_role
+    approval_overrides: dict[str, ApprovalOverride] = Field(default_factory=dict)
 
     # LLM settings
     model: str | None = None
@@ -273,6 +301,19 @@ class AgentDefinition(BaseModel):
         if isinstance(self.mcps, dict):
             return self.mcps.get(mcp_name)
         return None  # All tools allowed when using simple list format
+
+    def get_approval_override(self, server: str, tool: str) -> ApprovalOverride | None:
+        """Get approval override for a specific tool, if any.
+
+        Args:
+            server: MCP server name (e.g., "coding")
+            tool: Tool name (e.g., "write_file")
+
+        Returns:
+            ApprovalOverride if override exists, None otherwise
+        """
+        key = f"{server}:{tool}"
+        return self.approval_overrides.get(key)
 
 
 class AgentResult(BaseModel):

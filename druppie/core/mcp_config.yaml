@@ -1,5 +1,17 @@
 # MCP Server Configuration
 # Defines all MCPs, their URLs, and tool approval requirements
+#
+# LAYERED APPROVAL SYSTEM (per goal.md):
+# - This file defines GLOBAL DEFAULTS for all agents
+# - Agents can OVERRIDE these defaults in their YAML files via approval_overrides
+# - Use "required_role" (singular string) instead of "required_roles" (array)
+# - No danger_level - keeping it simple
+#
+# Example override in agent YAML:
+#   approval_overrides:
+#     coding:write_file:
+#       requires_approval: true
+#       required_role: architect
 
 mcps:
   coding:
@@ -20,10 +32,14 @@ mcps:
 
       - name: write_file
         description: "Write file to workspace (auto-commits)"
+        # DEFAULT: No approval needed for write_file
+        # Agents can OVERRIDE this (e.g., architect requires architect approval)
         requires_approval: false
 
       - name: batch_write_files
         description: "Write multiple files at once with a single git commit"
+        # DEFAULT: No approval needed for batch writes
+        # Agents can OVERRIDE this (e.g., architect requires architect approval)
         requires_approval: false
 
       - name: list_dir
@@ -37,10 +53,7 @@ mcps:
       - name: run_command
         description: "Execute shell command in workspace"
         requires_approval: true
-        required_roles:
-          - developer
-          - admin
-        danger_level: high
+        required_role: developer
 
       - name: run_tests
         description: "Run tests in workspace with auto-detection of test framework"
@@ -57,10 +70,7 @@ mcps:
       - name: merge_to_main
         description: "Merge feature branch to main"
         requires_approval: true
-        required_roles:
-          - architect
-          - admin
-        danger_level: medium
+        required_role: architect
 
       - name: get_git_status
         description: "Get git status for workspace"
@@ -76,11 +86,9 @@ mcps:
 
       - name: build
         description: "Build Docker image from workspace"
+        # GLOBAL: docker:build ALWAYS needs developer approval (per goal.md)
         requires_approval: true
-        required_roles:
-          - developer
-          - admin
-        danger_level: medium
+        required_role: developer
         parameters:
           type: object
           properties:
@@ -101,11 +109,9 @@ mcps:
 
       - name: run
         description: "Run Docker container"
+        # GLOBAL: docker:run ALWAYS needs developer approval (per goal.md)
         requires_approval: true
-        required_roles:
-          - developer
-          - admin
-        danger_level: medium
+        required_role: developer
         parameters:
           type: object
           properties:
@@ -139,10 +145,7 @@ mcps:
       - name: remove
         description: "Remove container"
         requires_approval: true
-        required_roles:
-          - developer
-          - admin
-        danger_level: low
+        required_role: developer
 
       - name: list_containers
         description: "List Docker containers"
@@ -155,10 +158,7 @@ mcps:
       - name: exec_command
         description: "Execute command in running container"
         requires_approval: true
-        required_roles:
-          - developer
-          - admin
-        danger_level: high
+        required_role: developer
 
 # NOTE: HITL (Human-in-the-Loop) is now built into the agent runtime
 # directly (agents/hitl.py). No separate MCP server is needed.

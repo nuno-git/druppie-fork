@@ -84,11 +84,10 @@ ZAI_BASE_URL=https://api.z.ai/api/coding/paas/v4
 OLLAMA_HOST=http://host.docker.internal:11434
 OLLAMA_MODEL=qwen2.5:7b
 
-# MCP Microservices
+# MCP Microservices (HITL is built into backend)
 USE_MCP_MICROSERVICES=true
 MCP_CODING_URL=http://mcp-coding:9001
 MCP_DOCKER_URL=http://mcp-docker:9002
-MCP_HITL_URL=http://mcp-hitl:9003
 EOF
     success "Environment saved to .env"
 }
@@ -140,7 +139,8 @@ create_network() {
 
 start_infrastructure() {
     log "Starting infrastructure services..."
-    compose up -d keycloak-db gitea-db druppie-db redis
+    # NOTE: Redis removed - HITL uses database directly now
+    compose up -d keycloak-db gitea-db druppie-db
 
     log "Waiting for databases to be ready..."
     sleep 10
@@ -217,7 +217,8 @@ configure_gitea() {
 
 start_mcp_servers() {
     log "Starting MCP microservices..."
-    compose up -d mcp-coding mcp-docker mcp-hitl
+    # NOTE: mcp-hitl removed - HITL is now built into the backend
+    compose up -d mcp-coding mcp-docker
 
     log "Waiting for MCP servers to be ready..."
     sleep 5
@@ -233,12 +234,6 @@ start_mcp_servers() {
         success "Docker MCP ready (port 9002)"
     else
         warn "Docker MCP may not be ready yet"
-    fi
-
-    if compose ps mcp-hitl | grep -q "Up"; then
-        success "HITL MCP ready (port 9003)"
-    else
-        warn "HITL MCP may not be ready yet"
     fi
 
     success "MCP microservices started"
@@ -258,7 +253,8 @@ build_frontend() {
 
 build_mcp_servers() {
     log "Building MCP servers..."
-    compose build mcp-coding mcp-docker mcp-hitl
+    # NOTE: mcp-hitl removed - HITL is now built into the backend
+    compose build mcp-coding mcp-docker
     success "MCP servers built"
 }
 
@@ -290,14 +286,18 @@ print_summary() {
     echo "MCP Microservices:"
     echo "  - Coding MCP:  http://localhost:9001 (internal: mcp-coding:9001)"
     echo "  - Docker MCP:  http://localhost:9002 (internal: mcp-docker:9002)"
-    echo "  - HITL MCP:    http://localhost:9003 (internal: mcp-hitl:9003)"
+    echo "  - HITL:        Built into backend (no separate server)"
     echo ""
-    echo "Default Users (Keycloak):"
-    echo "  - admin / Admin123!           (Full access)"
+    echo "Default Users (Keycloak) - per goal.md:"
+    echo "  - normal_user / User123!      (user role - makes requests)"
+    echo "  - architect / Architect123!   (architect role - approves designs)"
+    echo "  - developer / Developer123!   (developer role - approves builds)"
+    echo "  - admin / Admin123!           (admin role - full access)"
+    echo ""
+    echo "Legacy Users:"
     echo "  - infra / Infra123!           (Infrastructure Engineer)"
-    echo "  - architect / Architect123!   (System Architect)"
     echo "  - seniordev / Developer123!   (Senior Developer)"
-    echo "  - juniordev / Junior123!      (Junior Developer)"
+    echo "  - juniordev / Developer123!   (Junior Developer)"
     echo "  - productowner / Product123!  (Product Owner)"
     echo "  - compliance / Compliance123! (Compliance Officer)"
     echo "  - viewer / Viewer123!         (Viewer)"

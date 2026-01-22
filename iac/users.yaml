@@ -1,61 +1,49 @@
 # Druppie Governance Platform - Users & Roles Configuration
 # This file defines users, roles, and MCP permissions
+#
+# SIMPLIFIED ROLE SYSTEM (per goal.md):
+# - user: Can make requests, triggers workflow
+# - architect: Approves architecture/design decisions
+# - developer: Approves builds and deployments
+# - admin: Full access (reserved for future)
 
 # =============================================================================
-# REALM ROLES (Governance Roles)
+# REALM ROLES (Simplified Governance Roles)
 # =============================================================================
 roles:
-  # Core governance roles
+  # Basic user role - can make requests
+  - name: user
+    description: Regular user - can make requests and trigger workflows
+
+  # Architect role - approves architecture decisions
+  - name: architect
+    description: System architect - approves architecture/design decisions
+
+  # Developer role - approves builds and deployments
+  - name: developer
+    description: Developer - approves builds and deployments
+
+  # Admin role - full access (reserved)
   - name: admin
     description: Platform administrator with full access
     composite: true
     composites:
+      - user
       - developer
       - architect
-      - infra-engineer
-      - product-owner
-      - compliance-officer
 
-  - name: developer
-    description: Software developer - can create/modify code
-    mcpPermissions:
-      - filesystem.read
-      - filesystem.write
-      - shell.run
-      - git.clone
-      - git.commit
-      - git.push
-
-  - name: architect
-    description: System architect - can approve technical designs
-    mcpPermissions:
-      - filesystem.read
-      - filesystem.write
-      - shell.run
-      - git.*
-      - docker.build
-
+  # Legacy roles kept for backwards compatibility
   - name: infra-engineer
     description: Infrastructure engineer - can approve deployments
-    mcpPermissions:
-      - docker.*
-      - shell.run
-      - git.*
 
   - name: product-owner
     description: Product owner - can approve features and priorities
-    mcpPermissions:
-      - filesystem.read
-      - git.read
 
   - name: compliance-officer
     description: Compliance officer - can approve regulatory changes
-    mcpPermissions:
-      - filesystem.read
 
   - name: viewer
     description: Read-only access to view plans and status
-    mcpPermissions: []
 
 # =============================================================================
 # APPROVAL WORKFLOWS
@@ -131,10 +119,43 @@ mcpPermissionLevels:
 defaultPassword: "ChangeMe123!"
 
 # =============================================================================
-# USERS
+# USERS (per goal.md)
 # =============================================================================
 users:
-  # Admin user
+  # Normal user - can make requests (per goal.md)
+  - username: normal_user
+    email: user@druppie.local
+    firstName: Normal
+    lastName: User
+    enabled: true
+    emailVerified: true
+    password: "User123!"
+    realmRoles:
+      - user
+
+  # Architect user - approves architecture decisions (per goal.md)
+  - username: architect
+    email: architect@druppie.local
+    firstName: System
+    lastName: Architect
+    enabled: true
+    emailVerified: true
+    password: "Architect123!"
+    realmRoles:
+      - architect
+
+  # Developer user - approves builds and deployments (per goal.md)
+  - username: developer
+    email: developer@druppie.local
+    firstName: Senior
+    lastName: Developer
+    enabled: true
+    emailVerified: true
+    password: "Developer123!"
+    realmRoles:
+      - developer
+
+  # Admin user - full access (per goal.md)
   - username: admin
     email: admin@druppie.local
     firstName: Admin
@@ -145,7 +166,7 @@ users:
     realmRoles:
       - admin
 
-  # Infrastructure Engineer
+  # Legacy users kept for backwards compatibility
   - username: infra
     email: infra@druppie.local
     firstName: Infrastructure
@@ -156,19 +177,6 @@ users:
     realmRoles:
       - infra-engineer
 
-  # Senior Architect
-  - username: architect
-    email: architect@druppie.local
-    firstName: System
-    lastName: Architect
-    enabled: true
-    emailVerified: true
-    password: "Architect123!"
-    realmRoles:
-      - architect
-      - developer
-
-  # Senior Developer
   - username: seniordev
     email: seniordev@druppie.local
     firstName: Senior
@@ -179,7 +187,6 @@ users:
     realmRoles:
       - developer
 
-  # Junior Developer
   - username: juniordev
     email: juniordev@druppie.local
     firstName: Junior
@@ -190,7 +197,6 @@ users:
     realmRoles:
       - developer
 
-  # Product Owner
   - username: productowner
     email: po@druppie.local
     firstName: Product
@@ -201,7 +207,6 @@ users:
     realmRoles:
       - product-owner
 
-  # Compliance Officer
   - username: compliance
     email: compliance@druppie.local
     firstName: Compliance
@@ -212,13 +217,13 @@ users:
     realmRoles:
       - compliance-officer
 
-  # Viewer / Stakeholder
   - username: viewer
     email: viewer@druppie.local
     firstName: Stake
     lastName: Holder
     enabled: true
     emailVerified: true
+    password: "Viewer123!"
     realmRoles:
       - viewer
 

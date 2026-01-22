@@ -137,7 +137,20 @@ mcps:
   coding:
     - read_file
     - write_file
+    - batch_write_files
     - list_dir
+
+# LAYERED APPROVAL SYSTEM (per goal.md):
+# Override the default (no approval) for write_file when used by architect.
+# When architect calls write_file (e.g., to create architecture.md),
+# it requires approval from someone with the "architect" role.
+approval_overrides:
+  "coding:write_file":
+    requires_approval: true
+    required_role: architect
+  "coding:batch_write_files":
+    requires_approval: true
+    required_role: architect
 
 model: glm-4
 temperature: 0.2

@@ -140,6 +140,7 @@ def classify_error(error: Exception) -> tuple[str, bool, bool]:
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DBSession
     from druppie.core.execution_context import ExecutionContext
+    from druppie.core.models import AgentDefinition
 
 logger = structlog.get_logger()
 
@@ -212,18 +213,55 @@ class MCPClient:
                 return t
         return {}
 
-    def requires_approval(self, server: str, tool: str) -> tuple[bool, list[str], str]:
-        """Check if tool requires approval and what roles can approve.
+    def requires_approval(
+        self,
+        server: str,
+        tool: str,
+        agent_definition: "AgentDefinition | None" = None,
+    ) -> tuple[bool, str | None]:
+        """Check if tool requires approval and what role can approve.
+
+        LAYERED APPROVAL SYSTEM (per goal.md):
+        1. First check agent's approval_overrides (if agent_definition provided)
+        2. Fall back to global defaults from mcp_config.yaml
+
+        Args:
+            server: MCP server name
+            tool: Tool name
+            agent_definition: Optional agent definition to check for overrides
 
         Returns:
-            Tuple of (requires_approval, required_roles, danger_level)
+            Tuple of (requires_approval, required_role)
+            - required_role is singular string (not array) per goal.md
         """
+        from druppie.core.models import AgentDefinition
+
+        # Step 1: Check agent-specific override (if agent_definition provided)
+        if agent_definition is not None:
+            override = agent_definition.get_approval_override(server, tool)
+            if override is not None:
+                logger.debug(
+                    "using_agent_approval_override",
+                    agent_id=agent_definition.id,
+                    tool=f"{server}:{tool}",
+                    requires_approval=override.requires_approval,
+                    required_role=override.required_role,
+                )
+                return (override.requires_approval, override.required_role)
+
+        # Step 2: Fall back to global config from mcp_config.yaml
         config = self.get_tool_config(server, tool)
-        return (
-            config.get("requires_approval", False),
-            config.get("required_roles", []),
-            config.get("danger_level", "low"),
-        )
+        requires = config.get("requires_approval", False)
+
+        # Support both old "required_roles" (array) and new "required_role" (string)
+        # Prefer new "required_role" if present
+        required_role = config.get("required_role")
+        if required_role is None:
+            # Fall back to old format - take first role from array
+            old_roles = config.get("required_roles", [])
+            required_role = old_roles[0] if old_roles else None
+
+        return (requires, required_role)
 
     def user_has_role(self, user_roles: list[str], required_roles: list[str]) -> bool:
         """Check if user has any of the required roles."""
@@ -240,8 +278,13 @@ class MCPClient:
         args: dict[str, Any],
         context: "ExecutionContext",
         agent_id: str | None = None,
+        agent_definition: "AgentDefinition | None" = None,
     ) -> dict[str, Any]:
         """Call MCP tool, checking for approval requirements.
+
+        LAYERED APPROVAL SYSTEM (per goal.md):
+        1. Check agent's approval_overrides first (if agent_definition provided)
+        2. Fall back to global defaults from mcp_config.yaml
 
         IMPORTANT: AI executes tools, so user ALWAYS confirms for
         approval-required tools (even if user has the role).
@@ -252,12 +295,17 @@ class MCPClient:
             args: Tool arguments
             context: Execution context with session/user info
             agent_id: ID of the agent making this call (for approval tracking)
+            agent_definition: Optional agent definition for layered approval
 
         Returns:
             Tool result or paused status if approval required
         """
         tool_name = f"{server}:{tool}"
-        needs_approval, required_roles, danger_level = self.requires_approval(server, tool)
+
+        # Use layered approval system: agent overrides > global config
+        needs_approval, required_role = self.requires_approval(
+            server, tool, agent_definition
+        )
 
         if needs_approval:
             # Check if we have a cached result from a recently approved execution
@@ -276,8 +324,10 @@ class MCPClient:
                     return cached_result
 
             # ALWAYS request approval - AI is executing, user must confirm
+            # Convert required_role to list for backwards compatibility
+            required_roles = [required_role] if required_role else []
             return await self._request_approval(
-                server, tool, args, required_roles, danger_level, context, agent_id
+                server, tool, args, required_roles, "low", context, agent_id
             )
 
         # No approval needed for this tool - execute with retry for transient errors
