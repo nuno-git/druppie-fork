@@ -16,8 +16,15 @@ logger = structlog.get_logger()
 GITEA_URL = os.getenv("GITEA_URL", "http://gitea:3000")
 GITEA_INTERNAL_URL = os.getenv("GITEA_INTERNAL_URL", GITEA_URL)
 GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
-GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "GiteaAdmin123")
+GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "")
 GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
+
+# Security warning for missing credentials
+if not GITEA_ADMIN_PASSWORD:
+    logger.warning(
+        "gitea_password_not_configured",
+        message="GITEA_ADMIN_PASSWORD not set - Gitea operations will fail",
+    )
 
 
 class GiteaClient:
@@ -93,7 +100,7 @@ class GiteaClient:
             return result
 
         except httpx.RequestError as e:
-            logger.error("gitea_request_error", method=method, endpoint=endpoint, error=str(e))
+            logger.error("gitea_request_error", method=method, endpoint=endpoint, error=str(e), exc_info=True)
             return {
                 "success": False,
                 "error": str(e),

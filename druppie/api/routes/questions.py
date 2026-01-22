@@ -4,11 +4,12 @@ Endpoints for listing and answering pending HITL questions for the current user.
 Also includes internal endpoints for MCP servers to create questions.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from druppie.api.deps import get_current_user, get_db, verify_internal_api_key
+from druppie.api.errors import NotFoundError, ConflictError, ExternalServiceError
 from druppie.db import (
     list_pending_hitl_questions,
     get_hitl_question,
@@ -66,7 +67,7 @@ async def get_question(
     """Get a specific HITL question by ID."""
     question = get_hitl_question(db, question_id)
     if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
+        raise NotFoundError("question", question_id)
     return question.to_dict()
 
 
@@ -83,17 +84,14 @@ async def answer_question(
     """
     question = get_hitl_question(db, question_id)
     if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
+        raise NotFoundError("question", question_id)
 
     if question.status != "pending":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Question is already {question.status}",
-        )
+        raise ConflictError(f"Question {question_id} is already {question.status}")
 
     updated = answer_hitl_question(db, question_id, request.answer)
     if not updated:
-        raise HTTPException(status_code=500, detail="Failed to answer question")
+        raise ExternalServiceError("database", "Failed to answer question")
 
     return updated.to_dict()
 

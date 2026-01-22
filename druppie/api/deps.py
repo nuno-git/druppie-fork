@@ -13,6 +13,9 @@ from typing import Callable, Generator
 from fastapi import Depends, HTTPException, Header
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
+import structlog
+
+logger = structlog.get_logger()
 
 from druppie.core.auth import get_auth_service, AuthService
 from druppie.core.loop import get_main_loop, MainLoop
@@ -87,7 +90,15 @@ async def get_optional_user(
 
 
 # Internal API key for MCP servers to call backend
-INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "druppie-internal-key")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
+
+# Security warning for missing/default API key
+if not INTERNAL_API_KEY:
+    logger.warning(
+        "internal_api_key_not_configured",
+        message="INTERNAL_API_KEY not set - internal API authentication disabled",
+    )
+    INTERNAL_API_KEY = "disabled"  # Prevent empty string matching
 
 
 async def verify_internal_api_key(
