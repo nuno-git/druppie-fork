@@ -143,10 +143,39 @@ async def router_node(state: GraphState) -> dict:
 
     try:
         result = await Agent("router").run(message)
-        logger.info("router_node_complete", action=result.get("action"))
+
+        # Extract action and validate structure
+        action = result.get("action", "general_chat")
+        prompt = result.get("prompt", message)
+        answer = result.get("answer")
+        project_context = result.get("project_context", {})
+
+        # Ensure we have a properly structured intent
+        intent = {
+            "action": action,
+            "prompt": prompt,
+            "answer": answer,
+            "project_context": project_context,
+        }
+
+        logger.info(
+            "router_node_complete",
+            action=action,
+            prompt_preview=prompt[:100] if prompt else "",
+            has_answer=answer is not None,
+            has_context=bool(project_context),
+        )
+
         if ctx:
-            ctx.emit("step_completed", {"step": "router", "action": result.get("action")})
-        return {"intent": result}
+            ctx.emit("step_completed", {
+                "step": "router",
+                "action": action,
+                "prompt": prompt,
+                "has_answer": answer is not None,
+                "project_name": project_context.get("project_name") if project_context else None,
+            })
+
+        return {"intent": intent}
     except Exception as e:
         logger.error("router_node_error", error=str(e), exc_info=True)
         if ctx:
@@ -170,26 +199,82 @@ async def planner_node(state: GraphState) -> dict:
         return {"error": "No intent from router"}
 
     # Check if this is just a chat response (no planning needed)
-    if state["intent"].get("action") == "general_chat":
+    action = state["intent"].get("action", "general_chat")
+    if action == "general_chat":
+        answer = state["intent"].get("answer") or state["intent"].get("prompt", "")
+        logger.info("planner_node_general_chat", answer_preview=str(answer)[:100])
         if ctx:
-            ctx.emit("step_completed", {"step": "planner", "action": "general_chat"})
+            ctx.emit("step_completed", {
+                "step": "planner",
+                "action": "general_chat",
+                "skipped": True,
+                "reason": "Direct chat response, no plan needed",
+            })
         return {
             "plan": None,
-            "response": state["intent"].get("answer", state["intent"].get("prompt", "")),
+            "response": answer,
         }
 
     try:
-        prompt = f"""Create a plan for:
-Action: {state['intent'].get('action')}
-Request: {state['intent'].get('prompt')}
-Context: {state['intent'].get('project_context', {})}"""
+        # Build comprehensive prompt for planner
+        project_context = state["intent"].get("project_context", {})
+        prompt_parts = [
+            f"Action: {action}",
+            f"User Request: {state['intent'].get('prompt', '')}",
+        ]
+
+        if project_context:
+            prompt_parts.append(f"Project Context: {project_context}")
+
+        # Include workspace info if available
+        if state.get("workspace_id"):
+            prompt_parts.append(f"Workspace ID: {state.get('workspace_id')}")
+        if state.get("workspace_path"):
+            prompt_parts.append(f"Workspace Path: {state.get('workspace_path')}")
+        if state.get("branch"):
+            prompt_parts.append(f"Branch: {state.get('branch')}")
+
+        prompt = "Create an execution plan for:\n" + "\n".join(prompt_parts)
+
+        logger.debug("planner_prompt", prompt=prompt)
 
         result = await Agent("planner").run(prompt)
-        steps_count = len(result.get("steps", []))
-        logger.info("planner_node_complete", steps=steps_count)
+
+        # Validate plan structure
+        plan_name = result.get("name", "Unnamed Plan")
+        steps = result.get("steps", [])
+        workflow_id = result.get("workflow_id")
+
+        # Ensure plan has required fields
+        plan = {
+            "name": plan_name,
+            "description": result.get("description", ""),
+            "workflow_id": workflow_id,
+            "steps": steps,
+            "inputs": result.get("inputs", {}),
+        }
+
+        logger.info(
+            "planner_node_complete",
+            plan_name=plan_name,
+            steps_count=len(steps),
+            has_workflow=workflow_id is not None,
+        )
+
         if ctx:
-            ctx.emit("step_completed", {"step": "planner", "steps_count": steps_count})
-        return {"plan": result}
+            ctx.emit("step_completed", {
+                "step": "planner",
+                "plan_name": plan_name,
+                "steps_count": len(steps),
+                "workflow_id": workflow_id,
+                "steps_preview": [
+                    {"id": s.get("id"), "type": s.get("type"), "agent_id": s.get("agent_id")}
+                    for s in steps[:5]  # Preview first 5 steps
+                ],
+            })
+
+        return {"plan": plan}
+
     except Exception as e:
         logger.error("planner_node_error", error=str(e), exc_info=True)
         if ctx:
@@ -203,28 +288,34 @@ async def execute_node(state: GraphState) -> dict:
     Each step can be an agent call or an MCP tool call.
     Agents can pause via hitl:ask or hitl:approve.
     """
-    logger.info("execute_node_start")
+    logger.info("execute_node_start", plan=state.get("plan", {}).get("name"))
 
     ctx = get_current_context()
 
     if not state.get("plan"):
+        logger.debug("execute_node_no_plan", response=state.get("response"))
         return {"results": [], "response": state.get("response", "No plan to execute")}
 
     plan = state["plan"]
     results = []
 
     # Pass workspace context to agents so they know where to work
+    # This is critical for agents to know where files should be created
     context = {
         "workspace_id": state.get("workspace_id"),
         "workspace_path": state.get("workspace_path"),
         "project_id": state.get("project_id"),
         "branch": state.get("branch"),
+        "session_id": state.get("session_id"),  # For HITL tools
     }
+
+    logger.debug("execute_node_context", context=context)
 
     if ctx:
         ctx.emit("execution_started", {
             "plan_name": plan.get("name", "Unnamed plan"),
             "total_steps": len(plan.get("steps", [])),
+            "workspace_id": context.get("workspace_id"),
         })
 
     # Check if this is a workflow
@@ -270,7 +361,54 @@ async def execute_node(state: GraphState) -> dict:
         try:
             if step_type == "agent":
                 prompt = step.get("prompt", "")
+
+                logger.info(
+                    "execute_agent_step",
+                    step_id=step_id,
+                    agent_id=agent_id,
+                    prompt_preview=prompt[:100] if prompt else "",
+                    workspace_id=context.get("workspace_id"),
+                )
+
+                if ctx:
+                    ctx.emit("agent_starting", {
+                        "step_id": step_id,
+                        "agent_id": agent_id,
+                        "prompt": prompt,
+                    })
+
                 result = await Agent(agent_id).run(prompt, context)
+
+                # Check if agent returned paused state (for approval)
+                if isinstance(result, dict) and result.get("paused"):
+                    logger.info("agent_paused", step_id=step_id, agent_id=agent_id)
+                    if ctx:
+                        ctx.emit("agent_paused", {
+                            "step_id": step_id,
+                            "agent_id": agent_id,
+                            "approval_id": result.get("approval_id"),
+                        })
+                    return {
+                        "results": results,
+                        "response": f"Waiting for approval in step {step_id}",
+                        "paused": True,
+                        "approval_id": result.get("approval_id"),
+                    }
+
+                logger.info(
+                    "execute_agent_complete",
+                    step_id=step_id,
+                    agent_id=agent_id,
+                    result_type=type(result).__name__,
+                )
+
+                if ctx:
+                    ctx.emit("agent_completed", {
+                        "step_id": step_id,
+                        "agent_id": agent_id,
+                        "result_preview": str(result)[:200] if result else "",
+                    })
+
             elif step_type == "mcp":
                 tool = step.get("tool")
                 inputs = step.get("inputs", {})
