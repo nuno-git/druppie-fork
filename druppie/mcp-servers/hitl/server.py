@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 import redis
@@ -211,7 +211,7 @@ async def ask_question(
             "question": question,
             "input_type": "text",
             "context": context,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }),
     )
 
@@ -326,7 +326,7 @@ async def ask_choice(
             "choices": choices,
             "allow_other": allow_other,
             "context": context,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }),
     )
 
@@ -416,7 +416,7 @@ async def progress(
             "message": message,
             "percent": percent,
             "step": step,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }),
     )
 
@@ -455,7 +455,7 @@ async def submit_response(
         json.dumps({
             "answer": answer,
             "selected": selected,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }),
     )
 
@@ -496,7 +496,7 @@ async def notify(
             "title": title,
             "message": message,
             "level": level,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }),
     )
 
