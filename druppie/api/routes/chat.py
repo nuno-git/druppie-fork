@@ -87,10 +87,15 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     """Request for chat endpoint."""
 
-    message: str = Field(..., description="The user's message")
+    message: str = Field(..., description="The user's message", max_length=5000)
     session_id: str | None = Field(None, description="Session ID to continue")
     project_id: str | None = Field(None, description="Existing project ID to work on")
-    project_name: str | None = Field(None, description="Name for new project (used if project_id not provided)")
+    project_name: str | None = Field(
+        None,
+        description="Name for new project (used if project_id not provided)",
+        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$",
+        max_length=100,
+    )
     conversation_history: list[ChatMessage] = Field(
         default_factory=list,
         description="Previous conversation messages",

@@ -12,8 +12,24 @@ const WS_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000')
 
 let socket = null
 let reconnectAttempts = 0
-const MAX_RECONNECT_ATTEMPTS = 5
+const MAX_RECONNECT_ATTEMPTS = 10
 const RECONNECT_DELAY = 1000
+const MAX_RECONNECT_DELAY = 30000
+
+/**
+ * Calculate reconnection delay with exponential backoff and jitter
+ * @param {number} attempt - Current attempt number (0-indexed)
+ * @returns {number} Delay in milliseconds
+ */
+const calculateReconnectDelay = (attempt) => {
+  // Exponential backoff: delay = RECONNECT_DELAY * (2 ** attempt)
+  const exponentialDelay = RECONNECT_DELAY * Math.pow(2, attempt)
+  // Cap at max delay
+  const cappedDelay = Math.min(exponentialDelay, MAX_RECONNECT_DELAY)
+  // Add jitter: delay * (0.5 + random * 0.5) to prevent thundering herd
+  const jitter = 0.5 + Math.random() * 0.5
+  return Math.floor(cappedDelay * jitter)
+}
 
 // Connection status: 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 let connectionStatus = 'disconnected'
@@ -104,11 +120,12 @@ export const initSocket = (sessionId = null) => {
   }
 
   socket.onclose = (event) => {
-    // Attempt reconnection
+    // Attempt reconnection with exponential backoff and jitter
     if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      const delay = calculateReconnectDelay(reconnectAttempts)
       reconnectAttempts++
       setConnectionStatus('reconnecting')
-      setTimeout(() => initSocket(sessionId), RECONNECT_DELAY * reconnectAttempts)
+      setTimeout(() => initSocket(sessionId), delay)
     } else {
       console.error('[WebSocket] Max reconnection attempts reached, code:', event.code)
       setConnectionStatus('disconnected')
