@@ -80,6 +80,44 @@ def create_app() -> FastAPI:
         """Health check endpoint."""
         return {"status": "healthy", "version": "2.0.0"}
 
+    @app.get("/health/ready")
+    async def readiness_check():
+        """Readiness check endpoint.
+
+        Checks if the application is ready to serve traffic:
+        - Database is connected
+        - Agents are loaded
+        """
+        from fastapi.responses import JSONResponse
+
+        # Check database connection
+        database_ready = False
+        try:
+            from druppie.api.deps import engine
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+                database_ready = True
+        except Exception as e:
+            logger.warning("readiness_database_check_failed", error=str(e))
+
+        # Check if agents are loaded
+        main_loop = get_main_loop()
+        agents_ready = bool(main_loop.agents)
+
+        is_ready = database_ready and agents_ready
+
+        response_data = {
+            "ready": is_ready,
+            "database": database_ready,
+            "agents_loaded": agents_ready,
+        }
+
+        if is_ready:
+            return response_data
+        else:
+            return JSONResponse(status_code=503, content=response_data)
+
     @app.get("/api/status")
     async def api_status():
         """API status endpoint for frontend dashboard.
