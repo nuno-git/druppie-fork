@@ -3,12 +3,13 @@
 Endpoints for managing chat sessions.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 import structlog
 
-from druppie.api.deps import get_current_user, get_db
+from druppie.api.deps import get_current_user, get_db, check_resource_ownership
+from druppie.api.errors import NotFoundError, AuthorizationError
 from druppie.db import crud
 from druppie.db.models import Session as SessionModel
 
@@ -341,12 +342,10 @@ async def get_session(
     """Get a specific session."""
     session = crud.get_session(db, session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFoundError("session", session_id)
 
     # Check ownership (unless admin)
-    roles = user.get("realm_access", {}).get("roles", [])
-    if "admin" not in roles and session.user_id != user.get("sub"):
-        raise HTTPException(status_code=403, detail="Not authorized")
+    check_resource_ownership(user, session.user_id)
 
     # Fetch project info if session has a project_id
     project = None
@@ -384,12 +383,10 @@ async def delete_session(
     """Delete a session."""
     session = crud.get_session(db, session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFoundError("session", session_id)
 
     # Check ownership (unless admin)
-    roles = user.get("realm_access", {}).get("roles", [])
-    if "admin" not in roles and session.user_id != user.get("sub"):
-        raise HTTPException(status_code=403, detail="Not authorized")
+    check_resource_ownership(user, session.user_id)
 
     crud.delete_session(db, session_id)
     logger.info("session_deleted", session_id=session_id, user_id=user.get("sub"))
@@ -406,12 +403,10 @@ async def get_session_state(
     """Get the execution state of a session."""
     session = crud.get_session(db, session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFoundError("session", session_id)
 
     # Check ownership
-    roles = user.get("realm_access", {}).get("roles", [])
-    if "admin" not in roles and session.user_id != user.get("sub"):
-        raise HTTPException(status_code=403, detail="Not authorized")
+    check_resource_ownership(user, session.user_id)
 
     return {
         "session_id": session_id,
@@ -588,12 +583,10 @@ async def get_session_trace(
     """
     session = crud.get_session(db, session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFoundError("session", session_id)
 
     # Check ownership (unless admin)
-    roles = user.get("realm_access", {}).get("roles", [])
-    if "admin" not in roles and session.user_id != user.get("sub"):
-        raise HTTPException(status_code=403, detail="Not authorized")
+    check_resource_ownership(user, session.user_id)
 
     state = session.state or {}
 
