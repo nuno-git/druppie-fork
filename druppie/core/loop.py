@@ -554,6 +554,8 @@ async def execute_node(state: GraphState) -> dict:
                         try:
                             from druppie.db.crud import update_approval
                             with db_session() as db:
+                                # Include HITL clarifications so agent remembers user confirmations
+                                clarifications = ctx.hitl_clarifications if ctx else []
                                 update_approval(
                                     db,
                                     approval_id,
@@ -564,6 +566,7 @@ async def execute_node(state: GraphState) -> dict:
                                             "results": results,
                                             "context": context,
                                             "agent_id": agent_id,  # Track which agent was running
+                                            "hitl_clarifications": clarifications,  # Preserve user confirmations
                                         },
                                     },
                                 )
@@ -696,6 +699,7 @@ async def execute_node(state: GraphState) -> dict:
                                     "current_step": i,
                                     "results": results,
                                     "context": context,
+                                    "hitl_clarifications": ctx.hitl_clarifications if ctx else [],
                                 },
                             }
                         )
@@ -1214,6 +1218,17 @@ class MainLoop:
         exec_ctx.workspace_path = context.get("workspace_path")
         exec_ctx.branch = context.get("branch")
 
+        # Restore HITL clarifications if they were saved in agent_state
+        # This ensures the agent knows about prior user confirmations when resuming
+        saved_clarifications = agent_state.get("hitl_clarifications", [])
+        if saved_clarifications:
+            exec_ctx.hitl_clarifications = saved_clarifications
+            logger.info(
+                "clarifications_restored_for_resume",
+                session_id=session_id,
+                clarifications_count=len(saved_clarifications),
+            )
+
         # Store the last tool result so MCPClient can return it instead of re-executing
         # Also add it to context so the agent knows what happened with the approved tool
         if last_tool_result:
@@ -1394,6 +1409,30 @@ class MainLoop:
                     if step_type == "agent":
                         prompt = step.get("prompt", "")
 
+                        # CRITICAL: Append HITL clarifications to prompt
+                        # This is the same logic as in execute_plan() - ensures agent knows
+                        # about user confirmations when resuming after MCP tool approval
+                        if exec_ctx and exec_ctx.hitl_clarifications:
+                            # Filter to only this agent's clarifications
+                            agent_clarifications = [
+                                c for c in exec_ctx.hitl_clarifications
+                                if c.get("agent_id") == agent_id
+                            ]
+                            if agent_clarifications:
+                                # Append clarification context to prompt
+                                clarification_text = "\n\n--- USER CONFIRMATION ---\n"
+                                for c in agent_clarifications:
+                                    clarification_text += f"The user was asked: \"{c.get('question', '')[:200]}...\"\n"
+                                    clarification_text += f"User responded: \"{c.get('answer', '')}\"\n"
+                                clarification_text += "\nIMPORTANT: The user has already confirmed! Proceed with the action (write the file) without asking again.\n"
+                                clarification_text += "--- END USER CONFIRMATION ---"
+                                prompt = prompt + clarification_text
+                                logger.info(
+                                    "clarification_appended_to_prompt_on_resume",
+                                    agent_id=agent_id,
+                                    clarifications_count=len(agent_clarifications),
+                                )
+
                         logger.info(
                             "execute_agent_step_resumed",
                             step_id=step_id,
@@ -1420,6 +1459,8 @@ class MainLoop:
                                 try:
                                     from druppie.db.crud import update_approval
                                     with db_session() as db:
+                                        # Include HITL clarifications so agent remembers user confirmations
+                                        clarifications = exec_ctx.hitl_clarifications if exec_ctx else []
                                         update_approval(
                                             db,
                                             approval_id,
@@ -1430,6 +1471,7 @@ class MainLoop:
                                                     "results": results,
                                                     "context": context,
                                                     "agent_id": agent_id,  # Track which agent was running
+                                                    "hitl_clarifications": clarifications,  # Preserve user confirmations
                                                 },
                                             },
                                         )
@@ -1538,6 +1580,7 @@ class MainLoop:
                                         "current_step": i,
                                         "results": results,
                                         "context": context,
+                                        "hitl_clarifications": exec_ctx.hitl_clarifications if exec_ctx else [],
                                     },
                                 }
                             )
