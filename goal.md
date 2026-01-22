@@ -1,378 +1,175 @@
-# **Druppie: The Complete Development Platform with Unified Interface**
+# Druppie - Simplified Goal
 
-## **Ultimate Goal Vision**
+## The Only Thing That Matters Right Now
 
-Build **a complete development platform with multiple unified interfaces** where users can manage projects through natural conversation as the primary mode, while having full visibility and control through dedicated project management interfaces. The system seamlessly blends conversational AI with traditional development tooling.
-
----
-
-## **The Complete Interface Ecosystem**
-
-### **1. Multi-Interface Platform**
-**Not just chat** - but chat as the **primary interaction mode** with full support interfaces:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                          DRUPPIE PLATFORM                        │
-│                                                                  │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │    CHAT      │  │   PROJECTS   │  │     APPROVALS        │  │
-│  │  Interface   │  │   Dashboard  │  │     Dashboard        │  │
-│  │              │  │              │  │                      │  │
-│  │ • Conversations│ • All projects │ • Pending approvals    │  │
-│  │ • Natural lang│ • Quick stats  │ • Approval history     │  │
-│  │ • Work status │ • Create new   │ • Team approvals       │  │
-│  │ • Inline apps │ • Search/filter│ • Compliance tracking  │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘  │
-│         │                  │                     │              │
-│  ┌──────┴───────┐  ┌──────┴───────┐  ┌──────────┴───────────┐  │
-│  │    DEBUG     │  │    PROJECT    │  │      SETTINGS       │  │
-│  │    PANEL     │  │    DETAIL     │  │                     │  │
-│  │              │  │              │  │                      │  │
-│  │ • Full trace │ • Overview      │ • User management     │  │
-│  │ • LLM calls  │ • Repository    │ • Permission config   │  │
-│  │ • Tool execs │ • Environments  │ • Integration setup   │  │
-│  │ • State      │ • History       │ • Security settings   │  │
-│  │ • Audit log  │ • Conversations │ • Compliance rules    │  │
-│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
-│                                                                  │
-│                    ALL INTERFACES SHARE:                        │
-│                    • Same backend engine                        │
-│                    • Same agent system                          │
-│                    • Same MCP tools                             │
-│                    • Same approval flows                        │
-│                    • Same audit trail                           │
-│                    • Same project context                       │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### **2. Chat: The Primary Interface (But Not The Only One)**
-**Where you DO the work:**
-- Natural language conversations with AI team
-- Real-time progress updates as work happens
-- Inline approval requests and decisions
-- Agent questions and clarifications
-- Code review and feedback
-- Deployment status and URLs
-
-**Projects Page: Where you MANAGE the work:**
-- Overview of all projects (grid/list view)
-- Quick stats: last activity, deployment status, open items
-- Create new projects
-- Search and filter projects
-- Jump to project detail or start conversation
-
-**Project Detail Page: Where you SEE the work:**
-- Overview: description, tech stack, status
-- Repository: commits, branches, PRs (integrated Gitea)
-- Environments: preview URLs, production URLs, status
-- History: timeline of all major actions
-- Conversations: all chats about this project
-- Settings: team, permissions, integrations
-
-**Approvals Dashboard: Where you CONTROL the work:**
-- Pending approvals requiring your action
-- Approvals you've requested (and their status)
-- Approval history and audit trail
-- Filter by project, type, urgency
-- Team-wide approval tracking
-
-**Debug Panel: Where you UNDERSTAND the work:**
-- Full execution trace of any conversation
-- Every LLM call, tool execution, state change
-- Expandable details at every level
-- Search, filter, export capabilities
-- Compliance and audit support
-
-**Settings: Where you CONFIGURE the work:**
-- User and team management
-- Permission configurations
-- Integration setup (Git, Docker, etc.)
-- Security and compliance rules
-- Platform-wide settings
-
-### **3. Seamless Interface Transitions**
-**Example User Journey:**
-1. **Projects Page** → See all projects, click on "Inventory System"
-2. **Project Detail** → Review current status, check recent commits
-3. **Chat** → "Add user management with roles" → Work happens conversationally
-4. **Approvals Dashboard** → Get notified when production deploy needs approval
-5. **Debug Panel** → Investigate why a test failed during implementation
-6. **Back to Chat** → "Also add audit logging" → Continue conversation
-
-**Every interface shares:**
-- Same project context
-- Same user identity (Keycloak)
-- Same MCP tool access
-- Same approval rules
-- Same audit trail
-
-### **4. Interface-Specific Superpowers**
-
-**Chat Interface:**
-- Agent attribution (know who you're talking to)
-- Rich message formatting with code blocks
-- Inline file previews and diffs
-- Real-time progress indicators
-- Interactive approval buttons
-- Collapsible detail sections
-
-**Projects Interface:**
-- Visual project status dashboard
-- Quick action buttons (deploy, review, etc.)
-- Team collaboration views
-- Activity feeds across projects
-- Health metrics and alerts
-
-**Cross-Interface Features:**
-- **Deep linking**: Click project in Projects → opens Chat about that project
-- **Notifications**: Approval needed → appears in Approvals AND as chat notification
-- **Context preservation**: Start in Chat, switch to Projects, return to same conversation
-- **Real-time sync**: Changes in one interface instantly reflect in others
-
-### **5. The Complete Development Lifecycle**
-
-**Through Chat (Primary):**
-```
-User: "Build me a customer portal with authentication"
-AI: [Conversation about requirements, implementation, deployment]
-User: "Make the login form more accessible"
-AI: [Updates made, preview provided]
-```
-
-**Through Projects (Management):**
-- Monitor progress of all active developments
-- Review code quality metrics
-- Track deployment statuses
-- Manage team permissions
-- View project health dashboards
-
-**Through Approvals (Governance):**
-- Review and approve critical changes
-- Track compliance requirements
-- Monitor security-related actions
-- Audit all approval decisions
-
-**Through Debug (Transparency):**
-- Understand exactly how decisions were made
-- Troubleshoot issues with full context
-- Verify compliance requirements met
-- Learn from past implementations
-
-### **6. The Unified Platform Experience**
-
-**Key Principles:**
-1. **Chat is primary but not exclusive** - Natural conversation for doing work
-2. **Projects is for management** - Visual overview and control
-3. **Approvals is for governance** - Security and compliance control
-4. **Debug is for transparency** - Complete understanding and audit
-5. **Settings is for configuration** - Platform and project setup
-
-**Everything connects to:**
-- Same agent orchestration engine
-- Same MCP tool infrastructure
-- Same state management system
-- Same audit and compliance framework
-- Same Druppie Core SDK for generated apps
-
-### **7. The Complete Platform Value**
-
-**For Developers/Users:**
-- Start in Chat for natural development
-- Switch to Projects for management
-- Use Approvals for governance
-- Check Debug for understanding
-- All interfaces work together seamlessly
-
-**For Organizations:**
-- Natural language lowers barrier to development
-- Multiple interfaces support different workflows
-- Built-in governance at every level
-- Complete audit trail across all interfaces
-- Generated apps inherit the entire ecosystem
-
-**The Result:**
-A platform where you can **converse** your way through development, **manage** through visual interfaces, **govern** through approval workflows, and **understand** through complete transparency - all working together as one cohesive system.
+A simple, traceable workflow where **architects design** and **developers build**, with clear approval gates using Keycloak roles.
 
 ---
 
-## **Summary**
+## Users & Roles (Keycloak)
 
-**Druppie is not "just a chat interface"** - it's a **complete development platform** where:
-- **Chat** is where you *do* the work (primary interface)
-- **Projects** is where you *manage* the work
-- **Approvals** is where you *control* the work  
-- **Debug** is where you *understand* the work
-- **Settings** is where you *configure* the work
+Define in `iac/users.yaml`:
 
-All interfaces share the same powerful backend: agent orchestration, MCP tools, state management, and governance - creating a seamless development experience from conversation to production.# **Druppie Technical Stack: Simple Yet Powerful Architecture**
+| User | Role | Purpose |
+|------|------|---------|
+| normal_user | user | Can make requests, triggers workflow |
+| architect | architect | Approves architecture/design decisions |
+| developer | developer | Approves builds and deployments |
+| admin | admin | (Reserved for future - does nothing yet) |
 
-## **Core Technical Philosophy**
+**Roles are checked via Keycloak.** No fake roles, real authentication.
 
-We maintain extreme simplicity: **Agent-driven workflow with containerized MCPs, minimal dependencies, and straightforward setup**. The entire platform runs on a lightweight stack that's easy to understand, deploy, and maintain.
+---
 
-## **Technical Stack Components**
+## The Workflow
 
-### **1. Infrastructure Layer**
-- **Docker Compose**: Single `docker-compose.full.yml` that starts everything
-- **PostgreSQL**: Main database for users, projects, approvals, audit trail
-- **Redis**: State persistence, HITL pub/sub, real-time notifications
-- **Keycloak**: Authentication and OBO token management
-- **Gitea**: Git repositories for all projects
+```
+User Request
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  1. ARCHITECT AGENT                                     │
+│                                                         │
+│  a) Ask user via HITL: "Does this plan look good?"     │
+│  b) User confirms                                       │
+│  c) Architect calls write_file (architecture.md)       │
+│  d) APPROVAL GATE: needs "architect" role to approve   │
+│  e) Architect user approves → continues                │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  2. DEVELOPER AGENT                                     │
+│                                                         │
+│  a) Reads architecture.md                               │
+│  b) Implements code (write_file, batch_write_files)    │
+│  c) ALL MCP tools need "developer" role approval       │
+│  d) Builds Docker container                             │
+│  e) APPROVAL GATE: needs "developer" role to approve   │
+│  f) Developer user approves → deployment complete      │
+└─────────────────────────────────────────────────────────┘
+    │
+    ▼
+Done - App Running
+```
 
-### **2. Core Platform (Python/FastAPI)**
-- **FastAPI Backend**: Main application server
-- **LangGraph/Agent Orchestration**: Simple router→planner→executor pattern
-- **MCP Client**: HTTP client that communicates with MCP servers
-- **State Management**: SQLAlchemy models with Redis for session state
-- **WebSocket Server**: Real-time chat and notifications
+---
 
-### **3. MCP Layer (FastMCP Servers)**
-Three specialized servers in separate containers:
+## MCP Permission Gateway (Clean Architecture)
 
-1. **Coding MCP** (FastMCP on port 9001)
-   - Workspace management with auto-initialization
-   - File operations (read/write/list/delete)
-   - Git integration with automatic commits
-   - Shell command execution (with approval)
-   - Branch and merge operations
+### Agent-Level Config (`agents/definitions/*.yaml`)
+Agents specify which MCP tools they can use, but NOT approval rules:
+```yaml
+# architect.yaml
+name: architect
+mcps:
+  - coding
+  - hitl
+```
 
-2. **Docker MCP** (FastMCP on port 9002)
-   - Container build operations
-   - Container run/stop/management
-   - Log retrieval
-   - Docker Compose operations
-   - Image management
+### MCP-Level Config (`core/mcp_config.yaml`)
+**All approval rules live here.** Simple structure:
+```yaml
+mcps:
+  coding:
+    url: ${MCP_CODING_URL}
+    tools:
+      - name: write_file
+        requires_approval: true
+        required_role: architect  # Single role, not array
+      - name: batch_write_files
+        requires_approval: true
+        required_role: developer
+      - name: run_command
+        requires_approval: true
+        required_role: developer
+  docker:
+    url: ${MCP_DOCKER_URL}
+    tools:
+      - name: build
+        requires_approval: true
+        required_role: developer
+      - name: run
+        requires_approval: true
+        required_role: developer
+```
 
-3. **HITL MCP** (FastMCP on port 9003)
-   - Human-in-the-loop questions via Redis pub/sub
-   - State persistence for approval workflows
-   - Progress reporting to frontend
-   - Multi-day workflow resumption
+### What We Remove
+- ❌ `danger_level` - unnecessary complexity
+- ❌ `required_roles: [array]` - just use single `required_role: string`
+- ❌ Multiple approval requirement - one role approves, done
 
-### **4. Frontend Layer**
-- **React/TypeScript**: Main web application
-- **Chat Interface**: Primary conversation UI with agent attribution
-- **Projects Dashboard**: Project management and overview
-- **Approvals Interface**: Governance and compliance control
-- **Debug Panel**: Full transparency and audit trail
-- **WebSocket Client**: Real-time updates across all interfaces
+---
 
-### **5. Agent System**
-- **YAML-based Definitions**: Simple agent configuration
-- **Router Agent**: Intent recognition and conversation management
-- **Planner Agent**: Work breakdown and specialist selection
-- **Specialist Agents**: 7 core agents (Architect, Developer, Tester, etc.)
-- **Skill Library**: Markdown files agents can reference
-- **Workflow System**: YAML-defined multi-step processes
+## Role Definition & Checking
 
-### **6. Druppie Core SDK**
-- **JavaScript/TypeScript Package**: `@druppie/core`
-- **Pre-configured Authentication**: Keycloak integration
-- **MCP Client SDK**: Tool access from generated apps
-- **Approval UI Components**: Consistent governance interface
-- **Type-safe APIs**: Full TypeScript support
+### Define Roles (`iac/realm.yaml`)
+```yaml
+roles:
+  - user
+  - architect
+  - developer
+  - admin
+```
 
-## **How Everything Fits Together**
+### Check Roles (Backend)
+```python
+# Real Keycloak token check, no fake roles
+def check_approval_permission(user_token, required_role):
+    user_roles = get_roles_from_keycloak_token(user_token)
+    return required_role in user_roles
+```
 
-### **Development Flow**
-1. **User starts in Chat**: Natural conversation with router agent
-2. **Router recognizes intent**: Determines new project, update, or question
-3. **Planner creates plan**: Selects agents/workflows and custom instructions
-4. **Agents execute via MCPs**: Only use registered tools (coding, docker, hitl)
-5. **State persists throughout**: Redis + PostgreSQL for crash recovery
-6. **Results appear in Chat**: Final deliverables presented conversationally
+---
 
-### **Technical Simplicity Wins**
-- **No complex event systems**: Just HTTP calls between components
-- **No message queues**: Redis pub/sub for real-time only
-- **No service mesh**: Docker Compose networking is sufficient
-- **No custom protocols**: Standard HTTP/WebSocket for everything
-- **No complex deployments**: Single `docker-compose up` command
+## Traceability
 
-### **State Management Strategy**
-- **Database**: PostgreSQL for structured data (users, projects, approvals)
-- **Redis**: For session state, HITL messages, real-time notifications
-- **Workspace Files**: Docker volumes for code repositories
-- **Agent State**: LangGraph checkpoints persisted to database
+Every action is visible to the user:
+1. Router decides intent → user sees "Routing your request..."
+2. Planner creates plan → user sees the plan steps
+3. Architect works → user sees "Architect is designing..."
+4. Approval needed → user sees approval UI with file preview
+5. Developer builds → user sees "Developer is implementing..."
+6. Docker builds → user sees build logs
+7. Done → user sees the result URL
 
-### **Approval Workflow Technicals**
-- **Tool-level configuration**: `mcp_config.yaml` defines approval requirements
-- **State persistence**: Full agent state saved before pausing
-- **Redis notifications**: Frontend notified of approval requests
-- **Resume capability**: Exact continuation from saved state
-- **Audit trail**: Every approval logged with full context
+**The debug panel shows ALL of this** - every LLM call, every tool call, every approval.
 
-### **Generated App Integration**
-- **Auto-included SDK**: `@druppie/core` in all generated apps
-- **OBO token flow**: Apps act on behalf of logged-in user
-- **Consistent MCP access**: Same tools as platform agents
-- **Embeddable chat**: Apps can include Druppie chat interface
-- **Unified permissions**: Same approval rules apply everywhere
+---
 
-## **Development and Testing Setup**
+## Testing
 
-### **Local Development**
+Run the full flow with:
+
 ```bash
-./setup.sh              # Starts everything
-docker-compose logs -f  # Watch all services
-# That's it - full platform running
+./setup.sh all
 ```
 
-### **Testing Strategy**
-- **Unit tests**: Individual MCP server functionality
-- **Integration tests**: Agent → MCP → Approval flows
-- **E2E tests**: Full conversation flows with Playwright
-- **Recovery tests**: Simulate crashes mid-approval
-- **Performance tests**: Multiple concurrent conversations
+### LLM Keys for Testing
+- **DeepInfra**: `TO0zZfaHNsmOKEjt53kKtjzvGTuC50jh`
+- **GLM (Z.AI)**: `92faa046321b4c8dba81823da6868e5e.8hhV4Tl2Zb1xftYz`
 
-### **Production Deployment**
-- **Same docker-compose**: Just with production environment variables
-- **Add Traefik/nginx**: For SSL termination and routing
-- **Backup strategy**: Database and workspace volumes
-- **Monitoring**: Basic health checks and logs
-- **Scaling**: Add more backend instances if needed
+### Test Scenario
+1. Login as `normal_user`
+2. Request: "Build me a todo app"
+3. Architect agent asks user if plan looks good (HITL)
+4. Architect writes architecture.md → **approval needed from architect role**
+5. Login as `architect`, approve
+6. Developer implements → **approval needed from developer role**
+7. Login as `developer`, approve
+8. App is built and running
 
-## **Why This Stack Works**
+---
 
-### **Simplicity Advantages**
-1. **Easy to understand**: Clear separation of concerns
-2. **Easy to debug**: Logs show everything in one place
-3. **Easy to deploy**: Single command setup
-4. **Easy to extend**: Add new MCPs as needed
-5. **Easy to maintain**: Minimal moving parts
+## Summary
 
-### **Containerization Benefits**
-- **Isolation**: Each MCP runs in its own container
-- **Resource limits**: Control CPU/memory per component
-- **Versioning**: Independent updates of components
-- **Portability**: Works anywhere Docker runs
-- **Networking**: Simple service discovery via Docker Compose
+| Principle | Implementation |
+|-----------|----------------|
+| Simple users | 4 users: normal_user, architect, developer, admin |
+| Simple roles | 4 roles checked via Keycloak |
+| Simple approval | One role per tool, configured in mcp_config.yaml |
+| Simple agents | Architect designs, Developer builds |
+| Full traceability | Debug panel shows everything |
+| Clean architecture | Approval rules in MCP config, not agent files |
 
-### **Agent-Centric Design**
-- **Agents drive everything**: No complex backend logic
-- **MCPs as capabilities**: Clear boundary for what's possible
-- **State is king**: Everything persists, nothing is lost
-- **Conversation is primary**: Natural language as the API
-- **Governance is built-in**: Approval flows at tool level
-
-## **The Complete Picture**
-
-**Druppie is technically simple but functionally complete:**
-
-- **Frontend**: React app with multiple interfaces
-- **Backend**: FastAPI with agent orchestration  
-- **MCPs**: 3 specialized servers in containers
-- **Database**: PostgreSQL + Redis for state
-- **Auth**: Keycloak with OBO token flow
-- **Git**: Gitea for all repositories
-
-**Everything connects via:**
-- Standard HTTP calls (backend ↔ MCPs)
-- WebSocket (frontend ↔ backend)
-- Redis pub/sub (HITL ↔ frontend)
-- Docker networking (containers ↔ each other)
-
-**The result:** A platform that's **simple to run** but **powerful enough** to handle complex development workflows, with natural conversation as the primary interface and multiple supporting views for management, governance, and transparency.
-
-One thing i might forgot to mention: the user should completely be able to see what happens, so router agent does x, planner makes plan ..., agent ,.. executes tool... and ttool2 and agent2 does..., etc..
+**This is it.** Nothing more until this works perfectly.
