@@ -4,8 +4,8 @@
 
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { User, Server, Bot, Info, Shield, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
-import { getMCPServers, getMCPTools, getStatus } from '../services/api'
+import { User, Server, Bot, Info, Shield, CheckCircle, XCircle, RefreshCw, Cpu, Thermometer, Zap } from 'lucide-react'
+import { getMCPServers, getMCPTools, getStatus, getAgents } from '../services/api'
 import { useAuth } from '../App'
 
 const SectionCard = ({ title, icon: Icon, children }) => (
@@ -61,6 +61,15 @@ const Settings = () => {
     queryKey: ['status'],
     queryFn: getStatus,
     refetchInterval: 30000,
+  })
+
+  const {
+    data: agentsList = [],
+    isLoading: agentsLoading,
+    refetch: refetchAgents,
+  } = useQuery({
+    queryKey: ['agents'],
+    queryFn: getAgents,
   })
 
   // Group tools by server
@@ -242,84 +251,90 @@ const Settings = () => {
 
       {/* Agents */}
       <SectionCard title="Configured Agents" icon={Bot}>
-        <p className="text-gray-500 text-sm mb-4">
-          Agents are AI assistants with specific capabilities defined by their MCP tool access.
-        </p>
-
-        <div className="space-y-4">
-          {/* Router Agent */}
-          <div className="border rounded-lg p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center space-x-2">
-                <Bot className="w-4 h-4 text-blue-600" />
-                <span className="font-medium">Router</span>
-              </div>
-              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">System</span>
-            </div>
-            <p className="text-sm text-gray-500">
-              Routes incoming requests to the appropriate agent based on the task requirements.
-            </p>
-          </div>
-
-          {/* Planner Agent */}
-          <div className="border rounded-lg p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center space-x-2">
-                <Bot className="w-4 h-4 text-purple-600" />
-                <span className="font-medium">Planner</span>
-              </div>
-              <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">
-                System
-              </span>
-            </div>
-            <p className="text-sm text-gray-500">
-              Creates execution plans and breaks down complex tasks into manageable steps.
-            </p>
-          </div>
-
-          {/* Developer Agent */}
-          <div className="border rounded-lg p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center space-x-2">
-                <Bot className="w-4 h-4 text-green-600" />
-                <span className="font-medium">Developer</span>
-              </div>
-              <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">
-                Execution
-              </span>
-            </div>
-            <p className="text-sm text-gray-500">
-              Writes and modifies code using coding, git, and docker MCP tools.
-            </p>
-            <div className="mt-2 flex flex-wrap gap-1">
-              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">coding</span>
-              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">git</span>
-              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">docker</span>
-              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">hitl</span>
-            </div>
-          </div>
-
-          {/* Reviewer Agent */}
-          <div className="border rounded-lg p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center space-x-2">
-                <Bot className="w-4 h-4 text-orange-600" />
-                <span className="font-medium">Reviewer</span>
-              </div>
-              <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs">
-                Quality
-              </span>
-            </div>
-            <p className="text-sm text-gray-500">
-              Reviews code changes and provides feedback before merging.
-            </p>
-            <div className="mt-2 flex flex-wrap gap-1">
-              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">coding</span>
-              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">git</span>
-              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">hitl</span>
-            </div>
-          </div>
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-gray-500 text-sm">
+            Agents are AI assistants with specific capabilities. Model info shown for transparency.
+          </p>
+          <button
+            onClick={() => refetchAgents()}
+            className="text-blue-600 hover:text-blue-700 text-sm flex items-center"
+          >
+            <RefreshCw className={`w-4 h-4 mr-1 ${agentsLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
         </div>
+
+        {agentsLoading ? (
+          <div className="text-gray-500">Loading agents...</div>
+        ) : agentsList.length === 0 ? (
+          <div className="text-gray-500">No agents configured.</div>
+        ) : (
+          <div className="space-y-4">
+            {agentsList.map((agent) => {
+              const categoryColors = {
+                system: { bg: 'bg-blue-100', text: 'text-blue-700', icon: 'text-blue-600' },
+                execution: { bg: 'bg-green-100', text: 'text-green-700', icon: 'text-green-600' },
+                quality: { bg: 'bg-orange-100', text: 'text-orange-700', icon: 'text-orange-600' },
+                deployment: { bg: 'bg-purple-100', text: 'text-purple-700', icon: 'text-purple-600' },
+              }
+              const colors = categoryColors[agent.category] || categoryColors.execution
+
+              return (
+                <div key={agent.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center space-x-2">
+                      <Bot className={`w-4 h-4 ${colors.icon}`} />
+                      <span className="font-medium">{agent.name}</span>
+                    </div>
+                    <span className={`px-2 py-0.5 ${colors.bg} ${colors.text} rounded text-xs capitalize`}>
+                      {agent.category}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-500 mb-3">{agent.description}</p>
+
+                  {/* Model Info (Transparency) */}
+                  {agent.model && (
+                    <div className="flex flex-wrap gap-2 mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                      <span className="flex items-center text-xs text-yellow-800" title="LLM Model">
+                        <Cpu className="w-3 h-3 mr-1" />
+                        {agent.model}
+                      </span>
+                      {agent.temperature !== null && (
+                        <span className="flex items-center text-xs text-yellow-700" title="Temperature">
+                          <Thermometer className="w-3 h-3 mr-1" />
+                          temp: {agent.temperature}
+                        </span>
+                      )}
+                      {agent.max_tokens && (
+                        <span className="flex items-center text-xs text-yellow-700" title="Max Tokens">
+                          <Zap className="w-3 h-3 mr-1" />
+                          max: {agent.max_tokens}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* MCP Tools */}
+                  {agent.mcps && agent.mcps.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-xs text-gray-400 mb-1">MCP Access</p>
+                      <div className="flex flex-wrap gap-1">
+                        {agent.mcps.map((mcp) => (
+                          <span
+                            key={mcp}
+                            className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs"
+                          >
+                            {mcp}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </SectionCard>
     </div>
   )

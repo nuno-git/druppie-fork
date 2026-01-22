@@ -614,10 +614,19 @@ const TraceEvent = ({ event, depth = 0 }) => {
   )
 }
 
+// Format token count with K suffix for large numbers
+const formatTokens = (count) => {
+  if (!count) return '0'
+  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`
+  return count.toString()
+}
+
 // Summary stats component
 const TraceSummary = ({ trace }) => {
   // Calculate stats from trace
   const events = trace.events || []
+  const summary = trace.summary || {}
 
   const countByType = (type) =>
     events.filter((e) => (e.type || e.event_type || '').includes(type)).length
@@ -627,14 +636,17 @@ const TraceSummary = ({ trace }) => {
 
   const totalDuration = events.reduce((sum, e) => sum + (e.duration_ms || 0), 0)
 
+  // Use summary token counts if available, otherwise calculate from events
+  const totalTokens = summary.total_tokens || 0
+
   const stats = [
     { label: 'Total Events', value: events.length, icon: Hash, color: 'text-gray-600' },
     { label: 'Agent Calls', value: countByType('agent'), icon: Bot, color: 'text-purple-600' },
     { label: 'LLM Calls', value: countByType('llm'), icon: Brain, color: 'text-blue-600' },
     { label: 'Tool Calls', value: countByType('tool'), icon: Hammer, color: 'text-orange-600' },
+    { label: 'Total Tokens', value: formatTokens(totalTokens), icon: Zap, color: 'text-yellow-600' },
     { label: 'Successful', value: countByStatus('success') + countByStatus('completed'), icon: CheckCircle, color: 'text-green-600' },
-    { label: 'Failed', value: countByStatus('error') + countByStatus('failed'), icon: XCircle, color: 'text-red-600' },
-    { label: 'Total Duration', value: formatDuration(totalDuration), icon: Timer, color: 'text-cyan-600' },
+    { label: 'Duration', value: formatDuration(totalDuration), icon: Timer, color: 'text-cyan-600' },
   ]
 
   return (

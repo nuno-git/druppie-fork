@@ -186,6 +186,13 @@ export const getProjectFile = (projectId, path, branch = 'main') =>
 // ============ Running Apps ============
 export const getRunningApps = () => request('/api/apps/running')
 
+// ============ Agents (Transparency) ============
+export const getAgents = async () => {
+  const response = await request('/api/agents')
+  return response.agents || []
+}
+export const getAgent = (agentId) => request(`/api/agents/${agentId}`)
+
 // ============ Health ============
 export const getHealth = () => request('/health')
 export const getStatus = () => request('/api/status')

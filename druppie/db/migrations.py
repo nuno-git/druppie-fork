@@ -222,11 +222,52 @@ def migrate_003_add_project_workspace_to_sessions(engine: Engine) -> None:
     logger.info("migration_applied", migration=migration_name)
 
 
+def migrate_004_add_token_usage_to_sessions(engine: Engine) -> None:
+    """Add token usage tracking columns to sessions table.
+
+    These columns track LLM token usage for transparency:
+    - prompt_tokens: Tokens used for prompts
+    - completion_tokens: Tokens used for completions
+    - total_tokens: Total tokens used
+    """
+    migration_name = "004_add_token_usage_to_sessions"
+
+    if migration_applied(engine, migration_name):
+        return
+
+    columns_to_add = [
+        ("prompt_tokens", "INTEGER DEFAULT 0"),
+        ("completion_tokens", "INTEGER DEFAULT 0"),
+        ("total_tokens", "INTEGER DEFAULT 0"),
+    ]
+
+    with engine.connect() as conn:
+        for col_name, col_type in columns_to_add:
+            if not column_exists(engine, "sessions", col_name):
+                try:
+                    conn.execute(text(f"""
+                        ALTER TABLE sessions
+                        ADD COLUMN {col_name} {col_type}
+                    """))
+                    conn.commit()
+                    logger.info("migration_column_added", migration=migration_name, column=col_name)
+                except (OperationalError, ProgrammingError) as e:
+                    if "already exists" in str(e):
+                        conn.rollback()
+                        logger.info("migration_column_already_exists", migration=migration_name, column=col_name)
+                    else:
+                        raise
+
+    mark_migration_applied(engine, migration_name)
+    logger.info("migration_applied", migration=migration_name)
+
+
 # List of all migrations in order
 MIGRATIONS = [
     migrate_001_add_agent_id_to_approvals,
     migrate_002_add_agent_state_to_approvals,
     migrate_003_add_project_workspace_to_sessions,
+    migrate_004_add_token_usage_to_sessions,
 ]
 
 

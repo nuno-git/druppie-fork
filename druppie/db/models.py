@@ -29,6 +29,12 @@ class Session(Base):
         index=True,
     )  # active, paused, completed, failed
     state = Column(JSON, nullable=True)  # ExecutionState as JSON
+
+    # Token usage tracking (transparency)
+    prompt_tokens = Column(Integer, default=0)
+    completion_tokens = Column(Integer, default=0)
+    total_tokens = Column(Integer, default=0)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -40,6 +46,9 @@ class Session(Base):
             "workspace_id": self.workspace_id,
             "status": self.status,
             "state": self.state,
+            "prompt_tokens": self.prompt_tokens or 0,
+            "completion_tokens": self.completion_tokens or 0,
+            "total_tokens": self.total_tokens or 0,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

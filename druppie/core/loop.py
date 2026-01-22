@@ -2225,6 +2225,10 @@ class MainLoop:
                     state,
                     project_id=exec_ctx.project_id,
                     workspace_id=exec_ctx.workspace_id,
+                    # Token usage tracking (transparency)
+                    prompt_tokens=exec_ctx.prompt_tokens,
+                    completion_tokens=exec_ctx.completion_tokens,
+                    total_tokens=exec_ctx.total_tokens,
                 )
                 db.commit()
 

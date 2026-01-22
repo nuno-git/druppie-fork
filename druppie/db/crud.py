@@ -131,6 +131,9 @@ def upsert_session(
     state: dict | None = None,
     project_id: str | None = None,
     workspace_id: str | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    total_tokens: int | None = None,
 ) -> Session:
     """Create or update a session.
 
@@ -144,6 +147,9 @@ def upsert_session(
         state: Session state dict
         project_id: Optional project ID to link session to
         workspace_id: Optional workspace ID to link session to
+        prompt_tokens: Optional prompt token count (for transparency)
+        completion_tokens: Optional completion token count (for transparency)
+        total_tokens: Optional total token count (for transparency)
     """
     session = get_session(db, session_id)
 
@@ -159,6 +165,13 @@ def upsert_session(
             session.project_id = project_id
         if workspace_id is not None:
             session.workspace_id = workspace_id
+        # Update token usage (accumulate if already set)
+        if prompt_tokens is not None:
+            session.prompt_tokens = (session.prompt_tokens or 0) + prompt_tokens
+        if completion_tokens is not None:
+            session.completion_tokens = (session.completion_tokens or 0) + completion_tokens
+        if total_tokens is not None:
+            session.total_tokens = (session.total_tokens or 0) + total_tokens
         session.updated_at = datetime.now(timezone.utc)
     else:
         # Create new session
@@ -169,6 +182,9 @@ def upsert_session(
             state=state,
             project_id=project_id,
             workspace_id=workspace_id,
+            prompt_tokens=prompt_tokens or 0,
+            completion_tokens=completion_tokens or 0,
+            total_tokens=total_tokens or 0,
         )
         db.add(session)
 

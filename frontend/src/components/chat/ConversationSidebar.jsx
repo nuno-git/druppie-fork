@@ -10,7 +10,16 @@ import {
   ChevronDown,
   History,
   Bug,
+  Zap,
 } from 'lucide-react'
+
+// Format token count with K suffix for large numbers
+const formatTokens = (count) => {
+  if (!count) return null
+  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`
+  return count.toString()
+}
 
 // Individual conversation item
 const ConversationItem = ({ session, isActive, onClick, onDebug }) => {
@@ -50,9 +59,15 @@ const ConversationItem = ({ session, isActive, onClick, onDebug }) => {
             <div className={`text-sm font-medium truncate ${isActive ? 'text-blue-900' : 'text-gray-800'}`}>
               {preview.length > 40 ? `${preview.slice(0, 40)}...` : preview}
             </div>
-            <div className="flex items-center gap-2 mt-1">
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
               <span className={`w-2 h-2 rounded-full ${getStatusColor(session.status)}`} />
               <span className="text-xs text-gray-500">{date}</span>
+              {formatTokens(session.total_tokens) && (
+                <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Total tokens used">
+                  <Zap className="w-2.5 h-2.5" />
+                  {formatTokens(session.total_tokens)}
+                </span>
+              )}
               {session.project_name && (
                 <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded truncate max-w-[80px]">
                   {session.project_name}
