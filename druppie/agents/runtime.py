@@ -244,10 +244,22 @@ class Agent:
                             tool_args["workspace_id"] = exec_ctx.workspace_id
                             injected["workspace_id"] = exec_ctx.workspace_id
                     if server == "docker":
-                        # Docker tools accept: workspace_id for build
-                        if "workspace_id" not in tool_args and exec_ctx.workspace_id:
-                            tool_args["workspace_id"] = exec_ctx.workspace_id
-                            injected["workspace_id"] = exec_ctx.workspace_id
+                        # Only docker:build accepts workspace_id - it needs to know where to find Dockerfile
+                        # Other docker tools (run, stop, logs, list_containers) don't use workspace_id
+                        docker_tools_with_workspace = {"build", "register_workspace"}
+                        if tool in docker_tools_with_workspace:
+                            if "workspace_id" not in tool_args and exec_ctx.workspace_id:
+                                tool_args["workspace_id"] = exec_ctx.workspace_id
+                                injected["workspace_id"] = exec_ctx.workspace_id
+                        else:
+                            # Remove workspace_id if LLM incorrectly added it to a tool that doesn't use it
+                            if "workspace_id" in tool_args:
+                                del tool_args["workspace_id"]
+                                logger.debug(
+                                    "removed_invalid_workspace_id",
+                                    agent_id=self.id,
+                                    tool=mcp_tool_name,
+                                )
                     if server == "hitl" and "session_id" not in tool_args:
                         tool_args["session_id"] = exec_ctx.session_id
                         injected["session_id"] = exec_ctx.session_id

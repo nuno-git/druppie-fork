@@ -525,6 +525,9 @@ async def approve_request(
                 }
 
         # This is an MCP tool approval - execute the approved tool
+        # Check if we have saved agent state for resumption
+        agent_state = approval.agent_state
+
         try:
             mcp_client = get_mcp_client(db)
 
@@ -646,11 +649,44 @@ async def approve_request(
                 }
 
             # Resume session with the result
+            # If we have agent_state, use resume_from_step_approval to continue the plan
+            # This handles MCP tool approvals mid-agent execution properly
             try:
-                resume_result = await loop.resume_session(
-                    session_id=approval.session_id,
-                    response=result,
-                )
+                if agent_state and isinstance(agent_state, dict):
+                    # Store the tool result in the context so the agent can use it
+                    # when we re-run the current step
+                    agent_state_with_result = dict(agent_state)
+                    agent_state_with_result["last_tool_result"] = {
+                        "tool": approval.tool_name,
+                        "result": result,
+                        "approval_id": approval_id,
+                    }
+
+                    logger.info(
+                        "resuming_mcp_tool_approval_with_state",
+                        approval_id=approval_id,
+                        session_id=approval.session_id,
+                        current_step=agent_state.get("current_step"),
+                        agent_id=agent_state.get("agent_id"),
+                    )
+
+                    resume_result = await loop.resume_from_step_approval(
+                        session_id=approval.session_id,
+                        agent_state=agent_state_with_result,
+                        emit_event=None,
+                    )
+                else:
+                    # Fallback to old behavior if no agent_state
+                    logger.warning(
+                        "mcp_tool_approval_no_agent_state",
+                        approval_id=approval_id,
+                        session_id=approval.session_id,
+                    )
+                    resume_result = await loop.resume_session(
+                        session_id=approval.session_id,
+                        response=result,
+                    )
+
                 return {
                     "success": True,
                     "status": "approved",

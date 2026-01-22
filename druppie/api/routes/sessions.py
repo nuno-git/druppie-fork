@@ -40,6 +40,8 @@ class MessageResponse(BaseModel):
     timestamp: str | None = None
     workflow_events: list[dict] | None = None
     llm_calls: list[dict] | None = None
+    deployment_url: str | None = None
+    container_name: str | None = None
 
 
 class SessionResponse(BaseModel):
@@ -156,6 +158,8 @@ def _session_to_response(session, project=None) -> SessionResponse:
             timestamp=msg.get("timestamp"),
             workflow_events=msg.get("workflow_events"),
             llm_calls=msg.get("llm_calls"),
+            deployment_url=msg.get("deployment_url"),
+            container_name=msg.get("container_name"),
         )
         for msg in messages_data
     ] if messages_data else None

@@ -8,6 +8,7 @@ import WorkflowTimeline from './WorkflowTimeline'
 import QuestionCard from './QuestionCard'
 import ApprovalCard from './ApprovalCard'
 import AgentAttribution from './AgentAttribution'
+import DeploymentCard from './DeploymentCard'
 
 const Message = ({
   message,
@@ -45,6 +46,14 @@ const Message = ({
             {/* Main content */}
             {message.content && (
               <div className="whitespace-pre-wrap text-sm">{message.content}</div>
+            )}
+
+            {/* Deployment Card - shows when deployment is complete with URL */}
+            {!isUser && message.deploymentUrl && (
+              <DeploymentCard
+                url={message.deploymentUrl}
+                containerName={message.containerName}
+              />
             )}
 
             {/* Workflow Events Timeline */}

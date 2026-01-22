@@ -51,6 +51,10 @@ class ExecutionContext:
     # Real-time callback
     emit_event: Callable[[dict], None] | None = None
 
+    # Cached tool results from approved executions
+    # Used when resuming after MCP tool approval to avoid re-executing
+    completed_tool_results: dict[str, Any] = field(default_factory=dict)
+
     # Timing
     start_time: float = field(default_factory=time.time)
 

@@ -362,6 +362,9 @@ const Chat = () => {
           ...(msg.role === 'assistant' && {
             workflowEvents: normalizedMsgEvents.length > 0 ? normalizedMsgEvents : (isLastAssistant ? normalizedEvents : []),
             llmCalls: msgLlmCalls,
+            // Include deployment info if present
+            deploymentUrl: msg.deployment_url || msg.deploymentUrl,
+            containerName: msg.container_name || msg.containerName,
           }),
           // Attach approvals to last assistant message
           ...(isLastAssistant && {
@@ -472,9 +475,65 @@ const Chat = () => {
   const approveMutation = useMutation({
     mutationFn: (taskId) => approveTask(taskId),
     onSuccess: (data, taskId) => {
-      const isFullyApproved = !data.approvals_required || data.approvals_received >= data.approvals_required
+      // Remove the pending approval from messages
       setMessages((prev) => prev.map(msg => msg.pendingApprovals ? { ...msg, pendingApprovals: msg.pendingApprovals.filter(a => a.task_id !== taskId) } : msg))
-      setMessages((prev) => [...prev, { role: 'assistant', content: isFullyApproved ? '✅ Task fully approved! The action will now proceed.' : `✅ Your approval has been recorded (${data.approvals_received}/${data.approvals_required}). Waiting for more approvals.` }])
+
+      // Check if the tool execution failed
+      if (data.success === false) {
+        const errorMessage = data.user_message || data.error || 'Tool execution failed'
+        setMessages((prev) => [...prev, {
+          role: 'assistant',
+          content: `❌ Execution failed: ${errorMessage}${data.retryable ? ' (You can try again)' : ''}`,
+          timestamp: new Date().toISOString(),
+        }])
+        setCurrentStep(null)
+        queryClient.invalidateQueries({ queryKey: ['tasks'] })
+        queryClient.invalidateQueries({ queryKey: ['sessions'] })
+        return
+      }
+
+      // Check if we have a resume result with actual response content
+      const resumeResult = data.resume_result
+      if (resumeResult && resumeResult.response) {
+        // Display the actual response from the backend (e.g., deployment complete message)
+        const workflowEvents = (resumeResult.workflow_events || []).map(event => ({
+          ...event,
+          event_type: event.type || event.event_type,
+          title: event.title || formatEventTitle({ ...event, event_type: event.type }),
+          description: event.data?.description || event.description || '',
+          status: event.status || 'success',
+          data: event.data || event,
+        }))
+
+        setMessages((prev) => [...prev, {
+          role: 'assistant',
+          content: resumeResult.response,
+          workflowEvents,
+          deploymentUrl: resumeResult.deployment_url,
+          containerName: resumeResult.container_name,
+          timestamp: new Date().toISOString(),
+        }])
+
+        // Update debug panel with events from the resumed execution
+        if (workflowEvents.length > 0) {
+          setDebugWorkflowEvents(prev => [...prev, ...workflowEvents])
+        }
+        if (resumeResult.llm_calls?.length > 0) {
+          setDebugLLMCalls(prev => [...prev, ...resumeResult.llm_calls])
+        }
+
+        // Clear current step indicator since execution is complete
+        setCurrentStep(null)
+      } else {
+        // Fallback to generic message if no resume result
+        const isFullyApproved = !data.approvals_required || data.approvals_received >= data.approvals_required
+        setMessages((prev) => [...prev, {
+          role: 'assistant',
+          content: isFullyApproved ? '✅ Task fully approved! The action will now proceed.' : `✅ Your approval has been recorded (${data.approvals_received}/${data.approvals_required}). Waiting for more approvals.`,
+          timestamp: new Date().toISOString(),
+        }])
+      }
+
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },

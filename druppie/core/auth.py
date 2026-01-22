@@ -138,19 +138,20 @@ class AuthService:
         Returns:
             User info dict or None if authentication failed
         """
-        # Dev mode bypass
+        # Try to decode real token first (even in dev mode)
+        # This ensures user isolation works properly
+        if authorization and authorization.startswith("Bearer "):
+            token = authorization[7:]
+            user = self.decode_token(token)
+            if user:
+                return user
+
+        # Dev mode fallback - only if no valid token
         if self.dev_mode:
             logger.debug("dev_mode_auth_bypass")
             return DEV_USER
 
-        if not authorization:
-            return None
-
-        if not authorization.startswith("Bearer "):
-            return None
-
-        token = authorization[7:]
-        return self.decode_token(token)
+        return None
 
     def get_user_roles(self, user: dict[str, Any]) -> list[str]:
         """Extract roles from user info."""

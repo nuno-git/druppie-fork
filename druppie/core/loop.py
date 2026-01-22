@@ -465,18 +465,53 @@ async def execute_node(state: GraphState) -> dict:
 
                 # Check if agent returned paused state (for approval)
                 if isinstance(result, dict) and result.get("paused"):
-                    logger.info("agent_paused", step_id=step_id, agent_id=agent_id)
+                    approval_id = result.get("approval_id")
+                    logger.info("agent_paused", step_id=step_id, agent_id=agent_id, approval_id=approval_id)
+
+                    # Update the approval with plan execution state so we can resume properly
+                    # This is critical - MCP tool approvals need the same state as step approvals
+                    if approval_id:
+                        try:
+                            from druppie.db.crud import update_approval
+                            with db_session() as db:
+                                update_approval(
+                                    db,
+                                    approval_id,
+                                    {
+                                        "agent_state": {
+                                            "plan": plan,
+                                            "current_step": i,
+                                            "results": results,
+                                            "context": context,
+                                            "agent_id": agent_id,  # Track which agent was running
+                                        },
+                                    },
+                                )
+                                db.commit()
+                                logger.info(
+                                    "approval_state_saved",
+                                    approval_id=approval_id,
+                                    step_id=step_id,
+                                    current_step=i,
+                                )
+                        except Exception as e:
+                            logger.error(
+                                "approval_state_save_failed",
+                                approval_id=approval_id,
+                                error=str(e),
+                            )
+
                     if ctx:
                         ctx.emit("agent_paused", {
                             "step_id": step_id,
                             "agent_id": agent_id,
-                            "approval_id": result.get("approval_id"),
+                            "approval_id": approval_id,
                         })
                     return {
                         "results": results,
                         "response": f"Waiting for approval in step {step_id}",
                         "paused": True,
-                        "approval_id": result.get("approval_id"),
+                        "approval_id": approval_id,
                     }
 
                 logger.info(
@@ -636,11 +671,32 @@ async def execute_node(state: GraphState) -> dict:
             if not step.get("continue_on_error", False):
                 break
 
-    # Generate response
+    # Generate response - prefer agent's final response (e.g., deployer with URL)
     successful = sum(1 for r in results if r.get("success"))
     total = len(results)
 
-    if successful == total and total > 0:
+    # Try to find a meaningful agent response to show the user
+    # Deployer agent should return the deployment URL
+    final_agent_response = None
+    for r in reversed(results):  # Check most recent results first
+        if r.get("success") and isinstance(r.get("result"), dict):
+            result_data = r["result"]
+            # Check if this is an agent response with text content
+            # Agent returns {"content": "..."} when output is text (not JSON)
+            if isinstance(result_data.get("content"), str) and len(result_data["content"]) > 20:
+                final_agent_response = result_data["content"]
+                break
+            if isinstance(result_data.get("response"), str) and len(result_data["response"]) > 20:
+                final_agent_response = result_data["response"]
+                break
+            # Check for URL in docker run result
+            if result_data.get("url"):
+                final_agent_response = f"**Deployment Complete!**\n\n- **URL**: {result_data['url']}\n- **Container**: {result_data.get('container_name', 'N/A')}\n- **Port**: {result_data.get('port', 'N/A')}"
+                break
+
+    if final_agent_response:
+        response = final_agent_response
+    elif successful == total and total > 0:
         response = f"Successfully completed all {total} steps"
     elif successful > 0:
         response = f"Completed {successful}/{total} steps"
@@ -651,6 +707,7 @@ async def execute_node(state: GraphState) -> dict:
         ctx.emit("execution_completed", {
             "successful_steps": successful,
             "total_steps": total,
+            "final_response": response[:200] if response else None,
         })
 
     return {"results": results, "response": response}
@@ -1027,8 +1084,9 @@ class MainLoop:
     ) -> dict[str, Any]:
         """Resume plan execution from a step approval checkpoint.
 
-        This is called when a step approval (type: "approval") is approved.
-        It continues executing the plan from the next step after the approval.
+        This is called when:
+        1. A step approval (type: "approval") is approved - continue from NEXT step
+        2. An MCP tool approval is approved - continue from SAME step (re-run agent)
 
         Args:
             session_id: Session ID
@@ -1037,6 +1095,8 @@ class MainLoop:
                 - current_step: Index of the approval step (0-indexed)
                 - results: Results from steps before the approval
                 - context: Workspace/session context
+                - agent_id: (optional) If present, this was an MCP tool approval
+                - last_tool_result: (optional) Result of the just-executed approved tool
             emit_event: Callback for real-time events
 
         Returns:
@@ -1054,6 +1114,10 @@ class MainLoop:
         current_step_idx = agent_state.get("current_step", 0)
         results = agent_state.get("results", [])
         context = agent_state.get("context", {})
+        last_tool_result = agent_state.get("last_tool_result")
+
+        # Check if this was an MCP tool approval (has agent_id) or step approval
+        is_mcp_tool_approval = "agent_id" in agent_state
 
         # Update execution context with workspace info
         exec_ctx.workspace_id = context.get("workspace_id")
@@ -1061,11 +1125,141 @@ class MainLoop:
         exec_ctx.workspace_path = context.get("workspace_path")
         exec_ctx.branch = context.get("branch")
 
+        # Store the last tool result so MCPClient can return it instead of re-executing
+        # Also add it to context so the agent knows what happened with the approved tool
+        if last_tool_result:
+            exec_ctx.completed_tool_results = exec_ctx.completed_tool_results if hasattr(exec_ctx, "completed_tool_results") else {}
+            tool_key = last_tool_result.get("tool", "")
+            exec_ctx.completed_tool_results[tool_key] = last_tool_result.get("result")
+
+            # CRITICAL: Add the tool result to context so agent knows the approved tool succeeded
+            # This prevents the agent from trying to re-do work that was already completed
+            tool_result = last_tool_result.get("result", {})
+            context["last_approved_tool"] = tool_key
+            context["last_tool_result"] = tool_result
+
+            # If this was docker:run, explicitly add the URL to context
+            if tool_key == "docker:run" and isinstance(tool_result, dict):
+                if tool_result.get("success") and tool_result.get("url"):
+                    context["deployment_url"] = tool_result.get("url")
+                    context["deployment_complete"] = True
+                    context["container_name"] = tool_result.get("container_name")
+                    context["container_id"] = tool_result.get("container_id")
+
+                    # SHORT-CIRCUIT: Deployment is complete! Don't re-run agent.
+                    # The agent would try to call more tools, but we already have the result.
+                    logger.info(
+                        "deployment_complete_short_circuit",
+                        session_id=session_id,
+                        deployment_url=tool_result.get("url"),
+                        container_name=tool_result.get("container_name"),
+                    )
+
+                    # Build deployment success response
+                    deployment_response = (
+                        f"**Deployment Complete!**\n\n"
+                        f"- **URL**: {tool_result.get('url')}\n"
+                        f"- **Container**: {tool_result.get('container_name', 'N/A')}\n"
+                        f"- **Image**: {tool_result.get('image_name', 'N/A')}\n"
+                        f"- **Port**: {tool_result.get('port', 'N/A')}\n"
+                        f"- **Status**: Running\n\n"
+                        f"To view logs: `docker logs {tool_result.get('container_name')}`\n"
+                        f"To stop: `docker stop {tool_result.get('container_name')}`"
+                    )
+
+                    # Add the deployment result to results
+                    results.append({
+                        "step_id": f"step_{current_step_idx}",
+                        "success": True,
+                        "result": tool_result,
+                    })
+
+                    exec_ctx.emit("deployment_complete", {
+                        "url": tool_result.get("url"),
+                        "container_name": tool_result.get("container_name"),
+                        "container_id": tool_result.get("container_id"),
+                    })
+
+                    exec_ctx.emit("execution_completed", {
+                        "successful_steps": len(results),
+                        "total_steps": len(plan.get("steps", [])),
+                        "final_response": deployment_response[:200],
+                    })
+
+                    # Save session state with final response for persistence
+                    # This ensures the deployment info is available on page reload
+                    try:
+                        from druppie.db.crud import update_session, get_session
+                        with db_session() as db:
+                            existing_session = get_session(db, session_id)
+                            if existing_session:
+                                existing_state = existing_session.state or {}
+                                existing_messages = existing_state.get("messages", [])
+
+                                # Add deployment completion message
+                                existing_messages.append({
+                                    "role": "assistant",
+                                    "content": deployment_response,
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "workflow_events": exec_ctx.workflow_events,
+                                    "llm_calls": exec_ctx.llm_calls,
+                                    "deployment_url": tool_result.get("url"),
+                                    "container_name": tool_result.get("container_name"),
+                                })
+
+                                # Update context with final response
+                                existing_context = existing_state.get("context", {})
+                                existing_context["response"] = deployment_response
+                                existing_context["deployment_url"] = tool_result.get("url")
+                                existing_context["deployment_complete"] = True
+
+                                update_session(
+                                    db,
+                                    session_id,
+                                    status="completed",
+                                    state={
+                                        **existing_state,
+                                        "messages": existing_messages,
+                                        "context": existing_context,
+                                        "workflow_events": exec_ctx.workflow_events,
+                                        "llm_calls": exec_ctx.llm_calls,
+                                    },
+                                )
+                                db.commit()
+                                logger.info(
+                                    "session_state_saved_on_deployment_complete",
+                                    session_id=session_id,
+                                    deployment_url=tool_result.get("url"),
+                                )
+                    except Exception as e:
+                        logger.warning(
+                            "failed_to_save_session_state_on_deployment",
+                            session_id=session_id,
+                            error=str(e),
+                        )
+
+                    clear_current_context()
+                    return {
+                        "success": True,
+                        "type": "result",
+                        "response": deployment_response,
+                        "results": results,
+                        "session_id": session_id,
+                        "deployment_url": tool_result.get("url"),
+                        "container_name": tool_result.get("container_name"),
+                        "workflow_events": exec_ctx.workflow_events,
+                        "llm_calls": exec_ctx.llm_calls,
+                    }
+
         steps = plan.get("steps", [])
         total_steps = len(steps)
 
-        # Resume from the step AFTER the approval checkpoint
-        start_step = current_step_idx + 1
+        # For MCP tool approvals: re-run the current step (agent might need more tools)
+        # For step approvals: continue from the next step
+        if is_mcp_tool_approval:
+            start_step = current_step_idx  # Re-run current step
+        else:
+            start_step = current_step_idx + 1  # Skip to next step
 
         logger.info(
             "resume_from_step_approval",
@@ -1074,6 +1268,8 @@ class MainLoop:
             start_step=start_step,
             total_steps=total_steps,
             plan_name=plan.get("name"),
+            is_mcp_tool_approval=is_mcp_tool_approval,
+            has_last_tool_result=last_tool_result is not None,
         )
 
         exec_ctx.emit("execution_resumed", {
@@ -1126,11 +1322,46 @@ class MainLoop:
 
                         # Check if agent returned paused state (for another approval)
                         if isinstance(result, dict) and result.get("paused"):
-                            logger.info("agent_paused_again", step_id=step_id, agent_id=agent_id)
+                            approval_id = result.get("approval_id")
+                            logger.info("agent_paused_again", step_id=step_id, agent_id=agent_id, approval_id=approval_id)
+
+                            # CRITICAL: Save agent_state to approval for proper resume
+                            # This is the same pattern used in execute_plan()
+                            if approval_id:
+                                try:
+                                    from druppie.db.crud import update_approval
+                                    with db_session() as db:
+                                        update_approval(
+                                            db,
+                                            approval_id,
+                                            {
+                                                "agent_state": {
+                                                    "plan": plan,
+                                                    "current_step": i,
+                                                    "results": results,
+                                                    "context": context,
+                                                    "agent_id": agent_id,  # Track which agent was running
+                                                },
+                                            },
+                                        )
+                                        db.commit()
+                                        logger.info(
+                                            "approval_state_saved_on_resume",
+                                            approval_id=approval_id,
+                                            step_id=step_id,
+                                            current_step=i,
+                                        )
+                                except Exception as e:
+                                    logger.error(
+                                        "approval_state_save_failed_on_resume",
+                                        approval_id=approval_id,
+                                        error=str(e),
+                                    )
+
                             exec_ctx.emit("agent_paused", {
                                 "step_id": step_id,
                                 "agent_id": agent_id,
-                                "approval_id": result.get("approval_id"),
+                                "approval_id": approval_id,
                             })
                             clear_current_context()
                             return {
@@ -1262,11 +1493,31 @@ class MainLoop:
                     if not step.get("continue_on_error", False):
                         break
 
-            # Generate response
+            # Generate response - prefer agent's final response (e.g., deployer with URL)
             successful = sum(1 for r in results if r.get("success"))
             total = len(results)
 
-            if successful == total and total > 0:
+            # Try to find a meaningful agent response to show the user
+            final_agent_response = None
+            for r in reversed(results):  # Check most recent results first
+                if r.get("success") and isinstance(r.get("result"), dict):
+                    result_data = r["result"]
+                    # Check if this is an agent response with text content
+                    # Agent returns {"content": "..."} when output is text (not JSON)
+                    if isinstance(result_data.get("content"), str) and len(result_data["content"]) > 20:
+                        final_agent_response = result_data["content"]
+                        break
+                    if isinstance(result_data.get("response"), str) and len(result_data["response"]) > 20:
+                        final_agent_response = result_data["response"]
+                        break
+                    # Check for URL in docker run result
+                    if result_data.get("url"):
+                        final_agent_response = f"**Deployment Complete!**\n\n- **URL**: {result_data['url']}\n- **Container**: {result_data.get('container_name', 'N/A')}\n- **Port**: {result_data.get('port', 'N/A')}"
+                        break
+
+            if final_agent_response:
+                response = final_agent_response
+            elif successful == total and total > 0:
                 response = f"Successfully completed all {total} steps"
             elif successful > 0:
                 response = f"Completed {successful}/{total} steps"
@@ -1276,6 +1527,7 @@ class MainLoop:
             exec_ctx.emit("execution_completed", {
                 "successful_steps": successful,
                 "total_steps": total,
+                "final_response": response[:200] if response else None,
             })
 
             clear_current_context()

@@ -206,6 +206,9 @@ services:
       # Workspace
       WORKSPACE_PATH: /app/workspace
 
+      # Internal API key for MCP servers
+      INTERNAL_API_KEY: druppie-internal-secret-key
+
       # MCP Microservices
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: http://mcp-coding:9001
@@ -299,10 +302,14 @@ services:
       MCP_PORT: "9003"
       REDIS_URL: redis://redis:6379/0
       HITL_TIMEOUT: "300"
+      BACKEND_URL: http://druppie-backend:8000
+      INTERNAL_API_KEY: druppie-internal-secret-key
     ports:
       - "9003:9003"
     depends_on:
       redis:
+        condition: service_healthy
+      druppie-backend:
         condition: service_healthy
     networks:
       - druppie-new-network
