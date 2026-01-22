@@ -401,7 +401,7 @@ const Debug = () => {
           <h2 className="text-lg font-semibold text-red-800 mb-2">Failed to Load Trace</h2>
           <p className="text-red-600 mb-4">{error}</p>
           <Link
-            to="/chat"
+            to={`/chat?session=${sessionId}`}
             className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -423,7 +423,7 @@ const Debug = () => {
             No execution trace found for session: {sessionId}
           </p>
           <Link
-            to="/chat"
+            to={`/chat?session=${sessionId}`}
             className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -440,7 +440,7 @@ const Debug = () => {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link
-            to="/chat"
+            to={`/chat?session=${sessionId}`}
             className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
             title="Back to Chat"
           >

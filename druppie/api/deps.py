@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from druppie.core.auth import get_auth_service, AuthService
 from druppie.core.loop import get_main_loop, MainLoop
 from druppie.db.models import Base
+from druppie.db.migrations import run_migrations
 
 # Database setup
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./druppie.db")
@@ -20,8 +21,11 @@ engine = create_engine(
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Create tables
+# Create tables (only creates if they don't exist)
 Base.metadata.create_all(bind=engine)
+
+# Run migrations (adds new columns to existing tables)
+run_migrations(engine)
 
 
 def get_db() -> Generator[Session, None, None]:
