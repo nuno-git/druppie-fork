@@ -404,6 +404,27 @@ if exec_ctx and server == "coding" and "workspace_id" not in tool_args:
     tool_args["workspace_id"] = exec_ctx.workspace_id
 ```
 
+### Issue: HITL MCP Not Configured (hitl:progress fails)
+**Symptom**: Deployer/developer agents fail with "Client failed to connect" when calling hitl:progress
+**Cause**: HITL MCP server running on port 9003 but not configured in mcp_config.yaml
+**Fix**: Add hitl MCP configuration to mcp_config.yaml with correct URL (http://mcp-hitl:9003)
+**Also**: Ensure agents that use hitl:progress have `hitl: [progress]` in their mcps list
+
+### Issue: Planner Skips Architect for Static Web Pages
+**Symptom**: "Build a simple counter app" goes directly to Developer without Architect
+**Cause**: planner.yaml has a "STATIC WEB PAGES" section that explicitly skips architect for counter, calculator, etc.
+**Note**: This is by design - use "Build me a todo app" to test the full architect flow
+**Key**: The planner distinguishes:
+- CREATE_PROJECT (complex apps) → architect → approval → developer → deployer
+- STATIC WEB PAGES (counter, calculator) → developer → deployer
+- SIMPLE FILE OPERATIONS → developer only
+
+### Issue: Port Conflicts in docker:run
+**Symptom**: docker:run fails with "Bind for 0.0.0.0:8080 failed: port is already allocated"
+**Cause**: Another container (e.g., landing-page) already using the requested port
+**Fix**: Check existing containers with `docker ps` and use a different port mapping
+**Prevention**: Deployer should check for port availability or use dynamic port allocation
+
 ### Architecture Reminder
 - `loop.py` - Keep simple/abstract, orchestrates LangGraph states
 - `agents/runtime.py` - Tool-calling loop, injects context
