@@ -69,8 +69,9 @@ test.describe('Chat and Plan Creation', () => {
     await expect(page.getByText('Hello, can you help me create a calculator?')).toBeVisible()
 
     // Wait for response (may take a moment with LLM)
+    // Use first() to avoid strict mode violation when multiple processing indicators exist
     await expect(
-      page.locator('.animate-pulse').or(page.getByText(/router|agent|tool/i))
+      page.locator('.animate-pulse').first().or(page.getByText(/router|agent|tool/i).first())
     ).toBeVisible({ timeout: 60000 })
   })
 
@@ -164,12 +165,13 @@ test.describe('App Creation E2E', () => {
     await input.fill('Create a todo app')
     await input.press('Enter')
 
-    // Should see user message in chat
-    await expect(page.getByText('Create a todo app')).toBeVisible()
+    // Should see user message in chat (use first to avoid strict mode)
+    await expect(page.getByText('Create a todo app').first()).toBeVisible()
 
     // Wait for any response (loading indicator or actual response)
+    // Use first() to handle multiple processing indicators
     await expect(
-      page.locator('.animate-pulse').or(page.getByText(/working|processing|router/i))
+      page.locator('.animate-pulse').first().or(page.getByText(/working|processing|router/i).first())
     ).toBeVisible({ timeout: 30000 })
   })
 
@@ -183,11 +185,12 @@ test.describe('App Creation E2E', () => {
     await input.fill('Build me a calculator')
     await input.press('Enter')
 
-    await expect(page.getByText('Build me a calculator')).toBeVisible()
+    // Use first() to avoid strict mode violation
+    await expect(page.getByText('Build me a calculator').first()).toBeVisible()
 
     // Wait for processing to start
     await expect(
-      page.locator('.animate-pulse').or(page.getByText(/working|processing|router/i))
+      page.locator('.animate-pulse').first().or(page.getByText(/working|processing|router/i).first())
     ).toBeVisible({ timeout: 30000 })
   })
 })
