@@ -483,3 +483,28 @@ Only inject fields the MCP tool actually accepts:
 - For coding tools: inject `workspace_id`
 - For hitl tools: inject `session_id`
 - Don't inject project_id, workspace_path, branch to MCP tools
+
+### Database Migrations
+Use the migration system in `druppie/db/migrations.py`:
+- Add new columns via migration functions
+- System tracks applied migrations in `_migrations` table
+- Handle "column already exists" errors gracefully
+- Migrations run automatically on startup after table creation
+
+### Frontend Components
+Key reusable components added:
+- `ErrorBoundary.jsx` - Catch React errors with retry UI
+- `ConnectionStatus.jsx` - WebSocket status indicator
+- `CodeBlock.jsx` - Syntax highlighted code with copy button
+
+### Deep Linking
+Chat supports URL parameters for direct navigation:
+- `/chat?session=xxx` loads specific session
+- URL updates when switching sessions
+- Debug page "Back to Chat" preserves session context
+
+### Accessibility
+All interactive elements should have:
+- `aria-label` for icon-only buttons
+- `focus:ring` for visible focus states
+- `aria-expanded` for expandable sections
