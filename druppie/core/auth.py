@@ -45,7 +45,27 @@ class AuthService:
             "KEYCLOAK_SERVER_URL", "http://localhost:8080"
         )
         self.keycloak_realm = keycloak_realm or os.getenv("KEYCLOAK_REALM", "druppie")
-        self.dev_mode = dev_mode or os.getenv("DEV_MODE", "false").lower() == "true"
+
+        # Dev mode security: refuse to enable in production environment
+        environment = os.getenv("ENVIRONMENT", "development")
+        dev_mode_requested = dev_mode or os.getenv("DEV_MODE", "false").lower() == "true"
+
+        if dev_mode_requested and environment.lower() in ("production", "prod"):
+            logger.warning(
+                "dev_mode_blocked_in_production",
+                message="DEV_MODE cannot be enabled in production environment",
+                environment=environment,
+            )
+            self.dev_mode = False
+        else:
+            self.dev_mode = dev_mode_requested
+
+        if self.dev_mode:
+            logger.warning(
+                "dev_mode_enabled",
+                message="SECURITY WARNING: Dev mode enabled - authentication is bypassed!",
+                environment=environment,
+            )
 
         self._jwk_client: PyJWKClient | None = None
 

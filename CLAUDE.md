@@ -597,3 +597,42 @@ The coding MCP blocks dangerous commands. Key blocked patterns:
 - Reverse shells: `nc -e`, `curl|bash`, `wget|bash`
 
 All MCP servers use Python logging (not print) for production monitoring.
+
+### Security: Dev Mode Protection
+The dev mode authentication bypass is protected:
+- Cannot be enabled when `ENVIRONMENT=production` or `ENVIRONMENT=prod`
+- Logs a warning when enabled in development
+- Set `DEV_MODE=true` only in local development
+
+### Security: Credential Warnings
+Services log warnings when credentials are not configured:
+- `GITEA_ADMIN_PASSWORD` - Required for Gitea operations
+- `INTERNAL_API_KEY` - Required for internal MCP→Backend calls
+
+### Logging Best Practices
+Always include `exc_info=True` in logger.error calls within exception handlers:
+```python
+except Exception as e:
+    logger.error("operation_failed", error=str(e), exc_info=True)
+```
+
+This preserves the full stack trace for debugging.
+
+### Standardized Error Classes
+Use the error classes from `druppie/api/errors.py`:
+- `NotFoundError("resource", resource_id)` - 404 errors
+- `ValidationError("message", field="field_name")` - 422 validation errors
+- `ConflictError("message")` - 409 conflicts
+- `AuthorizationError("message", required_roles=["admin"])` - 403 forbidden
+- `ExternalServiceError("service", "message")` - 502 external service errors
+
+Example usage:
+```python
+from druppie.api.errors import NotFoundError, ExternalServiceError
+
+if not project:
+    raise NotFoundError("project", project_id)
+
+if not result.get("success"):
+    raise ExternalServiceError("gitea", f"Failed: {result.get('error')}")
+```
