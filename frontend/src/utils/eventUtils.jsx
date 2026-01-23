@@ -226,7 +226,9 @@ export const formatEventTitle = (event) => {
   if (type === 'llm_generating' || type === 'llm_calling' || type === 'llm_call') {
     const agentName = data.agent_id ? data.agent_id.replace('_agent', '').replace(/_/g, ' ') : ''
     const iteration = data.iteration !== undefined ? ` (iteration ${data.iteration + 1})` : ''
-    return agentName ? `${agentName} calling LLM${iteration}` : `Calling LLM${iteration}`
+    // Show model name for transparency
+    const modelName = data.model ? ` [${data.model}]` : ''
+    return agentName ? `${agentName} calling LLM${iteration}${modelName}` : `Calling LLM${iteration}${modelName}`
   }
   if (type === 'llm_response') {
     const duration = data.duration_ms ? ` (${data.duration_ms}ms)` : ''
@@ -294,9 +296,20 @@ export const getEventDescription = (event) => {
     return data.error || 'An error occurred'
   }
   if (type === 'llm_call') {
-    const duration = data.duration_ms ? `Duration: ${data.duration_ms}ms` : ''
-    const hasTools = data.has_tool_calls ? 'Tool calls made' : 'No tool calls'
-    return `${hasTools}. ${duration}`.trim()
+    const parts = []
+    // Show model/provider for transparency
+    if (data.model) {
+      const provider = data.provider ? ` (${data.provider})` : ''
+      parts.push(`Model: ${data.model}${provider}`)
+    }
+    parts.push(data.has_tool_calls ? 'Tool calls made' : 'No tool calls')
+    if (data.duration_ms) {
+      parts.push(`Duration: ${data.duration_ms}ms`)
+    }
+    if (data.tokens) {
+      parts.push(`Tokens: ${data.tokens}`)
+    }
+    return parts.join('. ')
   }
   if (type === 'tool_call') {
     const args = data.args_preview || ''
