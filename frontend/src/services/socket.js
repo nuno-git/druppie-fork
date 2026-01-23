@@ -91,6 +91,7 @@ const eventCallbacks = {
   progress: [],  // HITL MCP progress events
   notification: [],  // HITL MCP notification events
   execution_cancelled: [],  // Execution cancelled by user
+  deployment_complete: [],  // Deployment successful with URL
 }
 
 /**
@@ -325,6 +326,14 @@ export const onHITLNotification = (callback) => {
  */
 export const onExecutionCancelled = (callback) => {
   return registerCallback('execution_cancelled', callback)
+}
+
+/**
+ * Subscribe to deployment complete events
+ * Called when docker:run succeeds with a URL
+ */
+export const onDeploymentComplete = (callback) => {
+  return registerCallback('deployment_complete', callback)
 }
 
 /**
