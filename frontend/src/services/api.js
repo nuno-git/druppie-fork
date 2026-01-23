@@ -85,8 +85,22 @@ export const rejectApproval = (approvalId, comment = '') =>
 // Legacy task endpoints (mapped to approvals for backwards compatibility)
 export const getTasks = () => request('/api/approvals')
 export const getTask = (taskId) => request(`/api/approvals/${taskId}`)
-export const getApprovalHistory = (limit = 20) =>
-  request(`/api/approvals?status=approved&limit=${limit}`)
+export const getApprovalHistory = async (limit = 20) => {
+  // Fetch both approved and rejected approvals for complete history
+  const [approved, rejected] = await Promise.all([
+    request(`/api/approvals?status=approved&limit=${limit}`),
+    request(`/api/approvals?status=rejected&limit=${limit}`),
+  ])
+  // Combine and sort by created_at descending
+  const allApprovals = [
+    ...(approved?.approvals || []),
+    ...(rejected?.approvals || []),
+  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+  return {
+    approvals: allApprovals.slice(0, limit),
+    total: (approved?.total || 0) + (rejected?.total || 0),
+  }
+}
 export const getRejectedApprovals = (limit = 20) =>
   request(`/api/approvals?status=rejected&limit=${limit}`)
 export const approveTask = (taskId, comment = '') =>

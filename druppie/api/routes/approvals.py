@@ -317,6 +317,11 @@ class ApprovalResponse(BaseModel):
     description: str | None
     agent_id: str | None
     created_at: str | None
+    # Approval decision info (for history)
+    approved_by: str | None = None
+    approved_at: str | None = None
+    rejected_by: str | None = None
+    rejection_reason: str | None = None
 
 
 class ApprovalListResponse(BaseModel):
@@ -451,6 +456,11 @@ async def list_approvals(
             description=a.description,
             agent_id=a.agent_id,
             created_at=a.created_at.isoformat() if a.created_at else None,
+            # History fields
+            approved_by=a.approved_by,
+            approved_at=a.approved_at.isoformat() if a.approved_at else None,
+            rejected_by=a.rejected_by,
+            rejection_reason=a.rejection_reason,
         )
         for a in paginated
     ]
