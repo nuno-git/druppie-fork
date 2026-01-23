@@ -35,10 +35,21 @@ used_ports: set[int] = set()
 workspaces: dict[str, dict] = {}
 
 
+def is_port_available(port: int) -> bool:
+    """Check if a port is available for binding."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("", port))
+            return True
+        except OSError:
+            return False
+
+
 def get_next_port() -> int:
     """Get next available port."""
     for port in range(PORT_RANGE_START, PORT_RANGE_END):
-        if port not in used_ports:
+        if port not in used_ports and is_port_available(port):
             used_ports.add(port)
             return port
     raise RuntimeError("No available ports")
@@ -224,13 +235,28 @@ async def run(
     """
     try:
         # Handle port mapping
+        requested_port = None
         if port_mapping:
             # Parse "host:container" format
             parts = port_mapping.split(":")
-            host_port = int(parts[0])
+            requested_port = int(parts[0])
             container_port = int(parts[1]) if len(parts) > 1 else 3000
         else:
-            host_port = port or get_next_port()
+            requested_port = port
+
+        # Check if requested port is available, auto-select if not
+        if requested_port:
+            if is_port_available(requested_port):
+                host_port = requested_port
+            else:
+                # Port is busy, auto-select an available one
+                logger.warning(
+                    "Requested port %d is not available, auto-selecting alternative",
+                    requested_port
+                )
+                host_port = get_next_port()
+        else:
+            host_port = get_next_port()
 
         logger.info(
             "Running container %s from image %s (port %d:%d)",
@@ -278,13 +304,19 @@ async def run(
 
         container_id = result.stdout.strip()
 
-        return {
+        response = {
             "success": True,
             "container_name": container_name,
             "container_id": container_id[:12],
             "port": host_port,
             "url": f"http://localhost:{host_port}",
         }
+
+        # Add note if port was changed
+        if requested_port and host_port != requested_port:
+            response["note"] = f"Port {requested_port} was busy, using {host_port} instead"
+
+        return response
 
     except Exception as e:
         return {"success": False, "error": str(e)}
