@@ -2,11 +2,11 @@
  * Dashboard Page
  */
 
-import React from 'react'
-import { useQuery } from '@tanstack/react-query'
+import React, { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { FileText, CheckSquare, Clock, AlertCircle, TrendingUp, Play, ExternalLink, Zap, Server } from 'lucide-react'
-import { getPlans, getTasks, getStatus, getRunningApps, getProjects } from '../services/api'
+import { FileText, CheckSquare, Clock, AlertCircle, TrendingUp, Play, ExternalLink, Zap, Server, Square, Loader2 } from 'lucide-react'
+import { getPlans, getTasks, getStatus, getRunningApps, getProjects, stopProject } from '../services/api'
 import { useAuth } from '../App'
 
 const StatCard = ({ title, value, icon: Icon, color, link }) => (
@@ -28,6 +28,27 @@ const StatCard = ({ title, value, icon: Icon, color, link }) => (
 
 const Dashboard = () => {
   const { user } = useAuth()
+  const queryClient = useQueryClient()
+  const [stoppingId, setStoppingId] = useState(null)
+
+  const stopMutation = useMutation({
+    mutationFn: stopProject,
+    onMutate: (projectId) => {
+      setStoppingId(projectId)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['running-apps'] })
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
+      setStoppingId(null)
+    },
+    onError: () => {
+      setStoppingId(null)
+    },
+  })
+
+  const handleStop = (projectId) => {
+    stopMutation.mutate(projectId)
+  }
 
   const { data: plansResponse, isLoading: plansLoading } = useQuery({
     queryKey: ['plans'],
@@ -146,17 +167,35 @@ const Dashboard = () => {
                   Branch: <span className="font-mono">{app.branch}</span>
                   {app.port && <span className="ml-2">Port: {app.port}</span>}
                 </div>
-                {app.app_url && (
-                  <a
-                    href={app.app_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2 w-full px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors"
+                <div className="flex items-center gap-2">
+                  {app.app_url && (
+                    <a
+                      href={app.app_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      Open App
+                    </a>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleStop(app.project_id)
+                    }}
+                    disabled={stoppingId === app.project_id}
+                    className="flex items-center justify-center gap-1 px-3 py-2 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                    aria-label={`Stop ${app.project_name}`}
                   >
-                    <ExternalLink className="w-4 h-4" />
-                    Open App
-                  </a>
-                )}
+                    {stoppingId === app.project_id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Square className="w-4 h-4" />
+                    )}
+                    Stop
+                  </button>
+                </div>
               </div>
             ))}
           </div>
