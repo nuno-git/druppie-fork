@@ -892,11 +892,22 @@ const Tasks = () => {
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium">{approval.tool_name || 'Unknown tool'}</span>
-                          <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full flex items-center">
-                            <CheckCircle className="w-3 h-3 mr-1" />
-                            Approved
+                          <span className={`px-2 py-0.5 ${
+                            approval.status === 'approved'
+                              ? 'bg-green-100 text-green-700'
+                              : approval.status === 'rejected'
+                              ? 'bg-red-100 text-red-700'
+                              : 'bg-gray-100 text-gray-700'
+                          } text-xs rounded-full flex items-center`}>
+                            {approval.status === 'approved' ? (
+                              <><CheckCircle className="w-3 h-3 mr-1" />Approved</>
+                            ) : approval.status === 'rejected' ? (
+                              <><XCircle className="w-3 h-3 mr-1" />Rejected</>
+                            ) : (
+                              <>{approval.status}</>
+                            )}
                           </span>
                           {approval.agent_id && (
                             <span className="px-2 py-0.5 bg-purple-100 text-purple-600 text-xs rounded-full flex items-center">
@@ -906,22 +917,41 @@ const Tasks = () => {
                           )}
                         </div>
                         {approval.description && (
-                          <p className="text-gray-500 text-sm mt-1">{approval.description}</p>
+                          <p className="text-gray-500 text-sm mt-1 line-clamp-2">{approval.description}</p>
                         )}
-                        <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                        <div className="flex items-center gap-4 mt-2 text-xs text-gray-500 flex-wrap">
                           {approval.approved_by && (
                             <span className="flex items-center gap-1">
                               <User className="w-3 h-3" />
-                              Approved by: {approval.approved_by}
+                              Approved by: {approval.approved_by.substring(0, 8)}...
                             </span>
                           )}
-                          {approval.approved_at && (
+                          {approval.created_at && (
                             <span className="flex items-center gap-1">
                               <Clock className="w-3 h-3" />
-                              {new Date(approval.approved_at).toLocaleString()}
+                              {new Date(approval.created_at).toLocaleString()}
                             </span>
                           )}
                         </div>
+                        {/* Session links for context */}
+                        {approval.session_id && (
+                          <div className="flex items-center gap-3 mt-2">
+                            <Link
+                              to={`/chat?session=${approval.session_id}`}
+                              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                            >
+                              <MessageSquare className="w-3 h-3" />
+                              View Conversation
+                            </Link>
+                            <Link
+                              to={`/debug/${approval.session_id}`}
+                              className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              Debug Trace
+                            </Link>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
