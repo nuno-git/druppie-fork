@@ -26,7 +26,16 @@ import {
   Save,
   Calendar,
   User,
+  Zap,
 } from 'lucide-react'
+
+// Format token count with K suffix for large numbers
+const formatTokens = (count) => {
+  if (!count) return '0'
+  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`
+  return count.toString()
+}
 import {
   getProject,
   getProjectStatus,
@@ -172,6 +181,18 @@ const OverviewTab = ({ project, projectStatus, onBuild, onRun, onStop, buildPend
               {project?.updated_at ? new Date(project.updated_at).toLocaleString() : 'N/A'}
             </p>
           </div>
+          {project?.token_usage && (
+            <div>
+              <span className="text-sm text-gray-400">Token Usage</span>
+              <p className="text-yellow-400 flex items-center font-medium" title={`Prompt: ${formatTokens(project.token_usage.prompt_tokens)} | Completion: ${formatTokens(project.token_usage.completion_tokens)}`}>
+                <Zap className="w-4 h-4 mr-1 text-yellow-500" />
+                {formatTokens(project.token_usage.total_tokens)} tokens
+                <span className="text-gray-500 text-xs ml-2">
+                  ({project.token_usage.session_count || 0} sessions)
+                </span>
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
