@@ -29,6 +29,15 @@ router = APIRouter()
 # =============================================================================
 
 
+class TokenUsageSummary(BaseModel):
+    """Token usage summary for transparency."""
+
+    total_tokens: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    session_count: int = 0
+
+
 class ProjectResponse(BaseModel):
     """Project response model."""
 
@@ -48,6 +57,8 @@ class ProjectResponse(BaseModel):
     # Convenience fields for running apps
     is_running: bool = False
     app_url: str | None = None
+    # Token usage (transparency) - aggregated from all sessions
+    token_usage: TokenUsageSummary | None = None
 
 
 class BuildResponse(BaseModel):
@@ -104,6 +115,7 @@ def project_to_response(
     project: Project,
     main_build: Build | None = None,
     preview_builds: list[Build] | None = None,
+    token_usage: TokenUsageSummary | None = None,
 ) -> ProjectResponse:
     """Convert Project model to response."""
     # Check if main build is running and get app URL
@@ -124,6 +136,27 @@ def project_to_response(
         preview_builds=[b.to_dict() for b in (preview_builds or [])],
         is_running=is_running,
         app_url=app_url,
+        token_usage=token_usage,
+    )
+
+
+def get_project_token_usage(db: DBSession, project_id: str) -> TokenUsageSummary:
+    """Get aggregated token usage for a project from all its sessions."""
+    from druppie.db.models import Session
+    from sqlalchemy import func
+
+    result = db.query(
+        func.coalesce(func.sum(Session.total_tokens), 0).label("total_tokens"),
+        func.coalesce(func.sum(Session.prompt_tokens), 0).label("prompt_tokens"),
+        func.coalesce(func.sum(Session.completion_tokens), 0).label("completion_tokens"),
+        func.count(Session.id).label("session_count"),
+    ).filter(Session.project_id == project_id).first()
+
+    return TokenUsageSummary(
+        total_tokens=result.total_tokens or 0,
+        prompt_tokens=result.prompt_tokens or 0,
+        completion_tokens=result.completion_tokens or 0,
+        session_count=result.session_count or 0,
     )
 
 
@@ -153,6 +186,9 @@ async def list_projects(
     db: DBSession = Depends(get_db),
 ) -> list[ProjectResponse]:
     """List all projects for the current user."""
+    from druppie.db.models import Session
+    from sqlalchemy import func
+
     user_id = user.get("sub")
     roles = user.get("realm_access", {}).get("roles", [])
 
@@ -170,14 +206,35 @@ async def list_projects(
     project_ids = [p.id for p in projects]
     builds_by_project = builder.get_builds_for_projects(project_ids)
 
-    # Build response using pre-loaded builds
+    # Batch load token usage for all projects (avoids N+1)
+    token_results = db.query(
+        Session.project_id,
+        func.coalesce(func.sum(Session.total_tokens), 0).label("total_tokens"),
+        func.coalesce(func.sum(Session.prompt_tokens), 0).label("prompt_tokens"),
+        func.coalesce(func.sum(Session.completion_tokens), 0).label("completion_tokens"),
+        func.count(Session.id).label("session_count"),
+    ).filter(Session.project_id.in_(project_ids)).group_by(Session.project_id).all()
+
+    tokens_by_project = {
+        r.project_id: TokenUsageSummary(
+            total_tokens=r.total_tokens or 0,
+            prompt_tokens=r.prompt_tokens or 0,
+            completion_tokens=r.completion_tokens or 0,
+            session_count=r.session_count or 0,
+        )
+        for r in token_results
+    }
+
+    # Build response using pre-loaded builds and token usage
     result = []
     for project in projects:
         build_info = builds_by_project.get(project.id, {"main": None, "previews": []})
+        token_usage = tokens_by_project.get(project.id, TokenUsageSummary())
         result.append(project_to_response(
             project,
             build_info["main"],
             build_info["previews"],
+            token_usage,
         ))
 
     return result
@@ -202,7 +259,10 @@ async def get_project(
     main_build = builder.get_main_build(project.id)
     preview_builds = builder.get_preview_builds(project.id)
 
-    return project_to_response(project, main_build, preview_builds)
+    # Get token usage for transparency
+    token_usage = get_project_token_usage(db, project_id)
+
+    return project_to_response(project, main_build, preview_builds, token_usage)
 
 
 @router.delete("/projects/{project_id}")

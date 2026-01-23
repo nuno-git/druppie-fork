@@ -27,7 +27,16 @@ import {
   Hammer,
   Loader2,
   User,
+  Zap,
 } from 'lucide-react'
+
+// Format token count with K suffix for large numbers
+const formatTokens = (count) => {
+  if (!count) return null
+  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`
+  return count.toString()
+}
 import { getWorkspaceFiles, getWorkspaceFile, getWorkspaceDownloadUrl, getProjectStatus, getProjects, deleteProject, buildProject, runProject, stopProject } from '../services/api'
 import { useToast } from '../components/Toast'
 import CodeBlock from '../components/CodeBlock'
@@ -170,6 +179,8 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
   const hasRepo = !!repoUrl
   const isRunning = plan.is_running || projectStatus?.status === 'running'
   const ownerId = plan.owner_id
+  const tokenUsage = plan.token_usage
+  const totalTokens = tokenUsage?.total_tokens || 0
 
   const handleDelete = (e) => {
     e.stopPropagation()
@@ -293,6 +304,12 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
             <span className="flex items-center text-gray-400" title={`Created by: ${ownerId}`}>
               <User className="w-3 h-3 mr-0.5" />
               <span className="truncate max-w-[80px]">{ownerId.split('-')[0]}</span>
+            </span>
+          )}
+          {formatTokens(totalTokens) && (
+            <span className="flex items-center text-yellow-600" title={`Total tokens: ${totalTokens.toLocaleString()} (from ${tokenUsage?.session_count || 0} sessions)`}>
+              <Zap className="w-3 h-3 mr-0.5" />
+              {formatTokens(totalTokens)}
             </span>
           )}
         </div>
