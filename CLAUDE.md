@@ -670,6 +670,27 @@ Lists all configured agents with their LLM settings:
 
 Settings page dynamically displays agents with model info badges
 
+### Running Apps API (`/api/apps/running`)
+Returns all currently running applications:
+- Build ID, project name, container name
+- App URL for direct access
+- Branch and port information
+- Owner ID for authorization
+
+Dashboard displays running apps with quick "Open App" links
+
+### Dashboard Enhancements
+The Dashboard now shows:
+- Running Applications section with live status and direct links
+- Total token usage across all projects
+- Quick access stats for sessions, approvals, and running apps
+
+### Real-time Deployment Notifications
+WebSocket `deployment_complete` event handling:
+- Chat shows DeploymentCard immediately when docker:run succeeds
+- Toast notification with app URL
+- Updates message state to display deployment info
+
 ## Frontend Pages
 
 | Page | Route | Description |
