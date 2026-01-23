@@ -143,6 +143,10 @@ class ExecutionContext:
         completion_tokens = getattr(response, "completion_tokens", 0)
         response_total_tokens = getattr(response, "total_tokens", 0)
 
+        # Extract model info from response (for transparency)
+        model = getattr(response, "model", "")
+        provider = getattr(response, "provider", "")
+
         # Aggregate token usage
         self.prompt_tokens += prompt_tokens
         self.completion_tokens += completion_tokens
@@ -164,17 +168,21 @@ class ExecutionContext:
                 "completion_tokens": completion_tokens,
                 "total_tokens": response_total_tokens,
             },
+            "model": model,
+            "provider": provider,
         }
 
         self.llm_calls.append(call)
 
-        # Emit LLM call event with token info
+        # Emit LLM call event with token info and model transparency
         self.emit("llm_call", {
             "agent_id": agent_id,
             "iteration": iteration,
             "duration_ms": duration_ms,
             "has_tool_calls": bool(getattr(response, "tool_calls", [])),
             "tokens": response_total_tokens,
+            "model": model,
+            "provider": provider,
         })
 
     def agent_started(self, agent_id: str, prompt: str) -> None:

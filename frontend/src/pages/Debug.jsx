@@ -242,7 +242,14 @@ const RawLLMCallViewer = ({ call, index }) => {
               LLM Call #{index + 1}
               {call.agent_id && <span className="ml-2 text-blue-600">({call.agent_id})</span>}
             </div>
-            <div className="text-xs text-gray-600 flex items-center gap-3">
+            <div className="text-xs text-gray-600 flex items-center gap-3 flex-wrap">
+              {/* Model transparency - show which model was used */}
+              {call.model && (
+                <span className="bg-indigo-200 text-indigo-800 px-1.5 py-0.5 rounded font-medium">
+                  {call.model}
+                  {call.provider && <span className="opacity-75 ml-1">({call.provider})</span>}
+                </span>
+              )}
               {call.iteration !== undefined && <span>Iteration {call.iteration}</span>}
               {call.duration_ms && (
                 <span className="flex items-center gap-1">
@@ -445,6 +452,18 @@ const RawLLMCallViewer = ({ call, index }) => {
                 <h4 className="text-sm font-semibold text-gray-700">Token Usage</h4>
                 <CopyButton text={JSON.stringify(call.usage, null, 2)} label="Copy Usage" />
               </div>
+              {/* Model transparency */}
+              {call.model && (
+                <div className="mb-4 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
+                  <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Model Used</div>
+                  <div className="text-lg font-semibold text-indigo-700">
+                    {call.model}
+                    {call.provider && (
+                      <span className="text-sm font-normal text-indigo-500 ml-2">via {call.provider}</span>
+                    )}
+                  </div>
+                </div>
+              )}
               {call.usage ? (
                 <div className="grid grid-cols-3 gap-4">
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">

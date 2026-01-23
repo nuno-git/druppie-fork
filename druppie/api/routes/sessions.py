@@ -506,6 +506,9 @@ class RawLLMCall(BaseModel):
     iteration: int | None = None
     timestamp: str | None = None
     duration_ms: int | None = None
+    # Model transparency
+    model: str | None = None  # Which model was used (e.g., "Qwen/Qwen3-Next-80B-A3B-Instruct")
+    provider: str | None = None  # Which provider was used (e.g., "deepinfra")
     # Full request data
     messages: list[dict] = []  # Full message history sent to LLM
     tools: list[dict] | None = None  # Full tool schemas
@@ -693,6 +696,8 @@ async def get_session_trace(
             iteration=call.get("iteration"),
             timestamp=call.get("timestamp"),
             duration_ms=call.get("duration_ms"),
+            model=call.get("model"),  # Model transparency
+            provider=call.get("provider"),  # Provider transparency
             messages=call.get("messages", []),
             tools=call.get("tools"),
             response=call.get("response"),

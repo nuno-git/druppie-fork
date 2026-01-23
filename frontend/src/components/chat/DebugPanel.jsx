@@ -547,14 +547,20 @@ const MessageDebugCard = ({ message, index, isExpanded, onToggle }) => {
               <div className="space-y-2">
                 {llmCalls.map((call, i) => (
                   <div key={i} className="bg-purple-50 rounded-lg border border-purple-200 p-2">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-2">
                         <Brain className="w-4 h-4 text-purple-600" />
                         <span className="text-sm font-medium text-purple-900">
                           {call.agent_id || 'LLM'} - Iteration {call.iteration || i + 1}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2 text-xs">
+                      <div className="flex items-center gap-2 text-xs flex-wrap">
+                        {/* Model transparency */}
+                        {call.model && (
+                          <span className="bg-indigo-200 text-indigo-800 px-1.5 py-0.5 rounded font-medium">
+                            {call.model}
+                          </span>
+                        )}
                         {call.duration_ms && (
                           <span className="text-purple-600">{call.duration_ms}ms</span>
                         )}
@@ -634,7 +640,13 @@ const LLMCallCard = ({ call, idx, isExpanded, onToggle }) => (
           <span className="text-xs text-purple-600 ml-2">iter {call.iteration || idx + 1}</span>
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* Model transparency */}
+        {call.model && (
+          <span className="text-xs bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded font-medium">
+            {call.model}
+          </span>
+        )}
         {call.usage?.total_tokens && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{call.usage.total_tokens} tokens</span>}
         {call.duration_ms && <span className="text-xs text-purple-600">{call.duration_ms}ms</span>}
         {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
