@@ -1202,6 +1202,23 @@ class MainLoop:
         )
         set_current_context(exec_ctx)
 
+        # Restore previous workflow_events and llm_calls from session state
+        # This ensures the Debug page shows the full execution history
+        from druppie.db.crud import get_session as crud_get_session
+        with db_session() as db:
+            session = crud_get_session(db, session_id)
+            if session and session.state:
+                previous_events = session.state.get("workflow_events", [])
+                previous_llm_calls = session.state.get("llm_calls", [])
+                exec_ctx.workflow_events = list(previous_events)
+                exec_ctx.llm_calls = list(previous_llm_calls)
+                logger.info(
+                    "restored_execution_history",
+                    session_id=session_id,
+                    previous_events=len(previous_events),
+                    previous_llm_calls=len(previous_llm_calls),
+                )
+
         # Extract saved state
         plan = agent_state.get("plan", {})
         current_step_idx = agent_state.get("current_step", 0)
@@ -1732,6 +1749,22 @@ class MainLoop:
             emit_event=emit_event,
         )
         set_current_context(exec_ctx)
+
+        # Restore previous workflow_events and llm_calls from session state
+        # This ensures the Debug page shows the full execution history
+        with db_session() as db:
+            session = get_session(db, session_id)
+            if session and session.state:
+                previous_events = session.state.get("workflow_events", [])
+                previous_llm_calls = session.state.get("llm_calls", [])
+                exec_ctx.workflow_events = list(previous_events)
+                exec_ctx.llm_calls = list(previous_llm_calls)
+                logger.info(
+                    "restored_execution_history",
+                    session_id=session_id,
+                    previous_events=len(previous_events),
+                    previous_llm_calls=len(previous_llm_calls),
+                )
 
         logger.info(
             "resume_from_question_answer",
