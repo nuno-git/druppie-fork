@@ -155,8 +155,12 @@ def create_app() -> FastAPI:
         llm_healthy = False
         if llm_provider == "mock":
             llm_healthy = True
+        elif llm_provider == "deepinfra":
+            # Check if DeepInfra API key is configured
+            deepinfra_key = os.getenv("DEEPINFRA_API_KEY", "")
+            llm_healthy = bool(deepinfra_key)
         elif llm_provider in ("zai", "auto"):
-            # Check if API key is configured
+            # Check if Z.AI API key is configured
             zai_key = os.getenv("ZAI_API_KEY", "")
             llm_healthy = bool(zai_key)
 
