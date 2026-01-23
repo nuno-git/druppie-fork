@@ -473,6 +473,27 @@ class ChatDeepInfra(BaseLLM):
                     match_preview=match[:200] if len(match) > 200 else match,
                     json_str_preview=json_str[:200] if json_str else None,
                 )
+                # Try to extract tool name and use malformed args parser
+                name_match = re.search(r'"name"\s*:\s*"([^"]+)"', json_str)
+                if name_match:
+                    tool_name = name_match.group(1)
+                    # Try to extract arguments section
+                    args_match = re.search(r'"arguments"\s*:\s*(\{[\s\S]*)', json_str)
+                    if args_match:
+                        args_str = args_match.group(1)
+                        args = self._parse_malformed_args(args_str, tool_name)
+                        if args:
+                            tool_calls.append({
+                                "id": f"text_call_{i}",
+                                "name": tool_name,
+                                "args": args,
+                            })
+                            logger.info(
+                                "recovered_malformed_tool_call",
+                                tool_name=tool_name,
+                                args_keys=list(args.keys()) if args else [],
+                            )
+                            continue
                 continue
             except Exception as e:
                 logger.warning(
@@ -540,10 +561,109 @@ class ChatDeepInfra(BaseLLM):
             )
             return {"reason": reason_match.group(1) if reason_match else args_str[:100]}
 
+        # Handle batch_write_files - try to extract files dictionary
+        if tool_name in ("coding_batch_write_files", "batch_write_files"):
+            return self._parse_batch_write_files_args(args_str)
+
         logger.warning(
             "could_not_parse_malformed_args", tool_name=tool_name, args=args_str[:200]
         )
         return {}
+
+    def _parse_batch_write_files_args(self, args_str: str) -> dict[str, Any]:
+        """Parse malformed batch_write_files arguments.
+
+        This is a specialized parser for batch_write_files which often has
+        issues with JSON escaping in file content.
+        """
+        result = {"files": {}}
+
+        # Try to extract workspace_id first
+        ws_match = re.search(r'"workspace_id"\s*:\s*"([^"]+)"', args_str)
+        if ws_match:
+            result["workspace_id"] = ws_match.group(1)
+
+        # Try to find the files object
+        files_match = re.search(r'"files"\s*:\s*\{', args_str)
+        if not files_match:
+            logger.warning("batch_write_files_no_files_key", args_preview=args_str[:200])
+            return result
+
+        # Start from the files object
+        files_start = files_match.end() - 1  # Include the opening brace
+        files_str = args_str[files_start:]
+
+        # Try to extract individual file entries using pattern matching
+        # Look for "filename": "content" patterns
+        file_pattern = re.compile(
+            r'"([^"]+\.[a-zA-Z0-9]+)"\s*:\s*"',  # filename with extension
+            re.MULTILINE
+        )
+
+        files = {}
+        last_end = 0
+
+        for match in file_pattern.finditer(files_str):
+            filename = match.group(1)
+            content_start = match.end()
+
+            # Find the end of this file content
+            # Look for closing quote that's not escaped
+            i = content_start
+            content_chars = []
+            escape_next = False
+
+            while i < len(files_str):
+                char = files_str[i]
+
+                if escape_next:
+                    # Handle escaped character
+                    if char == 'n':
+                        content_chars.append('\n')
+                    elif char == 't':
+                        content_chars.append('\t')
+                    elif char == 'r':
+                        content_chars.append('\r')
+                    elif char == '"':
+                        content_chars.append('"')
+                    elif char == '\\':
+                        content_chars.append('\\')
+                    else:
+                        content_chars.append(char)
+                    escape_next = False
+                elif char == '\\':
+                    escape_next = True
+                elif char == '"':
+                    # End of content
+                    break
+                else:
+                    content_chars.append(char)
+
+                i += 1
+
+            if content_chars:
+                content = ''.join(content_chars)
+                files[filename] = content
+                logger.debug(
+                    "batch_write_files_extracted_file",
+                    filename=filename,
+                    content_length=len(content),
+                )
+
+        if files:
+            result["files"] = files
+            logger.info(
+                "batch_write_files_recovery_success",
+                file_count=len(files),
+                filenames=list(files.keys()),
+            )
+        else:
+            logger.warning(
+                "batch_write_files_recovery_failed",
+                args_preview=args_str[:500],
+            )
+
+        return result
 
     def get_call_history(self) -> list[dict]:
         """Get history of LLM calls for debugging."""
