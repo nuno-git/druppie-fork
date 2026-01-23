@@ -1977,16 +1977,18 @@ class MainLoop:
                     project_name=project_name,
                 )
 
-                # Get the actual project name from the database
+                # Get the actual project name and repo_url from the database
                 # (may differ from input if sanitized or unique suffix added)
                 from druppie.db.models import Project
                 actual_project_name = None
+                project_repo_url = None
                 if workspace.project_id:
                     project_record = db.query(Project).filter(
                         Project.id == workspace.project_id
                     ).first()
                     if project_record:
                         actual_project_name = project_record.name
+                        project_repo_url = project_record.repo_url
 
                 # Update execution context with workspace info
                 exec_ctx.set_workspace(
@@ -1995,6 +1997,7 @@ class MainLoop:
                     workspace_path=workspace.local_path,
                     branch=workspace.branch,
                     project_name=actual_project_name,
+                    repo_url=project_repo_url,
                 )
 
                 db.commit()

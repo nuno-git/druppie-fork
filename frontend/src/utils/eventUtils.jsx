@@ -259,8 +259,9 @@ export const formatEventTitle = (event) => {
     return 'Application started'
   }
   if (type === 'workspace_initialized') {
-    const branch = data.branch ? ` on branch ${data.branch}` : ''
-    return `Workspace initialized${branch}`
+    const projectName = data.project_name ? `"${data.project_name}"` : 'workspace'
+    const branch = data.branch ? ` on ${data.branch}` : ''
+    return `Project ${projectName} initialized${branch}`
   }
   if (type === 'approval_required') {
     const tool = data.tool || data.tool_name || 'action'
@@ -316,6 +317,9 @@ export const getEventDescription = (event) => {
     return args ? `Arguments: ${args}` : 'Tool called'
   }
   if (type === 'workspace_initialized') {
+    if (data.repo_url) {
+      return `Repository: ${data.repo_url}`
+    }
     return data.workspace_id ? `Workspace: ${data.workspace_id.substring(0, 8)}...` : 'Workspace ready'
   }
   if (type === 'approval_required') {
