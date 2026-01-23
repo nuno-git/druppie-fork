@@ -20,6 +20,7 @@ import {
   onApprovalRequired,
   onHITLProgress,
   onExecutionCancelled,
+  onDeploymentComplete,
   disconnectSocket,
 } from '../services/socket'
 import { useToast } from '../components/Toast'
@@ -283,6 +284,43 @@ const Chat = () => {
     const unsubApproval = onApprovalRequired(handleApprovalRequired)
     const unsubProgress = onHITLProgress(handleHITLProgress)
     return () => { unsubQuestion(); unsubApproval(); unsubProgress() }
+  }, [currentPlanId, toast])
+
+  // Deployment complete listener - shows the app URL when docker:run succeeds
+  useEffect(() => {
+    const handleDeploymentComplete = (data) => {
+      const sessionId = data.session_id
+      if (sessionId && currentPlanId && sessionId !== currentPlanId) return
+
+      const url = data.url
+      const containerName = data.container_name
+
+      // Add or update the last message with deployment info
+      setMessages((prev) => {
+        const lastMsg = prev[prev.length - 1]
+        if (lastMsg && lastMsg.role !== 'user') {
+          // Update the last assistant message with deployment URL
+          return prev.map((msg, idx) =>
+            idx === prev.length - 1
+              ? { ...msg, deploymentUrl: url, containerName: containerName }
+              : msg
+          )
+        }
+        // Add a new deployment message
+        return [...prev, {
+          role: 'assistant',
+          content: `🎉 Deployment complete! Your application is now running.`,
+          deploymentUrl: url,
+          containerName: containerName,
+          timestamp: new Date().toISOString(),
+        }]
+      })
+
+      toast.success('Deployment Successful!', `Your app is running at ${url}`)
+    }
+
+    const unsub = onDeploymentComplete(handleDeploymentComplete)
+    return () => unsub()
   }, [currentPlanId, toast])
 
   // Auto-scroll
