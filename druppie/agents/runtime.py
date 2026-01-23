@@ -295,7 +295,13 @@ class Agent:
                     continue
 
                 # Convert OpenAI format to MCP format (coding_read_file -> coding:read_file)
-                mcp_tool_name = tool_name.replace("_", ":", 1)
+                # Only do the conversion if there's no colon already (LLM might output either format)
+                if ":" in tool_name:
+                    # Already in MCP format (coding:read_file)
+                    mcp_tool_name = tool_name
+                else:
+                    # OpenAI format (coding_read_file) - convert first underscore to colon
+                    mcp_tool_name = tool_name.replace("_", ":", 1)
 
                 # Parse server:tool format
                 if ":" in mcp_tool_name:
