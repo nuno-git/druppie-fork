@@ -291,6 +291,7 @@ class ExecutionContext:
         workspace_path: str,
         branch: str,
         project_name: str | None = None,
+        repo_url: str | None = None,
     ) -> None:
         """Set workspace context after initialization.
 
@@ -300,6 +301,7 @@ class ExecutionContext:
             workspace_path: Local path to workspace
             branch: Current git branch
             project_name: Friendly project name (e.g., "to-do-app")
+            repo_url: Repository URL for the project
         """
         self.workspace_id = workspace_id
         self.project_id = project_id
@@ -311,6 +313,7 @@ class ExecutionContext:
             "project_id": project_id,
             "project_name": project_name,
             "branch": branch,
+            "repo_url": repo_url,
         })
 
 
