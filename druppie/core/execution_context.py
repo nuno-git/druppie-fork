@@ -229,6 +229,28 @@ class ExecutionContext:
             "error": error[:500] if error else "",  # Truncate long errors
         })
 
+    def app_running(
+        self,
+        container_name: str,
+        url: str,
+        port: int,
+        image_name: str | None = None,
+    ) -> None:
+        """Record app running event.
+
+        Args:
+            container_name: Name of the running container
+            url: URL where the app is accessible
+            port: Port the app is running on
+            image_name: Docker image name
+        """
+        self.emit("app_running", {
+            "container_name": container_name,
+            "url": url,
+            "port": port,
+            "image_name": image_name,
+        })
+
     def step_started(self, step_id: str, step_type: str, agent_id: str = None) -> None:
         """Record step started event."""
         self.emit("step_started", {

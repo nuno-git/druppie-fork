@@ -1284,6 +1284,14 @@ class MainLoop:
                         "container_id": tool_result.get("container_id"),
                     })
 
+                    # Emit app_running event for frontend display
+                    exec_ctx.app_running(
+                        container_name=tool_result.get("container_name", "app"),
+                        url=tool_result.get("url", ""),
+                        port=tool_result.get("port", 0),
+                        image_name=tool_result.get("image_name"),
+                    )
+
                     exec_ctx.emit("execution_completed", {
                         "successful_steps": len(results),
                         "total_steps": len(plan.get("steps", [])),

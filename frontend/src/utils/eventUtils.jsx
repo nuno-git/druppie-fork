@@ -256,7 +256,8 @@ export const formatEventTitle = (event) => {
     return 'Build completed'
   }
   if (type === 'app_running') {
-    return 'Application started'
+    const port = data.port ? ` on port ${data.port}` : ''
+    return `Application started${port}`
   }
   if (type === 'workspace_initialized') {
     const projectName = data.project_name ? `"${data.project_name}"` : 'workspace'
@@ -325,6 +326,12 @@ export const getEventDescription = (event) => {
   if (type === 'approval_required') {
     const roles = data.required_roles?.join(', ') || 'authorized user'
     return `Requires approval from: ${roles}`
+  }
+  if (type === 'app_running') {
+    if (data.url) {
+      return `URL: ${data.url}`
+    }
+    return data.container_name ? `Container: ${data.container_name}` : 'Application is running'
   }
 
   return event.description || ''
