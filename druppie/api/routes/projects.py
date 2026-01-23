@@ -570,6 +570,75 @@ async def get_project_status(
 
 
 # =============================================================================
+# RUNNING APPS ROUTES
+# =============================================================================
+
+
+class RunningAppResponse(BaseModel):
+    """Response model for a running application."""
+
+    build_id: str
+    project_id: str
+    project_name: str
+    container_name: str | None
+    app_url: str | None
+    port: int | None
+    branch: str
+    is_preview: bool
+    owner_id: str | None
+    started_at: str | None
+
+
+@router.get("/apps/running", response_model=list[RunningAppResponse])
+async def get_running_apps(
+    user: dict = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> list[RunningAppResponse]:
+    """Get all currently running applications.
+
+    Returns a list of all running builds across all projects that the user can see.
+    Admin users can see all running apps, others only see their own.
+    """
+    from druppie.db.models import Build
+
+    user_roles = user.get("realm_access", {}).get("roles", [])
+    is_admin = "admin" in user_roles
+    user_id = user.get("sub")
+
+    # Query running builds with project info
+    query = (
+        db.query(Build, Project)
+        .join(Project, Build.project_id == Project.id)
+        .filter(Build.status == "running")
+    )
+
+    # Non-admin users only see their own running apps
+    if not is_admin:
+        query = query.filter(Project.owner_id == user_id)
+
+    results = query.all()
+
+    running_apps = []
+    for build, project in results:
+        running_apps.append(
+            RunningAppResponse(
+                build_id=build.id,
+                project_id=project.id,
+                project_name=project.name,
+                container_name=build.container_name,
+                app_url=build.app_url,
+                port=build.port,
+                branch=build.branch or "main",
+                is_preview=build.is_preview,
+                owner_id=project.owner_id,
+                started_at=build.created_at.isoformat() if build.created_at else None,
+            )
+        )
+
+    return running_apps
+
+
+# =============================================================================
 # GITEA DATA ROUTES (Commits, Branches)
 # =============================================================================
 
