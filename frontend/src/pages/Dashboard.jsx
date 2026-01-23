@@ -5,8 +5,8 @@
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { FileText, CheckSquare, Clock, AlertCircle, TrendingUp } from 'lucide-react'
-import { getPlans, getTasks, getStatus } from '../services/api'
+import { FileText, CheckSquare, Clock, AlertCircle, TrendingUp, Play, ExternalLink, Zap, Server } from 'lucide-react'
+import { getPlans, getTasks, getStatus, getRunningApps, getProjects } from '../services/api'
 import { useAuth } from '../App'
 
 const StatCard = ({ title, value, icon: Icon, color, link }) => (
@@ -49,9 +49,28 @@ const Dashboard = () => {
     refetchInterval: 30000,
   })
 
+  const { data: runningApps = [], isLoading: appsLoading } = useQuery({
+    queryKey: ['running-apps'],
+    queryFn: getRunningApps,
+    refetchInterval: 15000, // Refresh every 15 seconds
+  })
+
+  const { data: projects = [] } = useQuery({
+    queryKey: ['projects'],
+    queryFn: getProjects,
+  })
+
   const completedPlans = plans.filter((p) => p.status === 'completed').length
   const runningPlans = plans.filter((p) => p.status === 'running').length
   const pendingTasks = tasks.length
+
+  // Calculate total token usage across all projects
+  const totalTokens = projects.reduce((sum, p) => sum + (p.token_usage?.total_tokens || 0), 0)
+  const formatTokens = (tokens) => {
+    if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
+    if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
+    return tokens.toString()
+  }
 
   return (
     <div className="space-y-8">
@@ -62,9 +81,9 @@ const Dashboard = () => {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
         <StatCard
-          title="Total Plans"
+          title="Total Sessions"
           value={plansLoading ? '...' : plans.length}
           icon={FileText}
           color="bg-blue-500"
@@ -78,11 +97,11 @@ const Dashboard = () => {
           link="/plans"
         />
         <StatCard
-          title="Running"
-          value={plansLoading ? '...' : runningPlans}
-          icon={Clock}
-          color="bg-yellow-500"
-          link="/plans"
+          title="Running Apps"
+          value={appsLoading ? '...' : runningApps.length}
+          icon={Play}
+          color="bg-emerald-500"
+          link="/projects"
         />
         <StatCard
           title="Pending Approvals"
@@ -91,7 +110,58 @@ const Dashboard = () => {
           color="bg-purple-500"
           link="/tasks"
         />
+        <StatCard
+          title="Total Tokens"
+          value={formatTokens(totalTokens)}
+          icon={Zap}
+          color="bg-yellow-500"
+          link="/projects"
+        />
       </div>
+
+      {/* Running Applications - Quick Access */}
+      {runningApps.length > 0 && (
+        <div className="bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 p-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Server className="w-5 h-5 text-emerald-600" />
+            Running Applications
+            <span className="ml-2 px-2 py-0.5 bg-emerald-100 text-emerald-700 text-sm rounded-full">
+              {runningApps.length} active
+            </span>
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {runningApps.map((app) => (
+              <div
+                key={app.build_id}
+                className="bg-white rounded-lg border border-emerald-200 p-4 hover:shadow-md transition-shadow"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-medium text-gray-900">{app.project_name}</h3>
+                  <span className="flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                    Running
+                  </span>
+                </div>
+                <div className="text-sm text-gray-500 mb-3">
+                  Branch: <span className="font-mono">{app.branch}</span>
+                  {app.port && <span className="ml-2">Port: {app.port}</span>}
+                </div>
+                {app.app_url && (
+                  <a
+                    href={app.app_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 w-full px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Open App
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Recent Activity */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
