@@ -490,6 +490,24 @@ def get_used_host_ports() -> set[int]:
 **Workaround**: Approve from Approvals page, not from Chat page
 **Note**: The "View Conversation" link in Approvals page shows 403 for non-owners
 
+### Issue: Debug Page Shows Incomplete Trace Data After Approval
+**Symptom**: Debug page shows only 3 events when conversation had 35+ events
+**Cause**: When resuming from MCP tool approval or HITL question, `ExecutionContext` is created fresh with empty `workflow_events` and `llm_calls` lists
+**Root Cause**: `resume_from_step_approval` and `resume_from_question_answer` in loop.py create new ExecutionContext without restoring previous execution history
+**Fix**: Restore workflow_events and llm_calls from session state when resuming:
+```python
+# In resume_from_step_approval and resume_from_question_answer
+with db_session() as db:
+    session = get_session(db, session_id)
+    if session and session.state:
+        previous_events = session.state.get("workflow_events", [])
+        previous_llm_calls = session.state.get("llm_calls", [])
+        exec_ctx.workflow_events = list(previous_events)
+        exec_ctx.llm_calls = list(previous_llm_calls)
+```
+**Key Files**: `druppie/core/loop.py` (lines ~1205 and ~1753)
+**Result**: Debug page now shows complete execution history (48 events instead of 3)
+
 ### Workflow: Full Architect Flow Testing
 To test the complete architect workflow (including HITL questions and architect approval):
 1. Log in as `normal_user`
