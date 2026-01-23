@@ -35,24 +35,79 @@ used_ports: set[int] = set()
 workspaces: dict[str, dict] = {}
 
 
+def get_used_host_ports() -> set[int]:
+    """Get set of host ports currently in use by Docker containers.
+
+    This queries Docker to find which host ports are bound by running containers.
+    Works correctly when called from inside a Docker container.
+    """
+    try:
+        # Use docker ps to get port mappings of all running containers
+        result = subprocess.run(
+            ["docker", "ps", "--format", "{{.Ports}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            logger.warning("Failed to query Docker ports: %s", result.stderr)
+            return set()
+
+        ports = set()
+        # Parse port mappings like "0.0.0.0:8080->80/tcp, 0.0.0.0:443->443/tcp"
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            # Each line may have multiple port mappings separated by comma
+            for mapping in line.split(", "):
+                # Format: "0.0.0.0:HOST_PORT->CONTAINER_PORT/proto" or "HOST_PORT->CONTAINER_PORT/proto"
+                if "->" in mapping:
+                    host_part = mapping.split("->")[0]
+                    # Extract port number (after last colon if IP present)
+                    if ":" in host_part:
+                        port_str = host_part.rsplit(":", 1)[1]
+                    else:
+                        port_str = host_part
+                    try:
+                        ports.add(int(port_str))
+                    except ValueError:
+                        pass
+        return ports
+    except Exception as e:
+        logger.warning("Error getting used ports: %s", e)
+        return set()
+
+
 def is_port_available(port: int) -> bool:
-    """Check if a port is available for binding."""
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            s.bind(("", port))
-            return True
-        except OSError:
-            return False
+    """Check if a port is available for binding on the Docker host.
+
+    This checks both:
+    1. Docker containers using the port (via docker ps)
+    2. Our internal tracking of ports we've allocated
+    """
+    # Check if Docker is already using this port on the host
+    docker_ports = get_used_host_ports()
+    if port in docker_ports:
+        return False
+
+    # Also check our internal tracking
+    if port in used_ports:
+        return False
+
+    return True
 
 
 def get_next_port() -> int:
-    """Get next available port."""
+    """Get next available port from the configured range.
+
+    Checks both Docker's currently bound ports and our internal tracking.
+    """
     for port in range(PORT_RANGE_START, PORT_RANGE_END):
-        if port not in used_ports and is_port_available(port):
+        if is_port_available(port):
             used_ports.add(port)
+            logger.info("Auto-selected available port %d", port)
             return port
-    raise RuntimeError("No available ports")
+    raise RuntimeError(f"No available ports in range {PORT_RANGE_START}-{PORT_RANGE_END}")
 
 
 def release_port(port: int) -> None:
