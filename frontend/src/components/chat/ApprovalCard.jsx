@@ -1,40 +1,134 @@
 /**
  * ApprovalCard - Inline approval/reject UI for tasks requiring authorization
+ *
+ * Shows code/file content for write operations so users can review what will be changed.
  */
 
 import React, { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
   CheckCircle,
   XCircle,
   Loader2,
   FileText,
+  FilePlus,
+  FileCode,
   Eye,
   ChevronDown,
   ChevronUp,
+  Code,
+  Terminal,
+  GitBranch,
+  MessageSquare,
+  ExternalLink,
 } from 'lucide-react'
 import { getWorkspaceFile } from '../../services/api'
+
+// Helper to detect language from file path
+const getLanguageFromPath = (path) => {
+  if (!path) return 'text'
+  const ext = path.split('.').pop()?.toLowerCase()
+  const langMap = {
+    js: 'javascript',
+    jsx: 'javascript',
+    ts: 'typescript',
+    tsx: 'typescript',
+    py: 'python',
+    rb: 'ruby',
+    go: 'go',
+    rs: 'rust',
+    java: 'java',
+    c: 'c',
+    cpp: 'cpp',
+    h: 'c',
+    hpp: 'cpp',
+    cs: 'csharp',
+    php: 'php',
+    swift: 'swift',
+    kt: 'kotlin',
+    scala: 'scala',
+    sh: 'bash',
+    bash: 'bash',
+    zsh: 'bash',
+    yml: 'yaml',
+    yaml: 'yaml',
+    json: 'json',
+    xml: 'xml',
+    html: 'html',
+    css: 'css',
+    scss: 'scss',
+    less: 'less',
+    sql: 'sql',
+    md: 'markdown',
+    dockerfile: 'dockerfile',
+    toml: 'toml',
+    ini: 'ini',
+    cfg: 'ini',
+    conf: 'ini',
+  }
+  return langMap[ext] || 'text'
+}
+
+// Helper to get tool icon and label
+const getToolInfo = (toolName) => {
+  const tools = {
+    'write_file': { icon: FilePlus, label: 'Write File', color: 'text-blue-600' },
+    'coding:write_file': { icon: FilePlus, label: 'Write File', color: 'text-blue-600' },
+    'batch_write_files': { icon: FileCode, label: 'Write Files', color: 'text-blue-600' },
+    'coding:batch_write_files': { icon: FileCode, label: 'Write Files', color: 'text-blue-600' },
+    'run_command': { icon: Terminal, label: 'Run Command', color: 'text-orange-600' },
+    'coding:run_command': { icon: Terminal, label: 'Run Command', color: 'text-orange-600' },
+    'commit_and_push': { icon: GitBranch, label: 'Git Commit', color: 'text-green-600' },
+    'coding:commit_and_push': { icon: GitBranch, label: 'Git Commit', color: 'text-green-600' },
+  }
+  return tools[toolName] || { icon: Code, label: toolName, color: 'text-gray-600' }
+}
 
 const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUserId, sessionId }) => {
   const [showRejectInput, setShowRejectInput] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
-  const [showFilePreview, setShowFilePreview] = useState(false)
-  const [fileContent, setFileContent] = useState(null)
+  const [showNewContent, setShowNewContent] = useState(false)
+  const [showExistingContent, setShowExistingContent] = useState(false)
+  const [existingContent, setExistingContent] = useState(null)
   const [fileLoading, setFileLoading] = useState(false)
   const [fileError, setFileError] = useState(null)
 
-  // Extract file_path from approval context
-  const filePath = approval.context?.file_path || approval.arguments?.file_path
+  // Extract arguments from approval (mcp_arguments for chat view, arguments for API)
+  const args = approval.mcp_arguments || approval.arguments || {}
+
+  // Extract file path and content for write operations
+  const filePath = args.path || args.file_path || approval.context?.file_path
+  const newContent = args.content
   const contextDescription = approval.context?.description
 
-  // Load file content when preview is toggled
-  useEffect(() => {
-    if (showFilePreview && filePath && !fileContent && !fileLoading) {
-      loadFileContent()
-    }
-  }, [showFilePreview, filePath])
+  // For batch_write_files, files is a dict of {path: content}
+  const batchFiles = args.files
+  const isBatchWrite = !!batchFiles && Object.keys(batchFiles).length > 0
 
-  const loadFileContent = async () => {
+  // For run_command
+  const command = args.command
+
+  // For commit_and_push
+  const commitMessage = args.message || args.commit_message
+
+  // Get tool info for display
+  const toolName = approval.mcp_tool || approval.tool_name
+  const toolInfo = getToolInfo(toolName)
+  const ToolIcon = toolInfo.icon
+
+  // Determine if this is a write operation that has content to show
+  const isWriteOperation = toolName?.includes('write_file') || isBatchWrite
+  const hasContentToShow = isWriteOperation && (newContent || isBatchWrite)
+
+  // Load existing file content when comparison is requested
+  useEffect(() => {
+    if (showExistingContent && filePath && existingContent === null && !fileLoading) {
+      loadExistingContent()
+    }
+  }, [showExistingContent, filePath])
+
+  const loadExistingContent = async () => {
     if (!filePath || !sessionId) return
 
     setFileLoading(true)
@@ -42,10 +136,15 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
 
     try {
       const response = await getWorkspaceFile(filePath, sessionId)
-      setFileContent(response.content)
+      setExistingContent(response.content)
     } catch (err) {
-      console.error('Failed to load file:', err)
-      setFileError(err.message || 'Failed to load file')
+      console.error('Failed to load existing file:', err)
+      // File might not exist yet - that's OK for new files
+      if (err.message?.includes('404') || err.message?.includes('not found')) {
+        setExistingContent('[New file - does not exist yet]')
+      } else {
+        setFileError(err.message || 'Failed to load file')
+      }
     } finally {
       setFileLoading(false)
     }
@@ -141,51 +240,159 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
             </div>
           )}
 
-          {approval.mcp_tool && (
-            <div className="text-sm text-amber-700 mb-3">
-              MCP Tool: <code className="bg-amber-100 px-1 rounded">{approval.mcp_tool}</code>
+          {/* Tool info badge */}
+          {toolName && (
+            <div className="flex items-center gap-2 text-sm text-amber-700 mb-3">
+              <ToolIcon className={`w-4 h-4 ${toolInfo.color}`} />
+              <span className="font-medium">{toolInfo.label}</span>
+              <code className="bg-amber-100 px-1 rounded text-xs">{toolName}</code>
             </div>
           )}
 
-          {/* File preview section */}
-          {filePath && (
+          {/* Command preview for run_command */}
+          {command && (
+            <div className="mb-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                <Terminal className="w-4 h-4 text-orange-600" />
+                Command to execute:
+              </div>
+              <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
+                <code className="text-green-400 text-sm font-mono whitespace-pre-wrap">
+                  $ {command}
+                </code>
+              </div>
+            </div>
+          )}
+
+          {/* Commit message preview for commit_and_push */}
+          {commitMessage && (
+            <div className="mb-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                <GitBranch className="w-4 h-4 text-green-600" />
+                Commit message:
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">{commitMessage}</p>
+              </div>
+            </div>
+          )}
+
+          {/* NEW: Content preview for write_file operations */}
+          {hasContentToShow && !isBatchWrite && (
             <div className="mb-3">
               <button
-                onClick={() => setShowFilePreview(!showFilePreview)}
-                className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 transition-colors"
+                onClick={() => setShowNewContent(!showNewContent)}
+                className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 transition-colors font-medium"
               >
-                <FileText className="w-4 h-4" />
-                <span>View {filePath}</span>
-                {showFilePreview ? (
+                <FilePlus className="w-4 h-4" />
+                <span>View code to be written: {filePath}</span>
+                {showNewContent ? (
                   <ChevronUp className="w-4 h-4" />
                 ) : (
                   <ChevronDown className="w-4 h-4" />
                 )}
               </button>
 
-              {showFilePreview && (
-                <div className="mt-2 bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
-                  {fileLoading ? (
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
-                      <span className="ml-2 text-sm text-gray-500">Loading file...</span>
+              {showNewContent && (
+                <div className="mt-2 bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+                  {/* File path header */}
+                  <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700">
+                    <div className="flex items-center gap-2">
+                      <FileCode className="w-4 h-4 text-gray-400" />
+                      <span className="text-sm text-gray-300 font-mono">{filePath}</span>
                     </div>
-                  ) : fileError ? (
-                    <div className="p-4 text-red-600 text-sm">
-                      <AlertTriangle className="w-4 h-4 inline mr-2" />
-                      {fileError}
-                    </div>
-                  ) : fileContent ? (
-                    <div className="max-h-96 overflow-auto">
-                      <pre className="p-4 text-sm text-gray-700 whitespace-pre-wrap font-mono">
-                        {fileContent}
-                      </pre>
-                    </div>
-                  ) : (
-                    <div className="p-4 text-gray-500 text-sm">
-                      No content available
+                    <span className="text-xs text-gray-500">{getLanguageFromPath(filePath)}</span>
+                  </div>
+                  {/* Code content */}
+                  <div className="max-h-96 overflow-auto">
+                    <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
+                      {newContent}
+                    </pre>
+                  </div>
+                  {/* Line count footer */}
+                  <div className="px-3 py-1.5 bg-gray-800 border-t border-gray-700 text-xs text-gray-500">
+                    {newContent?.split('\n').length || 0} lines
+                  </div>
+                </div>
+              )}
+
+              {/* Compare with existing file */}
+              {filePath && showNewContent && (
+                <div className="mt-2">
+                  <button
+                    onClick={() => setShowExistingContent(!showExistingContent)}
+                    className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+                  >
+                    <Eye className="w-3 h-3" />
+                    <span>{showExistingContent ? 'Hide' : 'Show'} current file content</span>
+                  </button>
+
+                  {showExistingContent && (
+                    <div className="mt-2 bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
+                      <div className="px-3 py-2 bg-gray-100 border-b border-gray-200 text-sm font-medium text-gray-600">
+                        Current content (before change)
+                      </div>
+                      {fileLoading ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                          <span className="ml-2 text-sm text-gray-500">Loading...</span>
+                        </div>
+                      ) : fileError ? (
+                        <div className="p-4 text-red-600 text-sm">
+                          <AlertTriangle className="w-4 h-4 inline mr-2" />
+                          {fileError}
+                        </div>
+                      ) : existingContent ? (
+                        <div className="max-h-48 overflow-auto">
+                          <pre className="p-4 text-sm text-gray-600 whitespace-pre-wrap font-mono">
+                            {existingContent}
+                          </pre>
+                        </div>
+                      ) : null}
                     </div>
                   )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Batch write files preview */}
+          {isBatchWrite && (
+            <div className="mb-3">
+              <button
+                onClick={() => setShowNewContent(!showNewContent)}
+                className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 transition-colors font-medium"
+              >
+                <FileCode className="w-4 h-4" />
+                <span>View {Object.keys(batchFiles).length} files to be written</span>
+                {showNewContent ? (
+                  <ChevronUp className="w-4 h-4" />
+                ) : (
+                  <ChevronDown className="w-4 h-4" />
+                )}
+              </button>
+
+              {showNewContent && (
+                <div className="mt-2 space-y-3">
+                  {Object.entries(batchFiles).map(([path, content]) => (
+                    <div key={path} className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+                      <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700">
+                        <div className="flex items-center gap-2">
+                          <FileCode className="w-4 h-4 text-gray-400" />
+                          <span className="text-sm text-gray-300 font-mono">{path}</span>
+                        </div>
+                        <span className="text-xs text-gray-500">{getLanguageFromPath(path)}</span>
+                      </div>
+                      <div className="max-h-64 overflow-auto">
+                        <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
+                          {content}
+                        </pre>
+                      </div>
+                      <div className="px-3 py-1.5 bg-gray-800 border-t border-gray-700 text-xs text-gray-500">
+                        {content?.split('\n').length || 0} lines
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -195,6 +402,20 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
           {contextDescription && (
             <div className="text-sm text-amber-700 mb-3 italic">
               {contextDescription}
+            </div>
+          )}
+
+          {/* View full conversation link */}
+          {sessionId && (
+            <div className="mb-3 pt-2 border-t border-amber-200">
+              <Link
+                to={`/chat?session=${sessionId}`}
+                className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 transition-colors"
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>View full conversation history</span>
+                <ExternalLink className="w-3 h-3" />
+              </Link>
             </div>
           )}
 
