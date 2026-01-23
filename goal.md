@@ -202,10 +202,6 @@ Run the full flow with:
 ./setup.sh all
 ```
 
-### LLM Keys for Testing
-- **DeepInfra**: `TO0zZfaHNsmOKEjt53kKtjzvGTuC50jh`
-- **GLM (Z.AI)**: `92faa046321b4c8dba81823da6868e5e.8hhV4Tl2Zb1xftYz`
-
 ### Test Scenario
 1. Login as `normal_user`
 2. Request: "Build me a todo app"
