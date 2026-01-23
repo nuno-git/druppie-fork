@@ -622,7 +622,53 @@ Admin configuration page with:
 - User Profile: Current user info and roles
 - System Info: Service health status
 - MCP Servers: List with health checks
-- Configured Agents: Agent list with descriptions
+- Configured Agents: Agent list with model info (model, temperature, max_tokens)
+
+### Approval UI with Code Preview
+Enhanced approval cards show full context for informed decisions:
+- **Code Preview**: For `write_file` and `batch_write_files`, shows actual code being written
+- **Command Preview**: For `run_command`, shows exact command in terminal-style display
+- **Commit Preview**: For `commit_and_push`, shows commit message
+- **Conversation Link**: Link to view full chat history leading to approval
+- **Existing File Comparison**: Option to view current file content for comparison
+
+Key pattern for extracting approval arguments:
+```javascript
+// In ApprovalCard.jsx or Tasks.jsx
+const args = approval.mcp_arguments || approval.arguments || {}
+const filePath = args.path || args.file_path
+const newContent = args.content
+const batchFiles = args.files // For batch_write_files: {path: content}
+const command = args.command // For run_command
+const commitMessage = args.message || args.commit_message // For commit_and_push
+```
+
+### Token Usage Tracking
+Full token transparency across the platform:
+- **Session Level**: `prompt_tokens`, `completion_tokens`, `total_tokens` columns
+- **Project Level**: Aggregated from all sessions via batch SQL query
+- **UI Display**: Token badges in sidebar, project cards, and detail pages
+
+Token aggregation pattern (avoids N+1 queries):
+```python
+# In projects.py
+result = db.query(
+    func.coalesce(func.sum(Session.total_tokens), 0).label("total_tokens"),
+    func.coalesce(func.sum(Session.prompt_tokens), 0).label("prompt_tokens"),
+    func.coalesce(func.sum(Session.completion_tokens), 0).label("completion_tokens"),
+    func.count(Session.id).label("session_count"),
+).filter(Session.project_id == project_id).first()
+```
+
+### Agent Transparency API (`/api/agents`)
+Lists all configured agents with their LLM settings:
+- Model name (e.g., "glm-4.7", "claude-3-opus")
+- Temperature setting
+- Max tokens
+- MCP access list
+- Category (system, execution, quality, deployment)
+
+Settings page dynamically displays agents with model info badges
 
 ## Frontend Pages
 

@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Wifi, WifiOff, Bot, ExternalLink, ChevronDown, ChevronRight, History, User } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Wifi, WifiOff, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code } from 'lucide-react'
 import { getTasks, approveTask, rejectTask, getQuestions, answerQuestion, getApprovalHistory } from '../services/api'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
@@ -50,6 +50,36 @@ const getDangerLevelBadge = (level) => {
   return levels[level] || levels.low
 }
 
+// Helper to detect language from file path for syntax highlighting hint
+const getLanguageFromPath = (path) => {
+  if (!path) return 'text'
+  const ext = path.split('.').pop()?.toLowerCase()
+  const langMap = {
+    js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+    py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
+    c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp', cs: 'csharp', php: 'php',
+    swift: 'swift', kt: 'kotlin', scala: 'scala', sh: 'bash', bash: 'bash',
+    yml: 'yaml', yaml: 'yaml', json: 'json', xml: 'xml', html: 'html',
+    css: 'css', scss: 'scss', sql: 'sql', md: 'markdown', dockerfile: 'dockerfile',
+  }
+  return langMap[ext] || 'text'
+}
+
+// Helper to get tool icon and label
+const getToolInfo = (toolName) => {
+  const tools = {
+    'write_file': { icon: FilePlus, label: 'Write File', color: 'text-blue-600' },
+    'coding:write_file': { icon: FilePlus, label: 'Write File', color: 'text-blue-600' },
+    'batch_write_files': { icon: FileCode, label: 'Write Files', color: 'text-blue-600' },
+    'coding:batch_write_files': { icon: FileCode, label: 'Write Files', color: 'text-blue-600' },
+    'run_command': { icon: Terminal, label: 'Run Command', color: 'text-orange-600' },
+    'coding:run_command': { icon: Terminal, label: 'Run Command', color: 'text-orange-600' },
+    'commit_and_push': { icon: GitBranch, label: 'Git Commit', color: 'text-green-600' },
+    'coding:commit_and_push': { icon: GitBranch, label: 'Git Commit', color: 'text-green-600' },
+  }
+  return tools[toolName] || { icon: Code, label: toolName?.split(':').pop() || 'Tool', color: 'text-gray-600' }
+}
+
 // Helper to format agent display name
 const formatAgentName = (agentId) => {
   if (!agentId) return null
@@ -64,7 +94,17 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   const [rejectReason, setRejectReason] = useState('')
   const [showReject, setShowReject] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
+  const [showCodePreview, setShowCodePreview] = useState(false)
   const { user } = useAuth()
+
+  // Extract arguments for content preview
+  const args = task.mcp_arguments || task.arguments || {}
+  const filePath = args.path || args.file_path
+  const newContent = args.content
+  const batchFiles = args.files
+  const command = args.command
+  const commitMessage = args.message || args.commit_message
+  const isBatchWrite = !!batchFiles && Object.keys(batchFiles).length > 0
 
   // Normalize: derive required_role from required_roles array if not present
   const requiredRoles = task.required_roles || (task.required_role ? [task.required_role] : ['admin'])
@@ -130,12 +170,118 @@ const TaskCard = ({ task, onApprove, onReject }) => {
         <div className="space-y-2">
           <div className="flex items-start gap-2">
             <span className="text-blue-700 font-medium">Tool:</span>
-            <code className="bg-blue-100 px-2 py-0.5 rounded text-blue-800 font-mono text-sm">{toolName}</code>
+            {(() => {
+              const info = getToolInfo(toolName)
+              const Icon = info.icon
+              return (
+                <span className="flex items-center gap-2">
+                  <Icon className={`w-4 h-4 ${info.color}`} />
+                  <span className="font-medium">{info.label}</span>
+                  <code className="bg-blue-100 px-2 py-0.5 rounded text-blue-800 font-mono text-sm">{toolName}</code>
+                </span>
+              )
+            })()}
           </div>
           <div className="text-blue-700">
             <span className="font-medium">Action:</span> {toolDescription}
           </div>
-          {task.mcp_arguments && Object.keys(task.mcp_arguments).length > 0 && (
+
+          {/* Command preview for run_command */}
+          {command && (
+            <div className="mt-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                <Terminal className="w-4 h-4 text-orange-600" />
+                Command to execute:
+              </div>
+              <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
+                <code className="text-green-400 text-sm font-mono whitespace-pre-wrap">
+                  $ {command}
+                </code>
+              </div>
+            </div>
+          )}
+
+          {/* Commit message preview for commit_and_push */}
+          {commitMessage && (
+            <div className="mt-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                <GitBranch className="w-4 h-4 text-green-600" />
+                Commit message:
+              </div>
+              <div className="bg-white rounded-lg p-3 border border-gray-200">
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">{commitMessage}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Code preview for write_file operations */}
+          {(newContent || isBatchWrite) && (
+            <div className="mt-3">
+              <button
+                onClick={() => setShowCodePreview(!showCodePreview)}
+                className="flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                aria-expanded={showCodePreview}
+              >
+                <FileCode className="w-4 h-4" />
+                {showCodePreview ? 'Hide' : 'View'} code to be written
+                {isBatchWrite && ` (${Object.keys(batchFiles).length} files)`}
+                {showCodePreview ? (
+                  <ChevronDown className="w-4 h-4 transform rotate-180" />
+                ) : (
+                  <ChevronDown className="w-4 h-4" />
+                )}
+              </button>
+
+              {showCodePreview && (
+                <div className="mt-2 space-y-3">
+                  {/* Single file write */}
+                  {newContent && !isBatchWrite && (
+                    <div className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+                      <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700">
+                        <div className="flex items-center gap-2">
+                          <FileCode className="w-4 h-4 text-gray-400" />
+                          <span className="text-sm text-gray-300 font-mono">{filePath || 'file'}</span>
+                        </div>
+                        <span className="text-xs text-gray-500">{getLanguageFromPath(filePath)}</span>
+                      </div>
+                      <div className="max-h-96 overflow-auto">
+                        <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
+                          {newContent}
+                        </pre>
+                      </div>
+                      <div className="px-3 py-1.5 bg-gray-800 border-t border-gray-700 text-xs text-gray-500">
+                        {newContent?.split('\n').length || 0} lines
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Batch file write */}
+                  {isBatchWrite && Object.entries(batchFiles).map(([path, content]) => (
+                    <div key={path} className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+                      <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700">
+                        <div className="flex items-center gap-2">
+                          <FileCode className="w-4 h-4 text-gray-400" />
+                          <span className="text-sm text-gray-300 font-mono">{path}</span>
+                        </div>
+                        <span className="text-xs text-gray-500">{getLanguageFromPath(path)}</span>
+                      </div>
+                      <div className="max-h-64 overflow-auto">
+                        <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
+                          {content}
+                        </pre>
+                      </div>
+                      <div className="px-3 py-1.5 bg-gray-800 border-t border-gray-700 text-xs text-gray-500">
+                        {content?.split('\n').length || 0} lines
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Raw arguments fallback for other tools */}
+          {!command && !commitMessage && !newContent && !isBatchWrite && task.mcp_arguments && Object.keys(task.mcp_arguments).length > 0 && (
             <div className="mt-2">
               <button
                 onClick={() => setShowDetails(!showDetails)}
