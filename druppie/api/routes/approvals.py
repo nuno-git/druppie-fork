@@ -26,11 +26,104 @@ from druppie.core.loop import MainLoop
 from druppie.core.mcp_client import get_mcp_client, MCPErrorType
 from druppie.core.execution_context import ExecutionContext
 from druppie.db import crud
-from druppie.db.models import Approval, Workspace
+from druppie.db.models import Approval, Workspace, Build
 
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+
+def _create_build_record_from_docker_run(
+    db: Session,
+    tool_result: dict,
+    approval_args: dict,
+    session_id: str,
+) -> Build | None:
+    """Create a Build record when docker:run succeeds.
+
+    This allows the Running Apps dashboard to track containers started via MCP.
+
+    Args:
+        db: Database session
+        tool_result: Result from docker:run MCP call
+        approval_args: Original approval arguments
+        session_id: Session ID for linking
+
+    Returns:
+        Created Build instance or None if project_id not found
+    """
+    import uuid
+
+    # Extract info from the tool result
+    container_name = tool_result.get("container_name")
+    port = tool_result.get("port")
+    app_url = tool_result.get("url")
+
+    # Get project_id from approval arguments
+    project_id = approval_args.get("project_id")
+    if not project_id:
+        # Try to get from session's workspace
+        workspace = db.query(Workspace).filter(
+            Workspace.session_id == session_id
+        ).first()
+        if workspace:
+            project_id = workspace.project_id
+
+    if not project_id:
+        logger.warning(
+            "cannot_create_build_record_no_project",
+            session_id=session_id,
+            container_name=container_name,
+        )
+        return None
+
+    # Check if a build record already exists for this container
+    existing = db.query(Build).filter(
+        Build.container_name == container_name,
+        Build.status == "running",
+    ).first()
+
+    if existing:
+        # Update existing record
+        existing.port = port
+        existing.app_url = app_url
+        existing.status = "running"
+        db.commit()
+        logger.info(
+            "build_record_updated",
+            build_id=existing.id,
+            container_name=container_name,
+        )
+        return existing
+
+    # Create new build record
+    build_id = str(uuid.uuid4())
+    build = Build(
+        id=build_id,
+        project_id=project_id,
+        branch="main",  # Default to main
+        status="running",
+        container_name=container_name,
+        port=port,
+        app_url=app_url,
+        is_preview=False,
+    )
+    db.add(build)
+    db.commit()
+
+    logger.info(
+        "build_record_created",
+        build_id=build_id,
+        project_id=project_id,
+        container_name=container_name,
+        app_url=app_url,
+    )
+    return build
 
 
 # =============================================================================
@@ -605,6 +698,15 @@ async def approve_request(
 
             # Execute the tool that was waiting for approval
             result = await mcp_client.execute_approved_tool(approval_id, context)
+
+            # Create Build record if docker:run succeeded (for Running Apps tracking)
+            if approval.tool_name == "docker:run" and result.get("success", True):
+                _create_build_record_from_docker_run(
+                    db=db,
+                    tool_result=result,
+                    approval_args=args,
+                    session_id=approval.session_id,
+                )
 
             # Check if tool execution itself failed
             if not result.get("success", True):
