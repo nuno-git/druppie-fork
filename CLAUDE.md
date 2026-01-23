@@ -446,11 +446,28 @@ immediately after and overwrites the session state before the clarification can 
 - STATIC WEB PAGES (counter, calculator) → developer → deployer
 - SIMPLE FILE OPERATIONS → developer only
 
-### Issue: Port Conflicts in docker:run
+### Issue: Port Conflicts in docker:run (from inside Docker containers)
 **Symptom**: docker:run fails with "Bind for 0.0.0.0:8080 failed: port is already allocated"
-**Cause**: Another container (e.g., landing-page) already using the requested port
-**Fix**: Check existing containers with `docker ps` and use a different port mapping
-**Prevention**: Deployer should check for port availability or use dynamic port allocation
+**Cause**: The mcp-docker container's `is_port_available()` was using `socket.bind(("", port))` which only checks port availability INSIDE the container, not on the Docker host
+**Root Cause**: MCP servers run inside Docker containers, so socket binding tests the container's network namespace, not the host's
+**Fix**: Use `docker ps --format "{{.Ports}}"` to query which host ports are actually in use:
+```python
+def get_used_host_ports() -> set[int]:
+    result = subprocess.run(
+        ["docker", "ps", "--format", "{{.Ports}}"],
+        capture_output=True, text=True, timeout=10,
+    )
+    # Parse "0.0.0.0:HOST_PORT->CONTAINER_PORT/tcp" format
+    ports = set()
+    for mapping in result.stdout.split(", "):
+        if "->" in mapping:
+            host_part = mapping.split("->")[0]
+            port_str = host_part.rsplit(":", 1)[-1]
+            ports.add(int(port_str))
+    return ports
+```
+**Key**: This approach works correctly from inside containers since it queries Docker daemon, not the local network stack
+**Behavior**: If requested port is unavailable, auto-selects from range 9100-9199
 
 ### Issue: Architect Doesn't Ask HITL Confirmation Before Writing
 **Symptom**: Architect agent writes architecture.md immediately without asking user confirmation
