@@ -701,9 +701,10 @@ class MCPClient:
         # Also emit via context callback if available
         if context.emit_event:
             context.emit_event({
-                "event_type": "approval_required",
+                "type": "approval_required",
                 "approval_id": approval_id,
                 "tool": tool_name,
+                "agent_id": agent_id,
                 "args": args_with_context,
                 "required_roles": required_roles,
                 "danger_level": danger_level,
@@ -749,11 +750,13 @@ class MCPClient:
                     "danger_level": approval.danger_level,
                     "description": approval.description,
                 },
+                agent_id=approval.agent_id,  # Pass agent_id for frontend attribution
             )
             logger.debug(
                 "approval_broadcast_to_roles",
                 approval_id=approval.id,
                 roles=approval.required_roles,
+                agent_id=approval.agent_id,
             )
         except Exception as e:
             logger.warning("approval_broadcast_to_roles_failed", error=str(e))

@@ -13,13 +13,13 @@ import {
 } from 'lucide-react'
 import { getAgentConfig, getAgentColorClasses } from '../../utils/agentConfig'
 
-const TypingIndicator = ({ currentStep, liveEvents = [], onStop, isStopping = false }) => {
+const TypingIndicator = ({ currentStep, liveEvents = [], onStop, isStopping = false, agentId = null }) => {
   const [confirmStop, setConfirmStop] = useState(false)
   const [expanded, setExpanded] = useState(false)
 
-  // Find the current active agent
+  // Find the current active agent from events or use the passed agentId
   const activeAgentEvent = liveEvents.filter(e => e.event_type === 'agent_started' || e.data?.agent_id).pop()
-  const activeAgent = activeAgentEvent?.data?.agent_id
+  const activeAgent = activeAgentEvent?.data?.agent_id || agentId
   const agentConfig = activeAgent ? getAgentConfig(activeAgent) : null
   const AgentIcon = agentConfig?.icon || Bot
   const colorClasses = agentConfig ? getAgentColorClasses(agentConfig.color) : 'bg-blue-100 text-blue-700 border-blue-200'

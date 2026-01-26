@@ -428,22 +428,46 @@ async def get_session(
 
     response = _session_to_response(session, project=project, db=db)
 
-    # Also include pending approvals (tasks) for the frontend
-    pending_approvals = crud.list_pending_approvals(db, session_id=session_id)
-    response.tasks = [
-        {
+    # Include ALL approvals (pending and completed) for the frontend ToolExecutionCard
+    from druppie.db.models import Approval, User
+    all_approvals = (
+        db.query(Approval)
+        .filter(Approval.session_id == session_id)
+        .order_by(Approval.created_at.asc())
+        .all()
+    )
+
+    def get_approver_info(approval):
+        """Get approver username and role from resolved_by user ID."""
+        if not approval.resolved_by:
+            return None, None
+        resolver = db.query(User).filter(User.id == approval.resolved_by).first()
+        if resolver:
+            return resolver.username, approval.required_role
+        return str(approval.resolved_by), approval.required_role
+
+    response.tasks = []
+    for a in all_approvals:
+        approver_username, approver_role = get_approver_info(a)
+        response.tasks.append({
             "id": str(a.id),
             "name": a.tool_name,
             "status": "pending_approval" if a.status == "pending" else a.status,
             "mcp_tool": a.tool_name,
+            "mcp_arguments": a.arguments if isinstance(a.arguments, dict) else {},
+            "agent_id": a.agent_id,  # Include which agent executed the tool
             "required_role": a.required_role or "admin",
             "required_roles": [a.required_role] if a.required_role else ["admin"],
             "approval_type": "role",
             "required_approvals": 1,
-            "approvals": [],
-        }
-        for a in pending_approvals
-    ]
+            "approvals": [
+                {
+                    "approver_username": approver_username,
+                    "role": approver_role,
+                    "created_at": a.resolved_at.isoformat() if a.resolved_at else None,
+                }
+            ] if a.status in ("approved", "rejected") else [],
+        })
 
     # Fetch HITL questions (both pending and answered) for conversation reconstruction
     hitl_questions = (
