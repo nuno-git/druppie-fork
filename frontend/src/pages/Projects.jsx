@@ -30,13 +30,7 @@ import {
   Zap,
 } from 'lucide-react'
 
-// Format token count with K suffix for large numbers
-const formatTokens = (count) => {
-  if (!count) return null
-  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`
-  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`
-  return count.toString()
-}
+import { formatTokens, formatCost, calculateCost } from '../utils/tokenUtils'
 import { getWorkspaceFiles, getWorkspaceFile, getWorkspaceDownloadUrl, getProjectStatus, getProjects, deleteProject, buildProject, runProject, stopProject } from '../services/api'
 import { useToast } from '../components/Toast'
 import CodeBlock from '../components/CodeBlock'
@@ -308,9 +302,10 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
             </span>
           )}
           {formatTokens(totalTokens) && (
-            <span className="flex items-center text-yellow-600" title={`Total tokens: ${totalTokens.toLocaleString()} (from ${tokenUsage?.session_count || 0} sessions)`}>
+            <span className="flex items-center text-yellow-600" title={`Total tokens: ${totalTokens.toLocaleString()} (${formatCost(calculateCost(totalTokens)) || '<$0.01'}) from ${tokenUsage?.session_count || 0} sessions`}>
               <Zap className="w-3 h-3 mr-0.5" />
               {formatTokens(totalTokens)}
+              <span className="text-xs text-yellow-500 ml-1">{formatCost(calculateCost(totalTokens))}</span>
             </span>
           )}
         </div>
