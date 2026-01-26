@@ -49,7 +49,6 @@ class WorkspaceResponse(BaseModel):
     project_id: str | None = None
     branch: str
     local_path: str | None = None
-    is_new_project: bool = False
     created_at: str | None = None
     # Project info if available
     project_name: str | None = None
@@ -84,12 +83,11 @@ class FileContentResponse(BaseModel):
 def workspace_to_response(workspace: Workspace, project: Project | None = None) -> WorkspaceResponse:
     """Convert Workspace model to response."""
     return WorkspaceResponse(
-        id=workspace.id,
-        session_id=workspace.session_id,
-        project_id=workspace.project_id,
+        id=str(workspace.id),
+        session_id=str(workspace.session_id) if workspace.session_id else None,
+        project_id=str(workspace.project_id) if workspace.project_id else None,
         branch=workspace.branch,
         local_path=workspace.local_path,
-        is_new_project=workspace.is_new_project,
         created_at=workspace.created_at.isoformat() if workspace.created_at else None,
         project_name=project.name if project else None,
         project_repo_url=project.repo_url if project else None,

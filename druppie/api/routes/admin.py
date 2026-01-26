@@ -109,7 +109,6 @@ class WorkspaceItem(BaseModel):
     project_id: str | None
     branch: str
     local_path: str | None
-    is_new_project: bool
     created_at: str | None
 
 
@@ -470,12 +469,11 @@ async def list_all_workspaces(
     return WorkspaceListResponse(
         workspaces=[
             WorkspaceItem(
-                id=w.id,
-                session_id=w.session_id,
-                project_id=w.project_id,
+                id=str(w.id),
+                session_id=str(w.session_id) if w.session_id else None,
+                project_id=str(w.project_id) if w.project_id else None,
                 branch=w.branch,
                 local_path=w.local_path,
-                is_new_project=w.is_new_project,
                 created_at=w.created_at.isoformat() if w.created_at else None,
             )
             for w in workspaces

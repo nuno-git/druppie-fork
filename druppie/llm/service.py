@@ -22,6 +22,11 @@ from .deepinfra import ChatDeepInfra
 logger = structlog.get_logger()
 
 
+class LLMConfigurationError(Exception):
+    """Raised when LLM is not properly configured."""
+    pass
+
+
 class LLMService:
     """Service for managing LLM instances.
 
@@ -29,7 +34,7 @@ class LLMService:
 
     Environment variables:
         LLM_PROVIDER: Provider to use (zai, deepinfra, mock, auto)
-        ZAI_API_KEY: API key for Z.AI
+        ZAI_API_KEY: API key for Z.AI (REQUIRED unless using mock)
         ZAI_MODEL: Model name for Z.AI (default: GLM-4.7)
         ZAI_BASE_URL: Base URL for Z.AI API
         DEEPINFRA_API_KEY: API key for DeepInfra
@@ -43,7 +48,11 @@ class LLMService:
         self._provider: str | None = None
 
     def get_provider(self) -> str:
-        """Get the configured LLM provider name."""
+        """Get the configured LLM provider name.
+
+        Raises:
+            LLMConfigurationError: If no API key is configured and provider is not 'mock'
+        """
         if self._provider is not None:
             return self._provider
 
@@ -53,27 +62,38 @@ class LLMService:
 
         if provider == "mock":
             self._provider = "mock"
-        elif provider == "zai" and zai_key:
+        elif provider == "zai":
+            if not zai_key:
+                raise LLMConfigurationError(
+                    "ZAI_API_KEY environment variable is required when LLM_PROVIDER=zai. "
+                    "Please set ZAI_API_KEY in your .env file or environment."
+                )
             self._provider = "zai"
-        elif provider == "deepinfra" and deepinfra_key:
+        elif provider == "deepinfra":
+            if not deepinfra_key:
+                raise LLMConfigurationError(
+                    "DEEPINFRA_API_KEY environment variable is required when LLM_PROVIDER=deepinfra. "
+                    "Please set DEEPINFRA_API_KEY in your .env file or environment."
+                )
             self._provider = "deepinfra"
         elif provider == "auto":
-            # Auto-detect: prefer DeepInfra, then Z.AI, then mock
+            # Auto-detect: prefer DeepInfra, then Z.AI
             if deepinfra_key:
                 self._provider = "deepinfra"
             elif zai_key:
                 self._provider = "zai"
             else:
-                logger.warning("no_llm_provider_configured", using="mock")
-                self._provider = "mock"
+                raise LLMConfigurationError(
+                    "No LLM API key configured! Please set one of:\n"
+                    "  - ZAI_API_KEY for Z.AI GLM models\n"
+                    "  - DEEPINFRA_API_KEY for DeepInfra models\n"
+                    "Or set LLM_PROVIDER=mock for testing (not recommended for production)."
+                )
         else:
-            # Fallback logic
-            if deepinfra_key:
-                self._provider = "deepinfra"
-            elif zai_key:
-                self._provider = "zai"
-            else:
-                self._provider = "mock"
+            raise LLMConfigurationError(
+                f"Unknown LLM_PROVIDER: {provider}. "
+                "Valid options: zai, deepinfra, mock, auto"
+            )
 
         logger.info("llm_provider_selected", provider=self._provider)
         return self._provider

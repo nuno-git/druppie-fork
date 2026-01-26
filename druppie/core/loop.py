@@ -1,122 +1,193 @@
-"""Main Execution Loop for Druppie using LangGraph.
+"""Main execution loop for Druppie AI Governance Platform.
 
-This is the heart of the architecture - a minimal graph that orchestrates agents.
+This module orchestrates the AI agent workflow:
+1. Router classifies user intent
+2. Planner creates execution plan (stored in workflow_steps)
+3. Steps execute in order (agents, approvals, etc.)
+4. Pauses for approvals/HITL questions
+5. Resumes from DB state when approval/answer received
 
-Flow:
-    User Message
-         |
-         v
-    Workspace Init ─── Clone/create repo (git-first)
-         |
-         v
-    Router Agent ─── Analyzes intent
-         |
-         v
-    Planner Agent ─── Creates execution plan
-         |
-         v
-    Execute ─── Runs agents/workflows from plan
-         |
-         v
-    Done
-
-Key principle: The loop just defines graph structure.
-All execution logic is in Agent and Workflow classes.
-All HITL (pause/resume) is handled by LangGraph's interrupt() in MCP tools.
-Workspace is initialized at conversation start (git-first architecture).
+NO JSON state storage - everything is in normalized PostgreSQL tables.
 """
 
-import os
-import uuid
+import asyncio
+import structlog
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable, Generator, TypedDict
+from typing import Any, Callable
+from uuid import UUID, uuid4
 
-import structlog
-from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session as DBSession
 
-from druppie.agents import Agent
-from druppie.workflows import Workflow
-from druppie.core.execution_context import (
-    ExecutionContext,
-    CancelledException,
-    set_current_context,
-    get_current_context,
-    clear_current_context,
+from druppie.core.config import get_settings
+from druppie.db import (
+    # Models
+    Session,
+    Workflow,
+    WorkflowStep,
+    AgentRun,
+    Message,
+    Approval,
+    HitlQuestion,
+    Workspace,
+    # CRUD functions
+    create_session,
+    get_session,
+    update_session,
+    update_session_tokens,
+    create_workflow,
+    get_workflow,
+    get_workflow_for_session,
+    update_workflow,
+    update_workflow_step,
+    create_agent_run,
+    get_agent_run,
+    get_active_agent_run,
+    update_agent_run,
+    update_agent_run_tokens,
+    create_message,
+    get_messages_for_session,
+    get_messages_for_agent_run,
+    create_approval,
+    get_approval,
+    get_pending_approval_for_tool_call,
+    resolve_approval,
+    list_pending_approvals,
+    create_hitl_question,
+    get_hitl_question,
+    get_pending_hitl_question,
+    answer_hitl_question,
+    create_workspace,
+    get_workspace,
+    get_workspace_for_session,
+    create_llm_call,
+    get_llm_calls_for_session,
 )
-from druppie.core.mcp_client import get_mcp_client
+from druppie.db.database import get_db
+
 
 logger = structlog.get_logger()
+settings = get_settings()
 
 
 # =============================================================================
-# PROJECT NAME EXTRACTION
+# EXECUTION CONTEXT
 # =============================================================================
 
 
-def extract_project_name_from_message(message: str) -> str | None:
-    """Extract a friendly project name from the user's message.
+class ExecutionContext:
+    """Context for a single execution flow.
 
-    This is used when no project_name is provided, to generate a meaningful
-    name instead of using UUID-based names like "Project 2a161".
-
-    Examples:
-        "Create a to-do app" -> "to-do-app"
-        "Build a weather dashboard" -> "weather-dashboard"
-        "Make a simple calculator" -> "simple-calculator"
-        "Write a Python script for data analysis" -> "data-analysis"
-
-    Args:
-        message: User's message describing what they want to build
-
-    Returns:
-        A friendly project name, or None if extraction fails
+    Tracks workspace info, events, and provides emit callback for real-time updates.
     """
-    import re
 
-    message_lower = message.lower().strip()
+    def __init__(
+        self,
+        session_id: str | UUID,
+        emit_event: Callable[[dict], None] | None = None,
+    ):
+        self.session_id = str(session_id) if isinstance(session_id, UUID) else session_id
+        self.emit_event = emit_event
 
-    # Common patterns for project requests
-    # Pattern: "create/build/make/write a [adjective] <project name> [with/using/for...]"
-    patterns = [
-        # "create a to-do app", "build a weather dashboard"
-        r"(?:create|build|make|write|develop|generate)\s+(?:a\s+)?(?:simple\s+|basic\s+|new\s+)?(.+?)(?:\s+(?:app|application|website|web app|webapp|site|service|api|tool|script|program|project|dashboard|system|platform))?(?:\s+(?:with|using|for|in|that|which)|\s*$)",
-        # "to-do app", "weather dashboard" (direct object)
-        r"^(?:a\s+)?(?:simple\s+|basic\s+|new\s+)?(.+?)\s+(?:app|application|website|web app|webapp|site|service|api|tool|script|program|project|dashboard|system|platform)(?:\s|$)",
-        # Just grab the main nouns if nothing else matches
-        r"(?:create|build|make|write|develop)\s+(?:a\s+)?(.+?)(?:\s+(?:with|using|for|in|that|which)|\s*$)",
-    ]
+        # Workspace info (set during initialization)
+        self.workspace_id: str | None = None
+        self.project_id: str | None = None
+        self.project_name: str | None = None
+        self.workspace_path: str | None = None
+        self.branch: str | None = None
 
-    for pattern in patterns:
-        match = re.search(pattern, message_lower)
-        if match:
-            name = match.group(1).strip()
+        # Current execution tracking
+        self.current_agent_run_id: str | None = None
+        self.current_workflow_id: str | None = None
 
-            # Clean up the name
-            # Remove common filler words at the start
-            name = re.sub(r"^(?:a|an|the|my|new|simple|basic)\s+", "", name)
+        # Token tracking
+        self.prompt_tokens: int = 0
+        self.completion_tokens: int = 0
+        self.total_tokens: int = 0
 
-            # Remove technical details at the end
-            name = re.sub(r"\s+(?:using|with|in|for|that|which).*$", "", name)
+        # Events for debugging (in-memory, not persisted)
+        self.workflow_events: list[dict] = []
 
-            # Convert to slug format
-            name = name.strip()
-            name = re.sub(r"[^a-z0-9\s-]", "", name)  # Keep only alphanumeric, space, hyphen
-            name = re.sub(r"[\s_]+", "-", name)  # Replace spaces/underscores with hyphens
-            name = re.sub(r"-+", "-", name)  # Collapse multiple hyphens
-            name = name.strip("-")
+        # Cancellation flag
+        self._cancelled: bool = False
 
-            # Limit length
-            if len(name) > 50:
-                # Try to cut at word boundary
-                name = name[:50].rsplit("-", 1)[0]
+    def emit(self, event_type: str, data: dict | None = None) -> None:
+        """Emit an event to the frontend."""
+        event = {
+            "type": event_type,
+            "session_id": self.session_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **(data or {}),
+        }
+        self.workflow_events.append(event)
+        if self.emit_event:
+            try:
+                self.emit_event(event)
+            except Exception as e:
+                logger.warning("emit_event_error", error=str(e))
 
-            if name and len(name) >= 2:
-                return name
+    def set_workspace(
+        self,
+        workspace_id: str | UUID,
+        project_id: str | UUID | None,
+        workspace_path: str | None,
+        branch: str | None,
+        project_name: str | None = None,
+    ) -> None:
+        """Set workspace info."""
+        self.workspace_id = str(workspace_id) if workspace_id else None
+        self.project_id = str(project_id) if project_id else None
+        self.workspace_path = workspace_path
+        self.branch = branch
+        self.project_name = project_name
 
-    return None
+        self.emit("workspace_initialized", {
+            "workspace_id": self.workspace_id,
+            "project_id": self.project_id,
+            "project_name": project_name,
+            "branch": branch,
+        })
+
+    def add_tokens(self, prompt: int, completion: int) -> None:
+        """Add token usage."""
+        self.prompt_tokens += prompt
+        self.completion_tokens += completion
+        self.total_tokens += prompt + completion
+
+    def cancel(self) -> None:
+        """Cancel the current execution."""
+        self._cancelled = True
+
+    def check_cancelled(self) -> None:
+        """Raise if cancelled."""
+        if self._cancelled:
+            raise CancelledException("Execution was cancelled")
+
+
+class CancelledException(Exception):
+    """Raised when execution is cancelled."""
+    pass
+
+
+# Thread-local context for current execution
+_current_context: ExecutionContext | None = None
+
+
+def get_current_context() -> ExecutionContext | None:
+    """Get the current execution context."""
+    return _current_context
+
+
+def set_current_context(ctx: ExecutionContext | None) -> None:
+    """Set the current execution context."""
+    global _current_context
+    _current_context = ctx
+
+
+def clear_current_context() -> None:
+    """Clear the current execution context."""
+    global _current_context
+    _current_context = None
 
 
 # =============================================================================
@@ -125,795 +196,565 @@ def extract_project_name_from_message(message: str) -> str | None:
 
 
 @contextmanager
-def db_session() -> Generator[Session, None, None]:
-    """Context manager for database sessions with guaranteed cleanup.
-
-    This ensures database connections are always properly closed, even when
-    exceptions occur. Using this instead of `next(get_db())` prevents
-    connection pool exhaustion.
-
-    Usage:
-        with db_session() as db:
-            # use db...
-            db.commit()  # if needed
-        # db is automatically closed here
-
-    Yields:
-        SQLAlchemy Session instance
-    """
-    from druppie.api.deps import get_db
-
-    db_gen = get_db()
-    db = next(db_gen)
+def db_session():
+    """Get a database session with proper cleanup."""
+    db = next(get_db())
     try:
         yield db
-    except Exception as e:
-        logger.error("db_session_error", error=str(e), error_type=type(e).__name__, exc_info=True)
-        raise
     finally:
-        try:
-            # Try to exhaust the generator to trigger its finally block
-            next(db_gen, None)
-        except StopIteration:
-            pass
-        # Explicit close as safety net (idempotent operation)
         db.close()
 
 
 # =============================================================================
-# GRAPH STATE
+# STATE RECONSTRUCTION FROM DATABASE
 # =============================================================================
 
 
-class GraphState(TypedDict):
-    """State passed through the LangGraph flow."""
-    # Input
-    message: str
-    session_id: str
-    user_id: str | None
+def get_execution_state(db: DBSession, session_id: UUID) -> dict[str, Any]:
+    """Build execution state from normalized database tables.
 
-    # Workspace context (set after initialization)
-    workspace_id: str | None
-    project_id: str | None
-    workspace_path: str | None
-    branch: str | None
+    This replaces the JSON session.state approach. All state is derived
+    from properly normalized tables.
 
-    # Router output
-    intent: dict | None
-
-    # Planner output
-    plan: dict | None
-
-    # Execution results
-    results: list[dict]
-
-    # Final response
-    response: str | None
-    error: str | None
-
-
-# =============================================================================
-# GRAPH NODES
-# =============================================================================
-
-
-async def router_node(state: GraphState) -> dict:
-    """Run the router agent to analyze intent.
-
-    The router can call hitl:ask if it needs clarification.
-    This automatically pauses via LangGraph's interrupt().
+    Returns:
+        Dict with:
+        - session: Session record
+        - workflow: Current workflow (if any)
+        - steps: List of workflow steps
+        - current_step: Current step index
+        - workspace: Workspace info
+        - messages: Recent messages
+        - pending_approval: Approval we're waiting for (if any)
+        - pending_question: HITL question we're waiting for (if any)
+        - hitl_answers: Previous HITL Q&A for this workflow
     """
-    message = state.get("message", "")
-    logger.info("router_node_start", message=message[:100] if message else "(no message)")
+    session = get_session(db, session_id)
+    if not session:
+        return {"error": "Session not found"}
 
-    # Emit step event
-    ctx = get_current_context()
+    workflow = get_workflow_for_session(db, session_id)
 
-    # Check for cancellation before starting
-    if ctx:
-        ctx.check_cancelled()
-        ctx.emit("step_started", {"step": "router", "description": "Analyzing your request..."})
-
-    try:
-        result = await Agent("router").run(message)
-
-        # Extract action and validate structure
-        action = result.get("action", "general_chat")
-        prompt = result.get("prompt", message)
-        answer = result.get("answer")
-        project_context = result.get("project_context", {})
-
-        # Ensure we have a properly structured intent
-        intent = {
-            "action": action,
-            "prompt": prompt,
-            "answer": answer,
-            "project_context": project_context,
-        }
-
-        logger.info(
-            "router_node_complete",
-            action=action,
-            prompt_preview=prompt[:100] if prompt else "",
-            has_answer=answer is not None,
-            has_context=bool(project_context),
+    # Get workflow steps if workflow exists
+    steps = []
+    if workflow:
+        steps = (
+            db.query(WorkflowStep)
+            .filter(WorkflowStep.workflow_id == workflow.id)
+            .order_by(WorkflowStep.step_index.asc())
+            .all()
         )
 
-        if ctx:
-            ctx.emit("step_completed", {
-                "step": "router",
-                "action": action,
-                "prompt": prompt,
-                "has_answer": answer is not None,
-                "project_name": project_context.get("project_name") if project_context else None,
-            })
+    # Get workspace
+    workspace = get_workspace_for_session(db, session_id)
 
-        return {"intent": intent}
-    except Exception as e:
-        logger.error("router_node_error", error=str(e), exc_info=True)
-        if ctx:
-            ctx.emit("step_error", {"step": "router", "error": str(e)})
-        return {"error": f"Router failed: {e}"}
+    # Get pending approval or HITL question
+    pending_approval = (
+        db.query(Approval)
+        .filter(Approval.session_id == session_id, Approval.status == "pending")
+        .first()
+    )
+
+    pending_question = get_pending_hitl_question(db, session_id)
+
+    # Get previous HITL Q&A for context
+    hitl_answers = (
+        db.query(HitlQuestion)
+        .filter(HitlQuestion.session_id == session_id, HitlQuestion.status == "answered")
+        .order_by(HitlQuestion.created_at.asc())
+        .all()
+    )
+
+    # Get recent messages
+    messages = get_messages_for_session(db, session_id, limit=50)
+
+    return {
+        "session": session,
+        "workflow": workflow,
+        "steps": steps,
+        "current_step": workflow.current_step if workflow else 0,
+        "workspace": workspace,
+        "messages": messages,
+        "pending_approval": pending_approval,
+        "pending_question": pending_question,
+        "hitl_answers": hitl_answers,
+    }
 
 
-async def planner_node(state: GraphState) -> dict:
-    """Run the planner agent to create an execution plan.
+def build_plan_from_workflow(workflow: Workflow, steps: list[WorkflowStep]) -> dict:
+    """Convert workflow/steps records to plan dict for agent execution."""
+    return {
+        "id": str(workflow.id),
+        "name": workflow.name,
+        "status": workflow.status,
+        "current_step": workflow.current_step,
+        "steps": [
+            {
+                "id": str(step.id),
+                "index": step.step_index,
+                "agent_id": step.agent_id,
+                "description": step.description,
+                "status": step.status,
+                "result": step.result_summary,
+            }
+            for step in steps
+        ],
+    }
 
-    The planner can call hitl:ask if it needs more info.
-    """
-    intent = state.get("intent")
-    logger.info("planner_node_start", intent=intent)
 
-    ctx = get_current_context()
+def build_context_from_workspace(workspace: Workspace | None) -> dict:
+    """Build execution context dict from workspace record."""
+    if not workspace:
+        return {}
 
-    # Check for cancellation before starting
-    if ctx:
-        ctx.check_cancelled()
-        ctx.emit("step_started", {"step": "planner", "description": "Creating execution plan..."})
+    return {
+        "workspace_id": str(workspace.id) if workspace.id else None,
+        "project_id": str(workspace.project_id) if workspace.project_id else None,
+        "workspace_path": workspace.local_path,
+        "branch": workspace.branch,
+    }
 
-    if not state.get("intent"):
-        return {"error": "No intent from router"}
 
-    # Check if this is just a chat response (no planning needed)
-    action = state["intent"].get("action", "general_chat")
-    if action == "general_chat":
-        answer = state["intent"].get("answer") or state["intent"].get("prompt", "")
-        logger.info("planner_node_general_chat", answer_preview=str(answer)[:100])
-        if ctx:
-            ctx.emit("step_completed", {
-                "step": "planner",
-                "action": "general_chat",
-                "skipped": True,
-                "reason": "Direct chat response, no plan needed",
-            })
-        return {
-            "plan": None,
-            "response": answer,
+def build_clarifications_from_hitl(hitl_answers: list[HitlQuestion]) -> list[dict]:
+    """Build clarification history from HITL Q&A records."""
+    return [
+        {
+            "question_id": str(q.id),
+            "question": q.question,
+            "answer": q.answer,
+            "agent_id": q.agent_run.agent_id if q.agent_run else None,
         }
+        for q in hitl_answers
+        if q.answer  # Only include answered questions
+    ]
 
-    # Handle ask_clarification - use built-in HITL to ask the user
-    if action == "ask_clarification":
-        question = state["intent"].get("question", "What would you like help with?")
-        logger.info("planner_node_ask_clarification", question=question[:100])
 
-        # Use built-in HITL to ask the question (no MCP server needed)
-        try:
-            from druppie.agents.hitl import ask_question
+# =============================================================================
+# MCP CLIENT
+# =============================================================================
 
-            session_id = state.get("session_id", "unknown")
-            result = await ask_question(
-                question=question,
-                context=ctx,
-                agent_id="router",
-                question_context="Clarifying user intent",
-            )
 
-            logger.info("planner_node_hitl_result", result=result)
+def get_mcp_client(db: DBSession):
+    """Get the MCP client for tool execution."""
+    from druppie.core.mcp_client import MCPClient
+    return MCPClient(db)
 
-            if ctx:
-                ctx.emit("step_completed", {
-                    "step": "planner",
-                    "action": "ask_clarification",
-                    "question_asked": question,
+
+# =============================================================================
+# AGENT EXECUTION
+# =============================================================================
+
+
+async def run_agent(
+    db: DBSession,
+    agent_id: str,
+    prompt: str,
+    context: dict,
+    exec_ctx: ExecutionContext,
+    parent_run_id: UUID | None = None,
+    workflow_step_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Run an agent with the given prompt and context.
+
+    Creates an agent_run record, executes the agent, and returns the result.
+    If the agent pauses for approval or HITL, returns paused state.
+
+    Args:
+        db: Database session
+        agent_id: ID of the agent to run (router, planner, architect, developer, etc.)
+        prompt: The prompt/instruction for the agent
+        context: Execution context (workspace info, previous results, etc.)
+        exec_ctx: ExecutionContext for events and tracking
+        parent_run_id: Parent agent run (for context chain)
+        workflow_step_id: Associated workflow step (if any)
+
+    Returns:
+        Dict with result, or paused state with approval_id/question_id
+    """
+    from druppie.agents.runtime import Agent
+
+    # Create agent run record
+    agent_run = create_agent_run(
+        db,
+        session_id=UUID(exec_ctx.session_id),
+        agent_id=agent_id,
+        workflow_step_id=workflow_step_id,
+        parent_run_id=parent_run_id,
+    )
+    exec_ctx.current_agent_run_id = str(agent_run.id)
+
+    exec_ctx.emit("agent_started", {
+        "agent_id": agent_id,
+        "agent_run_id": str(agent_run.id),
+    })
+
+    logger.info(
+        "agent_run_started",
+        session_id=exec_ctx.session_id,
+        agent_id=agent_id,
+        agent_run_id=str(agent_run.id),
+    )
+
+    try:
+        # Run the agent
+        agent = Agent(agent_id)
+        result = await agent.run(prompt, context)
+
+        # Check if paused for approval or HITL
+        if isinstance(result, dict):
+            if result.get("paused"):
+                # Agent paused - update status
+                update_agent_run(
+                    db,
+                    agent_run.id,
+                    status="paused_tool" if result.get("approval_id") else "paused_hitl",
+                )
+
+                exec_ctx.emit("agent_paused", {
+                    "agent_id": agent_id,
+                    "agent_run_id": str(agent_run.id),
+                    "approval_id": result.get("approval_id"),
                     "question_id": result.get("question_id"),
                 })
 
-            # Return with pending state - the workflow will resume when user answers
-            return {
-                "plan": None,
-                "response": None,
-                "waiting_for_answer": True,
-                "question_id": result.get("question_id"),
-            }
-        except Exception as e:
-            logger.error("planner_node_hitl_error", error=str(e), exc_info=True)
-            # Fallback: return the question as a response
-            if ctx:
-                ctx.emit("step_completed", {
-                    "step": "planner",
-                    "action": "ask_clarification",
-                    "fallback": True,
-                })
-            return {
-                "plan": None,
-                "response": question,
-            }
+                return result
 
-    try:
-        # Build comprehensive prompt for planner
-        project_context = state["intent"].get("project_context", {})
-        prompt_parts = [
-            f"Action: {action}",
-            f"User Request: {state['intent'].get('prompt', '')}",
-        ]
-
-        if project_context:
-            prompt_parts.append(f"Project Context: {project_context}")
-
-        # Include workspace info if available
-        if state.get("workspace_id"):
-            prompt_parts.append(f"Workspace ID: {state.get('workspace_id')}")
-        if state.get("workspace_path"):
-            prompt_parts.append(f"Workspace Path: {state.get('workspace_path')}")
-        if state.get("branch"):
-            prompt_parts.append(f"Branch: {state.get('branch')}")
-
-        prompt = "Create an execution plan for:\n" + "\n".join(prompt_parts)
-
-        logger.debug("planner_prompt", prompt=prompt)
-
-        result = await Agent("planner").run(prompt)
-
-        # Validate plan structure
-        plan_name = result.get("name", "Unnamed Plan")
-        steps = result.get("steps", [])
-        workflow_id = result.get("workflow_id")
-
-        # Ensure plan has required fields
-        plan = {
-            "name": plan_name,
-            "description": result.get("description", ""),
-            "workflow_id": workflow_id,
-            "steps": steps,
-            "inputs": result.get("inputs", {}),
-        }
-
-        logger.info(
-            "planner_node_complete",
-            plan_name=plan_name,
-            steps_count=len(steps),
-            has_workflow=workflow_id is not None,
+        # Agent completed successfully
+        update_agent_run(
+            db,
+            agent_run.id,
+            status="completed",
+            completed_at=datetime.now(timezone.utc),
         )
 
-        if ctx:
-            ctx.emit("step_completed", {
-                "step": "planner",
-                "plan_name": plan_name,
-                "steps_count": len(steps),
-                "workflow_id": workflow_id,
-                "steps_preview": [
-                    {"id": s.get("id"), "type": s.get("type"), "agent_id": s.get("agent_id")}
-                    for s in steps[:5]  # Preview first 5 steps
-                ],
-            })
+        exec_ctx.emit("agent_completed", {
+            "agent_id": agent_id,
+            "agent_run_id": str(agent_run.id),
+            "result_preview": str(result)[:200] if result else None,
+        })
 
-        return {"plan": plan}
+        return {"success": True, "result": result}
+
+    except CancelledException:
+        update_agent_run(db, agent_run.id, status="failed")
+        raise
 
     except Exception as e:
-        logger.error("planner_node_error", error=str(e), exc_info=True)
-        if ctx:
-            ctx.emit("step_error", {"step": "planner", "error": str(e)})
-        return {"error": f"Planner failed: {e}"}
+        logger.error(
+            "agent_run_failed",
+            agent_id=agent_id,
+            agent_run_id=str(agent_run.id),
+            error=str(e),
+            exc_info=True,
+        )
+        update_agent_run(db, agent_run.id, status="failed")
 
-
-async def execute_node(state: GraphState) -> dict:
-    """Execute the plan steps.
-
-    Each step can be an agent call or an MCP tool call.
-    Agents can pause via hitl:ask or hitl:approve.
-    """
-    logger.info("execute_node_start", plan=state.get("plan", {}).get("name"))
-
-    ctx = get_current_context()
-
-    # Check for cancellation before starting
-    if ctx:
-        ctx.check_cancelled()
-
-    if not state.get("plan"):
-        logger.debug("execute_node_no_plan", response=state.get("response"))
-        return {"results": [], "response": state.get("response", "No plan to execute")}
-
-    plan = state["plan"]
-    results = []
-
-    # Pass workspace context to agents so they know where to work
-    # This is critical for agents to know where files should be created
-    context = {
-        "workspace_id": state.get("workspace_id"),
-        "workspace_path": state.get("workspace_path"),
-        "project_id": state.get("project_id"),
-        "branch": state.get("branch"),
-        "session_id": state.get("session_id"),  # For HITL tools
-    }
-
-    logger.debug("execute_node_context", context=context)
-
-    if ctx:
-        ctx.emit("execution_started", {
-            "plan_name": plan.get("name", "Unnamed plan"),
-            "total_steps": len(plan.get("steps", [])),
-            "workspace_id": context.get("workspace_id"),
+        exec_ctx.emit("agent_error", {
+            "agent_id": agent_id,
+            "agent_run_id": str(agent_run.id),
+            "error": str(e),
         })
 
-    # Check if this is a workflow
-    if plan.get("workflow_id"):
-        try:
-            if ctx:
-                ctx.emit("workflow_started", {"workflow_id": plan["workflow_id"]})
-            workflow_result = await Workflow(plan["workflow_id"]).run(
-                plan.get("inputs", {})
-            )
-            if ctx:
-                ctx.emit("workflow_completed", {"workflow_id": plan["workflow_id"]})
-            return {
-                "results": workflow_result.get("results", []),
-                "response": f"Workflow {plan['workflow_id']} completed",
-            }
-        except Exception as e:
-            logger.error("workflow_error", workflow=plan["workflow_id"], error=str(e), exc_info=True)
-            if ctx:
-                ctx.emit("workflow_error", {"workflow_id": plan["workflow_id"], "error": str(e)})
-            return {"error": f"Workflow failed: {e}"}
-
-    # Execute individual steps
-    total_steps = len(plan.get("steps", []))
-    for i, step in enumerate(plan.get("steps", [])):
-        # Check for cancellation before each step
-        if ctx:
-            ctx.check_cancelled()
-
-        step_type = step.get("type", "agent")
-        step_id = step.get("id", f"step_{i}")
-        agent_id = step.get("agent_id") if step_type == "agent" else None
-
-        logger.info("execute_step", step_id=step_id, step_type=step_type)
-
-        if ctx:
-            ctx.step_started(step_id, step_type, agent_id)
-            ctx.emit("step_progress", {
-                "current_step": i + 1,
-                "total_steps": total_steps,
-                "step_id": step_id,
-                "step_type": step_type,
-                "agent_id": agent_id,
-                "description": step.get("prompt", step.get("tool", ""))[:100],
-            })
-
-        try:
-            if step_type == "agent":
-                prompt = step.get("prompt", "")
-
-                # CRITICAL: Check for HITL clarifications that should be passed to this agent
-                # This allows agents to know if the user has already confirmed/answered
-                # FIRST check the execution context (most reliable - passed directly from resume)
-                # THEN fall back to database (for other cases)
-                clarifications = []
-
-                # Check execution context first (this is the reliable path for resumption)
-                if ctx and ctx.hitl_clarifications:
-                    clarifications = ctx.hitl_clarifications
-                    logger.info(
-                        "clarifications_from_context",
-                        agent_id=agent_id,
-                        clarifications_count=len(clarifications),
-                    )
-
-                # Filter to only this agent's clarifications
-                agent_clarifications = [c for c in clarifications if c.get("agent_id") == agent_id]
-                if agent_clarifications:
-                    # Append clarification context to prompt
-                    clarification_text = "\n\n--- USER CONFIRMATION ---\n"
-                    for c in agent_clarifications:
-                        clarification_text += f"The user was asked: \"{c.get('question', '')[:200]}...\"\n"
-                        clarification_text += f"User responded: \"{c.get('answer', '')}\"\n"
-                    clarification_text += "\nIMPORTANT: The user has already confirmed! Proceed with the action (write the file) without asking again.\n"
-                    clarification_text += "--- END USER CONFIRMATION ---"
-                    prompt = prompt + clarification_text
-                    logger.info(
-                        "clarification_appended_to_prompt",
-                        agent_id=agent_id,
-                        clarifications_count=len(agent_clarifications),
-                    )
-
-                logger.info(
-                    "execute_agent_step",
-                    step_id=step_id,
-                    agent_id=agent_id,
-                    prompt_preview=prompt[:100] if prompt else "",
-                    workspace_id=context.get("workspace_id"),
-                )
-
-                if ctx:
-                    ctx.emit("agent_starting", {
-                        "step_id": step_id,
-                        "agent_id": agent_id,
-                        "prompt": prompt,
-                    })
-
-                result = await Agent(agent_id).run(prompt, context)
-
-                # Check if agent returned paused state (for approval or HITL question)
-                if isinstance(result, dict) and result.get("paused"):
-                    approval_id = result.get("approval_id")
-                    question_id = result.get("question_id")
-                    logger.info("agent_paused", step_id=step_id, agent_id=agent_id, approval_id=approval_id, question_id=question_id)
-
-                    # Build agent state for resumption
-                    clarifications = ctx.hitl_clarifications if ctx else []
-                    agent_state = {
-                        "plan": plan,
-                        "current_step": i,
-                        "results": results,
-                        "context": context,
-                        "agent_id": agent_id,
-                        "hitl_clarifications": clarifications,
-                        "iteration": result.get("iteration", 0),  # Agent iteration when paused
-                    }
-
-                    # Update the approval with plan execution state so we can resume properly
-                    # This is critical - MCP tool approvals need the same state as step approvals
-                    if approval_id:
-                        try:
-                            from druppie.db.crud import update_approval
-                            with db_session() as db:
-                                update_approval(
-                                    db,
-                                    approval_id,
-                                    {"agent_state": agent_state},
-                                )
-                                db.commit()
-                                logger.info(
-                                    "approval_state_saved",
-                                    approval_id=approval_id,
-                                    step_id=step_id,
-                                    current_step=i,
-                                )
-                        except Exception as e:
-                            logger.error(
-                                "approval_state_save_failed",
-                                approval_id=approval_id,
-                                error=str(e),
-                            )
-
-                    # Also save state to HITL question if paused for a question
-                    # This enables proper resumption from where the agent paused
-                    if question_id:
-                        try:
-                            from druppie.db.crud import update_hitl_question_agent_state
-                            with db_session() as db:
-                                update_hitl_question_agent_state(
-                                    db,
-                                    question_id,
-                                    agent_state,
-                                )
-                                logger.info(
-                                    "question_state_saved",
-                                    question_id=question_id,
-                                    step_id=step_id,
-                                    current_step=i,
-                                    agent_id=agent_id,
-                                )
-                        except Exception as e:
-                            logger.error(
-                                "question_state_save_failed",
-                                question_id=question_id,
-                                error=str(e),
-                            )
-
-                    if ctx:
-                        ctx.emit("agent_paused", {
-                            "step_id": step_id,
-                            "agent_id": agent_id,
-                            "approval_id": approval_id,
-                            "question_id": question_id,
-                        })
-                    return {
-                        "results": results,
-                        "response": f"Waiting for approval in step {step_id}",
-                        "paused": True,
-                        "approval_id": approval_id,
-                        "question_id": question_id,
-                    }
-
-                logger.info(
-                    "execute_agent_complete",
-                    step_id=step_id,
-                    agent_id=agent_id,
-                    result_type=type(result).__name__,
-                )
-
-                if ctx:
-                    ctx.emit("agent_completed", {
-                        "step_id": step_id,
-                        "agent_id": agent_id,
-                        "result_preview": str(result)[:200] if result else "",
-                    })
-
-            elif step_type == "mcp":
-                tool = step.get("tool")
-                inputs = step.get("inputs", {})
-
-                if ctx:
-                    # Use MCPClient for HTTP calls to MCP microservices
-                    # Parse tool name first (format: server:tool)
-                    if ":" in tool:
-                        server, tool_name = tool.split(":", 1)
-                    else:
-                        server = "coding"
-                        tool_name = tool
-
-                    # Inject context into inputs based on server type
-                    if server == "coding" and "workspace_id" not in inputs:
-                        if context.get("workspace_id"):
-                            inputs["workspace_id"] = context["workspace_id"]
-                    if server == "hitl" and "session_id" not in inputs:
-                        if context.get("session_id"):
-                            inputs["session_id"] = context["session_id"]
-                    if server == "docker" and "workspace_id" not in inputs:
-                        if context.get("workspace_id"):
-                            inputs["workspace_id"] = context["workspace_id"]
-
-                    logger.debug(
-                        "mcp_step_inputs",
-                        step_id=step_id,
-                        tool=tool,
-                        inputs=inputs,
-                    )
-
-                    with db_session() as db:
-                        try:
-                            mcp_client = get_mcp_client(db)
-                            result = await mcp_client.call_tool(server, tool_name, inputs, ctx)
-
-                            # Check if paused for approval
-                            if result.get("status") == "paused":
-                                # Return paused state - execution will resume after approval
-                                return {
-                                    "results": results,
-                                    "response": f"Waiting for approval: {result.get('tool')}",
-                                    "paused": True,
-                                    "approval_id": result.get("approval_id"),
-                                }
-                        except Exception as mcp_error:
-                            logger.error(
-                                "mcp_tool_call_error",
-                                step_id=step_id,
-                                tool=tool,
-                                server=server,
-                                error=str(mcp_error),
-                                error_type=type(mcp_error).__name__,
-                                exc_info=True,
-                            )
-                            raise
-                else:
-                    result = {"error": "No execution context available for MCP call"}
-            elif step_type == "approval":
-                # Approval checkpoint - pause and wait for user approval
-                approval_message = step.get("message", "Approval required to continue")
-                required_roles = step.get("required_roles", ["developer", "admin"])
-                approval_context = step.get("context", {})
-
-                logger.info(
-                    "approval_checkpoint",
-                    step_id=step_id,
-                    message=approval_message,
-                    required_roles=required_roles,
-                )
-
-                if ctx:
-                    # Create approval request
-                    from druppie.db.crud import create_approval
-                    with db_session() as db:
-                        approval = create_approval(
-                            db,
-                            {
-                                "session_id": context.get("session_id"),
-                                "tool_name": f"approval:{step_id}",
-                                "arguments": {"message": approval_message, **approval_context},
-                                "required_roles": required_roles,
-                                "description": approval_message,
-                                "agent_state": {
-                                    "plan": plan,
-                                    "current_step": i,
-                                    "results": results,
-                                    "context": context,
-                                    "hitl_clarifications": ctx.hitl_clarifications if ctx else [],
-                                },
-                            }
-                        )
-
-                    # Emit approval required event directly (not wrapped as workflow_event)
-                    # This ensures the frontend receives it with type="approval_required"
-                    if ctx.emit_event:
-                        ctx.emit_event({
-                            "type": "approval_required",
-                            "session_id": context.get("session_id"),
-                            "approval_id": str(approval.id),
-                            "message": approval_message,
-                            "required_roles": required_roles,
-                            "step_id": step_id,
-                            "context": approval_context,
-                        })
-                    # Also store it as a workflow event for the timeline
-                    ctx.emit("approval_required", {
-                        "approval_id": str(approval.id),
-                        "message": approval_message,
-                        "required_roles": required_roles,
-                        "step_id": step_id,
-                        "context": approval_context,
-                    })
-
-                    # Return paused state
-                    return {
-                        "results": results,
-                        "response": f"Waiting for approval: {approval_message}",
-                        "paused": True,
-                        "approval_id": str(approval.id),
-                    }
-                else:
-                    # No context - skip approval
-                    result = {"approved": True, "skipped": True}
-
-            else:
-                result = {"error": f"Unknown step type: {step_type}"}
-
-            results.append({"step_id": step_id, "success": True, "result": result})
-            context[step_id] = result
-
-            if ctx:
-                ctx.step_completed(step_id, success=True)
-
-        except Exception as e:
-            logger.error("step_error", step_id=step_id, error=str(e), exc_info=True)
-            results.append({"step_id": step_id, "success": False, "error": str(e)})
-            if ctx:
-                ctx.step_completed(step_id, success=False)
-                ctx.emit("step_error", {"step_id": step_id, "error": str(e)})
-            # Continue or stop based on step configuration
-            if not step.get("continue_on_error", False):
-                break
-
-    # Generate response - prefer agent's final response (e.g., deployer with URL)
-    successful = sum(1 for r in results if r.get("success"))
-    total = len(results)
-
-    # Try to find a meaningful agent response to show the user
-    # Deployer agent should return the deployment URL
-    final_agent_response = None
-    for r in reversed(results):  # Check most recent results first
-        if r.get("success") and isinstance(r.get("result"), dict):
-            result_data = r["result"]
-            # Check if this is an agent response with text content
-            # Agent returns {"content": "..."} when output is text (not JSON)
-            if isinstance(result_data.get("content"), str) and len(result_data["content"]) > 20:
-                final_agent_response = result_data["content"]
-                break
-            if isinstance(result_data.get("response"), str) and len(result_data["response"]) > 20:
-                final_agent_response = result_data["response"]
-                break
-            # Check for URL in docker run result
-            if result_data.get("url"):
-                final_agent_response = f"**Deployment Complete!**\n\n- **URL**: {result_data['url']}\n- **Container**: {result_data.get('container_name', 'N/A')}\n- **Port**: {result_data.get('port', 'N/A')}"
-                break
-
-    if final_agent_response:
-        response = final_agent_response
-    elif successful == total and total > 0:
-        response = f"Successfully completed all {total} steps"
-    elif successful > 0:
-        response = f"Completed {successful}/{total} steps"
-    else:
-        response = "Failed to complete steps"
-
-    if ctx:
-        ctx.emit("execution_completed", {
-            "successful_steps": successful,
-            "total_steps": total,
-            "final_response": response[:200] if response else None,
-        })
-
-    return {"results": results, "response": response}
+        return {"success": False, "error": str(e)}
 
 
 # =============================================================================
-# ROUTING FUNCTIONS
+# WORKFLOW EXECUTION
 # =============================================================================
 
 
-def route_after_router(state: GraphState) -> str:
-    """Determine next step after router."""
-    if state.get("error"):
-        return "end"
-    if not state.get("intent"):
-        return "end"
-    return "planner"
+async def execute_workflow_steps(
+    db: DBSession,
+    workflow: Workflow,
+    steps: list[WorkflowStep],
+    context: dict,
+    exec_ctx: ExecutionContext,
+    start_from: int = 0,
+) -> dict[str, Any]:
+    """Execute workflow steps from a given starting point.
 
+    Processes steps in order:
+    - Agent steps: Run the agent
+    - Approval steps: Create approval request and pause
+    - MCP steps: Execute MCP tool directly
 
-def route_after_planner(state: GraphState) -> str:
-    """Determine next step after planner."""
-    if state.get("error"):
-        return "end"
-    if state.get("response"):  # Already have a response (general_chat)
-        return "end"
-    if not state.get("plan") or not state["plan"].get("steps"):
-        return "end"
-    return "execute"
-
-
-# =============================================================================
-# GRAPH BUILDER
-# =============================================================================
-
-
-def build_graph(checkpointer=None):
-    """Build the LangGraph flow.
+    Returns when:
+    - All steps complete (success)
+    - An error occurs (failure)
+    - Paused for approval/HITL (interrupt)
 
     Args:
-        checkpointer: Optional checkpointer for state persistence.
-                     If None, uses in-memory checkpointer.
+        db: Database session
+        workflow: The workflow to execute
+        steps: List of workflow steps
+        context: Execution context (workspace info, previous results)
+        exec_ctx: ExecutionContext for events
+        start_from: Step index to start from (for resume)
 
     Returns:
-        Compiled graph
+        Dict with success/error/paused state
     """
-    builder = StateGraph(GraphState)
+    results = []
 
-    # Add nodes
-    builder.add_node("router", router_node)
-    builder.add_node("planner", planner_node)
-    builder.add_node("execute", execute_node)
+    # Build results from already-completed steps
+    for step in steps[:start_from]:
+        if step.status == "completed":
+            results.append({
+                "step_id": str(step.id),
+                "agent_id": step.agent_id,
+                "success": True,
+                "result": step.result_summary,
+            })
 
-    # Add edges
-    builder.set_entry_point("router")
-    builder.add_conditional_edges(
-        "router",
-        route_after_router,
-        {"planner": "planner", "end": END}
+    # Update workflow status
+    update_workflow(db, workflow.id, status="running")
+
+    exec_ctx.emit("workflow_started", {
+        "workflow_id": str(workflow.id),
+        "workflow_name": workflow.name,
+        "total_steps": len(steps),
+        "starting_from": start_from,
+    })
+
+    try:
+        for i in range(start_from, len(steps)):
+            exec_ctx.check_cancelled()
+
+            step = steps[i]
+            step_type = _get_step_type(step.agent_id)
+
+            logger.info(
+                "executing_step",
+                session_id=exec_ctx.session_id,
+                workflow_id=str(workflow.id),
+                step_index=i,
+                step_id=str(step.id),
+                agent_id=step.agent_id,
+                step_type=step_type,
+            )
+
+            # Update current step in workflow
+            update_workflow(db, workflow.id, current_step=i)
+
+            # Update step status
+            update_workflow_step(
+                db,
+                step.id,
+                status="running",
+                started_at=datetime.now(timezone.utc),
+            )
+
+            exec_ctx.emit("step_started", {
+                "step_index": i,
+                "step_id": str(step.id),
+                "agent_id": step.agent_id,
+                "description": step.description,
+                "total_steps": len(steps),
+            })
+
+            try:
+                if step_type == "approval":
+                    # Create approval request and pause
+                    result = await _handle_approval_step(db, step, context, exec_ctx)
+                    if result.get("paused"):
+                        return result
+
+                elif step_type == "agent":
+                    # Run the agent
+                    result = await run_agent(
+                        db=db,
+                        agent_id=step.agent_id,
+                        prompt=step.description or "",
+                        context=context,
+                        exec_ctx=exec_ctx,
+                        workflow_step_id=step.id,
+                    )
+
+                    if result.get("paused"):
+                        return result
+
+                    if not result.get("success"):
+                        # Step failed
+                        update_workflow_step(
+                            db,
+                            step.id,
+                            status="failed",
+                            result_summary=result.get("error", "Unknown error"),
+                            completed_at=datetime.now(timezone.utc),
+                        )
+
+                        exec_ctx.emit("step_failed", {
+                            "step_index": i,
+                            "step_id": str(step.id),
+                            "error": result.get("error"),
+                        })
+
+                        # Stop workflow on error (unless continue_on_error)
+                        break
+
+                    # Step succeeded
+                    step_result = result.get("result")
+                    result_summary = _summarize_result(step_result)
+
+                    update_workflow_step(
+                        db,
+                        step.id,
+                        status="completed",
+                        result_summary=result_summary,
+                        completed_at=datetime.now(timezone.utc),
+                    )
+
+                    results.append({
+                        "step_id": str(step.id),
+                        "agent_id": step.agent_id,
+                        "success": True,
+                        "result": step_result,
+                    })
+
+                    # Add result to context for next steps
+                    context[f"step_{i}_result"] = step_result
+
+                else:
+                    # Unknown step type - skip
+                    logger.warning("unknown_step_type", agent_id=step.agent_id)
+                    update_workflow_step(db, step.id, status="skipped")
+
+                exec_ctx.emit("step_completed", {
+                    "step_index": i,
+                    "step_id": str(step.id),
+                    "agent_id": step.agent_id,
+                    "success": True,
+                })
+
+            except CancelledException:
+                raise
+            except Exception as e:
+                logger.error(
+                    "step_execution_error",
+                    step_id=str(step.id),
+                    error=str(e),
+                    exc_info=True,
+                )
+
+                update_workflow_step(
+                    db,
+                    step.id,
+                    status="failed",
+                    result_summary=str(e),
+                    completed_at=datetime.now(timezone.utc),
+                )
+
+                exec_ctx.emit("step_failed", {
+                    "step_index": i,
+                    "step_id": str(step.id),
+                    "error": str(e),
+                })
+
+                break
+
+        # Workflow completed
+        update_workflow(db, workflow.id, status="completed")
+
+        exec_ctx.emit("workflow_completed", {
+            "workflow_id": str(workflow.id),
+            "successful_steps": len([r for r in results if r.get("success")]),
+            "total_steps": len(steps),
+        })
+
+        return {
+            "success": True,
+            "results": results,
+            "workflow_id": str(workflow.id),
+        }
+
+    except CancelledException:
+        update_workflow(db, workflow.id, status="failed")
+        raise
+    except Exception as e:
+        logger.error(
+            "workflow_execution_error",
+            workflow_id=str(workflow.id),
+            error=str(e),
+            exc_info=True,
+        )
+        update_workflow(db, workflow.id, status="failed")
+        return {"success": False, "error": str(e)}
+
+
+def _get_step_type(agent_id: str) -> str:
+    """Determine step type from agent_id."""
+    if agent_id.startswith("approval"):
+        return "approval"
+    return "agent"
+
+
+def _summarize_result(result: Any) -> str:
+    """Create a summary of a step result for storage."""
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result[:1000]
+    if isinstance(result, dict):
+        if "content" in result:
+            return str(result["content"])[:1000]
+        if "response" in result:
+            return str(result["response"])[:1000]
+        if "url" in result:
+            return f"URL: {result['url']}"
+    return str(result)[:1000]
+
+
+async def _handle_approval_step(
+    db: DBSession,
+    step: WorkflowStep,
+    context: dict,
+    exec_ctx: ExecutionContext,
+) -> dict[str, Any]:
+    """Handle an approval step - create approval and pause."""
+    # Extract approval info from step description
+    approval_message = step.description or "Approval required to continue"
+
+    # Create approval record
+    approval = create_approval(
+        db,
+        session_id=UUID(exec_ctx.session_id),
+        approval_type="workflow_step",
+        workflow_step_id=step.id,
+        title=f"Step Approval: {step.agent_id}",
+        description=approval_message,
+        required_role="developer",  # Default role
     )
-    builder.add_conditional_edges(
-        "planner",
-        route_after_planner,
-        {"execute": "execute", "end": END}
-    )
-    builder.add_edge("execute", END)
 
-    # Compile with checkpointer
-    if checkpointer is None:
-        checkpointer = MemorySaver()
+    # Update step status
+    update_workflow_step(db, step.id, status="waiting_approval")
 
-    return builder.compile(checkpointer=checkpointer)
+    # Update session status
+    update_session(db, UUID(exec_ctx.session_id), status="paused_approval")
+
+    exec_ctx.emit("approval_required", {
+        "approval_id": str(approval.id),
+        "approval_type": "workflow_step",
+        "message": approval_message,
+        "step_id": str(step.id),
+    })
+
+    return {
+        "success": True,
+        "paused": True,
+        "approval_id": str(approval.id),
+        "message": f"Waiting for approval: {approval_message}",
+    }
 
 
 # =============================================================================
-# MAIN LOOP CLASS (for API compatibility)
+# MAIN LOOP CLASS
 # =============================================================================
 
 
 class MainLoop:
-    """Main execution loop.
+    """Main execution loop for Druppie."""
 
-    This is a thin wrapper around the LangGraph flow for API compatibility.
-    """
-
-    def __init__(self, checkpointer=None):
-        self._checkpointer = checkpointer or MemorySaver()
-        self._graph = None
-
-    @property
-    def graph(self):
-        if self._graph is None:
-            self._graph = build_graph(self._checkpointer)
-        return self._graph
+    def __init__(self):
+        pass
 
     async def process_message(
         self,
@@ -923,831 +764,359 @@ class MainLoop:
         project_id: str | None = None,
         project_name: str | None = None,
         emit_event: Callable[[dict], None] | None = None,
-        conversation_history: list[dict] | None = None,
-        hitl_clarifications: list[dict] | None = None,
     ) -> dict[str, Any]:
-        """Process a user message through the LangGraph flow.
+        """Process a user message.
+
+        Main entry point for new messages. Creates session if needed,
+        initializes workspace, runs router/planner, and executes workflow.
 
         Args:
             message: User's message
-            session_id: Session ID (used as thread_id for LangGraph)
-            user_id: User ID for context
-            project_id: Optional existing project ID to work on
-            project_name: Optional name for new project (used if project_id not provided)
+            session_id: Existing session ID (or None for new session)
+            user_id: User ID
+            project_id: Project ID (for existing project)
+            project_name: Project name (for new project)
             emit_event: Callback for real-time events
-            conversation_history: Previous conversation messages for context
 
         Returns:
-            Response dict with results
+            Dict with response, session_id, and execution state
         """
-        session_id = session_id or str(uuid.uuid4())
+        # Create or get session
+        with db_session() as db:
+            if session_id:
+                session = get_session(db, UUID(session_id))
+                if not session:
+                    session = create_session(
+                        db,
+                        user_id=UUID(user_id) if user_id else None,
+                        project_id=UUID(project_id) if project_id else None,
+                        title=message[:100],
+                    )
+            else:
+                session = create_session(
+                    db,
+                    user_id=UUID(user_id) if user_id else None,
+                    project_id=UUID(project_id) if project_id else None,
+                    title=message[:100],
+                )
 
-        # Create execution context for tracking
+            session_id = str(session.id)
+
+        # Create execution context
         exec_ctx = ExecutionContext(
             session_id=session_id,
-            user_id=user_id,
             emit_event=emit_event,
-            hitl_clarifications=hitl_clarifications or [],
         )
         set_current_context(exec_ctx)
 
-        if hitl_clarifications:
-            logger.info(
-                "process_message_with_clarifications",
+        try:
+            exec_ctx.emit("processing_started", {"message": message[:200]})
+
+            # Initialize workspace
+            workspace_info = await self._initialize_workspace(
                 session_id=session_id,
-                clarifications_count=len(hitl_clarifications),
+                user_id=user_id,
+                project_id=project_id,
+                project_name=project_name,
+                exec_ctx=exec_ctx,
             )
 
-        # Load existing messages from session state or use provided history
-        existing_messages = await self._load_messages(session_id)
-        if not existing_messages and conversation_history:
-            # Use provided history if no stored messages
-            existing_messages = conversation_history
+            # Build context for agents
+            context = {
+                **workspace_info,
+                "session_id": session_id,
+                "user_id": user_id,
+                "message": message,
+            }
 
-        # Add new user message
-        messages = list(existing_messages) if existing_messages else []
-        messages.append({
-            "role": "user",
-            "content": message,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-
-        # Store messages in context for later saving
-        exec_ctx.messages = messages
-
-        # Save session first (required for workspace foreign key)
-        await self._save_session(session_id, user_id, "initializing", message, exec_ctx)
-
-        # Extract friendly project name from message if not provided
-        # This prevents ugly names like "Project 2a161" and instead uses
-        # friendly names like "to-do-app" based on the user's request
-        effective_project_name = project_name
-        if not project_id and not project_name:
-            extracted_name = extract_project_name_from_message(message)
-            if extracted_name:
-                effective_project_name = extracted_name
-                logger.info(
-                    "extracted_project_name",
-                    message_preview=message[:50],
-                    extracted_name=extracted_name,
+            # Save user message to DB
+            with db_session() as db:
+                create_message(
+                    db,
+                    session_id=UUID(session_id),
+                    role="user",
+                    content=message,
                 )
 
-        # Initialize workspace (git-first architecture)
-        workspace_info = await self._initialize_workspace(
-            session_id=session_id,
-            user_id=user_id,
-            project_id=project_id,
-            project_name=effective_project_name,
-            exec_ctx=exec_ctx,
-        )
+            # Run router to classify intent
+            exec_ctx.emit("router_started", {})
 
-        # LangGraph config (thread_id enables persistence)
-        config = {"configurable": {"thread_id": session_id}}
+            with db_session() as db:
+                router_result = await run_agent(
+                    db=db,
+                    agent_id="router",
+                    prompt=message,
+                    context=context,
+                    exec_ctx=exec_ctx,
+                )
 
-        # Initial state
-        initial_state: GraphState = {
-            "message": message,
-            "session_id": session_id,
-            "user_id": user_id,
-            "workspace_id": workspace_info.get("workspace_id"),
-            "project_id": workspace_info.get("project_id"),
-            "workspace_path": workspace_info.get("workspace_path"),
-            "branch": workspace_info.get("branch"),
-            "intent": None,
-            "plan": None,
-            "results": [],
-            "response": None,
-            "error": None,
-        }
+            if not router_result.get("success"):
+                return await self._handle_error(
+                    session_id,
+                    exec_ctx,
+                    router_result.get("error", "Router failed"),
+                )
 
-        logger.info("main_loop_start", session=session_id, message=message[:100], workspace=workspace_info)
+            intent = _extract_intent(router_result.get("result"))
+            exec_ctx.emit("router_completed", {"intent": intent})
 
-        # Emit start event
-        exec_ctx.emit("processing_started", {"message_preview": message[:100]})
+            logger.info(
+                "intent_classified",
+                session_id=session_id,
+                intent=intent,
+            )
 
-        try:
-            # Save session to database
-            await self._save_session(session_id, user_id, "active", message, exec_ctx)
+            # Handle based on intent
+            if intent == "simple_response":
+                # Direct response, no planning needed
+                response = _extract_response(router_result.get("result"))
+                return await self._complete_session(
+                    session_id,
+                    exec_ctx,
+                    response,
+                )
 
-            # Run the graph
-            final_state = await self.graph.ainvoke(initial_state, config=config)
+            if intent == "needs_clarification":
+                # Router asked HITL question
+                if router_result.get("paused"):
+                    return {
+                        "success": True,
+                        "type": "interrupt",
+                        "response": "Waiting for clarification",
+                        "paused": True,
+                        "question_id": router_result.get("question_id"),
+                        "session_id": session_id,
+                    }
 
-            # Check for interrupt (question/approval pending)
-            if "__interrupt__" in final_state:
-                interrupt_data = final_state["__interrupt__"]
-                await self._save_session(session_id, user_id, "paused", message, exec_ctx, final_state)
-                clear_current_context()
+            # Run planner to create workflow
+            exec_ctx.emit("planner_started", {})
+
+            with db_session() as db:
+                planner_result = await run_agent(
+                    db=db,
+                    agent_id="planner",
+                    prompt=f"User request: {message}\n\nContext: {context}",
+                    context=context,
+                    exec_ctx=exec_ctx,
+                )
+
+            if not planner_result.get("success"):
+                return await self._handle_error(
+                    session_id,
+                    exec_ctx,
+                    planner_result.get("error", "Planner failed"),
+                )
+
+            # Create workflow from planner output
+            plan = _extract_plan(planner_result.get("result"))
+
+            with db_session() as db:
+                workflow = create_workflow(
+                    db,
+                    session_id=UUID(session_id),
+                    name=plan.get("name", "Execution Plan"),
+                    steps=[
+                        {
+                            "agent_id": step.get("agent_id", step.get("type", "unknown")),
+                            "description": step.get("prompt", step.get("description", "")),
+                        }
+                        for step in plan.get("steps", [])
+                    ],
+                )
+                exec_ctx.current_workflow_id = str(workflow.id)
+
+                # Get the created steps
+                steps = (
+                    db.query(WorkflowStep)
+                    .filter(WorkflowStep.workflow_id == workflow.id)
+                    .order_by(WorkflowStep.step_index.asc())
+                    .all()
+                )
+
+            exec_ctx.emit("planner_completed", {
+                "workflow_id": str(workflow.id),
+                "workflow_name": workflow.name,
+                "step_count": len(steps),
+            })
+
+            # Execute workflow
+            with db_session() as db:
+                workflow = get_workflow(db, workflow.id)
+                steps = (
+                    db.query(WorkflowStep)
+                    .filter(WorkflowStep.workflow_id == workflow.id)
+                    .order_by(WorkflowStep.step_index.asc())
+                    .all()
+                )
+
+                result = await execute_workflow_steps(
+                    db=db,
+                    workflow=workflow,
+                    steps=steps,
+                    context=context,
+                    exec_ctx=exec_ctx,
+                )
+
+            if result.get("paused"):
                 return {
                     "success": True,
                     "type": "interrupt",
-                    "interrupt": interrupt_data,
+                    "response": result.get("message", "Execution paused"),
+                    "paused": True,
+                    "approval_id": result.get("approval_id"),
+                    "question_id": result.get("question_id"),
                     "session_id": session_id,
                     "workflow_events": exec_ctx.workflow_events,
-                    "llm_calls": exec_ctx.llm_calls,
                 }
 
-            # Check for error
-            if final_state.get("error"):
-                await self._save_session(session_id, user_id, "failed", message, exec_ctx, final_state)
-                clear_current_context()
-                return {
-                    "success": False,
-                    "error": final_state["error"],
-                    "session_id": session_id,
-                    "workflow_events": exec_ctx.workflow_events,
-                    "llm_calls": exec_ctx.llm_calls,
-                }
+            if not result.get("success"):
+                return await self._handle_error(
+                    session_id,
+                    exec_ctx,
+                    result.get("error", "Workflow execution failed"),
+                )
 
-            # Success - add assistant message to history with workflow events
-            response_text = final_state.get("response", "")
-            if response_text and exec_ctx.messages is not None:
-                exec_ctx.messages.append({
-                    "role": "assistant",
-                    "content": response_text,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    # Attach workflow events to this message for persistence
-                    "workflow_events": exec_ctx.workflow_events.copy(),
-                    "llm_calls": exec_ctx.llm_calls.copy(),
-                })
-
-            await self._save_session(session_id, user_id, "completed", message, exec_ctx, final_state)
-            exec_ctx.emit("processing_completed", {"response_preview": str(response_text)[:100]})
-            clear_current_context()
-
-            return {
-                "success": True,
-                "type": "result",
-                "response": final_state.get("response"),
-                "intent": final_state.get("intent"),
-                "plan": final_state.get("plan"),
-                "results": final_state.get("results", []),
-                "session_id": session_id,
-                "workspace_id": exec_ctx.workspace_id,
-                "project_id": exec_ctx.project_id,
-                "project_name": exec_ctx.project_name,
-                "branch": exec_ctx.branch,
-                "workflow_events": exec_ctx.workflow_events,
-                "llm_calls": exec_ctx.llm_calls,
-            }
+            # Build final response
+            response = _build_final_response(result.get("results", []))
+            return await self._complete_session(session_id, exec_ctx, response)
 
         except CancelledException:
-            # User cancelled the execution
-            logger.info("main_loop_cancelled", session_id=session_id)
-            await self._save_session(session_id, user_id, "cancelled", message, exec_ctx)
-            clear_current_context()
+            logger.info("execution_cancelled", session_id=session_id)
             return {
                 "success": False,
-                "error": "Execution was cancelled by user",
+                "error": "Execution was cancelled",
                 "cancelled": True,
                 "session_id": session_id,
                 "workflow_events": exec_ctx.workflow_events,
-                "llm_calls": exec_ctx.llm_calls,
             }
-
         except Exception as e:
-            logger.error("main_loop_error", error=str(e), exc_info=True)
-            await self._save_session(session_id, user_id, "failed", message, exec_ctx, error=str(e))
-            clear_current_context()
-            return {
-                "success": False,
-                "error": str(e),
-                "session_id": session_id,
-                "workflow_events": exec_ctx.workflow_events,
-                "llm_calls": exec_ctx.llm_calls,
-            }
-
-    async def resume_session(
-        self,
-        session_id: str,
-        response: Any,
-        emit_event: Callable[[dict], None] | None = None,
-    ) -> dict[str, Any]:
-        """Resume a paused session with user's response.
-
-        Args:
-            session_id: Session ID to resume
-            response: User's response to the interrupt
-            emit_event: Callback for real-time events
-
-        Returns:
-            Response dict with results
-        """
-        from langgraph.types import Command
-
-        # Create execution context for tracking
-        exec_ctx = ExecutionContext(
-            session_id=session_id,
-            emit_event=emit_event,
-        )
-        set_current_context(exec_ctx)
-
-        config = {"configurable": {"thread_id": session_id}}
-
-        logger.info("main_loop_resume", session=session_id)
-
-        try:
-            # Resume with user's response
-            final_state = await self.graph.ainvoke(
-                Command(resume=response),
-                config=config,
+            logger.error(
+                "process_message_error",
+                session_id=session_id,
+                error=str(e),
+                exc_info=True,
             )
-
-            # Check for another interrupt
-            if "__interrupt__" in final_state:
-                clear_current_context()
-                return {
-                    "success": True,
-                    "type": "interrupt",
-                    "interrupt": final_state["__interrupt__"],
-                    "session_id": session_id,
-                    "workflow_events": exec_ctx.workflow_events,
-                    "llm_calls": exec_ctx.llm_calls,
-                }
-
-            if final_state.get("error"):
-                clear_current_context()
-                return {
-                    "success": False,
-                    "error": final_state["error"],
-                    "session_id": session_id,
-                    "workflow_events": exec_ctx.workflow_events,
-                    "llm_calls": exec_ctx.llm_calls,
-                }
-
+            return await self._handle_error(session_id, exec_ctx, str(e))
+        finally:
             clear_current_context()
-            return {
-                "success": True,
-                "type": "result",
-                "response": final_state.get("response"),
-                "intent": final_state.get("intent"),
-                "plan": final_state.get("plan"),
-                "results": final_state.get("results", []),
-                "session_id": session_id,
-                "workflow_events": exec_ctx.workflow_events,
-                "llm_calls": exec_ctx.llm_calls,
-            }
 
-        except Exception as e:
-            logger.error("main_loop_resume_error", error=str(e), exc_info=True)
-            clear_current_context()
-            return {
-                "success": False,
-                "error": str(e),
-                "session_id": session_id,
-                "workflow_events": exec_ctx.workflow_events,
-                "llm_calls": exec_ctx.llm_calls,
-            }
-
-    async def resume_from_step_approval(
+    async def resume_from_approval(
         self,
         session_id: str,
-        agent_state: dict,
+        approval_id: str,
         emit_event: Callable[[dict], None] | None = None,
     ) -> dict[str, Any]:
-        """Resume plan execution from a step approval checkpoint.
+        """Resume execution after an approval is granted.
 
-        This is called when:
-        1. A step approval (type: "approval") is approved - continue from NEXT step
-        2. An MCP tool approval is approved - continue from SAME step (re-run agent)
+        Reconstructs execution state from DB and continues from
+        the current workflow step.
 
         Args:
             session_id: Session ID
-            agent_state: Saved state from the approval containing:
-                - plan: The execution plan
-                - current_step: Index of the approval step (0-indexed)
-                - results: Results from steps before the approval
-                - context: Workspace/session context
-                - agent_id: (optional) If present, this was an MCP tool approval
-                - last_tool_result: (optional) Result of the just-executed approved tool
+            approval_id: ID of the approved approval
             emit_event: Callback for real-time events
 
         Returns:
-            Response dict with results
+            Dict with response/paused state
         """
-        # Create execution context for tracking
         exec_ctx = ExecutionContext(
             session_id=session_id,
             emit_event=emit_event,
         )
         set_current_context(exec_ctx)
 
-        # Restore previous workflow_events and llm_calls from session state
-        # This ensures the Debug page shows the full execution history
-        from druppie.db.crud import get_session as crud_get_session
-        with db_session() as db:
-            session = crud_get_session(db, session_id)
-            if session and session.state:
-                previous_events = session.state.get("workflow_events", [])
-                previous_llm_calls = session.state.get("llm_calls", [])
-                exec_ctx.workflow_events = list(previous_events)
-                exec_ctx.llm_calls = list(previous_llm_calls)
-                logger.info(
-                    "restored_execution_history",
-                    session_id=session_id,
-                    previous_events=len(previous_events),
-                    previous_llm_calls=len(previous_llm_calls),
-                )
-
-        # Extract saved state
-        plan = agent_state.get("plan", {})
-        current_step_idx = agent_state.get("current_step", 0)
-        results = agent_state.get("results", [])
-        context = agent_state.get("context", {})
-        last_tool_result = agent_state.get("last_tool_result")
-
-        # Check if this was an MCP tool approval (has agent_id) or step approval
-        is_mcp_tool_approval = "agent_id" in agent_state
-
-        # Update execution context with workspace info
-        exec_ctx.workspace_id = context.get("workspace_id")
-        exec_ctx.project_id = context.get("project_id")
-        exec_ctx.workspace_path = context.get("workspace_path")
-        exec_ctx.branch = context.get("branch")
-
-        # Restore HITL clarifications if they were saved in agent_state
-        # This ensures the agent knows about prior user confirmations when resuming
-        saved_clarifications = agent_state.get("hitl_clarifications", [])
-        if saved_clarifications:
-            exec_ctx.hitl_clarifications = saved_clarifications
-            logger.info(
-                "clarifications_restored_for_resume",
-                session_id=session_id,
-                clarifications_count=len(saved_clarifications),
-            )
-
-        # Store the last tool result so MCPClient can return it instead of re-executing
-        # Also add it to context so the agent knows what happened with the approved tool
-        if last_tool_result:
-            exec_ctx.completed_tool_results = exec_ctx.completed_tool_results if hasattr(exec_ctx, "completed_tool_results") else {}
-            tool_key = last_tool_result.get("tool", "")
-            exec_ctx.completed_tool_results[tool_key] = last_tool_result.get("result")
-
-            # CRITICAL: Add the tool result to context so agent knows the approved tool succeeded
-            # This prevents the agent from trying to re-do work that was already completed
-            tool_result = last_tool_result.get("result", {})
-            context["last_approved_tool"] = tool_key
-            context["last_tool_result"] = tool_result
-
-            # If this was docker:run, explicitly add the URL to context
-            if tool_key == "docker:run" and isinstance(tool_result, dict):
-                if tool_result.get("success") and tool_result.get("url"):
-                    context["deployment_url"] = tool_result.get("url")
-                    context["deployment_complete"] = True
-                    context["container_name"] = tool_result.get("container_name")
-                    context["container_id"] = tool_result.get("container_id")
-
-                    # SHORT-CIRCUIT: Deployment is complete! Don't re-run agent.
-                    # The agent would try to call more tools, but we already have the result.
-                    logger.info(
-                        "deployment_complete_short_circuit",
-                        session_id=session_id,
-                        deployment_url=tool_result.get("url"),
-                        container_name=tool_result.get("container_name"),
-                    )
-
-                    # Build deployment success response
-                    deployment_response = (
-                        f"**Deployment Complete!**\n\n"
-                        f"- **URL**: {tool_result.get('url')}\n"
-                        f"- **Container**: {tool_result.get('container_name', 'N/A')}\n"
-                        f"- **Image**: {tool_result.get('image_name', 'N/A')}\n"
-                        f"- **Port**: {tool_result.get('port', 'N/A')}\n"
-                        f"- **Status**: Running\n\n"
-                        f"To view logs: `docker logs {tool_result.get('container_name')}`\n"
-                        f"To stop: `docker stop {tool_result.get('container_name')}`"
-                    )
-
-                    # Add the deployment result to results
-                    results.append({
-                        "step_id": f"step_{current_step_idx}",
-                        "success": True,
-                        "result": tool_result,
-                    })
-
-                    exec_ctx.emit("deployment_complete", {
-                        "url": tool_result.get("url"),
-                        "container_name": tool_result.get("container_name"),
-                        "container_id": tool_result.get("container_id"),
-                    })
-
-                    # Emit app_running event for frontend display
-                    exec_ctx.app_running(
-                        container_name=tool_result.get("container_name", "app"),
-                        url=tool_result.get("url", ""),
-                        port=tool_result.get("port", 0),
-                        image_name=tool_result.get("image_name"),
-                    )
-
-                    exec_ctx.emit("execution_completed", {
-                        "successful_steps": len(results),
-                        "total_steps": len(plan.get("steps", [])),
-                        "final_response": deployment_response[:200],
-                    })
-
-                    # Save session state with final response for persistence
-                    # This ensures the deployment info is available on page reload
-                    try:
-                        from druppie.db.crud import update_session, get_session
-                        with db_session() as db:
-                            existing_session = get_session(db, session_id)
-                            if existing_session:
-                                existing_state = existing_session.state or {}
-                                existing_messages = existing_state.get("messages", [])
-
-                                # Add deployment completion message
-                                existing_messages.append({
-                                    "role": "assistant",
-                                    "content": deployment_response,
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                    "workflow_events": exec_ctx.workflow_events,
-                                    "llm_calls": exec_ctx.llm_calls,
-                                    "deployment_url": tool_result.get("url"),
-                                    "container_name": tool_result.get("container_name"),
-                                })
-
-                                # Update context with final response
-                                existing_context = existing_state.get("context", {})
-                                existing_context["response"] = deployment_response
-                                existing_context["deployment_url"] = tool_result.get("url")
-                                existing_context["deployment_complete"] = True
-
-                                update_session(
-                                    db,
-                                    session_id,
-                                    status="completed",
-                                    state={
-                                        **existing_state,
-                                        "messages": existing_messages,
-                                        "context": existing_context,
-                                        "workflow_events": exec_ctx.workflow_events,
-                                        "llm_calls": exec_ctx.llm_calls,
-                                    },
-                                )
-                                db.commit()
-                                logger.info(
-                                    "session_state_saved_on_deployment_complete",
-                                    session_id=session_id,
-                                    deployment_url=tool_result.get("url"),
-                                )
-                    except Exception as e:
-                        logger.warning(
-                            "failed_to_save_session_state_on_deployment",
-                            session_id=session_id,
-                            error=str(e),
-                        )
-
-                    clear_current_context()
-                    return {
-                        "success": True,
-                        "type": "result",
-                        "response": deployment_response,
-                        "results": results,
-                        "session_id": session_id,
-                        "deployment_url": tool_result.get("url"),
-                        "container_name": tool_result.get("container_name"),
-                        "workflow_events": exec_ctx.workflow_events,
-                        "llm_calls": exec_ctx.llm_calls,
-                    }
-
-        steps = plan.get("steps", [])
-        total_steps = len(steps)
-
-        # For MCP tool approvals: re-run the current step (agent might need more tools)
-        # For step approvals: continue from the next step
-        if is_mcp_tool_approval:
-            start_step = current_step_idx  # Re-run current step
-        else:
-            start_step = current_step_idx + 1  # Skip to next step
-
-        logger.info(
-            "resume_from_step_approval",
-            session_id=session_id,
-            current_step=current_step_idx,
-            start_step=start_step,
-            total_steps=total_steps,
-            plan_name=plan.get("name"),
-            is_mcp_tool_approval=is_mcp_tool_approval,
-            has_last_tool_result=last_tool_result is not None,
-        )
-
-        exec_ctx.emit("execution_resumed", {
-            "plan_name": plan.get("name", "Unnamed plan"),
-            "resumed_from_step": start_step,
-            "total_steps": total_steps,
-        })
-
         try:
-            # Execute remaining steps
-            for i in range(start_step, total_steps):
-                # Check for cancellation before each step
-                exec_ctx.check_cancelled()
+            with db_session() as db:
+                # Get execution state from DB
+                state = get_execution_state(db, UUID(session_id))
 
-                step = steps[i]
-                step_type = step.get("type", "agent")
-                step_id = step.get("id", f"step_{i}")
-                agent_id = step.get("agent_id") if step_type == "agent" else None
+                if state.get("error"):
+                    return {"success": False, "error": state["error"]}
 
-                logger.info("execute_step_after_approval", step_id=step_id, step_type=step_type)
+                workflow = state["workflow"]
+                if not workflow:
+                    return {"success": False, "error": "No workflow found for session"}
 
-                exec_ctx.step_started(step_id, step_type, agent_id)
-                exec_ctx.emit("step_progress", {
-                    "current_step": i + 1,
-                    "total_steps": total_steps,
-                    "step_id": step_id,
-                    "step_type": step_type,
-                    "agent_id": agent_id,
-                    "description": step.get("prompt", step.get("tool", ""))[:100],
+                steps = state["steps"]
+                workspace = state["workspace"]
+
+                # Build context
+                context = build_context_from_workspace(workspace)
+                context["session_id"] = session_id
+
+                # Add HITL clarifications to context
+                clarifications = build_clarifications_from_hitl(state["hitl_answers"])
+                if clarifications:
+                    context["clarifications"] = clarifications
+
+                # Update workspace info in exec_ctx
+                if workspace:
+                    exec_ctx.workspace_id = str(workspace.id)
+                    exec_ctx.project_id = str(workspace.project_id) if workspace.project_id else None
+                    exec_ctx.workspace_path = workspace.local_path
+                    exec_ctx.branch = workspace.branch
+
+                exec_ctx.emit("execution_resumed", {
+                    "approval_id": approval_id,
+                    "workflow_id": str(workflow.id),
+                    "current_step": workflow.current_step,
                 })
 
-                try:
-                    if step_type == "agent":
-                        prompt = step.get("prompt", "")
+                # Update session status
+                update_session(db, UUID(session_id), status="active")
 
-                        # CRITICAL: Append HITL clarifications to prompt
-                        # This is the same logic as in execute_plan() - ensures agent knows
-                        # about user confirmations when resuming after MCP tool approval
-                        if exec_ctx and exec_ctx.hitl_clarifications:
-                            # Filter to only this agent's clarifications
-                            agent_clarifications = [
-                                c for c in exec_ctx.hitl_clarifications
-                                if c.get("agent_id") == agent_id
-                            ]
-                            if agent_clarifications:
-                                # Append clarification context to prompt
-                                clarification_text = "\n\n--- USER CONFIRMATION ---\n"
-                                for c in agent_clarifications:
-                                    clarification_text += f"The user was asked: \"{c.get('question', '')[:200]}...\"\n"
-                                    clarification_text += f"User responded: \"{c.get('answer', '')}\"\n"
-                                clarification_text += "\nIMPORTANT: The user has already confirmed! Proceed with the action (write the file) without asking again.\n"
-                                clarification_text += "--- END USER CONFIRMATION ---"
-                                prompt = prompt + clarification_text
-                                logger.info(
-                                    "clarification_appended_to_prompt_on_resume",
-                                    agent_id=agent_id,
-                                    clarifications_count=len(agent_clarifications),
-                                )
+                # Continue from current step + 1 (approval step was completed)
+                resume_from = workflow.current_step + 1
 
-                        logger.info(
-                            "execute_agent_step_resumed",
-                            step_id=step_id,
-                            agent_id=agent_id,
-                            prompt_preview=prompt[:100] if prompt else "",
-                        )
+                result = await execute_workflow_steps(
+                    db=db,
+                    workflow=workflow,
+                    steps=steps,
+                    context=context,
+                    exec_ctx=exec_ctx,
+                    start_from=resume_from,
+                )
 
-                        exec_ctx.emit("agent_starting", {
-                            "step_id": step_id,
-                            "agent_id": agent_id,
-                            "prompt": prompt,
-                        })
+            if result.get("paused"):
+                return {
+                    "success": True,
+                    "type": "interrupt",
+                    "response": result.get("message", "Execution paused"),
+                    "paused": True,
+                    "approval_id": result.get("approval_id"),
+                    "question_id": result.get("question_id"),
+                    "session_id": session_id,
+                    "workflow_events": exec_ctx.workflow_events,
+                }
 
-                        result = await Agent(agent_id).run(prompt, context)
+            if not result.get("success"):
+                return await self._handle_error(
+                    session_id,
+                    exec_ctx,
+                    result.get("error", "Workflow execution failed"),
+                )
 
-                        # Check if agent returned paused state (for another approval)
-                        if isinstance(result, dict) and result.get("paused"):
-                            approval_id = result.get("approval_id")
-                            logger.info("agent_paused_again", step_id=step_id, agent_id=agent_id, approval_id=approval_id)
-
-                            # CRITICAL: Save agent_state to approval for proper resume
-                            # This is the same pattern used in execute_plan()
-                            if approval_id:
-                                try:
-                                    from druppie.db.crud import update_approval
-                                    with db_session() as db:
-                                        # Include HITL clarifications so agent remembers user confirmations
-                                        clarifications = exec_ctx.hitl_clarifications if exec_ctx else []
-                                        update_approval(
-                                            db,
-                                            approval_id,
-                                            {
-                                                "agent_state": {
-                                                    "plan": plan,
-                                                    "current_step": i,
-                                                    "results": results,
-                                                    "context": context,
-                                                    "agent_id": agent_id,  # Track which agent was running
-                                                    "hitl_clarifications": clarifications,  # Preserve user confirmations
-                                                },
-                                            },
-                                        )
-                                        db.commit()
-                                        logger.info(
-                                            "approval_state_saved_on_resume",
-                                            approval_id=approval_id,
-                                            step_id=step_id,
-                                            current_step=i,
-                                        )
-                                except Exception as e:
-                                    logger.error(
-                                        "approval_state_save_failed_on_resume",
-                                        approval_id=approval_id,
-                                        error=str(e),
-                                    )
-
-                            exec_ctx.emit("agent_paused", {
-                                "step_id": step_id,
-                                "agent_id": agent_id,
-                                "approval_id": approval_id,
-                            })
-                            clear_current_context()
-                            return {
-                                "success": True,
-                                "type": "interrupt",
-                                "response": f"Waiting for approval in step {step_id}",
-                                "paused": True,
-                                "approval_id": result.get("approval_id"),
-                                "session_id": session_id,
-                                "workflow_events": exec_ctx.workflow_events,
-                                "llm_calls": exec_ctx.llm_calls,
-                            }
-
-                        exec_ctx.emit("agent_completed", {
-                            "step_id": step_id,
-                            "agent_id": agent_id,
-                            "result_preview": str(result)[:200] if result else "",
-                        })
-
-                    elif step_type == "mcp":
-                        tool = step.get("tool")
-                        inputs = step.get("inputs", {})
-
-                        # Parse tool name (format: server:tool)
-                        if ":" in tool:
-                            server, tool_name = tool.split(":", 1)
-                        else:
-                            server = "coding"
-                            tool_name = tool
-
-                        # Inject context into inputs
-                        if server == "coding" and "workspace_id" not in inputs:
-                            if context.get("workspace_id"):
-                                inputs["workspace_id"] = context["workspace_id"]
-                        if server == "hitl" and "session_id" not in inputs:
-                            if context.get("session_id"):
-                                inputs["session_id"] = context["session_id"]
-                        if server == "docker" and "workspace_id" not in inputs:
-                            if context.get("workspace_id"):
-                                inputs["workspace_id"] = context["workspace_id"]
-
-                        with db_session() as db:
-                            mcp_client = get_mcp_client(db)
-                            result = await mcp_client.call_tool(server, tool_name, inputs, exec_ctx)
-
-                            # Check if paused for approval
-                            if result.get("status") == "paused":
-                                clear_current_context()
-                                return {
-                                    "success": True,
-                                    "type": "interrupt",
-                                    "response": f"Waiting for approval: {result.get('tool')}",
-                                    "paused": True,
-                                    "approval_id": result.get("approval_id"),
-                                    "session_id": session_id,
-                                    "workflow_events": exec_ctx.workflow_events,
-                                    "llm_calls": exec_ctx.llm_calls,
-                                }
-
-                    elif step_type == "approval":
-                        # Another approval checkpoint
-                        approval_message = step.get("message", "Approval required to continue")
-                        required_roles = step.get("required_roles", ["developer", "admin"])
-                        approval_context = step.get("context", {})
-
-                        logger.info(
-                            "another_approval_checkpoint",
-                            step_id=step_id,
-                            message=approval_message,
-                        )
-
-                        # Create approval request
-                        from druppie.db.crud import create_approval
-                        with db_session() as db:
-                            approval = create_approval(
-                                db,
-                                {
-                                    "session_id": session_id,
-                                    "tool_name": f"approval:{step_id}",
-                                    "arguments": {"message": approval_message, **approval_context},
-                                    "required_roles": required_roles,
-                                    "description": approval_message,
-                                    "agent_state": {
-                                        "plan": plan,
-                                        "current_step": i,
-                                        "results": results,
-                                        "context": context,
-                                        "hitl_clarifications": exec_ctx.hitl_clarifications if exec_ctx else [],
-                                    },
-                                }
-                            )
-
-                        # Emit approval required event
-                        if exec_ctx.emit_event:
-                            exec_ctx.emit_event({
-                                "type": "approval_required",
-                                "session_id": session_id,
-                                "approval_id": str(approval.id),
-                                "message": approval_message,
-                                "required_roles": required_roles,
-                                "step_id": step_id,
-                                "context": approval_context,
-                            })
-
-                        clear_current_context()
-                        return {
-                            "success": True,
-                            "type": "interrupt",
-                            "response": f"Waiting for approval: {approval_message}",
-                            "paused": True,
-                            "approval_id": str(approval.id),
-                            "session_id": session_id,
-                            "workflow_events": exec_ctx.workflow_events,
-                            "llm_calls": exec_ctx.llm_calls,
-                        }
-                    else:
-                        result = {"error": f"Unknown step type: {step_type}"}
-
-                    results.append({"step_id": step_id, "success": True, "result": result})
-                    context[step_id] = result
-                    exec_ctx.step_completed(step_id, success=True)
-
-                except CancelledException:
-                    raise
-                except Exception as e:
-                    logger.error("step_error_after_approval", step_id=step_id, error=str(e), exc_info=True)
-                    results.append({"step_id": step_id, "success": False, "error": str(e)})
-                    exec_ctx.step_completed(step_id, success=False)
-                    exec_ctx.emit("step_error", {"step_id": step_id, "error": str(e)})
-                    if not step.get("continue_on_error", False):
-                        break
-
-            # Generate response - prefer agent's final response (e.g., deployer with URL)
-            successful = sum(1 for r in results if r.get("success"))
-            total = len(results)
-
-            # Try to find a meaningful agent response to show the user
-            final_agent_response = None
-            for r in reversed(results):  # Check most recent results first
-                if r.get("success") and isinstance(r.get("result"), dict):
-                    result_data = r["result"]
-                    # Check if this is an agent response with text content
-                    # Agent returns {"content": "..."} when output is text (not JSON)
-                    if isinstance(result_data.get("content"), str) and len(result_data["content"]) > 20:
-                        final_agent_response = result_data["content"]
-                        break
-                    if isinstance(result_data.get("response"), str) and len(result_data["response"]) > 20:
-                        final_agent_response = result_data["response"]
-                        break
-                    # Check for URL in docker run result
-                    if result_data.get("url"):
-                        final_agent_response = f"**Deployment Complete!**\n\n- **URL**: {result_data['url']}\n- **Container**: {result_data.get('container_name', 'N/A')}\n- **Port**: {result_data.get('port', 'N/A')}"
-                        break
-
-            if final_agent_response:
-                response = final_agent_response
-            elif successful == total and total > 0:
-                response = f"Successfully completed all {total} steps"
-            elif successful > 0:
-                response = f"Completed {successful}/{total} steps"
-            else:
-                response = "Failed to complete steps"
-
-            exec_ctx.emit("execution_completed", {
-                "successful_steps": successful,
-                "total_steps": total,
-                "final_response": response[:200] if response else None,
-            })
-
-            clear_current_context()
-            return {
-                "success": True,
-                "type": "result",
-                "response": response,
-                "results": results,
-                "session_id": session_id,
-                "workflow_events": exec_ctx.workflow_events,
-                "llm_calls": exec_ctx.llm_calls,
-            }
+            response = _build_final_response(result.get("results", []))
+            return await self._complete_session(session_id, exec_ctx, response)
 
         except CancelledException:
-            logger.info("step_approval_resume_cancelled", session_id=session_id)
-            clear_current_context()
             return {
                 "success": False,
-                "error": "Execution was cancelled by user",
+                "error": "Execution was cancelled",
                 "cancelled": True,
                 "session_id": session_id,
-                "workflow_events": exec_ctx.workflow_events,
-                "llm_calls": exec_ctx.llm_calls,
             }
         except Exception as e:
-            logger.error("step_approval_resume_error", error=str(e), exc_info=True)
+            logger.error(
+                "resume_from_approval_error",
+                session_id=session_id,
+                approval_id=approval_id,
+                error=str(e),
+                exc_info=True,
+            )
+            return {"success": False, "error": str(e)}
+        finally:
             clear_current_context()
-            return {
-                "success": False,
-                "error": str(e),
-                "session_id": session_id,
-                "workflow_events": exec_ctx.workflow_events,
-                "llm_calls": exec_ctx.llm_calls,
-            }
 
     async def resume_from_question_answer(
         self,
@@ -1756,10 +1125,10 @@ class MainLoop:
         answer: str,
         emit_event: Callable[[dict], None] | None = None,
     ) -> dict[str, Any]:
-        """Resume workflow after user answers a HITL question.
+        """Resume execution after a HITL question is answered.
 
-        This is called when the user answers a question that was asked by an agent.
-        The workflow should continue from where it paused.
+        Reconstructs execution state from DB and continues with
+        the answer available in context.
 
         Args:
             session_id: Session ID
@@ -1768,214 +1137,131 @@ class MainLoop:
             emit_event: Callback for real-time events
 
         Returns:
-            Response dict with results
+            Dict with response/paused state
         """
-        from druppie.db.crud import get_session, get_hitl_question
-
-        # Create execution context for tracking
         exec_ctx = ExecutionContext(
             session_id=session_id,
             emit_event=emit_event,
         )
         set_current_context(exec_ctx)
 
-        # Restore previous workflow_events and llm_calls from session state
-        # This ensures the Debug page shows the full execution history
-        with db_session() as db:
-            session = get_session(db, session_id)
-            if session and session.state:
-                previous_events = session.state.get("workflow_events", [])
-                previous_llm_calls = session.state.get("llm_calls", [])
-                exec_ctx.workflow_events = list(previous_events)
-                exec_ctx.llm_calls = list(previous_llm_calls)
-                logger.info(
-                    "restored_execution_history",
-                    session_id=session_id,
-                    previous_events=len(previous_events),
-                    previous_llm_calls=len(previous_llm_calls),
-                )
-
-        logger.info(
-            "resume_from_question_answer",
-            session_id=session_id,
-            question_id=question_id,
-            answer_preview=answer[:100] if answer else "",
-        )
-
         try:
-            # Get the session and question
             with db_session() as db:
-                session = get_session(db, session_id)
-                question = get_hitl_question(db, question_id)
+                # Mark question as answered
+                answer_hitl_question(db, UUID(question_id), answer)
 
-                if not session:
-                    clear_current_context()
-                    return {
-                        "success": False,
-                        "error": "Session not found",
-                        "session_id": session_id,
-                    }
+                # Get execution state from DB
+                state = get_execution_state(db, UUID(session_id))
 
-                if not question:
-                    clear_current_context()
-                    return {
-                        "success": False,
-                        "error": "Question not found",
-                        "session_id": session_id,
-                    }
+                if state.get("error"):
+                    return {"success": False, "error": state["error"]}
 
-                # Get session state for context
-                session_state = session.state or {}
-                workspace_info = session_state.get("workspace", {})
+                workflow = state["workflow"]
+                workspace = state["workspace"]
 
-                # Update execution context with workspace info
-                exec_ctx.workspace_id = workspace_info.get("workspace_id")
-                exec_ctx.project_id = workspace_info.get("project_id")
-                exec_ctx.workspace_path = workspace_info.get("workspace_path")
-                exec_ctx.branch = workspace_info.get("branch")
+                # Build context with clarifications
+                context = build_context_from_workspace(workspace)
+                context["session_id"] = session_id
 
-            # Emit event that we're resuming
-            exec_ctx.emit("question_answered", {
-                "question_id": question_id,
-                "answer": answer,
-            })
+                # Add all HITL clarifications (including the just-answered one)
+                clarifications = build_clarifications_from_hitl(state["hitl_answers"])
+                # Add the new answer
+                question = get_hitl_question(db, UUID(question_id))
+                if question:
+                    clarifications.append({
+                        "question_id": question_id,
+                        "question": question.question,
+                        "answer": answer,
+                        "agent_id": question.agent_run.agent_id if question.agent_run else None,
+                    })
+                context["clarifications"] = clarifications
 
-            # CRITICAL: Build clarification info
-            clarification_info = {
-                "question_id": question_id,
-                "question": question.question,
-                "answer": answer,
-                "agent_id": question.agent_id,
-            }
+                # Update workspace info in exec_ctx
+                if workspace:
+                    exec_ctx.workspace_id = str(workspace.id)
+                    exec_ctx.project_id = str(workspace.project_id) if workspace.project_id else None
+                    exec_ctx.workspace_path = workspace.local_path
+                    exec_ctx.branch = workspace.branch
 
-            # Check if the question has saved agent_state (for proper resume)
-            # This was saved by execute_plan when the agent paused for HITL
-            saved_agent_state = question.agent_state
+                exec_ctx.emit("question_answered", {
+                    "question_id": question_id,
+                    "answer": answer[:200],
+                })
 
-            if saved_agent_state:
-                # PROPER RESUME: Use saved state to continue from where agent paused
-                logger.info(
-                    "resuming_from_saved_agent_state",
-                    session_id=session_id,
-                    question_id=question_id,
-                    agent_id=question.agent_id,
-                    current_step=saved_agent_state.get("current_step"),
-                )
+                # Update session status
+                update_session(db, UUID(session_id), status="active")
 
-                # Add the new clarification to existing clarifications in saved state
-                existing_clarifications = saved_agent_state.get("hitl_clarifications", [])
-                all_clarifications = existing_clarifications + [clarification_info]
+                if workflow:
+                    # Continue workflow from current step (re-run since agent was paused)
+                    steps = state["steps"]
 
-                # Update the agent_state with the new clarification
-                saved_agent_state["hitl_clarifications"] = all_clarifications
+                    result = await execute_workflow_steps(
+                        db=db,
+                        workflow=workflow,
+                        steps=steps,
+                        context=context,
+                        exec_ctx=exec_ctx,
+                        start_from=workflow.current_step,
+                    )
 
-                # Also update the exec_ctx with clarifications for the agent
-                exec_ctx.hitl_clarifications = all_clarifications
+                    if result.get("paused"):
+                        return {
+                            "success": True,
+                            "type": "interrupt",
+                            "response": result.get("message", "Execution paused"),
+                            "paused": True,
+                            "approval_id": result.get("approval_id"),
+                            "question_id": result.get("question_id"),
+                            "session_id": session_id,
+                            "workflow_events": exec_ctx.workflow_events,
+                        }
 
-                # Save clarifications to session state as well (for persistence)
-                with db_session() as db:
-                    from druppie.db.crud import get_session as db_get_session, save_session_state
-                    session_obj = db_get_session(db, session_id)
-                    if session_obj:
-                        current_state = session_obj.state or {}
-                        current_state["hitl_clarifications"] = all_clarifications
-                        save_session_state(db, session_id, current_state)
+                    if not result.get("success"):
+                        return await self._handle_error(
+                            session_id,
+                            exec_ctx,
+                            result.get("error", "Workflow execution failed"),
+                        )
 
-                # Use resume_from_step_approval to continue from saved state
-                # This will properly resume the agent from where it paused
-                clear_current_context()  # Clear our context, resume will create new one
-                result = await self.resume_from_step_approval(
-                    session_id=session_id,
-                    agent_state=saved_agent_state,
-                    emit_event=emit_event,
-                )
-            else:
-                # FALLBACK: No saved state, restart workflow with clarification
-                # This is the legacy behavior for questions without saved state
-                logger.warning(
-                    "no_saved_agent_state_falling_back_to_restart",
-                    session_id=session_id,
-                    question_id=question_id,
-                )
+                    response = _build_final_response(result.get("results", []))
+                else:
+                    # No workflow - this was a router clarification
+                    # Re-process with the original message + answer
+                    messages = state["messages"]
+                    original_message = next(
+                        (m.content for m in messages if m.role == "user"),
+                        "",
+                    )
 
-                original_message = session_state.get("context", {}).get("message", "")
-                new_message = f"{original_message}\n\nUser clarification: {answer}"
+                    # Restart processing with clarification
+                    return await self.process_message(
+                        message=f"{original_message}\n\nUser clarification: {answer}",
+                        session_id=session_id,
+                        user_id=str(state["session"].user_id) if state["session"].user_id else None,
+                        project_id=str(workspace.project_id) if workspace and workspace.project_id else None,
+                        emit_event=emit_event,
+                    )
 
-                # Collect all clarifications (including this new one)
-                all_clarifications = [clarification_info]
-
-                # Also save to session state as backup
-                with db_session() as db:
-                    from druppie.db.crud import get_session as db_get_session, save_session_state
-                    session_obj = db_get_session(db, session_id)
-                    if session_obj:
-                        current_state = session_obj.state or {}
-                        existing = current_state.get("hitl_clarifications", [])
-                        all_clarifications = existing + [clarification_info]
-                        current_state["hitl_clarifications"] = all_clarifications
-                        save_session_state(db, session_id, current_state)
-
-                logger.info(
-                    "resuming_with_clarification_restart",
-                    session_id=session_id,
-                    original_message=original_message[:50],
-                    clarification=answer[:50],
-                )
-
-                # Process the message again with the clarification
-                result = await self.process_message(
-                    message=new_message,
-                    session_id=session_id,
-                    user_id=session.user_id,
-                    project_id=exec_ctx.project_id,
-                    emit_event=emit_event,
-                    hitl_clarifications=all_clarifications,
-                )
-
-            clear_current_context()
-            return result
+                return await self._complete_session(session_id, exec_ctx, response)
 
         except CancelledException:
-            logger.info("question_resume_cancelled", session_id=session_id)
-            clear_current_context()
             return {
                 "success": False,
-                "error": "Execution was cancelled by user",
+                "error": "Execution was cancelled",
                 "cancelled": True,
                 "session_id": session_id,
-                "workflow_events": exec_ctx.workflow_events,
-                "llm_calls": exec_ctx.llm_calls,
             }
         except Exception as e:
-            logger.error("question_resume_error", error=str(e), exc_info=True)
+            logger.error(
+                "resume_from_question_error",
+                session_id=session_id,
+                question_id=question_id,
+                error=str(e),
+                exc_info=True,
+            )
+            return {"success": False, "error": str(e)}
+        finally:
             clear_current_context()
-            return {
-                "success": False,
-                "error": str(e),
-                "session_id": session_id,
-                "workflow_events": exec_ctx.workflow_events,
-                "llm_calls": exec_ctx.llm_calls,
-            }
-
-    async def _load_messages(self, session_id: str) -> list[dict]:
-        """Load existing messages from session state.
-
-        Args:
-            session_id: Session ID to load messages from
-
-        Returns:
-            List of message dicts or empty list if no session/messages
-        """
-        try:
-            from druppie.db.crud import get_session
-
-            with db_session() as db:
-                session = get_session(db, session_id)
-                if session and session.state:
-                    return session.state.get("messages", [])
-        except Exception as e:
-            logger.warning("load_messages_error", session_id=session_id, error=str(e))
-        return []
 
     async def _initialize_workspace(
         self,
@@ -1985,94 +1271,34 @@ class MainLoop:
         project_name: str | None,
         exec_ctx: ExecutionContext,
     ) -> dict[str, Any]:
-        """Initialize workspace for the session (git-first architecture).
-
-        - If project_id is provided, clones existing repo with feature branch
-        - If project_name is provided, creates new project with repo on main
-        - If neither, creates a project with auto-generated name
-
-        After creating the workspace, registers it with the MCP coding server
-        so that coding tools (read_file, write_file, etc.) can access it.
-
-        Only emits workspace_initializing/workspace_initialized events on first
-        message of a session. Subsequent messages reuse the existing workspace.
-
-        Args:
-            session_id: Session ID
-            user_id: User ID
-            project_id: Optional existing project ID
-            project_name: Optional name for new project
-            exec_ctx: Execution context for events
-
-        Returns:
-            Dict with workspace info (workspace_id, project_id, workspace_path, branch)
-        """
+        """Initialize workspace for the session."""
         try:
             from druppie.core.workspace import get_workspace_service, WORKSPACE_ROOT
-            from druppie.db.crud import get_workspace_by_session
 
-            # Check if workspace already exists for this session (subsequent messages)
             with db_session() as db:
-                existing_workspace = get_workspace_by_session(db, session_id)
-                if existing_workspace:
-                    # Workspace already exists - skip initialization events
-                    logger.info(
-                        "workspace_reusing_existing",
-                        session_id=session_id,
-                        workspace_id=existing_workspace.id,
+                # Check if workspace already exists
+                existing = get_workspace_for_session(db, UUID(session_id))
+                if existing:
+                    exec_ctx.set_workspace(
+                        workspace_id=existing.id,
+                        project_id=existing.project_id,
+                        workspace_path=existing.local_path,
+                        branch=existing.branch,
                     )
-
-                    # Get project name for the existing workspace
-                    from druppie.db.models import Project
-                    existing_project_name = None
-                    if existing_workspace.project_id:
-                        project_record = db.query(Project).filter(
-                            Project.id == existing_workspace.project_id
-                        ).first()
-                        if project_record:
-                            existing_project_name = project_record.name
-
-                    # Update execution context with existing workspace info (silently, no events)
-                    exec_ctx.workspace_id = existing_workspace.id
-                    exec_ctx.project_id = existing_workspace.project_id
-                    exec_ctx.project_name = existing_project_name
-                    exec_ctx.workspace_path = existing_workspace.local_path
-                    exec_ctx.branch = existing_workspace.branch
-
-                    # Re-register with MCP (in case server restarted)
-                    mcp_workspace_path = existing_workspace.local_path.replace(
-                        str(WORKSPACE_ROOT), "/workspaces"
-                    )
-                    await self._register_workspace_with_mcp(
-                        workspace_id=existing_workspace.id,
-                        workspace_path=mcp_workspace_path,
-                        project_id=existing_workspace.project_id,
-                        branch=existing_workspace.branch,
-                        user_id=user_id,
-                        session_id=session_id,
-                        exec_ctx=exec_ctx,
-                    )
-
                     return {
-                        "workspace_id": existing_workspace.id,
-                        "project_id": existing_workspace.project_id,
-                        "project_name": existing_project_name,
-                        "workspace_path": existing_workspace.local_path,
-                        "branch": existing_workspace.branch,
-                        "is_new_project": False,
-                        "reused": True,
+                        "workspace_id": str(existing.id),
+                        "project_id": str(existing.project_id) if existing.project_id else None,
+                        "workspace_path": existing.local_path,
+                        "branch": existing.branch,
                     }
 
-            # First message in session - emit initialization events
-            exec_ctx.emit("workspace_initializing", {
-                "project_id": project_id,
-                "project_name": project_name,
-            })
+                # Initialize new workspace
+                exec_ctx.emit("workspace_initializing", {
+                    "project_id": project_id,
+                    "project_name": project_name,
+                })
 
-            with db_session() as db:
                 workspace_service = get_workspace_service(db)
-
-                # Initialize workspace (creates project/repo if needed)
                 workspace = await workspace_service.initialize_workspace(
                     session_id=session_id,
                     project_id=project_id,
@@ -2080,41 +1306,20 @@ class MainLoop:
                     project_name=project_name,
                 )
 
-                # Get the actual project name and repo_url from the database
-                # (may differ from input if sanitized or unique suffix added)
-                from druppie.db.models import Project
-                actual_project_name = None
-                project_repo_url = None
-                if workspace.project_id:
-                    project_record = db.query(Project).filter(
-                        Project.id == workspace.project_id
-                    ).first()
-                    if project_record:
-                        actual_project_name = project_record.name
-                        project_repo_url = project_record.repo_url
-
-                # Update execution context with workspace info
                 exec_ctx.set_workspace(
                     workspace_id=workspace.id,
                     project_id=workspace.project_id,
                     workspace_path=workspace.local_path,
                     branch=workspace.branch,
-                    project_name=actual_project_name,
-                    repo_url=project_repo_url,
                 )
 
                 db.commit()
 
-                # Register workspace with MCP coding server
-                # The MCP server uses a different mount path for the same volume
-                # Backend: /app/workspace -> MCP: /workspaces
-                mcp_workspace_path = workspace.local_path.replace(
-                    str(WORKSPACE_ROOT), "/workspaces"
-                )
-
+                # Register with MCP servers
+                mcp_path = workspace.local_path.replace(str(WORKSPACE_ROOT), "/workspaces")
                 await self._register_workspace_with_mcp(
                     workspace_id=workspace.id,
-                    workspace_path=mcp_workspace_path,
+                    workspace_path=mcp_path,
                     project_id=workspace.project_id,
                     branch=workspace.branch,
                     user_id=user_id,
@@ -2122,38 +1327,24 @@ class MainLoop:
                     exec_ctx=exec_ctx,
                 )
 
-                logger.info(
-                    "workspace_initialized",
-                    workspace_id=workspace.id,
-                    project_id=workspace.project_id,
-                    branch=workspace.branch,
-                    mcp_path=mcp_workspace_path,
-                )
-
                 return {
-                    "workspace_id": workspace.id,
-                    "project_id": workspace.project_id,
-                    "project_name": actual_project_name,
+                    "workspace_id": str(workspace.id),
+                    "project_id": str(workspace.project_id) if workspace.project_id else None,
                     "workspace_path": workspace.local_path,
                     "branch": workspace.branch,
-                    "is_new_project": workspace.is_new_project,
                 }
 
         except Exception as e:
             logger.error(
                 "workspace_initialization_failed",
-                error=str(e),
-                error_type=type(e).__name__,
                 session_id=session_id,
-                project_id=project_id,
+                error=str(e),
                 exc_info=True,
             )
             exec_ctx.emit("workspace_error", {"error": str(e)})
-            # Return empty workspace info - execution can continue without workspace
             return {
                 "workspace_id": None,
                 "project_id": project_id,
-                "project_name": None,
                 "workspace_path": None,
                 "branch": None,
             }
@@ -2162,33 +1353,19 @@ class MainLoop:
         self,
         workspace_id: str,
         workspace_path: str,
-        project_id: str,
+        project_id: str | None,
         branch: str,
         user_id: str | None,
         session_id: str,
         exec_ctx: ExecutionContext,
     ) -> None:
-        """Register workspace with MCP servers (coding and docker).
-
-        The MCP servers maintain in-memory registries of workspaces.
-        This must be called after backend workspace initialization so that
-        tools (read_file, write_file, docker build, etc.) can find the workspace.
-
-        Args:
-            workspace_id: Workspace ID from backend
-            workspace_path: Path to workspace (using MCP server's mount path)
-            project_id: Project ID
-            branch: Current git branch
-            user_id: User ID
-            session_id: Session ID
-            exec_ctx: Execution context for logging
-        """
+        """Register workspace with MCP servers."""
         try:
             with db_session() as db:
                 mcp_client = get_mcp_client(db)
 
                 # Register with coding MCP
-                result = await mcp_client._execute_tool(
+                await mcp_client._execute_tool(
                     server="coding",
                     tool="register_workspace",
                     args={
@@ -2202,21 +1379,8 @@ class MainLoop:
                     context=exec_ctx,
                 )
 
-                if result.get("success"):
-                    logger.info(
-                        "workspace_registered_with_coding_mcp",
-                        workspace_id=workspace_id,
-                        mcp_path=workspace_path,
-                    )
-                else:
-                    logger.warning(
-                        "workspace_coding_mcp_registration_failed",
-                        workspace_id=workspace_id,
-                        error=result.get("error"),
-                    )
-
-                # Also register with Docker MCP for docker:build to find workspace
-                docker_result = await mcp_client._execute_tool(
+                # Register with docker MCP
+                await mcp_client._execute_tool(
                     server="docker",
                     tool="register_workspace",
                     args={
@@ -2228,127 +1392,138 @@ class MainLoop:
                     context=exec_ctx,
                 )
 
-                if docker_result.get("success"):
-                    logger.info(
-                        "workspace_registered_with_docker_mcp",
-                        workspace_id=workspace_id,
-                        mcp_path=workspace_path,
-                    )
-                else:
-                    logger.warning(
-                        "workspace_docker_mcp_registration_failed",
-                        workspace_id=workspace_id,
-                        error=docker_result.get("error"),
-                    )
-
         except Exception as e:
-            # Log but don't fail - workspace still exists, just MCP might not find it
             logger.warning(
                 "workspace_mcp_registration_error",
                 workspace_id=workspace_id,
                 error=str(e),
             )
 
-    async def _save_session(
+    async def _handle_error(
         self,
         session_id: str,
-        user_id: str | None,
-        status: str,
-        message: str,
         exec_ctx: ExecutionContext,
-        final_state: dict = None,
-        error: str = None,
-    ) -> None:
-        """Save session to database.
+        error: str,
+    ) -> dict[str, Any]:
+        """Handle an error - update session and return error response."""
+        with db_session() as db:
+            update_session(db, UUID(session_id), status="failed")
 
-        Args:
-            session_id: Session ID
-            user_id: User ID
-            status: Session status (active, paused, completed, failed)
-            message: Original user message
-            exec_ctx: Execution context with events and calls
-            final_state: Final graph state
-            error: Error message if any
-        """
-        try:
-            from druppie.db.crud import upsert_session, get_session
+        exec_ctx.emit("execution_error", {"error": error})
 
-            # Build state to store
-            state = {
-                "context": {
-                    "message": message,
-                    "name": f"Chat: {message[:30]}...",
-                    "response": final_state.get("response") if final_state else None,
-                },
-                "workspace": {
-                    "workspace_id": exec_ctx.workspace_id,
-                    "project_id": exec_ctx.project_id,
-                    "workspace_path": exec_ctx.workspace_path,
-                    "branch": exec_ctx.branch,
-                },
-                "messages": exec_ctx.messages,  # Store full conversation history
-                "workflow_events": exec_ctx.workflow_events,
-                "llm_calls": exec_ctx.llm_calls,
-                "intent": final_state.get("intent") if final_state else None,
-                "plan": final_state.get("plan") if final_state else None,
-                "results": final_state.get("results") if final_state else None,
-                "error": error,
-            }
+        return {
+            "success": False,
+            "error": error,
+            "session_id": session_id,
+            "workflow_events": exec_ctx.workflow_events,
+        }
 
-            # CRITICAL: Preserve hitl_clarifications from existing state
-            # These are saved by resume_from_question_answer and must not be lost
-            with db_session() as db:
-                existing_session = get_session(db, session_id)
-                logger.info(
-                    "checking_existing_session_for_clarifications",
-                    session_id=session_id,
-                    has_session=existing_session is not None,
-                    has_state=existing_session.state is not None if existing_session else False,
-                )
-                if existing_session and existing_session.state:
-                    existing_clarifications = existing_session.state.get("hitl_clarifications")
-                    logger.info(
-                        "existing_session_state",
-                        session_id=session_id,
-                        has_clarifications=existing_clarifications is not None,
-                        clarifications_count=len(existing_clarifications) if existing_clarifications else 0,
-                        state_keys=list(existing_session.state.keys()) if existing_session.state else [],
-                    )
-                    if existing_clarifications:
-                        state["hitl_clarifications"] = existing_clarifications
-                        logger.info(
-                            "preserving_hitl_clarifications",
-                            session_id=session_id,
-                            count=len(existing_clarifications),
-                        )
+    async def _complete_session(
+        self,
+        session_id: str,
+        exec_ctx: ExecutionContext,
+        response: str,
+    ) -> dict[str, Any]:
+        """Complete the session successfully."""
+        with db_session() as db:
+            update_session(db, UUID(session_id), status="completed")
 
-            with db_session() as db:
-                upsert_session(
-                    db,
-                    session_id,
-                    user_id,
-                    status,
-                    state,
-                    project_id=exec_ctx.project_id,
-                    workspace_id=exec_ctx.workspace_id,
-                    # Token usage tracking (transparency)
-                    prompt_tokens=exec_ctx.prompt_tokens,
-                    completion_tokens=exec_ctx.completion_tokens,
-                    total_tokens=exec_ctx.total_tokens,
-                )
-                db.commit()
-
-            logger.debug("session_saved", session_id=session_id, status=status)
-
-        except Exception as e:
-            logger.error(
-                "session_save_error",
-                session_id=session_id,
-                status=status,
-                error=str(e),
-                error_type=type(e).__name__,
-                exc_info=True,
+            # Save assistant response
+            create_message(
+                db,
+                session_id=UUID(session_id),
+                role="assistant",
+                content=response,
             )
+
+            # Update token usage
+            update_session_tokens(
+                db,
+                UUID(session_id),
+                exec_ctx.prompt_tokens,
+                exec_ctx.completion_tokens,
+            )
+
+        exec_ctx.emit("execution_completed", {
+            "response_preview": response[:200] if response else None,
+        })
+
+        return {
+            "success": True,
+            "type": "result",
+            "response": response,
+            "session_id": session_id,
+            "workflow_events": exec_ctx.workflow_events,
+        }
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+
+def _extract_intent(result: Any) -> str:
+    """Extract intent from router result."""
+    if isinstance(result, dict):
+        return result.get("intent", result.get("classification", "execute_plan"))
+    if isinstance(result, str):
+        # Try to parse intent from text
+        result_lower = result.lower()
+        if "clarification" in result_lower or "question" in result_lower:
+            return "needs_clarification"
+        if "simple" in result_lower or "direct" in result_lower:
+            return "simple_response"
+    return "execute_plan"
+
+
+def _extract_response(result: Any) -> str:
+    """Extract response text from agent result."""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        return result.get("content", result.get("response", str(result)))
+    return str(result)
+
+
+def _extract_plan(result: Any) -> dict:
+    """Extract plan from planner result."""
+    if isinstance(result, dict):
+        if "plan" in result:
+            return result["plan"]
+        if "steps" in result:
+            return result
+        return {
+            "name": result.get("name", "Execution Plan"),
+            "steps": result.get("steps", []),
+        }
+    return {"name": "Execution Plan", "steps": []}
+
+
+def _build_final_response(results: list[dict]) -> str:
+    """Build a final response from step results."""
+    if not results:
+        return "Task completed."
+
+    # Try to find a meaningful response from results
+    for result in reversed(results):
+        step_result = result.get("result")
+        if isinstance(step_result, dict):
+            if step_result.get("url"):
+                return (
+                    f"**Deployment Complete!**\n\n"
+                    f"- **URL**: {step_result['url']}\n"
+                    f"- **Container**: {step_result.get('container_name', 'N/A')}"
+                )
+            if step_result.get("content"):
+                return step_result["content"]
+            if step_result.get("response"):
+                return step_result["response"]
+        elif isinstance(step_result, str) and len(step_result) > 20:
+            return step_result
+
+    # Default response
+    successful = sum(1 for r in results if r.get("success"))
+    return f"Completed {successful}/{len(results)} steps successfully."
 
 
 # =============================================================================

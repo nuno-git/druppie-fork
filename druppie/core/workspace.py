@@ -118,7 +118,6 @@ class WorkspaceService:
                 project_id=project_id,
                 branch=branch_name,
                 local_path=str(local_path),
-                is_new_project=False,
             )
         else:
             # Creating new project
@@ -139,7 +138,6 @@ class WorkspaceService:
                 project_id=project.id,
                 branch="main",
                 local_path=str(local_path),
-                is_new_project=True,
             )
 
         self.db.add(workspace)

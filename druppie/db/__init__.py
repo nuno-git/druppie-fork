@@ -1,111 +1,210 @@
-"""Database module for Druppie platform."""
+"""Database module for Druppie platform.
 
-from .models import Base, Session, Approval, Project, Build, Workspace, HitlQuestion
-from .migrations import run_migrations
+NO JSON columns - everything is properly normalized.
+Single source of truth: druppie/db/schema.sql
+"""
+
+from .database import get_db, init_db, SessionLocal, engine
+
+from .models import (
+    # Base
+    Base,
+    # Users
+    User,
+    UserRole,
+    UserToken,
+    # Projects
+    Project,
+    # Sessions
+    Session,
+    # Workflows
+    Workflow,
+    WorkflowStep,
+    # Agent Runs
+    AgentRun,
+    # Messages
+    Message,
+    # Tool Calls
+    ToolCall,
+    ToolCallArgument,
+    # Approvals
+    Approval,
+    # HITL
+    HitlQuestion,
+    HitlQuestionChoice,
+    # Workspaces
+    Workspace,
+    # Builds & Deployments
+    Build,
+    Deployment,
+    # LLM Tracking
+    LlmCall,
+)
+
 from .crud import (
+    # User CRUD
+    get_or_create_user,
+    get_user,
+    get_user_roles,
     # Session CRUD
     create_session,
     get_session,
     update_session,
-    delete_session,
-    get_session_state,
-    save_session_state,
-    delete_session_state,
+    update_session_tokens,
     list_sessions,
-    upsert_session,
+    count_sessions,
+    # Workflow CRUD
+    create_workflow,
+    get_workflow,
+    get_workflow_for_session,
+    update_workflow,
+    update_workflow_step,
+    # Agent Run CRUD
+    create_agent_run,
+    get_agent_run,
+    get_active_agent_run,
+    update_agent_run,
+    update_agent_run_tokens,
+    # Message CRUD
+    create_message,
+    get_messages_for_session,
+    get_messages_for_agent_run,
+    # Tool Call CRUD
+    create_tool_call,
+    get_tool_call,
+    update_tool_call,
     # Approval CRUD
     create_approval,
     get_approval,
-    update_approval,
+    get_pending_approval_for_tool_call,
+    resolve_approval,
     list_pending_approvals,
-    list_approvals_for_session,
     list_approvals,
-    list_approvals_for_roles,
+    # HITL Question CRUD
+    create_hitl_question,
+    get_hitl_question,
+    get_pending_hitl_question,
+    answer_hitl_question,
+    list_pending_hitl_questions,
+    get_hitl_questions_for_session,
     # Project CRUD
     create_project,
     get_project,
     get_project_by_repo,
     list_projects,
     update_project,
-    delete_project,
-    # Build CRUD
-    create_build,
-    get_build,
-    list_builds,
-    update_build,
-    get_running_build,
     # Workspace CRUD
     create_workspace,
     get_workspace,
-    get_workspace_by_session,
-    list_workspaces,
-    update_workspace,
-    delete_workspace,
-    # HITL Question CRUD
-    create_hitl_question,
-    get_hitl_question,
-    get_hitl_questions_for_session,
-    list_pending_hitl_questions,
-    answer_hitl_question,
-    expire_hitl_question,
-    list_hitl_questions,
+    get_workspace_for_session,
+    # Build CRUD
+    create_build,
+    get_build,
+    update_build,
+    list_builds,
+    # Deployment CRUD
+    create_deployment,
+    get_deployment,
+    update_deployment,
+    get_running_deployments,
+    # LLM Call CRUD
+    create_llm_call,
+    get_llm_calls_for_session,
 )
 
 __all__ = [
-    # Models
+    # Database
+    "get_db",
+    "init_db",
+    "SessionLocal",
+    "engine",
+    # Base
     "Base",
-    "Session",
-    "Approval",
+    # Models
+    "User",
+    "UserRole",
+    "UserToken",
     "Project",
-    "Build",
-    "Workspace",
+    "Session",
+    "Workflow",
+    "WorkflowStep",
+    "AgentRun",
+    "Message",
+    "ToolCall",
+    "ToolCallArgument",
+    "Approval",
     "HitlQuestion",
-    # Migrations
-    "run_migrations",
+    "HitlQuestionChoice",
+    "Workspace",
+    "Build",
+    "Deployment",
+    "LlmCall",
+    # User CRUD
+    "get_or_create_user",
+    "get_user",
+    "get_user_roles",
     # Session CRUD
     "create_session",
     "get_session",
     "update_session",
-    "delete_session",
-    "get_session_state",
-    "save_session_state",
-    "delete_session_state",
+    "update_session_tokens",
     "list_sessions",
-    "upsert_session",
+    "count_sessions",
+    # Workflow CRUD
+    "create_workflow",
+    "get_workflow",
+    "get_workflow_for_session",
+    "update_workflow",
+    "update_workflow_step",
+    # Agent Run CRUD
+    "create_agent_run",
+    "get_agent_run",
+    "get_active_agent_run",
+    "update_agent_run",
+    "update_agent_run_tokens",
+    # Message CRUD
+    "create_message",
+    "get_messages_for_session",
+    "get_messages_for_agent_run",
+    # Tool Call CRUD
+    "create_tool_call",
+    "get_tool_call",
+    "update_tool_call",
     # Approval CRUD
     "create_approval",
     "get_approval",
-    "update_approval",
+    "get_pending_approval_for_tool_call",
+    "resolve_approval",
     "list_pending_approvals",
-    "list_approvals_for_session",
     "list_approvals",
-    "list_approvals_for_roles",
+    # HITL Question CRUD
+    "create_hitl_question",
+    "get_hitl_question",
+    "get_pending_hitl_question",
+    "answer_hitl_question",
+    "list_pending_hitl_questions",
+    "get_hitl_questions_for_session",
     # Project CRUD
     "create_project",
     "get_project",
     "get_project_by_repo",
     "list_projects",
     "update_project",
-    "delete_project",
-    # Build CRUD
-    "create_build",
-    "get_build",
-    "list_builds",
-    "update_build",
-    "get_running_build",
     # Workspace CRUD
     "create_workspace",
     "get_workspace",
-    "get_workspace_by_session",
-    "list_workspaces",
-    "update_workspace",
-    "delete_workspace",
-    # HITL Question CRUD
-    "create_hitl_question",
-    "get_hitl_question",
-    "get_hitl_questions_for_session",
-    "list_pending_hitl_questions",
-    "answer_hitl_question",
-    "expire_hitl_question",
-    "list_hitl_questions",
+    "get_workspace_for_session",
+    # Build CRUD
+    "create_build",
+    "get_build",
+    "update_build",
+    "list_builds",
+    # Deployment CRUD
+    "create_deployment",
+    "get_deployment",
+    "update_deployment",
+    "get_running_deployments",
+    # LLM Call CRUD
+    "create_llm_call",
+    "get_llm_calls_for_session",
 ]

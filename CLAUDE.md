@@ -4,6 +4,20 @@
 
 Druppie is a governance platform for AI agents with MCP (Model Context Protocol) tool permissions, approval workflows, and project management integrated with Gitea.
 workflow: always push and commit changes to git!
+
+## Design Principles
+
+### Database Rules
+1. **NO JSON/JSONB columns** - Everything must be normalized into proper relational tables
+2. **Config stays in files** - Agent definitions (`agents/*.yaml`), MCP configs (`mcp_config.yaml`), workflows stay in YAML files, not database
+3. **Single source of truth** - Database schema is defined in `druppie/db/schema.sql`
+4. **Agent isolation** - Messages are linked to `agent_run_id` so agents don't share history by default
+
+### Code Quality Rules
+1. **NO legacy/fallback code** - We are refactoring to a new normalized database architecture. Do not add backwards compatibility, fallback logic, or "legacy" code paths. Keep the code clean and focused on the new architecture only.
+2. **NO mock LLM in production paths** - Always use real LLM providers (zai, deepinfra). Mock is only for tests.
+3. **Error on missing config** - If required configuration (API keys, etc.) is missing, throw an error immediately. Do not silently fall back to defaults.
+
 ## Repository Structure
 
 ```
