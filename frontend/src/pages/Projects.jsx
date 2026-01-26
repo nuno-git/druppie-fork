@@ -179,6 +179,7 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
   const hasRepo = !!repoUrl
   const isRunning = plan.is_running || projectStatus?.status === 'running'
   const ownerId = plan.owner_id
+  const ownerUsername = plan.owner_username
   const tokenUsage = plan.token_usage
   const totalTokens = tokenUsage?.total_tokens || 0
 
@@ -300,10 +301,10 @@ const ProjectCard = ({ plan, isSelected, onSelect, projectStatus, onDelete, isDe
       <div className="flex items-center justify-between text-xs text-gray-500">
         <div className="flex items-center space-x-2">
           <span>{new Date(plan.created_at).toLocaleDateString()}</span>
-          {ownerId && (
-            <span className="flex items-center text-gray-400" title={`Created by: ${ownerId}`}>
+          {(ownerUsername || ownerId) && (
+            <span className="flex items-center text-gray-400" title={`Created by: ${ownerUsername || ownerId}`}>
               <User className="w-3 h-3 mr-0.5" />
-              <span className="truncate max-w-[80px]">{ownerId.split('-')[0]}</span>
+              <span className="truncate max-w-[80px]">{ownerUsername || ownerId.split('-')[0]}</span>
             </span>
           )}
           {formatTokens(totalTokens) && (

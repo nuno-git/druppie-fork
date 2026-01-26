@@ -51,6 +51,7 @@ class ProjectResponse(BaseModel):
     updated_at: str | None = None
     # Owner info
     owner_id: str | None = None
+    owner_username: str | None = None  # Human-readable username for display
     # Build info
     main_build: dict | None = None
     preview_builds: list[dict] = []
@@ -116,6 +117,7 @@ def project_to_response(
     main_build: Build | None = None,
     preview_builds: list[Build] | None = None,
     token_usage: TokenUsageSummary | None = None,
+    owner_username: str | None = None,
 ) -> ProjectResponse:
     """Convert Project model to response."""
     # Check if main build is running and get app URL
@@ -132,6 +134,7 @@ def project_to_response(
         created_at=project.created_at.isoformat() if project.created_at else None,
         updated_at=project.updated_at.isoformat() if project.updated_at else None,
         owner_id=str(project.owner_id) if project.owner_id else None,
+        owner_username=owner_username,
         main_build=main_build.to_dict() if main_build else None,
         preview_builds=[b.to_dict() for b in (preview_builds or [])],
         is_running=is_running,
@@ -186,7 +189,7 @@ async def list_projects(
     db: DBSession = Depends(get_db),
 ) -> list[ProjectResponse]:
     """List all projects for the current user."""
-    from druppie.db.models import Session
+    from druppie.db.models import Session, User
     from sqlalchemy import func
 
     user_id = user.get("sub")
@@ -225,16 +228,25 @@ async def list_projects(
         for r in token_results
     }
 
-    # Build response using pre-loaded builds and token usage
+    # Batch load usernames for all project owners (avoids N+1)
+    owner_ids = list(set(str(p.owner_id) for p in projects if p.owner_id))
+    usernames_by_id = {}
+    if owner_ids:
+        users = db.query(User).filter(User.id.in_(owner_ids)).all()
+        usernames_by_id = {str(u.id): u.username for u in users}
+
+    # Build response using pre-loaded builds, token usage, and usernames
     result = []
     for project in projects:
         build_info = builds_by_project.get(project.id, {"main": None, "previews": []})
         token_usage = tokens_by_project.get(project.id, TokenUsageSummary())
+        owner_username = usernames_by_id.get(str(project.owner_id)) if project.owner_id else None
         result.append(project_to_response(
             project,
             build_info["main"],
             build_info["previews"],
             token_usage,
+            owner_username,
         ))
 
     return result
@@ -247,6 +259,8 @@ async def get_project(
     db: DBSession = Depends(get_db),
 ) -> ProjectResponse:
     """Get a specific project."""
+    from druppie.db.models import User
+
     project = db.query(Project).filter(Project.id == project_id).first()
 
     if not project:
@@ -262,7 +276,14 @@ async def get_project(
     # Get token usage for transparency
     token_usage = get_project_token_usage(db, project_id)
 
-    return project_to_response(project, main_build, preview_builds, token_usage)
+    # Get owner username for display
+    owner_username = None
+    if project.owner_id:
+        owner = db.query(User).filter(User.id == project.owner_id).first()
+        if owner:
+            owner_username = owner.username
+
+    return project_to_response(project, main_build, preview_builds, token_usage, owner_username)
 
 
 @router.delete("/projects/{project_id}")
