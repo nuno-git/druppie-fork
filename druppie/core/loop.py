@@ -1761,6 +1761,10 @@ class MainLoop:
                     branch=workspace.branch,
                 )
 
+                # Link project to session so it appears in chat UI
+                if workspace.project_id:
+                    update_session(db, UUID(session_id), project_id=workspace.project_id)
+
                 db.commit()
 
                 # Register with MCP servers
