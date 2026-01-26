@@ -765,6 +765,20 @@ result = db.query(
 ).filter(Session.project_id == project_id).first()
 ```
 
+### Project Name Auto-Extraction
+When users start a new chat, the system automatically extracts a meaningful project name from their message instead of using "new-project":
+
+- "Build a notes app with markdown support" → `notes-app`
+- "Create a todo app with Flask" → `todo-app`
+- "Make a simple calculator" → `simple-calculator`
+
+The extraction logic (`_extract_project_name()` in `druppie/api/routes/chat.py`):
+1. Matches patterns like "build/create/make a X app"
+2. Slugifies the result (lowercase, hyphens instead of spaces)
+3. Falls back to meaningful words from the message if no pattern matches
+
+**Key fix**: The frontend generates session UUIDs before sending the first message, so we check if the session exists in the database (not just if session_id was provided) to determine if this is a new session.
+
 ### Agent Transparency API (`/api/agents`)
 Lists all configured agents with their LLM settings:
 - Model name (e.g., "glm-4.7", "claude-3-opus")
