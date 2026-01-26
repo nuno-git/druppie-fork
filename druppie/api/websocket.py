@@ -300,6 +300,16 @@ async def handle_websocket(websocket: WebSocket, session_id: str | None = None):
                         websocket,
                         {"type": "joined_session", "session_id": new_session_id},
                     )
+                    # Send any missed events that occurred before the client joined
+                    missed_events = manager.get_missed_events(new_session_id, clear=True)
+                    for event in missed_events:
+                        await manager.send_personal(websocket, event)
+                    if missed_events:
+                        logger.info(
+                            "sent_missed_events",
+                            session_id=new_session_id,
+                            count=len(missed_events),
+                        )
 
             elif msg_type == "join_approvals":
                 roles = data.get("roles", [])
@@ -355,14 +365,19 @@ async def emit_approval_request(
     tool_name: str,
     required_roles: list[str],
     details: dict,
+    agent_id: str | None = None,
 ):
     """Emit an approval request to relevant role subscribers."""
     message = {
-        "type": EventType.APPROVAL_REQUESTED,
+        "type": "approval_required",  # Use approval_required for frontend compatibility
         "approval_id": approval_id,
         "session_id": session_id,
-        "tool_name": tool_name,
+        "tool": tool_name,  # Use 'tool' for frontend compatibility
+        "tool_name": tool_name,  # Keep for backwards compat
         "required_roles": required_roles,
+        "agent_id": agent_id,
+        "args": details.get("args"),
+        "context": details.get("args"),  # Alias for frontend
         "details": details,
     }
     # Broadcast to session
@@ -379,6 +394,7 @@ async def emit_approval_decision(
     approver_role: str,
     approver_username: str | None = None,
     tool_name: str | None = None,
+    agent_id: str | None = None,
 ):
     """Emit an approval decision with full approver info."""
     event_type = EventType.APPROVAL_APPROVED if approved else EventType.APPROVAL_REJECTED
@@ -394,6 +410,7 @@ async def emit_approval_decision(
         "approver_role": approver_role,
         "approver_username": approver_username,
         "tool_name": tool_name,
+        "agent_id": agent_id,
     }
 
     await manager.broadcast_to_session(session_id, message)
@@ -409,6 +426,7 @@ async def emit_approval_decision(
             "approver_role": approver_role,
             "approver_username": approver_username,
             "tool_name": tool_name,
+            "agent_id": agent_id,
         },
     )
 

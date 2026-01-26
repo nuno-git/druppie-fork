@@ -120,10 +120,19 @@ def create_session(
     user_id: UUID | None = None,
     project_id: UUID | None = None,
     title: str | None = None,
+    session_id: UUID | None = None,
 ) -> Session:
-    """Create a new session."""
+    """Create a new session.
+
+    Args:
+        db: Database session
+        user_id: Owner user ID
+        project_id: Associated project ID
+        title: Session title
+        session_id: Optional specific session ID (otherwise auto-generated)
+    """
     session = Session(
-        id=uuid4(),
+        id=session_id or uuid4(),
         user_id=user_id,
         project_id=project_id,
         title=title,

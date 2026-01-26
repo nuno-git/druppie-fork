@@ -812,11 +812,13 @@ class MainLoop:
             if session_id:
                 session = get_session(db, UUID(session_id))
                 if not session:
+                    # Create session with the provided session_id so frontend can track it
                     session = create_session(
                         db,
                         user_id=UUID(user_id) if user_id else None,
                         project_id=UUID(project_id) if project_id else None,
                         title=message[:100],
+                        session_id=UUID(session_id),
                     )
             else:
                 session = create_session(
