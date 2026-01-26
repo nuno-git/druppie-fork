@@ -1,7 +1,7 @@
 """SQLAlchemy database models for Druppie platform.
 
-Models match druppie/db/schema.sql exactly.
-NO JSON/JSONB columns - everything is normalized into proper tables.
+Models match druppie/db/schema.sql with normalized tables.
+LLM calls include JSON columns for full request/response debugging.
 """
 
 from datetime import datetime, timezone
@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
 )
@@ -584,7 +585,7 @@ class Deployment(Base):
 
 
 class LlmCall(Base):
-    """Tracks LLM API calls for cost transparency."""
+    """Tracks LLM API calls for cost transparency and debugging."""
 
     __tablename__ = "llm_calls"
 
@@ -597,6 +598,11 @@ class LlmCall(Base):
     completion_tokens = Column(Integer, nullable=False)
     total_tokens = Column(Integer, nullable=False)
     duration_ms = Column(Integer)
+    # Full request/response data for debugging
+    request_messages = Column(JSON)  # Array of messages sent to LLM
+    response_content = Column(Text)  # LLM response text
+    response_tool_calls = Column(JSON)  # Tool calls returned by LLM
+    tools_provided = Column(JSON)  # Tools available to the LLM
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     def to_dict(self) -> dict[str, Any]:
@@ -610,5 +616,9 @@ class LlmCall(Base):
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
             "duration_ms": self.duration_ms,
+            "request_messages": self.request_messages,
+            "response_content": self.response_content,
+            "response_tool_calls": self.response_tool_calls,
+            "tools_provided": self.tools_provided,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

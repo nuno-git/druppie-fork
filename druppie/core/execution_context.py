@@ -41,6 +41,10 @@ class ExecutionContext:
     workspace_path: str | None = None
     branch: str | None = None
 
+    # Current execution tracking (used by loop.py)
+    current_agent_run_id: str | None = None
+    current_workflow_id: str | None = None
+
     # Event collection
     workflow_events: list[dict] = field(default_factory=list)
     llm_calls: list[dict] = field(default_factory=list)

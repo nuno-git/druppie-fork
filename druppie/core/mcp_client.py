@@ -5,6 +5,7 @@ This client:
 2. Checks tool approval requirements before execution
 3. Pauses execution and creates approval records when needed
 4. Executes tools via FastMCP Client to MCP server containers
+5. Records tool calls in the database for debugging/tracing
 """
 
 import asyncio
@@ -15,11 +16,14 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
+from uuid import UUID
 
 import structlog
 import yaml
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+
+from druppie.db.crud import create_tool_call, update_tool_call
 
 
 # =============================================================================
@@ -302,6 +306,22 @@ class MCPClient:
         """
         tool_name = f"{server}:{tool}"
 
+        # Create tool_call record in database for tracing
+        tool_call_record = None
+        try:
+            agent_run_id = UUID(context.current_agent_run_id) if context.current_agent_run_id else None
+            tool_call_record = create_tool_call(
+                self.db,
+                session_id=UUID(context.session_id),
+                agent_run_id=agent_run_id,
+                mcp_server=server,
+                tool_name=tool,
+                arguments=args,
+            )
+        except Exception as e:
+            # Don't fail the tool call if we can't record it
+            logger.warning("tool_call_record_failed", error=str(e), tool=tool_name)
+
         # Use layered approval system: agent overrides > global config
         needs_approval, required_role = self.requires_approval(
             server, tool, agent_definition
@@ -321,17 +341,57 @@ class MCPClient:
                     )
                     # Clear the cached result so it's not reused again
                     del context.completed_tool_results[tool_name]
+                    # Update tool_call record as completed
+                    if tool_call_record:
+                        try:
+                            update_tool_call(
+                                self.db,
+                                tool_call_record.id,
+                                status="completed",
+                                result=json.dumps(cached_result)[:4000] if cached_result else None,
+                            )
+                        except Exception as e:
+                            logger.warning("tool_call_update_failed", error=str(e))
                     return cached_result
 
             # ALWAYS request approval - AI is executing, user must confirm
             # Convert required_role to list for backwards compatibility
             required_roles = [required_role] if required_role else []
+            # Update tool_call record as pending approval
+            if tool_call_record:
+                try:
+                    update_tool_call(self.db, tool_call_record.id, status="pending_approval")
+                except Exception as e:
+                    logger.warning("tool_call_update_failed", error=str(e))
             return await self._request_approval(
                 server, tool, args, required_roles, "low", context, agent_id
             )
 
         # No approval needed for this tool - execute with retry for transient errors
-        return await self._execute_tool_with_retry(server, tool, args, context)
+        # Update tool_call record as executing
+        if tool_call_record:
+            try:
+                update_tool_call(self.db, tool_call_record.id, status="executing")
+            except Exception as e:
+                logger.warning("tool_call_update_failed", error=str(e))
+
+        result = await self._execute_tool_with_retry(server, tool, args, context)
+
+        # Update tool_call record with result
+        if tool_call_record:
+            try:
+                is_success = result.get("success", False)
+                update_tool_call(
+                    self.db,
+                    tool_call_record.id,
+                    status="completed" if is_success else "failed",
+                    result=json.dumps(result)[:4000] if is_success else None,
+                    error_message=result.get("error")[:4000] if result.get("error") else None,
+                )
+            except Exception as e:
+                logger.warning("tool_call_update_failed", error=str(e))
+
+        return result
 
     async def _execute_tool_with_retry(
         self,

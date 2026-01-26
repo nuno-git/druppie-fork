@@ -771,7 +771,7 @@ async def get_session_trace(
     )
 
     raw_llm_calls = []
-    for call in llm_calls:
+    for i, call in enumerate(llm_calls):
         # Get agent_id from agent_run if available
         agent_id = None
         if call.agent_run_id:
@@ -779,16 +779,24 @@ async def get_session_trace(
             if agent_run:
                 agent_id = agent_run.agent_id
 
+        # Build response dict from stored data
+        response = None
+        if call.response_content or call.response_tool_calls:
+            response = {
+                "content": call.response_content,
+                "tool_calls": call.response_tool_calls or [],
+            }
+
         raw_llm_calls.append(RawLLMCall(
             agent_id=agent_id,
-            iteration=None,  # Not stored in normalized schema
+            iteration=i + 1,  # Use 1-based index as iteration
             timestamp=call.created_at.isoformat() if call.created_at else None,
             duration_ms=call.duration_ms,
             model=call.model,
             provider=call.provider,
-            messages=[],  # Full messages not stored in normalized schema
-            tools=None,
-            response=None,
+            messages=call.request_messages or [],  # Full messages from database
+            tools=call.tools_provided,  # Tools from database
+            response=response,  # Response content and tool calls
             usage={
                 "prompt_tokens": call.prompt_tokens,
                 "completion_tokens": call.completion_tokens,

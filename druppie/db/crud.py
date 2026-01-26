@@ -641,7 +641,7 @@ def list_approvals(
 def create_hitl_question(
     db: DBSession,
     session_id: UUID,
-    agent_run_id: UUID,
+    agent_run_id: UUID | None,
     question: str,
     question_type: str = "text",
     choices: list[str] | None = None,
@@ -1025,8 +1025,12 @@ def create_llm_call(
     prompt_tokens: int,
     completion_tokens: int,
     duration_ms: int | None = None,
+    request_messages: list[dict] | None = None,
+    response_content: str | None = None,
+    response_tool_calls: list[dict] | None = None,
+    tools_provided: list[dict] | None = None,
 ) -> LlmCall:
-    """Record an LLM API call."""
+    """Record an LLM API call with full request/response data for debugging."""
     llm_call = LlmCall(
         id=uuid4(),
         session_id=session_id,
@@ -1037,6 +1041,10 @@ def create_llm_call(
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
         duration_ms=duration_ms,
+        request_messages=request_messages,
+        response_content=response_content,
+        response_tool_calls=response_tool_calls,
+        tools_provided=tools_provided,
     )
     db.add(llm_call)
     db.commit()
