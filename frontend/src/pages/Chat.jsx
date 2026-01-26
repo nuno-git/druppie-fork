@@ -58,6 +58,7 @@ const Chat = () => {
   const [currentProject, setCurrentProject] = useState(null)
   const [isStopping, setIsStopping] = useState(false)
   const [sessionPendingApprovals, setSessionPendingApprovals] = useState([]) // Session-level approvals not attached to messages
+  const [isAgentWorking, setIsAgentWorking] = useState(false) // For showing typing indicator after approval
 
   // Fetch session history
   const { data: sessionsData } = useQuery({
@@ -125,6 +126,14 @@ const Chat = () => {
       const stepTitle = event.title || event.data?.description || formatEventTitle(event)
       if (stepTitle) setCurrentStep(stepTitle)
 
+      // Check if workflow is complete or failed - stop the working indicator
+      const eventType = event.type || event.event_type || ''
+      if (eventType.includes('workflow_completed') || eventType.includes('workflow_failed') ||
+          eventType.includes('session_completed') || eventType.includes('session_failed')) {
+        setIsAgentWorking(false)
+        setCurrentStep(null)
+      }
+
       const formattedEvent = {
         ...event,
         event_type: event.type,
@@ -142,52 +151,75 @@ const Chat = () => {
 
   // Approval event listeners
   useEffect(() => {
-    const handleTaskApproved = (task) => {
-      const approvals = task.approvals || []
-      const latestApproval = approvals[approvals.length - 1]
-      const approverId = latestApproval?.approved_by || latestApproval?.approver_id
+    const handleTaskApproved = (data) => {
+      const approverId = data.approver_id
+      const approverUsername = data.approver_username || data.approver_role || 'User'
+      const approverRole = data.approver_role || 'user'
+      const toolName = data.tool_name || data.name || 'action'
+      const approvalId = data.approval_id || data.id
 
+      // Only show notification and add message if it's from another user
       if (approverId && approverId !== user?.id) {
-        if (task.status === 'approved') {
-          toast.success('Task Fully Approved', `"${task.name}" has been approved and will now execute.`)
-        } else {
-          toast.info('New Approval Received', `A ${latestApproval?.approver_role || 'user'} has approved "${task.name}".`)
-        }
+        toast.success('Task Approved', `${approverUsername} (${approverRole}) approved: ${toolName}`)
+
+        // Add approval message to chat immediately (will also be in DB on reload)
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'system',
+            content: `✅ **${approverUsername}** (${approverRole}) approved: \`${toolName}\``,
+            timestamp: new Date().toISOString(),
+          },
+        ])
+
+        // Show typing indicator since agent is now working
+        setCurrentStep('Agent is continuing execution...')
+        setIsAgentWorking(true)
+        setLiveWorkflowEvents([])
       }
 
+      // Remove the pending approval from messages and session-level approvals
       setMessages((prev) => prev.map((msg) => {
         if (!msg.pendingApprovals) return msg
-        const updatedApprovals = msg.pendingApprovals.map((approval) => {
-          if (approval.task_id === task.id) {
-            const approvedApprovals = approvals.filter(a => a.decision === 'approved')
-            return {
-              ...approval,
-              current_approvals: approvedApprovals.length,
-              approved_by_roles: approvedApprovals.map(a => a.approver_role || a.role).filter(Boolean),
-              approved_by_ids: approvedApprovals.map(a => a.approved_by || a.approver_id).filter(Boolean),
-              status: task.status,
-            }
-          }
-          return approval
-        })
-        return { ...msg, pendingApprovals: updatedApprovals.filter(a => a.status !== 'approved' && a.status !== 'rejected') }
+        return { ...msg, pendingApprovals: msg.pendingApprovals.filter(a => (a.task_id || a.id) !== approvalId) }
       }))
+      setSessionPendingApprovals((prev) => prev.filter(a => (a.task_id || a.id) !== approvalId))
+
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
     }
 
-    const handleTaskRejected = (task) => {
-      const rejectionApproval = (task.approvals || []).find(a => a.decision === 'rejected')
-      const rejectorId = rejectionApproval?.approved_by || rejectionApproval?.approver_id
+    const handleTaskRejected = (data) => {
+      const rejectorId = data.approver_id
+      const rejectorUsername = data.approver_username || data.approver_role || 'User'
+      const rejectorRole = data.approver_role || 'user'
+      const toolName = data.tool_name || data.name || 'action'
+      const approvalId = data.approval_id || data.id
 
+      // Only show notification and add message if it's from another user
       if (rejectorId && rejectorId !== user?.id) {
-        toast.warning('Task Rejected', `"${task.name}" has been rejected.`)
+        toast.warning('Task Rejected', `${rejectorUsername} (${rejectorRole}) rejected: ${toolName}`)
+
+        // Add rejection message to chat immediately
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'system',
+            content: `🚫 **${rejectorUsername}** (${rejectorRole}) rejected: \`${toolName}\``,
+            timestamp: new Date().toISOString(),
+          },
+        ])
       }
 
+      // Remove the pending approval from messages
       setMessages((prev) => prev.map((msg) => {
         if (!msg.pendingApprovals) return msg
-        return { ...msg, pendingApprovals: msg.pendingApprovals.filter(a => a.task_id !== task.id) }
+        return { ...msg, pendingApprovals: msg.pendingApprovals.filter(a => (a.task_id || a.id) !== approvalId) }
       }))
+      setSessionPendingApprovals((prev) => prev.filter(a => (a.task_id || a.id) !== approvalId))
+
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
     }
 
     const unsubApproved = onTaskApproved(handleTaskApproved)
@@ -529,6 +561,7 @@ const Chat = () => {
       setMessages((prev) => [...prev, ...newMessages])
       setCurrentPlanId(data.plan_id)
       setCurrentStep(null)
+      setIsAgentWorking(false)
       setDebugWorkflowEvents([...liveWorkflowEvents, ...normalizedEvents])
       setDebugLLMCalls(data.llm_calls || [])
       setLiveWorkflowEvents([])
@@ -565,6 +598,7 @@ const Chat = () => {
     onError: (error) => {
       setMessages((prev) => [...prev, { role: 'assistant', content: `Error: ${error.message}` }])
       setCurrentStep(null)
+      setIsAgentWorking(false)
       setDebugWorkflowEvents([...liveWorkflowEvents])
       setLiveWorkflowEvents([])
     },
@@ -587,6 +621,7 @@ const Chat = () => {
           timestamp: new Date().toISOString(),
         }])
         setCurrentStep(null)
+        setIsAgentWorking(false)
         queryClient.invalidateQueries({ queryKey: ['tasks'] })
         queryClient.invalidateQueries({ queryKey: ['sessions'] })
         return
@@ -624,6 +659,7 @@ const Chat = () => {
 
         // Clear current step indicator since execution is complete
         setCurrentStep(null)
+        setIsAgentWorking(false)
       } else {
         // Fallback to generic message if no resume result
         const isFullyApproved = !data.approvals_required || data.approvals_received >= data.approvals_required
@@ -632,6 +668,7 @@ const Chat = () => {
           content: isFullyApproved ? '✅ Task fully approved! The action will now proceed.' : `✅ Your approval has been recorded (${data.approvals_received}/${data.approvals_required}). Waiting for more approvals.`,
           timestamp: new Date().toISOString(),
         }])
+        setIsAgentWorking(false)
       }
 
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
@@ -741,6 +778,8 @@ const Chat = () => {
     setWorkspaceInfo(null)
     setCurrentProject(null)
     setSessionPendingApprovals([])
+    setCurrentStep(null)
+    setIsAgentWorking(false)
     setSearchParams({})
     setMessages([{ role: 'assistant', content: `Hello ${user?.firstName || user?.username}! I'm Druppie, your AI governance assistant.\n\nI can help you:\n• Create applications (just describe what you want!)\n• Manage code deployments\n• Check compliance and permissions\n\nWhat would you like to build today?` }])
   }
@@ -864,7 +903,7 @@ const Chat = () => {
               />
             )
           ))}
-          {chatMutation.isPending && (
+          {(chatMutation.isPending || isAgentWorking) && (
             <TypingIndicator
               currentStep={currentStep}
               liveEvents={liveWorkflowEvents}
@@ -874,7 +913,7 @@ const Chat = () => {
           )}
 
           {/* Session-level pending approvals - shown when not attached to any message */}
-          {!chatMutation.isPending && sessionPendingApprovals.length > 0 && (
+          {!chatMutation.isPending && !isAgentWorking && sessionPendingApprovals.length > 0 && (
             <div className="space-y-3">
               {sessionPendingApprovals.map((approval, i) => (
                 <ApprovalCard

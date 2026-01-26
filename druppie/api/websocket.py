@@ -377,8 +377,10 @@ async def emit_approval_decision(
     approved: bool,
     approver_id: str,
     approver_role: str,
+    approver_username: str | None = None,
+    tool_name: str | None = None,
 ):
-    """Emit an approval decision."""
+    """Emit an approval decision with full approver info."""
     event_type = EventType.APPROVAL_APPROVED if approved else EventType.APPROVAL_REJECTED
     # Also emit legacy event type for backwards compatibility
     legacy_type = EventType.TASK_APPROVED if approved else EventType.TASK_REJECTED
@@ -390,6 +392,8 @@ async def emit_approval_decision(
         "approved": approved,
         "approver_id": approver_id,
         "approver_role": approver_role,
+        "approver_username": approver_username,
+        "tool_name": tool_name,
     }
 
     await manager.broadcast_to_session(session_id, message)
@@ -403,6 +407,8 @@ async def emit_approval_decision(
             "status": "approved" if approved else "rejected",
             "approver_id": approver_id,
             "approver_role": approver_role,
+            "approver_username": approver_username,
+            "tool_name": tool_name,
         },
     )
 

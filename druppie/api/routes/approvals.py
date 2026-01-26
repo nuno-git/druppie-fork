@@ -22,6 +22,7 @@ from druppie.api.errors import (
     ExternalServiceError,
 )
 from druppie.api.websocket import emit_approval_decision
+from druppie.api.routes.chat import create_emit_event
 from druppie.core.loop import MainLoop
 from druppie.core.mcp_client import get_mcp_client, MCPErrorType
 from druppie.core.execution_context import ExecutionContext
@@ -312,7 +313,7 @@ class ApprovalResponse(BaseModel):
     arguments: dict | None
     status: str
     required_roles: list[str] | None
-    approvals_received: list[dict] | None
+    approvals_received: list[str] | None  # List of user IDs who approved
     danger_level: str
     description: str | None
     agent_id: str | None
@@ -529,6 +530,8 @@ async def approve_request(
             )
 
     user_id = user.get("sub")
+    username = user.get("preferred_username") or user.get("username") or user.get("name") or "User"
+    approver_role = next(iter(user_roles), "user")
 
     if decision.approved:
         # Update approval status to approved
@@ -547,7 +550,19 @@ async def approve_request(
             "approval_approved",
             approval_id=approval_id,
             user_id=user_id,
+            username=username,
             tool=approval.tool_name,
+        )
+
+        # Save approval message to database for history
+        approval_message = f"✅ **{username}** ({approver_role}) approved: `{approval.tool_name}`"
+        crud.create_message(
+            db=db,
+            session_id=approval.session_id,
+            role="system",
+            content=approval_message,
+            agent_id="system",
+            tool_name=approval.tool_name,
         )
 
         # Broadcast approval decision to WebSocket subscribers
@@ -556,7 +571,9 @@ async def approve_request(
             session_id=str(approval.session_id),  # Convert UUID to string for JSON serialization
             approved=True,
             approver_id=user_id,
-            approver_role=next(iter(user_roles), "user"),
+            approver_role=approver_role,
+            approver_username=username,
+            tool_name=approval.tool_name,
         )
 
         # Check if this is a step approval checkpoint (vs MCP tool approval)
@@ -588,11 +605,14 @@ async def approve_request(
                         "retryable": False,
                     }
 
+                # Create emit callback for WebSocket updates
+                emit_event = create_emit_event(str(approval.session_id))
+
                 # Resume plan execution from the next step
                 resume_result = await loop.resume_from_step_approval(
                     session_id=str(approval.session_id),
                     agent_state=agent_state,
-                    emit_event=None,  # Will emit via WebSocket automatically
+                    emit_event=emit_event,
                 )
 
                 return {
@@ -773,10 +793,13 @@ async def approve_request(
                         agent_id=agent_state.get("agent_id"),
                     )
 
+                    # Create emit callback for WebSocket updates
+                    emit_event = create_emit_event(str(approval.session_id))
+
                     resume_result = await loop.resume_from_step_approval(
                         session_id=str(approval.session_id),
                         agent_state=agent_state_with_result,
-                        emit_event=None,
+                        emit_event=emit_event,
                     )
                 else:
                     # Fallback to old behavior if no agent_state
@@ -785,9 +808,13 @@ async def approve_request(
                         approval_id=approval_id,
                         session_id=approval.session_id,
                     )
+                    # Create emit callback for WebSocket updates
+                    emit_event = create_emit_event(str(approval.session_id))
+
                     resume_result = await loop.resume_session(
                         session_id=str(approval.session_id),
                         response=result,
+                        emit_event=emit_event,
                     )
 
                 return {
@@ -885,7 +912,20 @@ async def approve_request(
             "approval_rejected",
             approval_id=approval_id,
             user_id=user_id,
+            username=username,
             reason=decision.comment,
+        )
+
+        # Save rejection message to database for history
+        reason_text = f": {decision.comment}" if decision.comment else ""
+        rejection_message = f"🚫 **{username}** ({approver_role}) rejected: `{approval.tool_name}`{reason_text}"
+        crud.create_message(
+            db=db,
+            session_id=approval.session_id,
+            role="system",
+            content=rejection_message,
+            agent_id="system",
+            tool_name=approval.tool_name,
         )
 
         # Broadcast rejection decision to WebSocket subscribers
@@ -894,7 +934,9 @@ async def approve_request(
             session_id=str(approval.session_id),  # Convert UUID to string for JSON serialization
             approved=False,
             approver_id=user_id,
-            approver_role=next(iter(user_roles), "user"),
+            approver_role=approver_role,
+            approver_username=username,
+            tool_name=approval.tool_name,
         )
 
         # Update session status

@@ -3,7 +3,7 @@
  */
 
 import React, { useState } from 'react'
-import { Bot, User } from 'lucide-react'
+import { Bot, User, Info, CheckCircle, XCircle } from 'lucide-react'
 import WorkflowTimeline from './WorkflowTimeline'
 import QuestionCard from './QuestionCard'
 import ApprovalCard from './ApprovalCard'
@@ -22,6 +22,7 @@ const Message = ({
   userRoles = [],
 }) => {
   const isUser = message.role === 'user'
+  const isSystem = message.role === 'system'
   const [eventsExpanded, setEventsExpanded] = useState(false) // Start collapsed
 
   // Get agent config for assistant messages with agent_id
@@ -29,6 +30,27 @@ const Message = ({
   const agentConfig = agentId ? getAgentConfig(agentId) : null
   const AgentIcon = agentConfig?.icon || Bot
   const colors = agentConfig ? getAgentMessageColors(agentConfig.color) : null
+
+  // System messages (approval notifications) have a distinct style
+  if (isSystem) {
+    const isApproval = message.content?.includes('✅')
+    const isRejection = message.content?.includes('🚫')
+    const SystemIcon = isApproval ? CheckCircle : isRejection ? XCircle : Info
+    const bgColor = isApproval ? 'bg-green-50 border-green-200' : isRejection ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'
+    const iconColor = isApproval ? 'text-green-600' : isRejection ? 'text-red-600' : 'text-blue-600'
+    const textColor = isApproval ? 'text-green-800' : isRejection ? 'text-red-800' : 'text-blue-800'
+
+    return (
+      <div className="flex justify-center mb-3">
+        <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border ${bgColor}`}>
+          <SystemIcon className={`w-4 h-4 ${iconColor}`} />
+          <span className={`text-sm ${textColor}`}>
+            {message.content?.replace(/[✅🚫]/g, '').replace(/\*\*/g, '').replace(/`/g, '')}
+          </span>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
