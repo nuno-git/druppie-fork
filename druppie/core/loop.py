@@ -314,6 +314,16 @@ def _persist_agent_data(
             completion_tokens=agent_completion_tokens,
         )
 
+        # Also update session tokens incrementally
+        # This ensures tokens are saved even when execution pauses for approval/HITL
+        from uuid import UUID as UUIDType2
+        update_session_tokens(
+            db,
+            UUIDType2(exec_ctx.session_id),
+            agent_prompt_tokens,
+            agent_completion_tokens,
+        )
+
     # Update iteration count via direct update
     agent_run.iteration_count = iteration_count
     db.commit()
@@ -1888,13 +1898,8 @@ class MainLoop:
                 content=response,
             )
 
-            # Update token usage
-            update_session_tokens(
-                db,
-                UUID(session_id),
-                exec_ctx.prompt_tokens,
-                exec_ctx.completion_tokens,
-            )
+            # NOTE: Token usage is now updated incrementally in _persist_agent_data
+            # to ensure tokens are saved even when execution pauses for approval/HITL
 
         exec_ctx.emit("execution_completed", {
             "response_preview": response[:200] if response else None,
