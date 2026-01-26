@@ -476,11 +476,13 @@ const Chat = () => {
 
   // Helper to load session data
   const loadSessionData = async (fullSession, sessionId) => {
+    let projectInfo = null
     if (fullSession.project) {
+      projectInfo = fullSession.project
       setCurrentProject(fullSession.project)
     } else if (fullSession.project_id) {
       try {
-        const projectInfo = await getProject(fullSession.project_id)
+        projectInfo = await getProject(fullSession.project_id)
         setCurrentProject(projectInfo)
       } catch { setCurrentProject(null) }
     } else {
@@ -641,6 +643,22 @@ const Chat = () => {
       const timeB = new Date(b.timestamp || 0).getTime()
       return timeA - timeB
     })
+
+    // If project has a running build with app_url, add deployment message if not already present
+    if (projectInfo?.app_url) {
+      const hasDeploymentMessage = loadedMessages.some(
+        msg => msg.deploymentUrl === projectInfo.app_url
+      )
+      if (!hasDeploymentMessage) {
+        loadedMessages.push({
+          role: 'assistant',
+          content: `🎉 Your application is running!`,
+          deploymentUrl: projectInfo.app_url,
+          containerName: projectInfo.name || 'app',
+          timestamp: new Date().toISOString(),
+        })
+      }
+    }
 
     setMessages(loadedMessages)
 
