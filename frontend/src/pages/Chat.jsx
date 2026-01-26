@@ -31,6 +31,7 @@ import {
   TypingIndicator,
   ConversationSidebar,
   DebugPanel,
+  ApprovalCard,
 } from '../components/chat'
 
 const Chat = () => {
@@ -56,6 +57,7 @@ const Chat = () => {
   const [initialSessionLoaded, setInitialSessionLoaded] = useState(false)
   const [currentProject, setCurrentProject] = useState(null)
   const [isStopping, setIsStopping] = useState(false)
+  const [sessionPendingApprovals, setSessionPendingApprovals] = useState([]) // Session-level approvals not attached to messages
 
   // Fetch session history
   const { data: sessionsData } = useQuery({
@@ -463,6 +465,10 @@ const Chat = () => {
     })
 
     setMessages(loadedMessages)
+
+    // Store session-level pending approvals for display at end of chat
+    // These may not be attached to any message yet
+    setSessionPendingApprovals(pendingApprovals)
   }
 
   // Chat mutation
@@ -568,8 +574,9 @@ const Chat = () => {
   const approveMutation = useMutation({
     mutationFn: (taskId) => approveTask(taskId),
     onSuccess: (data, taskId) => {
-      // Remove the pending approval from messages
+      // Remove the pending approval from messages and session-level approvals
       setMessages((prev) => prev.map(msg => msg.pendingApprovals ? { ...msg, pendingApprovals: msg.pendingApprovals.filter(a => a.task_id !== taskId) } : msg))
+      setSessionPendingApprovals((prev) => prev.filter(a => (a.task_id || a.id) !== taskId))
 
       // Check if the tool execution failed
       if (data.success === false) {
@@ -637,6 +644,7 @@ const Chat = () => {
     mutationFn: ({ taskId, reason }) => rejectTask(taskId, reason),
     onSuccess: (data, { taskId }) => {
       setMessages((prev) => prev.map(msg => msg.pendingApprovals ? { ...msg, pendingApprovals: msg.pendingApprovals.filter(a => a.task_id !== taskId) } : msg))
+      setSessionPendingApprovals((prev) => prev.filter(a => (a.task_id || a.id) !== taskId))
       setMessages((prev) => [...prev, { role: 'assistant', content: '🚫 Task rejected. The action has been cancelled.' }])
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
@@ -732,6 +740,7 @@ const Chat = () => {
     setDebugLLMCalls([])
     setWorkspaceInfo(null)
     setCurrentProject(null)
+    setSessionPendingApprovals([])
     setSearchParams({})
     setMessages([{ role: 'assistant', content: `Hello ${user?.firstName || user?.username}! I'm Druppie, your AI governance assistant.\n\nI can help you:\n• Create applications (just describe what you want!)\n• Manage code deployments\n• Check compliance and permissions\n\nWhat would you like to build today?` }])
   }
@@ -863,6 +872,25 @@ const Chat = () => {
               isStopping={isStopping}
             />
           )}
+
+          {/* Session-level pending approvals - shown when not attached to any message */}
+          {!chatMutation.isPending && sessionPendingApprovals.length > 0 && (
+            <div className="space-y-3">
+              {sessionPendingApprovals.map((approval, i) => (
+                <ApprovalCard
+                  key={approval.task_id || approval.id || i}
+                  approval={approval}
+                  onApprove={handleApproveTask}
+                  onReject={handleRejectTask}
+                  isProcessing={approveMutation.isPending || rejectMutation.isPending}
+                  currentUserId={user?.id}
+                  sessionId={currentPlanId}
+                  userRoles={user?.roles || []}
+                />
+              ))}
+            </div>
+          )}
+
           <div ref={messagesEndRef} />
         </div>
 
