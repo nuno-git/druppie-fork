@@ -589,7 +589,10 @@ class Build(Base):
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"))
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id"))
     branch = Column(String(255), default="main")
-    status = Column(String(20), default="pending")  # pending, building, success, failed
+    status = Column(String(20), default="pending")  # pending, building, built, running, stopped, failed
+    is_preview = Column(Boolean, default=False)  # True for preview builds, False for main
+    port = Column(Integer)  # Host port allocated for this build
+    container_name = Column(String(255))  # Docker container name
     build_logs = Column(Text)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
@@ -600,6 +603,9 @@ class Build(Base):
             "session_id": str(self.session_id) if self.session_id else None,
             "branch": self.branch,
             "status": self.status,
+            "is_preview": self.is_preview,
+            "port": self.port,
+            "container_name": self.container_name,
             "build_logs": self.build_logs,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
