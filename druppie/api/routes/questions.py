@@ -5,6 +5,7 @@ Also includes internal endpoints for MCP servers to create questions.
 """
 
 from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -193,11 +194,11 @@ async def create_question_internal(
 
     question = create_hitl_question(
         db=db,
-        question_id=request.question_id,
-        session_id=request.session_id,
-        agent_id=request.agent_id,
+        session_id=UUID(request.session_id),
+        agent_run_id=None,  # Not available from external API
         question=request.question,
         question_type=request.question_type,
         choices=request.choices,
+        agent_id=request.agent_id,
     )
     return question.to_dict()

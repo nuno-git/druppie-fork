@@ -478,9 +478,9 @@ async def get_session(
     )
 
     def hitl_to_response(q):
-        # Get agent_id from agent_run if available
-        agent_id = None
-        if q.agent_run_id:
+        # Get agent_id - first try direct field, then fall back to agent_run lookup
+        agent_id = q.agent_id
+        if not agent_id and q.agent_run_id:
             agent_run = db.query(AgentRun).filter(AgentRun.id == q.agent_run_id).first()
             if agent_run:
                 agent_id = agent_run.agent_id
