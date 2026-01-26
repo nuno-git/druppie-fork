@@ -245,6 +245,9 @@ services:
       GITEA_INTERNAL_URL: http://gitea:3000
       GITEA_ORG: druppie
       GITEA_TOKEN: ${GITEA_TOKEN:-}
+      # Git push credentials (uses admin user for repo operations)
+      GITEA_USER: gitea_admin
+      GITEA_PASSWORD: GiteaAdmin123
     volumes:
       - druppie_new_workspace:/workspaces
     ports:
