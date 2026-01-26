@@ -560,6 +560,24 @@ with db_session() as db:
 **Fix**: Updated setup.sh to use `$DOCKER_COMPOSE -f "$COMPOSE_FILE" --env-file .env "$@"`
 **Note**: The .env file is at project root, but docker-compose.yml is in `druppie/` subdirectory
 
+### Issue: Token Usage Shows 0 Despite LLM Calls
+**Symptom**: Dashboard and Projects show "Total Tokens: 0" even after sessions complete
+**Cause**: `update_session_tokens()` was only called in `_complete_session()` at the very end of execution. When workflows paused for approval or HITL questions, execution never reached that point, so tokens were lost.
+**Diagnosis**: Query database - `sessions` table shows 0 tokens but `agent_runs` and `llm_calls` tables have token data
+**Fix**: Call `update_session_tokens()` inside `_persist_agent_data()` which runs whenever an agent completes OR pauses:
+```python
+# In _persist_agent_data, after update_agent_run_tokens:
+if agent_prompt_tokens > 0 or agent_completion_tokens > 0:
+    update_session_tokens(
+        db,
+        session_id,
+        agent_prompt_tokens,
+        agent_completion_tokens,
+    )
+```
+**Key Files**: `druppie/core/loop.py` (lines ~308-325)
+**Result**: Tokens are now saved incrementally as each agent runs, ensuring they're never lost even when execution pauses
+
 ### Workflow: Full Architect Flow Testing
 To test the complete architect workflow (including HITL questions and architect approval):
 1. Log in as `normal_user`
