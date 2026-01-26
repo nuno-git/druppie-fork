@@ -501,6 +501,41 @@ async def emit_question_answered(question_id: str, session_id: str, answer: str)
     )
 
 
+async def emit_deployment_complete(
+    session_id: str,
+    url: str,
+    container_name: str | None = None,
+    port: int | None = None,
+    project_id: str | None = None,
+):
+    """Emit a deployment complete event.
+
+    Called when docker:run succeeds to notify the user that their app is running.
+
+    Args:
+        session_id: Session ID for targeted broadcast
+        url: URL where the app is accessible
+        container_name: Name of the running container
+        port: Port the app is running on
+        project_id: Associated project ID
+    """
+    message = {
+        "type": "deployment_complete",
+        "session_id": session_id,
+        "url": url,
+        "container_name": container_name,
+        "port": port,
+        "project_id": project_id,
+    }
+    await manager.broadcast_to_session(session_id, message)
+    logger.info(
+        "deployment_complete_broadcast",
+        session_id=session_id,
+        url=url,
+        container_name=container_name,
+    )
+
+
 # Get the manager for external use
 def get_manager() -> ConnectionManager:
     """Get the connection manager singleton."""

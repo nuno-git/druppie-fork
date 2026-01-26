@@ -552,6 +552,29 @@ class MCPClient:
                         success=True,
                         result_preview=str(result_dict)[:200],
                     )
+
+                    # Emit deployment_complete event when docker:run succeeds
+                    # This notifies the user in real-time about the deployed app URL
+                    if server == "docker" and tool == "run":
+                        app_url = result_dict.get("url") or result_dict.get("app_url")
+                        if app_url:
+                            # Use direct WebSocket broadcast for reliability
+                            # (context.emit_event may not always be configured)
+                            try:
+                                from druppie.api.websocket import emit_deployment_complete
+                                loop = asyncio.get_running_loop()
+                                loop.create_task(emit_deployment_complete(
+                                    session_id=context.session_id,
+                                    url=app_url,
+                                    container_name=result_dict.get("container_name"),
+                                    port=result_dict.get("port"),
+                                    project_id=context.project_id,
+                                ))
+                            except RuntimeError:
+                                # No running event loop - can't broadcast
+                                logger.debug("no_event_loop_for_deployment_broadcast")
+                            except Exception as e:
+                                logger.warning("deployment_complete_broadcast_failed", error=str(e))
                 else:
                     logger.warning(
                         "mcp_tool_returned_error",
