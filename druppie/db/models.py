@@ -593,6 +593,7 @@ class Build(Base):
     is_preview = Column(Boolean, default=False)  # True for preview builds, False for main
     port = Column(Integer)  # Host port allocated for this build
     container_name = Column(String(255))  # Docker container name
+    app_url = Column(String(512))  # URL to access the running app
     build_logs = Column(Text)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
@@ -606,6 +607,7 @@ class Build(Base):
             "is_preview": self.is_preview,
             "port": self.port,
             "container_name": self.container_name,
+            "app_url": self.app_url,
             "build_logs": self.build_logs,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
