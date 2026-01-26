@@ -164,7 +164,7 @@ const OverviewTab = ({ project, projectStatus, onBuild, onRun, onStop, buildPend
             <span className="text-sm text-gray-400">Created By</span>
             <p className="text-gray-300 flex items-center">
               <User className="w-4 h-4 mr-1 text-gray-500" />
-              {project?.owner_id || 'Unknown'}
+              {project?.owner_username || project?.owner_id || 'Unknown'}
             </p>
           </div>
           <div>
