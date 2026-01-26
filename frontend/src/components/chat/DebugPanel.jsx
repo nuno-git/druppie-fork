@@ -43,6 +43,116 @@ const DebugPanel = ({ isOpen, onClose, sessionId, apiCalls, workflowEvents, llmC
     setTimeout(() => setAllCopied(false), 2000)
   }
 
+  // Generate readable text format for copy
+  const generateExecutionText = () => {
+    const lines = []
+    lines.push('='.repeat(60))
+    lines.push('EXECUTION TRACE')
+    lines.push('='.repeat(60))
+    lines.push('')
+
+    // Workspace info
+    if (workspaceInfo) {
+      lines.push('WORKSPACE:')
+      if (workspaceInfo.workspace_id) lines.push(`  Workspace ID: ${workspaceInfo.workspace_id}`)
+      if (workspaceInfo.project_id) lines.push(`  Project ID: ${workspaceInfo.project_id}`)
+      if (workspaceInfo.branch) lines.push(`  Branch: ${workspaceInfo.branch}`)
+      if (workspaceInfo.workspace_path) lines.push(`  Path: ${workspaceInfo.workspace_path}`)
+      lines.push('')
+    }
+
+    // Summary
+    lines.push('SUMMARY:')
+    lines.push(`  Agents: ${agents.length}`)
+    lines.push(`  Tool Calls: ${toolCalls.length}`)
+    lines.push(`  LLM Calls: ${llmCalls.length}`)
+    lines.push(`  Total Events: ${events.length}`)
+    const totalTokens = llmCalls.reduce((acc, c) => acc + (c.usage?.total_tokens || 0), 0)
+    if (totalTokens > 0) lines.push(`  Total Tokens: ${totalTokens}`)
+    lines.push('')
+
+    // Agents
+    if (agents.length > 0) {
+      lines.push('-'.repeat(60))
+      lines.push('AGENTS:')
+      lines.push('-'.repeat(60))
+      agents.forEach((agent, i) => {
+        lines.push(`\n[${i + 1}] Agent: ${agent.id}`)
+        lines.push(`    Status: ${agent.status}`)
+        lines.push(`    LLM Calls: ${agent.llmCalls.length}`)
+        if (agent.error) lines.push(`    Error: ${agent.error}`)
+      })
+      lines.push('')
+    }
+
+    // Tool Calls
+    if (toolCalls.length > 0) {
+      lines.push('-'.repeat(60))
+      lines.push('TOOL CALLS:')
+      lines.push('-'.repeat(60))
+      toolCalls.forEach((tool, i) => {
+        lines.push(`\n[${i + 1}] ${tool.name}`)
+        if (tool.agent) lines.push(`    Agent: ${tool.agent}`)
+        lines.push(`    Status: ${tool.status}`)
+        if (tool.args) {
+          const argsStr = typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args, null, 2)
+          lines.push(`    Args: ${argsStr.substring(0, 500)}${argsStr.length > 500 ? '...' : ''}`)
+        }
+        if (tool.timestamp) lines.push(`    Time: ${new Date(tool.timestamp).toLocaleString()}`)
+      })
+      lines.push('')
+    }
+
+    // LLM Calls
+    if (llmCalls.length > 0) {
+      lines.push('-'.repeat(60))
+      lines.push('LLM CALLS:')
+      lines.push('-'.repeat(60))
+      llmCalls.forEach((call, i) => {
+        lines.push(`\n[${i + 1}] ${call.agent_id || 'LLM'} - Iteration ${call.iteration || i + 1}`)
+        if (call.model) lines.push(`    Model: ${call.model}`)
+        if (call.provider) lines.push(`    Provider: ${call.provider}`)
+        if (call.duration_ms) lines.push(`    Duration: ${call.duration_ms}ms`)
+        if (call.usage?.total_tokens) {
+          lines.push(`    Tokens: ${call.usage.prompt_tokens || 0} prompt + ${call.usage.completion_tokens || 0} completion = ${call.usage.total_tokens}`)
+        }
+        if (call.response?.tool_calls?.length > 0) {
+          const toolNames = call.response.tool_calls.map(tc => tc.name || tc.function?.name || 'tool').join(', ')
+          lines.push(`    Tool Calls: ${toolNames}`)
+        }
+      })
+      lines.push('')
+    }
+
+    // Events Timeline
+    if (events.length > 0) {
+      lines.push('-'.repeat(60))
+      lines.push('EVENTS TIMELINE:')
+      lines.push('-'.repeat(60))
+      events.forEach((event, i) => {
+        const eventType = event.event_type || event.type || 'unknown'
+        const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : ''
+        const agent = event.data?.agent_id || ''
+        lines.push(`[${i + 1}] ${time} ${eventType}${agent ? ` (${agent})` : ''}`)
+        if (event.description) lines.push(`    ${event.description}`)
+      })
+    }
+
+    lines.push('')
+    lines.push('='.repeat(60))
+    lines.push(`Generated: ${new Date().toLocaleString()}`)
+    lines.push('='.repeat(60))
+
+    return lines.join('\n')
+  }
+
+  const copyAsText = () => {
+    const text = generateExecutionText()
+    navigator.clipboard.writeText(text)
+    setAllCopied(true)
+    setTimeout(() => setAllCopied(false), 2000)
+  }
+
   const toggleExpand = (index) => {
     setExpandedItems(prev => ({ ...prev, [index]: !prev[index] }))
   }
@@ -156,10 +266,18 @@ const DebugPanel = ({ isOpen, onClose, sessionId, apiCalls, workflowEvents, llmC
               </Link>
             )}
             <button
+              onClick={copyAsText}
+              className="flex items-center gap-1 px-3 py-1.5 text-xs bg-green-100 text-green-700 hover:bg-green-200 rounded-lg transition-colors"
+              title="Copy execution trace as readable text"
+            >
+              {allCopied ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Copy as Text</>}
+            </button>
+            <button
               onClick={copyAllToClipboard}
               className="flex items-center gap-1 px-3 py-1.5 text-xs bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors"
+              title="Export all data as JSON"
             >
-              {allCopied ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Export All</>}
+              <Copy className="w-3 h-3" /> Export JSON
             </button>
             <button
               onClick={onClose}
@@ -630,45 +748,173 @@ const MessageDebugCard = ({ message, index, isExpanded, onToggle }) => {
   )
 }
 
-const LLMCallCard = ({ call, idx, isExpanded, onToggle }) => (
-  <div className="bg-purple-50 rounded-lg border border-purple-200 overflow-hidden">
-    <div className="flex items-center justify-between p-4 bg-purple-100 cursor-pointer" onClick={onToggle}>
-      <div className="flex items-center gap-3">
-        <Brain className="w-5 h-5 text-purple-600" />
-        <div>
-          <span className="font-medium text-purple-900">{call.agent_id || 'LLM Call'}</span>
-          <span className="text-xs text-purple-600 ml-2">iter {call.iteration || idx + 1}</span>
+const LLMCallCard = ({ call, idx, isExpanded, onToggle }) => {
+  // Extract data - handle both old format (tool_calls at top level) and new format (response.tool_calls)
+  const responseToolCalls = call.response?.tool_calls || call.tool_calls || []
+  const responseContent = call.response?.content || null
+  const messages = call.messages || []
+  const tools = call.tools || []
+
+  return (
+    <div className="bg-purple-50 rounded-lg border border-purple-200 overflow-hidden">
+      <div className="flex items-center justify-between p-4 bg-purple-100 cursor-pointer" onClick={onToggle}>
+        <div className="flex items-center gap-3">
+          <Brain className="w-5 h-5 text-purple-600" />
+          <div>
+            <span className="font-medium text-purple-900">{call.agent_id || 'LLM Call'}</span>
+            <span className="text-xs text-purple-600 ml-2">iter {call.iteration || idx + 1}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Model transparency */}
+          {call.model && (
+            <span className="text-xs bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded font-medium">
+              {call.model}
+            </span>
+          )}
+          {call.provider && (
+            <span className="text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded">
+              {call.provider}
+            </span>
+          )}
+          {messages.length > 0 && (
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+              {messages.length} msgs
+            </span>
+          )}
+          {tools.length > 0 && (
+            <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded">
+              {tools.length} tools
+            </span>
+          )}
+          {call.usage?.total_tokens && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">{call.usage.total_tokens} tokens</span>}
+          {call.duration_ms && <span className="text-xs text-purple-600">{call.duration_ms}ms</span>}
+          {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </div>
       </div>
-      <div className="flex items-center gap-2 flex-wrap">
-        {/* Model transparency */}
-        {call.model && (
-          <span className="text-xs bg-indigo-200 text-indigo-800 px-2 py-0.5 rounded font-medium">
-            {call.model}
-          </span>
-        )}
-        {call.usage?.total_tokens && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{call.usage.total_tokens} tokens</span>}
-        {call.duration_ms && <span className="text-xs text-purple-600">{call.duration_ms}ms</span>}
-        {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-      </div>
+      {isExpanded && (
+        <div className="p-4 space-y-4">
+          {/* Request Messages */}
+          {messages.length > 0 && (
+            <details className="group">
+              <summary className="text-xs font-medium text-blue-600 uppercase cursor-pointer flex items-center gap-2">
+                <ChevronRight className="w-3 h-3 group-open:rotate-90 transition-transform" />
+                Request Messages ({messages.length})
+              </summary>
+              <div className="mt-2 space-y-2 max-h-64 overflow-y-auto">
+                {messages.map((msg, msgIdx) => (
+                  <div key={msgIdx} className={`p-2 rounded border text-xs ${
+                    msg.role === 'system' ? 'bg-gray-100 border-gray-300' :
+                    msg.role === 'user' ? 'bg-blue-50 border-blue-200' :
+                    msg.role === 'assistant' ? 'bg-purple-50 border-purple-200' :
+                    'bg-orange-50 border-orange-200'
+                  }`}>
+                    <div className="font-medium mb-1 capitalize">{msg.role}</div>
+                    <div className="whitespace-pre-wrap font-mono text-gray-700 max-h-32 overflow-y-auto">
+                      {typeof msg.content === 'string'
+                        ? msg.content.substring(0, 1000) + (msg.content.length > 1000 ? '...' : '')
+                        : JSON.stringify(msg.content, null, 2)}
+                    </div>
+                    {msg.tool_calls && msg.tool_calls.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-gray-200">
+                        <div className="text-orange-600 font-medium">Tool Calls:</div>
+                        {msg.tool_calls.map((tc, tcIdx) => (
+                          <div key={tcIdx} className="mt-1 bg-orange-100 p-1 rounded">
+                            <span className="font-mono">{tc.function?.name || tc.name}</span>
+                            {tc.function?.arguments && (
+                              <pre className="text-xs mt-1 overflow-x-auto">{
+                                typeof tc.function.arguments === 'string'
+                                  ? tc.function.arguments.substring(0, 500)
+                                  : JSON.stringify(tc.function.arguments, null, 2).substring(0, 500)
+                              }</pre>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
+          {/* Tools Provided */}
+          {tools.length > 0 && (
+            <details className="group">
+              <summary className="text-xs font-medium text-orange-600 uppercase cursor-pointer flex items-center gap-2">
+                <ChevronRight className="w-3 h-3 group-open:rotate-90 transition-transform" />
+                Tools Provided ({tools.length})
+              </summary>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {tools.map((tool, toolIdx) => (
+                  <div key={toolIdx} className="bg-orange-100 border border-orange-300 rounded p-2 text-xs">
+                    <div className="font-mono font-medium text-orange-800">
+                      {tool.function?.name || tool.name || 'tool'}
+                    </div>
+                    {(tool.function?.description || tool.description) && (
+                      <div className="text-gray-600 mt-1 max-w-xs truncate">
+                        {tool.function?.description || tool.description}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
+          {/* Response Content */}
+          {responseContent && (
+            <details className="group" open>
+              <summary className="text-xs font-medium text-green-600 uppercase cursor-pointer flex items-center gap-2">
+                <ChevronRight className="w-3 h-3 group-open:rotate-90 transition-transform" />
+                Response Content
+              </summary>
+              <div className="mt-2 bg-green-50 border border-green-200 rounded p-3">
+                <pre className="text-xs text-gray-800 whitespace-pre-wrap font-mono max-h-48 overflow-y-auto">
+                  {responseContent}
+                </pre>
+              </div>
+            </details>
+          )}
+
+          {/* Response Tool Calls */}
+          {responseToolCalls.length > 0 && (
+            <details className="group" open>
+              <summary className="text-xs font-medium text-orange-600 uppercase cursor-pointer flex items-center gap-2">
+                <ChevronRight className="w-3 h-3 group-open:rotate-90 transition-transform" />
+                Response Tool Calls ({responseToolCalls.length})
+              </summary>
+              <div className="mt-2 space-y-2">
+                {responseToolCalls.map((tc, tcIdx) => (
+                  <div key={tcIdx} className="bg-orange-50 border border-orange-300 rounded p-2">
+                    <div className="font-mono font-medium text-orange-800 text-sm">
+                      {tc.function?.name || tc.name || 'tool'}
+                    </div>
+                    {(tc.function?.arguments || tc.arguments) && (
+                      <pre className="mt-1 text-xs bg-white p-2 rounded border overflow-x-auto max-h-32">
+                        {typeof (tc.function?.arguments || tc.arguments) === 'string'
+                          ? tc.function?.arguments || tc.arguments
+                          : JSON.stringify(tc.function?.arguments || tc.arguments, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
+          {/* Token usage breakdown */}
+          {call.usage && (
+            <div className="flex items-center gap-4 text-xs text-gray-600 pt-2 border-t">
+              <span>Prompt: {call.usage.prompt_tokens || 0}</span>
+              <span>Completion: {call.usage.completion_tokens || 0}</span>
+              <span className="font-medium">Total: {call.usage.total_tokens || 0}</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
-    {isExpanded && (
-      <div className="p-4 space-y-3">
-        {call.tool_calls?.length > 0 && (
-          <div>
-            <div className="text-xs font-medium text-orange-600 uppercase mb-2">Tool Calls</div>
-            <div className="flex flex-wrap gap-1">{call.tool_calls.map((tc, tcIdx) => <span key={tcIdx} className="bg-orange-200 text-orange-800 px-2 py-1 rounded text-xs font-mono">{tc.name || tc}</span>)}</div>
-          </div>
-        )}
-        {call.response && (
-          <details>
-            <summary className="text-xs font-medium text-green-600 uppercase cursor-pointer">Response</summary>
-            <pre className="mt-2 text-xs bg-gray-900 text-green-400 p-2 rounded overflow-x-auto max-h-48">{typeof call.response === 'string' ? call.response : JSON.stringify(call.response, null, 2)}</pre>
-          </details>
-        )}
-      </div>
-    )}
-  </div>
-)
+  )
+}
 
 export default DebugPanel

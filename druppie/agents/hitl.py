@@ -15,9 +15,9 @@ The workflow is:
 5. User answers via frontend -> API updates question -> workflow resumes
 """
 
-import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 import structlog
 
@@ -106,14 +106,14 @@ async def ask_question(
     from druppie.api.deps import get_db
     from druppie.db.crud import create_hitl_question
 
-    question_id = str(uuid.uuid4())
     session_id = context.session_id
+    agent_run_id = context.current_agent_run_id
 
     logger.info(
         "hitl_ask_question",
-        question_id=question_id,
         session_id=session_id,
         agent_id=agent_id,
+        agent_run_id=agent_run_id,
         question=question[:100] + "..." if len(question) > 100 else question,
     )
 
@@ -122,14 +122,15 @@ async def ask_question(
     try:
         hitl_question = create_hitl_question(
             db=db,
-            question_id=question_id,
-            session_id=session_id,
-            agent_id=agent_id,
+            session_id=UUID(session_id),
+            agent_run_id=UUID(agent_run_id) if agent_run_id else None,
             question=question,
             question_type="text",
             choices=None,
         )
         db.commit()
+
+        question_id = str(hitl_question.id)
 
         logger.info(
             "hitl_question_created",
@@ -202,14 +203,14 @@ async def ask_multiple_choice_question(
     from druppie.api.deps import get_db
     from druppie.db.crud import create_hitl_question
 
-    question_id = str(uuid.uuid4())
     session_id = context.session_id
+    agent_run_id = context.current_agent_run_id
 
     logger.info(
         "hitl_ask_multiple_choice_question",
-        question_id=question_id,
         session_id=session_id,
         agent_id=agent_id,
+        agent_run_id=agent_run_id,
         question=question[:100] + "..." if len(question) > 100 else question,
         choices_count=len(choices),
         allow_other=allow_other,
@@ -226,14 +227,15 @@ async def ask_multiple_choice_question(
     try:
         hitl_question = create_hitl_question(
             db=db,
-            question_id=question_id,
-            session_id=session_id,
-            agent_id=agent_id,
+            session_id=UUID(session_id),
+            agent_run_id=UUID(agent_run_id) if agent_run_id else None,
             question=question,
             question_type="choice",
             choices=choices_data,
         )
         db.commit()
+
+        question_id = str(hitl_question.id)
 
         logger.info(
             "hitl_choice_question_created",

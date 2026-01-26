@@ -10,16 +10,22 @@ This module orchestrates the AI agent workflow:
 NO JSON state storage - everything is in normalized PostgreSQL tables.
 """
 
-import asyncio
 import structlog
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy.orm import Session as DBSession
 
 from druppie.core.config import get_settings
+from druppie.core.execution_context import (
+    ExecutionContext,
+    CancelledException,
+    set_current_context,
+    get_current_context,
+    clear_current_context,
+)
 from druppie.db import (
     # Models
     Session,
@@ -68,126 +74,6 @@ from druppie.db.database import get_db
 
 logger = structlog.get_logger()
 settings = get_settings()
-
-
-# =============================================================================
-# EXECUTION CONTEXT
-# =============================================================================
-
-
-class ExecutionContext:
-    """Context for a single execution flow.
-
-    Tracks workspace info, events, and provides emit callback for real-time updates.
-    """
-
-    def __init__(
-        self,
-        session_id: str | UUID,
-        emit_event: Callable[[dict], None] | None = None,
-    ):
-        self.session_id = str(session_id) if isinstance(session_id, UUID) else session_id
-        self.emit_event = emit_event
-
-        # Workspace info (set during initialization)
-        self.workspace_id: str | None = None
-        self.project_id: str | None = None
-        self.project_name: str | None = None
-        self.workspace_path: str | None = None
-        self.branch: str | None = None
-
-        # Current execution tracking
-        self.current_agent_run_id: str | None = None
-        self.current_workflow_id: str | None = None
-
-        # Token tracking
-        self.prompt_tokens: int = 0
-        self.completion_tokens: int = 0
-        self.total_tokens: int = 0
-
-        # Events for debugging (in-memory, not persisted)
-        self.workflow_events: list[dict] = []
-
-        # Cancellation flag
-        self._cancelled: bool = False
-
-    def emit(self, event_type: str, data: dict | None = None) -> None:
-        """Emit an event to the frontend."""
-        event = {
-            "type": event_type,
-            "session_id": self.session_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            **(data or {}),
-        }
-        self.workflow_events.append(event)
-        if self.emit_event:
-            try:
-                self.emit_event(event)
-            except Exception as e:
-                logger.warning("emit_event_error", error=str(e))
-
-    def set_workspace(
-        self,
-        workspace_id: str | UUID,
-        project_id: str | UUID | None,
-        workspace_path: str | None,
-        branch: str | None,
-        project_name: str | None = None,
-    ) -> None:
-        """Set workspace info."""
-        self.workspace_id = str(workspace_id) if workspace_id else None
-        self.project_id = str(project_id) if project_id else None
-        self.workspace_path = workspace_path
-        self.branch = branch
-        self.project_name = project_name
-
-        self.emit("workspace_initialized", {
-            "workspace_id": self.workspace_id,
-            "project_id": self.project_id,
-            "project_name": project_name,
-            "branch": branch,
-        })
-
-    def add_tokens(self, prompt: int, completion: int) -> None:
-        """Add token usage."""
-        self.prompt_tokens += prompt
-        self.completion_tokens += completion
-        self.total_tokens += prompt + completion
-
-    def cancel(self) -> None:
-        """Cancel the current execution."""
-        self._cancelled = True
-
-    def check_cancelled(self) -> None:
-        """Raise if cancelled."""
-        if self._cancelled:
-            raise CancelledException("Execution was cancelled")
-
-
-class CancelledException(Exception):
-    """Raised when execution is cancelled."""
-    pass
-
-
-# Thread-local context for current execution
-_current_context: ExecutionContext | None = None
-
-
-def get_current_context() -> ExecutionContext | None:
-    """Get the current execution context."""
-    return _current_context
-
-
-def set_current_context(ctx: ExecutionContext | None) -> None:
-    """Set the current execution context."""
-    global _current_context
-    _current_context = ctx
-
-
-def clear_current_context() -> None:
-    """Clear the current execution context."""
-    global _current_context
-    _current_context = None
 
 
 # =============================================================================
@@ -344,6 +230,101 @@ def get_mcp_client(db: DBSession):
 # =============================================================================
 
 
+def _persist_agent_data(
+    db: DBSession,
+    agent_run: AgentRun,
+    exec_ctx: ExecutionContext,
+    iteration_count: int,
+    status: str,
+    completed_at: datetime | None = None,
+) -> None:
+    """Persist LLM calls and update agent_run stats after agent execution.
+
+    Args:
+        db: Database session
+        agent_run: The agent run record to update
+        exec_ctx: ExecutionContext with collected LLM calls
+        iteration_count: Number of LLM iterations
+        status: New status for agent_run
+        completed_at: Completion timestamp (if completed)
+    """
+    from uuid import UUID as UUIDType
+
+    # Persist LLM calls for this agent run
+    agent_id = agent_run.agent_id
+    agent_prompt_tokens = 0
+    agent_completion_tokens = 0
+
+    for llm_call in exec_ctx.llm_calls:
+        # Only persist LLM calls for this specific agent
+        if llm_call.get("agent_id") != agent_id:
+            continue
+
+        # Check if already persisted (to avoid duplicates on resume)
+        if llm_call.get("_persisted"):
+            continue
+
+        usage = llm_call.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+
+        # Extract full request/response data for debugging
+        response = llm_call.get("response", {})
+        response_content = response.get("content") if response else None
+        response_tool_calls = response.get("tool_calls") if response else None
+
+        create_llm_call(
+            db,
+            session_id=UUIDType(exec_ctx.session_id),
+            agent_run_id=agent_run.id,
+            provider=llm_call.get("provider", "unknown"),
+            model=llm_call.get("model", "unknown"),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            duration_ms=llm_call.get("duration_ms"),
+            request_messages=llm_call.get("messages"),
+            response_content=response_content,
+            response_tool_calls=response_tool_calls,
+            tools_provided=llm_call.get("tools"),
+        )
+
+        agent_prompt_tokens += prompt_tokens
+        agent_completion_tokens += completion_tokens
+
+        # Mark as persisted to avoid duplicates
+        llm_call["_persisted"] = True
+
+    # Update agent_run with stats
+    update_agent_run(
+        db,
+        agent_run.id,
+        status=status,
+        completed_at=completed_at,
+    )
+
+    # Update agent_run token counts
+    if agent_prompt_tokens > 0 or agent_completion_tokens > 0:
+        update_agent_run_tokens(
+            db,
+            agent_run.id,
+            prompt_tokens=agent_prompt_tokens,
+            completion_tokens=agent_completion_tokens,
+        )
+
+    # Update iteration count via direct update
+    agent_run.iteration_count = iteration_count
+    db.commit()
+
+    logger.debug(
+        "agent_data_persisted",
+        agent_id=agent_id,
+        agent_run_id=str(agent_run.id),
+        iteration_count=iteration_count,
+        prompt_tokens=agent_prompt_tokens,
+        completion_tokens=agent_completion_tokens,
+    )
+
+
 async def run_agent(
     db: DBSession,
     agent_id: str,
@@ -402,10 +383,10 @@ async def run_agent(
         # Check if paused for approval or HITL
         if isinstance(result, dict):
             if result.get("paused"):
-                # Agent paused - update status
-                update_agent_run(
-                    db,
-                    agent_run.id,
+                # Agent paused - update status and persist data collected so far
+                iteration_count = result.get("iteration", 0) + 1
+                _persist_agent_data(
+                    db, agent_run, exec_ctx, iteration_count,
                     status="paused_tool" if result.get("approval_id") else "paused_hitl",
                 )
 
@@ -418,10 +399,15 @@ async def run_agent(
 
                 return result
 
-        # Agent completed successfully
-        update_agent_run(
-            db,
-            agent_run.id,
+        # Agent completed successfully - persist LLM calls and update stats
+        # Count iterations from llm_calls for this agent
+        llm_calls_for_agent = [
+            c for c in exec_ctx.llm_calls if c.get("agent_id") == agent_id
+        ]
+        iteration_count = len(llm_calls_for_agent)
+
+        _persist_agent_data(
+            db, agent_run, exec_ctx, iteration_count,
             status="completed",
             completed_at=datetime.now(timezone.utc),
         )
@@ -430,6 +416,7 @@ async def run_agent(
             "agent_id": agent_id,
             "agent_run_id": str(agent_run.id),
             "result_preview": str(result)[:200] if result else None,
+            "iterations": iteration_count,
         })
 
         return {"success": True, "result": result}
