@@ -8,8 +8,9 @@ import { Link } from 'react-router-dom'
 import { FileText, CheckSquare, Clock, AlertCircle, TrendingUp, Play, ExternalLink, Zap, Server, Square, Loader2 } from 'lucide-react'
 import { getPlans, getTasks, getStatus, getRunningApps, getProjects, stopProject } from '../services/api'
 import { useAuth } from '../App'
+import { formatTokens, formatCost, calculateCost } from '../utils/tokenUtils'
 
-const StatCard = ({ title, value, icon: Icon, color, link }) => (
+const StatCard = ({ title, value, subtitle, icon: Icon, color, link }) => (
   <Link
     to={link}
     className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
@@ -18,6 +19,7 @@ const StatCard = ({ title, value, icon: Icon, color, link }) => (
       <div>
         <p className="text-sm text-gray-500">{title}</p>
         <p className="text-3xl font-bold mt-1">{value}</p>
+        {subtitle && <p className="text-xs text-green-600 mt-0.5">{subtitle}</p>}
       </div>
       <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${color}`}>
         <Icon className="w-6 h-6 text-white" />
@@ -87,11 +89,7 @@ const Dashboard = () => {
 
   // Calculate total token usage across all projects
   const totalTokens = projects.reduce((sum, p) => sum + (p.token_usage?.total_tokens || 0), 0)
-  const formatTokens = (tokens) => {
-    if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`
-    if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`
-    return tokens.toString()
-  }
+  const totalCost = calculateCost(totalTokens)
 
   return (
     <div className="space-y-8">
@@ -133,7 +131,8 @@ const Dashboard = () => {
         />
         <StatCard
           title="Total Tokens"
-          value={formatTokens(totalTokens)}
+          value={formatTokens(totalTokens) || '0'}
+          subtitle={formatCost(totalCost)}
           icon={Zap}
           color="bg-yellow-500"
           link="/projects"
