@@ -55,14 +55,23 @@ export GITEA_SECRET_KEY="${GITEA_SECRET_KEY:-$(openssl rand -hex 32)}"
 
 # Save generated secrets to .env
 save_env() {
+    # Check if .env already exists and has API key
+    if [ -f .env ] && grep -q "DEEPINFRA_API_KEY=." .env; then
+        log "Using existing .env file with API key"
+        source .env
+        return
+    fi
+
     cat > .env << EOF
+# =============================================================================
 # Druppie Governance Platform - Environment Variables
 # Generated on $(date)
+# =============================================================================
 
 # External hostname (change for production)
 EXTERNAL_HOST=${EXTERNAL_HOST}
 
-# Database passwords
+# Database passwords (auto-generated, don't change)
 KEYCLOAK_DB_PASSWORD=${KEYCLOAK_DB_PASSWORD}
 GITEA_DB_PASSWORD=${GITEA_DB_PASSWORD}
 DRUPPIE_DB_PASSWORD=${DRUPPIE_DB_PASSWORD}
@@ -71,25 +80,74 @@ DRUPPIE_DB_PASSWORD=${DRUPPIE_DB_PASSWORD}
 KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN}
 KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
 
-# OAuth2 client secrets
+# OAuth2 client secrets (auto-generated)
 KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
 GITEA_CLIENT_SECRET=${GITEA_CLIENT_SECRET}
 GITEA_SECRET_KEY=${GITEA_SECRET_KEY}
 
-# LLM Configuration (configure one of these)
-LLM_PROVIDER=zai
-ZAI_API_KEY=${ZAI_API_KEY:-}
-ZAI_MODEL=GLM-4.7
-ZAI_BASE_URL=https://api.z.ai/api/coding/paas/v4
-OLLAMA_HOST=http://host.docker.internal:11434
-OLLAMA_MODEL=qwen2.5:7b
+# =============================================================================
+# LLM CONFIGURATION - SET YOUR API KEY HERE!
+# =============================================================================
+# Using DeepInfra (fast, cheap, good quality)
+LLM_PROVIDER=deepinfra
+DEEPINFRA_API_KEY=your_deepinfra_api_key_here
+DEEPINFRA_MODEL=meta-llama/Llama-3.3-70B-Instruct-Turbo
 
-# MCP Microservices (HITL is built into backend)
+# Alternative: Z.AI GLM-4 (uncomment to use)
+# LLM_PROVIDER=zai
+# ZAI_API_KEY=your_zai_api_key_here
+# ZAI_MODEL=GLM-4.7
+# ZAI_BASE_URL=https://api.z.ai/api/coding/paas/v4
+
+# Alternative: Local Ollama (uncomment to use)
+# LLM_PROVIDER=ollama
+# OLLAMA_HOST=http://host.docker.internal:11434
+# OLLAMA_MODEL=qwen2.5:7b
+
+# =============================================================================
+# MCP Microservices (internal, don't change)
+# =============================================================================
 USE_MCP_MICROSERVICES=true
 MCP_CODING_URL=http://mcp-coding:9001
 MCP_DOCKER_URL=http://mcp-docker:9002
 EOF
-    success "Environment saved to .env"
+
+    echo ""
+    warn "============================================================"
+    warn "IMPORTANT: Set your API key in .env file!"
+    warn "============================================================"
+    echo ""
+    echo "  1. Open .env file in your editor"
+    echo "  2. Replace 'your_deepinfra_api_key_here' with your actual key"
+    echo "  3. Run ./setup.sh all again"
+    echo ""
+    echo "  Get a DeepInfra API key at: https://deepinfra.com/"
+    echo ""
+    warn "============================================================"
+    exit 1
+}
+
+# Check if API key is configured
+check_api_key() {
+    if [ -f .env ]; then
+        source .env
+    fi
+
+    if [ "$LLM_PROVIDER" = "deepinfra" ]; then
+        if [ -z "$DEEPINFRA_API_KEY" ] || [ "$DEEPINFRA_API_KEY" = "your_deepinfra_api_key_here" ]; then
+            error "DEEPINFRA_API_KEY not set in .env file. Please set it and run again."
+        fi
+        success "DeepInfra API key configured"
+    elif [ "$LLM_PROVIDER" = "zai" ]; then
+        if [ -z "$ZAI_API_KEY" ] || [ "$ZAI_API_KEY" = "your_zai_api_key_here" ]; then
+            error "ZAI_API_KEY not set in .env file. Please set it and run again."
+        fi
+        success "Z.AI API key configured"
+    elif [ "$LLM_PROVIDER" = "ollama" ]; then
+        success "Using Ollama (local)"
+    else
+        error "Unknown LLM_PROVIDER: $LLM_PROVIDER"
+    fi
 }
 
 # Helper function for docker compose
@@ -324,6 +382,7 @@ case "${1:-all}" in
     all)
         check_requirements
         save_env
+        check_api_key
         create_network
         start_infrastructure
         start_keycloak
