@@ -679,6 +679,32 @@ def expire_hitl_question(db: DBSession, question_id: str) -> HitlQuestion | None
     return question
 
 
+def update_hitl_question_agent_state(
+    db: DBSession,
+    question_id: str,
+    agent_state: dict,
+) -> HitlQuestion | None:
+    """Update the agent_state on a HITL question.
+
+    This saves the execution state so the workflow can resume from where
+    it paused when the user answers.
+
+    Args:
+        db: Database session
+        question_id: ID of the question to update
+        agent_state: Dict with plan, current_step, results, context, agent_id
+    """
+    question = get_hitl_question(db, question_id)
+    if not question:
+        return None
+
+    question.agent_state = agent_state
+
+    db.commit()
+    db.refresh(question)
+    return question
+
+
 def list_hitl_questions(
     db: DBSession,
     status: str | None = None,
