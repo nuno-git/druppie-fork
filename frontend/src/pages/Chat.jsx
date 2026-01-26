@@ -62,6 +62,7 @@ const Chat = () => {
   const [isAgentWorking, setIsAgentWorking] = useState(false) // For showing typing indicator after approval
   const [currentAgentId, setCurrentAgentId] = useState(null) // Track which agent is currently working
   const [toolExecutions, setToolExecutions] = useState([]) // Track tool executions with approval status
+  const seenApprovalIds = useRef(new Set()) // Track seen approval IDs to prevent duplicates
 
   // Fetch session history
   const { data: sessionsData } = useQuery({
@@ -348,6 +349,19 @@ const Chat = () => {
     }
 
     const handleApprovalRequired = (data) => {
+      // Filter by session - only show approvals for our session
+      const eventSessionId = data.session_id
+      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) {
+        return
+      }
+
+      // Deduplicate - skip if we've already seen this approval
+      const approvalId = data.approval_id
+      if (seenApprovalIds.current.has(approvalId)) {
+        return
+      }
+      seenApprovalIds.current.add(approvalId)
+
       // Handle both tool approvals (data.tool) and step approvals (data.message)
       const isStepApproval = data.tool?.startsWith('approval:') || data.message
       const taskName = isStepApproval
@@ -940,6 +954,7 @@ const Chat = () => {
     setIsAgentWorking(false)
     setCurrentAgentId(null)
     setToolExecutions([])
+    seenApprovalIds.current.clear()
     setSearchParams({})
     setMessages([{ role: 'assistant', content: `Hello ${user?.firstName || user?.username}! I'm Druppie, your AI governance assistant.\n\nI can help you:\n• Create applications (just describe what you want!)\n• Manage code deployments\n• Check compliance and permissions\n\nWhat would you like to build today?` }])
   }
@@ -950,6 +965,7 @@ const Chat = () => {
     setToolExecutions([])
     setCurrentAgentId(null)
     setIsAgentWorking(false)
+    seenApprovalIds.current.clear()
     setSearchParams({ session: session.id })
     try {
       const fullSession = await getPlan(session.id)
