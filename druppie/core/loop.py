@@ -543,10 +543,23 @@ async def execute_node(state: GraphState) -> dict:
 
                 result = await Agent(agent_id).run(prompt, context)
 
-                # Check if agent returned paused state (for approval)
+                # Check if agent returned paused state (for approval or HITL question)
                 if isinstance(result, dict) and result.get("paused"):
                     approval_id = result.get("approval_id")
-                    logger.info("agent_paused", step_id=step_id, agent_id=agent_id, approval_id=approval_id)
+                    question_id = result.get("question_id")
+                    logger.info("agent_paused", step_id=step_id, agent_id=agent_id, approval_id=approval_id, question_id=question_id)
+
+                    # Build agent state for resumption
+                    clarifications = ctx.hitl_clarifications if ctx else []
+                    agent_state = {
+                        "plan": plan,
+                        "current_step": i,
+                        "results": results,
+                        "context": context,
+                        "agent_id": agent_id,
+                        "hitl_clarifications": clarifications,
+                        "iteration": result.get("iteration", 0),  # Agent iteration when paused
+                    }
 
                     # Update the approval with plan execution state so we can resume properly
                     # This is critical - MCP tool approvals need the same state as step approvals
@@ -554,21 +567,10 @@ async def execute_node(state: GraphState) -> dict:
                         try:
                             from druppie.db.crud import update_approval
                             with db_session() as db:
-                                # Include HITL clarifications so agent remembers user confirmations
-                                clarifications = ctx.hitl_clarifications if ctx else []
                                 update_approval(
                                     db,
                                     approval_id,
-                                    {
-                                        "agent_state": {
-                                            "plan": plan,
-                                            "current_step": i,
-                                            "results": results,
-                                            "context": context,
-                                            "agent_id": agent_id,  # Track which agent was running
-                                            "hitl_clarifications": clarifications,  # Preserve user confirmations
-                                        },
-                                    },
+                                    {"agent_state": agent_state},
                                 )
                                 db.commit()
                                 logger.info(
@@ -584,17 +586,44 @@ async def execute_node(state: GraphState) -> dict:
                                 error=str(e),
                             )
 
+                    # Also save state to HITL question if paused for a question
+                    # This enables proper resumption from where the agent paused
+                    if question_id:
+                        try:
+                            from druppie.db.crud import update_hitl_question_agent_state
+                            with db_session() as db:
+                                update_hitl_question_agent_state(
+                                    db,
+                                    question_id,
+                                    agent_state,
+                                )
+                                logger.info(
+                                    "question_state_saved",
+                                    question_id=question_id,
+                                    step_id=step_id,
+                                    current_step=i,
+                                    agent_id=agent_id,
+                                )
+                        except Exception as e:
+                            logger.error(
+                                "question_state_save_failed",
+                                question_id=question_id,
+                                error=str(e),
+                            )
+
                     if ctx:
                         ctx.emit("agent_paused", {
                             "step_id": step_id,
                             "agent_id": agent_id,
                             "approval_id": approval_id,
+                            "question_id": question_id,
                         })
                     return {
                         "results": results,
                         "response": f"Waiting for approval in step {step_id}",
                         "paused": True,
                         "approval_id": approval_id,
+                        "question_id": question_id,
                     }
 
                 logger.info(
@@ -1811,18 +1840,7 @@ class MainLoop:
                 "answer": answer,
             })
 
-            # Re-run the workflow with the original message plus the answer context
-            # The router should now have more context to make a decision
-            original_message = session_state.get("context", {}).get("message", "")
-
-            # Build a new message that includes the user's answer
-            if question.question_type == "choice":
-                new_message = f"{original_message}\n\nUser clarification: {answer}"
-            else:
-                new_message = f"{original_message}\n\nUser clarification: {answer}"
-
-            # CRITICAL: Build clarification info to pass directly to process_message
-            # We also save to session state as backup, but the direct parameter is reliable
+            # CRITICAL: Build clarification info
             clarification_info = {
                 "question_id": question_id,
                 "question": question.question,
@@ -1830,45 +1848,89 @@ class MainLoop:
                 "agent_id": question.agent_id,
             }
 
-            # Collect all clarifications (including this new one)
-            all_clarifications = [clarification_info]
+            # Check if the question has saved agent_state (for proper resume)
+            # This was saved by execute_plan when the agent paused for HITL
+            saved_agent_state = question.agent_state
 
-            # Also save to session state as backup (though this may get overwritten)
-            with db_session() as db:
-                from druppie.db.crud import get_session, save_session_state
-                session_obj = get_session(db, session_id)
-                if session_obj:
-                    current_state = session_obj.state or {}
-                    # Get existing clarifications
-                    existing = current_state.get("hitl_clarifications", [])
-                    all_clarifications = existing + [clarification_info]
-                    current_state["hitl_clarifications"] = all_clarifications
-                    save_session_state(db, session_id, current_state)
-                    logger.info(
-                        "clarification_saved_to_session",
-                        session_id=session_id,
-                        agent_id=question.agent_id,
-                        clarifications_count=len(all_clarifications),
-                    )
+            if saved_agent_state:
+                # PROPER RESUME: Use saved state to continue from where agent paused
+                logger.info(
+                    "resuming_from_saved_agent_state",
+                    session_id=session_id,
+                    question_id=question_id,
+                    agent_id=question.agent_id,
+                    current_step=saved_agent_state.get("current_step"),
+                )
 
-            logger.info(
-                "resuming_with_clarification",
-                session_id=session_id,
-                original_message=original_message[:50],
-                clarification=answer[:50],
-                clarifications_to_pass=len(all_clarifications),
-            )
+                # Add the new clarification to existing clarifications in saved state
+                existing_clarifications = saved_agent_state.get("hitl_clarifications", [])
+                all_clarifications = existing_clarifications + [clarification_info]
 
-            # Process the message again with the clarification
-            # Pass clarifications directly to avoid database race conditions
-            result = await self.process_message(
-                message=new_message,
-                session_id=session_id,
-                user_id=session.user_id,
-                project_id=exec_ctx.project_id,
-                emit_event=emit_event,
-                hitl_clarifications=all_clarifications,  # Direct path for reliability
-            )
+                # Update the agent_state with the new clarification
+                saved_agent_state["hitl_clarifications"] = all_clarifications
+
+                # Also update the exec_ctx with clarifications for the agent
+                exec_ctx.hitl_clarifications = all_clarifications
+
+                # Save clarifications to session state as well (for persistence)
+                with db_session() as db:
+                    from druppie.db.crud import get_session as db_get_session, save_session_state
+                    session_obj = db_get_session(db, session_id)
+                    if session_obj:
+                        current_state = session_obj.state or {}
+                        current_state["hitl_clarifications"] = all_clarifications
+                        save_session_state(db, session_id, current_state)
+
+                # Use resume_from_step_approval to continue from saved state
+                # This will properly resume the agent from where it paused
+                clear_current_context()  # Clear our context, resume will create new one
+                result = await self.resume_from_step_approval(
+                    session_id=session_id,
+                    agent_state=saved_agent_state,
+                    emit_event=emit_event,
+                )
+            else:
+                # FALLBACK: No saved state, restart workflow with clarification
+                # This is the legacy behavior for questions without saved state
+                logger.warning(
+                    "no_saved_agent_state_falling_back_to_restart",
+                    session_id=session_id,
+                    question_id=question_id,
+                )
+
+                original_message = session_state.get("context", {}).get("message", "")
+                new_message = f"{original_message}\n\nUser clarification: {answer}"
+
+                # Collect all clarifications (including this new one)
+                all_clarifications = [clarification_info]
+
+                # Also save to session state as backup
+                with db_session() as db:
+                    from druppie.db.crud import get_session as db_get_session, save_session_state
+                    session_obj = db_get_session(db, session_id)
+                    if session_obj:
+                        current_state = session_obj.state or {}
+                        existing = current_state.get("hitl_clarifications", [])
+                        all_clarifications = existing + [clarification_info]
+                        current_state["hitl_clarifications"] = all_clarifications
+                        save_session_state(db, session_id, current_state)
+
+                logger.info(
+                    "resuming_with_clarification_restart",
+                    session_id=session_id,
+                    original_message=original_message[:50],
+                    clarification=answer[:50],
+                )
+
+                # Process the message again with the clarification
+                result = await self.process_message(
+                    message=new_message,
+                    session_id=session_id,
+                    user_id=session.user_id,
+                    project_id=exec_ctx.project_id,
+                    emit_event=emit_event,
+                    hitl_clarifications=all_clarifications,
+                )
 
             clear_current_context()
             return result

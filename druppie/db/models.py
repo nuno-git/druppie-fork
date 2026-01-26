@@ -208,6 +208,7 @@ class HitlQuestion(Base):
     answered_at = Column(DateTime, nullable=True)
     status = Column(String(20), default="pending", index=True)  # pending, answered, expired
     created_at = Column(DateTime, default=datetime.utcnow)
+    agent_state = Column(JSON, nullable=True)  # For resuming agent from where it paused
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -221,4 +222,5 @@ class HitlQuestion(Base):
             "answered_at": self.answered_at.isoformat() if self.answered_at else None,
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "agent_state": self.agent_state,
         }

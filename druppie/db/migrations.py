@@ -262,12 +262,50 @@ def migrate_004_add_token_usage_to_sessions(engine: Engine) -> None:
     logger.info("migration_applied", migration=migration_name)
 
 
+def migrate_005_add_agent_state_to_hitl_questions(engine: Engine) -> None:
+    """Add agent_state column to hitl_questions table.
+
+    This column stores the execution state for resuming the agent from where
+    it paused when asking a HITL question. Without this, the workflow would
+    restart from the beginning instead of continuing.
+    """
+    migration_name = "005_add_agent_state_to_hitl_questions"
+
+    if migration_applied(engine, migration_name):
+        return
+
+    # Check if column already exists
+    if column_exists(engine, "hitl_questions", "agent_state"):
+        mark_migration_applied(engine, migration_name)
+        logger.info("migration_skipped_column_exists", migration=migration_name)
+        return
+
+    with engine.connect() as conn:
+        try:
+            # JSON type for SQLite is just TEXT, PostgreSQL has native JSON
+            conn.execute(text("""
+                ALTER TABLE hitl_questions
+                ADD COLUMN agent_state TEXT
+            """))
+            conn.commit()
+        except (OperationalError, ProgrammingError) as e:
+            if "already exists" in str(e):
+                conn.rollback()
+                logger.info("migration_column_already_exists", migration=migration_name)
+            else:
+                raise
+
+    mark_migration_applied(engine, migration_name)
+    logger.info("migration_applied", migration=migration_name)
+
+
 # List of all migrations in order
 MIGRATIONS = [
     migrate_001_add_agent_id_to_approvals,
     migrate_002_add_agent_state_to_approvals,
     migrate_003_add_project_workspace_to_sessions,
     migrate_004_add_token_usage_to_sessions,
+    migrate_005_add_agent_state_to_hitl_questions,
 ]
 
 
