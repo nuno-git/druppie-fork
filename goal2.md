@@ -1,5 +1,12 @@
 # AI Governance Platform - Complete Detailed Specification
 
+## **Design Principles**
+
+### **Database Rules**
+1. **NO JSON/JSONB columns** - Everything must be normalized into proper relational tables
+2. **Config stays in files** - Agent definitions, MCP configs, workflows stay in YAML files, not database
+3. **Keep it simple** - Only store what's needed, avoid over-engineering
+
 ## **Core Architecture**
 
 ### **1. Infrastructure Stack**

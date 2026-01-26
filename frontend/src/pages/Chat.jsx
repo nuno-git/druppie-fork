@@ -7,7 +7,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Send, Bug, FolderOpen, ExternalLink } from 'lucide-react'
-import { sendChat, getSessions, getPlan, answerQuestion, approveTask, rejectTask, submitHITLResponse, getProject, cancelChat } from '../services/api'
+import { sendChat, getSessions, getPlan, answerQuestion, approveTask, rejectTask, submitHITLResponse, getProject, cancelChat, getSessionTrace } from '../services/api'
 import { useAuth } from '../App'
 import {
   initSocket,
@@ -340,16 +340,50 @@ const Chat = () => {
       setCurrentProject(null)
     }
 
-    const workflowEvents = fullSession.result?.workflow_events || []
-    const llmCalls = fullSession.result?.llm_calls || []
-    const normalizedEvents = workflowEvents.map(event => ({
-      ...event,
-      event_type: event.type || event.event_type,
-      title: event.title || formatEventTitle({ ...event, event_type: event.type }),
-      description: event.data?.description || event.description || '',
-      status: event.status || 'info',
-      data: event.data || event,
-    }))
+    // Fetch trace data from the normalized database endpoint
+    let normalizedEvents = []
+    let llmCalls = []
+    try {
+      const traceData = await getSessionTrace(sessionId)
+      if (traceData?.trace) {
+        // Convert trace events to DebugPanel format
+        normalizedEvents = (traceData.trace.events || []).map(event => ({
+          id: event.id,
+          type: event.type,
+          event_type: event.type,
+          title: formatEventTitle({ type: event.type, event_type: event.type, data: { agent_id: event.agent, ...event.data } }),
+          description: event.tool ? `Tool: ${event.tool}` : '',
+          status: event.type.includes('complete') ? 'success' : event.type.includes('error') ? 'error' : 'working',
+          timestamp: event.timestamp,
+          data: {
+            agent_id: event.agent,
+            tool_name: event.tool,
+            tool: event.tool,
+            args_preview: event.args ? JSON.stringify(event.args).substring(0, 100) : null,
+            arguments: event.args,
+            result: event.result,
+            ...event.data,
+          },
+          duration_ms: event.duration_ms,
+        }))
+
+        // Convert raw LLM calls to DebugPanel format
+        llmCalls = (traceData.trace.raw_llm_calls || []).map((call, idx) => ({
+          agent_id: call.agent_id,
+          iteration: call.iteration || idx + 1,
+          model: call.model,
+          provider: call.provider,
+          duration_ms: call.duration_ms,
+          usage: call.usage,
+          timestamp: call.timestamp,
+          tool_calls: [],  // Not stored in normalized schema
+          response: call.response,
+        }))
+      }
+    } catch (err) {
+      console.error('Error loading trace data:', err)
+    }
+
     setDebugWorkflowEvents(normalizedEvents)
     setDebugLLMCalls(llmCalls)
     setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
@@ -372,62 +406,28 @@ const Chat = () => {
         }))
     }
 
-    // Check if session has stored messages (new format)
-    if (fullSession.messages && fullSession.messages.length > 0) {
-      // Use stored messages directly - they contain full conversation history with per-message events
-      const loadedMessages = fullSession.messages.map((msg, idx) => {
-        const isLastAssistant = idx === fullSession.messages.length - 1 && msg.role === 'assistant'
+    // Load messages from normalized database
+    const loadedMessages = (fullSession.messages || []).map((msg, idx) => {
+      const isLastAssistant = idx === (fullSession.messages?.length || 0) - 1 && msg.role === 'assistant'
 
-        // Use per-message workflow events if available, otherwise fall back to session-level events for last message
-        const msgWorkflowEvents = msg.workflow_events || msg.workflowEvents || []
-        const msgLlmCalls = msg.llm_calls || msg.llmCalls || []
-
-        // Normalize workflow events
-        const normalizedMsgEvents = msgWorkflowEvents.map(event => ({
-          ...event,
-          event_type: event.type || event.event_type,
-          title: event.title || formatEventTitle({ ...event, event_type: event.type }),
-          description: event.data?.description || event.description || '',
-          status: event.status || 'info',
-          data: event.data || event,
-        }))
-
-        return {
-          role: msg.role,
-          content: msg.content,
-          timestamp: msg.timestamp,
-          // Attach per-message workflow events
-          ...(msg.role === 'assistant' && {
-            workflowEvents: normalizedMsgEvents.length > 0 ? normalizedMsgEvents : (isLastAssistant ? normalizedEvents : []),
-            llmCalls: msgLlmCalls,
-            // Include deployment info if present
-            deploymentUrl: msg.deployment_url || msg.deploymentUrl,
-            containerName: msg.container_name || msg.containerName,
-          }),
-          // Attach approvals to last assistant message
-          ...(isLastAssistant && {
-            planId: sessionId,
-            status: fullSession.status,
-            pendingApprovals,
-          }),
-        }
-      })
-      setMessages(loadedMessages)
-    } else {
-      // Fallback: Reconstruct from legacy format (description + result.response)
-      const reconstructedMessages = []
-      const userMessage = fullSession.description || fullSession.preview
-      if (userMessage) reconstructedMessages.push({ role: 'user', content: userMessage })
-      reconstructedMessages.push({
-        role: 'assistant',
-        content: fullSession.result?.response || `Session - Status: ${fullSession.status}`,
-        planId: sessionId,
-        status: fullSession.status,
-        workflowEvents,
-        pendingApprovals,
-      })
-      setMessages(reconstructedMessages.length > 0 ? reconstructedMessages : [{ role: 'assistant', content: 'Continuing conversation...', planId: sessionId }])
-    }
+      return {
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        ...(msg.role === 'assistant' && {
+          workflowEvents: isLastAssistant ? normalizedEvents : [],
+          llmCalls: isLastAssistant ? llmCalls : [],
+          deploymentUrl: msg.deployment_url,
+          containerName: msg.container_name,
+        }),
+        ...(isLastAssistant && {
+          planId: sessionId,
+          status: fullSession.status,
+          pendingApprovals,
+        }),
+      }
+    })
+    setMessages(loadedMessages)
   }
 
   // Chat mutation

@@ -4,7 +4,7 @@ from .base import BaseLLM, LLMResponse, LLMError, RateLimitError, Authentication
 from .zai import ChatZAI
 from .mock import ChatMock
 from .deepinfra import ChatDeepInfra
-from .service import LLMService, get_llm_service
+from .service import LLMService, get_llm_service, LLMConfigurationError
 
 __all__ = [
     # Base classes
@@ -19,6 +19,7 @@ __all__ = [
     "get_llm_service",
     # Exceptions
     "LLMError",
+    "LLMConfigurationError",
     "RateLimitError",
     "AuthenticationError",
     "ServerError",

@@ -11,47 +11,19 @@ from functools import wraps
 from typing import Callable, Generator
 
 from fastapi import Depends, HTTPException, Header
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 import structlog
 
 logger = structlog.get_logger()
 
 from druppie.core.auth import get_auth_service, AuthService
 from druppie.core.loop import get_main_loop, MainLoop
-from druppie.db.models import Base
-from druppie.db.migrations import run_migrations
+from druppie.db.database import get_db, init_db, SessionLocal, engine
+from druppie.db import get_or_create_user
+from uuid import UUID
 
-# Database setup
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./druppie.db")
-
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Create tables (only creates if they don't exist)
-Base.metadata.create_all(bind=engine)
-
-# Run migrations (adds new columns to existing tables)
-run_migrations(engine)
-
-
-def get_db() -> Generator[Session, None, None]:
-    """Get database session with proper cleanup.
-
-    Ensures transactions are rolled back on errors and connections
-    are properly closed to prevent connection pool exhaustion.
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+# Initialize database tables on import
+init_db()
 
 
 def get_loop() -> MainLoop:
@@ -71,6 +43,7 @@ async def get_current_user(
     """Get current user from JWT token.
 
     Returns user info dict or raises 401 if not authenticated.
+    Also syncs user to database from Keycloak on first login.
     """
     user = auth.validate_request(authorization)
     if not user:
@@ -78,6 +51,25 @@ async def get_current_user(
             status_code=401,
             detail="Invalid or missing authentication token",
         )
+
+    # Sync user to database (creates if doesn't exist)
+    try:
+        user_id = user.get("sub")
+        if user_id:
+            db = SessionLocal()
+            try:
+                get_or_create_user(
+                    db,
+                    user_id=UUID(user_id),
+                    username=user.get("preferred_username"),
+                    email=user.get("email"),
+                    display_name=user.get("name"),
+                )
+            finally:
+                db.close()
+    except Exception as e:
+        logger.warning("user_sync_failed", user_id=user.get("sub"), error=str(e))
+
     return user
 
 

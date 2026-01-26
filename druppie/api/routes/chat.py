@@ -260,13 +260,8 @@ async def chat(
         # Create emit_event callback for real-time updates
         emit_event = create_emit_event(session_id)
 
-        # Convert conversation history to plain dicts if provided
-        conversation_history = None
-        if request.conversation_history:
-            conversation_history = [
-                {"role": msg.role, "content": msg.content}
-                for msg in request.conversation_history
-            ]
+        # Note: conversation_history from request is ignored
+        # Messages are stored in the database and retrieved automatically
 
         result = await loop.process_message(
             message=request.message,
@@ -275,7 +270,6 @@ async def chat(
             project_id=request.project_id,
             project_name=request.project_name,
             emit_event=emit_event,
-            conversation_history=conversation_history,
         )
 
         result_session_id = result.get("session_id", session_id)

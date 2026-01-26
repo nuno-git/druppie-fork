@@ -62,6 +62,9 @@ export const resumeSession = (sessionId, answer = null) =>
     body: JSON.stringify({ answer }),
   })
 
+// Session trace endpoint for debug panel data
+export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}/trace`)
+
 // Legacy plan endpoints (mapped to sessions/list for backwards compatibility)
 export const getPlans = () => request('/api/sessions/list')
 export const getPlan = (planId) => request(`/api/sessions/${planId}`)

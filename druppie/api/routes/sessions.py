@@ -125,55 +125,64 @@ MAX_LIMIT = 100
 # =============================================================================
 
 
-def _session_to_response(session, project=None) -> SessionResponse:
+def _session_to_response(session, project=None, db=None) -> SessionResponse:
     """Convert a DB session to response model.
 
     Args:
         session: Session DB model
         project: Optional project DB model for project info
+        db: Database session for fetching related data
     """
-    state = session.state or {}
-    context = state.get("context", {})
-
-    # Extract name from context or first user message
-    # Support both "message" (new) and "user_message" (legacy)
-    message = context.get("message") or context.get("user_message", "Session")
-    name = context.get("name") or f"Chat: {message[:30]}"
-    description = message
-
-    # Build result from state
-    result = {
-        "response": context.get("response") or context.get("final_response", ""),
-        "workflow_events": state.get("workflow_events", []),
-        "llm_calls": state.get("llm_calls", []),
-        "intent": state.get("intent"),
-        "plan": state.get("plan"),
-    }
+    # Get first user message for name/description
+    first_message = session.title or "Session"
+    name = f"Chat: {first_message[:30]}"
+    description = first_message
 
     # Build project info if available
     project_info = None
     if project:
         project_info = ProjectInfo(
-            id=project.id,
+            id=str(project.id),
             name=project.name,
             repo_name=project.repo_name,
             repo_url=project.repo_url,
         )
 
-    # Build messages list from stored history (including per-message workflow events)
-    messages_data = state.get("messages", [])
-    messages = [
-        MessageResponse(
-            role=msg.get("role", "user"),
-            content=msg.get("content", ""),
-            timestamp=msg.get("timestamp"),
-            workflow_events=msg.get("workflow_events"),
-            llm_calls=msg.get("llm_calls"),
-            deployment_url=msg.get("deployment_url"),
-            container_name=msg.get("container_name"),
+    # Get messages from database if db is provided
+    messages = None
+    if db:
+        from druppie.db.models import Message
+        db_messages = (
+            db.query(Message)
+            .filter(Message.session_id == session.id)
+            .order_by(Message.sequence_number.asc())
+            .all()
         )
-        for msg in messages_data
-    ] if messages_data else None
+        if db_messages:
+            messages = [
+                MessageResponse(
+                    role=msg.role,
+                    content=msg.content,
+                    timestamp=msg.created_at.isoformat() if msg.created_at else None,
+                    workflow_events=None,  # Not stored per-message anymore
+                    llm_calls=None,
+                    deployment_url=None,
+                    container_name=None,
+                )
+                for msg in db_messages
+            ]
+
+    # Get workspace from database if db is provided
+    workspace_id = None
+    if db:
+        from druppie.db.models import Workspace
+        workspace = (
+            db.query(Workspace)
+            .filter(Workspace.session_id == session.id)
+            .first()
+        )
+        if workspace:
+            workspace_id = str(workspace.id)
 
     # Token usage (transparency)
     token_usage = TokenUsage(
@@ -183,48 +192,42 @@ def _session_to_response(session, project=None) -> SessionResponse:
     )
 
     return SessionResponse(
-        id=session.id,
-        user_id=session.user_id,
+        id=str(session.id),
+        user_id=str(session.user_id) if session.user_id else None,
         status=session.status,
         created_at=session.created_at.isoformat() if session.created_at else None,
         updated_at=session.updated_at.isoformat() if session.updated_at else None,
-        project_id=session.project_id,
-        workspace_id=session.workspace_id,
+        project_id=str(session.project_id) if session.project_id else None,
+        workspace_id=workspace_id,
         project=project_info,
         name=name,
         description=description,
-        result=result,
+        result=None,  # No longer stored in JSON state
         tasks=None,  # Approvals are fetched separately
         messages=messages,
         token_usage=token_usage,
     )
 
 
-def _session_to_summary(session, project_name: str | None = None) -> SessionSummary:
+def _session_to_summary(session, project_name: str | None = None, workspace_id: str | None = None) -> SessionSummary:
     """Convert a DB session to a compact summary for sidebar listing.
 
     Args:
         session: Session DB model
         project_name: Optional project name (fetched separately for efficiency)
+        workspace_id: Optional workspace ID (fetched separately)
     """
-    state = session.state or {}
-    context = state.get("context", {})
-
-    # Extract preview from initial message (first 50 chars)
-    message = context.get("message") or context.get("user_message", "")
-    preview = message[:50] if message else "No message"
-
-    # Use provided project_name or fallback to state
-    resolved_project_name = project_name or context.get("project_name") or state.get("project_name")
+    # Use title as preview (set when session created)
+    preview = session.title[:50] if session.title else "No message"
 
     return SessionSummary(
-        id=session.id,
+        id=str(session.id),
         created_at=session.created_at.isoformat() if session.created_at else None,
         status=session.status,
         preview=preview,
-        project_id=session.project_id,
-        project_name=resolved_project_name,
-        workspace_id=session.workspace_id,
+        project_id=str(session.project_id) if session.project_id else None,
+        project_name=project_name,
+        workspace_id=workspace_id,
         total_tokens=session.total_tokens or 0,
     )
 
@@ -374,7 +377,7 @@ async def list_sessions_legacy(
     # Build response with pagination info
     return SessionListLegacyResponse(
         sessions=[
-            _session_to_response(s, project=projects_map.get(s.project_id))
+            _session_to_response(s, project=projects_map.get(s.project_id), db=db)
             for s in sessions
         ],
         total=total,
@@ -395,28 +398,28 @@ async def get_session(
         raise NotFoundError("session", session_id)
 
     # Check ownership (unless admin)
-    check_resource_ownership(user, session.user_id)
+    check_resource_ownership(user, str(session.user_id) if session.user_id else None)
 
     # Fetch project info if session has a project_id
     project = None
     if session.project_id:
         project = crud.get_project(db, session.project_id)
 
-    response = _session_to_response(session, project=project)
+    response = _session_to_response(session, project=project, db=db)
 
     # Also include pending approvals (tasks) for the frontend
     pending_approvals = crud.list_pending_approvals(db, session_id=session_id)
     response.tasks = [
         {
-            "id": a.id,
+            "id": str(a.id),
             "name": a.tool_name,
             "status": "pending_approval" if a.status == "pending" else a.status,
             "mcp_tool": a.tool_name,
-            "required_role": (a.required_roles or ["admin"])[0],
-            "required_roles": a.required_roles or ["admin"],
-            "approval_type": "multi" if len(a.required_roles or []) > 1 else "role",
-            "required_approvals": len(a.required_roles or [1]),
-            "approvals": a.approvals_received or [],
+            "required_role": a.required_role or "admin",
+            "required_roles": [a.required_role] if a.required_role else ["admin"],
+            "approval_type": "role",
+            "required_approvals": 1,
+            "approvals": [],
         }
         for a in pending_approvals
     ]
@@ -436,7 +439,7 @@ async def delete_session(
         raise NotFoundError("session", session_id)
 
     # Check ownership (unless admin)
-    check_resource_ownership(user, session.user_id)
+    check_resource_ownership(user, str(session.user_id) if session.user_id else None)
 
     crud.delete_session(db, session_id)
     logger.info("session_deleted", session_id=session_id, user_id=user.get("sub"))
@@ -450,18 +453,48 @@ async def get_session_state(
     user: dict = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ):
-    """Get the execution state of a session."""
+    """Get the execution state of a session.
+
+    Note: With the normalized schema, state is reconstructed from tables.
+    """
+    from druppie.db.models import Message, Workflow, AgentRun
+
     session = crud.get_session(db, session_id)
     if not session:
         raise NotFoundError("session", session_id)
 
     # Check ownership
-    check_resource_ownership(user, session.user_id)
+    check_resource_ownership(user, str(session.user_id) if session.user_id else None)
+
+    # Reconstruct state from normalized tables
+    messages = (
+        db.query(Message)
+        .filter(Message.session_id == session.id)
+        .order_by(Message.sequence_number.asc())
+        .all()
+    )
+
+    workflow = (
+        db.query(Workflow)
+        .filter(Workflow.session_id == session.id)
+        .first()
+    )
+
+    agent_runs = (
+        db.query(AgentRun)
+        .filter(AgentRun.session_id == session.id)
+        .order_by(AgentRun.started_at.asc())
+        .all()
+    )
 
     return {
         "session_id": session_id,
         "status": session.status,
-        "state": session.state,
+        "state": {
+            "messages": [m.to_dict() for m in messages],
+            "workflow": workflow.to_dict() if workflow else None,
+            "agent_runs": [r.to_dict() for r in agent_runs],
+        },
     }
 
 
@@ -533,59 +566,114 @@ class SessionTraceResponse(BaseModel):
     trace: TraceData
 
 
-def _build_trace_events(state: dict) -> list[TraceEvent]:
-    """Build a list of trace events from session state.
+def _build_trace_events_from_db(db, session_id) -> list[TraceEvent]:
+    """Build a list of trace events from normalized tables.
 
-    Combines workflow_events and llm_calls into a unified timeline.
+    Combines agent_runs, tool_calls, and llm_calls into a unified timeline.
     """
+    from druppie.db.models import AgentRun, ToolCall, LlmCall
+
     events = []
     event_counter = 0
 
-    workflow_events = state.get("workflow_events", [])
-    llm_calls = state.get("llm_calls", [])
+    # Get agent runs
+    agent_runs = (
+        db.query(AgentRun)
+        .filter(AgentRun.session_id == session_id)
+        .order_by(AgentRun.started_at.asc())
+        .all()
+    )
 
-    # Process workflow events
-    for evt in workflow_events:
+    for run in agent_runs:
         event_counter += 1
-        event_type = evt.get("type", "unknown")
-
-        # Extract agent info from various event fields
-        agent = evt.get("agent_id") or evt.get("agent")
-
-        trace_event = TraceEvent(
+        # Agent start event
+        events.append(TraceEvent(
             id=f"evt-{event_counter}",
-            type=event_type,
-            agent=agent,
-            timestamp=evt.get("timestamp", ""),
-            data={k: v for k, v in evt.items() if k not in ["type", "timestamp", "session_id", "agent_id", "agent"]},
-        )
+            type="agent_start",
+            agent=run.agent_id,
+            timestamp=run.started_at.isoformat() if run.started_at else "",
+            data={
+                "agent_run_id": str(run.id),
+                "status": run.status,
+                "iteration_count": run.iteration_count,
+            },
+        ))
 
-        # Enrich tool_call events
-        if event_type == "tool_call":
-            trace_event.tool = evt.get("tool_name")
-            trace_event.args = {"preview": evt.get("args_preview", "")}
+        if run.completed_at:
+            event_counter += 1
+            events.append(TraceEvent(
+                id=f"evt-{event_counter}",
+                type="agent_complete",
+                agent=run.agent_id,
+                timestamp=run.completed_at.isoformat(),
+                data={
+                    "agent_run_id": str(run.id),
+                    "status": run.status,
+                },
+            ))
 
-        events.append(trace_event)
+    # Get tool calls
+    tool_calls = (
+        db.query(ToolCall)
+        .filter(ToolCall.session_id == session_id)
+        .order_by(ToolCall.created_at.asc())
+        .all()
+    )
 
-    # Process LLM calls as separate events
+    for tc in tool_calls:
+        event_counter += 1
+        # Get agent_id from agent_run if available
+        agent_id = None
+        if tc.agent_run_id:
+            agent_run = db.query(AgentRun).filter(AgentRun.id == tc.agent_run_id).first()
+            if agent_run:
+                agent_id = agent_run.agent_id
+
+        events.append(TraceEvent(
+            id=f"evt-{event_counter}",
+            type="tool_call",
+            agent=agent_id,
+            timestamp=tc.created_at.isoformat() if tc.created_at else "",
+            tool=f"{tc.mcp_server}:{tc.tool_name}",
+            args={a.arg_name: a.arg_value[:100] if a.arg_value else None for a in tc.arguments} if tc.arguments else {},
+            result={"status": tc.status, "error": tc.error_message} if tc.error_message else {"status": tc.status},
+            duration_ms=int((tc.executed_at - tc.created_at).total_seconds() * 1000) if tc.executed_at and tc.created_at else None,
+            data={"tool_call_id": str(tc.id), "mcp_server": tc.mcp_server},
+        ))
+
+    # Get LLM calls
+    llm_calls = (
+        db.query(LlmCall)
+        .filter(LlmCall.session_id == session_id)
+        .order_by(LlmCall.created_at.asc())
+        .all()
+    )
+
     for call in llm_calls:
         event_counter += 1
-        trace_event = TraceEvent(
+        # Get agent_id from agent_run if available
+        agent_id = None
+        if call.agent_run_id:
+            agent_run = db.query(AgentRun).filter(AgentRun.id == call.agent_run_id).first()
+            if agent_run:
+                agent_id = agent_run.agent_id
+
+        events.append(TraceEvent(
             id=f"evt-{event_counter}",
             type="llm_call",
-            agent=call.get("agent_id"),
-            timestamp=call.get("timestamp", ""),
-            duration_ms=call.get("duration_ms", 0),
+            agent=agent_id,
+            timestamp=call.created_at.isoformat() if call.created_at else "",
+            duration_ms=call.duration_ms,
             data={
-                "iteration": call.get("iteration"),
-                "has_tool_calls": bool(call.get("response", {}).get("tool_calls")),
-                "message_count": len(call.get("messages", [])),
-                "tools_provided": len(call.get("tools", []) or []),
-                "usage": call.get("usage", {}),
-                "response_preview": (call.get("response", {}).get("content") or "")[:200],
+                "provider": call.provider,
+                "model": call.model,
+                "usage": {
+                    "prompt_tokens": call.prompt_tokens,
+                    "completion_tokens": call.completion_tokens,
+                    "total_tokens": call.total_tokens,
+                },
             },
-        )
-        events.append(trace_event)
+        ))
 
     # Sort events by timestamp
     events.sort(key=lambda e: e.timestamp or "")
@@ -593,8 +681,10 @@ def _build_trace_events(state: dict) -> list[TraceEvent]:
     return events
 
 
-def _build_trace_summary(events: list[TraceEvent], state: dict) -> TraceSummary:
+def _build_trace_summary_from_db(events: list[TraceEvent], session) -> TraceSummary:
     """Build summary statistics from trace events."""
+    from datetime import datetime
+
     agents_used = set()
     tools_called = 0
     llm_calls_count = 0
@@ -607,12 +697,10 @@ def _build_trace_summary(events: list[TraceEvent], state: dict) -> TraceSummary:
         if evt.type == "llm_call":
             llm_calls_count += 1
 
-    # Calculate total duration from timestamps or stored value
+    # Calculate total duration from timestamps
     total_duration_ms = 0
     if events:
         try:
-            from datetime import datetime
-
             first_ts = events[0].timestamp
             last_ts = events[-1].timestamp
             if first_ts and last_ts:
@@ -622,30 +710,15 @@ def _build_trace_summary(events: list[TraceEvent], state: dict) -> TraceSummary:
         except (ValueError, TypeError):
             pass
 
-    # Use stored duration if available and larger
-    stored_duration = state.get("duration_ms", 0)
-    if stored_duration > total_duration_ms:
-        total_duration_ms = stored_duration
-
-    # Get token usage from llm_calls
-    prompt_tokens = 0
-    completion_tokens = 0
-    total_tokens = 0
-    for call in state.get("llm_calls", []):
-        usage = call.get("usage", {})
-        prompt_tokens += usage.get("prompt_tokens", 0)
-        completion_tokens += usage.get("completion_tokens", 0)
-        total_tokens += usage.get("total_tokens", 0)
-
     return TraceSummary(
         total_events=len(events),
         agents_used=sorted(list(agents_used)),
         tools_called=tools_called,
         llm_calls=llm_calls_count,
         total_duration_ms=total_duration_ms,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
+        prompt_tokens=session.prompt_tokens or 0,
+        completion_tokens=session.completion_tokens or 0,
+        total_tokens=session.total_tokens or 0,
     )
 
 
@@ -661,26 +734,26 @@ async def get_session_trace(
     and tool executions in a format suitable for the frontend Debug Panel.
 
     The trace includes:
-    - All workflow_events (agent starts, completions, errors)
-    - All llm_calls (model calls with inputs/outputs)
+    - All agent_runs (agent starts, completions)
+    - All llm_calls (model calls with provider/model info)
     - All tool_calls (MCP tool executions with args)
     - Timeline data (timestamps for each event)
     - Agent information (which agent executed what)
     """
+    from druppie.db.models import LlmCall, AgentRun
+
     session = crud.get_session(db, session_id)
     if not session:
         raise NotFoundError("session", session_id)
 
     # Check ownership (unless admin)
-    check_resource_ownership(user, session.user_id)
+    check_resource_ownership(user, str(session.user_id) if session.user_id else None)
 
-    state = session.state or {}
-
-    # Build trace events from state
-    events = _build_trace_events(state)
+    # Build trace events from normalized tables
+    events = _build_trace_events_from_db(db, session.id)
 
     # Build summary
-    summary = _build_trace_summary(events, state)
+    summary = _build_trace_summary_from_db(events, session)
 
     logger.info(
         "session_trace_retrieved",
@@ -689,22 +762,39 @@ async def get_session_trace(
         agents_used=summary.agents_used,
     )
 
-    # Build raw LLM calls list for full debugging data
-    raw_llm_calls = [
-        RawLLMCall(
-            agent_id=call.get("agent_id"),
-            iteration=call.get("iteration"),
-            timestamp=call.get("timestamp"),
-            duration_ms=call.get("duration_ms"),
-            model=call.get("model"),  # Model transparency
-            provider=call.get("provider"),  # Provider transparency
-            messages=call.get("messages", []),
-            tools=call.get("tools"),
-            response=call.get("response"),
-            usage=call.get("usage"),
-        )
-        for call in state.get("llm_calls", [])
-    ]
+    # Build raw LLM calls list from database
+    llm_calls = (
+        db.query(LlmCall)
+        .filter(LlmCall.session_id == session.id)
+        .order_by(LlmCall.created_at.asc())
+        .all()
+    )
+
+    raw_llm_calls = []
+    for call in llm_calls:
+        # Get agent_id from agent_run if available
+        agent_id = None
+        if call.agent_run_id:
+            agent_run = db.query(AgentRun).filter(AgentRun.id == call.agent_run_id).first()
+            if agent_run:
+                agent_id = agent_run.agent_id
+
+        raw_llm_calls.append(RawLLMCall(
+            agent_id=agent_id,
+            iteration=None,  # Not stored in normalized schema
+            timestamp=call.created_at.isoformat() if call.created_at else None,
+            duration_ms=call.duration_ms,
+            model=call.model,
+            provider=call.provider,
+            messages=[],  # Full messages not stored in normalized schema
+            tools=None,
+            response=None,
+            usage={
+                "prompt_tokens": call.prompt_tokens,
+                "completion_tokens": call.completion_tokens,
+                "total_tokens": call.total_tokens,
+            },
+        ))
 
     return SessionTraceResponse(
         session_id=session_id,

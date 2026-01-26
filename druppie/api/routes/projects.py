@@ -123,7 +123,7 @@ def project_to_response(
     app_url = main_build.app_url if main_build and is_running else None
 
     return ProjectResponse(
-        id=project.id,
+        id=str(project.id),
         name=project.name,
         description=project.description,
         repo_name=project.repo_name,
@@ -131,7 +131,7 @@ def project_to_response(
         status=project.status,
         created_at=project.created_at.isoformat() if project.created_at else None,
         updated_at=project.updated_at.isoformat() if project.updated_at else None,
-        owner_id=project.owner_id,
+        owner_id=str(project.owner_id) if project.owner_id else None,
         main_build=main_build.to_dict() if main_build else None,
         preview_builds=[b.to_dict() for b in (preview_builds or [])],
         is_running=is_running,
