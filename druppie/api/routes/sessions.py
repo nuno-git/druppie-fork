@@ -30,6 +30,7 @@ class ProjectInfo(BaseModel):
     name: str
     repo_name: str | None = None
     repo_url: str | None = None
+    app_url: str | None = None  # Running app URL from build
 
 
 class MessageResponse(BaseModel):
@@ -159,11 +160,24 @@ def _session_to_response(session, project=None, db=None) -> SessionResponse:
     # Build project info if available
     project_info = None
     if project:
+        # Get app_url from running build if available
+        app_url = None
+        if db:
+            from druppie.db.models import Build
+            running_build = db.query(Build).filter(
+                Build.project_id == project.id,
+                Build.status == "running",
+                Build.is_preview == False,
+            ).first()
+            if running_build:
+                app_url = running_build.app_url
+
         project_info = ProjectInfo(
             id=str(project.id),
             name=project.name,
             repo_name=project.repo_name,
             repo_url=project.repo_url,
+            app_url=app_url,
         )
 
     # Get messages from database if db is provided
