@@ -12,14 +12,7 @@ import {
   Bug,
   Zap,
 } from 'lucide-react'
-
-// Format token count with K suffix for large numbers
-const formatTokens = (count) => {
-  if (!count) return null
-  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`
-  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`
-  return count.toString()
-}
+import { formatTokens, formatCost, calculateCost } from '../../utils/tokenUtils'
 
 // Individual conversation item
 const ConversationItem = ({ session, isActive, onClick, onDebug }) => {
@@ -63,9 +56,12 @@ const ConversationItem = ({ session, isActive, onClick, onDebug }) => {
               <span className={`w-2 h-2 rounded-full ${getStatusColor(session.status)}`} />
               <span className="text-xs text-gray-500">{date}</span>
               {formatTokens(session.total_tokens) && (
-                <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Total tokens used">
+                <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded flex items-center gap-0.5" title={`${session.total_tokens?.toLocaleString() || 0} tokens (${formatCost(calculateCost(session.total_tokens)) || '<$0.01'})`}>
                   <Zap className="w-2.5 h-2.5" />
                   {formatTokens(session.total_tokens)}
+                  {formatCost(calculateCost(session.total_tokens)) && (
+                    <span className="text-yellow-600 ml-0.5">{formatCost(calculateCost(session.total_tokens))}</span>
+                  )}
                 </span>
               )}
               {session.project_name && (
