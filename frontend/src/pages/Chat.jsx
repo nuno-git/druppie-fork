@@ -32,6 +32,7 @@ import {
   ConversationSidebar,
   DebugPanel,
   ApprovalCard,
+  ToolExecutionCard,
 } from '../components/chat'
 
 const Chat = () => {
@@ -59,6 +60,8 @@ const Chat = () => {
   const [isStopping, setIsStopping] = useState(false)
   const [sessionPendingApprovals, setSessionPendingApprovals] = useState([]) // Session-level approvals not attached to messages
   const [isAgentWorking, setIsAgentWorking] = useState(false) // For showing typing indicator after approval
+  const [currentAgentId, setCurrentAgentId] = useState(null) // Track which agent is currently working
+  const [toolExecutions, setToolExecutions] = useState([]) // Track tool executions with approval status
 
   // Fetch session history
   const { data: sessionsData } = useQuery({
@@ -117,21 +120,46 @@ const Chat = () => {
   // Workflow event listener
   useEffect(() => {
     const handleWorkflowEvent = (data) => {
+      console.log('[Chat] handleWorkflowEvent called:', data)
       const eventSessionId = data.session_id || data.plan_id
-      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) return
+      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) {
+        console.log('[Chat] Ignoring event - session mismatch:', eventSessionId, '!==', currentPlanId)
+        return
+      }
 
       const event = data.event
-      if (!event) return
+      if (!event) {
+        console.log('[Chat] No event in data, skipping')
+        return
+      }
+
+      const eventType = event.type || event.event_type || ''
+      console.log('[Chat] Processing workflow event:', eventType, event)
+
+      // Update agent working state based on event type
+      if (eventType === 'agent_started') {
+        const agentId = event.data?.agent_id || event.agent_id
+        console.log('[Chat] Agent started:', agentId)
+        setIsAgentWorking(true)
+        if (agentId) setCurrentAgentId(agentId)
+      }
 
       const stepTitle = event.title || event.data?.description || formatEventTitle(event)
       if (stepTitle) setCurrentStep(stepTitle)
 
       // Check if workflow is complete or failed - stop the working indicator
-      const eventType = event.type || event.event_type || ''
       if (eventType.includes('workflow_completed') || eventType.includes('workflow_failed') ||
           eventType.includes('session_completed') || eventType.includes('session_failed')) {
         setIsAgentWorking(false)
         setCurrentStep(null)
+        setCurrentAgentId(null)
+      }
+
+      // Agent completed - keep working if workflow continues, just update agent
+      if (eventType === 'agent_completed') {
+        const agentId = event.data?.agent_id || event.agent_id
+        // Don't stop working - next agent may start
+        if (agentId) setCurrentAgentId(agentId)
       }
 
       const formattedEvent = {
@@ -157,23 +185,41 @@ const Chat = () => {
       const approverRole = data.approver_role || 'user'
       const toolName = data.tool_name || data.name || 'action'
       const approvalId = data.approval_id || data.id
+      const agentId = data.agent_id
 
-      // Only show notification and add message if it's from another user
+      // Update the tool execution status instead of adding a message
+      setToolExecutions((prev) => {
+        const existing = prev.find(t => t.approvalId === approvalId)
+        if (existing) {
+          return prev.map(t => t.approvalId === approvalId ? {
+            ...t,
+            status: 'approved',
+            approverUsername,
+            approverRole,
+            approvedAt: new Date().toISOString(),
+          } : t)
+        }
+        // If not found, add it (for real-time updates from other sessions)
+        return [...prev, {
+          id: approvalId,
+          approvalId,
+          agentId: agentId || 'developer',
+          toolName,
+          parameters: data.args || {},
+          status: 'approved',
+          approverUsername,
+          approverRole,
+          approvedAt: new Date().toISOString(),
+        }]
+      })
+
+      // Only show notification if it's from another user
       if (approverId && approverId !== user?.id) {
         toast.success('Task Approved', `${approverUsername} (${approverRole}) approved: ${toolName}`)
 
-        // Add approval message to chat immediately (will also be in DB on reload)
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: 'system',
-            content: `✅ **${approverUsername}** (${approverRole}) approved: \`${toolName}\``,
-            timestamp: new Date().toISOString(),
-          },
-        ])
-
         // Show typing indicator since agent is now working
-        setCurrentStep('Agent is continuing execution...')
+        setCurrentStep(`${agentId || 'Agent'} is continuing execution...`)
+        setCurrentAgentId(agentId || 'developer')
         setIsAgentWorking(true)
         setLiveWorkflowEvents([])
       }
@@ -195,20 +241,36 @@ const Chat = () => {
       const rejectorRole = data.approver_role || 'user'
       const toolName = data.tool_name || data.name || 'action'
       const approvalId = data.approval_id || data.id
+      const agentId = data.agent_id
 
-      // Only show notification and add message if it's from another user
+      // Update the tool execution status instead of adding a message
+      setToolExecutions((prev) => {
+        const existing = prev.find(t => t.approvalId === approvalId)
+        if (existing) {
+          return prev.map(t => t.approvalId === approvalId ? {
+            ...t,
+            status: 'rejected',
+            approverUsername: rejectorUsername,
+            approverRole: rejectorRole,
+            rejectionReason: data.reason || data.comment,
+          } : t)
+        }
+        return [...prev, {
+          id: approvalId,
+          approvalId,
+          agentId: agentId || 'developer',
+          toolName,
+          parameters: data.args || {},
+          status: 'rejected',
+          approverUsername: rejectorUsername,
+          approverRole: rejectorRole,
+          rejectionReason: data.reason || data.comment,
+        }]
+      })
+
+      // Only show notification if it's from another user
       if (rejectorId && rejectorId !== user?.id) {
         toast.warning('Task Rejected', `${rejectorUsername} (${rejectorRole}) rejected: ${toolName}`)
-
-        // Add rejection message to chat immediately
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: 'system',
-            content: `🚫 **${rejectorUsername}** (${rejectorRole}) rejected: \`${toolName}\``,
-            timestamp: new Date().toISOString(),
-          },
-        ])
       }
 
       // Remove the pending approval from messages
@@ -245,6 +307,16 @@ const Chat = () => {
   // HITL event listeners
   useEffect(() => {
     const handleHITLQuestion = (data) => {
+      console.log('[Chat] handleHITLQuestion called:', data)
+      // Filter by session - only show questions for our session
+      const eventSessionId = data.session_id
+      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) {
+        console.log('[Chat] Ignoring question - session mismatch:', eventSessionId, '!==', currentPlanId)
+        return
+      }
+
+      console.log('[Chat] Processing HITL question for session:', eventSessionId)
+
       // Create question data with agent info for proper display
       const questionData = {
         id: data.request_id || data.question_id,
@@ -256,6 +328,10 @@ const Chat = () => {
         session_id: data.session_id || currentPlanId,
         agent_id: data.agent_id || 'unknown',
       }
+
+      // Stop showing typing indicator when waiting for user input
+      setIsAgentWorking(false)
+      setCurrentStep(null)
 
       // Add as a separate question message (not embedded in assistant message)
       setMessages((prev) => [
@@ -290,6 +366,25 @@ const Chat = () => {
         approved_by_ids: [],
         args: data.args || data.context,
         step_id: data.step_id,
+      }
+
+      // Add to tool executions for ToolExecutionCard display (only for tool approvals, not step approvals)
+      if (!isStepApproval) {
+        setToolExecutions((prev) => {
+          // Avoid duplicates
+          if (prev.find(t => t.approvalId === data.approval_id)) return prev
+          return [...prev, {
+            id: data.approval_id,
+            approvalId: data.approval_id,
+            agentId: data.agent_id || currentAgentId || 'developer',
+            toolName: data.tool,
+            parameters: data.args || data.context || {},
+            status: 'pending',
+          }]
+        })
+        // Stop showing typing indicator when waiting for approval
+        setIsAgentWorking(false)
+        setCurrentStep(null)
       }
 
       setMessages((prev) => {
@@ -427,6 +522,7 @@ const Chat = () => {
     setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
 
     let pendingApprovals = []
+    let loadedToolExecutions = []
     if (fullSession.tasks) {
       pendingApprovals = fullSession.tasks
         .filter(task => task.status === 'pending_approval')
@@ -442,11 +538,47 @@ const Chat = () => {
           approved_by_roles: task.approvals?.filter(a => a.decision === 'approved').map(a => a.role) || [],
           approved_by_ids: task.approvals?.filter(a => a.decision === 'approved').map(a => a.approved_by || a.approver_id) || [],
         }))
+
+      // Load all tool executions (pending, approved, rejected) for ToolExecutionCard display
+      loadedToolExecutions = fullSession.tasks
+        .filter(task => task.mcp_tool && !task.mcp_tool.startsWith('approval:'))
+        .map(task => {
+          const lastApproval = task.approvals?.slice(-1)[0]
+          const isApproved = task.status === 'approved' || task.status === 'completed'
+          const isRejected = task.status === 'rejected'
+
+          return {
+            id: task.id,
+            approvalId: task.id,
+            agentId: task.agent_id || 'developer',
+            toolName: task.mcp_tool,
+            parameters: task.mcp_arguments || {},
+            status: isApproved ? 'approved' : isRejected ? 'rejected' : 'pending',
+            approverUsername: lastApproval?.approver_username || lastApproval?.approved_by_username,
+            approverRole: lastApproval?.role,
+            approvedAt: lastApproval?.created_at,
+            rejectionReason: isRejected ? (lastApproval?.comment || task.rejection_reason) : undefined,
+          }
+        })
     }
 
+    setToolExecutions(loadedToolExecutions)
+
     // Load messages from normalized database
-    const loadedMessages = (fullSession.messages || []).map((msg, idx) => {
-      const isLastAssistant = idx === (fullSession.messages?.length || 0) - 1 && msg.role === 'assistant'
+    // Filter out system messages that are approval notifications (they're shown via ToolExecutionCard)
+    const filteredMessages = (fullSession.messages || []).filter((msg) => {
+      if (msg.role === 'system') {
+        // Filter out approval notification messages
+        const content = msg.content || ''
+        if (content.includes('approved:') || content.includes('rejected:')) {
+          return false
+        }
+      }
+      return true
+    })
+
+    const loadedMessages = filteredMessages.map((msg, idx) => {
+      const isLastAssistant = idx === (filteredMessages.length - 1) && msg.role === 'assistant'
 
       return {
         role: msg.role,
@@ -501,6 +633,31 @@ const Chat = () => {
     // Store session-level pending approvals for display at end of chat
     // These may not be attached to any message yet
     setSessionPendingApprovals(pendingApprovals)
+
+    // Restore typing indicator state based on session status
+    // If session is still executing, show the typing indicator
+    // BUT NOT if there's a pending question - we're waiting for user input
+    const sessionStatus = fullSession.status
+    const isExecuting = ['executing', 'in_progress', 'running', 'active'].includes(sessionStatus)
+    const isPausedForApproval = sessionStatus === 'paused_approval' && pendingApprovals.length > 0
+    const hasPendingQuestion = hitlQuestions.some(q => q.status === 'pending')
+
+    if (isExecuting && !hasPendingQuestion) {
+      // Find the last active agent from workflow events
+      const lastAgentEvent = normalizedEvents
+        .filter(e => e.data?.agent_id)
+        .pop()
+      const lastAgentId = lastAgentEvent?.data?.agent_id
+
+      setIsAgentWorking(true)
+      setCurrentAgentId(lastAgentId || null)
+      setCurrentStep(lastAgentId ? `${lastAgentId.charAt(0).toUpperCase() + lastAgentId.slice(1)} is working...` : 'Agent is working...')
+    } else {
+      // Clear typing indicator - either not executing, waiting for question, or waiting for approval
+      setIsAgentWorking(false)
+      setCurrentAgentId(null)
+      setCurrentStep(null)
+    }
   }
 
   // Chat mutation
@@ -781,6 +938,8 @@ const Chat = () => {
     setSessionPendingApprovals([])
     setCurrentStep(null)
     setIsAgentWorking(false)
+    setCurrentAgentId(null)
+    setToolExecutions([])
     setSearchParams({})
     setMessages([{ role: 'assistant', content: `Hello ${user?.firstName || user?.username}! I'm Druppie, your AI governance assistant.\n\nI can help you:\n• Create applications (just describe what you want!)\n• Manage code deployments\n• Check compliance and permissions\n\nWhat would you like to build today?` }])
   }
@@ -788,6 +947,9 @@ const Chat = () => {
   const handleSelectPlan = async (session) => {
     setCurrentPlanId(session.id)
     setLiveWorkflowEvents([])
+    setToolExecutions([])
+    setCurrentAgentId(null)
+    setIsAgentWorking(false)
     setSearchParams({ session: session.id })
     try {
       const fullSession = await getPlan(session.id)
@@ -904,12 +1066,30 @@ const Chat = () => {
               />
             )
           ))}
+          {/* Render completed tool executions (approved/rejected) - pending ones shown via ApprovalCard */}
+          {toolExecutions
+            .filter((execution) => execution.status !== 'pending')
+            .map((execution) => (
+              <ToolExecutionCard
+                key={execution.id || execution.approvalId}
+                agentId={execution.agentId}
+                toolName={execution.toolName}
+                parameters={execution.parameters}
+                status={execution.status}
+                approverUsername={execution.approverUsername}
+                approverRole={execution.approverRole}
+                approvedAt={execution.approvedAt}
+                rejectionReason={execution.rejectionReason}
+              />
+            ))}
+
           {(chatMutation.isPending || isAgentWorking) && (
             <TypingIndicator
               currentStep={currentStep}
               liveEvents={liveWorkflowEvents}
               onStop={handleStopExecution}
               isStopping={isStopping}
+              agentId={currentAgentId}
             />
           )}
 

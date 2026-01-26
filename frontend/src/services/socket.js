@@ -2,6 +2,7 @@
  * WebSocket Service for Druppie Real-time Updates
  *
  * Updated to use native WebSocket for the new FastAPI backend.
+ * Includes race condition prevention and proper cleanup.
  */
 
 import { getToken } from './keycloak'
@@ -12,6 +13,8 @@ const WS_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000')
 
 let socket = null
 let reconnectAttempts = 0
+let reconnectTimer = null  // Track reconnect timer to prevent race conditions
+let isConnecting = false   // Prevent multiple simultaneous connection attempts
 const MAX_RECONNECT_ATTEMPTS = 10
 const RECONNECT_DELAY = 1000
 const MAX_RECONNECT_DELAY = 30000
@@ -70,7 +73,7 @@ const setConnectionStatus = (status) => {
       try {
         callback(status)
       } catch (err) {
-        console.error('[WebSocket] Status callback error:', err)
+        // Silently ignore callback errors
       }
     })
   }
@@ -95,47 +98,102 @@ const eventCallbacks = {
 }
 
 /**
+ * Clear any pending reconnection timer
+ */
+const clearReconnectTimer = () => {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+}
+
+/**
  * Initialize WebSocket connection
  */
 export const initSocket = (sessionId = null) => {
+  // If already connected, return existing socket
   if (socket?.readyState === WebSocket.OPEN) {
     return socket
   }
 
-  // Close existing socket if any
+  // If already connecting, don't create another connection
+  if (isConnecting || socket?.readyState === WebSocket.CONNECTING) {
+    return socket
+  }
+
+  // Clear any pending reconnection
+  clearReconnectTimer()
+
+  // Close existing socket cleanly if any
   if (socket) {
-    socket.close()
+    // Remove event handlers to prevent callbacks during close
+    socket.onopen = null
+    socket.onclose = null
+    socket.onerror = null
+    socket.onmessage = null
+    try {
+      socket.close()
+    } catch (e) {
+      // Ignore close errors
+    }
+    socket = null
   }
 
   const token = getToken()
+  if (!token) {
+    // Don't attempt connection without token
+    setConnectionStatus('disconnected')
+    return null
+  }
+
   const wsPath = sessionId ? `/ws/session/${sessionId}` : '/ws'
-  const wsUrl = token ? `${WS_URL}${wsPath}?token=${token}` : `${WS_URL}${wsPath}`
+  const wsUrl = `${WS_URL}${wsPath}?token=${token}`
 
   // Set status to connecting (or reconnecting if we've already attempted)
+  isConnecting = true
   setConnectionStatus(reconnectAttempts > 0 ? 'reconnecting' : 'connecting')
 
-  socket = new WebSocket(wsUrl)
+  try {
+    socket = new WebSocket(wsUrl)
+  } catch (e) {
+    isConnecting = false
+    setConnectionStatus('disconnected')
+    return null
+  }
 
   socket.onopen = () => {
+    isConnecting = false
     reconnectAttempts = 0
     setConnectionStatus('connected')
   }
 
   socket.onclose = (event) => {
+    isConnecting = false
+
+    // Don't reconnect if we're intentionally disconnecting (code 1000)
+    if (event.code === 1000) {
+      setConnectionStatus('disconnected')
+      return
+    }
+
     // Attempt reconnection with exponential backoff and jitter
     if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
       const delay = calculateReconnectDelay(reconnectAttempts)
       reconnectAttempts++
       setConnectionStatus('reconnecting')
-      setTimeout(() => initSocket(sessionId), delay)
+      clearReconnectTimer()
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null
+        initSocket(sessionId)
+      }, delay)
     } else {
-      console.error('[WebSocket] Max reconnection attempts reached, code:', event.code)
       setConnectionStatus('disconnected')
     }
   }
 
-  socket.onerror = (error) => {
-    console.error('[WebSocket] Error:', error)
+  socket.onerror = () => {
+    // Error is handled by onclose, just mark as not connecting
+    isConnecting = false
   }
 
   socket.onmessage = (event) => {
@@ -143,8 +201,12 @@ export const initSocket = (sessionId = null) => {
       const data = JSON.parse(event.data)
       const eventType = data.type
 
+      // DEBUG: Log all incoming WebSocket messages
+      console.log('[WebSocket] Received:', eventType, data)
+
       // Handle connected confirmation (no action needed)
       if (eventType === 'connected') {
+        console.log('[WebSocket] Connected to server')
         return
       }
 
@@ -158,6 +220,7 @@ export const initSocket = (sessionId = null) => {
 
       const callbackType = eventMap[eventType] || eventType
       const callbacks = eventCallbacks[callbackType] || []
+      console.log('[WebSocket] Dispatching to', callbackType, '- callbacks registered:', callbacks.length)
       callbacks.forEach((callback) => {
         try {
           callback(data)
@@ -166,7 +229,7 @@ export const initSocket = (sessionId = null) => {
         }
       })
     } catch (err) {
-      console.error('[WebSocket] Failed to parse message:', err)
+      console.error('[WebSocket] Parse error:', err)
     }
   }
 
@@ -199,6 +262,7 @@ const sendMessage = (message) => {
  */
 export const joinPlanRoom = (planId) => {
   if (planId) {
+    console.log('[WebSocket] Joining session room:', planId)
     sendMessage({ type: 'join_session', session_id: planId })
   }
 }
@@ -340,10 +404,23 @@ export const onDeploymentComplete = (callback) => {
  * Disconnect the socket
  */
 export const disconnectSocket = () => {
+  clearReconnectTimer()
+  isConnecting = false
+
   if (socket) {
-    socket.close()
+    // Remove event handlers to prevent reconnection attempts
+    socket.onopen = null
+    socket.onclose = null
+    socket.onerror = null
+    socket.onmessage = null
+    try {
+      socket.close(1000, 'User disconnect')  // Use code 1000 for intentional close
+    } catch (e) {
+      // Ignore close errors
+    }
     socket = null
-    reconnectAttempts = 0
-    setConnectionStatus('disconnected')
   }
+
+  reconnectAttempts = 0
+  setConnectionStatus('disconnected')
 }
