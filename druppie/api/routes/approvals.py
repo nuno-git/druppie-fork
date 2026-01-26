@@ -90,7 +90,9 @@ def _create_build_record_from_docker_run(
     ).first()
 
     if existing:
-        # Update existing record
+        # Update existing record - including project_id so it points to the
+        # project that most recently deployed with this container name
+        existing.project_id = project_id
         existing.port = port
         existing.app_url = app_url
         existing.status = "running"
@@ -98,6 +100,7 @@ def _create_build_record_from_docker_run(
         logger.info(
             "build_record_updated",
             build_id=existing.id,
+            project_id=project_id,
             container_name=container_name,
         )
         return existing
