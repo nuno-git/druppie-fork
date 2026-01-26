@@ -1126,7 +1126,7 @@ class UsersByRoleResponse(BaseModel):
     users: list[UserContact]
 
 
-@router.get("/users-by-role/{role}", response_model=UsersByRoleResponse)
+@router.get("/approvals/users-by-role/{role}", response_model=UsersByRoleResponse)
 async def get_users_by_role(
     role: str,
     user: dict = Depends(get_current_user),
