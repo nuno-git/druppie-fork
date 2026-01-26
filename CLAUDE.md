@@ -539,6 +539,27 @@ with db_session() as db:
 **Key Files**: `druppie/core/loop.py` (lines ~1205 and ~1753)
 **Result**: Debug page now shows complete execution history (48 events instead of 3)
 
+### Issue: Workflow Stuck After Second MCP Tool Approval
+**Symptom**: After approving second `coding:write_file` from architect, workflow doesn't continue to next step
+**Observation**:
+- Session status stays as `paused_hitl`
+- Debug panel shows architect as "running" even though tool completed successfully
+- Backend logs show `resuming_mcp_tool_approval_with_state` with `agent_id=None` and `current_step=None`
+- WebSocket errors: "Unexpected ASGI message 'websocket.send', after sending 'websocket.close'"
+**Root Cause**: The workflow state isn't properly preserved or restored when resuming from approval
+**Impact**: Multi-step workflows get stuck after the first approval/HITL round
+**To Investigate**:
+1. Check how `agent_state` is being saved when creating approval records
+2. Verify `resume_from_step_approval` properly restores workflow position
+3. Check if WebSocket disconnection during approval affects workflow continuation
+**Workaround**: Session may need to be manually restarted or workflow resumed via API
+
+### Issue: docker-compose Not Loading .env from Project Root
+**Symptom**: Backend container shows empty API keys (`DEEPINFRA_API_KEY=`, `ZAI_API_KEY=`)
+**Cause**: The `compose()` helper function in setup.sh didn't pass `--env-file .env`
+**Fix**: Updated setup.sh to use `$DOCKER_COMPOSE -f "$COMPOSE_FILE" --env-file .env "$@"`
+**Note**: The .env file is at project root, but docker-compose.yml is in `druppie/` subdirectory
+
 ### Workflow: Full Architect Flow Testing
 To test the complete architect workflow (including HITL questions and architect approval):
 1. Log in as `normal_user`
