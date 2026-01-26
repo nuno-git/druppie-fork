@@ -740,9 +740,10 @@ async def _handle_approval_step(
     approval_message = step.description or "Approval required to continue"
 
     # Create approval record
+    # Note: create_approval expects session_id as the second positional argument
     approval = create_approval(
         db,
-        session_id=UUID(exec_ctx.session_id),
+        UUID(exec_ctx.session_id),  # session_id as positional arg
         approval_type="workflow_step",
         workflow_step_id=step.id,
         title=f"Step Approval: {step.agent_id}",
@@ -1523,20 +1524,43 @@ class MainLoop:
 
                     # Check if agent paused again
                     if result.get("paused"):
-                        # Save the new agent state to the question
-                        new_question_id = result.get("question_id")
-                        if new_question_id and result.get("agent_state"):
+                        is_hitl = result.get("question_id") is not None
+
+                        # Save agent state to the appropriate record
+                        if is_hitl and result.get("agent_state"):
+                            # Save state to new HITL question
+                            new_question_id = result.get("question_id")
                             update_hitl_question_state(
                                 db, UUID(new_question_id), result["agent_state"]
                             )
+                            logger.info(
+                                "saved_agent_state_for_hitl_on_resume",
+                                question_id=new_question_id,
+                                agent_id=agent_id,
+                            )
 
-                        update_session(db, UUID(session_id), status="paused_hitl")
+                        # Handle MCP tool approval - save agent_state
+                        new_approval_id = result.get("approval_id")
+                        if new_approval_id and result.get("agent_state"):
+                            update_approval(
+                                db, new_approval_id, {"agent_state": result["agent_state"]}
+                            )
+                            logger.info(
+                                "saved_agent_state_for_approval_on_resume",
+                                approval_id=new_approval_id,
+                                agent_id=agent_id,
+                            )
+
+                        status = "paused_hitl" if is_hitl else "paused_approval"
+                        update_session(db, UUID(session_id), status=status)
+
                         return {
                             "success": True,
                             "type": "interrupt",
-                            "response": result.get("question", "Agent is waiting for input"),
+                            "response": result.get("question", result.get("message", "Execution paused")),
                             "paused": True,
-                            "question_id": new_question_id,
+                            "question_id": result.get("question_id"),
+                            "approval_id": new_approval_id,
                             "session_id": session_id,
                             "workflow_events": exec_ctx.workflow_events,
                         }

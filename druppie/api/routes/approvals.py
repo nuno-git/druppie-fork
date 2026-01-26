@@ -308,13 +308,13 @@ class ApprovalResponse(BaseModel):
     """Approval response model."""
 
     id: str
-    session_id: str
-    tool_name: str
+    session_id: str | None  # May be None for some approvals
+    tool_name: str | None  # May be None for step approvals
     arguments: dict | None
     status: str
     required_roles: list[str] | None
     approvals_received: list[str] | None  # List of user IDs who approved
-    danger_level: str
+    danger_level: str | None  # May be None for step approvals
     description: str | None
     agent_id: str | None
     created_at: str | None
@@ -574,46 +574,48 @@ async def approve_request(
             approver_role=approver_role,
             approver_username=username,
             tool_name=approval.tool_name,
+            agent_id=approval.agent_id,  # Include which agent executed the tool
         )
 
         # Check if this is a step approval checkpoint (vs MCP tool approval)
-        # Step approvals have tool_name like "approval:step_2" and contain agent_state
-        if approval.tool_name and approval.tool_name.startswith("approval:"):
-            # This is a step approval checkpoint - resume plan execution from next step
+        # Step approvals have approval_type="workflow_step" or tool_name like "approval:step_2"
+        is_step_approval = (
+            approval.approval_type == "workflow_step"
+            or (approval.tool_name and approval.tool_name.startswith("approval:"))
+        )
+        if is_step_approval:
+            # This is a workflow step approval checkpoint - resume plan execution from next step
             logger.info(
-                "resuming_from_step_approval",
+                "resuming_from_workflow_step_approval",
                 approval_id=approval_id,
+                approval_type=approval.approval_type,
                 tool_name=approval.tool_name,
                 session_id=approval.session_id,
             )
 
             try:
-                # Get the saved agent_state from the approval
-                agent_state = approval.agent_state
-                if not agent_state:
-                    logger.error(
-                        "step_approval_missing_agent_state",
-                        approval_id=approval_id,
-                        tool_name=approval.tool_name,
-                    )
-                    return {
-                        "success": False,
-                        "status": "execution_failed",
-                        "error_type": ApprovalErrorType.CONTEXT_INVALID.value,
-                        "error": "Step approval is missing saved agent state. Cannot resume execution.",
-                        "user_message": "Cannot resume execution: saved state is missing.",
-                        "retryable": False,
-                    }
-
                 # Create emit callback for WebSocket updates
                 emit_event = create_emit_event(str(approval.session_id))
 
-                # Resume plan execution from the next step
-                resume_result = await loop.resume_from_step_approval(
-                    session_id=str(approval.session_id),
-                    agent_state=agent_state,
-                    emit_event=emit_event,
-                )
+                # Get the saved agent_state from the approval (if any)
+                agent_state = approval.agent_state
+
+                if agent_state:
+                    # If we have agent_state, use resume_from_step_approval
+                    # This handles mid-agent pauses with saved context
+                    resume_result = await loop.resume_from_step_approval(
+                        session_id=str(approval.session_id),
+                        agent_state=agent_state,
+                        emit_event=emit_event,
+                    )
+                else:
+                    # No agent_state - this is a pure workflow checkpoint
+                    # Use resume_from_approval to continue from next step
+                    resume_result = await loop.resume_from_approval(
+                        session_id=str(approval.session_id),
+                        approval_id=approval_id,
+                        emit_event=emit_event,
+                    )
 
                 return {
                     "success": True,
@@ -937,6 +939,7 @@ async def approve_request(
             approver_role=approver_role,
             approver_username=username,
             tool_name=approval.tool_name,
+            agent_id=approval.agent_id,  # Include which agent executed the tool
         )
 
         # Update session status
