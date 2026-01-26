@@ -392,7 +392,20 @@ async def list_approvals(
         limit = MAX_LIMIT
 
     user_roles = user.get("realm_access", {}).get("roles", [])
+    user_id = user.get("sub")  # User ID from token
     is_admin = "admin" in user_roles
+
+    # For history (approved/rejected), also show approvals for user's own sessions
+    is_history_query = status in ("approved", "rejected")
+
+    # Get session IDs owned by this user for history filtering
+    user_session_ids = set()
+    if is_history_query and user_id:
+        from druppie.db.models import Session as DBSession
+        owned_sessions = db.query(DBSession.id).filter(
+            DBSession.user_id == user_id
+        ).all()
+        user_session_ids = {str(s[0]) for s in owned_sessions}
 
     # Build base query with filters
     query = db.query(Approval)
@@ -414,9 +427,8 @@ async def list_approvals(
         offset = (page - 1) * limit
         paginated = query.offset(offset).limit(limit).all()
     else:
-        # For non-admin users, we need to filter by role
-        # Use streaming to avoid loading all into memory at once
-        # Fetch in batches to find approvals user can act on
+        # For non-admin users, we need to filter by role (for pending)
+        # OR by session ownership (for history)
         BATCH_SIZE = 500
         filtered = []
         total_scanned = 0
@@ -431,11 +443,17 @@ async def list_approvals(
                 break
 
             for a in batch:
-                # Security policy: If no required_roles, default to admin only
+                # For history: include if user owns the session
+                if is_history_query and str(a.session_id) in user_session_ids:
+                    filtered.append(a)
+                    if len(filtered) >= target_count + BATCH_SIZE:
+                        break
+                    continue
+
+                # For pending (or if not owner): check role permissions
                 required_roles = a.required_roles if a.required_roles else ["admin"]
                 if any(r in user_roles for r in required_roles):
                     filtered.append(a)
-                    # Stop early if we have enough for this page plus some buffer
                     if len(filtered) >= target_count + BATCH_SIZE:
                         break
 
