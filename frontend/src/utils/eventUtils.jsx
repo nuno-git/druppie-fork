@@ -64,6 +64,7 @@ export const getEventIcon = (eventType, status) => {
     case 'app_running':
       return <Play {...iconProps} />
     case 'approval_required':
+    case 'approval_pending':
       return <AlertTriangle {...iconProps} />
     case 'question_pending':
       return <HelpCircle {...iconProps} />
@@ -114,7 +115,7 @@ export const EVENT_CATEGORIES = {
   tool: ['tool_call', 'tool_executing', 'tool_completed', 'mcp_tool'],
   llm: ['llm_generating', 'llm_calling', 'llm_call', 'llm_response'],
   workflow: ['workflow_started', 'workflow_completed', 'workflow_failed', 'step_started', 'step_completed'],
-  approval: ['approval_required', 'question_pending'],
+  approval: ['approval_required', 'approval_pending', 'question_pending'],
   result: ['files_created', 'git_pushed', 'build_complete', 'app_running', 'workspace_initialized'],
 }
 
@@ -264,9 +265,9 @@ export const formatEventTitle = (event) => {
     const branch = data.branch ? ` on ${data.branch}` : ''
     return `Project ${projectName} initialized${branch}`
   }
-  if (type === 'approval_required') {
-    const tool = data.tool || data.tool_name || 'action'
-    return `Approval required for ${tool}`
+  if (type === 'approval_required' || type === 'approval_pending') {
+    const tool = data.tool || data.tool_name || event.tool || 'action'
+    return `⏳ Waiting for approval: ${tool}`
   }
   if (type === 'step_started') {
     return data.step_type ? `Starting ${data.step_type}` : 'Starting step'
@@ -323,9 +324,9 @@ export const getEventDescription = (event) => {
     }
     return data.workspace_id ? `Workspace: ${data.workspace_id.substring(0, 8)}...` : 'Workspace ready'
   }
-  if (type === 'approval_required') {
-    const roles = data.required_roles?.join(', ') || 'authorized user'
-    return `Requires approval from: ${roles}`
+  if (type === 'approval_required' || type === 'approval_pending') {
+    const role = data.required_role || data.required_roles?.join(', ') || 'authorized user'
+    return `Requires approval from: ${role}`
   }
   if (type === 'app_running') {
     if (data.url) {

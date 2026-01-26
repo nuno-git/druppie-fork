@@ -730,6 +730,32 @@ def _build_trace_events_from_db(db, session_id) -> list[TraceEvent]:
             },
         ))
 
+    # Add pending approvals as events too (so they show in debug panel)
+    from druppie.db.models import Approval
+
+    pending_approvals = (
+        db.query(Approval)
+        .filter(Approval.session_id == session_id, Approval.status == "pending")
+        .order_by(Approval.created_at.asc())
+        .all()
+    )
+
+    for approval in pending_approvals:
+        event_counter += 1
+        events.append(TraceEvent(
+            id=f"evt-{event_counter}",
+            type="approval_pending",
+            agent=approval.agent_id,
+            timestamp=approval.created_at.isoformat() if approval.created_at else "",
+            tool=approval.tool_name,
+            args=approval.mcp_arguments if approval.mcp_arguments else {},
+            data={
+                "approval_id": str(approval.id),
+                "required_role": approval.required_role,
+                "status": approval.status,
+            },
+        ))
+
     # Sort events by timestamp
     events.sort(key=lambda e: e.timestamp or "")
 
