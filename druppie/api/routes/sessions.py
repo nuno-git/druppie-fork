@@ -8,14 +8,68 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 import structlog
 
-from druppie.api.deps import get_current_user, get_db, check_resource_ownership
+from druppie.api.deps import get_current_user, get_db, check_resource_ownership, get_user_roles
 from druppie.api.errors import NotFoundError, AuthorizationError
 from druppie.db import crud
-from druppie.db.models import Session as SessionModel
+from druppie.db.models import Session as SessionModel, Approval
 
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+
+# =============================================================================
+# AUTHORIZATION HELPERS
+# =============================================================================
+
+
+def check_session_access(
+    user: dict,
+    session: SessionModel,
+    db: DBSession,
+) -> None:
+    """Check if user can access a session.
+
+    Allows access if:
+    - User owns the session
+    - User is admin
+    - User has a pending approval for this session that matches their role
+
+    Args:
+        user: Current authenticated user
+        session: Session to check access for
+        db: Database session
+
+    Raises:
+        AuthorizationError: If user cannot access the session
+    """
+    user_id = user.get("sub")
+    is_owner = str(session.user_id) == user_id if session.user_id else False
+    is_admin = "admin" in get_user_roles(user)
+
+    if is_owner or is_admin:
+        return
+
+    # Check if user has pending approvals for this session
+    user_roles = set(get_user_roles(user))
+    pending_approvals = (
+        db.query(Approval)
+        .filter(
+            Approval.session_id == session.id,
+            Approval.status == "pending",
+        )
+        .all()
+    )
+
+    for approval in pending_approvals:
+        required_role = approval.required_role or "admin"
+        if required_role in user_roles:
+            return  # User can approve this, allow access
+
+    raise AuthorizationError(
+        "You don't have permission to view this session",
+        required_roles=["owner", "admin", "approver"],
+    )
 
 
 # =============================================================================
@@ -432,8 +486,8 @@ async def get_session(
     if not session:
         raise NotFoundError("session", session_id)
 
-    # Check ownership (unless admin)
-    check_resource_ownership(user, str(session.user_id) if session.user_id else None)
+    # Check access (owner, admin, or has pending approval)
+    check_session_access(user, session, db)
 
     # Fetch project info if session has a project_id
     project = None
@@ -556,8 +610,8 @@ async def get_session_state(
     if not session:
         raise NotFoundError("session", session_id)
 
-    # Check ownership
-    check_resource_ownership(user, str(session.user_id) if session.user_id else None)
+    # Check access (owner, admin, or has pending approval)
+    check_session_access(user, session, db)
 
     # Reconstruct state from normalized tables
     messages = (
@@ -876,8 +930,8 @@ async def get_session_trace(
     if not session:
         raise NotFoundError("session", session_id)
 
-    # Check ownership (unless admin)
-    check_resource_ownership(user, str(session.user_id) if session.user_id else None)
+    # Check access (owner, admin, or has pending approval)
+    check_session_access(user, session, db)
 
     # Build trace events from normalized tables
     events = _build_trace_events_from_db(db, session.id)
