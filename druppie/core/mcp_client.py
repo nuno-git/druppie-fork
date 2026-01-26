@@ -422,7 +422,7 @@ class MCPClient:
             server=server,
             tool=tool,
             url=url,
-            session_id=context.session_id,
+            session_id=context.session_id if context else None,
             workspace_id=workspace_id,
             args=args,
         )
