@@ -435,6 +435,7 @@ const Chat = () => {
 
     // Add HITL questions (both pending and answered) as separate question messages
     // Use hitl_questions which includes all questions for full history reconstruction
+    // Note: The answered question message shows the user's answer inline, no need for separate user message
     const hitlQuestions = fullSession.hitl_questions || fullSession.pending_questions || []
     for (const q of hitlQuestions) {
       const isAnswered = q.status === 'answered'
@@ -452,15 +453,6 @@ const Chat = () => {
         userAnswer: q.answer,
         timestamp: q.created_at || new Date().toISOString(),
       })
-
-      // If answered, also add the user's answer as a user message
-      if (isAnswered && q.answer) {
-        loadedMessages.push({
-          role: 'user',
-          content: q.answer,
-          timestamp: q.answered_at || q.created_at || new Date().toISOString(),
-        })
-      }
     }
 
     // Sort all messages by timestamp to ensure correct order
