@@ -313,6 +313,7 @@ class ApprovalResponse(BaseModel):
     id: str
     session_id: str | None  # May be None for some approvals
     tool_name: str | None  # May be None for step approvals
+    approval_type: str | None = None  # "mcp_tool" or "workflow_step"
     arguments: dict | None
     status: str
     required_roles: list[str] | None
@@ -482,6 +483,7 @@ async def list_approvals(
             id=str(a.id),
             session_id=str(a.session_id) if a.session_id else None,
             tool_name=a.tool_name,
+            approval_type=a.approval_type,
             arguments=a.arguments,
             status=a.status,
             required_roles=a.required_roles,
@@ -524,6 +526,7 @@ async def get_approval(
         id=approval.id,
         session_id=approval.session_id,
         tool_name=approval.tool_name,
+        approval_type=approval.approval_type,
         arguments=approval.arguments,
         status=approval.status,
         required_roles=approval.required_roles,

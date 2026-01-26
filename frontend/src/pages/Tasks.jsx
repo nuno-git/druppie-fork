@@ -907,7 +907,7 @@ const Tasks = () => {
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium">{approval.tool_name || 'Unknown tool'}</span>
+                          <span className="font-medium">{approval.tool_name || (approval.approval_type === 'workflow_step' ? 'Step Approval' : 'Unknown tool')}</span>
                           <span className={`px-2 py-0.5 ${
                             approval.status === 'approved'
                               ? 'bg-green-100 text-green-700'
