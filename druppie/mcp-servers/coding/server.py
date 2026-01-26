@@ -95,9 +95,35 @@ WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/workspaces"))
 GITEA_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
 GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
 GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
+GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
+GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 
 # In-memory workspace registry (in production, use Redis/DB)
 workspaces: dict[str, dict] = {}
+
+
+def get_gitea_clone_url(repo_name: str) -> str:
+    """Get Gitea clone URL with embedded credentials if available.
+
+    If GITEA_USER and GITEA_PASSWORD are set, returns authenticated URL.
+    Otherwise returns unauthenticated URL.
+    """
+    # Parse URL to inject credentials
+    # GITEA_URL is like "http://gitea:3000"
+    if GITEA_USER and GITEA_PASSWORD:
+        # Embed credentials in URL for git operations
+        # Result: http://user:pass@gitea:3000/org/repo.git
+        if "://" in GITEA_URL:
+            protocol, rest = GITEA_URL.split("://", 1)
+            from urllib.parse import quote
+            return f"{protocol}://{quote(GITEA_USER)}:{quote(GITEA_PASSWORD)}@{rest}/{GITEA_ORG}/{repo_name}.git"
+    # Fallback: unauthenticated URL (push will fail)
+    return f"{GITEA_URL}/{GITEA_ORG}/{repo_name}.git"
+
+
+def is_gitea_configured() -> bool:
+    """Check if Gitea is configured with credentials for push."""
+    return bool(GITEA_TOKEN or (GITEA_USER and GITEA_PASSWORD))
 
 
 async def create_gitea_repo(repo_name: str, description: str) -> dict:
@@ -256,9 +282,9 @@ async def initialize_workspace(
     workspace_path = WORKSPACE_ROOT / user_id / project_id / session_id
     workspace_path.mkdir(parents=True, exist_ok=True)
 
-    # Clone repo if Gitea is configured
-    if GITEA_TOKEN:
-        repo_url = f"{GITEA_URL}/{GITEA_ORG}/{repo_name}.git"
+    # Clone repo if Gitea is configured with credentials
+    if is_gitea_configured():
+        repo_url = get_gitea_clone_url(repo_name)
         try:
             subprocess.run(
                 ["git", "clone", repo_url, str(workspace_path)],
@@ -1075,13 +1101,27 @@ async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
         # Commit
         subprocess.run(["git", "commit", "-m", message], cwd=cwd, check=True)
 
-        # Push (only if Gitea is configured)
-        if GITEA_TOKEN:
+        # Push (only if Gitea is configured with credentials)
+        if is_gitea_configured():
             try:
+                # Ensure remote has credentials for push
+                ws = get_workspace(workspace_id)
+                repo_name = ws.get("repo_name")
+                if repo_name:
+                    # Update remote URL with credentials if needed
+                    auth_url = get_gitea_clone_url(repo_name)
+                    subprocess.run(
+                        ["git", "remote", "set-url", "origin", auth_url],
+                        cwd=cwd,
+                        check=True,
+                        capture_output=True,
+                    )
+
                 subprocess.run(
                     ["git", "push", "-u", "origin", branch],
                     cwd=cwd,
                     check=True,
+                    capture_output=True,
                     timeout=60,
                 )
                 return {"success": True, "message": f"Committed and pushed: {message}", "pushed": True}
