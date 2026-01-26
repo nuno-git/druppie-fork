@@ -643,15 +643,15 @@ async def get_running_apps(
     for build, project in results:
         running_apps.append(
             RunningAppResponse(
-                build_id=build.id,
-                project_id=project.id,
+                build_id=str(build.id),
+                project_id=str(project.id),
                 project_name=project.name,
                 container_name=build.container_name,
                 app_url=build.app_url,
                 port=build.port,
                 branch=build.branch or "main",
                 is_preview=build.is_preview,
-                owner_id=project.owner_id,
+                owner_id=str(project.owner_id) if project.owner_id else None,
                 started_at=build.created_at.isoformat() if build.created_at else None,
             )
         )
