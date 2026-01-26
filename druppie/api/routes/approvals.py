@@ -27,7 +27,7 @@ from druppie.core.loop import MainLoop
 from druppie.core.mcp_client import get_mcp_client, MCPErrorType
 from druppie.core.execution_context import ExecutionContext
 from druppie.db import crud
-from druppie.db.models import Approval, Workspace, Build
+from druppie.db.models import Approval, Workspace, Build, User
 
 logger = structlog.get_logger()
 
@@ -323,8 +323,10 @@ class ApprovalResponse(BaseModel):
     created_at: str | None
     # Approval decision info (for history)
     approved_by: str | None = None
+    approved_by_username: str | None = None  # Human-readable username for display
     approved_at: str | None = None
     rejected_by: str | None = None
+    rejected_by_username: str | None = None  # Human-readable username for display
     rejection_reason: str | None = None
 
 
@@ -446,6 +448,16 @@ async def list_approvals(
         total = len(filtered)
         paginated = filtered[offset : offset + limit]
 
+    # Batch load usernames for resolved_by IDs (avoids N+1 queries)
+    resolver_ids = list(set(
+        str(a.resolved_by) for a in paginated
+        if a.resolved_by is not None
+    ))
+    usernames_by_id: dict[str, str] = {}
+    if resolver_ids:
+        users = db.query(User).filter(User.id.in_(resolver_ids)).all()
+        usernames_by_id = {str(u.id): u.username for u in users}
+
     # Build response
     approvals_response = [
         ApprovalResponse(
@@ -462,8 +474,10 @@ async def list_approvals(
             created_at=a.created_at.isoformat() if a.created_at else None,
             # History fields
             approved_by=a.approved_by,
+            approved_by_username=usernames_by_id.get(str(a.resolved_by)) if a.resolved_by else None,
             approved_at=a.approved_at.isoformat() if a.approved_at else None,
             rejected_by=a.rejected_by,
+            rejected_by_username=usernames_by_id.get(str(a.resolved_by)) if a.resolved_by else None,
             rejection_reason=a.rejection_reason,
         )
         for a in paginated
