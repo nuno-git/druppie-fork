@@ -37,9 +37,11 @@ class SessionItem(BaseModel):
     id: str
     user_id: str | None
     project_id: str | None
-    workspace_id: str | None
+    title: str | None
     status: str
-    state: dict | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
     created_at: str | None
     updated_at: str | None
 
@@ -55,19 +57,19 @@ class ApprovalItem(BaseModel):
     """Approval item for admin listing."""
 
     id: str
-    session_id: str
-    tool_name: str
-    arguments: dict | None = None
-    status: str
-    required_roles: list[str] | None = None
-    approvals_received: list[dict] | None = None
-    danger_level: str
+    session_id: str | None
+    agent_run_id: str | None
+    tool_call_id: str | None
+    workflow_step_id: str | None
+    approval_type: str
+    mcp_server: str | None
+    tool_name: str | None
+    title: str | None
     description: str | None
-    agent_id: str | None
-    agent_state: dict | None = None
-    approved_by: str | None
-    approved_at: str | None
-    rejected_by: str | None
+    required_role: str | None
+    status: str
+    resolved_by: str | None
+    resolved_at: str | None
     rejection_reason: str | None
     created_at: str | None
 
@@ -123,14 +125,13 @@ class HitlQuestionItem(BaseModel):
     """HITL question item for admin listing."""
 
     id: str
-    session_id: str
-    agent_id: str
+    session_id: str | None
+    agent_run_id: str | None
     question: str
     question_type: str
-    choices: list[str] | None = None
+    status: str
     answer: str | None
     answered_at: str | None
-    status: str
     created_at: str | None
 
 
@@ -145,16 +146,12 @@ class BuildItem(BaseModel):
     """Build item for admin listing."""
 
     id: str
-    project_id: str
+    project_id: str | None
+    session_id: str | None
     branch: str
     status: str
-    container_name: str | None
-    port: int | None
-    app_url: str | None
-    is_preview: bool
     build_logs: str | None
     created_at: str | None
-    updated_at: str | None
 
 
 class BuildListResponse(BaseModel):
@@ -242,7 +239,7 @@ async def list_all_sessions(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=MAX_LIMIT, description="Items per page"),
     status: str | None = Query(None, description="Filter by status"),
-    search: str | None = Query(None, description="Search in user_id"),
+    search: str | None = Query(None, description="Search in title"),
     user: dict = Depends(require_admin),
     db: DBSession = Depends(get_db),
 ):
@@ -258,7 +255,8 @@ async def list_all_sessions(
         query = query.filter(Session.status == status)
 
     if search:
-        query = query.filter(Session.user_id.ilike(f"%{search}%"))
+        # Search in title (user_id is UUID, can't ilike)
+        query = query.filter(Session.title.ilike(f"%{search}%"))
 
     total = query.count()
     offset = (page - 1) * limit
@@ -281,12 +279,14 @@ async def list_all_sessions(
     return SessionListResponse(
         sessions=[
             SessionItem(
-                id=s.id,
-                user_id=s.user_id,
-                project_id=s.project_id,
-                workspace_id=s.workspace_id,
+                id=str(s.id),
+                user_id=str(s.user_id) if s.user_id else None,
+                project_id=str(s.project_id) if s.project_id else None,
+                title=s.title,
                 status=s.status,
-                state=s.state,
+                prompt_tokens=s.prompt_tokens or 0,
+                completion_tokens=s.completion_tokens or 0,
+                total_tokens=s.total_tokens or 0,
                 created_at=s.created_at.isoformat() if s.created_at else None,
                 updated_at=s.updated_at.isoformat() if s.updated_at else None,
             )
@@ -340,20 +340,20 @@ async def list_all_approvals(
     return ApprovalListResponse(
         approvals=[
             ApprovalItem(
-                id=a.id,
-                session_id=a.session_id,
+                id=str(a.id),
+                session_id=str(a.session_id) if a.session_id else None,
+                agent_run_id=str(a.agent_run_id) if a.agent_run_id else None,
+                tool_call_id=str(a.tool_call_id) if a.tool_call_id else None,
+                workflow_step_id=str(a.workflow_step_id) if a.workflow_step_id else None,
+                approval_type=a.approval_type,
+                mcp_server=a.mcp_server,
                 tool_name=a.tool_name,
-                arguments=a.arguments,
-                status=a.status,
-                required_roles=a.required_roles,
-                approvals_received=a.approvals_received,
-                danger_level=a.danger_level,
+                title=a.title,
                 description=a.description,
-                agent_id=a.agent_id,
-                agent_state=a.agent_state,
-                approved_by=a.approved_by,
-                approved_at=a.approved_at.isoformat() if a.approved_at else None,
-                rejected_by=a.rejected_by,
+                required_role=a.required_role,
+                status=a.status,
+                resolved_by=str(a.resolved_by) if a.resolved_by else None,
+                resolved_at=a.resolved_at.isoformat() if a.resolved_at else None,
                 rejection_reason=a.rejection_reason,
                 created_at=a.created_at.isoformat() if a.created_at else None,
             )
@@ -409,13 +409,13 @@ async def list_all_projects(
     return ProjectListResponse(
         projects=[
             ProjectItem(
-                id=p.id,
+                id=str(p.id),
                 name=p.name,
                 description=p.description,
                 repo_name=p.repo_name,
                 repo_url=p.repo_url,
                 clone_url=p.clone_url,
-                owner_id=p.owner_id,
+                owner_id=str(p.owner_id) if p.owner_id else None,
                 status=p.status,
                 created_at=p.created_at.isoformat() if p.created_at else None,
                 updated_at=p.updated_at.isoformat() if p.updated_at else None,
@@ -430,7 +430,7 @@ async def list_all_projects(
 async def list_all_workspaces(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=MAX_LIMIT, description="Items per page"),
-    search: str | None = Query(None, description="Search in session_id or local_path"),
+    search: str | None = Query(None, description="Search in local_path or branch"),
     user: dict = Depends(require_admin),
     db: DBSession = Depends(get_db),
 ):
@@ -443,9 +443,10 @@ async def list_all_workspaces(
     query = db.query(Workspace)
 
     if search:
+        # Search in local_path and branch (session_id is UUID, can't ilike)
         query = query.filter(
-            (Workspace.session_id.ilike(f"%{search}%"))
-            | (Workspace.local_path.ilike(f"%{search}%"))
+            (Workspace.local_path.ilike(f"%{search}%"))
+            | (Workspace.branch.ilike(f"%{search}%"))
         )
 
     total = query.count()
@@ -526,15 +527,14 @@ async def list_all_hitl_questions(
     return HitlQuestionListResponse(
         questions=[
             HitlQuestionItem(
-                id=q.id,
-                session_id=q.session_id,
-                agent_id=q.agent_id,
+                id=str(q.id),
+                session_id=str(q.session_id) if q.session_id else None,
+                agent_run_id=str(q.agent_run_id) if q.agent_run_id else None,
                 question=q.question,
                 question_type=q.question_type,
-                choices=q.choices,
+                status=q.status,
                 answer=q.answer,
                 answered_at=q.answered_at.isoformat() if q.answered_at else None,
-                status=q.status,
                 created_at=q.created_at.isoformat() if q.created_at else None,
             )
             for q in questions
@@ -548,7 +548,7 @@ async def list_all_builds(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=MAX_LIMIT, description="Items per page"),
     status: str | None = Query(None, description="Filter by status"),
-    search: str | None = Query(None, description="Search in container_name"),
+    search: str | None = Query(None, description="Search in branch"),
     user: dict = Depends(require_admin),
     db: DBSession = Depends(get_db),
 ):
@@ -564,7 +564,7 @@ async def list_all_builds(
         query = query.filter(Build.status == status)
 
     if search:
-        query = query.filter(Build.container_name.ilike(f"%{search}%"))
+        query = query.filter(Build.branch.ilike(f"%{search}%"))
 
     total = query.count()
     offset = (page - 1) * limit
@@ -587,17 +587,13 @@ async def list_all_builds(
     return BuildListResponse(
         builds=[
             BuildItem(
-                id=b.id,
-                project_id=b.project_id,
+                id=str(b.id),
+                project_id=str(b.project_id) if b.project_id else None,
+                session_id=str(b.session_id) if b.session_id else None,
                 branch=b.branch,
                 status=b.status,
-                container_name=b.container_name,
-                port=b.port,
-                app_url=b.app_url,
-                is_preview=b.is_preview,
                 build_logs=b.build_logs,
                 created_at=b.created_at.isoformat() if b.created_at else None,
-                updated_at=b.updated_at.isoformat() if b.updated_at else None,
             )
             for b in builds
         ],
