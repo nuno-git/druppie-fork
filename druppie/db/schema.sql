@@ -334,6 +334,11 @@ CREATE TABLE llm_calls (
     completion_tokens INTEGER NOT NULL,
     total_tokens INTEGER NOT NULL,
     duration_ms INTEGER,
+    -- Full request/response data for debugging (JSON allowed for debug data)
+    request_messages JSON,                  -- Messages sent to LLM
+    response_content TEXT,                  -- LLM response text
+    response_tool_calls JSON,               -- Tool calls returned by LLM
+    tools_provided JSON,                    -- Tools available to LLM
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
