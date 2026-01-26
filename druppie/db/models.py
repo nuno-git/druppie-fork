@@ -493,6 +493,7 @@ class HitlQuestion(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"))
     agent_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id"))
+    agent_id = Column(String(50))  # Direct reference to agent name (router, architect, etc.)
 
     question = Column(Text, nullable=False)
     question_type = Column(String(20), default="text")  # text, single_choice, multiple_choice
@@ -514,6 +515,7 @@ class HitlQuestion(Base):
             "id": str(self.id),
             "session_id": str(self.session_id) if self.session_id else None,
             "agent_run_id": str(self.agent_run_id) if self.agent_run_id else None,
+            "agent_id": self.agent_id,
             "question": self.question,
             "question_type": self.question_type,
             "choices": [c.to_dict() for c in self.choices] if self.choices else [],

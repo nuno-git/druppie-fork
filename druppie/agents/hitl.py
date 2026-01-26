@@ -127,6 +127,7 @@ async def ask_question(
             question=question,
             question_type="text",
             choices=None,
+            agent_id=agent_id,
         )
         db.commit()
 
@@ -232,6 +233,7 @@ async def ask_multiple_choice_question(
             question=question,
             question_type="choice",
             choices=choices_data,
+            agent_id=agent_id,
         )
         db.commit()
 

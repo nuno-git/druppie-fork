@@ -737,12 +737,14 @@ def create_hitl_question(
     question: str,
     question_type: str = "text",
     choices: list[str] | None = None,
+    agent_id: str | None = None,
 ) -> HitlQuestion:
     """Create a HITL question."""
     hitl_question = HitlQuestion(
         id=uuid4(),
         session_id=session_id,
         agent_run_id=agent_run_id,
+        agent_id=agent_id,
         question=question,
         question_type=question_type,
         status="pending",
