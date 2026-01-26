@@ -934,10 +934,14 @@ const Tasks = () => {
                           <p className="text-gray-500 text-sm mt-1 line-clamp-2">{approval.description}</p>
                         )}
                         <div className="flex items-center gap-4 mt-2 text-xs text-gray-500 flex-wrap">
-                          {approval.approved_by && (
+                          {(approval.approved_by || approval.rejected_by) && (
                             <span className="flex items-center gap-1">
                               <User className="w-3 h-3" />
-                              Approved by: {approval.approved_by.substring(0, 8)}...
+                              {approval.status === 'approved' ? 'Approved' : 'Rejected'} by: {
+                                approval.approved_by_username ||
+                                approval.rejected_by_username ||
+                                (approval.approved_by || approval.rejected_by)?.substring(0, 8) + '...'
+                              }
                             </span>
                           )}
                           {approval.created_at && (
