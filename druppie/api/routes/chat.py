@@ -85,6 +85,55 @@ def _extract_provider(error_str: str) -> str | None:
     return None
 
 
+import re
+
+
+def _extract_project_name(message: str) -> str:
+    """Extract a project name from the user's message.
+
+    Looks for patterns like:
+    - "build a todo app" -> "todo-app"
+    - "create a greeting page" -> "greeting-page"
+    - "make a simple counter" -> "simple-counter"
+
+    Returns a slugified name suitable for git repos.
+    """
+    message_lower = message.lower()
+
+    # Common patterns for project descriptions
+    patterns = [
+        r"(?:build|create|make|develop)\s+(?:a|an|the)?\s*(?:simple|basic)?\s*(.+?)(?:\s+(?:with|using|in|for|that)\s|$)",
+        r"(?:todo|counter|calculator|notes?|weather|greeting|hello)\s*(?:app|page|application)?",
+    ]
+
+    # Try to extract from common patterns
+    for pattern in patterns:
+        match = re.search(pattern, message_lower)
+        if match:
+            # Use the first captured group if available, otherwise the whole match
+            name = match.group(1) if match.lastindex else match.group(0)
+            break
+    else:
+        # Fallback: use first few meaningful words
+        words = re.findall(r'\b[a-z]+\b', message_lower)
+        # Remove common stop words
+        stop_words = {'a', 'an', 'the', 'build', 'create', 'make', 'please', 'can', 'you', 'me', 'i', 'want', 'to'}
+        meaningful = [w for w in words[:6] if w not in stop_words and len(w) > 2]
+        name = ' '.join(meaningful[:3]) if meaningful else "new-project"
+
+    # Slugify the name
+    # Remove special chars, replace spaces with hyphens
+    slug = re.sub(r'[^a-z0-9\s-]', '', name.strip())
+    slug = re.sub(r'\s+', '-', slug)
+    slug = re.sub(r'-+', '-', slug)  # Remove multiple hyphens
+    slug = slug.strip('-')
+
+    # Ensure it's not too long and not empty
+    slug = slug[:50] if slug else "new-project"
+
+    return slug
+
+
 # =============================================================================
 # REQUEST/RESPONSE MODELS
 # =============================================================================
@@ -263,12 +312,37 @@ async def chat(
         # Note: conversation_history from request is ignored
         # Messages are stored in the database and retrieved automatically
 
+        # Auto-generate project name from message if not provided
+        project_name = request.project_name
+        # Check if this is a new session (session_id may be provided by frontend but not yet in DB)
+        is_new_session = True
+        if request.session_id:
+            from druppie.db.crud import get_session
+            from druppie.db.database import get_db
+            # Use get_db generator to check if session exists
+            db = next(get_db())
+            try:
+                existing_session = get_session(db, session_id)
+                is_new_session = existing_session is None
+            finally:
+                db.close()
+
+        if not project_name and not request.project_id and is_new_session:
+            # New session without existing project - extract name from message
+            project_name = _extract_project_name(request.message)
+            if project_name and project_name != "new-project":
+                logger.info(
+                    "auto_generated_project_name",
+                    project_name=project_name,
+                    message_preview=request.message[:50],
+                )
+
         result = await loop.process_message(
             message=request.message,
             session_id=session_id,
             user_id=user.get("sub") if user else None,
             project_id=request.project_id,
-            project_name=request.project_name,
+            project_name=project_name,
             emit_event=emit_event,
         )
 
