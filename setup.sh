@@ -184,7 +184,7 @@ configure_keycloak() {
     export KEYCLOAK_URL="http://localhost:8180"
 
     # Run the Keycloak configuration script
-    python3 scripts/setup_keycloak.py
+    python scripts/setup_keycloak.py
 
     success "Keycloak configured"
 }
@@ -210,7 +210,7 @@ configure_gitea() {
     export KEYCLOAK_URL="http://localhost:8180"
 
     # Run the Gitea configuration script
-    python3 scripts/setup_gitea.py
+    python scripts/setup_gitea.py
 
     success "Gitea configured"
 }
