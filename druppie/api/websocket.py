@@ -91,12 +91,26 @@ class ConnectionManager:
             return
 
         success_count = 0
+        failed_connections = []
         for websocket in connections:
             try:
+                # Check if connection is still open
+                if websocket.client_state.value != 1:  # 1 = CONNECTED
+                    failed_connections.append(websocket)
+                    continue
                 await websocket.send_json(message)
                 success_count += 1
             except Exception as e:
-                logger.error("websocket_broadcast_session_error", session_id=session_id, error=str(e), exc_info=True)
+                # Connection is closed or failed - mark for removal
+                failed_connections.append(websocket)
+                logger.debug("websocket_broadcast_session_failed", session_id=session_id, error=str(e))
+
+        # Clean up failed connections
+        for ws in failed_connections:
+            if ws in self.session_connections[session_id]:
+                self.session_connections[session_id].remove(ws)
+            if ws in self.active_connections:
+                self.active_connections.remove(ws)
 
         # If all broadcasts failed, store the event
         if success_count == 0:
@@ -105,22 +119,46 @@ class ConnectionManager:
     async def broadcast_to_roles(self, roles: list[str], message: dict):
         """Broadcast a message to all connections with the given roles."""
         sent_to = set()  # Avoid duplicates
+        failed_connections = []
         for role in roles:
             for websocket in self.role_connections.get(role, []):
                 if id(websocket) not in sent_to:
                     try:
+                        # Check if connection is still open
+                        if websocket.client_state.value != 1:  # 1 = CONNECTED
+                            failed_connections.append((role, websocket))
+                            continue
                         await websocket.send_json(message)
                         sent_to.add(id(websocket))
                     except Exception as e:
-                        logger.error("websocket_broadcast_role_error", role=role, error=str(e), exc_info=True)
+                        failed_connections.append((role, websocket))
+                        logger.debug("websocket_broadcast_role_failed", role=role, error=str(e))
+
+        # Clean up failed connections
+        for role, ws in failed_connections:
+            if ws in self.role_connections.get(role, []):
+                self.role_connections[role].remove(ws)
+            if ws in self.active_connections:
+                self.active_connections.remove(ws)
 
     async def broadcast_all(self, message: dict):
         """Broadcast a message to all active connections."""
+        failed_connections = []
         for websocket in self.active_connections:
             try:
+                # Check if connection is still open
+                if websocket.client_state.value != 1:  # 1 = CONNECTED
+                    failed_connections.append(websocket)
+                    continue
                 await websocket.send_json(message)
             except Exception as e:
-                logger.error("websocket_broadcast_all_error", error=str(e), exc_info=True)
+                failed_connections.append(websocket)
+                logger.debug("websocket_broadcast_all_failed", error=str(e))
+
+        # Clean up failed connections
+        for ws in failed_connections:
+            if ws in self.active_connections:
+                self.active_connections.remove(ws)
 
     def store_missed_event(self, session_id: str, event: dict):
         """Store an event that failed to broadcast for later retrieval.
