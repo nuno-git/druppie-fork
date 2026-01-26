@@ -19,6 +19,7 @@ const Message = ({
   isApprovingTask,
   currentUserId,
   sessionId,
+  userRoles = [],
 }) => {
   const isUser = message.role === 'user'
   const [eventsExpanded, setEventsExpanded] = useState(true)
@@ -77,6 +78,7 @@ const Message = ({
                   isProcessing={isApprovingTask}
                   currentUserId={currentUserId}
                   sessionId={sessionId || message.planId}
+                  userRoles={userRoles}
                 />
               ))
             )}

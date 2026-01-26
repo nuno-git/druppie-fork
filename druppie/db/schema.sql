@@ -226,6 +226,9 @@ CREATE TABLE approvals (
     -- Who can approve
     required_role VARCHAR(50),              -- architect, developer, infra_engineer, admin
 
+    -- Danger level for MCP tools
+    danger_level VARCHAR(20),               -- low, medium, high
+
     -- Status
     status VARCHAR(20) DEFAULT 'pending',   -- pending, approved, rejected
 
@@ -233,6 +236,15 @@ CREATE TABLE approvals (
     resolved_by UUID REFERENCES users(id),
     resolved_at TIMESTAMP WITH TIME ZONE,
     rejection_reason TEXT,
+
+    -- Tool arguments for execution after approval
+    arguments JSONB,
+
+    -- Agent state for resumption after approval
+    agent_state JSONB,
+
+    -- Agent ID that requested the approval
+    agent_id VARCHAR(100),
 
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -256,6 +268,9 @@ CREATE TABLE hitl_questions (
     status VARCHAR(20) DEFAULT 'pending',   -- pending, answered
     answer TEXT,
     answered_at TIMESTAMP WITH TIME ZONE,
+
+    -- Agent state for resumption (messages, iteration, context, workflow info)
+    agent_state JSON,
 
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

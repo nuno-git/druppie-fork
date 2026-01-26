@@ -399,11 +399,58 @@ class Approval(Base):
 
     required_role = Column(String(50))  # architect, developer, infra_engineer, admin
 
+    @property
+    def required_roles(self) -> list[str]:
+        """Get required roles as a list (for API compatibility)."""
+        if not self.required_role:
+            return []
+        return [r.strip() for r in self.required_role.split(",") if r.strip()]
+
+    @property
+    def approvals_received(self) -> list[str]:
+        """Get list of approvals received (for multi-approval API compatibility)."""
+        if self.status == "approved" and self.resolved_by:
+            return [str(self.resolved_by)]
+        return []
+
+    @property
+    def approved_by(self) -> str | None:
+        """Get the user who approved (for API compatibility)."""
+        if self.status == "approved" and self.resolved_by:
+            return str(self.resolved_by)
+        return None
+
+    @property
+    def approved_at(self):
+        """Get approval timestamp (for API compatibility)."""
+        if self.status == "approved":
+            return self.resolved_at
+        return None
+
+    @property
+    def rejected_by(self) -> str | None:
+        """Get the user who rejected (for API compatibility)."""
+        if self.status == "rejected" and self.resolved_by:
+            return str(self.resolved_by)
+        return None
+
+    # Danger level for MCP tools
+    danger_level = Column(String(20))  # low, medium, high
+
     status = Column(String(20), default="pending")  # pending, approved, rejected
 
     resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     resolved_at = Column(DateTime(timezone=True))
     rejection_reason = Column(Text)
+
+    # Tool arguments for execution after approval
+    arguments = Column(JSON)
+
+    # Agent state for resumption after approval
+    agent_state = Column(JSON)
+
+    # Agent ID that requested the approval
+    agent_id = Column(String(100))
 
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
@@ -420,10 +467,15 @@ class Approval(Base):
             "title": self.title,
             "description": self.description,
             "required_role": self.required_role,
+            "required_roles": self.required_roles,  # List version for API
+            "danger_level": self.danger_level,
             "status": self.status,
             "resolved_by": str(self.resolved_by) if self.resolved_by else None,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
             "rejection_reason": self.rejection_reason,
+            "arguments": self.arguments,
+            "agent_state": self.agent_state,
+            "agent_id": self.agent_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -449,9 +501,13 @@ class HitlQuestion(Base):
     answer = Column(Text)
     answered_at = Column(DateTime(timezone=True))
 
+    # Agent state for resumption (messages, iteration, context, workflow info)
+    agent_state = Column(JSON)
+
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     choices = relationship("HitlQuestionChoice", back_populates="question", cascade="all, delete-orphan")
+    agent_run = relationship("AgentRun", foreign_keys=[agent_run_id])
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -464,6 +520,7 @@ class HitlQuestion(Base):
             "status": self.status,
             "answer": self.answer,
             "answered_at": self.answered_at.isoformat() if self.answered_at else None,
+            "agent_state": self.agent_state,  # For resumption
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

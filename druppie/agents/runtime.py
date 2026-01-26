@@ -139,15 +139,23 @@ class Agent:
             self._mcp_client = get_mcp_client(db)
         return self._mcp_client
 
-    async def run(self, prompt: str, context: dict = None) -> Any:
+    async def run(
+        self,
+        prompt: str,
+        context: dict = None,
+        workflow_id: str = None,
+        workflow_step: int = None,
+    ) -> Any:
         """Run the agent with the given prompt.
 
         Args:
             prompt: User prompt or task description
             context: Optional context dict (previous results, etc.)
+            workflow_id: ID of the workflow this agent is part of (for continuation)
+            workflow_step: Current step in the workflow
 
         Returns:
-            Parsed result from agent's final response
+            Parsed result from agent's final response, or paused state with agent_state
 
         Note:
             Built-in HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question)
@@ -162,6 +170,164 @@ class Agent:
             {"role": "user", "content": self._build_prompt(prompt, context)},
         ]
 
+        return await self._run_loop(
+            messages=messages,
+            prompt=prompt,
+            context=context,
+            exec_ctx=exec_ctx,
+            workflow_id=workflow_id,
+            workflow_step=workflow_step,
+            start_iteration=0,
+        )
+
+    async def resume(
+        self,
+        agent_state: dict,
+        answer: str,
+    ) -> Any:
+        """Resume the agent from a paused state with the user's answer.
+
+        Args:
+            agent_state: The saved agent state from when it paused
+            answer: User's answer to the HITL question
+
+        Returns:
+            Parsed result from agent's final response, or paused state
+        """
+        # Get execution context for event tracking
+        exec_ctx = get_current_context()
+
+        # Restore state
+        messages = agent_state.get("messages", [])
+        prompt = agent_state.get("prompt", "")
+        context = agent_state.get("context", {})
+        workflow_id = agent_state.get("workflow_id")
+        workflow_step = agent_state.get("workflow_step")
+        start_iteration = agent_state.get("iteration", 0)
+        question = agent_state.get("question", "")
+
+        # Add the HITL answer as a tool response
+        # The last assistant message should have the HITL tool call
+        messages.append({
+            "role": "tool",
+            "tool_call_id": agent_state.get("tool_call_id", f"hitl_{start_iteration}"),
+            "content": json.dumps({
+                "status": "answered",
+                "answer": answer,
+                "question": question,
+            }),
+        })
+
+        logger.info(
+            "agent_resume",
+            agent_id=self.id,
+            iteration=start_iteration,
+            answer_preview=answer[:50] if answer else "",
+        )
+
+        # Emit agent resumed event
+        if exec_ctx:
+            exec_ctx.emit("agent_resumed", {
+                "agent_id": self.id,
+                "iteration": start_iteration,
+                "answer": answer[:100] if answer else "",
+            })
+
+        return await self._run_loop(
+            messages=messages,
+            prompt=prompt,
+            context=context,
+            exec_ctx=exec_ctx,
+            workflow_id=workflow_id,
+            workflow_step=workflow_step,
+            start_iteration=start_iteration,
+        )
+
+    async def resume_from_approval(
+        self,
+        agent_state: dict,
+        tool_result: dict,
+    ) -> Any:
+        """Resume the agent from a paused state after MCP tool approval.
+
+        Args:
+            agent_state: The saved agent state from when it paused
+            tool_result: Result from the approved tool execution
+
+        Returns:
+            Parsed result from agent's final response, or paused state
+        """
+        # Get execution context for event tracking
+        exec_ctx = get_current_context()
+
+        # Restore state
+        messages = agent_state.get("messages", [])
+        prompt = agent_state.get("prompt", "")
+        context = agent_state.get("context", {})
+        workflow_id = agent_state.get("workflow_id")
+        workflow_step = agent_state.get("workflow_step")
+        start_iteration = agent_state.get("iteration", 0)
+        tool_call_id = agent_state.get("tool_call_id", f"call_{start_iteration}")
+
+        # Add the tool result as a tool response
+        # The last message should be the assistant message with the tool call
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": json.dumps(tool_result) if isinstance(tool_result, (dict, list)) else str(tool_result),
+        })
+
+        logger.info(
+            "agent_resume_from_approval",
+            agent_id=self.id,
+            iteration=start_iteration,
+            tool=agent_state.get("tool_name"),
+            tool_result_preview=str(tool_result)[:100] if tool_result else "",
+        )
+
+        # Emit agent resumed event
+        if exec_ctx:
+            exec_ctx.emit("agent_resumed", {
+                "agent_id": self.id,
+                "iteration": start_iteration,
+                "reason": "mcp_tool_approved",
+                "tool": agent_state.get("tool_name"),
+            })
+
+        return await self._run_loop(
+            messages=messages,
+            prompt=prompt,
+            context=context,
+            exec_ctx=exec_ctx,
+            workflow_id=workflow_id,
+            workflow_step=workflow_step,
+            start_iteration=start_iteration,
+        )
+
+    async def _run_loop(
+        self,
+        messages: list[dict],
+        prompt: str,
+        context: dict | None,
+        exec_ctx,
+        workflow_id: str | None,
+        workflow_step: int | None,
+        start_iteration: int,
+    ) -> Any:
+        """Internal tool-calling loop.
+
+        Args:
+            messages: Current message history
+            prompt: Original prompt
+            context: Original context
+            exec_ctx: Execution context
+            workflow_id: Workflow ID for continuation
+            workflow_step: Current workflow step
+            start_iteration: Iteration to start from
+
+        Returns:
+            Parsed result or paused state
+        """
         # Get tools for this agent's MCPs with full schemas from servers
         # Filter out 'hitl' from MCP IDs - we use built-in HITL tools instead
         mcp_ids = self.definition.get_mcp_names() if hasattr(self.definition, 'get_mcp_names') else self.definition.mcps
@@ -185,18 +351,19 @@ class Agent:
 
         max_iterations = self.definition.max_iterations or 10
 
-        logger.info(
-            "agent_run_start",
-            agent_id=self.id,
-            prompt_length=len(prompt),
-            tools_count=len(tools),
-        )
+        # Only log start on first iteration
+        if start_iteration == 0:
+            logger.info(
+                "agent_run_start",
+                agent_id=self.id,
+                prompt_length=len(prompt),
+                tools_count=len(tools),
+            )
+            # Emit agent started event
+            if exec_ctx:
+                exec_ctx.agent_started(self.id, prompt)
 
-        # Emit agent started event
-        if exec_ctx:
-            exec_ctx.agent_started(self.id, prompt)
-
-        for iteration in range(max_iterations):
+        for iteration in range(start_iteration, max_iterations):
             start_time = time.time()
             response = await self.llm.achat(messages, tools)
             duration_ms = int((time.time() - start_time) * 1000)
@@ -262,8 +429,27 @@ class Agent:
                             tool=tool_name,
                             question_id=result.get("question_id"),
                         )
+
+                        # Add the assistant message with the HITL tool call
+                        # This is needed so when we resume, we can add the tool response
+                        tool_call_id = tool_call.get("id", f"hitl_{iteration}")
+                        messages.append({
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [{
+                                "id": tool_call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool_name,
+                                    "arguments": json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args),
+                                },
+                            }],
+                        })
+
                         if exec_ctx:
-                            exec_ctx.agent_completed(self.id, iteration + 1, success=True)
+                            exec_ctx.agent_paused(self.id, iteration + 1, "hitl_question")
+
+                        # Return full state for resumption
                         return {
                             "paused": True,
                             "question_id": result.get("question_id"),
@@ -271,7 +457,17 @@ class Agent:
                             "question_type": result.get("question_type"),
                             "choices": result.get("choices"),
                             "tool": tool_name,
-                            "iteration": iteration,
+                            "agent_state": {
+                                "agent_id": self.id,
+                                "messages": messages,
+                                "prompt": prompt,
+                                "context": context,
+                                "iteration": iteration,
+                                "tool_call_id": tool_call_id,
+                                "question": result.get("question"),
+                                "workflow_id": workflow_id,
+                                "workflow_step": workflow_step,
+                            },
                         }
 
                     # Add tool result to messages
@@ -384,13 +580,45 @@ class Agent:
 
                 # Check if paused for approval
                 if result.get("status") == "paused":
-                    # Return paused state - execution will resume after approval
+                    # Add the assistant message with the tool call before returning
+                    # This is needed so when we resume, we can add the tool response
+                    tool_call_id = tool_call.get("id", f"call_{iteration}")
+                    messages.append({
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": tool_call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args),
+                            },
+                        }],
+                    })
+
+                    if exec_ctx:
+                        exec_ctx.agent_paused(self.id, iteration + 1, "mcp_tool_approval")
+
+                    # Return paused state with full agent_state for resumption
+                    # IMPORTANT: This allows proper resumption after approval
                     logger.info("agent_paused_for_approval", agent_id=self.id, tool=mcp_tool_name)
                     return {
                         "paused": True,
                         "approval_id": result.get("approval_id"),
                         "tool": mcp_tool_name,
                         "iteration": iteration,
+                        "agent_state": {
+                            "agent_id": self.id,
+                            "messages": messages,
+                            "prompt": prompt,
+                            "context": context,
+                            "iteration": iteration,
+                            "tool_call_id": tool_call_id,
+                            "tool_name": mcp_tool_name,
+                            "tool_args": tool_args,
+                            "workflow_id": workflow_id,
+                            "workflow_step": workflow_step,
+                        },
                     }
 
                 # Check for MCP tool errors (success=False or error field)

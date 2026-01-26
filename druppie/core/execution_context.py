@@ -211,6 +211,14 @@ class ExecutionContext:
             "error": error,
         })
 
+    def agent_paused(self, agent_id: str, iterations: int, reason: str) -> None:
+        """Record agent paused event (waiting for HITL or approval)."""
+        self.emit("agent_paused", {
+            "agent_id": agent_id,
+            "iterations": iterations,
+            "reason": reason,
+        })
+
     def tool_call(self, agent_id: str, tool_name: str, args: dict = None) -> None:
         """Record tool call event."""
         self.emit("tool_call", {

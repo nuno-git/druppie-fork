@@ -116,6 +116,8 @@ export const rejectTask = (taskId, comment = '') =>
     method: 'POST',
     body: JSON.stringify({ approved: false, comment }),
   })
+export const getUsersByRole = (role) =>
+  request(`/api/approvals/users-by-role/${role}`)
 
 // ============ MCP Registry ============
 export const getMCPs = () => request('/api/mcps')

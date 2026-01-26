@@ -46,6 +46,7 @@ from .crud import (
     get_or_create_user,
     get_user,
     get_user_roles,
+    get_users_by_role,
     # Session CRUD
     create_session,
     get_session,
@@ -77,6 +78,7 @@ from .crud import (
     create_approval,
     get_approval,
     get_pending_approval_for_tool_call,
+    update_approval,
     resolve_approval,
     list_pending_approvals,
     list_approvals,
@@ -85,6 +87,7 @@ from .crud import (
     get_hitl_question,
     get_pending_hitl_question,
     answer_hitl_question,
+    update_hitl_question_state,
     list_pending_hitl_questions,
     get_hitl_questions_for_session,
     # Project CRUD
@@ -143,6 +146,7 @@ __all__ = [
     "get_or_create_user",
     "get_user",
     "get_user_roles",
+    "get_users_by_role",
     # Session CRUD
     "create_session",
     "get_session",
@@ -174,6 +178,7 @@ __all__ = [
     "create_approval",
     "get_approval",
     "get_pending_approval_for_tool_call",
+    "update_approval",
     "resolve_approval",
     "list_pending_approvals",
     "list_approvals",
@@ -182,6 +187,7 @@ __all__ = [
     "get_hitl_question",
     "get_pending_hitl_question",
     "answer_hitl_question",
+    "update_hitl_question_state",
     "list_pending_hitl_questions",
     "get_hitl_questions_for_session",
     # Project CRUD

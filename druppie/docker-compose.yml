@@ -129,12 +129,20 @@ services:
       KC_HTTP_ENABLED: "true"
       KC_PROXY: edge
       KC_HEALTH_ENABLED: "true"
+      # JVM Memory tuning - limit heap to reduce memory pressure
+      JAVA_OPTS_APPEND: "-Xms256m -Xmx512m -XX:MaxGCPauseMillis=100 -Djava.net.preferIPv4Stack=true"
+      # Keycloak caching settings
+      KC_CACHE: local
+      KC_CACHE_STACK: udp
     command: start-dev
     ports:
       - "8180:8080"
     depends_on:
       keycloak-db:
         condition: service_healthy
+    # Memory limit for the container (docker-compose v2)
+    mem_limit: 768m
+    mem_reservation: 384m
     healthcheck:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e 'GET /health/ready HTTP/1.1\r\nhost: localhost\r\nConnection: close\r\n\r\n' >&3;if [ $? -eq 0 ]; then echo 'Healthcheck Successful';exit 0;else echo 'Healthcheck Failed';exit 1;fi;"]
       interval: 10s
