@@ -238,14 +238,14 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 
 def check_resource_ownership(
     user: dict,
-    resource_user_id: str | None,
+    resource_user_id: str | UUID | None,
     allow_admin: bool = True,
 ) -> bool:
     """Check if user owns a resource or is admin.
 
     Args:
         user: Current authenticated user
-        resource_user_id: User ID of the resource owner
+        resource_user_id: User ID of the resource owner (can be UUID or string)
         allow_admin: If True, admins can access any resource
 
     Returns:
@@ -261,11 +261,14 @@ def check_resource_ownership(
     if allow_admin and "admin" in roles:
         return True
 
-    # Check ownership
-    if resource_user_id and resource_user_id != user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Not authorized to access this resource",
-        )
+    # Check ownership - normalize both to strings for comparison
+    if resource_user_id:
+        # Convert UUID to string if needed for proper comparison
+        resource_id_str = str(resource_user_id)
+        if resource_id_str != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to access this resource",
+            )
 
     return True
