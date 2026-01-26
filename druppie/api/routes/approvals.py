@@ -1134,7 +1134,8 @@ async def get_users_by_role(
 ) -> UsersByRoleResponse:
     """Get users who have a specific role.
 
-    Useful for finding approvers when an approval requires a specific role.
+    Queries Keycloak Admin API to get users with the specified role.
+    Falls back to local database if Keycloak is unavailable.
 
     Args:
         role: The role to search for (e.g., 'architect', 'developer', 'admin')
@@ -1142,17 +1143,75 @@ async def get_users_by_role(
     Returns:
         List of users with contact information who have the specified role
     """
-    users = crud.get_users_by_role(db, role)
+    import httpx
+    import os
 
-    return UsersByRoleResponse(
-        role=role,
-        users=[
+    keycloak_url = os.getenv("KEYCLOAK_SERVER_URL", "http://keycloak:8080")
+    realm = os.getenv("KEYCLOAK_REALM", "druppie")
+    admin_user = os.getenv("KEYCLOAK_ADMIN", "admin")
+    admin_password = os.getenv("KEYCLOAK_ADMIN_PASSWORD", "admin")
+
+    users_list = []
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Get admin token
+            token_response = await client.post(
+                f"{keycloak_url}/realms/master/protocol/openid-connect/token",
+                data={
+                    "grant_type": "password",
+                    "client_id": "admin-cli",
+                    "username": admin_user,
+                    "password": admin_password,
+                },
+            )
+            if token_response.status_code != 200:
+                logger.warning("keycloak_admin_auth_failed", status=token_response.status_code)
+                raise Exception("Failed to get admin token")
+
+            admin_token = token_response.json().get("access_token")
+
+            # Get users with the specified role
+            # First get the role ID
+            role_response = await client.get(
+                f"{keycloak_url}/admin/realms/{realm}/roles/{role}",
+                headers={"Authorization": f"Bearer {admin_token}"},
+            )
+            if role_response.status_code != 200:
+                logger.warning("keycloak_role_not_found", role=role, status=role_response.status_code)
+                # Role doesn't exist, return empty list
+                return UsersByRoleResponse(role=role, users=[])
+
+            # Get users with this role
+            users_response = await client.get(
+                f"{keycloak_url}/admin/realms/{realm}/roles/{role}/users",
+                headers={"Authorization": f"Bearer {admin_token}"},
+            )
+            if users_response.status_code == 200:
+                keycloak_users = users_response.json()
+                for ku in keycloak_users:
+                    users_list.append(UserContact(
+                        id=ku.get("id", ""),
+                        username=ku.get("username", ""),
+                        email=ku.get("email"),
+                        display_name=f"{ku.get('firstName', '')} {ku.get('lastName', '')}".strip() or ku.get("username"),
+                    ))
+                logger.info("keycloak_users_fetched", role=role, count=len(users_list))
+            else:
+                logger.warning("keycloak_users_fetch_failed", role=role, status=users_response.status_code)
+
+    except Exception as e:
+        logger.warning("keycloak_query_failed", error=str(e), role=role)
+        # Fall back to local database
+        local_users = crud.get_users_by_role(db, role)
+        users_list = [
             UserContact(
                 id=str(u.id),
                 username=u.username,
                 email=u.email,
                 display_name=u.display_name,
             )
-            for u in users
-        ],
-    )
+            for u in local_users
+        ]
+
+    return UsersByRoleResponse(role=role, users=users_list)
