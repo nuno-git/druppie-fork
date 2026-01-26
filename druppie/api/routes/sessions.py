@@ -37,6 +37,7 @@ class MessageResponse(BaseModel):
 
     role: str
     content: str
+    agent_id: str | None = None  # Which agent produced this message
     timestamp: str | None = None
     workflow_events: list[dict] | None = None
     llm_calls: list[dict] | None = None
@@ -50,6 +51,20 @@ class TokenUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+
+
+class HITLQuestionResponse(BaseModel):
+    """HITL question in session response."""
+
+    id: str
+    question: str
+    choices: list[str] = []
+    context: str | None = None
+    agent_id: str | None = None
+    status: str  # pending, answered
+    answer: str | None = None
+    created_at: str | None = None
+    answered_at: str | None = None
 
 
 class SessionResponse(BaseModel):
@@ -71,6 +86,9 @@ class SessionResponse(BaseModel):
     tasks: list[dict] | None = None
     # Full conversation history
     messages: list[MessageResponse] | None = None
+    # HITL questions (pending and answered)
+    pending_questions: list[HITLQuestionResponse] | None = None
+    hitl_questions: list[HITLQuestionResponse] | None = None
     # Token usage for transparency
     token_usage: TokenUsage | None = None
 
@@ -163,6 +181,7 @@ def _session_to_response(session, project=None, db=None) -> SessionResponse:
                 MessageResponse(
                     role=msg.role,
                     content=msg.content,
+                    agent_id=msg.agent_id,  # Include agent_id for agent attribution
                     timestamp=msg.created_at.isoformat() if msg.created_at else None,
                     workflow_events=None,  # Not stored per-message anymore
                     llm_calls=None,
@@ -393,6 +412,8 @@ async def get_session(
     db: DBSession = Depends(get_db),
 ):
     """Get a specific session."""
+    from druppie.db.models import HitlQuestion, AgentRun
+
     session = crud.get_session(db, session_id)
     if not session:
         raise NotFoundError("session", session_id)
@@ -423,6 +444,40 @@ async def get_session(
         }
         for a in pending_approvals
     ]
+
+    # Fetch HITL questions (both pending and answered) for conversation reconstruction
+    hitl_questions = (
+        db.query(HitlQuestion)
+        .filter(HitlQuestion.session_id == session.id)
+        .order_by(HitlQuestion.created_at.asc())
+        .all()
+    )
+
+    def hitl_to_response(q):
+        # Get agent_id from agent_run if available
+        agent_id = None
+        if q.agent_run_id:
+            agent_run = db.query(AgentRun).filter(AgentRun.id == q.agent_run_id).first()
+            if agent_run:
+                agent_id = agent_run.agent_id
+
+        return HITLQuestionResponse(
+            id=str(q.id),
+            question=q.question,
+            choices=[c.choice_text for c in q.choices] if q.choices else [],
+            context=None,
+            agent_id=agent_id,
+            status=q.status,
+            answer=q.answer,
+            created_at=q.created_at.isoformat() if q.created_at else None,
+            answered_at=q.answered_at.isoformat() if q.answered_at else None,
+        )
+
+    # Separate pending and all questions
+    response.pending_questions = [
+        hitl_to_response(q) for q in hitl_questions if q.status == "pending"
+    ]
+    response.hitl_questions = [hitl_to_response(q) for q in hitl_questions]
 
     return response
 

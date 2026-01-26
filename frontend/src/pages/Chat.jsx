@@ -417,6 +417,7 @@ const Chat = () => {
       return {
         role: msg.role,
         content: msg.content,
+        agent_id: msg.agent_id,  // Include agent_id for agent attribution
         timestamp: msg.timestamp,
         ...(msg.role === 'assistant' && {
           workflowEvents: isLastAssistant ? normalizedEvents : [],
@@ -432,9 +433,11 @@ const Chat = () => {
       }
     })
 
-    // Add pending questions as separate question messages
-    const pendingQuestions = fullSession.pending_questions || []
-    for (const q of pendingQuestions) {
+    // Add HITL questions (both pending and answered) as separate question messages
+    // Use hitl_questions which includes all questions for full history reconstruction
+    const hitlQuestions = fullSession.hitl_questions || fullSession.pending_questions || []
+    for (const q of hitlQuestions) {
+      const isAnswered = q.status === 'answered'
       loadedMessages.push({
         role: 'question',
         questionData: {
@@ -445,9 +448,27 @@ const Chat = () => {
           agent_id: q.agent_id || 'unknown',
           session_id: sessionId,
         },
+        answered: isAnswered,
+        userAnswer: q.answer,
         timestamp: q.created_at || new Date().toISOString(),
       })
+
+      // If answered, also add the user's answer as a user message
+      if (isAnswered && q.answer) {
+        loadedMessages.push({
+          role: 'user',
+          content: q.answer,
+          timestamp: q.answered_at || q.created_at || new Date().toISOString(),
+        })
+      }
     }
+
+    // Sort all messages by timestamp to ensure correct order
+    loadedMessages.sort((a, b) => {
+      const timeA = new Date(a.timestamp || 0).getTime()
+      const timeB = new Date(b.timestamp || 0).getTime()
+      return timeA - timeB
+    })
 
     setMessages(loadedMessages)
   }
@@ -655,14 +676,22 @@ const Chat = () => {
 
   const handleAnswerQuestion = async (questionId, answer, selected = null) => {
     setMessages((prev) => {
-      // Filter out the standalone question message and handle legacy pendingQuestions
-      const updated = prev
-        .filter((msg) => !(msg.role === 'question' && msg.questionData?.id === questionId))
-        .map((msg) =>
-          msg.pendingQuestions
-            ? { ...msg, pendingQuestions: msg.pendingQuestions.filter((q) => q.id !== questionId) }
-            : msg
-        )
+      // Mark the question as answered (don't remove it - keep for history)
+      // and add the user's answer as a separate message
+      const updated = prev.map((msg) => {
+        // Mark standalone question messages as answered
+        if (msg.role === 'question' && msg.questionData?.id === questionId) {
+          return { ...msg, answered: true, userAnswer: selected || answer }
+        }
+        // Handle legacy pendingQuestions embedded in assistant messages
+        if (msg.pendingQuestions) {
+          return {
+            ...msg,
+            pendingQuestions: msg.pendingQuestions.filter((q) => q.id !== questionId),
+          }
+        }
+        return msg
+      })
       // Add user's answer as a user message
       return [...updated, { role: 'user', content: selected || answer, timestamp: new Date().toISOString() }]
     })
@@ -816,6 +845,8 @@ const Chat = () => {
                 question={message.questionData}
                 onAnswer={handleAnswerQuestion}
                 isAnswering={answerMutation.isPending}
+                answered={message.answered}
+                userAnswer={message.userAnswer}
               />
             ) : (
               <Message
