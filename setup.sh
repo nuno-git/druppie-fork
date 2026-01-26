@@ -152,7 +152,7 @@ check_api_key() {
 
 # Helper function for docker compose
 compose() {
-    $DOCKER_COMPOSE -f "$COMPOSE_FILE" "$@"
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" --env-file .env "$@"
 }
 
 # =============================================================================
