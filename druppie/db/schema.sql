@@ -131,17 +131,8 @@ CREATE TABLE workflow_steps (
 CREATE INDEX idx_workflow_steps_workflow ON workflow_steps(workflow_id);
 
 -- =============================================================================
--- MCP SERVERS & TOOLS
+-- TOOL CALLS (MCP servers defined in mcp_config.yaml, not DB)
 -- =============================================================================
-
-CREATE TABLE mcp_servers (
-    id VARCHAR(100) PRIMARY KEY,            -- coding, docker, hitl, git, deploy
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    url VARCHAR(512) NOT NULL,
-    health_status VARCHAR(20) DEFAULT 'unknown',  -- healthy, unhealthy, unknown
-    last_health_check TIMESTAMP WITH TIME ZONE
-);
 
 -- Tool calls made by agents
 CREATE TABLE tool_calls (
@@ -311,13 +302,8 @@ CREATE TABLE llm_calls (
 CREATE INDEX idx_llm_calls_session ON llm_calls(session_id);
 
 -- =============================================================================
--- INITIAL DATA
+-- NOTES
 -- =============================================================================
-
--- Default MCP servers
-INSERT INTO mcp_servers (id, name, description, url) VALUES
-    ('coding', 'Coding MCP', 'File operations, git, and command execution', 'http://mcp-coding:9001'),
-    ('docker', 'Docker MCP', 'Container build and deployment', 'http://mcp-docker:9002');
-
--- Note: Users and roles come from Keycloak, not seeded here
--- Note: Agents are defined in YAML files, not in database
+-- Users and roles: Synced from Keycloak, not seeded here
+-- Agents: Defined in YAML files (druppie/agents/definitions/)
+-- MCP servers: Defined in mcp_config.yaml, not in database
