@@ -169,8 +169,11 @@ const DebugPanel = ({ isOpen, onClose, sessionId, apiCalls, workflowEvents, llmC
 
   events.forEach(event => {
     const eventType = getEventType(event)
-    if (eventType === 'agent_started' || event.data?.agent_id) {
-      const agentId = event.data?.agent_id || event.agent_id
+    // Agent ID can be at event.agent_id (new format) or event.data?.agent_id (old format)
+    const getAgentId = (e) => e.agent_id || e.data?.agent_id
+
+    if (eventType === 'agent_started' || eventType === 'agent_start' || getAgentId(event)) {
+      const agentId = getAgentId(event)
       if (agentId && !agentMap.has(agentId)) {
         agentMap.set(agentId, {
           id: agentId,
@@ -185,18 +188,24 @@ const DebugPanel = ({ isOpen, onClose, sessionId, apiCalls, workflowEvents, llmC
         agentMap.get(agentId).events.push(event)
       }
     }
-    if (eventType === 'agent_completed') {
-      const agentId = event.data?.agent_id
+    if (eventType === 'agent_completed' || eventType === 'agent_complete') {
+      const agentId = getAgentId(event)
       if (agentId && agentMap.has(agentId)) {
         agentMap.get(agentId).status = 'completed'
         agentMap.get(agentId).endTime = event.timestamp
       }
     }
+    if (eventType === 'agent_paused') {
+      const agentId = getAgentId(event)
+      if (agentId && agentMap.has(agentId)) {
+        agentMap.get(agentId).status = 'paused'
+      }
+    }
     if (eventType === 'agent_error' || eventType === 'agent_failed') {
-      const agentId = event.data?.agent_id
+      const agentId = getAgentId(event)
       if (agentId && agentMap.has(agentId)) {
         agentMap.get(agentId).status = 'error'
-        agentMap.get(agentId).error = event.data?.error
+        agentMap.get(agentId).error = event.error || event.data?.error
       }
     }
   })

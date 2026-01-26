@@ -454,18 +454,50 @@ class Agent:
         )
 
     def _build_prompt(self, prompt: str, context: dict = None) -> str:
-        """Build the full prompt with context."""
+        """Build the full prompt with context.
+
+        Formats clarifications specially so agents can detect user confirmations.
+        """
         if not context:
             return prompt
 
+        # Extract clarifications for special formatting
+        clarifications = context.get("clarifications", [])
+
+        # Build context string WITHOUT clarifications (handled separately)
+        context_items = {k: v for k, v in context.items() if k != "clarifications"}
         context_str = "\n".join(
-            f"- {key}: {value}" for key, value in context.items()
+            f"- {key}: {value}" for key, value in context_items.items()
         )
+
+        # Build clarifications section if present
+        clarifications_str = ""
+        if clarifications:
+            clarification_parts = []
+            for c in clarifications:
+                agent = c.get("agent_id", "agent")
+                question = c.get("question", "")
+                answer = c.get("answer", "")
+                # Format clearly for the agent to recognize
+                clarification_parts.append(f"Question from {agent}: {question}\nUser responded: {answer}")
+
+            clarifications_str = f"""
+
+=============================================================================
+USER CONFIRMATION - User has already confirmed the following questions:
+=============================================================================
+{chr(10).join(clarification_parts)}
+
+NOTE: The user has already confirmed. DO NOT ask the same question again!
+Proceed with the action that was pending confirmation.
+=============================================================================
+"""
+
         return f"""CONTEXT:
 {context_str}
 
 TASK:
-{prompt}"""
+{prompt}{clarifications_str}"""
 
     def _parse_output(self, content: str) -> Any:
         """Parse agent's final output.
