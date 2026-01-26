@@ -740,8 +740,8 @@ class MCPClient:
         try:
             from druppie.api.websocket import emit_approval_request
             await emit_approval_request(
-                approval_id=approval.id,
-                session_id=approval.session_id,
+                approval_id=str(approval.id),  # Convert UUID to string for JSON serialization
+                session_id=str(approval.session_id),  # Convert UUID to string for JSON serialization
                 tool_name=approval.tool_name,
                 required_roles=approval.required_roles or [],
                 details={

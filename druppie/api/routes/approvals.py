@@ -445,8 +445,8 @@ async def list_approvals(
     # Build response
     approvals_response = [
         ApprovalResponse(
-            id=a.id,
-            session_id=a.session_id,
+            id=str(a.id),
+            session_id=str(a.session_id) if a.session_id else None,
             tool_name=a.tool_name,
             arguments=a.arguments,
             status=a.status,
@@ -532,23 +532,14 @@ async def approve_request(
 
     if decision.approved:
         # Update approval status to approved
+        # Note: Use actual column names (resolved_by, resolved_at), not property names
         crud.update_approval(
             db,
             approval_id,
             {
                 "status": "approved",
-                "approved_by": user_id,
-                "approved_at": datetime.now(timezone.utc),
-                "approvals_received": (approval.approvals_received or [])
-                + [
-                    {
-                        "user_id": user_id,
-                        "role": next(iter(user_roles), "user"),
-                        "approved": True,
-                        "comment": decision.comment,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }
-                ],
+                "resolved_by": user_id,
+                "resolved_at": datetime.now(timezone.utc),
             },
         )
 
@@ -562,7 +553,7 @@ async def approve_request(
         # Broadcast approval decision to WebSocket subscribers
         await emit_approval_decision(
             approval_id=approval_id,
-            session_id=approval.session_id,
+            session_id=str(approval.session_id),  # Convert UUID to string for JSON serialization
             approved=True,
             approver_id=user_id,
             approver_role=next(iter(user_roles), "user"),
@@ -599,7 +590,7 @@ async def approve_request(
 
                 # Resume plan execution from the next step
                 resume_result = await loop.resume_from_step_approval(
-                    session_id=approval.session_id,
+                    session_id=str(approval.session_id),
                     agent_state=agent_state,
                     emit_event=None,  # Will emit via WebSocket automatically
                 )
@@ -783,7 +774,7 @@ async def approve_request(
                     )
 
                     resume_result = await loop.resume_from_step_approval(
-                        session_id=approval.session_id,
+                        session_id=str(approval.session_id),
                         agent_state=agent_state_with_result,
                         emit_event=None,
                     )
@@ -795,7 +786,7 @@ async def approve_request(
                         session_id=approval.session_id,
                     )
                     resume_result = await loop.resume_session(
-                        session_id=approval.session_id,
+                        session_id=str(approval.session_id),
                         response=result,
                     )
 
@@ -878,23 +869,15 @@ async def approve_request(
 
     else:
         # Rejected
+        # Note: Use actual column names (resolved_by, resolved_at, rejection_reason)
         crud.update_approval(
             db,
             approval_id,
             {
                 "status": "rejected",
-                "rejected_by": user_id,
+                "resolved_by": user_id,
+                "resolved_at": datetime.now(timezone.utc),
                 "rejection_reason": decision.comment,
-                "approvals_received": (approval.approvals_received or [])
-                + [
-                    {
-                        "user_id": user_id,
-                        "role": next(iter(user_roles), "user"),
-                        "approved": False,
-                        "comment": decision.comment,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }
-                ],
             },
         )
 
@@ -908,7 +891,7 @@ async def approve_request(
         # Broadcast rejection decision to WebSocket subscribers
         await emit_approval_decision(
             approval_id=approval_id,
-            session_id=approval.session_id,
+            session_id=str(approval.session_id),  # Convert UUID to string for JSON serialization
             approved=False,
             approver_id=user_id,
             approver_role=next(iter(user_roles), "user"),
@@ -987,20 +970,14 @@ async def approve_merge(
         raise ValidationError("Already on main branch, nothing to merge", field="branch")
 
     # Mark approval as approved
+    # Note: Use actual column names (resolved_by, resolved_at)
     crud.update_approval(
         db,
         approval_id,
         {
             "status": "approved",
-            "approvals_received": (approval.approvals_received or [])
-            + [
-                {
-                    "user_id": user.get("sub"),
-                    "role": next(iter(user_roles), "user"),
-                    "approved": True,
-                    "action": "merge",
-                }
-            ],
+            "resolved_by": user.get("sub"),
+            "resolved_at": datetime.now(timezone.utc),
         },
     )
 
@@ -1126,3 +1103,56 @@ async def request_merge(
 # HITL questions are now handled by the built-in HITL tools in agents/hitl.py
 # and the /api/questions/{id}/answer endpoint in routes/questions.py
 # Redis is no longer needed for HITL - questions are stored in the database
+
+
+# =============================================================================
+# USERS BY ROLE ENDPOINT
+# =============================================================================
+
+
+class UserContact(BaseModel):
+    """User contact information for approval coordination."""
+
+    id: str
+    username: str
+    email: str | None
+    display_name: str | None
+
+
+class UsersByRoleResponse(BaseModel):
+    """Response with users who have the specified role."""
+
+    role: str
+    users: list[UserContact]
+
+
+@router.get("/users-by-role/{role}", response_model=UsersByRoleResponse)
+async def get_users_by_role(
+    role: str,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UsersByRoleResponse:
+    """Get users who have a specific role.
+
+    Useful for finding approvers when an approval requires a specific role.
+
+    Args:
+        role: The role to search for (e.g., 'architect', 'developer', 'admin')
+
+    Returns:
+        List of users with contact information who have the specified role
+    """
+    users = crud.get_users_by_role(db, role)
+
+    return UsersByRoleResponse(
+        role=role,
+        users=[
+            UserContact(
+                id=str(u.id),
+                username=u.username,
+                email=u.email,
+                display_name=u.display_name,
+            )
+            for u in users
+        ],
+    )

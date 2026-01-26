@@ -57,12 +57,15 @@ from druppie.db import (
     create_approval,
     get_approval,
     get_pending_approval_for_tool_call,
+    update_approval,
     resolve_approval,
     list_pending_approvals,
     create_hitl_question,
     get_hitl_question,
     get_pending_hitl_question,
     answer_hitl_question,
+    update_hitl_question_state,
+    get_workflow,
     create_workspace,
     get_workspace,
     get_workspace_for_session,
@@ -333,6 +336,8 @@ async def run_agent(
     exec_ctx: ExecutionContext,
     parent_run_id: UUID | None = None,
     workflow_step_id: UUID | None = None,
+    workflow_id: UUID | None = None,
+    step_index: int | None = None,
 ) -> dict[str, Any]:
     """Run an agent with the given prompt and context.
 
@@ -347,6 +352,8 @@ async def run_agent(
         exec_ctx: ExecutionContext for events and tracking
         parent_run_id: Parent agent run (for context chain)
         workflow_step_id: Associated workflow step (if any)
+        workflow_id: Workflow this agent is part of (for resume)
+        step_index: Step index in the workflow (for resume)
 
     Returns:
         Dict with result, or paused state with approval_id/question_id
@@ -376,19 +383,49 @@ async def run_agent(
     )
 
     try:
-        # Run the agent
+        # Run the agent with workflow info for resume support
         agent = Agent(agent_id)
-        result = await agent.run(prompt, context)
+        result = await agent.run(
+            prompt,
+            context,
+            workflow_id=str(workflow_id) if workflow_id else None,
+            workflow_step=step_index,
+        )
 
         # Check if paused for approval or HITL
         if isinstance(result, dict):
             if result.get("paused"):
                 # Agent paused - update status and persist data collected so far
                 iteration_count = result.get("iteration", 0) + 1
+                is_hitl = result.get("question_id") is not None
                 _persist_agent_data(
                     db, agent_run, exec_ctx, iteration_count,
-                    status="paused_tool" if result.get("approval_id") else "paused_hitl",
+                    status="paused_hitl" if is_hitl else "paused_tool",
                 )
+
+                # If paused for HITL question, save the agent_state for resume
+                if is_hitl and result.get("agent_state"):
+                    question_id = result.get("question_id")
+                    update_hitl_question_state(
+                        db, UUID(question_id), result["agent_state"]
+                    )
+                    logger.info(
+                        "saved_agent_state_for_hitl",
+                        question_id=question_id,
+                        agent_id=agent_id,
+                    )
+
+                # If paused for MCP tool approval, update the approval with agent_state
+                approval_id = result.get("approval_id")
+                if approval_id and result.get("agent_state"):
+                    update_approval(
+                        db, approval_id, {"agent_state": result["agent_state"]}
+                    )
+                    logger.info(
+                        "saved_agent_state_for_approval",
+                        approval_id=approval_id,
+                        agent_id=agent_id,
+                    )
 
                 exec_ctx.emit("agent_paused", {
                     "agent_id": agent_id,
@@ -546,7 +583,7 @@ async def execute_workflow_steps(
                         return result
 
                 elif step_type == "agent":
-                    # Run the agent
+                    # Run the agent with workflow info for resume support
                     result = await run_agent(
                         db=db,
                         agent_id=step.agent_id,
@@ -554,6 +591,8 @@ async def execute_workflow_steps(
                         context=context,
                         exec_ctx=exec_ctx,
                         workflow_step_id=step.id,
+                        workflow_id=workflow.id,
+                        step_index=i,
                     )
 
                     if result.get("paused"):
@@ -1105,22 +1144,205 @@ class MainLoop:
         finally:
             clear_current_context()
 
-    async def resume_from_question_answer(
+    async def resume_from_step_approval(
         self,
         session_id: str,
-        question_id: str,
-        answer: str,
+        agent_state: dict,
         emit_event: Callable[[dict], None] | None = None,
     ) -> dict[str, Any]:
-        """Resume execution after a HITL question is answered.
+        """Resume execution after an MCP tool approval is granted.
 
-        Reconstructs execution state from DB and continues with
-        the answer available in context.
+        Uses the saved agent_state to resume the agent from where it paused.
+        The tool result is in agent_state["last_tool_result"] if the tool
+        was already executed.
 
         Args:
             session_id: Session ID
-            question_id: ID of the answered question
-            answer: User's answer
+            agent_state: Saved agent state with tool result
+            emit_event: Callback for real-time events
+
+        Returns:
+            Dict with response/paused state
+        """
+        from druppie.agents.runtime import Agent
+
+        exec_ctx = ExecutionContext(
+            session_id=session_id,
+            emit_event=emit_event,
+        )
+        set_current_context(exec_ctx)
+
+        try:
+            with db_session() as db:
+                # Get workspace info to set up context
+                workspace = get_workspace_for_session(db, UUID(session_id))
+                if workspace:
+                    exec_ctx.workspace_id = str(workspace.id)
+                    exec_ctx.project_id = str(workspace.project_id) if workspace.project_id else None
+                    exec_ctx.workspace_path = workspace.local_path
+                    exec_ctx.branch = workspace.branch
+
+                # Restore HITL clarifications if available
+                hitl_clarifications = agent_state.get("hitl_clarifications", [])
+                if hitl_clarifications:
+                    exec_ctx.hitl_clarifications = hitl_clarifications
+
+                # Get the tool result from agent_state
+                last_tool_result = agent_state.get("last_tool_result", {})
+                tool_result = last_tool_result.get("result", {"success": True})
+
+                # Get agent ID and restore agent
+                agent_id = agent_state.get("agent_id")
+                if not agent_id:
+                    return {"success": False, "error": "No agent_id in saved state"}
+
+                logger.info(
+                    "resuming_agent_from_step_approval",
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    tool=last_tool_result.get("tool"),
+                    workflow_id=agent_state.get("workflow_id"),
+                    workflow_step=agent_state.get("workflow_step"),
+                )
+
+                exec_ctx.emit("execution_resumed", {
+                    "agent_id": agent_id,
+                    "reason": "mcp_tool_approved",
+                    "tool": last_tool_result.get("tool"),
+                })
+
+                # Update session status
+                update_session(db, UUID(session_id), status="active")
+
+                # Create and resume agent
+                agent = Agent(agent_id)
+                result = await agent.resume_from_approval(agent_state, tool_result)
+
+                # Check if agent paused again
+                if result.get("paused"):
+                    # Update session status
+                    if result.get("approval_id"):
+                        update_session(db, UUID(session_id), status="paused_approval")
+                    elif result.get("question_id"):
+                        update_session(db, UUID(session_id), status="paused_question")
+                        # Save agent_state to the new question for resumption
+                        if result.get("agent_state"):
+                            update_hitl_question_state(
+                                db, UUID(result["question_id"]), result["agent_state"]
+                            )
+
+                    return {
+                        "success": True,
+                        "type": "interrupt",
+                        "response": result.get("question") or "Execution paused for approval",
+                        "paused": True,
+                        "approval_id": result.get("approval_id"),
+                        "question_id": result.get("question_id"),
+                        "session_id": session_id,
+                        "workflow_events": exec_ctx.workflow_events,
+                    }
+
+                # Agent completed - check if we need to continue workflow
+                workflow_id = agent_state.get("workflow_id")
+                workflow_step = agent_state.get("workflow_step")
+
+                if workflow_id and workflow_step is not None:
+                    # Get workflow and continue from next step
+                    workflow = get_workflow(db, UUID(workflow_id))
+                    if workflow:
+                        steps = workflow.steps
+                        context = build_context_from_workspace(workspace)
+                        context["session_id"] = session_id
+                        context["previous_result"] = result
+
+                        # Add HITL clarifications to context
+                        state = get_execution_state(db, UUID(session_id))
+                        clarifications = build_clarifications_from_hitl(state.get("hitl_answers", []))
+                        if clarifications:
+                            context["clarifications"] = clarifications
+
+                        # Move to next step
+                        next_step = workflow_step + 1
+                        workflow.current_step = next_step
+                        db.commit()
+
+                        logger.info(
+                            "continuing_workflow_after_agent",
+                            session_id=session_id,
+                            workflow_id=workflow_id,
+                            next_step=next_step,
+                            total_steps=len(steps),
+                        )
+
+                        # Continue workflow from next step
+                        workflow_result = await execute_workflow_steps(
+                            db=db,
+                            workflow=workflow,
+                            steps=steps,
+                            context=context,
+                            exec_ctx=exec_ctx,
+                            start_from=next_step,
+                        )
+
+                        if workflow_result.get("paused"):
+                            return {
+                                "success": True,
+                                "type": "interrupt",
+                                "response": workflow_result.get("message", "Execution paused"),
+                                "paused": True,
+                                "approval_id": workflow_result.get("approval_id"),
+                                "question_id": workflow_result.get("question_id"),
+                                "session_id": session_id,
+                                "workflow_events": exec_ctx.workflow_events,
+                            }
+
+                        if not workflow_result.get("success"):
+                            return await self._handle_error(
+                                session_id,
+                                exec_ctx,
+                                workflow_result.get("error", "Workflow execution failed"),
+                            )
+
+                        response = _build_final_response(workflow_result.get("results", []))
+                        return await self._complete_session(session_id, exec_ctx, response)
+
+                # No workflow or standalone agent - return result
+                response = _build_final_response([result])
+                return await self._complete_session(session_id, exec_ctx, response)
+
+        except CancelledException:
+            return {
+                "success": False,
+                "error": "Execution was cancelled",
+                "cancelled": True,
+                "session_id": session_id,
+            }
+        except Exception as e:
+            logger.error(
+                "resume_from_step_approval_error",
+                session_id=session_id,
+                agent_id=agent_state.get("agent_id"),
+                error=str(e),
+                exc_info=True,
+            )
+            return {"success": False, "error": str(e)}
+        finally:
+            clear_current_context()
+
+    async def resume_session(
+        self,
+        session_id: str,
+        response: dict,
+        emit_event: Callable[[dict], None] | None = None,
+    ) -> dict[str, Any]:
+        """Resume a session with a tool response (fallback for old-style approvals).
+
+        This is used when there's no saved agent_state and we just need to
+        continue the workflow from the next step.
+
+        Args:
+            session_id: Session ID
+            response: Tool result to pass to next step
             emit_event: Callback for real-time events
 
         Returns:
@@ -1134,9 +1356,6 @@ class MainLoop:
 
         try:
             with db_session() as db:
-                # Mark question as answered
-                answer_hitl_question(db, UUID(question_id), answer)
-
                 # Get execution state from DB
                 state = get_execution_state(db, UUID(session_id))
 
@@ -1144,26 +1363,131 @@ class MainLoop:
                     return {"success": False, "error": state["error"]}
 
                 workflow = state["workflow"]
+                if not workflow:
+                    # No workflow - just complete the session
+                    return await self._complete_session(
+                        session_id,
+                        exec_ctx,
+                        _build_final_response([response]),
+                    )
+
+                steps = state["steps"]
                 workspace = state["workspace"]
 
-                # Build context with clarifications
+                # Build context
                 context = build_context_from_workspace(workspace)
                 context["session_id"] = session_id
+                context["previous_result"] = response
 
-                # Add all HITL clarifications (including the just-answered one)
+                # Add HITL clarifications
                 clarifications = build_clarifications_from_hitl(state["hitl_answers"])
-                # Add the new answer
-                question = get_hitl_question(db, UUID(question_id))
-                if question:
-                    clarifications.append({
-                        "question_id": question_id,
-                        "question": question.question,
-                        "answer": answer,
-                        "agent_id": question.agent_run.agent_id if question.agent_run else None,
-                    })
-                context["clarifications"] = clarifications
+                if clarifications:
+                    context["clarifications"] = clarifications
 
                 # Update workspace info in exec_ctx
+                if workspace:
+                    exec_ctx.workspace_id = str(workspace.id)
+                    exec_ctx.project_id = str(workspace.project_id) if workspace.project_id else None
+                    exec_ctx.workspace_path = workspace.local_path
+                    exec_ctx.branch = workspace.branch
+
+                # Update session status
+                update_session(db, UUID(session_id), status="active")
+
+                # Continue from next step
+                resume_from = workflow.current_step + 1
+
+                result = await execute_workflow_steps(
+                    db=db,
+                    workflow=workflow,
+                    steps=steps,
+                    context=context,
+                    exec_ctx=exec_ctx,
+                    start_from=resume_from,
+                )
+
+            if result.get("paused"):
+                return {
+                    "success": True,
+                    "type": "interrupt",
+                    "response": result.get("message", "Execution paused"),
+                    "paused": True,
+                    "approval_id": result.get("approval_id"),
+                    "question_id": result.get("question_id"),
+                    "session_id": session_id,
+                    "workflow_events": exec_ctx.workflow_events,
+                }
+
+            if not result.get("success"):
+                return await self._handle_error(
+                    session_id,
+                    exec_ctx,
+                    result.get("error", "Workflow execution failed"),
+                )
+
+            final_response = _build_final_response(result.get("results", []))
+            return await self._complete_session(session_id, exec_ctx, final_response)
+
+        except CancelledException:
+            return {
+                "success": False,
+                "error": "Execution was cancelled",
+                "cancelled": True,
+                "session_id": session_id,
+            }
+        except Exception as e:
+            logger.error(
+                "resume_session_error",
+                session_id=session_id,
+                error=str(e),
+                exc_info=True,
+            )
+            return {"success": False, "error": str(e)}
+        finally:
+            clear_current_context()
+
+    async def resume_from_question_answer(
+        self,
+        session_id: str,
+        question_id: str,
+        answer: str,
+        emit_event: Callable[[dict], None] | None = None,
+    ) -> dict[str, Any]:
+        """Resume execution after a HITL question is answered.
+
+        Uses the agent_state stored in the question to resume the agent
+        from where it paused. If the agent is part of a workflow, continues
+        the workflow after the agent completes.
+
+        Args:
+            session_id: Session ID
+            question_id: ID of the answered question
+            answer: User's answer
+            emit_event: Callback for real-time events
+
+        Returns:
+            Dict with response/paused state
+        """
+        from druppie.agents.runtime import Agent
+
+        exec_ctx = ExecutionContext(
+            session_id=session_id,
+            emit_event=emit_event,
+        )
+        set_current_context(exec_ctx)
+
+        try:
+            with db_session() as db:
+                # Get the question with its agent_state
+                question = get_hitl_question(db, UUID(question_id))
+                if not question:
+                    return {"success": False, "error": f"Question {question_id} not found"}
+
+                # Mark question as answered
+                answer_hitl_question(db, UUID(question_id), answer)
+
+                # Get workspace for context
+                workspace = get_workspace_for_session(db, UUID(session_id))
                 if workspace:
                     exec_ctx.workspace_id = str(workspace.id)
                     exec_ctx.project_id = str(workspace.project_id) if workspace.project_id else None
@@ -1178,58 +1502,169 @@ class MainLoop:
                 # Update session status
                 update_session(db, UUID(session_id), status="active")
 
-                if workflow:
-                    # Continue workflow from current step (re-run since agent was paused)
-                    steps = state["steps"]
+                agent_state = question.agent_state
+                if agent_state:
+                    # Resume agent from saved state
+                    agent_id = agent_state.get("agent_id")
+                    workflow_id = agent_state.get("workflow_id")
+                    workflow_step = agent_state.get("workflow_step")
 
-                    result = await execute_workflow_steps(
-                        db=db,
-                        workflow=workflow,
-                        steps=steps,
-                        context=context,
-                        exec_ctx=exec_ctx,
-                        start_from=workflow.current_step,
+                    logger.info(
+                        "resuming_agent_from_state",
+                        agent_id=agent_id,
+                        workflow_id=workflow_id,
+                        workflow_step=workflow_step,
                     )
 
+                    agent = Agent(agent_id)
+                    result = await agent.resume(agent_state, answer)
+
+                    # Check if agent paused again
                     if result.get("paused"):
+                        # Save the new agent state to the question
+                        new_question_id = result.get("question_id")
+                        if new_question_id and result.get("agent_state"):
+                            update_hitl_question_state(
+                                db, UUID(new_question_id), result["agent_state"]
+                            )
+
+                        update_session(db, UUID(session_id), status="paused_hitl")
                         return {
                             "success": True,
                             "type": "interrupt",
-                            "response": result.get("message", "Execution paused"),
+                            "response": result.get("question", "Agent is waiting for input"),
                             "paused": True,
-                            "approval_id": result.get("approval_id"),
-                            "question_id": result.get("question_id"),
+                            "question_id": new_question_id,
                             "session_id": session_id,
                             "workflow_events": exec_ctx.workflow_events,
                         }
 
-                    if not result.get("success"):
-                        return await self._handle_error(
-                            session_id,
-                            exec_ctx,
-                            result.get("error", "Workflow execution failed"),
+                    # Agent completed - check if we need to continue workflow
+                    if workflow_id and workflow_step is not None:
+                        # Get workflow and continue from next step
+                        workflow = get_workflow(db, UUID(workflow_id))
+                        if workflow:
+                            steps = workflow.steps  # Use relationship
+                            context = build_context_from_workspace(workspace)
+                            context["session_id"] = session_id
+                            # Add the agent result to context for next step
+                            context["previous_result"] = result
+
+                            # Move to next step
+                            next_step = workflow_step + 1
+                            workflow.current_step = next_step
+                            db.commit()
+
+                            # Continue workflow from next step
+                            workflow_result = await execute_workflow_steps(
+                                db=db,
+                                workflow=workflow,
+                                steps=steps,
+                                context=context,
+                                exec_ctx=exec_ctx,
+                                start_from=next_step,
+                            )
+
+                            if workflow_result.get("paused"):
+                                return {
+                                    "success": True,
+                                    "type": "interrupt",
+                                    "response": workflow_result.get("message", "Execution paused"),
+                                    "paused": True,
+                                    "approval_id": workflow_result.get("approval_id"),
+                                    "question_id": workflow_result.get("question_id"),
+                                    "session_id": session_id,
+                                    "workflow_events": exec_ctx.workflow_events,
+                                }
+
+                            if not workflow_result.get("success"):
+                                return await self._handle_error(
+                                    session_id,
+                                    exec_ctx,
+                                    workflow_result.get("error", "Workflow execution failed"),
+                                )
+
+                            response = _build_final_response(workflow_result.get("results", []))
+                            return await self._complete_session(session_id, exec_ctx, response)
+
+                    # No workflow - agent completed standalone
+                    response = _build_final_response([result])
+                    return await self._complete_session(session_id, exec_ctx, response)
+
+                else:
+                    # No agent_state - fall back to old behavior (restart workflow)
+                    logger.warning(
+                        "no_agent_state_for_question",
+                        question_id=question_id,
+                        session_id=session_id,
+                    )
+
+                    # Get execution state from DB
+                    state = get_execution_state(db, UUID(session_id))
+                    if state.get("error"):
+                        return {"success": False, "error": state["error"]}
+
+                    workflow = state["workflow"]
+
+                    # Build context with clarifications
+                    context = build_context_from_workspace(workspace)
+                    context["session_id"] = session_id
+                    clarifications = build_clarifications_from_hitl(state["hitl_answers"])
+                    clarifications.append({
+                        "question_id": question_id,
+                        "question": question.question,
+                        "answer": answer,
+                        "agent_id": question.agent_run.agent_id if question.agent_run else None,
+                    })
+                    context["clarifications"] = clarifications
+
+                    if workflow:
+                        steps = state["steps"]
+                        result = await execute_workflow_steps(
+                            db=db,
+                            workflow=workflow,
+                            steps=steps,
+                            context=context,
+                            exec_ctx=exec_ctx,
+                            start_from=workflow.current_step,
                         )
 
-                    response = _build_final_response(result.get("results", []))
-                else:
-                    # No workflow - this was a router clarification
-                    # Re-process with the original message + answer
-                    messages = state["messages"]
-                    original_message = next(
-                        (m.content for m in messages if m.role == "user"),
-                        "",
-                    )
+                        if result.get("paused"):
+                            return {
+                                "success": True,
+                                "type": "interrupt",
+                                "response": result.get("message", "Execution paused"),
+                                "paused": True,
+                                "approval_id": result.get("approval_id"),
+                                "question_id": result.get("question_id"),
+                                "session_id": session_id,
+                                "workflow_events": exec_ctx.workflow_events,
+                            }
 
-                    # Restart processing with clarification
-                    return await self.process_message(
-                        message=f"{original_message}\n\nUser clarification: {answer}",
-                        session_id=session_id,
-                        user_id=str(state["session"].user_id) if state["session"].user_id else None,
-                        project_id=str(workspace.project_id) if workspace and workspace.project_id else None,
-                        emit_event=emit_event,
-                    )
+                        if not result.get("success"):
+                            return await self._handle_error(
+                                session_id,
+                                exec_ctx,
+                                result.get("error", "Workflow execution failed"),
+                            )
 
-                return await self._complete_session(session_id, exec_ctx, response)
+                        response = _build_final_response(result.get("results", []))
+                    else:
+                        # No workflow - restart with clarification
+                        messages = state["messages"]
+                        original_message = next(
+                            (m.content for m in messages if m.role == "user"),
+                            "",
+                        )
+                        return await self.process_message(
+                            message=f"{original_message}\n\nUser clarification: {answer}",
+                            session_id=session_id,
+                            user_id=str(state["session"].user_id) if state["session"].user_id else None,
+                            project_id=str(workspace.project_id) if workspace and workspace.project_id else None,
+                            emit_event=emit_event,
+                        )
+
+                    return await self._complete_session(session_id, exec_ctx, response)
 
         except CancelledException:
             return {
@@ -1267,8 +1702,8 @@ class MainLoop:
                 existing = get_workspace_for_session(db, UUID(session_id))
                 if existing:
                     exec_ctx.set_workspace(
-                        workspace_id=existing.id,
-                        project_id=existing.project_id,
+                        workspace_id=str(existing.id),
+                        project_id=str(existing.project_id) if existing.project_id else None,
                         workspace_path=existing.local_path,
                         branch=existing.branch,
                     )
@@ -1294,8 +1729,8 @@ class MainLoop:
                 )
 
                 exec_ctx.set_workspace(
-                    workspace_id=workspace.id,
-                    project_id=workspace.project_id,
+                    workspace_id=str(workspace.id),
+                    project_id=str(workspace.project_id) if workspace.project_id else None,
                     workspace_path=workspace.local_path,
                     branch=workspace.branch,
                 )
@@ -1305,9 +1740,9 @@ class MainLoop:
                 # Register with MCP servers
                 mcp_path = workspace.local_path.replace(str(WORKSPACE_ROOT), "/workspaces")
                 await self._register_workspace_with_mcp(
-                    workspace_id=workspace.id,
+                    workspace_id=str(workspace.id),
                     workspace_path=mcp_path,
-                    project_id=workspace.project_id,
+                    project_id=str(workspace.project_id) if workspace.project_id else None,
                     branch=workspace.branch,
                     user_id=user_id,
                     session_id=session_id,

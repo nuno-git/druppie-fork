@@ -27,6 +27,7 @@ import { useToast } from '../components/Toast'
 import { formatEventTitle } from '../utils/eventUtils'
 import {
   Message,
+  HITLQuestionMessage,
   TypingIndicator,
   ConversationSidebar,
   DebugPanel,
@@ -210,27 +211,30 @@ const Chat = () => {
   // HITL event listeners
   useEffect(() => {
     const handleHITLQuestion = (data) => {
+      // Create question data with agent info for proper display
       const questionData = {
-        id: data.request_id,
+        id: data.request_id || data.question_id,
         question: data.question,
         input_type: data.input_type,
         choices: data.choices || [],
         allow_other: data.allow_other !== false,
         context: data.context,
         session_id: data.session_id || currentPlanId,
+        agent_id: data.agent_id || 'unknown',
       }
 
-      setMessages((prev) => {
-        const lastMsg = prev[prev.length - 1]
-        if (lastMsg && lastMsg.role !== 'user') {
-          return prev.map((msg, idx) => idx === prev.length - 1
-            ? { ...msg, pendingQuestions: [...(msg.pendingQuestions || []), questionData] }
-            : msg
-          )
-        }
-        return [...prev, { role: 'assistant', content: '', pendingQuestions: [questionData], timestamp: new Date().toISOString() }]
-      })
-      toast.info('Question from Agent', data.question)
+      // Add as a separate question message (not embedded in assistant message)
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'question',
+          questionData,
+          timestamp: new Date().toISOString(),
+        },
+      ])
+
+      const agentName = data.agent_id ? data.agent_id.charAt(0).toUpperCase() + data.agent_id.slice(1) : 'Agent'
+      toast.info(`Question from ${agentName}`, data.question.substring(0, 80) + (data.question.length > 80 ? '...' : ''))
     }
 
     const handleApprovalRequired = (data) => {
@@ -427,6 +431,24 @@ const Chat = () => {
         }),
       }
     })
+
+    // Add pending questions as separate question messages
+    const pendingQuestions = fullSession.pending_questions || []
+    for (const q of pendingQuestions) {
+      loadedMessages.push({
+        role: 'question',
+        questionData: {
+          id: q.id,
+          question: q.question,
+          choices: q.choices || [],
+          context: q.context,
+          agent_id: q.agent_id || 'unknown',
+          session_id: sessionId,
+        },
+        timestamp: q.created_at || new Date().toISOString(),
+      })
+    }
+
     setMessages(loadedMessages)
   }
 
@@ -456,16 +478,36 @@ const Chat = () => {
         data: event.data || event,
       }))
 
-      setMessages((prev) => [...prev, {
+      // Create the assistant message
+      const newMessages = [{
         role: 'assistant',
         content: data.response,
         planId: data.plan_id,
         pendingApprovals: data.pending_approvals,
-        pendingQuestions: data.pending_questions || [],
         status: data.status,
         workflowEvents: normalizedEvents,
         timestamp: new Date().toISOString(),
-      }])
+      }]
+
+      // Convert pending_questions to separate question messages
+      if (data.pending_questions && data.pending_questions.length > 0) {
+        for (const q of data.pending_questions) {
+          newMessages.push({
+            role: 'question',
+            questionData: {
+              id: q.id,
+              question: q.question,
+              choices: q.choices || [],
+              context: q.context,
+              agent_id: q.agent_id || 'unknown',
+              session_id: data.plan_id,
+            },
+            timestamp: new Date().toISOString(),
+          })
+        }
+      }
+
+      setMessages((prev) => [...prev, ...newMessages])
       setCurrentPlanId(data.plan_id)
       setCurrentStep(null)
       setDebugWorkflowEvents([...liveWorkflowEvents, ...normalizedEvents])
@@ -613,8 +655,16 @@ const Chat = () => {
 
   const handleAnswerQuestion = async (questionId, answer, selected = null) => {
     setMessages((prev) => {
-      const updated = prev.map(msg => msg.pendingQuestions ? { ...msg, pendingQuestions: msg.pendingQuestions.filter(q => q.id !== questionId) } : msg)
-      return [...updated, { role: 'user', content: selected || answer }]
+      // Filter out the standalone question message and handle legacy pendingQuestions
+      const updated = prev
+        .filter((msg) => !(msg.role === 'question' && msg.questionData?.id === questionId))
+        .map((msg) =>
+          msg.pendingQuestions
+            ? { ...msg, pendingQuestions: msg.pendingQuestions.filter((q) => q.id !== questionId) }
+            : msg
+        )
+      // Add user's answer as a user message
+      return [...updated, { role: 'user', content: selected || answer, timestamp: new Date().toISOString() }]
     })
     setCurrentStep('Processing your answer...')
     setLiveWorkflowEvents([])
@@ -760,17 +810,27 @@ const Chat = () => {
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {messages.map((message, index) => (
-            <Message
-              key={index}
-              message={message}
-              onAnswerQuestion={handleAnswerQuestion}
-              isAnsweringQuestion={answerMutation.isPending}
-              onApproveTask={handleApproveTask}
-              onRejectTask={handleRejectTask}
-              isApprovingTask={approveMutation.isPending || rejectMutation.isPending}
-              currentUserId={user?.id}
-              sessionId={currentPlanId}
-            />
+            message.role === 'question' ? (
+              <HITLQuestionMessage
+                key={index}
+                question={message.questionData}
+                onAnswer={handleAnswerQuestion}
+                isAnswering={answerMutation.isPending}
+              />
+            ) : (
+              <Message
+                key={index}
+                message={message}
+                onAnswerQuestion={handleAnswerQuestion}
+                isAnsweringQuestion={answerMutation.isPending}
+                onApproveTask={handleApproveTask}
+                onRejectTask={handleRejectTask}
+                isApprovingTask={approveMutation.isPending || rejectMutation.isPending}
+                currentUserId={user?.id}
+                sessionId={currentPlanId}
+                userRoles={user?.roles || []}
+              />
+            )
           ))}
           {chatMutation.isPending && (
             <TypingIndicator

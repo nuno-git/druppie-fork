@@ -92,6 +92,24 @@ def get_user_roles(db: DBSession, user_id: UUID) -> list[str]:
     return [r[0] for r in roles]
 
 
+def get_users_by_role(db: DBSession, role: str) -> list[User]:
+    """Get all users who have a specific role.
+
+    Args:
+        db: Database session
+        role: Role name (e.g., 'architect', 'developer', 'admin')
+
+    Returns:
+        List of User objects with the specified role
+    """
+    return (
+        db.query(User)
+        .join(UserRole, User.id == UserRole.user_id)
+        .filter(UserRole.role == role)
+        .all()
+    )
+
+
 # =============================================================================
 # SESSION CRUD
 # =============================================================================
@@ -533,8 +551,8 @@ def update_tool_call(
 
 def create_approval(
     db: DBSession,
-    session_id: UUID,
-    approval_type: str,
+    data_or_session_id: dict | UUID | str | None = None,
+    approval_type: str | None = None,
     agent_run_id: UUID | None = None,
     tool_call_id: UUID | None = None,
     workflow_step_id: UUID | None = None,
@@ -543,22 +561,59 @@ def create_approval(
     title: str | None = None,
     description: str | None = None,
     required_role: str | None = None,
+    **kwargs,
 ) -> Approval:
-    """Create an approval request."""
-    approval = Approval(
-        id=uuid4(),
-        session_id=session_id,
-        agent_run_id=agent_run_id,
-        tool_call_id=tool_call_id,
-        workflow_step_id=workflow_step_id,
-        approval_type=approval_type,
-        mcp_server=mcp_server,
-        tool_name=tool_name,
-        title=title,
-        description=description,
-        required_role=required_role,
-        status="pending",
-    )
+    """Create an approval request.
+
+    Supports two calling conventions:
+    1. Dict format: create_approval(db, {"session_id": ..., "tool_name": ..., ...})
+    2. Positional format: create_approval(db, session_id, approval_type, ...)
+    """
+    # Check if first arg is a dict (from mcp_client.py, approvals.py, state.py)
+    if isinstance(data_or_session_id, dict):
+        data = data_or_session_id
+        # Map dict fields to Approval model fields
+        # Handle required_roles (array) vs required_role (string)
+        req_role = data.get("required_role")
+        if not req_role and "required_roles" in data:
+            roles = data.get("required_roles", [])
+            req_role = ",".join(roles) if isinstance(roles, list) else roles
+
+        approval = Approval(
+            id=UUID(data["id"]) if "id" in data and data["id"] else uuid4(),
+            session_id=UUID(data["session_id"]) if isinstance(data.get("session_id"), str) else data.get("session_id"),
+            agent_run_id=data.get("agent_run_id"),
+            tool_call_id=data.get("tool_call_id"),
+            workflow_step_id=data.get("workflow_step_id"),
+            approval_type=data.get("approval_type", "mcp_tool"),
+            mcp_server=data.get("mcp_server"),
+            tool_name=data.get("tool_name"),
+            title=data.get("title"),
+            description=data.get("description"),
+            required_role=req_role,
+            danger_level=data.get("danger_level"),
+            arguments=data.get("arguments"),
+            agent_state=data.get("agent_state"),
+            agent_id=data.get("agent_id"),
+            status=data.get("status", "pending"),
+        )
+    else:
+        # Positional format (from loop.py)
+        session_id = data_or_session_id
+        approval = Approval(
+            id=uuid4(),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            tool_call_id=tool_call_id,
+            workflow_step_id=workflow_step_id,
+            approval_type=approval_type or "workflow_step",
+            mcp_server=mcp_server,
+            tool_name=tool_name,
+            title=title,
+            description=description,
+            required_role=required_role,
+            status="pending",
+        )
     db.add(approval)
     db.commit()
     db.refresh(approval)
@@ -577,6 +632,34 @@ def get_pending_approval_for_tool_call(db: DBSession, tool_call_id: UUID) -> App
         .filter(Approval.tool_call_id == tool_call_id, Approval.status == "pending")
         .first()
     )
+
+
+def update_approval(
+    db: DBSession,
+    approval_id: str,
+    updates: dict,
+) -> Approval | None:
+    """Update an approval with the given fields.
+
+    Args:
+        db: Database session
+        approval_id: Approval ID (string UUID)
+        updates: Dict of fields to update (e.g., {"agent_state": {...}, "status": "approved"})
+
+    Returns:
+        Updated approval or None if not found
+    """
+    approval = db.query(Approval).filter(Approval.id == approval_id).first()
+    if not approval:
+        return None
+
+    for key, value in updates.items():
+        if hasattr(approval, key):
+            setattr(approval, key, value)
+
+    db.commit()
+    db.refresh(approval)
+    return approval
 
 
 def resolve_approval(
@@ -709,6 +792,22 @@ def answer_hitl_question(
         for choice in question.choices:
             choice.is_selected = choice.choice_index in selected_choices
 
+    db.commit()
+    db.refresh(question)
+    return question
+
+
+def update_hitl_question_state(
+    db: DBSession,
+    question_id: UUID,
+    agent_state: dict,
+) -> HitlQuestion | None:
+    """Update the agent state on a HITL question for resumption."""
+    question = get_hitl_question(db, question_id)
+    if not question:
+        return None
+
+    question.agent_state = agent_state
     db.commit()
     db.refresh(question)
     return question

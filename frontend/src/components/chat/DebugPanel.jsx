@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
-import { ChevronDown, ChevronRight, Copy, Check, Bot, Wrench, Brain, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { ChevronDown, ChevronRight, Copy, Check, Bot, Wrench, Brain, X, ExternalLink } from 'lucide-react'
 
 /**
  * Simplified Debug Panel - Single overview with expandable agents
@@ -161,6 +162,16 @@ export default function DebugPanel({
               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
               {copied ? 'Copied' : 'Copy'}
             </button>
+            {sessionId && (
+              <Link
+                to={`/debug/${sessionId}`}
+                className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50"
+                onClick={onClose}
+              >
+                <ExternalLink className="w-4 h-4" />
+                Full Debug
+              </Link>
+            )}
             <button
               onClick={onClose}
               className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
@@ -226,15 +237,25 @@ export default function DebugPanel({
                   {/* Agent Details (expanded) */}
                   {expandedAgents.has(agent.id) && (
                     <div className="px-4 pb-4 space-y-3 bg-gray-50">
-                      {/* Tool Calls Summary */}
+                      {/* Tool Calls with expandable arguments */}
                       {agent.toolCalls.length > 0 && (
                         <div className="mt-2">
-                          <div className="text-xs font-medium text-gray-500 uppercase mb-2">Tools Used</div>
-                          <div className="flex flex-wrap gap-2">
+                          <div className="text-xs font-medium text-gray-500 uppercase mb-2">Tools Used ({agent.toolCalls.length})</div>
+                          <div className="space-y-2">
                             {agent.toolCalls.map((tool, i) => (
-                              <span key={i} className="px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded font-mono">
-                                {tool.name}
-                              </span>
+                              <details key={i} className="bg-orange-50 rounded border border-orange-200">
+                                <summary className="px-3 py-2 cursor-pointer hover:bg-orange-100 flex items-center gap-2">
+                                  <Wrench className="w-4 h-4 text-orange-600" />
+                                  <span className="font-mono text-sm text-orange-800">{tool.name}</span>
+                                </summary>
+                                {tool.args && (
+                                  <pre className="px-3 py-2 text-xs bg-white border-t border-orange-200 overflow-auto max-h-40">
+                                    {typeof tool.args === 'string'
+                                      ? tool.args
+                                      : JSON.stringify(tool.args, null, 2)}
+                                  </pre>
+                                )}
+                              </details>
                             ))}
                           </div>
                         </div>

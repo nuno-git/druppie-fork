@@ -2,6 +2,8 @@
  * ApprovalCard - Inline approval/reject UI for tasks requiring authorization
  *
  * Shows code/file content for write operations so users can review what will be changed.
+ * For users without the required role, shows a "waiting for approval" state with
+ * a contact popup to find users who can approve.
  */
 
 import React, { useState, useEffect } from 'react'
@@ -22,8 +24,12 @@ import {
   GitBranch,
   MessageSquare,
   ExternalLink,
+  Mail,
+  Users,
+  X,
+  Clock,
 } from 'lucide-react'
-import { getWorkspaceFile } from '../../services/api'
+import { getWorkspaceFile, getUsersByRole } from '../../services/api'
 
 // Helper to detect language from file path
 const getLanguageFromPath = (path) => {
@@ -85,7 +91,7 @@ const getToolInfo = (toolName) => {
   return tools[toolName] || { icon: Code, label: toolName, color: 'text-gray-600' }
 }
 
-const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUserId, sessionId }) => {
+const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUserId, sessionId, userRoles = [] }) => {
   const [showRejectInput, setShowRejectInput] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [showNewContent, setShowNewContent] = useState(false)
@@ -93,6 +99,10 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
   const [existingContent, setExistingContent] = useState(null)
   const [fileLoading, setFileLoading] = useState(false)
   const [fileError, setFileError] = useState(null)
+  // Contact modal state
+  const [showContactModal, setShowContactModal] = useState(false)
+  const [contactUsers, setContactUsers] = useState([])
+  const [contactLoading, setContactLoading] = useState(false)
 
   // Extract arguments from approval (mcp_arguments for chat view, arguments for API)
   const args = approval.mcp_arguments || approval.arguments || {}
@@ -127,6 +137,20 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
       loadExistingContent()
     }
   }, [showExistingContent, filePath])
+
+  // Load contact users when modal is opened
+  const loadContactUsers = async (role) => {
+    setContactLoading(true)
+    try {
+      const response = await getUsersByRole(role)
+      setContactUsers(response.users || [])
+    } catch (err) {
+      console.error('Failed to load users by role:', err)
+      setContactUsers([])
+    } finally {
+      setContactLoading(false)
+    }
+  }
 
   const loadExistingContent = async () => {
     if (!filePath || !sessionId) return
@@ -173,6 +197,18 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
 
   // Check if current user has already approved
   const userHasApproved = currentUserId && approvedByIds.includes(currentUserId)
+
+  // Check if current user can approve based on their roles
+  // User can approve if they have admin role OR any of the required roles
+  const userCanApprove = userRoles.includes('admin') || requiredRoles.some((r) => userRoles.includes(r))
+
+  // Handler to open contact modal
+  const handleOpenContactModal = () => {
+    setShowContactModal(true)
+    // Load users for the first required role
+    const roleToQuery = requiredRoles[0] || 'admin'
+    loadContactUsers(roleToQuery)
+  }
 
   return (
     <div className="mt-3 bg-amber-50 rounded-lg border border-amber-200 p-4">
@@ -433,13 +469,35 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
             </div>
           )}
 
-          {/* Action buttons or "You have approved" message */}
+          {/* Action buttons or waiting message */}
           {userHasApproved ? (
             <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg border border-green-200">
               <CheckCircle className="w-5 h-5 text-green-600" />
               <span className="text-sm text-green-800 font-medium">
                 You have approved this task. Waiting for {requiredApprovals - currentApprovals} more approval(s) from other roles.
               </span>
+            </div>
+          ) : !userCanApprove ? (
+            /* User cannot approve - show waiting state with contact option */
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <Clock className="w-5 h-5 text-blue-600" />
+                <div className="flex-1">
+                  <span className="text-sm text-blue-800 font-medium">
+                    Waiting for approval from: <span className="font-bold">{requiredRoles.join(' or ')}</span>
+                  </span>
+                  <p className="text-xs text-blue-600 mt-0.5">
+                    You don't have the required role to approve this action.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleOpenContactModal}
+                className="flex items-center gap-2 px-4 py-2 text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              >
+                <Users className="w-4 h-4" />
+                <span>Contact {requiredRoles[0] || 'approvers'}</span>
+              </button>
             </div>
           ) : (
             <div className="flex items-center gap-2" role="group" aria-label="Approval actions">
@@ -490,6 +548,78 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
           )}
         </div>
       </div>
+
+      {/* Contact Modal */}
+      {showContactModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <Users className="w-5 h-5 text-blue-600" />
+                Contact Approvers
+              </h3>
+              <button
+                onClick={() => setShowContactModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-full hover:bg-gray-200"
+                aria-label="Close modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4">
+              <p className="text-sm text-gray-600 mb-4">
+                Users with <span className="font-semibold">{requiredRoles.join(' or ')}</span> role who can approve this action:
+              </p>
+              {contactLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+                  <span className="ml-2 text-sm text-gray-500">Loading...</span>
+                </div>
+              ) : contactUsers.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Users className="w-8 h-8 mx-auto mb-2 text-gray-400" />
+                  <p className="text-sm">No users found with this role.</p>
+                </div>
+              ) : (
+                <ul className="space-y-3">
+                  {contactUsers.map((u) => (
+                    <li
+                      key={u.id}
+                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200"
+                    >
+                      <div>
+                        <div className="font-medium text-gray-900">
+                          {u.display_name || u.username}
+                        </div>
+                        <div className="text-xs text-gray-500">@{u.username}</div>
+                      </div>
+                      {u.email ? (
+                        <a
+                          href={`mailto:${u.email}?subject=Approval%20Request&body=Hi%2C%0A%0AI%20need%20your%20approval%20for%20a%20task%20in%20Druppie.%0A%0ATask%3A%20${encodeURIComponent(approval.task_name)}%0A%0APlease%20check%20the%20Approvals%20page%20to%20review%20and%20approve.%0A%0AThanks!`}
+                          className="flex items-center gap-2 px-3 py-1.5 text-sm text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                        >
+                          <Mail className="w-4 h-4" />
+                          Email
+                        </a>
+                      ) : (
+                        <span className="text-xs text-gray-400 italic">No email</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex justify-end">
+              <button
+                onClick={() => setShowContactModal(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
