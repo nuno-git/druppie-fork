@@ -103,9 +103,20 @@ async def answer_question(
     This submits the user's response to the agent's question and
     resumes the workflow execution with the provided answer.
     """
+    from uuid import UUID
     from druppie.core.loop import get_main_loop
+    import structlog
+    logger = structlog.get_logger()
 
-    question = get_hitl_question(db, question_id)
+    logger.info("answering_question", question_id=question_id, answer_preview=request.answer[:50])
+
+    # Convert string to UUID for database queries
+    try:
+        question_uuid = UUID(question_id)
+    except ValueError:
+        raise NotFoundError("question", question_id)
+
+    question = get_hitl_question(db, question_uuid)
     if not question:
         raise NotFoundError("question", question_id)
 
@@ -113,21 +124,26 @@ async def answer_question(
         raise ConflictError(f"Question {question_id} is already {question.status}")
 
     # Save the answer to database
-    updated = answer_hitl_question(db, question_id, request.answer)
+    updated = answer_hitl_question(db, question_uuid, request.answer)
     if not updated:
         raise ExternalServiceError("database", "Failed to answer question")
 
     # Resume the workflow with the answer
     # Create emit_event callback for real-time updates
-    emit_event = create_emit_event(question.session_id)
+    session_id_str = str(question.session_id)
+    emit_event = create_emit_event(session_id_str)
+
+    logger.info("resuming_workflow", session_id=session_id_str, question_id=question_id)
 
     main_loop = get_main_loop()
     result = await main_loop.resume_from_question_answer(
-        session_id=question.session_id,
+        session_id=session_id_str,
         question_id=question_id,
         answer=request.answer,
         emit_event=emit_event,
     )
+
+    logger.info("workflow_resumed", session_id=session_id_str, result_keys=list(result.keys()) if result else None)
 
     # Return both the answered question and the workflow result
     return {
