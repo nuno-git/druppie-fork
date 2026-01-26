@@ -580,6 +580,16 @@ if agent_prompt_tokens > 0 or agent_completion_tokens > 0:
 **Key Files**: `druppie/core/loop.py` (lines ~308-325)
 **Result**: Tokens are now saved incrementally as each agent runs, ensuring they're never lost even when execution pauses
 
+### Issue: Approval History Shows "Unknown tool" for Step Approvals
+**Symptom**: In the Approval History section, workflow step approvals (non-MCP) showed "Unknown tool" instead of something meaningful
+**Cause**: The `ApprovalResponse` model didn't include `approval_type` field, so frontend couldn't distinguish between MCP tool approvals and workflow step approvals
+**Fix**:
+1. Add `approval_type: str | None` to `ApprovalResponse` model in `druppie/api/routes/approvals.py`
+2. Include `approval_type=a.approval_type` in response construction (both list and detail endpoints)
+3. Update frontend `Tasks.jsx` to display "Step Approval" when `approval_type === 'workflow_step'`
+**Key Files**: `druppie/api/routes/approvals.py`, `frontend/src/pages/Tasks.jsx`
+**Result**: Approval history now clearly shows "Step Approval" for workflow checkpoints vs actual tool names like "docker:build" for MCP tools
+
 ### Workflow: Full Architect Flow Testing
 To test the complete architect workflow (including HITL questions and architect approval):
 1. Log in as `normal_user`
