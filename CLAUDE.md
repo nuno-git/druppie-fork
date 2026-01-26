@@ -431,6 +431,23 @@ immediately after and overwrites the session state before the clarification can 
 **Key Files**: `druppie/core/loop.py`, `druppie/core/execution_context.py`
 **Test**: Full flow: User request → HITL question → "yes" → write_file → approval → agent completes (not asks again)
 
+### Issue: HITL Question Resume Restarts Workflow Instead of Continuing
+**Symptom**: When user answers an HITL question from an agent (e.g., developer asks clarification), the workflow restarts from the router instead of continuing from where the agent paused
+**Root Cause**: `resume_from_question_answer` in loop.py was calling `process_message()` which starts the entire workflow from scratch
+**Diagnosis**: After answering question, logs show "router_node_start" instead of resuming the paused agent
+**Fix**:
+1. Add `agent_state` column to HitlQuestion model (migration 005)
+2. Save agent state when pausing for HITL question (same pattern as MCP tool approvals)
+3. In `resume_from_question_answer`, check if question has saved `agent_state`
+4. If yes, call `resume_from_step_approval()` to continue from saved state
+5. If no (legacy questions), fall back to restarting workflow with clarification
+**Key Files**:
+- `druppie/db/models.py` - HitlQuestion.agent_state column
+- `druppie/db/migrations.py` - Migration 005
+- `druppie/db/crud.py` - update_hitl_question_agent_state()
+- `druppie/core/loop.py` - execute_plan saves state, resume_from_question_answer uses it
+**Pattern**: Same resumption pattern used for MCP tool approvals now works for HITL questions
+
 ### Issue: HITL MCP Not Configured (hitl:progress fails)
 **Symptom**: Deployer/developer agents fail with "Client failed to connect" when calling hitl:progress
 **Cause**: HITL MCP server running on port 9003 but not configured in mcp_config.yaml
