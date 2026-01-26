@@ -441,12 +441,26 @@ const TaskCard = ({ task, onApprove, onReject }) => {
           )}
         </div>
       ) : (
-        <div className="flex items-center p-3 bg-gray-50 rounded-lg text-gray-600">
-          <Shield className="w-5 h-5 mr-2" />
-          {requiredRoles.length > 1
-            ? `You need one of these roles to approve: ${requiredRoles.join(', ')}`
-            : `You need the "${requiredRole}" role to approve this task.`
-          }
+        <div className="space-y-3">
+          {/* Prominent waiting state */}
+          <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg border border-blue-200">
+            <div className="p-2 bg-blue-100 rounded-full">
+              <Clock className="w-5 h-5 text-blue-600 animate-pulse" />
+            </div>
+            <div className="flex-1">
+              <div className="font-medium text-blue-800">Waiting for Approval</div>
+              <p className="text-sm text-blue-600 mt-0.5">
+                This task requires approval from: <span className="font-semibold">{requiredRoles.join(' or ')}</span>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center p-3 bg-gray-50 rounded-lg text-gray-600">
+            <Shield className="w-5 h-5 mr-2" />
+            {requiredRoles.length > 1
+              ? `You need one of these roles to approve: ${requiredRoles.join(', ')}`
+              : `You need the "${requiredRole}" role to approve this task.`
+            }
+          </div>
         </div>
       )}
     </div>
