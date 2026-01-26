@@ -161,8 +161,11 @@ mcps:
         required_role: developer
 
   hitl:
-    url: ${MCP_HITL_URL:-http://mcp-hitl:9003}
-    description: "Human-in-the-loop interaction via Redis pub/sub"
+    # NOTE: HITL is now BUILT-IN to the backend (druppie/agents/hitl.py)
+    # No external MCP server needed - these tools are implemented directly
+    url: builtin://hitl
+    description: "Human-in-the-loop (built-in) - questions stored directly in database"
+    builtin: true
     tools:
       - name: ask_question
         description: "Ask user a free-form text question"

@@ -183,6 +183,7 @@ async def list_mcp_servers(
     """List MCP servers with their status.
 
     Returns all configured MCP servers with health status checks.
+    Built-in MCPs (like HITL) are always shown as healthy.
     """
     mcp_client = get_mcp_client(db)
     config = mcp_client.config
@@ -190,7 +191,12 @@ async def list_mcp_servers(
     servers = []
     for server_id, server_config in config.get("mcps", {}).items():
         url = mcp_client.get_mcp_url(server_id)
-        status = await check_server_health(url)
+
+        # Built-in MCPs are always healthy (no external server to check)
+        if server_config.get("builtin", False):
+            status = "healthy"
+        else:
+            status = await check_server_health(url)
 
         servers.append(
             ServerStatusResponse(
