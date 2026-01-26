@@ -514,12 +514,14 @@ def get_used_host_ports() -> set[int]:
 **Impact**: Users unsure how many people need to approve
 **Investigate**: Check how required_roles is interpreted in approval code
 
-### Issue: Session Ownership Restricts Cross-User Viewing
+### Issue: Session Ownership Restricts Cross-User Viewing (FIXED)
 **Symptom**: Users can approve tasks from Approvals page but get 403 when trying to view other users' sessions
 **Example**: seniordev can approve tasks for normal_user's session but can't navigate to that session
-**Behavior**: This is security by design - sessions are private to their owners
-**Workaround**: Approve from Approvals page, not from Chat page
-**Note**: The "View Conversation" link in Approvals page shows 403 for non-owners
+**Fix**: Added `check_session_access()` helper in `druppie/api/routes/sessions.py` that allows access if:
+- User owns the session
+- User is admin
+- User has a pending approval for the session that matches their role
+**Result**: "View Conversation" link now works for approvers, enabling them to see full context before approving
 
 ### Issue: Debug Page Shows Incomplete Trace Data After Approval
 **Symptom**: Debug page shows only 3 events when conversation had 35+ events
