@@ -700,10 +700,12 @@ const Chat = () => {
       queryClient.invalidateQueries({ queryKey: ['questions'] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
       setCurrentStep(null)
+      setIsAgentWorking(false)
     },
     onError: (error, variables) => {
-      setMessages((prev) => [...prev.filter(msg => msg.role !== 'user' || msg.content !== variables.answer), { role: 'assistant', content: `Error answering question: ${error.message}` }])
+      setMessages((prev) => [...prev, { role: 'assistant', content: `Error answering question: ${error.message}` }])
       setCurrentStep(null)
+      setIsAgentWorking(false)
     },
   })
 
@@ -714,8 +716,8 @@ const Chat = () => {
   const handleAnswerQuestion = async (questionId, answer, selected = null) => {
     setMessages((prev) => {
       // Mark the question as answered (don't remove it - keep for history)
-      // and add the user's answer as a separate message
-      const updated = prev.map((msg) => {
+      // The answer is shown inline in the HITLQuestionMessage component, no separate user message needed
+      return prev.map((msg) => {
         // Mark standalone question messages as answered
         if (msg.role === 'question' && msg.questionData?.id === questionId) {
           return { ...msg, answered: true, userAnswer: selected || answer }
@@ -729,10 +731,9 @@ const Chat = () => {
         }
         return msg
       })
-      // Add user's answer as a user message
-      return [...updated, { role: 'user', content: selected || answer, timestamp: new Date().toISOString() }]
     })
     setCurrentStep('Processing your answer...')
+    setIsAgentWorking(true)  // Show typing indicator while agent processes answer
     setLiveWorkflowEvents([])
     setDebugWorkflowEvents([])
     setDebugLLMCalls([])
