@@ -262,6 +262,66 @@ async def build(
         return {"success": False, "error": str(e)}
 
 
+def check_and_remove_existing_container(container_name: str) -> dict | None:
+    """Check if container exists and remove it if it does.
+
+    Args:
+        container_name: Name of container to check
+
+    Returns:
+        Dict with info about what was done, or None if no existing container
+    """
+    try:
+        # Check if container exists (running or stopped)
+        result = subprocess.run(
+            ["docker", "ps", "-a", "--filter", f"name=^{container_name}$", "--format", "{{.ID}} {{.Status}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        if result.returncode != 0 or not result.stdout.strip():
+            return None  # No existing container
+
+        # Container exists - get its ID and status
+        output = result.stdout.strip().split("\n")[0]
+        parts = output.split(" ", 1)
+        container_id = parts[0]
+        status = parts[1] if len(parts) > 1 else ""
+
+        logger.info("Found existing container %s (ID: %s, Status: %s) - removing it",
+                   container_name, container_id, status)
+
+        # Stop container if it's running
+        if "Up" in status:
+            stop_result = subprocess.run(
+                ["docker", "stop", container_name],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if stop_result.returncode != 0:
+                logger.warning("Failed to stop container: %s", stop_result.stderr)
+
+        # Remove the container
+        rm_result = subprocess.run(
+            ["docker", "rm", "-f", container_name],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        if rm_result.returncode != 0:
+            logger.warning("Failed to remove container: %s", rm_result.stderr)
+            return {"removed": False, "error": rm_result.stderr}
+
+        return {"removed": True, "previous_status": status}
+
+    except Exception as e:
+        logger.warning("Error checking/removing existing container: %s", e)
+        return {"removed": False, "error": str(e)}
+
+
 @mcp.tool()
 async def run(
     image_name: str,
@@ -289,6 +349,11 @@ async def run(
         Dict with success, container_name, port, url
     """
     try:
+        # Check for and remove existing container with same name
+        existing = check_and_remove_existing_container(container_name)
+        if existing:
+            logger.info("Removed existing container: %s", existing)
+
         # Handle port mapping
         requested_port = None
         if port_mapping:
