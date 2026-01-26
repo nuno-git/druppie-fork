@@ -184,8 +184,14 @@ const Settings = () => {
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">LLM Provider</span>
-                <span className="font-medium">{status?.llm_provider || 'zai'}</span>
+                <span className="font-medium">{status?.llm_provider || 'auto'}</span>
               </div>
+              {status?.llm_model && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">LLM Model</span>
+                  <span className="font-medium text-xs truncate max-w-[200px]" title={status.llm_model}>{status.llm_model}</span>
+                </div>
+              )}
             </div>
           </div>
         </SectionCard>

@@ -150,19 +150,25 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.warning("database_health_check_failed", error=str(e))
 
-        # Check LLM provider configuration
-        llm_provider = os.getenv("LLM_PROVIDER", "auto")
+        # Check LLM provider configuration - get actual resolved provider
+        from druppie.llm.service import get_llm_service, LLMConfigurationError
+        llm_provider_config = os.getenv("LLM_PROVIDER", "auto")
         llm_healthy = False
-        if llm_provider == "mock":
+        llm_provider = llm_provider_config
+        llm_model = None
+        try:
+            llm_service = get_llm_service()
+            llm_provider = llm_service.get_provider()  # Resolves 'auto' to actual provider
             llm_healthy = True
-        elif llm_provider == "deepinfra":
-            # Check if DeepInfra API key is configured
-            deepinfra_key = os.getenv("DEEPINFRA_API_KEY", "")
-            llm_healthy = bool(deepinfra_key)
-        elif llm_provider in ("zai", "auto"):
-            # Check if Z.AI API key is configured
-            zai_key = os.getenv("ZAI_API_KEY", "")
-            llm_healthy = bool(zai_key)
+            # Get model name for transparency
+            if llm_provider == "deepinfra":
+                llm_model = os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct")
+            elif llm_provider == "zai":
+                llm_model = os.getenv("ZAI_MODEL", "GLM-4.7")
+            elif llm_provider == "mock":
+                llm_model = "mock"
+        except LLMConfigurationError:
+            llm_healthy = False
 
         # Check Gitea health
         gitea_healthy = False
@@ -189,6 +195,7 @@ def create_app() -> FastAPI:
             "agents_count": len(agents),
             "workflows_count": len(workflows),
             "llm_provider": llm_provider,
+            "llm_model": llm_model,
         }
 
     @app.get("/")
