@@ -257,21 +257,26 @@ const Dashboard = () => {
             <div className="text-gray-500">No pending approvals.</div>
           ) : (
             <div className="space-y-3">
-              {tasks.slice(0, 5).map((task) => (
-                <Link
-                  key={task.id}
-                  to={`/tasks?id=${task.id}`}
-                  className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50"
-                >
-                  <div>
-                    <p className="font-medium">{task.name}</p>
-                    <p className="text-sm text-gray-500">
-                      Requires: <span className="font-medium">{task.required_role}</span>
-                    </p>
-                  </div>
-                  <AlertCircle className="w-5 h-5 text-yellow-500" />
-                </Link>
-              ))}
+              {tasks.slice(0, 5).map((task) => {
+                // Normalize: get required_role from required_role string or required_roles array
+                const requiredRole = task.required_role ||
+                  (task.required_roles?.length > 0 ? task.required_roles[0] : 'admin')
+                return (
+                  <Link
+                    key={task.id}
+                    to={`/tasks?id=${task.id}`}
+                    className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50"
+                  >
+                    <div>
+                      <p className="font-medium">{task.name}</p>
+                      <p className="text-sm text-gray-500">
+                        Requires: <span className="font-medium">{requiredRole}</span>
+                      </p>
+                    </div>
+                    <AlertCircle className="w-5 h-5 text-yellow-500" />
+                  </Link>
+                )
+              })}
             </div>
           )}
         </div>
