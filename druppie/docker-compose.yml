@@ -288,22 +288,22 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-filesearch:
+  mcp-web:
     build:
-      context: ./mcp-servers/filesearch
+      context: ./mcp-servers/web
       dockerfile: Dockerfile
-    container_name: druppie-mcp-filesearch
+    container_name: druppie-mcp-web
     environment:
       SEARCH_ROOT: /dataset
-      MCP_PORT: "9004"
+      MCP_PORT: "9005"
     volumes:
       - druppie_new_dataset:/dataset
     ports:
-      - "9004:9004"
+      - "9005:9005"
     networks:
       - druppie-new-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9004/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9005/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -337,15 +337,15 @@ services:
   druppie-frontend:
     build:
       context: ../frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_API_URL: http://localhost:8100
-        VITE_KEYCLOAK_URL: http://localhost:8180
-        VITE_KEYCLOAK_REALM: druppie
-        VITE_KEYCLOAK_CLIENT_ID: druppie-frontend
+      dockerfile: Dockerfile.dev
     container_name: druppie-new-frontend
     ports:
       - "5273:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8100
+      - VITE_KEYCLOAK_URL=http://localhost:8180
+      - VITE_KEYCLOAK_REALM=druppie
+      - VITE_KEYCLOAK_CLIENT_ID=druppie-frontend
     depends_on:
       - druppie-backend
     networks:
