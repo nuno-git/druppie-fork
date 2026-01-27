@@ -4,6 +4,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import {
   Home,
   CheckSquare,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react'
 
 import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole, isKeycloakAvailable } from './services/keycloak'
+import { getTasks } from './services/api'
 import { ToastProvider } from './components/Toast'
 import ErrorBoundary from './components/ErrorBoundary'
 import ConnectionStatus from './components/ConnectionStatus'
@@ -79,10 +81,20 @@ const Navigation = () => {
   const { authenticated, user } = useAuth()
   const location = useLocation()
 
+  // Fetch pending approvals count for badge
+  const { data: tasksData } = useQuery({
+    queryKey: ['pending-approvals-count'],
+    queryFn: getTasks,
+    enabled: authenticated,
+    refetchInterval: 30000, // Refresh every 30 seconds
+  })
+
+  const pendingApprovalsCount = tasksData?.approvals?.length || 0
+
   const navItems = [
     { path: '/', icon: Home, label: 'Dashboard' },
     { path: '/chat', icon: MessageSquare, label: 'Chat' },
-    { path: '/tasks', icon: CheckSquare, label: 'Approvals' },
+    { path: '/tasks', icon: CheckSquare, label: 'Approvals', badge: pendingApprovalsCount },
     { path: '/projects', icon: FolderOpen, label: 'Projects' },
     { path: '/settings', icon: SettingsIcon, label: 'Settings' },
   ]
@@ -110,11 +122,11 @@ const Navigation = () => {
 
           {/* Navigation */}
           <nav className="hidden md:flex items-center space-x-1">
-            {navItems.map(({ path, icon: Icon, label }) => (
+            {navItems.map(({ path, icon: Icon, label, badge }) => (
               <Link
                 key={path}
                 to={path}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors relative ${
                   isActive(path)
                     ? 'bg-blue-100 text-blue-700'
                     : 'text-gray-600 hover:bg-gray-100'
@@ -122,6 +134,11 @@ const Navigation = () => {
               >
                 <Icon className="w-4 h-4 inline mr-1" />
                 {label}
+                {badge > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                    {badge > 9 ? '9+' : badge}
+                  </span>
+                )}
               </Link>
             ))}
             {/* Admin-only navigation items */}
