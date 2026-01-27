@@ -379,8 +379,30 @@ class Agent:
                     duration_ms=duration_ms,
                 )
 
-            # No tool calls = agent is done
+            # No tool calls - check if agent is trying to communicate without tools
             if not response.tool_calls:
+                # If agent output content without using tools, remind it and retry
+                if response.content and iteration < max_iterations - 1:
+                    logger.warning(
+                        "agent_no_tool_calls_retry",
+                        agent_id=self.id,
+                        iteration=iteration,
+                        content_preview=response.content[:100] if response.content else "",
+                    )
+                    # Add the agent's response and a reminder to use tools
+                    messages.append({"role": "assistant", "content": response.content})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "You MUST use tools to communicate and act. "
+                            "Use hitl_ask_question to ask questions to the user. "
+                            "Use coding_write_file or coding_batch_write_files to create files. "
+                            "Do NOT output text directly - always use the appropriate tool."
+                        ),
+                    })
+                    continue  # Retry with reminder
+
+                # Agent is done (no content or last iteration)
                 logger.info(
                     "agent_run_complete",
                     agent_id=self.id,
