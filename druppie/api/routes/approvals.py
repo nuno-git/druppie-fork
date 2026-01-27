@@ -39,6 +39,26 @@ router = APIRouter()
 # =============================================================================
 
 
+def _generate_approval_name(approval: Approval) -> str:
+    """Generate a human-readable name for an approval.
+
+    Args:
+        approval: The approval record
+
+    Returns:
+        Human-readable name for display
+    """
+    if approval.title:
+        return approval.title
+    elif approval.approval_type == "workflow_step":
+        return "Step Approval"
+    elif approval.tool_name:
+        # Format tool name nicely: "docker:build" -> "Approve docker:build"
+        return f"Approve {approval.tool_name}"
+    else:
+        return "Approval Required"
+
+
 def _create_build_record_from_docker_run(
     db: Session,
     tool_result: dict,
@@ -312,6 +332,7 @@ class ApprovalResponse(BaseModel):
 
     id: str
     session_id: str | None  # May be None for some approvals
+    name: str | None = None  # Human-readable name for display
     tool_name: str | None  # May be None for step approvals
     approval_type: str | None = None  # "mcp_tool" or "workflow_step"
     arguments: dict | None
@@ -482,6 +503,7 @@ async def list_approvals(
         ApprovalResponse(
             id=str(a.id),
             session_id=str(a.session_id) if a.session_id else None,
+            name=_generate_approval_name(a),
             tool_name=a.tool_name,
             approval_type=a.approval_type,
             arguments=a.arguments,
@@ -525,6 +547,7 @@ async def get_approval(
     return ApprovalResponse(
         id=approval.id,
         session_id=approval.session_id,
+        name=_generate_approval_name(approval),
         tool_name=approval.tool_name,
         approval_type=approval.approval_type,
         arguments=approval.arguments,
