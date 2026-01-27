@@ -705,6 +705,8 @@ Full execution transparency with:
 - Event tree showing all agent, tool, and LLM calls
 - Timeline with durations
 - Expandable details for each event
+- **Per-agent token breakdown** with cost estimates (e.g., "deployer: 26.7K ($0.01)")
+- Raw LLM calls with model/provider info (e.g., "Qwen/Qwen3-Next-80B-A3B-Instruct (deepinfra)")
 
 ### Session History
 Chat sidebar shows previous conversations with:
@@ -775,7 +777,8 @@ const commitMessage = args.message || args.commit_message // For commit_and_push
 Full token transparency across the platform:
 - **Session Level**: `prompt_tokens`, `completion_tokens`, `total_tokens` columns
 - **Project Level**: Aggregated from all sessions via batch SQL query
-- **UI Display**: Token badges in sidebar, project cards, and detail pages
+- **Agent Level**: Per-agent token breakdown via `agent_runs` table with cost estimates
+- **UI Display**: Token badges in sidebar, project cards, detail pages, and Debug panel
 
 Token aggregation pattern (avoids N+1 queries):
 ```python
