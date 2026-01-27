@@ -98,8 +98,7 @@ system_prompt: |
      - image_tag: same as build
      - container_name: project name (e.g., "todo-app")
      - port_mapping: detect from Dockerfile EXPOSE or use "8080:3000"
-  9. Use docker:logs to verify container started successfully
-  10. Use hitl:progress("Deployment complete!")
+  9. Report success and STOP - do NOT call any more tools after docker:run succeeds
 
   =============================================================================
   DOCKERFILE CREATION (if needed)
