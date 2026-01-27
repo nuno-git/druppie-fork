@@ -54,7 +54,7 @@ const Dashboard = () => {
 
   const { data: plansResponse, isLoading: plansLoading } = useQuery({
     queryKey: ['plans'],
-    queryFn: getPlans,
+    queryFn: () => getPlans(),
   })
 
   const { data: tasksResponse, isLoading: tasksLoading } = useQuery({
