@@ -1,0 +1,77 @@
+# Bestand Zoeker MCP Server Configuration
+# Provides file search and metadata retrieval for local folders for Druppie agents
+
+id: bestand_zoeker
+name: Bestand Zoeker
+description: Local file search and metadata retrieval tool for file system operations
+transport: stdio
+command: python3
+args:
+  - -m
+  - druppie.mcp.servers.bestand_zoeker
+
+tools:
+  - name: get_all
+    description: Get all files and folders with metadata from specified folder
+    input_schema:
+      type: object
+      properties:
+        folder_path:
+          type: string
+          description: Path to search in (default: dataset)
+          default: ""
+        max_items:
+          type: string
+          description: Maximum number of items to return (default: 100)
+          default: ""
+      required: []
+
+  - name: get_singular
+    description: Get metadata for a single file or folder
+    input_schema:
+      type: object
+      properties:
+        file_path:
+          type: string
+          description: Path to the file or folder
+      required:
+        - file_path
+
+  - name: get_metadata
+    description: Get detailed metadata for a file or folder (alias for get_singular)
+    input_schema:
+      type: object
+      properties:
+        file_path:
+          type: string
+          description: Path to the file or folder
+      required:
+        - file_path
+
+# Environment variables required by this MCP server
+environment:
+  - name: BESTAND_ZOEKER_DEFAULT_FOLDER
+    description: Default folder to search when none specified
+    required: false
+    default: "dataset"
+  - name: BESTAND_ZOEKER_MAX_RESULTS
+    description: Maximum number of results to return
+    required: false
+    default: "100"
+  - name: BESTAND_ZOEKER_TIMEOUT
+    description: Operation timeout in seconds
+    required: false
+    default: "30"
+
+# Metadata for the MCP registry
+metadata:
+  category: productivity
+  tags:
+    - file-system
+    - search
+    - metadata
+    - local
+    - dutch
+  version: "1.0.0"
+  author: "Druppie MCP Generator"
+  license: MIT

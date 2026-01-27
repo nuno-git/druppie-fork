@@ -188,6 +188,8 @@ async def list_mcp_servers(
     mcp_client = get_mcp_client(db)
     config = mcp_client.config
 
+    logger.info("mcp_servers_list_requested", user_id=user.get("sub"), config_mcps=list(config.get("mcps", {}).keys()))
+
     servers = []
     for server_id, server_config in config.get("mcps", {}).items():
         url = mcp_client.get_mcp_url(server_id)
@@ -197,6 +199,8 @@ async def list_mcp_servers(
             status = "healthy"
         else:
             status = await check_server_health(url)
+
+        logger.info("mcp_server_found", server_id=server_id, url=url, status=status)
 
         servers.append(
             ServerStatusResponse(
@@ -208,6 +212,7 @@ async def list_mcp_servers(
             )
         )
 
+    logger.info("mcp_servers_list_returned", count=len(servers))
     return ServersListResponse(servers=servers)
 
 

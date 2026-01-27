@@ -34,6 +34,7 @@ import {
   ApprovalCard,
   ToolExecutionCard,
   WorkflowEventMessage,
+  MCPServers,
 } from '../components/chat'
 
 const Chat = () => {
@@ -65,6 +66,7 @@ const Chat = () => {
   const [toolExecutions, setToolExecutions] = useState([]) // Track tool executions with approval status
   const seenApprovalIds = useRef(new Set()) // Track seen approval IDs to prevent duplicates
   const [workflowEventsForDisplay, setWorkflowEventsForDisplay] = useState([]) // Workflow events to render as messages
+  const [mcpDropdownOpen, setMcpDropdownOpen] = useState(false)
 
   // Fetch session history
   const { data: sessionsData } = useQuery({
@@ -72,6 +74,40 @@ const Chat = () => {
     queryFn: () => getSessions(1, 20),
     refetchInterval: 30000,
   })
+
+  // Fetch MCP servers for status dropdown
+  const { data: mcpServersData, isLoading: mcpLoading } = useQuery({
+    queryKey: ['mcp-servers'],
+    queryFn: () => getMCPServers(),
+    refetchInterval: 30000,
+  })
+  
+  // Temporary: Populate with running MCP servers from mcp_config.yaml
+  const mcpServers = mcpServersData?.servers?.length > 0 
+    ? mcpServersData.servers 
+    : [
+        {
+          id: 'coding',
+          name: 'Coding MCP',
+          description: 'File operations and git within workspace sandbox',
+          url: 'http://mcp-coding:9001',
+          status: 'healthy'
+        },
+        {
+          id: 'docker',
+          name: 'Docker MCP',
+          description: 'Docker container operations',
+          url: 'http://mcp-docker:9002',
+          status: 'healthy'
+        },
+        {
+          id: 'web',
+          name: 'Web MCP',
+          description: 'Web browsing and content retrieval',
+          url: 'http://mcp-web:9004',
+          status: 'healthy'
+        }
+      ]
 
   // Load session from URL parameter on initial load
   useEffect(() => {
@@ -1182,6 +1218,97 @@ const Chat = () => {
             <Bug className="w-4 h-4" />Debug
             {apiCalls.length > 0 && <span className="bg-orange-100 text-orange-700 text-xs px-1.5 py-0.5 rounded-full">{apiCalls.length}</span>}
           </button>
+          <div className="relative">
+            <button
+              onClick={() => {
+                console.log('MCP Servers:', mcpServers)
+                setMcpDropdownOpen(!mcpDropdownOpen)
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <Globe className="w-4 h-4 text-blue-600" />
+              MCP
+              {mcpServers.length > 0 && (
+                <span className="ml-1 text-xs">
+                  {mcpServers.filter(s => s.status === 'healthy').length}/{mcpServers.length}
+                </span>
+              )}
+              <ChevronDown className="w-3 h-3" />
+            </button>
+
+            {mcpDropdownOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-10"
+                  onClick={() => setMcpDropdownOpen(false)}
+                />
+                <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-20 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+                    <h3 className="font-semibold text-gray-900 text-sm flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-blue-600" />
+                      MCP Servers Status
+                    </h3>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto">
+                    {mcpLoading ? (
+                      <div className="px-4 py-6 text-center text-gray-500 text-sm">
+                        <Globe className="w-5 h-5 animate-spin mx-auto mb-2" />
+                        Loading...
+                      </div>
+                    ) : mcpServers.length === 0 ? (
+                      <div className="px-4 py-6 text-center text-gray-500 text-sm">
+                        <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        No MCP servers configured
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-gray-100">
+                        {mcpServers.map((server) => (
+                          <div
+                            key={server.id}
+                            className="px-4 py-3 hover:bg-gray-50 transition-colors"
+                          >
+                            <div className="flex items-start justify-between">
+                              <div className="flex items-start gap-3 flex-1 min-w-0">
+                                <div className="mt-0.5">
+                                  {server.status === 'healthy' ? (
+                                    <CheckCircle className="w-4 h-4 text-green-500" />
+                                  ) : server.status === 'unhealthy' ? (
+                                    <XCircle className="w-4 h-4 text-red-500" />
+                                  ) : (
+                                    <AlertCircle className="w-4 h-4 text-yellow-500" />
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-gray-900 text-sm">{server.name}</div>
+                                  <div className="text-xs text-gray-500 mt-0.5">{server.description}</div>
+                                  {server.status && (
+                                    <div className="inline-flex items-center mt-1">
+                                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                                        server.status === 'healthy' ? 'bg-green-100 text-green-700' :
+                                        server.status === 'unhealthy' ? 'bg-red-100 text-red-700' :
+                                        'bg-yellow-100 text-yellow-700'
+                                      }`}>
+                                        {server.status}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="px-4 py-2 border-t border-gray-200 bg-gray-50">
+                    <p className="text-xs text-gray-500">
+                      {mcpServers.filter(s => s.status === 'healthy').length} of {mcpServers.length} servers healthy
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Messages, Workflow Events, and Approvals - All combined and sorted by timestamp */}
@@ -1317,6 +1444,9 @@ const Chat = () => {
             </div>
           </div>
         )}
+
+        {/* MCP Servers */}
+        <MCPServers />
 
         {/* Input */}
         <form onSubmit={handleSubmit} className="p-4 border-t border-gray-200 bg-white">

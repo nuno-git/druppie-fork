@@ -207,6 +207,7 @@ services:
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: http://mcp-coding:9001
       MCP_DOCKER_URL: http://mcp-docker:9002
+      MCP_FILESEARCH_URL: http://mcp-filesearch:9004
     volumes:
       - druppie_new_workspace:/app/workspace
       - /var/run/docker.sock:/var/run/docker.sock
@@ -287,7 +288,28 @@ services:
       retries: 5
       start_period: 10s
 
-  # NOTE: mcp-hitl removed - HITL is now built into the backend
+  mcp-filesearch:
+    build:
+      context: ./mcp-servers/filesearch
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-filesearch
+    environment:
+      SEARCH_ROOT: /dataset
+      MCP_PORT: "9004"
+    volumes:
+      - druppie_new_dataset:/dataset
+    ports:
+      - "9004:9004"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # NOTE: mcp-hitl removed - HITL is now built into backend
   # Questions are stored directly in the database
 
   # =============================================================================
@@ -340,6 +362,8 @@ volumes:
     name: druppie_new_gitea
   druppie_new_gitea_postgres:
     name: druppie_new_gitea_postgres
+  druppie_new_dataset:
+    name: druppie_new_dataset
 
 networks:
   druppie-new-network:

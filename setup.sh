@@ -187,6 +187,12 @@ check_requirements() {
     success "All requirements met"
 }
 
+remove_network() {
+    log "Remove Docker network..."
+    docker network remove druppie-network 2>/dev/null || true
+    success "Network down"
+}
+
 create_network() {
     log "Creating Docker network..."
     # Remove any existing network with wrong labels
@@ -384,6 +390,7 @@ case "${1:-all}" in
         save_env
         check_api_key
         create_network
+        remove_network        
         start_infrastructure
         start_keycloak
         configure_keycloak
@@ -399,7 +406,7 @@ case "${1:-all}" in
     infra)
         check_requirements
         save_env
-        create_network
+        remove_network
         start_infrastructure
         start_keycloak
         start_gitea
