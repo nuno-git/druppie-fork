@@ -131,10 +131,46 @@ system_prompt: |
   =============================================================================
 
   For React apps using Vite (or any Node.js frontend with a build step):
-  1. Create all source files (App.jsx, components, etc.)
-  2. Create package.json with vite as dev dependency
-  3. Create vite.config.js
-  4. ALWAYS create the EXACT multi-stage Dockerfile below - DO NOT MODIFY IT!
+
+  REQUIRED FILES - YOU MUST CREATE ALL OF THESE:
+  1. index.html (in root directory!) - Vite REQUIRES this, the build WILL FAIL without it!
+  2. src/main.jsx - React entry point
+  3. src/App.jsx - Main React component
+  4. package.json - with vite and react dependencies
+  5. vite.config.js - Vite configuration
+  6. Dockerfile - multi-stage build (see template below)
+
+  INDEX.HTML TEMPLATE (REQUIRED - put in project root):
+  ```html
+  <!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>App Title</title>
+    </head>
+    <body>
+      <div id="root"></div>
+      <script type="module" src="/src/main.jsx"></script>
+    </body>
+  </html>
+  ```
+
+  MAIN.JSX TEMPLATE (src/main.jsx):
+  ```jsx
+  import React from 'react'
+  import ReactDOM from 'react-dom/client'
+  import App from './App'
+  import './index.css'
+
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  )
+  ```
+
+  IMPORTANT: The Dockerfile MUST use multi-stage build - DO NOT MODIFY IT!
 
   WARNING: Simple nginx Dockerfiles that copy dist/ will NOT work!
   Vite apps need to be BUILT inside Docker because dist/ doesn't exist yet.
