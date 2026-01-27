@@ -140,7 +140,7 @@ const Chat = () => {
       console.log('[Chat] Processing workflow event:', eventType, event)
 
       // Update agent working state based on event type
-      if (eventType === 'agent_started') {
+      if (eventType === 'agent_started' || eventType.includes('_started')) {
         const agentId = event.data?.agent_id || event.agent_id
         console.log('[Chat] Agent started:', agentId)
         setIsAgentWorking(true)
@@ -152,17 +152,31 @@ const Chat = () => {
 
       // Check if workflow is complete or failed - stop the working indicator
       if (eventType.includes('workflow_completed') || eventType.includes('workflow_failed') ||
-          eventType.includes('session_completed') || eventType.includes('session_failed')) {
+          eventType.includes('session_completed') || eventType.includes('session_failed') ||
+          eventType.includes('execution_complete') || eventType.includes('execution_failed')) {
+        console.log('[Chat] Workflow/session completed or failed, stopping indicator')
         setIsAgentWorking(false)
         setCurrentStep(null)
         setCurrentAgentId(null)
       }
 
-      // Agent completed - keep working if workflow continues, just update agent
-      if (eventType === 'agent_completed') {
+      // Agent completed - check if it's the last agent (deployer usually)
+      if (eventType === 'agent_completed' || eventType.includes('_completed')) {
         const agentId = event.data?.agent_id || event.agent_id
-        // Don't stop working - next agent may start
         if (agentId) setCurrentAgentId(agentId)
+        // If deployer completed, it's likely the end of the workflow
+        if (agentId === 'deployer') {
+          console.log('[Chat] Deployer completed, stopping indicator')
+          setIsAgentWorking(false)
+          setCurrentStep(null)
+        }
+      }
+
+      // Tool approval required - stop the indicator
+      if (eventType.includes('approval_required') || eventType.includes('approval_pending')) {
+        console.log('[Chat] Approval required, stopping indicator')
+        setIsAgentWorking(false)
+        setCurrentStep(null)
       }
 
       const formattedEvent = {
@@ -176,13 +190,13 @@ const Chat = () => {
       }
       setLiveWorkflowEvents((prev) => [...prev, formattedEvent])
 
-      // Add to display list for inline workflow messages (filter to relevant events)
-      // Use more specific event types to avoid duplicates (e.g., router_started vs agent_started)
+      // Add to display list for inline workflow messages (show more events for transparency)
+      // Include: agent events, tool calls/results, approvals
       const isDisplayable = eventType.includes('tool_call') || eventType.includes('tool_result') ||
                            eventType.includes('mcp_') ||
-                           // Prefer specific agent events (router_started, developer_completed) over generic ones
-                           (eventType.includes('_started') && !eventType.startsWith('agent_')) ||
-                           (eventType.includes('_completed') && !eventType.startsWith('agent_'))
+                           eventType.includes('approval') ||
+                           eventType.includes('agent_started') || eventType.includes('agent_completed') ||
+                           eventType.includes('_started') || eventType.includes('_completed')
       if (isDisplayable) {
         setWorkflowEventsForDisplay((prev) => {
           // Deduplicate by checking for similar recent events (same type and agent within 2 seconds)
@@ -562,15 +576,17 @@ const Chat = () => {
     setDebugLLMCalls(llmCalls)
     setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
 
-    // Store workflow events for inline display (filter out less interesting events)
+    // Store workflow events for inline display (show more events for transparency)
     const displayableEvents = normalizedEvents.filter(event => {
       const type = event.type || event.event_type || ''
-      // Include agent start/complete, tool calls, and approval events
+      // Include: agent events, tool calls/results, approvals
       return type.includes('agent_started') || type.includes('agent_completed') ||
              type.includes('tool_call') || type.includes('tool_result') ||
-             type.includes('approval') || type.includes('mcp_')
+             type.includes('approval') || type.includes('mcp_') ||
+             type.includes('_started') || type.includes('_completed')
     })
     setWorkflowEventsForDisplay(displayableEvents)
+    console.log('[Chat] Loaded displayable events:', displayableEvents.length)
 
     let pendingApprovals = []
     let loadedToolExecutions = []
@@ -805,8 +821,26 @@ const Chat = () => {
 
       setMessages((prev) => [...prev, ...newMessages])
       setCurrentPlanId(data.plan_id)
-      setCurrentStep(null)
-      setIsAgentWorking(false)
+
+      // Check response status to determine if we should stop the loading indicator
+      // Keep working if status indicates ongoing execution (unless waiting for approval/question)
+      const responseStatus = data.status
+      const isPaused = responseStatus === 'paused_approval' || responseStatus === 'paused_hitl'
+      const isComplete = responseStatus === 'completed' || responseStatus === 'failed'
+      const hasPendingApprovals = data.pending_approvals && data.pending_approvals.length > 0
+      const hasPendingQuestions = data.pending_questions && data.pending_questions.length > 0
+
+      console.log('[Chat] Response status:', responseStatus, 'isPaused:', isPaused, 'isComplete:', isComplete)
+
+      if (isPaused || isComplete || hasPendingApprovals || hasPendingQuestions) {
+        setCurrentStep(null)
+        setIsAgentWorking(false)
+      } else {
+        // Still processing - keep indicator but update step
+        setCurrentStep(null)
+        setIsAgentWorking(false) // Default to stopping - backend will send events if still working
+      }
+
       setDebugWorkflowEvents([...liveWorkflowEvents, ...normalizedEvents])
       setDebugLLMCalls(data.llm_calls || [])
       setLiveWorkflowEvents([])
