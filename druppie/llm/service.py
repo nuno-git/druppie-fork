@@ -109,17 +109,23 @@ class LLMService:
             self._llm = ChatMock()
             logger.info("using_mock_llm")
         elif provider == "deepinfra":
+            # Get max_tokens from env, default to 8192 for code generation
+            max_tokens_str = os.getenv("DEEPINFRA_MAX_TOKENS", "8192")
+            max_tokens = int(max_tokens_str) if max_tokens_str else 8192
+
             self._llm = ChatDeepInfra(
                 api_key=os.getenv("DEEPINFRA_API_KEY"),
                 model=os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct"),
                 base_url=os.getenv(
                     "DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"
                 ),
+                max_tokens=max_tokens,
             )
             logger.info(
                 "using_deepinfra_llm",
                 model=self._llm.model,
                 base_url=self._llm.base_url,
+                max_tokens=max_tokens,
             )
         else:
             # Default to Z.AI
