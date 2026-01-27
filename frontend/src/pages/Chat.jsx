@@ -33,6 +33,7 @@ import {
   DebugPanel,
   ApprovalCard,
   ToolExecutionCard,
+  WorkflowEventMessage,
 } from '../components/chat'
 
 const Chat = () => {
@@ -63,6 +64,7 @@ const Chat = () => {
   const [currentAgentId, setCurrentAgentId] = useState(null) // Track which agent is currently working
   const [toolExecutions, setToolExecutions] = useState([]) // Track tool executions with approval status
   const seenApprovalIds = useRef(new Set()) // Track seen approval IDs to prevent duplicates
+  const [workflowEventsForDisplay, setWorkflowEventsForDisplay] = useState([]) // Workflow events to render as messages
 
   // Fetch session history
   const { data: sessionsData } = useQuery({
@@ -170,8 +172,17 @@ const Chat = () => {
         description: event.data?.description || event.description,
         status: event.status || (event.type?.includes('completed') || event.type?.includes('success') ? 'success' : 'working'),
         data: event.data || event,
+        timestamp: event.timestamp || new Date().toISOString(),
       }
       setLiveWorkflowEvents((prev) => [...prev, formattedEvent])
+
+      // Add to display list for inline workflow messages (filter to relevant events)
+      const isDisplayable = eventType.includes('agent_started') || eventType.includes('agent_completed') ||
+                           eventType.includes('tool_call') || eventType.includes('tool_result') ||
+                           eventType.includes('mcp_')
+      if (isDisplayable) {
+        setWorkflowEventsForDisplay((prev) => [...prev, formattedEvent])
+      }
     }
 
     const unsubscribe = onWorkflowEvent(handleWorkflowEvent)
@@ -536,6 +547,16 @@ const Chat = () => {
     setDebugWorkflowEvents(normalizedEvents)
     setDebugLLMCalls(llmCalls)
     setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
+
+    // Store workflow events for inline display (filter out less interesting events)
+    const displayableEvents = normalizedEvents.filter(event => {
+      const type = event.type || event.event_type || ''
+      // Include agent start/complete, tool calls, and approval events
+      return type.includes('agent_started') || type.includes('agent_completed') ||
+             type.includes('tool_call') || type.includes('tool_result') ||
+             type.includes('approval') || type.includes('mcp_')
+    })
+    setWorkflowEventsForDisplay(displayableEvents)
 
     let pendingApprovals = []
     let loadedToolExecutions = []
@@ -972,6 +993,7 @@ const Chat = () => {
     setIsAgentWorking(false)
     setCurrentAgentId(null)
     setToolExecutions([])
+    setWorkflowEventsForDisplay([])
     seenApprovalIds.current.clear()
     setSearchParams({})
     setMessages([{ role: 'assistant', content: `Hello ${user?.firstName || user?.username}! I'm Druppie, your AI governance assistant.\n\nI can help you:\n• Create applications (just describe what you want!)\n• Manage code deployments\n• Check compliance and permissions\n\nWhat would you like to build today?` }])
@@ -981,6 +1003,7 @@ const Chat = () => {
     setCurrentPlanId(session.id)
     setLiveWorkflowEvents([])
     setToolExecutions([])
+    setWorkflowEventsForDisplay([])
     setCurrentAgentId(null)
     setIsAgentWorking(false)
     seenApprovalIds.current.clear()
@@ -1073,33 +1096,65 @@ const Chat = () => {
           </button>
         </div>
 
-        {/* Messages */}
+        {/* Messages and Workflow Events - Combined and sorted by timestamp */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {messages.map((message, index) => (
-            message.role === 'question' ? (
-              <HITLQuestionMessage
-                key={index}
-                question={message.questionData}
-                onAnswer={handleAnswerQuestion}
-                isAnswering={answerMutation.isPending}
-                answered={message.answered}
-                userAnswer={message.userAnswer}
-              />
-            ) : (
-              <Message
-                key={index}
-                message={message}
-                onAnswerQuestion={handleAnswerQuestion}
-                isAnsweringQuestion={answerMutation.isPending}
-                onApproveTask={handleApproveTask}
-                onRejectTask={handleRejectTask}
-                isApprovingTask={approveMutation.isPending || rejectMutation.isPending}
-                currentUserId={user?.id}
-                sessionId={currentPlanId}
-                userRoles={user?.roles || []}
-              />
-            )
-          ))}
+          {(() => {
+            // Combine messages and workflow events for unified timeline
+            const allItems = [
+              ...messages.map((msg, idx) => ({
+                ...msg,
+                itemType: 'message',
+                sortKey: msg.timestamp ? new Date(msg.timestamp).getTime() : idx,
+                key: `msg-${idx}`,
+              })),
+              ...workflowEventsForDisplay.map((event, idx) => ({
+                ...event,
+                itemType: 'workflow',
+                sortKey: event.timestamp ? new Date(event.timestamp).getTime() : idx + 10000,
+                key: `event-${event.id || idx}`,
+              })),
+            ]
+
+            // Sort by timestamp (keeping welcome message first)
+            allItems.sort((a, b) => {
+              // Welcome message always first (index 0 with no timestamp)
+              if (a.itemType === 'message' && a.key === 'msg-0' && !a.timestamp) return -1
+              if (b.itemType === 'message' && b.key === 'msg-0' && !b.timestamp) return 1
+              return a.sortKey - b.sortKey
+            })
+
+            return allItems.map((item) => {
+              if (item.itemType === 'workflow') {
+                return <WorkflowEventMessage key={item.key} event={item} />
+              }
+              if (item.role === 'question') {
+                return (
+                  <HITLQuestionMessage
+                    key={item.key}
+                    question={item.questionData}
+                    onAnswer={handleAnswerQuestion}
+                    isAnswering={answerMutation.isPending}
+                    answered={item.answered}
+                    userAnswer={item.userAnswer}
+                  />
+                )
+              }
+              return (
+                <Message
+                  key={item.key}
+                  message={item}
+                  onAnswerQuestion={handleAnswerQuestion}
+                  isAnsweringQuestion={answerMutation.isPending}
+                  onApproveTask={handleApproveTask}
+                  onRejectTask={handleRejectTask}
+                  isApprovingTask={approveMutation.isPending || rejectMutation.isPending}
+                  currentUserId={user?.id}
+                  sessionId={currentPlanId}
+                  userRoles={user?.roles || []}
+                />
+              )
+            })
+          })()}
           {/* Render completed tool executions (approved/rejected) - pending ones shown via ApprovalCard */}
           {toolExecutions
             .filter((execution) => execution.status !== 'pending')
