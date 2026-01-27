@@ -381,8 +381,15 @@ class Agent:
 
             # No tool calls - check if agent is trying to communicate without tools
             if not response.tool_calls:
+                # Router and planner have special JSON output formats - don't retry them
+                # They output their results directly without using tools
+                agents_with_direct_output = ("router", "planner")
+
                 # If agent output content without using tools, remind it and retry
-                if response.content and iteration < max_iterations - 1:
+                # (but not for router/planner which have special output formats)
+                if (response.content
+                    and iteration < max_iterations - 1
+                    and self.id not in agents_with_direct_output):
                     logger.warning(
                         "agent_no_tool_calls_retry",
                         agent_id=self.id,
@@ -719,7 +726,15 @@ class Agent:
         )
 
     def _build_system_prompt(self) -> str:
-        """Build the system prompt with built-in tools documentation appended."""
+        """Build the system prompt with built-in tools documentation appended.
+
+        Router and planner agents have special JSON output formats and don't
+        need the built-in tools documentation.
+        """
+        # Router and planner output JSON directly - no built-in tools needed
+        if self.id in ("router", "planner"):
+            return self.definition.system_prompt
+
         builtin_tools_doc = """
 
 =============================================================================
