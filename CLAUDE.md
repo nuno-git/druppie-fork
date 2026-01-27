@@ -718,6 +718,19 @@ Chat sidebar shows previous conversations with:
 - Clear button (X) to reset text filter
 - Shows "Results (N)" when any filtering is active
 
+### Inline Workflow Event Messages
+Workflow steps are now shown as inline chat messages for transparency:
+- **Agent tool calls** - "Developer used coding:batch_write_files" with timestamps
+- **Collapsible parameters** - Click to expand and see full tool arguments
+- **Persistence** - Events persist after page refresh (loaded from session trace)
+- **Real-time updates** - New events appear as the workflow executes
+- Component: `WorkflowEventMessage.jsx` in `/frontend/src/components/chat/`
+
+Event types displayed:
+- `agent_started` / `agent_completed` - Agent lifecycle events
+- `tool_call` / `tool_result` - MCP tool executions with parameters
+- `approval_required` / `approved` / `rejected` - Approval flow events
+
 ### Tool Validation
 Validates required arguments before MCP calls:
 - Catches missing fields early
