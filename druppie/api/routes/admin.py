@@ -17,6 +17,7 @@ from druppie.db.models import (
     AgentRun, Message, ToolCall, ToolCallArgument,
     Approval, HitlQuestion, HitlQuestionChoice,
     Build, Deployment, LlmCall,
+    SessionEvent,
 )
 
 logger = structlog.get_logger()
@@ -43,6 +44,7 @@ MODELS = {
     "builds": Build,
     "deployments": Deployment,
     "llm_calls": LlmCall,
+    "session_events": SessionEvent,
 }
 
 # Define foreign key relationships for navigation
@@ -109,6 +111,13 @@ RELATIONS = {
     "user_tokens": {
         "user_id": ("users", "id"),
     },
+    "session_events": {
+        "session_id": ("sessions", "id"),
+        "agent_run_id": ("agent_runs", "id"),
+        "tool_call_id": ("tool_calls", "id"),
+        "approval_id": ("approvals", "id"),
+        "hitl_question_id": ("hitl_questions", "id"),
+    },
 }
 
 # Reverse relations (what tables link TO this table)
@@ -136,6 +145,7 @@ REVERSE_RELATIONS = {
         ("hitl_questions", "session_id"),
         ("builds", "session_id"),
         ("llm_calls", "session_id"),
+        ("session_events", "session_id"),
     ],
     "workflows": [
         ("workflow_steps", "workflow_id"),
@@ -151,16 +161,22 @@ REVERSE_RELATIONS = {
         ("approvals", "agent_run_id"),
         ("hitl_questions", "agent_run_id"),
         ("llm_calls", "agent_run_id"),
+        ("session_events", "agent_run_id"),
     ],
     "tool_calls": [
         ("tool_call_arguments", "tool_call_id"),
         ("approvals", "tool_call_id"),
+        ("session_events", "tool_call_id"),
     ],
     "hitl_questions": [
         ("hitl_question_choices", "question_id"),
+        ("session_events", "hitl_question_id"),
     ],
     "builds": [
         ("deployments", "build_id"),
+    ],
+    "approvals": [
+        ("session_events", "approval_id"),
     ],
 }
 
