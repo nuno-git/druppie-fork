@@ -1,127 +1,88 @@
-"""Web MCP Server.
+"""Bestand Zoeker MCP Server.
 
-Provides tools for web browsing and content retrieval.
-Example server to demonstrate MCP integration.
+Provides tools for local file search and web browsing.
+Combines file search capabilities with web content retrieval.
+Uses FastMCP framework for HTTP transport.
 """
 
-import httpx
 import logging
+import os
+
 from fastmcp import FastMCP
 
-# Configure logging
+from module import WebModule
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-logger = logging.getLogger("web-mcp")
+logger = logging.getLogger("bestand-zoeker")
 
-# Initialize FastMCP server
-mcp = FastMCP("Web MCP Server")
+mcp = FastMCP("Bestand Zoeker MCP Server")
 
-# Request timeout in seconds
-REQUEST_TIMEOUT = 30.0
+SEARCH_ROOT = os.getenv("SEARCH_ROOT", "/dataset")
+
+module = WebModule(search_root=SEARCH_ROOT)
 
 
 @mcp.tool()
 async def fetch_url(url: str) -> dict:
-    """Fetch and return content from a URL.
-
-    Args:
-        url: The URL to fetch
-
-    Returns:
-        Dict with success, content, status_code
-    """
-    try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            response = await client.get(url)
-
-            return {
-                "success": True,
-                "url": url,
-                "status_code": response.status_code,
-                "content": response.text[:10000],  # Limit to 10k chars
-            }
-    except Exception as e:
-        logger.error(f"Error fetching URL {url}: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "url": url,
-        }
+    """Fetch and return content from a URL."""
+    return await module.fetch_url(url=url)
 
 
 @mcp.tool()
 async def search_web(query: str, num_results: int = 5) -> dict:
-    """Search the web for information.
-
-    Args:
-        query: Search query
-        num_results: Number of results to return (default: 5)
-
-    Returns:
-        Dict with success, results array
-    """
-    # Note: This is a placeholder. In production, you'd use a real search API
-    logger.info(f"Searching for: {query}")
-    return {
-        "success": True,
-        "query": query,
-        "results": [
-            {
-                "title": f"Result {i + 1} for '{query}'",
-                "url": f"https://example.com/result{i + 1}",
-                "snippet": f"This is a placeholder search result for {query}",
-            }
-            for i in range(min(num_results, 5))
-        ],
-    }
+    """Search web for information."""
+    return await module.search_web(query=query, num_results=num_results)
 
 
 @mcp.tool()
 async def get_page_info(url: str) -> dict:
-    """Get basic information about a web page.
+    """Get basic information about a web page."""
+    return await module.get_page_info(url=url)
 
-    Args:
-        url: The URL to analyze
 
-    Returns:
-        Dict with title, description, links count
-    """
-    try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            response = await client.get(url)
+@mcp.tool()
+async def search_files(
+    query: str,
+    path: str = ".",
+    file_pattern: str = "*",
+    max_results: int = 100,
+    case_sensitive: bool = False,
+) -> dict:
+    """Search for files containing text content matching query."""
+    return module.search_files(
+        query=query,
+        path=path,
+        file_pattern=file_pattern,
+        max_results=max_results,
+        case_sensitive=case_sensitive,
+    )
 
-            # Simple HTML parsing to extract title
-            content = response.text
-            title = "No title found"
-            if "<title>" in content:
-                start = content.find("<title>") + 7
-                end = content.find("</title>", start)
-                title = content[start:end].strip()
 
-            # Count links
-            links_count = content.count("<a")
+@mcp.tool()
+async def list_directory(
+    path: str = ".",
+    recursive: bool = False,
+    show_hidden: bool = False,
+) -> dict:
+    """List files and directories in search path."""
+    return module.list_directory(
+        path=path,
+        recursive=recursive,
+        show_hidden=show_hidden,
+    )
 
-            return {
-                "success": True,
-                "url": url,
-                "title": title,
-                "links_count": links_count,
-                "status_code": response.status_code,
-            }
-    except Exception as e:
-        logger.error(f"Error getting page info for {url}: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "url": url,
-        }
+
+@mcp.tool()
+async def read_file(path: str) -> dict:
+    """Read file content from search path."""
+    return module.read_file(path=path)
 
 
 if __name__ == "__main__":
     import uvicorn
-    import os
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
@@ -131,7 +92,7 @@ if __name__ == "__main__":
         """Health check endpoint."""
         return JSONResponse({
             "status": "healthy",
-            "service": "web-mcp",
+            "service": "bestand-zoeker",
         })
 
     app.routes.insert(0, Route("/health", health, methods=["GET"]))

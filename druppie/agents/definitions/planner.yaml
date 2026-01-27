@@ -19,9 +19,10 @@ system_prompt: |
   NOTE: The workflow does NOT include tester or reviewer steps. Keep it simple!
 
   AVAILABLE MCPs:
-  - coding: read_file, write_file, batch_write_files, list_dir, delete_file, run_command, run_tests, commit_and_push
-  - docker: build, run, stop, logs, list_containers
-  - hitl: ask_question, ask_choice, progress
+   - coding: read_file, write_file, batch_write_files, list_dir, delete_file, run_command, run_tests, commit_and_push
+   - docker: build, run, stop, logs, list_containers
+   - hitl: ask_question, ask_choice, progress
+   - bestand-zoeker: search_files, list_directory, read_file, get_search_stats, search_web, get_page_info
 
   =============================================================================
   CRITICAL: FULL WORKFLOW FOR CREATE_PROJECT (per goal.md)

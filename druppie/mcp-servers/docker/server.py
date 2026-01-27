@@ -6,152 +6,30 @@ Uses FastMCP framework for HTTP transport.
 
 import logging
 import os
-import subprocess
-from pathlib import Path
-from typing import Any
 
 from fastmcp import FastMCP
 
-# Configure logging
+from module import DockerModule
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("docker-mcp")
 
-# Initialize FastMCP server
 mcp = FastMCP("Docker MCP Server")
 
-# Configuration
-WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/workspaces"))
+WORKSPACE_ROOT = os.getenv("WORKSPACE_ROOT", "/workspaces")
 DOCKER_NETWORK = os.getenv("DOCKER_NETWORK", "druppie-new-network")
 PORT_RANGE_START = int(os.getenv("PORT_RANGE_START", "9100"))
 PORT_RANGE_END = int(os.getenv("PORT_RANGE_END", "9199"))
 
-# Track used ports
-used_ports: set[int] = set()
-
-# In-memory workspace registry (shared with coding MCP or populated on build)
-workspaces: dict[str, dict] = {}
-
-
-def get_used_host_ports() -> set[int]:
-    """Get set of host ports currently in use by Docker containers.
-
-    This queries Docker to find which host ports are bound by running containers.
-    Works correctly when called from inside a Docker container.
-    """
-    try:
-        # Use docker ps to get port mappings of all running containers
-        result = subprocess.run(
-            ["docker", "ps", "--format", "{{.Ports}}"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            logger.warning("Failed to query Docker ports: %s", result.stderr)
-            return set()
-
-        ports = set()
-        # Parse port mappings like "0.0.0.0:8080->80/tcp, 0.0.0.0:443->443/tcp"
-        for line in result.stdout.strip().split("\n"):
-            if not line:
-                continue
-            # Each line may have multiple port mappings separated by comma
-            for mapping in line.split(", "):
-                # Format: "0.0.0.0:HOST_PORT->CONTAINER_PORT/proto" or "HOST_PORT->CONTAINER_PORT/proto"
-                if "->" in mapping:
-                    host_part = mapping.split("->")[0]
-                    # Extract port number (after last colon if IP present)
-                    if ":" in host_part:
-                        port_str = host_part.rsplit(":", 1)[1]
-                    else:
-                        port_str = host_part
-                    try:
-                        ports.add(int(port_str))
-                    except ValueError:
-                        pass
-        return ports
-    except Exception as e:
-        logger.warning("Error getting used ports: %s", e)
-        return set()
-
-
-def is_port_available(port: int) -> bool:
-    """Check if a port is available for binding on the Docker host.
-
-    This checks both:
-    1. Docker containers using the port (via docker ps)
-    2. Our internal tracking of ports we've allocated
-    """
-    # Check if Docker is already using this port on the host
-    docker_ports = get_used_host_ports()
-    if port in docker_ports:
-        return False
-
-    # Also check our internal tracking
-    if port in used_ports:
-        return False
-
-    return True
-
-
-def get_next_port() -> int:
-    """Get next available port from the configured range.
-
-    Checks both Docker's currently bound ports and our internal tracking.
-    """
-    for port in range(PORT_RANGE_START, PORT_RANGE_END):
-        if is_port_available(port):
-            used_ports.add(port)
-            logger.info("Auto-selected available port %d", port)
-            return port
-    raise RuntimeError(f"No available ports in range {PORT_RANGE_START}-{PORT_RANGE_END}")
-
-
-def release_port(port: int) -> None:
-    """Release a port back to pool."""
-    used_ports.discard(port)
-
-
-def resolve_workspace_path(workspace_id: str | None, workspace_path: str | None) -> Path | None:
-    """Resolve workspace path from workspace_id or direct path.
-
-    Args:
-        workspace_id: Workspace ID to look up
-        workspace_path: Direct path (takes precedence if provided)
-
-    Returns:
-        Resolved Path or None if not found
-    """
-    # Direct path takes precedence
-    if workspace_path:
-        p = Path(workspace_path)
-        if p.exists():
-            return p
-        # Try under workspace root
-        p = WORKSPACE_ROOT / workspace_path
-        if p.exists():
-            return p
-
-    # Look up workspace_id
-    if workspace_id:
-        if workspace_id in workspaces:
-            return Path(workspaces[workspace_id]["path"])
-        # Try to find by scanning workspace root
-        # Pattern: /workspaces/user_id/project_id/session_id
-        for user_dir in WORKSPACE_ROOT.iterdir():
-            if user_dir.is_dir():
-                for project_dir in user_dir.iterdir():
-                    if project_dir.is_dir():
-                        for session_dir in project_dir.iterdir():
-                            if session_dir.is_dir():
-                                # Check if this matches workspace_id pattern
-                                if workspace_id in str(session_dir):
-                                    return session_dir
-
-    return None
+module = DockerModule(
+    workspace_root=WORKSPACE_ROOT,
+    docker_network=DOCKER_NETWORK,
+    port_range_start=PORT_RANGE_START,
+    port_range_end=PORT_RANGE_END,
+)
 
 
 @mcp.tool()
@@ -161,29 +39,13 @@ async def register_workspace(
     project_id: str | None = None,
     branch: str | None = None,
 ) -> dict:
-    """Register a workspace for Docker operations.
-
-    Args:
-        workspace_id: Workspace ID
-        workspace_path: Path to workspace
-        project_id: Optional project ID
-        branch: Optional git branch
-
-    Returns:
-        Dict with success status
-    """
-    workspaces[workspace_id] = {
-        "path": workspace_path,
-        "project_id": project_id,
-        "branch": branch,
-    }
-    logger.info("Registered workspace %s at %s", workspace_id, workspace_path)
-    return {"success": True, "workspace_id": workspace_id}
-
-
-# =============================================================================
-# MCP TOOLS
-# =============================================================================
+    """Register a workspace for Docker operations."""
+    return module.register_workspace(
+        workspace_id=workspace_id,
+        workspace_path=workspace_path,
+        project_id=project_id,
+        branch=branch,
+    )
 
 
 @mcp.tool()
@@ -194,132 +56,14 @@ async def build(
     dockerfile: str = "Dockerfile",
     build_args: dict[str, str] | None = None,
 ) -> dict:
-    """Build Docker image from workspace.
-
-    Args:
-        image_name: Name for the built image (e.g., "myapp:latest")
-        workspace_id: Workspace ID (will resolve to path)
-        workspace_path: Direct path to workspace with Dockerfile (takes precedence)
-        dockerfile: Dockerfile name (default: "Dockerfile")
-        build_args: Optional build arguments
-
-    Returns:
-        Dict with success, image_name, logs
-    """
-    try:
-        # Resolve workspace path
-        workspace = resolve_workspace_path(workspace_id, workspace_path)
-        if workspace is None:
-            return {
-                "success": False,
-                "error": f"Workspace not found: workspace_id={workspace_id}, workspace_path={workspace_path}",
-            }
-
-        logger.info("Building Docker image %s from %s", image_name, workspace)
-
-        if not workspace.exists():
-            return {"success": False, "error": f"Workspace not found: {workspace}"}
-
-        dockerfile_path = workspace / dockerfile
-        if not dockerfile_path.exists():
-            return {"success": False, "error": f"Dockerfile not found: {dockerfile}"}
-
-        # Build command
-        cmd = ["docker", "build", "-t", image_name, "-f", str(dockerfile_path)]
-
-        # Add build args
-        if build_args:
-            for key, value in build_args.items():
-                cmd.extend(["--build-arg", f"{key}={value}"])
-
-        cmd.append(str(workspace))
-
-        # Run build
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=600,  # 10 minutes for builds
-        )
-
-        if result.returncode != 0:
-            return {
-                "success": False,
-                "error": "Build failed",
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
-
-        return {
-            "success": True,
-            "image_name": image_name,
-            "logs": result.stdout,
-        }
-
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Build timed out after 10 minutes"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-def check_and_remove_existing_container(container_name: str) -> dict | None:
-    """Check if container exists and remove it if it does.
-
-    Args:
-        container_name: Name of container to check
-
-    Returns:
-        Dict with info about what was done, or None if no existing container
-    """
-    try:
-        # Check if container exists (running or stopped)
-        result = subprocess.run(
-            ["docker", "ps", "-a", "--filter", f"name=^{container_name}$", "--format", "{{.ID}} {{.Status}}"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        if result.returncode != 0 or not result.stdout.strip():
-            return None  # No existing container
-
-        # Container exists - get its ID and status
-        output = result.stdout.strip().split("\n")[0]
-        parts = output.split(" ", 1)
-        container_id = parts[0]
-        status = parts[1] if len(parts) > 1 else ""
-
-        logger.info("Found existing container %s (ID: %s, Status: %s) - removing it",
-                   container_name, container_id, status)
-
-        # Stop container if it's running
-        if "Up" in status:
-            stop_result = subprocess.run(
-                ["docker", "stop", container_name],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if stop_result.returncode != 0:
-                logger.warning("Failed to stop container: %s", stop_result.stderr)
-
-        # Remove the container
-        rm_result = subprocess.run(
-            ["docker", "rm", "-f", container_name],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        if rm_result.returncode != 0:
-            logger.warning("Failed to remove container: %s", rm_result.stderr)
-            return {"removed": False, "error": rm_result.stderr}
-
-        return {"removed": True, "previous_status": status}
-
-    except Exception as e:
-        logger.warning("Error checking/removing existing container: %s", e)
-        return {"removed": False, "error": str(e)}
+    """Build Docker image from workspace."""
+    return module.build(
+        image_name=image_name,
+        workspace_id=workspace_id,
+        workspace_path=workspace_path,
+        dockerfile=dockerfile,
+        build_args=build_args,
+    )
 
 
 @mcp.tool()
@@ -333,153 +77,23 @@ async def run(
     volumes: list[str] | None = None,
     command: str | None = None,
 ) -> dict:
-    """Run Docker container.
-
-    Args:
-        image_name: Docker image to run
-        container_name: Name for the container
-        port: Host port to expose (auto-assigned if not provided)
-        container_port: Container port to map to (default: 3000)
-        port_mapping: Full port mapping string (e.g., "8080:3000") - overrides port/container_port
-        env_vars: Environment variables
-        volumes: Volume mounts (format: "host:container")
-        command: Override command
-
-    Returns:
-        Dict with success, container_name, port, url
-    """
-    try:
-        # Check for and remove existing container with same name
-        existing = check_and_remove_existing_container(container_name)
-        if existing:
-            logger.info("Removed existing container: %s", existing)
-
-        # Handle port mapping
-        requested_port = None
-        if port_mapping:
-            # Parse "host:container" format
-            parts = port_mapping.split(":")
-            requested_port = int(parts[0])
-            container_port = int(parts[1]) if len(parts) > 1 else 3000
-        else:
-            requested_port = port
-
-        # Check if requested port is available, auto-select if not
-        if requested_port:
-            if is_port_available(requested_port):
-                host_port = requested_port
-            else:
-                # Port is busy, auto-select an available one
-                logger.warning(
-                    "Requested port %d is not available, auto-selecting alternative",
-                    requested_port
-                )
-                host_port = get_next_port()
-        else:
-            host_port = get_next_port()
-
-        logger.info(
-            "Running container %s from image %s (port %d:%d)",
-            container_name, image_name, host_port, container_port
-        )
-
-        # Build run command
-        cmd = [
-            "docker", "run", "-d",
-            "--name", container_name,
-            "--network", DOCKER_NETWORK,
-            "-p", f"{host_port}:{container_port}",
-        ]
-
-        # Add environment variables
-        if env_vars:
-            for key, value in env_vars.items():
-                cmd.extend(["-e", f"{key}={value}"])
-
-        # Add volumes
-        if volumes:
-            for volume in volumes:
-                cmd.extend(["-v", volume])
-
-        # Add image and optional command
-        cmd.append(image_name)
-        if command:
-            cmd.extend(command.split())
-
-        # Run container
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-        if result.returncode != 0:
-            release_port(host_port)
-            return {
-                "success": False,
-                "error": "Failed to start container",
-                "stderr": result.stderr,
-            }
-
-        container_id = result.stdout.strip()
-
-        response = {
-            "success": True,
-            "container_name": container_name,
-            "container_id": container_id[:12],
-            "port": host_port,
-            "url": f"http://localhost:{host_port}",
-        }
-
-        # Add note if port was changed
-        if requested_port and host_port != requested_port:
-            response["note"] = f"Port {requested_port} was busy, using {host_port} instead"
-
-        return response
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    """Run Docker container."""
+    return module.run(
+        image_name=image_name,
+        container_name=container_name,
+        port=port,
+        container_port=container_port,
+        port_mapping=port_mapping,
+        env_vars=env_vars,
+        volumes=volumes,
+        command=command,
+    )
 
 
 @mcp.tool()
 async def stop(container_name: str, remove: bool = True) -> dict:
-    """Stop a running container.
-
-    Args:
-        container_name: Name of container to stop
-        remove: Whether to remove container after stopping
-
-    Returns:
-        Dict with success
-    """
-    try:
-        # Stop container
-        result = subprocess.run(
-            ["docker", "stop", container_name],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode != 0:
-            return {
-                "success": False,
-                "error": f"Failed to stop container: {result.stderr}",
-            }
-
-        # Remove if requested
-        if remove:
-            subprocess.run(
-                ["docker", "rm", container_name],
-                capture_output=True,
-                timeout=10,
-            )
-
-        return {"success": True, "stopped": container_name, "removed": remove}
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    """Stop a running container."""
+    return module.stop(container_name=container_name, remove=remove)
 
 
 @mcp.tool()
@@ -488,162 +102,30 @@ async def logs(
     tail: int = 100,
     follow: bool = False,
 ) -> dict:
-    """Get container logs.
-
-    Args:
-        container_name: Name of container
-        tail: Number of lines to show (default: 100)
-        follow: Not supported in MCP (always False)
-
-    Returns:
-        Dict with success, logs
-    """
-    try:
-        cmd = ["docker", "logs", "--tail", str(tail), container_name]
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode != 0:
-            return {
-                "success": False,
-                "error": f"Failed to get logs: {result.stderr}",
-            }
-
-        return {
-            "success": True,
-            "container_name": container_name,
-            "logs": result.stdout + result.stderr,
-        }
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    """Get container logs."""
+    return module.logs(
+        container_name=container_name,
+        tail=tail,
+        follow=follow,
+    )
 
 
 @mcp.tool()
 async def remove(container_name: str, force: bool = False) -> dict:
-    """Remove a container.
-
-    Args:
-        container_name: Name of container to remove
-        force: Force remove running container
-
-    Returns:
-        Dict with success
-    """
-    try:
-        cmd = ["docker", "rm"]
-        if force:
-            cmd.append("-f")
-        cmd.append(container_name)
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode != 0:
-            return {
-                "success": False,
-                "error": f"Failed to remove container: {result.stderr}",
-            }
-
-        return {"success": True, "removed": container_name}
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    """Remove a container."""
+    return module.remove(container_name=container_name, force=force)
 
 
 @mcp.tool()
 async def list_containers(all: bool = False) -> dict:
-    """List Docker containers.
-
-    Args:
-        all: Include stopped containers
-
-    Returns:
-        Dict with containers list
-    """
-    try:
-        cmd = ["docker", "ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"]
-        if all:
-            cmd.append("-a")
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode != 0:
-            return {"success": False, "error": result.stderr}
-
-        containers = []
-        for line in result.stdout.strip().split("\n"):
-            if line:
-                parts = line.split("\t")
-                if len(parts) >= 4:
-                    containers.append({
-                        "id": parts[0],
-                        "name": parts[1],
-                        "image": parts[2],
-                        "status": parts[3],
-                        "ports": parts[4] if len(parts) > 4 else "",
-                    })
-
-        return {"success": True, "containers": containers}
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    """List Docker containers."""
+    return module.list_containers(all=all)
 
 
 @mcp.tool()
 async def inspect(container_name: str) -> dict:
-    """Inspect a container.
-
-    Args:
-        container_name: Name of container
-
-    Returns:
-        Dict with container details
-    """
-    try:
-        result = subprocess.run(
-            ["docker", "inspect", container_name],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode != 0:
-            return {"success": False, "error": result.stderr}
-
-        import json
-        data = json.loads(result.stdout)
-
-        if data:
-            container = data[0]
-            return {
-                "success": True,
-                "id": container.get("Id", "")[:12],
-                "name": container.get("Name", "").lstrip("/"),
-                "image": container.get("Config", {}).get("Image", ""),
-                "status": container.get("State", {}).get("Status", ""),
-                "created": container.get("Created", ""),
-                "ports": container.get("NetworkSettings", {}).get("Ports", {}),
-            }
-
-        return {"success": False, "error": "Container not found"}
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    """Inspect a container."""
+    return module.inspect(container_name=container_name)
 
 
 @mcp.tool()
@@ -652,47 +134,12 @@ async def exec_command(
     command: str,
     workdir: str | None = None,
 ) -> dict:
-    """Execute command in running container.
-
-    Args:
-        container_name: Name of container
-        command: Command to execute
-        workdir: Working directory inside container
-
-    Returns:
-        Dict with stdout, stderr, return_code
-    """
-    try:
-        cmd = ["docker", "exec"]
-
-        if workdir:
-            cmd.extend(["-w", workdir])
-
-        cmd.extend([container_name, "sh", "-c", command])
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-        return {
-            "success": result.returncode == 0,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "return_code": result.returncode,
-        }
-
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Command timed out"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-# =============================================================================
-# MAIN
-# =============================================================================
+    """Execute command in running container."""
+    return module.exec_command(
+        container_name=container_name,
+        command=command,
+        workdir=workdir,
+    )
 
 
 if __name__ == "__main__":
@@ -700,10 +147,8 @@ if __name__ == "__main__":
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    # Get MCP app with HTTP transport
     app = mcp.http_app()
 
-    # Add health endpoint
     async def health(request):
         """Health check endpoint."""
         return JSONResponse({"status": "healthy", "service": "docker-mcp"})

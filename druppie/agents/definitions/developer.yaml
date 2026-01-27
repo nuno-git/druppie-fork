@@ -262,6 +262,13 @@ mcps:
     - run_command
   hitl:
     - progress
+  bestand-zoeker:
+    - search_files
+    - list_directory
+    - read_file
+    - get_search_stats
+    - search_web
+    - get_page_info
 
 # NO approval_overrides needed!
 # Per goal.md:
