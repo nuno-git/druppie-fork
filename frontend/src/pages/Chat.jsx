@@ -420,7 +420,8 @@ const Chat = () => {
     console.log('[Chat] Loaded timeline items:', timelineItems.length)
 
     // Session-level approvals for non-tool_call types (workflow_step approvals)
-    const allApprovals = fullSession.approvals || []
+    // Extract from agent_runs since approvals are now embedded (not at top level)
+    const allApprovals = agentRuns.flatMap(run => run.approvals || [])
     const pendingApprovals = allApprovals
       .filter(a => a.status === 'pending' && a.approval_type !== 'tool_call')
       .map(a => ({
@@ -458,7 +459,7 @@ const Chat = () => {
         agent_id: msg.agent_id,  // Include agent_id for agent attribution
         timestamp: msg.created_at || msg.timestamp,  // API returns created_at
         ...(msg.role === 'assistant' && {
-          workflowEvents: isLastAssistant ? normalizedEvents : [],
+          // Note: workflowEvents are now shown via ToolDecisionCard/WorkflowEventMessage
           llmCalls: isLastAssistant ? llmCalls : [],
           deploymentUrl: msg.deployment_url,
           containerName: msg.container_name,
@@ -472,9 +473,8 @@ const Chat = () => {
     })
 
     // Add HITL questions (both pending and answered) as separate question messages
-    // Use hitl_questions which includes all questions for full history reconstruction
-    // Note: The answered question message shows the user's answer inline, no need for separate user message
-    const hitlQuestions = fullSession.hitl_questions || fullSession.pending_questions || []
+    // Extract from agent_runs since hitl_questions is now embedded (not at top level)
+    const hitlQuestions = agentRuns.flatMap(run => run.hitl_questions || [])
     for (const q of hitlQuestions) {
       const isAnswered = q.status === 'answered'
       loadedMessages.push({
@@ -502,7 +502,7 @@ const Chat = () => {
 
     // Check for app_running event in trace data to show deployment URL
     // This ensures the URL is shown even on page refresh
-    const appRunningEvent = normalizedEvents.find(
+    const appRunningEvent = timelineItems.find(
       event => event.type === 'app_running' && event.data?.url
     )
     if (appRunningEvent) {
@@ -552,11 +552,11 @@ const Chat = () => {
     const hasPendingQuestion = hitlQuestions.some(q => q.status === 'pending')
 
     if (isExecuting && !hasPendingQuestion) {
-      // Find the last active agent from workflow events
-      const lastAgentEvent = normalizedEvents
-        .filter(e => e.data?.agent_id)
+      // Find the last active agent from timeline items
+      const lastAgentEvent = timelineItems
+        .filter(e => e.agent_id)
         .pop()
-      const lastAgentId = lastAgentEvent?.data?.agent_id
+      const lastAgentId = lastAgentEvent?.agent_id
 
       setIsAgentWorking(true)
       setCurrentAgentId(lastAgentId || null)
