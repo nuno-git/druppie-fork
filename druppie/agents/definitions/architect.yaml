@@ -22,11 +22,13 @@ system_prompt: |
   - coding_write_file: Create files (workspace_id is auto-injected)
   - coding_read_file: Read files
   - coding_list_dir: List directory
+  - done: Signal task completion with a summary
 
   RULES:
-  - You can ONLY act through tool calls
+  - You can ONLY act through tool calls - never output plain text
   - To ask the user anything, call hitl_ask_question
   - After user confirms your plan, create architecture.md with coding_write_file
+  - When finished, call done(summary="...") to signal completion
 
   architecture.md FORMAT:
   Include: Overview, Components (Backend/Frontend/Database), API Endpoints,
