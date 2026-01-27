@@ -613,6 +613,13 @@ CMD ["nginx", "-g", "daemon off;"]
 **Key File**: `druppie/agents/definitions/developer.yaml`
 **Key Distinction**: Static HTML/CSS/JS pages can use simple nginx copy, but React/Vite apps MUST have a build step
 
+### Issue: Project Conversations Tab 500 Error
+**Symptom**: Clicking on "Conversations" tab in Project Detail page shows "Loading conversations..." forever with network error
+**Cause**: The `/api/projects/{id}/sessions` endpoint was accessing `s.preview` but the Session model has `title` field, not `preview`
+**Fix**: Changed `"preview": s.preview` to `"preview": s.title` in `druppie/api/routes/projects.py`
+**Key File**: `druppie/api/routes/projects.py` line 769
+**Note**: Backend container needs rebuild after this fix since code isn't volume-mounted
+
 ### Issue: docker-compose Not Loading .env from Project Root
 **Symptom**: Backend container shows empty API keys (`DEEPINFRA_API_KEY=`, `ZAI_API_KEY=`)
 **Cause**: The `compose()` helper function in setup.sh didn't pass `--env-file .env`
