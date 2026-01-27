@@ -166,7 +166,7 @@ class Agent:
         exec_ctx = get_current_context()
 
         messages = [
-            {"role": "system", "content": self.definition.system_prompt},
+            {"role": "system", "content": self._build_system_prompt()},
             {"role": "user", "content": self._build_prompt(prompt, context)},
         ]
 
@@ -717,6 +717,38 @@ class Agent:
         raise AgentMaxIterationsError(
             f"Agent '{self.id}' exceeded {max_iterations} iterations"
         )
+
+    def _build_system_prompt(self) -> str:
+        """Build the system prompt with built-in tools documentation appended."""
+        builtin_tools_doc = """
+
+=============================================================================
+BUILT-IN TOOLS (available to all agents)
+=============================================================================
+
+These tools are always available and do not require MCP:
+
+1. hitl_ask_question(question: str, context?: str)
+   - Ask the user a free-form text question
+   - Use when you need clarification or input
+   - Workflow pauses until user responds
+
+2. hitl_ask_multiple_choice_question(question: str, choices: list[str], allow_other?: bool)
+   - Ask the user to select from predefined options
+   - Use for yes/no questions or selecting from options
+
+3. done(summary: str)
+   - Signal that you have completed your task
+   - MUST be called when you are finished
+   - Include a brief summary of what was accomplished
+
+CRITICAL RULES:
+- You can ONLY act through tool calls - never output plain text
+- To communicate with the user, use hitl_ask_question
+- When finished with your task, call done(summary="...")
+- Do NOT just output text without using a tool
+"""
+        return self.definition.system_prompt + builtin_tools_doc
 
     def _build_prompt(self, prompt: str, context: dict = None) -> str:
         """Build the full prompt with context."""
