@@ -109,9 +109,10 @@ class LLMService:
             self._llm = ChatMock()
             logger.info("using_mock_llm")
         elif provider == "deepinfra":
-            # Get max_tokens from env, default to 8192 for code generation
-            max_tokens_str = os.getenv("DEEPINFRA_MAX_TOKENS", "8192")
-            max_tokens = int(max_tokens_str) if max_tokens_str else 8192
+            # Get max_tokens from env, default to 16384 for code generation
+            # 8192 was still causing truncated output for multi-file React apps
+            max_tokens_str = os.getenv("DEEPINFRA_MAX_TOKENS", "16384")
+            max_tokens = int(max_tokens_str) if max_tokens_str else 16384
 
             self._llm = ChatDeepInfra(
                 api_key=os.getenv("DEEPINFRA_API_KEY"),
