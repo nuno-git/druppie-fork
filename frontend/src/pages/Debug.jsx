@@ -664,7 +664,20 @@ const TraceSummary = ({ trace }) => {
       return eventStatus === status
     }).length
 
-  const totalDuration = events.reduce((sum, e) => sum + (e.duration_ms || 0), 0)
+  // Calculate total duration from first and last event timestamps
+  const calculateDurationFromTimestamps = () => {
+    if (events.length < 2) return 0
+    const timestamps = events
+      .map(e => e.timestamp)
+      .filter(Boolean)
+      .map(ts => new Date(ts).getTime())
+      .filter(t => !isNaN(t))
+    if (timestamps.length < 2) return 0
+    const minTime = Math.min(...timestamps)
+    const maxTime = Math.max(...timestamps)
+    return maxTime - minTime
+  }
+  const totalDuration = calculateDurationFromTimestamps()
 
   // Use summary token counts if available, otherwise calculate from events
   const totalTokens = summary.total_tokens || 0
