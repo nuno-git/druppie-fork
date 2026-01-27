@@ -32,7 +32,7 @@ import {
   ConversationSidebar,
   DebugPanel,
   ApprovalCard,
-  ToolExecutionCard,
+  ToolDecisionCard,
   WorkflowEventMessage,
 } from '../components/chat'
 
@@ -357,84 +357,72 @@ const Chat = () => {
       }))
     )
 
-    // Build workflow events from agent runs and their tool calls
-    const normalizedEvents = []
+    // Build unified timeline from agent runs using the enhanced nested structure
+    // The backend now returns response_tool_calls with embedded approval/HITL/execution data
+    const timelineItems = []
     const knownAgents = ['router', 'planner', 'architect', 'developer', 'deployer', 'reviewer', 'tester']
 
     for (const run of agentRuns) {
-      // Add agent_started event if this is a known agent
+      // Add agent_started event
       if (knownAgents.includes(run.agent_id)) {
-        normalizedEvents.push({
+        timelineItems.push({
           id: `${run.id}-start`,
           type: 'agent_started',
-          event_type: 'agent_started',
-          agent: run.agent_id,
-          data: { agent_id: run.agent_id },
+          agent_id: run.agent_id,
           timestamp: run.started_at,
-          title: formatEventTitle({ type: 'agent_started', data: { agent_id: run.agent_id } }),
         })
       }
 
-      // Add tool calls from this agent run
-      for (const tc of (run.tool_calls || [])) {
-        normalizedEvents.push({
-          id: tc.id,
-          type: 'tool_call',
-          event_type: 'tool_call',
-          agent: run.agent_id,
-          tool: tc.tool_name,
-          args: tc.arguments || {},
-          data: {
+      // Process each LLM call's tool decisions
+      for (const llmCall of (run.llm_calls || [])) {
+        for (const toolDecision of (llmCall.response_tool_calls || [])) {
+          // Skip internal tools like hitl_progress
+          if (toolDecision.name === 'hitl_progress') continue
+
+          // Each toolDecision now has all embedded data from the backend
+          timelineItems.push({
+            id: toolDecision.id || `${llmCall.id}-${toolDecision.name}`,
+            type: 'tool_decision',
             agent_id: run.agent_id,
-            tool_name: tc.tool_name,
-            tool: tc.tool_name,
-            arguments: tc.arguments || {},
-            result: tc.result,
-          },
-          timestamp: tc.created_at,
-          status: tc.status,
-        })
+            timestamp: llmCall.created_at,
+            // The full tool decision with embedded data
+            toolDecision: toolDecision,
+          })
+        }
       }
 
-      // Add agent_completed event if completed and known agent
+      // Add agent_completed event
       if (run.status === 'completed' && knownAgents.includes(run.agent_id)) {
-        normalizedEvents.push({
+        const lastLlmCall = (run.llm_calls || []).slice(-1)[0]
+        const doneCall = lastLlmCall?.response_tool_calls?.find(tc => tc.is_done_tool || tc.name === 'done')
+
+        timelineItems.push({
           id: `${run.id}-complete`,
           type: 'agent_completed',
-          event_type: 'agent_completed',
-          agent: run.agent_id,
-          data: { agent_id: run.agent_id },
+          agent_id: run.agent_id,
           timestamp: run.completed_at || run.started_at,
-          title: formatEventTitle({ type: 'agent_completed', data: { agent_id: run.agent_id } }),
+          summary: doneCall?.arguments?.summary,
         })
       }
     }
 
-    // Sort events by timestamp
-    normalizedEvents.sort((a, b) => {
+    // Sort by timestamp
+    timelineItems.sort((a, b) => {
       const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0
       const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0
       return timeA - timeB
     })
 
-    setDebugWorkflowEvents(normalizedEvents)
+    setDebugWorkflowEvents(timelineItems)
     setDebugLLMCalls(llmCalls)
     setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
+    setWorkflowEventsForDisplay(timelineItems)
+    console.log('[Chat] Loaded timeline items:', timelineItems.length)
 
-    // Use all normalized events for display (they're already filtered to known agents)
-    setWorkflowEventsForDisplay(normalizedEvents)
-    console.log('[Chat] Loaded displayable events:', normalizedEvents.length)
-
-    // Load pending approvals from the new nested structure (session.approvals)
-    // and convert to the format expected by ApprovalCard
-    let pendingApprovals = []
-    let loadedToolExecutions = []
-
-    // Session-level approvals list (flattened from all agent_runs)
+    // Session-level approvals for non-tool_call types (workflow_step approvals)
     const allApprovals = fullSession.approvals || []
-
-    pendingApprovals = allApprovals
-      .filter(a => a.status === 'pending')
+    const pendingApprovals = allApprovals
+      .filter(a => a.status === 'pending' && a.approval_type !== 'tool_call')
       .map(a => ({
         task_id: a.id,
         task_name: a.title || a.tool_name || 'Approval Required',
@@ -443,30 +431,10 @@ const Chat = () => {
         required_role: a.required_roles?.[0],
         approval_type: a.approval_type,
         required_roles: a.required_roles || ['developer'],
-        required_approvals: 1,
-        current_approvals: 0,
-        approved_by_roles: [],
-        approved_by_ids: [],
         created_at: a.created_at,
       }))
 
-    // Load all tool executions (pending, approved, rejected) for ToolExecutionCard display
-    loadedToolExecutions = allApprovals
-      .filter(a => a.tool_name && a.approval_type === 'tool_call')
-      .map(a => ({
-        id: a.id,
-        approvalId: a.id,
-        agentId: a.agent_id || 'developer',
-        toolName: a.tool_name,
-        parameters: a.arguments || {},
-        status: a.status === 'approved' ? 'approved' : a.status === 'rejected' ? 'rejected' : 'pending',
-        approverUsername: a.resolved_by_username,
-        approverRole: a.required_roles?.[0],
-        approvedAt: a.resolved_at,
-        rejectionReason: a.status === 'rejected' ? a.rejection_reason : undefined,
-      }))
-
-    setToolExecutions(loadedToolExecutions)
+    setToolExecutions([])
 
     // Load messages from normalized database
     // Filter out system messages that are approval notifications (they're shown via ToolExecutionCard)
@@ -488,7 +456,7 @@ const Chat = () => {
         role: msg.role,
         content: msg.content,
         agent_id: msg.agent_id,  // Include agent_id for agent attribution
-        timestamp: msg.timestamp,
+        timestamp: msg.created_at || msg.timestamp,  // API returns created_at
         ...(msg.role === 'assistant' && {
           workflowEvents: isLastAssistant ? normalizedEvents : [],
           llmCalls: isLastAssistant ? llmCalls : [],
@@ -521,7 +489,7 @@ const Chat = () => {
         },
         answered: isAnswered,
         userAnswer: q.answer,
-        timestamp: q.created_at || new Date().toISOString(),
+        timestamp: q.created_at,
       })
     }
 
@@ -1000,10 +968,10 @@ const Chat = () => {
           </button>
         </div>
 
-        {/* Messages, Workflow Events, and Approvals - All combined and sorted by timestamp */}
+        {/* Messages and Timeline Events - Combined and sorted by timestamp */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {(() => {
-            // Combine ALL items into one unified timeline
+            // Combine messages and timeline items
             const allItems = [
               // User and assistant messages
               ...messages.map((msg, idx) => ({
@@ -1012,23 +980,14 @@ const Chat = () => {
                 sortKey: msg.timestamp ? new Date(msg.timestamp).getTime() : idx,
                 key: `msg-${idx}`,
               })),
-              // Workflow events (agent start/complete, tool calls)
-              ...workflowEventsForDisplay.map((event, idx) => ({
-                ...event,
-                itemType: 'workflow',
-                sortKey: event.timestamp ? new Date(event.timestamp).getTime() : idx + 10000,
-                key: `event-${event.id || idx}`,
+              // Timeline items from backend (agent_started, tool_decision, agent_completed)
+              ...workflowEventsForDisplay.map((item, idx) => ({
+                ...item,
+                itemType: 'timeline',
+                sortKey: item.timestamp ? new Date(item.timestamp).getTime() : idx + 10000,
+                key: `timeline-${item.id || idx}`,
               })),
-              // Completed tool executions (approved/rejected) - sorted by approval time
-              ...toolExecutions
-                .filter((execution) => execution.status !== 'pending')
-                .map((execution) => ({
-                  ...execution,
-                  itemType: 'toolExecution',
-                  sortKey: execution.approvedAt ? new Date(execution.approvedAt).getTime() : Date.now(),
-                  key: `tool-${execution.id || execution.approvalId}`,
-                })),
-              // Pending approvals - sorted by creation time (show where they should be in timeline)
+              // Session-level pending approvals (non-tool_call types)
               ...sessionPendingApprovals.map((approval, i) => ({
                 ...approval,
                 itemType: 'pendingApproval',
@@ -1039,31 +998,43 @@ const Chat = () => {
 
             // Sort by timestamp (keeping welcome message first)
             allItems.sort((a, b) => {
-              // Welcome message always first (index 0 with no timestamp)
               if (a.itemType === 'message' && a.key === 'msg-0' && !a.timestamp) return -1
               if (b.itemType === 'message' && b.key === 'msg-0' && !b.timestamp) return 1
               return a.sortKey - b.sortKey
             })
 
             return allItems.map((item) => {
-              if (item.itemType === 'workflow') {
-                return <WorkflowEventMessage key={item.key} event={item} />
-              }
-              if (item.itemType === 'toolExecution') {
+              // Timeline items (from the unified backend structure)
+              if (item.itemType === 'timeline') {
+                // tool_decision items use the new ToolDecisionCard
+                if (item.type === 'tool_decision' && item.toolDecision) {
+                  return (
+                    <ToolDecisionCard
+                      key={item.key}
+                      item={item}
+                      onApprove={handleApproveTask}
+                      onReject={handleRejectTask}
+                      onAnswerQuestion={handleAnswerQuestion}
+                      isProcessing={approveMutation.isPending || rejectMutation.isPending}
+                      isAnswering={answerMutation.isPending}
+                      userRoles={user?.roles || []}
+                    />
+                  )
+                }
+                // agent_started and agent_completed use WorkflowEventMessage
                 return (
-                  <ToolExecutionCard
+                  <WorkflowEventMessage
                     key={item.key}
-                    agentId={item.agentId}
-                    toolName={item.toolName}
-                    parameters={item.parameters}
-                    status={item.status}
-                    approverUsername={item.approverUsername}
-                    approverRole={item.approverRole}
-                    approvedAt={item.approvedAt}
-                    rejectionReason={item.rejectionReason}
+                    event={item}
+                    onApprove={handleApproveTask}
+                    onReject={handleRejectTask}
+                    isProcessing={approveMutation.isPending || rejectMutation.isPending}
+                    userRoles={user?.roles || []}
+                    sessionId={currentPlanId}
                   />
                 )
               }
+              // Non-tool_call approvals (workflow_step approvals)
               if (item.itemType === 'pendingApproval' && !chatMutation.isPending && !isAgentWorking) {
                 return (
                   <ApprovalCard
@@ -1078,6 +1049,7 @@ const Chat = () => {
                   />
                 )
               }
+              // Standalone HITL questions (from messages)
               if (item.role === 'question') {
                 return (
                   <HITLQuestionMessage
@@ -1090,6 +1062,7 @@ const Chat = () => {
                   />
                 )
               }
+              // Regular messages
               return (
                 <Message
                   key={item.key}

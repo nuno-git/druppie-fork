@@ -151,37 +151,28 @@ class WorkflowInfo(BaseModel):
 # =============================================================================
 
 
-class LLMCallInfo(BaseModel):
-    """Full LLM call information for debugging."""
+class HITLChoiceInfo(BaseModel):
+    """A choice for a HITL question."""
+
+    index: int
+    text: str
+    is_selected: bool = False
+
+
+class HITLQuestionInfo(BaseModel):
+    """HITL question from an agent."""
 
     id: str
+    session_id: str
+    agent_run_id: str | None = None
     agent_id: str | None = None
-    agent_run_id: str | None = None
-    provider: str
-    model: str
-    token_usage: "TokenUsage"
-    duration_ms: int | None = None
-    # Full request/response for debugging
-    request_messages: list[dict] | None = None
-    response_content: str | None = None
-    response_tool_calls: list[dict] | None = None
-    tools_provided: list[dict] | None = None
+    question: str
+    question_type: str = "text"  # text, single_choice, multiple_choice
+    choices: list[HITLChoiceInfo] = []
+    status: str  # pending, answered
+    answer: str | None = None
     created_at: str | None = None
-
-
-class ToolCallInfo(BaseModel):
-    """Information about an MCP tool call."""
-
-    id: str
-    agent_run_id: str | None = None
-    mcp_server: str
-    tool_name: str
-    arguments: dict[str, Any] = {}
-    status: str  # pending, executing, completed, failed
-    result: str | None = None
-    error_message: str | None = None
-    created_at: str | None = None
-    executed_at: str | None = None
+    answered_at: str | None = None
 
 
 class ApprovalInfo(BaseModel):
@@ -209,28 +200,78 @@ class ApprovalInfo(BaseModel):
     created_at: str | None = None
 
 
-class HITLChoiceInfo(BaseModel):
-    """A choice for a HITL question."""
+class ToolCallDecision(BaseModel):
+    """A tool call decision made by the agent in an LLM response.
 
-    index: int
-    text: str
-    is_selected: bool = False
+    This is the unified schema that embeds ALL related data:
+    - The tool call itself (name, arguments)
+    - Approval info (if requires approval)
+    - HITL question info (if this is a HITL tool)
+    - Execution result (if executed)
+    """
+
+    # Basic tool call info (from LLM response)
+    id: str | None = None
+    name: str
+    arguments: dict[str, Any] = {}
+
+    # Execution status
+    executed: bool = False
+    execution_status: str | None = None  # pending, executing, completed, failed
+    execution_result: str | None = None
+    execution_error: str | None = None
+    executed_at: str | None = None
+
+    # Approval info (embedded if this tool requires approval)
+    approval_required: bool = False
+    approval: ApprovalInfo | None = None  # Full approval data if required
+
+    # HITL question info (embedded if this is a HITL tool)
+    is_hitl_question: bool = False
+    hitl_question: HITLQuestionInfo | None = None  # Full question data if HITL tool
+
+    # Is this the final "done" tool?
+    is_done_tool: bool = False
 
 
-class HITLQuestionInfo(BaseModel):
-    """HITL question from an agent."""
+class LLMCallInfo(BaseModel):
+    """Full LLM call information for debugging."""
 
     id: str
-    session_id: str
-    agent_run_id: str | None = None
     agent_id: str | None = None
-    question: str
-    question_type: str = "text"  # text, single_choice, multiple_choice
-    choices: list[HITLChoiceInfo] = []
-    status: str  # pending, answered
-    answer: str | None = None
+    agent_run_id: str | None = None
+    provider: str
+    model: str
+    token_usage: "TokenUsage"
+    duration_ms: int | None = None
+    # Full request/response for debugging
+    request_messages: list[dict] | None = None
+    response_content: str | None = None
+    # Enhanced tool calls with embedded approval/HITL data
+    response_tool_calls: list[ToolCallDecision] = []
+    tools_provided: list[dict] | None = None
     created_at: str | None = None
-    answered_at: str | None = None
+
+
+class ToolCallInfo(BaseModel):
+    """Information about an executed MCP tool call."""
+
+    id: str
+    agent_run_id: str | None = None
+    mcp_server: str
+    tool_name: str
+    arguments: dict[str, Any] = {}
+    status: str  # pending, executing, completed, failed
+    result: str | None = None
+    error_message: str | None = None
+    created_at: str | None = None
+    executed_at: str | None = None
+    # Approval info
+    approval_required: bool = False
+    approval_given: bool | None = None  # None if not required, True/False if required
+    approval_id: str | None = None
+    approved_by: str | None = None  # Username of approver
+    rejected_reason: str | None = None
 
 
 class AgentRunInfo(BaseModel):
@@ -366,14 +407,12 @@ class SessionDetail(BaseModel):
     # All LLM calls (raw data for debugging)
     llm_calls: list[LLMCallInfo] = []
 
-    # All approvals (pending and resolved)
-    approvals: list[ApprovalInfo] = []
-
-    # All HITL questions (pending and answered)
-    hitl_questions: list[HITLQuestionInfo] = []
-
     # Timeline events
     events: list[SessionEventInfo] = []
+
+    # NOTE: Approvals and HITL questions are embedded within:
+    # - agent_runs[].approvals and agent_runs[].hitl_questions (per-agent)
+    # - llm_calls[].response_tool_calls[].approval and .hitl_question (per-tool-call)
 
 
 # =============================================================================
