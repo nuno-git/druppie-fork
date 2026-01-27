@@ -361,17 +361,23 @@ def get_agent_run(db: DBSession, run_id: UUID) -> AgentRun | None:
     return db.query(AgentRun).filter(AgentRun.id == run_id).first()
 
 
-def get_active_agent_run(db: DBSession, session_id: UUID) -> AgentRun | None:
-    """Get the active (running or paused) agent run for a session."""
-    return (
-        db.query(AgentRun)
-        .filter(
-            AgentRun.session_id == session_id,
-            AgentRun.status.in_(["running", "paused_tool", "paused_hitl"]),
-        )
-        .order_by(AgentRun.started_at.desc())
-        .first()
+def get_active_agent_run(
+    db: DBSession, session_id: UUID, agent_id: str | None = None
+) -> AgentRun | None:
+    """Get the active (running or paused) agent run for a session.
+
+    Args:
+        db: Database session
+        session_id: Session ID to filter by
+        agent_id: Optional agent ID to filter by (e.g., "architect")
+    """
+    query = db.query(AgentRun).filter(
+        AgentRun.session_id == session_id,
+        AgentRun.status.in_(["running", "paused_tool", "paused_hitl"]),
     )
+    if agent_id:
+        query = query.filter(AgentRun.agent_id == agent_id)
+    return query.order_by(AgentRun.started_at.desc()).first()
 
 
 def update_agent_run(

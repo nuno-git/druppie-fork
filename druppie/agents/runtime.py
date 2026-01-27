@@ -401,10 +401,13 @@ class Agent:
                     messages.append({
                         "role": "user",
                         "content": (
-                            "You MUST use tools to communicate and act. "
-                            "Use hitl_ask_question to ask questions to the user. "
-                            "Use coding_write_file or coding_batch_write_files to create files. "
-                            "Do NOT output text directly - always use the appropriate tool."
+                            "ERROR: You output plain text instead of a tool call. Your text was ignored.\n\n"
+                            "You MUST use a tool call. Use this exact format:\n"
+                            '<tool_call>{"name": "tool_name", "arguments": {"key": "value"}}</tool_call>\n\n'
+                            "Examples:\n"
+                            '- To ask user: <tool_call>{"name": "hitl_ask_question", "arguments": {"question": "Your question?"}}</tool_call>\n'
+                            '- When done: <tool_call>{"name": "done", "arguments": {"summary": "What you accomplished"}}</tool_call>\n\n'
+                            "Try again with a proper tool call."
                         ),
                     })
                     continue  # Retry with reminder
@@ -726,7 +729,7 @@ class Agent:
         )
 
     def _build_system_prompt(self) -> str:
-        """Build the system prompt with built-in tools documentation appended.
+        """Build the system prompt with shared tool usage instructions.
 
         Router and planner agents have special JSON output formats and don't
         need the built-in tools documentation.
@@ -735,35 +738,81 @@ class Agent:
         if self.id in ("router", "planner"):
             return self.definition.system_prompt
 
-        builtin_tools_doc = """
+        shared_tool_instructions = """
 
-=============================================================================
-BUILT-IN TOOLS (available to all agents)
-=============================================================================
+###############################################################################
+#                    CRITICAL: TOOL USAGE INSTRUCTIONS                        #
+###############################################################################
 
-These tools are always available and do not require MCP:
+You are an AI agent that can ONLY interact through TOOL CALLS.
+You MUST NOT output plain text - always use a tool.
 
-1. hitl_ask_question(question: str, context?: str)
-   - Ask the user a free-form text question
-   - Use when you need clarification or input
-   - Workflow pauses until user responds
+## TOOL CALL FORMAT
 
-2. hitl_ask_multiple_choice_question(question: str, choices: list[str], allow_other?: bool)
-   - Ask the user to select from predefined options
-   - Use for yes/no questions or selecting from options
+You MUST output tool calls in ONE of these two formats:
 
-3. done(summary: str)
-   - Signal that you have completed your task
-   - MUST be called when you are finished
-   - Include a brief summary of what was accomplished
+### Option 1: XML Format (recommended)
+```
+<tool_call>{"name": "tool_name", "arguments": {"arg1": "value1", "arg2": "value2"}}</tool_call>
+```
 
-CRITICAL RULES:
-- You can ONLY act through tool calls - never output plain text
-- To communicate with the user, use hitl_ask_question
-- When finished with your task, call done(summary="...")
-- Do NOT just output text without using a tool
+### Option 2: OpenAI Function Call Format
+The API will handle this automatically if your response includes proper function calls.
+
+## EXAMPLES OF CORRECT TOOL CALLS
+
+### Asking the user a question:
+<tool_call>{"name": "hitl_ask_question", "arguments": {"question": "What database would you like me to use?"}}</tool_call>
+
+### Asking a yes/no question:
+<tool_call>{"name": "hitl_ask_multiple_choice_question", "arguments": {"question": "Should I proceed with this plan?", "choices": ["Yes", "No"]}}</tool_call>
+
+### Signaling task completion:
+<tool_call>{"name": "done", "arguments": {"summary": "Successfully created the todo application"}}</tool_call>
+
+## BUILT-IN TOOLS (always available)
+
+1. **hitl_ask_question** - Ask the user a free-form question
+   Required: question (string)
+   Optional: context (string)
+
+2. **hitl_ask_multiple_choice_question** - Ask user to select from options
+   Required: question (string), choices (array of strings)
+   Optional: allow_other (boolean)
+
+3. **done** - Signal that your task is complete
+   Required: summary (string) - Brief description of what you accomplished
+
+## CRITICAL RULES
+
+1. NEVER output plain text to communicate - use hitl_ask_question instead
+2. NEVER announce what you will do - just call the tool directly
+3. ALWAYS call done() when you have finished your task
+4. Tool names use UNDERSCORES not colons (e.g., hitl_ask_question not hitl:ask_question)
+
+## WRONG vs RIGHT
+
+WRONG (plain text output):
+```
+I'll now create a file for you. What name would you like?
+```
+
+RIGHT (tool call):
+```
+<tool_call>{"name": "hitl_ask_question", "arguments": {"question": "What name would you like for the file?"}}</tool_call>
+```
+
+WRONG (announcing completion):
+```
+Done! I have completed the task.
+```
+
+RIGHT (tool call):
+```
+<tool_call>{"name": "done", "arguments": {"summary": "Created the requested file"}}</tool_call>
+```
 """
-        return self.definition.system_prompt + builtin_tools_doc
+        return self.definition.system_prompt + shared_tool_instructions
 
     def _build_prompt(self, prompt: str, context: dict = None) -> str:
         """Build the full prompt with context."""
@@ -828,13 +877,33 @@ TASK:
             except json.JSONDecodeError:
                 pass
 
-        # Strategy 3: Find JSON object in text (look for {...})
-        # This handles cases where LLM adds text before/after JSON
-        json_match = re.search(r"\{[\s\S]*\}", content)
-        if json_match:
+        # Strategy 3: Find the LAST valid JSON object in text (look for {...})
+        # This handles cases where LLM adds thinking text before the actual JSON
+        # We search backwards to find the last complete JSON object
+        json_objects = list(re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", content))
+        for match in reversed(json_objects):
             try:
-                return json.loads(json_match.group(0))
+                return json.loads(match.group(0))
             except json.JSONDecodeError:
+                continue
+
+        # Strategy 3b: Try to find a JSON object with nested braces (more complex)
+        # Look for JSON starting near the end of content
+        last_brace = content.rfind("{")
+        if last_brace >= 0:
+            # Try to extract JSON from the last { to the matching }
+            try:
+                # Count braces to find the matching }
+                brace_count = 0
+                for i, char in enumerate(content[last_brace:]):
+                    if char == "{":
+                        brace_count += 1
+                    elif char == "}":
+                        brace_count -= 1
+                        if brace_count == 0:
+                            json_str = content[last_brace:last_brace + i + 1]
+                            return json.loads(json_str)
+            except (json.JSONDecodeError, IndexError):
                 pass
 
         # Strategy 4: Find JSON array in text (look for [...])

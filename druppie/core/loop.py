@@ -1196,8 +1196,27 @@ class MainLoop:
                 agent = Agent(agent_id)
                 result = await agent.resume_from_approval(agent_state, tool_result)
 
+                # Get the agent_run to persist LLM calls
+                agent_run = get_active_agent_run(db, UUID(session_id), agent_id)
+
                 # Check if agent paused again
                 if result.get("paused"):
+                    is_hitl = result.get("question_id") is not None
+
+                    # Persist LLM calls made during the resume
+                    if agent_run:
+                        iteration_count = result.get("iteration", 0) + 1
+                        _persist_agent_data(
+                            db, agent_run, exec_ctx, iteration_count,
+                            status="paused_hitl" if is_hitl else "paused_tool",
+                        )
+                        logger.info(
+                            "persisted_llm_calls_on_approval_resume",
+                            agent_id=agent_id,
+                            agent_run_id=str(agent_run.id),
+                            llm_calls_count=len([c for c in exec_ctx.llm_calls if c.get("agent_id") == agent_id]),
+                        )
+
                     # Update session status
                     if result.get("approval_id"):
                         update_session(db, UUID(session_id), status="paused_approval")
@@ -1230,6 +1249,24 @@ class MainLoop:
                         "session_id": session_id,
                         "workflow_events": exec_ctx.workflow_events,
                     }
+
+                # Agent completed - persist LLM calls
+                if agent_run:
+                    llm_calls_for_agent = [
+                        c for c in exec_ctx.llm_calls if c.get("agent_id") == agent_id
+                    ]
+                    iteration_count = len(llm_calls_for_agent)
+                    _persist_agent_data(
+                        db, agent_run, exec_ctx, iteration_count,
+                        status="completed",
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                    logger.info(
+                        "persisted_llm_calls_on_approval_resume_complete",
+                        agent_id=agent_id,
+                        agent_run_id=str(agent_run.id),
+                        llm_calls_count=iteration_count,
+                    )
 
                 # Agent completed - check if we need to continue workflow
                 workflow_id = agent_state.get("workflow_id")
@@ -1508,9 +1545,27 @@ class MainLoop:
                     agent = Agent(agent_id)
                     result = await agent.resume(agent_state, answer)
 
+                    # Get the agent_run to persist LLM calls
+                    # The agent_run should be the active one for this agent in this session
+                    agent_run = get_active_agent_run(db, UUID(session_id), agent_id)
+
                     # Check if agent paused again
                     if result.get("paused"):
                         is_hitl = result.get("question_id") is not None
+
+                        # Persist LLM calls made during the resume
+                        if agent_run:
+                            iteration_count = result.get("iteration", 0) + 1
+                            _persist_agent_data(
+                                db, agent_run, exec_ctx, iteration_count,
+                                status="paused_hitl" if is_hitl else "paused_tool",
+                            )
+                            logger.info(
+                                "persisted_llm_calls_on_hitl_resume",
+                                agent_id=agent_id,
+                                agent_run_id=str(agent_run.id),
+                                llm_calls_count=len([c for c in exec_ctx.llm_calls if c.get("agent_id") == agent_id]),
+                            )
 
                         # Save agent state to the appropriate record
                         if is_hitl and result.get("agent_state"):
@@ -1550,6 +1605,24 @@ class MainLoop:
                             "session_id": session_id,
                             "workflow_events": exec_ctx.workflow_events,
                         }
+
+                    # Agent completed - persist LLM calls
+                    if agent_run:
+                        llm_calls_for_agent = [
+                            c for c in exec_ctx.llm_calls if c.get("agent_id") == agent_id
+                        ]
+                        iteration_count = len(llm_calls_for_agent)
+                        _persist_agent_data(
+                            db, agent_run, exec_ctx, iteration_count,
+                            status="completed",
+                            completed_at=datetime.now(timezone.utc),
+                        )
+                        logger.info(
+                            "persisted_llm_calls_on_hitl_resume_complete",
+                            agent_id=agent_id,
+                            agent_run_id=str(agent_run.id),
+                            llm_calls_count=iteration_count,
+                        )
 
                     # Agent completed - check if we need to continue workflow
                     if workflow_id and workflow_step is not None:
