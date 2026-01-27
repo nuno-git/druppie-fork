@@ -1236,6 +1236,17 @@ class MainLoop:
                     # Update session status
                     if result.get("approval_id"):
                         update_session(db, UUID(session_id), status="paused_approval")
+                        # Save agent_state to the new approval for resumption
+                        # BUG FIX: This was missing, causing agent_id=None on second approval
+                        if result.get("agent_state"):
+                            update_approval(
+                                db, result["approval_id"], {"agent_state": result["agent_state"]}
+                            )
+                            logger.info(
+                                "saved_agent_state_for_approval_in_resume_from_step_approval",
+                                approval_id=result["approval_id"],
+                                agent_id=result["agent_state"].get("agent_id"),
+                            )
                     elif result.get("question_id"):
                         update_session(db, UUID(session_id), status="paused_question")
                         # Save agent_state to the new question for resumption
