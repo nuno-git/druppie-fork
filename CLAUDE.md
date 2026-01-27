@@ -601,6 +601,17 @@ if agent_prompt_tokens > 0 or agent_completion_tokens > 0:
 **Key Files**: `druppie/api/routes/approvals.py`, `frontend/src/pages/Tasks.jsx`
 **Result**: Approval history now clearly shows "Step Approval" for workflow checkpoints vs actual tool names like "docker:build" for MCP tools
 
+### Issue: Dashboard Pending Approvals Shows "Requires:" Without Role
+**Symptom**: Dashboard's Pending Approvals section showed "Requires:" with nothing after it
+**Cause**: Dashboard used `task.required_role` (singular) but API returns `required_roles` (array)
+**Fix**: Normalize role field in Dashboard.jsx:
+```javascript
+const requiredRole = task.required_role ||
+  (task.required_roles?.length > 0 ? task.required_roles[0] : 'admin')
+```
+**Key Files**: `frontend/src/pages/Dashboard.jsx`
+**Pattern**: Always normalize both `required_role` (string) and `required_roles` (array) when displaying role info
+
 ### Workflow: Full Architect Flow Testing
 To test the complete architect workflow (including HITL questions and architect approval):
 1. Log in as `normal_user`
