@@ -201,6 +201,173 @@ def _build_session_detail(session: SessionModel, db: DBSession) -> SessionDetail
         .order_by(AgentRun.started_at)
         .all()
     )
+
+    # Build agent_run_id -> agent_id map
+    agent_run_map = {str(r.id): r.agent_id for r in runs}
+
+    # =========================================================================
+    # Query all data and group by agent_run_id
+    # =========================================================================
+
+    # Get all LLM calls
+    llm_calls_raw = (
+        db.query(LlmCall)
+        .filter(LlmCall.session_id == session.id)
+        .order_by(LlmCall.created_at)
+        .all()
+    )
+
+    # Get all tool calls
+    tcs = (
+        db.query(ToolCall)
+        .filter(ToolCall.session_id == session.id)
+        .order_by(ToolCall.created_at)
+        .all()
+    )
+
+    # Get all approvals with resolver info
+    approvals_raw = (
+        db.query(Approval)
+        .filter(Approval.session_id == session.id)
+        .order_by(Approval.created_at)
+        .all()
+    )
+
+    # Batch load resolver usernames
+    resolver_ids = {a.resolved_by for a in approvals_raw if a.resolved_by}
+    resolver_map = {}
+    if resolver_ids:
+        resolvers = db.query(User).filter(User.id.in_(resolver_ids)).all()
+        resolver_map = {str(u.id): u.username for u in resolvers}
+
+    # Get all HITL questions
+    questions_raw = (
+        db.query(HitlQuestion)
+        .filter(HitlQuestion.session_id == session.id)
+        .order_by(HitlQuestion.created_at)
+        .all()
+    )
+
+    # =========================================================================
+    # Group everything by agent_run_id
+    # =========================================================================
+
+    llm_calls_by_run: dict[str, list[LLMCallInfo]] = {}
+    all_llm_calls: list[LLMCallInfo] = []
+
+    for lc in llm_calls_raw:
+        llm_call_info = LLMCallInfo(
+            id=str(lc.id),
+            agent_id=agent_run_map.get(str(lc.agent_run_id)) if lc.agent_run_id else None,
+            agent_run_id=str(lc.agent_run_id) if lc.agent_run_id else None,
+            provider=lc.provider,
+            model=lc.model,
+            token_usage=_to_token_usage(lc.prompt_tokens, lc.completion_tokens, lc.total_tokens),
+            duration_ms=lc.duration_ms,
+            request_messages=lc.request_messages,
+            response_content=lc.response_content,
+            response_tool_calls=lc.response_tool_calls,
+            tools_provided=lc.tools_provided,
+            created_at=lc.created_at.isoformat() if lc.created_at else None,
+        )
+        all_llm_calls.append(llm_call_info)
+        if lc.agent_run_id:
+            run_id_str = str(lc.agent_run_id)
+            if run_id_str not in llm_calls_by_run:
+                llm_calls_by_run[run_id_str] = []
+            llm_calls_by_run[run_id_str].append(llm_call_info)
+
+    tool_calls_by_run: dict[str, list[ToolCallInfo]] = {}
+    all_tool_calls: list[ToolCallInfo] = []
+
+    for tc in tcs:
+        tool_call_info = ToolCallInfo(
+            id=str(tc.id),
+            agent_run_id=str(tc.agent_run_id) if tc.agent_run_id else None,
+            mcp_server=tc.mcp_server,
+            tool_name=tc.tool_name,
+            arguments={a.arg_name: a.arg_value for a in tc.arguments} if tc.arguments else {},
+            status=tc.status,
+            result=tc.result,
+            error_message=tc.error_message,
+            created_at=tc.created_at.isoformat() if tc.created_at else None,
+            executed_at=tc.executed_at.isoformat() if tc.executed_at else None,
+        )
+        all_tool_calls.append(tool_call_info)
+        if tc.agent_run_id:
+            run_id_str = str(tc.agent_run_id)
+            if run_id_str not in tool_calls_by_run:
+                tool_calls_by_run[run_id_str] = []
+            tool_calls_by_run[run_id_str].append(tool_call_info)
+
+    approvals_by_run: dict[str, list[ApprovalInfo]] = {}
+    all_approvals: list[ApprovalInfo] = []
+
+    for a in approvals_raw:
+        approval_info = ApprovalInfo(
+            id=str(a.id),
+            session_id=str(a.session_id),
+            agent_run_id=str(a.agent_run_id) if a.agent_run_id else None,
+            tool_call_id=str(a.tool_call_id) if a.tool_call_id else None,
+            workflow_step_id=str(a.workflow_step_id) if a.workflow_step_id else None,
+            approval_type=a.approval_type,
+            mcp_server=a.mcp_server,
+            tool_name=a.tool_name,
+            title=a.title,
+            description=a.description,
+            required_roles=a.required_roles,
+            danger_level=a.danger_level,
+            status=a.status,
+            arguments=a.arguments if isinstance(a.arguments, dict) else None,
+            resolved_by=str(a.resolved_by) if a.resolved_by else None,
+            resolved_by_username=resolver_map.get(str(a.resolved_by)) if a.resolved_by else None,
+            resolved_at=a.resolved_at.isoformat() if a.resolved_at else None,
+            rejection_reason=a.rejection_reason,
+            agent_id=a.agent_id,
+            created_at=a.created_at.isoformat() if a.created_at else None,
+        )
+        all_approvals.append(approval_info)
+        if a.agent_run_id:
+            run_id_str = str(a.agent_run_id)
+            if run_id_str not in approvals_by_run:
+                approvals_by_run[run_id_str] = []
+            approvals_by_run[run_id_str].append(approval_info)
+
+    hitl_by_run: dict[str, list[HITLQuestionInfo]] = {}
+    all_hitl_questions: list[HITLQuestionInfo] = []
+
+    for q in questions_raw:
+        hitl_info = HITLQuestionInfo(
+            id=str(q.id),
+            session_id=str(q.session_id),
+            agent_run_id=str(q.agent_run_id) if q.agent_run_id else None,
+            agent_id=q.agent_id,
+            question=q.question,
+            question_type=q.question_type or "text",
+            choices=[
+                HITLChoiceInfo(
+                    index=c.choice_index,
+                    text=c.choice_text,
+                    is_selected=c.is_selected or False,
+                )
+                for c in sorted(q.choices, key=lambda x: x.choice_index)
+            ] if q.choices else [],
+            status=q.status,
+            answer=q.answer,
+            created_at=q.created_at.isoformat() if q.created_at else None,
+            answered_at=q.answered_at.isoformat() if q.answered_at else None,
+        )
+        all_hitl_questions.append(hitl_info)
+        if q.agent_run_id:
+            run_id_str = str(q.agent_run_id)
+            if run_id_str not in hitl_by_run:
+                hitl_by_run[run_id_str] = []
+            hitl_by_run[run_id_str].append(hitl_info)
+
+    # =========================================================================
+    # Build agent runs with ALL nested data
+    # =========================================================================
+
     agent_runs = [
         AgentRunInfo(
             id=str(r.id),
@@ -212,6 +379,10 @@ def _build_session_detail(session: SessionModel, db: DBSession) -> SessionDetail
             token_usage=_to_token_usage(r.prompt_tokens, r.completion_tokens, r.total_tokens),
             started_at=r.started_at.isoformat() if r.started_at else None,
             completed_at=r.completed_at.isoformat() if r.completed_at else None,
+            llm_calls=llm_calls_by_run.get(str(r.id), []),
+            tool_calls=tool_calls_by_run.get(str(r.id), []),
+            approvals=approvals_by_run.get(str(r.id), []),
+            hitl_questions=hitl_by_run.get(str(r.id), []),
         )
         for r in runs
     ]
@@ -241,131 +412,6 @@ def _build_session_detail(session: SessionModel, db: DBSession) -> SessionDetail
             created_at=m.created_at.isoformat() if m.created_at else None,
         )
         for m in msgs
-    ]
-
-    # Get all tool calls
-    tcs = (
-        db.query(ToolCall)
-        .filter(ToolCall.session_id == session.id)
-        .order_by(ToolCall.created_at)
-        .all()
-    )
-    tool_calls = [
-        ToolCallInfo(
-            id=str(tc.id),
-            agent_run_id=str(tc.agent_run_id) if tc.agent_run_id else None,
-            mcp_server=tc.mcp_server,
-            tool_name=tc.tool_name,
-            arguments={a.arg_name: a.arg_value for a in tc.arguments} if tc.arguments else {},
-            status=tc.status,
-            result=tc.result,
-            error_message=tc.error_message,
-            created_at=tc.created_at.isoformat() if tc.created_at else None,
-            executed_at=tc.executed_at.isoformat() if tc.executed_at else None,
-        )
-        for tc in tcs
-    ]
-
-    # Get all LLM calls with agent_id lookup
-    llm_calls_raw = (
-        db.query(LlmCall)
-        .filter(LlmCall.session_id == session.id)
-        .order_by(LlmCall.created_at)
-        .all()
-    )
-
-    # Build agent_run_id -> agent_id map
-    agent_run_map = {str(r.id): r.agent_id for r in runs}
-
-    llm_calls = [
-        LLMCallInfo(
-            id=str(lc.id),
-            agent_id=agent_run_map.get(str(lc.agent_run_id)) if lc.agent_run_id else None,
-            agent_run_id=str(lc.agent_run_id) if lc.agent_run_id else None,
-            provider=lc.provider,
-            model=lc.model,
-            token_usage=_to_token_usage(lc.prompt_tokens, lc.completion_tokens, lc.total_tokens),
-            duration_ms=lc.duration_ms,
-            request_messages=lc.request_messages,
-            response_content=lc.response_content,
-            response_tool_calls=lc.response_tool_calls,
-            tools_provided=lc.tools_provided,
-            created_at=lc.created_at.isoformat() if lc.created_at else None,
-        )
-        for lc in llm_calls_raw
-    ]
-
-    # Get all approvals with resolver info
-    approvals_raw = (
-        db.query(Approval)
-        .filter(Approval.session_id == session.id)
-        .order_by(Approval.created_at)
-        .all()
-    )
-
-    # Batch load resolver usernames
-    resolver_ids = {a.resolved_by for a in approvals_raw if a.resolved_by}
-    resolver_map = {}
-    if resolver_ids:
-        resolvers = db.query(User).filter(User.id.in_(resolver_ids)).all()
-        resolver_map = {str(u.id): u.username for u in resolvers}
-
-    approvals = [
-        ApprovalInfo(
-            id=str(a.id),
-            session_id=str(a.session_id),
-            agent_run_id=str(a.agent_run_id) if a.agent_run_id else None,
-            tool_call_id=str(a.tool_call_id) if a.tool_call_id else None,
-            workflow_step_id=str(a.workflow_step_id) if a.workflow_step_id else None,
-            approval_type=a.approval_type,
-            mcp_server=a.mcp_server,
-            tool_name=a.tool_name,
-            title=a.title,
-            description=a.description,
-            required_roles=a.required_roles,
-            danger_level=a.danger_level,
-            status=a.status,
-            arguments=a.arguments if isinstance(a.arguments, dict) else None,
-            resolved_by=str(a.resolved_by) if a.resolved_by else None,
-            resolved_by_username=resolver_map.get(str(a.resolved_by)) if a.resolved_by else None,
-            resolved_at=a.resolved_at.isoformat() if a.resolved_at else None,
-            rejection_reason=a.rejection_reason,
-            agent_id=a.agent_id,
-            created_at=a.created_at.isoformat() if a.created_at else None,
-        )
-        for a in approvals_raw
-    ]
-
-    # Get all HITL questions
-    questions_raw = (
-        db.query(HitlQuestion)
-        .filter(HitlQuestion.session_id == session.id)
-        .order_by(HitlQuestion.created_at)
-        .all()
-    )
-
-    hitl_questions = [
-        HITLQuestionInfo(
-            id=str(q.id),
-            session_id=str(q.session_id),
-            agent_run_id=str(q.agent_run_id) if q.agent_run_id else None,
-            agent_id=q.agent_id,
-            question=q.question,
-            question_type=q.question_type or "text",
-            choices=[
-                HITLChoiceInfo(
-                    index=c.choice_index,
-                    text=c.choice_text,
-                    is_selected=c.is_selected or False,
-                )
-                for c in sorted(q.choices, key=lambda x: x.choice_index)
-            ] if q.choices else [],
-            status=q.status,
-            answer=q.answer,
-            created_at=q.created_at.isoformat() if q.created_at else None,
-            answered_at=q.answered_at.isoformat() if q.answered_at else None,
-        )
-        for q in questions_raw
     ]
 
     # Get all timeline events
@@ -411,10 +457,10 @@ def _build_session_detail(session: SessionModel, db: DBSession) -> SessionDetail
         workflow=workflow,
         agent_runs=agent_runs,
         messages=messages,
-        tool_calls=tool_calls,
-        llm_calls=llm_calls,
-        approvals=approvals,
-        hitl_questions=hitl_questions,
+        tool_calls=all_tool_calls,
+        llm_calls=all_llm_calls,
+        approvals=all_approvals,
+        hitl_questions=all_hitl_questions,
         events=events,
     )
 

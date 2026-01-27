@@ -151,18 +151,22 @@ class WorkflowInfo(BaseModel):
 # =============================================================================
 
 
-class AgentRunInfo(BaseModel):
-    """Information about an agent execution."""
+class LLMCallInfo(BaseModel):
+    """Full LLM call information for debugging."""
 
     id: str
-    agent_id: str
-    workflow_step_id: str | None = None
-    parent_run_id: str | None = None
-    status: str  # running, paused_tool, paused_hitl, completed, failed
-    iteration_count: int = 0
-    token_usage: TokenUsage = Field(default_factory=TokenUsage)
-    started_at: str | None = None
-    completed_at: str | None = None
+    agent_id: str | None = None
+    agent_run_id: str | None = None
+    provider: str
+    model: str
+    token_usage: "TokenUsage"
+    duration_ms: int | None = None
+    # Full request/response for debugging
+    request_messages: list[dict] | None = None
+    response_content: str | None = None
+    response_tool_calls: list[dict] | None = None
+    tools_provided: list[dict] | None = None
+    created_at: str | None = None
 
 
 class ToolCallInfo(BaseModel):
@@ -178,52 +182,6 @@ class ToolCallInfo(BaseModel):
     error_message: str | None = None
     created_at: str | None = None
     executed_at: str | None = None
-
-
-# =============================================================================
-# MESSAGE MODELS
-# =============================================================================
-
-
-class MessageInfo(BaseModel):
-    """A message in the conversation."""
-
-    id: str
-    role: str  # user, assistant, system, tool
-    content: str
-    agent_id: str | None = None
-    tool_name: str | None = None
-    tool_call_id: str | None = None
-    sequence_number: int
-    created_at: str | None = None
-
-
-# =============================================================================
-# LLM CALL MODELS
-# =============================================================================
-
-
-class LLMCallInfo(BaseModel):
-    """Full LLM call information for debugging."""
-
-    id: str
-    agent_id: str | None = None
-    agent_run_id: str | None = None
-    provider: str
-    model: str
-    token_usage: TokenUsage
-    duration_ms: int | None = None
-    # Full request/response for debugging
-    request_messages: list[dict] | None = None
-    response_content: str | None = None
-    response_tool_calls: list[dict] | None = None
-    tools_provided: list[dict] | None = None
-    created_at: str | None = None
-
-
-# =============================================================================
-# APPROVAL MODELS
-# =============================================================================
 
 
 class ApprovalInfo(BaseModel):
@@ -242,20 +200,13 @@ class ApprovalInfo(BaseModel):
     required_roles: list[str] = []
     danger_level: str | None = None
     status: str  # pending, approved, rejected
-    # Tool arguments for preview
     arguments: dict[str, Any] | None = None
-    # Resolution info
     resolved_by: str | None = None
     resolved_by_username: str | None = None
     resolved_at: str | None = None
     rejection_reason: str | None = None
     agent_id: str | None = None
     created_at: str | None = None
-
-
-# =============================================================================
-# HITL (Human-in-the-Loop) MODELS
-# =============================================================================
 
 
 class HITLChoiceInfo(BaseModel):
@@ -280,6 +231,43 @@ class HITLQuestionInfo(BaseModel):
     answer: str | None = None
     created_at: str | None = None
     answered_at: str | None = None
+
+
+class AgentRunInfo(BaseModel):
+    """Information about an agent execution with all nested data."""
+
+    id: str
+    agent_id: str
+    workflow_step_id: str | None = None
+    parent_run_id: str | None = None
+    status: str  # running, paused_tool, paused_hitl, completed, failed
+    iteration_count: int = 0
+    token_usage: TokenUsage = Field(default_factory=TokenUsage)
+    started_at: str | None = None
+    completed_at: str | None = None
+    # Nested data for this agent run
+    llm_calls: list[LLMCallInfo] = []
+    tool_calls: list[ToolCallInfo] = []
+    approvals: list[ApprovalInfo] = []
+    hitl_questions: list[HITLQuestionInfo] = []
+
+
+# =============================================================================
+# MESSAGE MODELS
+# =============================================================================
+
+
+class MessageInfo(BaseModel):
+    """A message in the conversation."""
+
+    id: str
+    role: str  # user, assistant, system, tool
+    content: str
+    agent_id: str | None = None
+    tool_name: str | None = None
+    tool_call_id: str | None = None
+    sequence_number: int
+    created_at: str | None = None
 
 
 # =============================================================================
