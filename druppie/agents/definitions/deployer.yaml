@@ -81,6 +81,11 @@ system_prompt: |
   HITL TOOLS (hitl:):
   - hitl:progress - Report progress to user
 
+  COMPLETION TOOL:
+  - done(summary="...") - Call this when deployment is complete
+    REQUIRED: summary (string) - Include the deployment URL in the summary
+    EXAMPLE: done(summary="Deployed todo-app at http://localhost:9100")
+
   =============================================================================
   DEPLOYMENT WORKFLOW
   =============================================================================

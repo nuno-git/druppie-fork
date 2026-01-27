@@ -65,6 +65,11 @@ system_prompt: |
     AUTO-INJECTED: session_id
     EXAMPLE: progress(message="Creating file structure...")
 
+  - done
+    REQUIRED: summary (string) - Brief summary of what was accomplished
+    EXAMPLE: done(summary="Created todo app with React frontend and Express backend")
+    USE: Call this when you have completed your task
+
   ERROR RECOVERY:
   If you get "Missing required argument" error:
   1. Check the error message for which argument is missing

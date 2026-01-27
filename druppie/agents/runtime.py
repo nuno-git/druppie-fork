@@ -22,7 +22,7 @@ import structlog
 import yaml
 
 from druppie.agents.models import AgentDefinition
-from druppie.agents.hitl import HITL_TOOLS, execute_hitl_tool, is_hitl_tool
+from druppie.agents.builtin_tools import BUILTIN_TOOLS, execute_builtin_tool, is_builtin_tool
 from druppie.llm import get_llm_service
 from druppie.core.execution_context import get_current_context
 
@@ -335,7 +335,7 @@ class Agent:
         tools = await self.mcp_client.to_openai_tools_async(mcp_ids)
 
         # Add built-in HITL tools (always available to all agents)
-        tools.extend(HITL_TOOLS)
+        tools.extend(BUILTIN_TOOLS)
 
         # Build a mapping of tool_name -> required_fields for validation
         tool_schemas: dict[str, dict] = {}
@@ -429,14 +429,14 @@ class Agent:
                     exec_ctx.tool_call(self.id, tool_name, tool_args)
 
                 # Check if this is a built-in HITL tool
-                if is_hitl_tool(tool_name):
+                if is_builtin_tool(tool_name):
                     logger.info(
                         "agent_hitl_tool_call",
                         agent_id=self.id,
                         tool=tool_name,
                         question=tool_args.get("question", "")[:100],
                     )
-                    result = await execute_hitl_tool(
+                    result = await execute_builtin_tool(
                         tool_name=tool_name,
                         tool_args=tool_args,
                         context=exec_ctx,
@@ -490,6 +490,21 @@ class Agent:
                                 "workflow_id": workflow_id,
                                 "workflow_step": workflow_step,
                             },
+                        }
+
+                    # Check if agent signaled task completion
+                    if result.get("status") == "completed":
+                        logger.info(
+                            "agent_task_complete",
+                            agent_id=self.id,
+                            tool=tool_name,
+                            summary=result.get("summary", "")[:100],
+                        )
+                        if exec_ctx:
+                            exec_ctx.agent_completed(self.id, iteration + 1, success=True)
+                        return {
+                            "success": True,
+                            "result": result.get("summary", "Task completed"),
                         }
 
                     # Add tool result to messages
