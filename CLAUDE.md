@@ -567,6 +567,29 @@ if result.get("paused") and result.get("approval_id"):
 **Test**: Create project → docker:build (approve) → docker:run (approve) → session should now complete
 **Result**: Multi-approval workflows (like deployer's docker:build + docker:run) now complete properly
 
+### Issue: Debug Page Duration Shows "0ms"
+**Symptom**: Debug page shows "Duration: 0ms" even for sessions that took several minutes
+**Cause**: The `totalDuration` was calculated by summing `duration_ms` from events, but this field is often 0 or not populated
+**Fix**: Calculate duration from the difference between first and last event timestamps instead:
+```javascript
+// In Debug.jsx
+const calculateDurationFromTimestamps = () => {
+  if (events.length < 2) return 0
+  const timestamps = events
+    .map(e => e.timestamp)
+    .filter(Boolean)
+    .map(ts => new Date(ts).getTime())
+    .filter(t => !isNaN(t))
+  if (timestamps.length < 2) return 0
+  const minTime = Math.min(...timestamps)
+  const maxTime = Math.max(...timestamps)
+  return maxTime - minTime
+}
+const totalDuration = calculateDurationFromTimestamps()
+```
+**Key File**: `frontend/src/pages/Debug.jsx`
+**Result**: Debug page now shows actual duration like "1m 49.5s" calculated from event timestamps
+
 ### Issue: docker-compose Not Loading .env from Project Root
 **Symptom**: Backend container shows empty API keys (`DEEPINFRA_API_KEY=`, `ZAI_API_KEY=`)
 **Cause**: The `compose()` helper function in setup.sh didn't pass `--env-file .env`
