@@ -403,11 +403,88 @@ class ChatDeepInfra(BaseLLM):
 
         return text.strip()
 
+    def _extract_python_style_tool_call(self, content: str) -> dict | None:
+        """Extract Python-style function calls from LLM output.
+
+        Handles output like:
+        - done(summary="Task completed successfully")
+        - done(summary="...", artifacts=[], data={})
+        - fail(reason="Could not complete task")
+
+        Args:
+            content: Raw content from LLM response
+
+        Returns:
+            Tool call dict if found, None otherwise
+        """
+        # Known built-in tools that might be output as Python function calls
+        builtin_tools = ["done", "fail"]
+
+        for tool_name in builtin_tools:
+            # Pattern to match: tool_name(arg="value", ...)
+            # Handle both single and double quotes, and keyword arguments
+            pattern = rf'^[\s\n]*{tool_name}\s*\(\s*(.*?)\s*\)\s*$'
+            match = re.search(pattern, content.strip(), re.DOTALL)
+
+            if match:
+                args_str = match.group(1)
+                args = {}
+
+                if tool_name == "done":
+                    # Extract summary - handle various quote styles
+                    summary_match = re.search(
+                        r'summary\s*=\s*["\']([^"\']*)["\']',
+                        args_str,
+                        re.DOTALL
+                    )
+                    if summary_match:
+                        args["summary"] = summary_match.group(1)
+                    else:
+                        # Try to extract any string content as summary
+                        string_match = re.search(r'["\']([^"\']+)["\']', args_str)
+                        if string_match:
+                            args["summary"] = string_match.group(1)
+                        else:
+                            args["summary"] = "Task completed"
+
+                    # Set defaults for done tool
+                    args.setdefault("artifacts", [])
+                    args.setdefault("data", {})
+
+                    return {
+                        "id": "python_call_done",
+                        "name": "done",
+                        "args": args,
+                    }
+
+                elif tool_name == "fail":
+                    # Extract reason
+                    reason_match = re.search(
+                        r'reason\s*=\s*["\']([^"\']*)["\']',
+                        args_str,
+                        re.DOTALL
+                    )
+                    if reason_match:
+                        args["reason"] = reason_match.group(1)
+                    else:
+                        args["reason"] = args_str[:200] if args_str else "Unknown error"
+
+                    return {
+                        "id": "python_call_fail",
+                        "name": "fail",
+                        "args": args,
+                    }
+
+        return None
+
     def _extract_tool_calls_from_text(self, content: str) -> tuple[list[dict], str]:
         """Extract tool calls from text content.
 
         Some models (like Qwen) output tool calls in text format like:
         <tool_call>{"name": "coding_write_file", "arguments": {...}}</tool_call>
+
+        Or as Python-style function calls:
+        done(summary="Task completed successfully")
 
         Args:
             content: Raw content from LLM response
@@ -417,6 +494,16 @@ class ChatDeepInfra(BaseLLM):
         """
         tool_calls = []
         cleaned_content = content
+
+        # First, try to parse Python-style function calls for built-in tools
+        # This handles output like: done(summary="Successfully implemented...")
+        python_call = self._extract_python_style_tool_call(content)
+        if python_call:
+            logger.info(
+                "extracted_python_style_tool_call",
+                tool_name=python_call.get("name"),
+            )
+            return [python_call], ""
 
         # Pattern to match <tool_call>...</tool_call> blocks
         # Use greedy match for everything between tags, then parse JSON
