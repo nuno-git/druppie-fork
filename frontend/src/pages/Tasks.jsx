@@ -604,7 +604,7 @@ const Tasks = () => {
   })
 
   // Extract tasks array from paginated response
-  const tasks = tasksResponse?.approvals || []
+  const tasks = tasksResponse?.items || []
 
   const { data: questions = [], isLoading: questionsLoading, isError: questionsError, error: questionsErrorData, refetch: refetchQuestions } = useQuery({
     queryKey: ['questions'],
@@ -913,9 +913,9 @@ const Tasks = () => {
                 <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
                 <span className="ml-2 text-gray-600">Loading history...</span>
               </div>
-            ) : historyResponse?.approvals?.length > 0 ? (
+            ) : historyResponse?.items?.length > 0 ? (
               <div className="space-y-3">
-                {historyResponse.approvals.map((approval) => (
+                {historyResponse.items.map((approval) => (
                   <div
                     key={approval.id}
                     className="bg-white rounded-lg border border-gray-200 p-4 hover:border-gray-300 transition-colors"

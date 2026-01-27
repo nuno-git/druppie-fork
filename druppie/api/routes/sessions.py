@@ -1,47 +1,70 @@
 """Sessions API routes.
 
-Endpoints for managing chat sessions.
+Simplified API for session management.
+GET /sessions/{id} returns ALL data in one call.
 """
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 import structlog
 
 from druppie.api.deps import get_current_user, get_db, check_resource_ownership, get_user_roles
 from druppie.api.errors import NotFoundError, AuthorizationError
+from druppie.api.schemas import (
+    PaginatedResponse,
+    SessionSummary,
+    SessionDetail,
+    TokenUsage,
+    ProjectSummary,
+    WorkspaceInfo,
+    WorkflowInfo,
+    WorkflowStepInfo,
+    AgentRunInfo,
+    MessageInfo,
+    ToolCallInfo,
+    LLMCallInfo,
+    ApprovalInfo,
+    HITLQuestionInfo,
+    HITLChoiceInfo,
+    SessionEventInfo,
+)
 from druppie.db import crud
-from druppie.db.models import Session as SessionModel, Approval, SessionEvent
+from druppie.db.models import (
+    Session as SessionModel,
+    Approval,
+    Project,
+    Workspace,
+    Workflow,
+    WorkflowStep,
+    AgentRun,
+    Message,
+    ToolCall,
+    LlmCall,
+    HitlQuestion,
+    SessionEvent,
+    User,
+    Build,
+)
 
 logger = structlog.get_logger()
 
 router = APIRouter()
 
+MAX_LIMIT = 100
+
 
 # =============================================================================
-# AUTHORIZATION HELPERS
+# AUTHORIZATION
 # =============================================================================
 
 
-def check_session_access(
-    user: dict,
-    session: SessionModel,
-    db: DBSession,
-) -> None:
+def check_session_access(user: dict, session: SessionModel, db: DBSession) -> None:
     """Check if user can access a session.
 
     Allows access if:
     - User owns the session
     - User is admin
     - User has a pending approval for this session that matches their role
-
-    Args:
-        user: Current authenticated user
-        session: Session to check access for
-        db: Database session
-
-    Raises:
-        AuthorizationError: If user cannot access the session
     """
     user_id = user.get("sub")
     is_owner = str(session.user_id) == user_id if session.user_id else False
@@ -54,17 +77,14 @@ def check_session_access(
     user_roles = set(get_user_roles(user))
     pending_approvals = (
         db.query(Approval)
-        .filter(
-            Approval.session_id == session.id,
-            Approval.status == "pending",
-        )
+        .filter(Approval.session_id == session.id, Approval.status == "pending")
         .all()
     )
 
     for approval in pending_approvals:
         required_role = approval.required_role or "admin"
         if required_role in user_roles:
-            return  # User can approve this, allow access
+            return
 
     raise AuthorizationError(
         "You don't have permission to view this session",
@@ -73,124 +93,330 @@ def check_session_access(
 
 
 # =============================================================================
-# RESPONSE MODELS
+# CONVERTERS
 # =============================================================================
 
 
-class ProjectInfo(BaseModel):
-    """Project info for session responses."""
-
-    id: str
-    name: str
-    repo_name: str | None = None
-    repo_url: str | None = None
-    app_url: str | None = None  # Running app URL from build
-
-
-class MessageResponse(BaseModel):
-    """Message in conversation history."""
-
-    role: str
-    content: str
-    agent_id: str | None = None  # Which agent produced this message
-    timestamp: str | None = None
-    workflow_events: list[dict] | None = None
-    llm_calls: list[dict] | None = None
-    deployment_url: str | None = None
-    container_name: str | None = None
+def _to_token_usage(prompt: int = 0, completion: int = 0, total: int = 0) -> TokenUsage:
+    """Convert token counts to TokenUsage model."""
+    return TokenUsage(
+        prompt_tokens=prompt or 0,
+        completion_tokens=completion or 0,
+        total_tokens=total or 0,
+    )
 
 
-class TokenUsage(BaseModel):
-    """Token usage tracking for transparency."""
-
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-
-
-class HITLQuestionResponse(BaseModel):
-    """HITL question in session response."""
-
-    id: str
-    question: str
-    choices: list[str] = []
-    context: str | None = None
-    agent_id: str | None = None
-    status: str  # pending, answered
-    answer: str | None = None
-    created_at: str | None = None
-    answered_at: str | None = None
+def _session_to_summary(session: SessionModel, project_name: str | None = None) -> SessionSummary:
+    """Convert session to summary for listing."""
+    return SessionSummary(
+        id=str(session.id),
+        title=session.title,
+        status=session.status,
+        project_id=str(session.project_id) if session.project_id else None,
+        project_name=project_name,
+        token_usage=_to_token_usage(
+            session.prompt_tokens,
+            session.completion_tokens,
+            session.total_tokens,
+        ),
+        created_at=session.created_at.isoformat() if session.created_at else None,
+        updated_at=session.updated_at.isoformat() if session.updated_at else None,
+    )
 
 
-class SessionResponse(BaseModel):
-    """Session response model."""
+def _build_session_detail(session: SessionModel, db: DBSession) -> SessionDetail:
+    """Build complete session detail with ALL data."""
 
-    id: str
-    user_id: str | None
-    status: str
-    created_at: str | None
-    updated_at: str | None
-    # Project/workspace tracking
-    project_id: str | None = None
-    workspace_id: str | None = None
-    project: ProjectInfo | None = None
-    # Backwards compatibility with "plan" naming
-    name: str | None = None
-    description: str | None = None
-    result: dict | None = None
-    tasks: list[dict] | None = None
-    # Full conversation history
-    messages: list[MessageResponse] | None = None
-    # HITL questions (pending and answered)
-    pending_questions: list[HITLQuestionResponse] | None = None
-    hitl_questions: list[HITLQuestionResponse] | None = None
-    # Token usage for transparency
-    token_usage: TokenUsage | None = None
+    # Get project info
+    project = None
+    if session.project_id:
+        proj = db.query(Project).filter(Project.id == session.project_id).first()
+        if proj:
+            # Get app_url from running build
+            app_url = None
+            running_build = (
+                db.query(Build)
+                .filter(Build.project_id == proj.id, Build.status == "running", Build.is_preview == False)
+                .first()
+            )
+            if running_build:
+                app_url = running_build.app_url
 
+            project = ProjectSummary(
+                id=str(proj.id),
+                name=proj.name,
+                repo_name=proj.repo_name,
+                repo_url=proj.repo_url,
+                app_url=app_url,
+            )
 
-class SessionListResponse(BaseModel):
-    """List of sessions response.
+    # Get workspace
+    workspace = None
+    ws = db.query(Workspace).filter(Workspace.session_id == session.id).first()
+    if ws:
+        workspace = WorkspaceInfo(
+            id=str(ws.id),
+            session_id=str(ws.session_id),
+            project_id=str(ws.project_id) if ws.project_id else None,
+            branch=ws.branch,
+            local_path=ws.local_path,
+            created_at=ws.created_at.isoformat() if ws.created_at else None,
+        )
 
-    Note: Returns as a list directly for backwards compatibility with getPlans.
-    """
+    # Get workflow with steps
+    workflow = None
+    wf = db.query(Workflow).filter(Workflow.session_id == session.id).first()
+    if wf:
+        steps = (
+            db.query(WorkflowStep)
+            .filter(WorkflowStep.workflow_id == wf.id)
+            .order_by(WorkflowStep.step_index)
+            .all()
+        )
+        workflow = WorkflowInfo(
+            id=str(wf.id),
+            name=wf.name,
+            status=wf.status,
+            current_step=wf.current_step or 0,
+            steps=[
+                WorkflowStepInfo(
+                    id=str(s.id),
+                    step_index=s.step_index,
+                    agent_id=s.agent_id,
+                    description=s.description,
+                    status=s.status,
+                    result_summary=s.result_summary,
+                    started_at=s.started_at.isoformat() if s.started_at else None,
+                    completed_at=s.completed_at.isoformat() if s.completed_at else None,
+                )
+                for s in steps
+            ],
+            created_at=wf.created_at.isoformat() if wf.created_at else None,
+        )
 
-    sessions: list[SessionResponse]
-    total: int
+    # Get all agent runs
+    runs = (
+        db.query(AgentRun)
+        .filter(AgentRun.session_id == session.id)
+        .order_by(AgentRun.started_at)
+        .all()
+    )
+    agent_runs = [
+        AgentRunInfo(
+            id=str(r.id),
+            agent_id=r.agent_id,
+            workflow_step_id=str(r.workflow_step_id) if r.workflow_step_id else None,
+            parent_run_id=str(r.parent_run_id) if r.parent_run_id else None,
+            status=r.status,
+            iteration_count=r.iteration_count or 0,
+            token_usage=_to_token_usage(r.prompt_tokens, r.completion_tokens, r.total_tokens),
+            started_at=r.started_at.isoformat() if r.started_at else None,
+            completed_at=r.completed_at.isoformat() if r.completed_at else None,
+        )
+        for r in runs
+    ]
 
+    # Calculate tokens by agent
+    tokens_by_agent = {}
+    for r in runs:
+        if r.agent_id and r.total_tokens:
+            tokens_by_agent[r.agent_id] = tokens_by_agent.get(r.agent_id, 0) + r.total_tokens
 
-class SessionSummary(BaseModel):
-    """Compact session summary for sidebar listing."""
+    # Get all messages
+    msgs = (
+        db.query(Message)
+        .filter(Message.session_id == session.id)
+        .order_by(Message.sequence_number)
+        .all()
+    )
+    messages = [
+        MessageInfo(
+            id=str(m.id),
+            role=m.role,
+            content=m.content,
+            agent_id=m.agent_id,
+            tool_name=m.tool_name,
+            tool_call_id=m.tool_call_id,
+            sequence_number=m.sequence_number,
+            created_at=m.created_at.isoformat() if m.created_at else None,
+        )
+        for m in msgs
+    ]
 
-    id: str
-    created_at: str | None
-    status: str
-    preview: str  # First 50 chars of initial message
-    project_id: str | None = None  # If linked to a project
-    project_name: str | None = None  # If linked to a project
-    workspace_id: str | None = None  # If linked to a workspace
-    total_tokens: int = 0  # Token usage for transparency
+    # Get all tool calls
+    tcs = (
+        db.query(ToolCall)
+        .filter(ToolCall.session_id == session.id)
+        .order_by(ToolCall.created_at)
+        .all()
+    )
+    tool_calls = [
+        ToolCallInfo(
+            id=str(tc.id),
+            agent_run_id=str(tc.agent_run_id) if tc.agent_run_id else None,
+            mcp_server=tc.mcp_server,
+            tool_name=tc.tool_name,
+            arguments={a.arg_name: a.arg_value for a in tc.arguments} if tc.arguments else {},
+            status=tc.status,
+            result=tc.result,
+            error_message=tc.error_message,
+            created_at=tc.created_at.isoformat() if tc.created_at else None,
+            executed_at=tc.executed_at.isoformat() if tc.executed_at else None,
+        )
+        for tc in tcs
+    ]
 
+    # Get all LLM calls with agent_id lookup
+    llm_calls_raw = (
+        db.query(LlmCall)
+        .filter(LlmCall.session_id == session.id)
+        .order_by(LlmCall.created_at)
+        .all()
+    )
 
-class PaginatedSessionsResponse(BaseModel):
-    """Paginated sessions response for session history sidebar."""
+    # Build agent_run_id -> agent_id map
+    agent_run_map = {str(r.id): r.agent_id for r in runs}
 
-    sessions: list[SessionSummary]
-    total: int
-    page: int
-    limit: int
+    llm_calls = [
+        LLMCallInfo(
+            id=str(lc.id),
+            agent_id=agent_run_map.get(str(lc.agent_run_id)) if lc.agent_run_id else None,
+            agent_run_id=str(lc.agent_run_id) if lc.agent_run_id else None,
+            provider=lc.provider,
+            model=lc.model,
+            token_usage=_to_token_usage(lc.prompt_tokens, lc.completion_tokens, lc.total_tokens),
+            duration_ms=lc.duration_ms,
+            request_messages=lc.request_messages,
+            response_content=lc.response_content,
+            response_tool_calls=lc.response_tool_calls,
+            tools_provided=lc.tools_provided,
+            created_at=lc.created_at.isoformat() if lc.created_at else None,
+        )
+        for lc in llm_calls_raw
+    ]
 
+    # Get all approvals with resolver info
+    approvals_raw = (
+        db.query(Approval)
+        .filter(Approval.session_id == session.id)
+        .order_by(Approval.created_at)
+        .all()
+    )
 
-class SessionListLegacyResponse(BaseModel):
-    """Paginated sessions response for legacy endpoint."""
+    # Batch load resolver usernames
+    resolver_ids = {a.resolved_by for a in approvals_raw if a.resolved_by}
+    resolver_map = {}
+    if resolver_ids:
+        resolvers = db.query(User).filter(User.id.in_(resolver_ids)).all()
+        resolver_map = {str(u.id): u.username for u in resolvers}
 
-    sessions: list[SessionResponse]
-    total: int
-    page: int
-    limit: int
+    approvals = [
+        ApprovalInfo(
+            id=str(a.id),
+            session_id=str(a.session_id),
+            agent_run_id=str(a.agent_run_id) if a.agent_run_id else None,
+            tool_call_id=str(a.tool_call_id) if a.tool_call_id else None,
+            workflow_step_id=str(a.workflow_step_id) if a.workflow_step_id else None,
+            approval_type=a.approval_type,
+            mcp_server=a.mcp_server,
+            tool_name=a.tool_name,
+            title=a.title,
+            description=a.description,
+            required_roles=a.required_roles,
+            danger_level=a.danger_level,
+            status=a.status,
+            arguments=a.arguments if isinstance(a.arguments, dict) else None,
+            resolved_by=str(a.resolved_by) if a.resolved_by else None,
+            resolved_by_username=resolver_map.get(str(a.resolved_by)) if a.resolved_by else None,
+            resolved_at=a.resolved_at.isoformat() if a.resolved_at else None,
+            rejection_reason=a.rejection_reason,
+            agent_id=a.agent_id,
+            created_at=a.created_at.isoformat() if a.created_at else None,
+        )
+        for a in approvals_raw
+    ]
 
+    # Get all HITL questions
+    questions_raw = (
+        db.query(HitlQuestion)
+        .filter(HitlQuestion.session_id == session.id)
+        .order_by(HitlQuestion.created_at)
+        .all()
+    )
 
-# Maximum limit for pagination to prevent excessive queries
-MAX_LIMIT = 100
+    hitl_questions = [
+        HITLQuestionInfo(
+            id=str(q.id),
+            session_id=str(q.session_id),
+            agent_run_id=str(q.agent_run_id) if q.agent_run_id else None,
+            agent_id=q.agent_id,
+            question=q.question,
+            question_type=q.question_type or "text",
+            choices=[
+                HITLChoiceInfo(
+                    index=c.choice_index,
+                    text=c.choice_text,
+                    is_selected=c.is_selected or False,
+                )
+                for c in sorted(q.choices, key=lambda x: x.choice_index)
+            ] if q.choices else [],
+            status=q.status,
+            answer=q.answer,
+            created_at=q.created_at.isoformat() if q.created_at else None,
+            answered_at=q.answered_at.isoformat() if q.answered_at else None,
+        )
+        for q in questions_raw
+    ]
+
+    # Get all timeline events
+    events_raw = (
+        db.query(SessionEvent)
+        .filter(SessionEvent.session_id == session.id)
+        .order_by(SessionEvent.timestamp)
+        .all()
+    )
+
+    events = [
+        SessionEventInfo(
+            id=str(e.id),
+            event_type=e.event_type,
+            agent_id=e.agent_id,
+            title=e.title,
+            tool_name=e.tool_name,
+            event_data=e.event_data,
+            timestamp=e.timestamp.isoformat() if e.timestamp else None,
+            agent_run_id=str(e.agent_run_id) if e.agent_run_id else None,
+            tool_call_id=str(e.tool_call_id) if e.tool_call_id else None,
+            approval_id=str(e.approval_id) if e.approval_id else None,
+            hitl_question_id=str(e.hitl_question_id) if e.hitl_question_id else None,
+        )
+        for e in events_raw
+    ]
+
+    return SessionDetail(
+        id=str(session.id),
+        user_id=str(session.user_id) if session.user_id else None,
+        title=session.title,
+        status=session.status,
+        created_at=session.created_at.isoformat() if session.created_at else None,
+        updated_at=session.updated_at.isoformat() if session.updated_at else None,
+        token_usage=_to_token_usage(
+            session.prompt_tokens,
+            session.completion_tokens,
+            session.total_tokens,
+        ),
+        tokens_by_agent=tokens_by_agent,
+        project=project,
+        workspace=workspace,
+        workflow=workflow,
+        agent_runs=agent_runs,
+        messages=messages,
+        tool_calls=tool_calls,
+        llm_calls=llm_calls,
+        approvals=approvals,
+        hitl_questions=hitl_questions,
+        events=events,
+    )
 
 
 # =============================================================================
@@ -198,129 +424,8 @@ MAX_LIMIT = 100
 # =============================================================================
 
 
-def _session_to_response(session, project=None, db=None) -> SessionResponse:
-    """Convert a DB session to response model.
-
-    Args:
-        session: Session DB model
-        project: Optional project DB model for project info
-        db: Database session for fetching related data
-    """
-    # Get first user message for name/description
-    first_message = session.title or "Session"
-    name = f"Chat: {first_message[:30]}"
-    description = first_message
-
-    # Build project info if available
-    project_info = None
-    if project:
-        # Get app_url from running build if available
-        app_url = None
-        if db:
-            from druppie.db.models import Build
-            running_build = db.query(Build).filter(
-                Build.project_id == project.id,
-                Build.status == "running",
-                Build.is_preview == False,
-            ).first()
-            if running_build:
-                app_url = running_build.app_url
-
-        project_info = ProjectInfo(
-            id=str(project.id),
-            name=project.name,
-            repo_name=project.repo_name,
-            repo_url=project.repo_url,
-            app_url=app_url,
-        )
-
-    # Get messages from database if db is provided
-    messages = None
-    if db:
-        from druppie.db.models import Message
-        db_messages = (
-            db.query(Message)
-            .filter(Message.session_id == session.id)
-            .order_by(Message.sequence_number.asc())
-            .all()
-        )
-        if db_messages:
-            messages = [
-                MessageResponse(
-                    role=msg.role,
-                    content=msg.content,
-                    agent_id=msg.agent_id,  # Include agent_id for agent attribution
-                    timestamp=msg.created_at.isoformat() if msg.created_at else None,
-                    workflow_events=None,  # Not stored per-message anymore
-                    llm_calls=None,
-                    deployment_url=None,
-                    container_name=None,
-                )
-                for msg in db_messages
-            ]
-
-    # Get workspace from database if db is provided
-    workspace_id = None
-    if db:
-        from druppie.db.models import Workspace
-        workspace = (
-            db.query(Workspace)
-            .filter(Workspace.session_id == session.id)
-            .first()
-        )
-        if workspace:
-            workspace_id = str(workspace.id)
-
-    # Token usage (transparency)
-    token_usage = TokenUsage(
-        prompt_tokens=session.prompt_tokens or 0,
-        completion_tokens=session.completion_tokens or 0,
-        total_tokens=session.total_tokens or 0,
-    )
-
-    return SessionResponse(
-        id=str(session.id),
-        user_id=str(session.user_id) if session.user_id else None,
-        status=session.status,
-        created_at=session.created_at.isoformat() if session.created_at else None,
-        updated_at=session.updated_at.isoformat() if session.updated_at else None,
-        project_id=str(session.project_id) if session.project_id else None,
-        workspace_id=workspace_id,
-        project=project_info,
-        name=name,
-        description=description,
-        result=None,  # No longer stored in JSON state
-        tasks=None,  # Approvals are fetched separately
-        messages=messages,
-        token_usage=token_usage,
-    )
-
-
-def _session_to_summary(session, project_name: str | None = None, workspace_id: str | None = None) -> SessionSummary:
-    """Convert a DB session to a compact summary for sidebar listing.
-
-    Args:
-        session: Session DB model
-        project_name: Optional project name (fetched separately for efficiency)
-        workspace_id: Optional workspace ID (fetched separately)
-    """
-    # Use title as preview (set when session created)
-    preview = session.title[:50] if session.title else "No message"
-
-    return SessionSummary(
-        id=str(session.id),
-        created_at=session.created_at.isoformat() if session.created_at else None,
-        status=session.status,
-        preview=preview,
-        project_id=str(session.project_id) if session.project_id else None,
-        project_name=project_name,
-        workspace_id=workspace_id,
-        total_tokens=session.total_tokens or 0,
-    )
-
-
-@router.get("/sessions", response_model=PaginatedSessionsResponse)
-async def list_sessions_paginated(
+@router.get("/sessions", response_model=PaginatedResponse[SessionSummary])
+async def list_sessions(
     page: int = 1,
     limit: int = 20,
     status: str | None = None,
@@ -328,27 +433,13 @@ async def list_sessions_paginated(
     user: dict = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ):
-    """List sessions for the current user with pagination.
+    """List sessions with pagination.
 
-    Returns paginated sessions with preview and project info for sidebar display.
-
-    Args:
-        page: Page number (1-indexed, default: 1)
-        limit: Number of sessions per page (default: 20, max: 100)
-        status: Optional status filter
-        project_id: Optional project ID filter to list sessions for a specific project
-        user: Current authenticated user
-        db: Database session
+    Returns compact session summaries for sidebar/listing.
     """
-    from druppie.db.models import Project
-
-    # Validate and enforce pagination limits
-    if page < 1:
-        page = 1
-    if limit < 1:
-        limit = 1
-    if limit > MAX_LIMIT:
-        limit = MAX_LIMIT
+    # Validate pagination
+    page = max(1, page)
+    limit = max(1, min(limit, MAX_LIMIT))
 
     user_id = user.get("sub")
     roles = user.get("realm_access", {}).get("roles", [])
@@ -357,7 +448,7 @@ async def list_sessions_paginated(
     if "admin" in roles:
         user_id = None
 
-    # Get total count
+    # Build query
     query = db.query(SessionModel)
     if user_id:
         query = query.filter(SessionModel.user_id == user_id)
@@ -365,213 +456,55 @@ async def list_sessions_paginated(
         query = query.filter(SessionModel.status == status)
     if project_id:
         query = query.filter(SessionModel.project_id == project_id)
+
     total = query.count()
-
-    # Get paginated sessions
     offset = (page - 1) * limit
-    sessions = (
-        query.order_by(SessionModel.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
+    sessions = query.order_by(SessionModel.created_at.desc()).offset(offset).limit(limit).all()
 
-    # Fetch project names for sessions with project_id (batch query)
+    # Batch load project names
     project_ids = {s.project_id for s in sessions if s.project_id}
     project_names = {}
     if project_ids:
         projects = db.query(Project).filter(Project.id.in_(project_ids)).all()
         project_names = {p.id: p.name for p in projects}
 
-    return PaginatedSessionsResponse(
-        sessions=[
-            _session_to_summary(s, project_name=project_names.get(s.project_id))
-            for s in sessions
-        ],
+    return PaginatedResponse[SessionSummary](
+        items=[_session_to_summary(s, project_names.get(s.project_id)) for s in sessions],
         total=total,
         page=page,
         limit=limit,
     )
 
 
-@router.get("/sessions/list", response_model=SessionListLegacyResponse)
-async def list_sessions_legacy(
-    status: str | None = None,
-    page: int = 1,
-    limit: int = 20,
-    project_id: str | None = None,
-    user: dict = Depends(get_current_user),
-    db: DBSession = Depends(get_db),
-):
-    """List sessions for the current user with pagination.
-
-    Args:
-        status: Optional status filter
-        page: Page number (1-indexed, default: 1)
-        limit: Number of sessions per page (default: 20, max: 100)
-        project_id: Optional project ID filter
-        user: Current authenticated user
-        db: Database session
-
-    Returns:
-        SessionListLegacyResponse with sessions, total count, page, and limit
-    """
-    from druppie.db.models import Project
-
-    # Validate and enforce pagination limits
-    if page < 1:
-        page = 1
-    if limit < 1:
-        limit = 1
-    if limit > MAX_LIMIT:
-        limit = MAX_LIMIT
-
-    user_id = user.get("sub")
-    roles = user.get("realm_access", {}).get("roles", [])
-
-    # Admin can see all sessions
-    if "admin" in roles:
-        user_id = None
-
-    # Build query for total count and pagination
-    query = db.query(SessionModel)
-    if user_id:
-        query = query.filter(SessionModel.user_id == user_id)
-    if status:
-        query = query.filter(SessionModel.status == status)
-    if project_id:
-        query = query.filter(SessionModel.project_id == project_id)
-
-    # Get total count
-    total = query.count()
-
-    # Get paginated sessions
-    offset = (page - 1) * limit
-    sessions = (
-        query.order_by(SessionModel.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
-    # Fetch projects for all sessions with project_id (batch query)
-    project_ids = {s.project_id for s in sessions if s.project_id}
-    projects_map = {}
-    if project_ids:
-        projects = db.query(Project).filter(Project.id.in_(project_ids)).all()
-        projects_map = {p.id: p for p in projects}
-
-    # Build response with pagination info
-    return SessionListLegacyResponse(
-        sessions=[
-            _session_to_response(s, project=projects_map.get(s.project_id), db=db)
-            for s in sessions
-        ],
-        total=total,
-        page=page,
-        limit=limit,
-    )
-
-
-@router.get("/sessions/{session_id}")
+@router.get("/sessions/{session_id}", response_model=SessionDetail)
 async def get_session(
     session_id: str,
     user: dict = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ):
-    """Get a specific session."""
-    from druppie.db.models import HitlQuestion, AgentRun
+    """Get complete session with ALL data.
 
+    Returns everything in one call:
+    - Basic session info and token usage
+    - Project and workspace info
+    - Workflow with all steps
+    - All agent runs (router, planner, architect, developer, etc.)
+    - Full message history
+    - All tool calls with arguments
+    - All LLM calls with full request/response (for debugging)
+    - All approvals (pending and resolved)
+    - All HITL questions (pending and answered)
+    - Timeline events
+    """
     session = crud.get_session(db, session_id)
     if not session:
         raise NotFoundError("session", session_id)
 
-    # Check access (owner, admin, or has pending approval)
     check_session_access(user, session, db)
 
-    # Fetch project info if session has a project_id
-    project = None
-    if session.project_id:
-        project = crud.get_project(db, session.project_id)
+    logger.info("session_retrieved", session_id=session_id, user_id=user.get("sub"))
 
-    response = _session_to_response(session, project=project, db=db)
-
-    # Include ALL approvals (pending and completed) for the frontend ToolExecutionCard
-    from druppie.db.models import Approval, User
-    all_approvals = (
-        db.query(Approval)
-        .filter(Approval.session_id == session_id)
-        .order_by(Approval.created_at.asc())
-        .all()
-    )
-
-    def get_approver_info(approval):
-        """Get approver username and role from resolved_by user ID."""
-        if not approval.resolved_by:
-            return None, None
-        resolver = db.query(User).filter(User.id == approval.resolved_by).first()
-        if resolver:
-            return resolver.username, approval.required_role
-        return str(approval.resolved_by), approval.required_role
-
-    response.tasks = []
-    for a in all_approvals:
-        approver_username, approver_role = get_approver_info(a)
-        response.tasks.append({
-            "id": str(a.id),
-            "name": a.tool_name,
-            "status": "pending_approval" if a.status == "pending" else a.status,
-            "mcp_tool": a.tool_name,
-            "mcp_arguments": a.arguments if isinstance(a.arguments, dict) else {},
-            "agent_id": a.agent_id,  # Include which agent executed the tool
-            "required_role": a.required_role or "admin",
-            "required_roles": [a.required_role] if a.required_role else ["admin"],
-            "approval_type": "role",
-            "required_approvals": 1,
-            "approvals": [
-                {
-                    "approver_username": approver_username,
-                    "role": approver_role,
-                    "created_at": a.resolved_at.isoformat() if a.resolved_at else None,
-                }
-            ] if a.status in ("approved", "rejected") else [],
-        })
-
-    # Fetch HITL questions (both pending and answered) for conversation reconstruction
-    hitl_questions = (
-        db.query(HitlQuestion)
-        .filter(HitlQuestion.session_id == session.id)
-        .order_by(HitlQuestion.created_at.asc())
-        .all()
-    )
-
-    def hitl_to_response(q):
-        # Get agent_id - first try direct field, then fall back to agent_run lookup
-        agent_id = q.agent_id
-        if not agent_id and q.agent_run_id:
-            agent_run = db.query(AgentRun).filter(AgentRun.id == q.agent_run_id).first()
-            if agent_run:
-                agent_id = agent_run.agent_id
-
-        return HITLQuestionResponse(
-            id=str(q.id),
-            question=q.question,
-            choices=[c.choice_text for c in q.choices] if q.choices else [],
-            context=None,
-            agent_id=agent_id,
-            status=q.status,
-            answer=q.answer,
-            created_at=q.created_at.isoformat() if q.created_at else None,
-            answered_at=q.answered_at.isoformat() if q.answered_at else None,
-        )
-
-    # Separate pending and all questions
-    response.pending_questions = [
-        hitl_to_response(q) for q in hitl_questions if q.status == "pending"
-    ]
-    response.hitl_questions = [hitl_to_response(q) for q in hitl_questions]
-
-    return response
+    return _build_session_detail(session, db)
 
 
 @router.delete("/sessions/{session_id}")
@@ -580,460 +513,14 @@ async def delete_session(
     user: dict = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ):
-    """Delete a session."""
+    """Delete a session and all related data."""
     session = crud.get_session(db, session_id)
     if not session:
         raise NotFoundError("session", session_id)
 
-    # Check ownership (unless admin)
     check_resource_ownership(user, str(session.user_id) if session.user_id else None)
 
     crud.delete_session(db, session_id)
     logger.info("session_deleted", session_id=session_id, user_id=user.get("sub"))
 
     return {"success": True, "message": "Session deleted"}
-
-
-@router.get("/sessions/{session_id}/state")
-async def get_session_state(
-    session_id: str,
-    user: dict = Depends(get_current_user),
-    db: DBSession = Depends(get_db),
-):
-    """Get the execution state of a session.
-
-    Note: With the normalized schema, state is reconstructed from tables.
-    """
-    from druppie.db.models import Message, Workflow, AgentRun
-
-    session = crud.get_session(db, session_id)
-    if not session:
-        raise NotFoundError("session", session_id)
-
-    # Check access (owner, admin, or has pending approval)
-    check_session_access(user, session, db)
-
-    # Reconstruct state from normalized tables
-    messages = (
-        db.query(Message)
-        .filter(Message.session_id == session.id)
-        .order_by(Message.sequence_number.asc())
-        .all()
-    )
-
-    workflow = (
-        db.query(Workflow)
-        .filter(Workflow.session_id == session.id)
-        .first()
-    )
-
-    agent_runs = (
-        db.query(AgentRun)
-        .filter(AgentRun.session_id == session.id)
-        .order_by(AgentRun.started_at.asc())
-        .all()
-    )
-
-    return {
-        "session_id": session_id,
-        "status": session.status,
-        "state": {
-            "messages": [m.to_dict() for m in messages],
-            "workflow": workflow.to_dict() if workflow else None,
-            "agent_runs": [r.to_dict() for r in agent_runs],
-        },
-    }
-
-
-# =============================================================================
-# TRACE RESPONSE MODELS
-# =============================================================================
-
-
-class TraceEvent(BaseModel):
-    """A single event in the execution trace."""
-
-    id: str
-    type: str
-    agent: str | None = None
-    timestamp: str
-    data: dict = {}
-    # For tool_call events
-    tool: str | None = None
-    args: dict | None = None
-    result: dict | None = None
-    duration_ms: int | None = None
-
-
-class TraceSummary(BaseModel):
-    """Summary statistics for an execution trace."""
-
-    total_events: int
-    agents_used: list[str]
-    tools_called: int
-    llm_calls: int
-    total_duration_ms: int
-    # Token usage for transparency
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-    # Per-agent token breakdown for transparency (goal2.md requirement)
-    tokens_by_agent: dict[str, int] = {}
-
-
-class RawLLMCall(BaseModel):
-    """Raw LLM call with full request/response data for debugging."""
-
-    agent_id: str | None = None
-    iteration: int | None = None
-    timestamp: str | None = None
-    duration_ms: int | None = None
-    # Model transparency
-    model: str | None = None  # Which model was used (e.g., "Qwen/Qwen3-Next-80B-A3B-Instruct")
-    provider: str | None = None  # Which provider was used (e.g., "deepinfra")
-    # Full request data
-    messages: list[dict] = []  # Full message history sent to LLM
-    tools: list[dict] | None = None  # Full tool schemas
-    # Full response data
-    response: dict | None = None  # Full response with content and tool_calls
-    usage: dict | None = None  # Token usage
-
-
-class TraceData(BaseModel):
-    """Full trace data with events and summary."""
-
-    events: list[TraceEvent]
-    summary: TraceSummary
-    raw_llm_calls: list[RawLLMCall] = []  # Full raw LLM data for debugging
-
-
-class SessionTraceResponse(BaseModel):
-    """Response model for session trace endpoint."""
-
-    session_id: str
-    status: str
-    trace: TraceData
-
-
-def _build_trace_events_from_db(db, session_id) -> list[TraceEvent]:
-    """Build trace events from session_events table."""
-    events = []
-
-    session_events = (
-        db.query(SessionEvent)
-        .filter(SessionEvent.session_id == session_id)
-        .order_by(SessionEvent.timestamp.asc())
-        .all()
-    )
-
-    for evt in session_events:
-        events.append(TraceEvent(
-            id=str(evt.id),
-            type=evt.event_type,
-            agent=evt.agent_id,
-            timestamp=evt.timestamp.isoformat() if evt.timestamp else "",
-            tool=evt.tool_name,
-            args=evt.event_data.get("args") if evt.event_data else None,
-            data=evt.event_data or {},
-        ))
-
-    return events
-
-
-def _build_trace_events_from_db_legacy(db, session_id) -> list[TraceEvent]:
-    """Legacy: Build trace events by reconstructing from multiple tables."""
-    from druppie.db.models import AgentRun, ToolCall, LlmCall
-
-    events = []
-    event_counter = 0
-
-    # Get agent runs
-    agent_runs = (
-        db.query(AgentRun)
-        .filter(AgentRun.session_id == session_id)
-        .order_by(AgentRun.started_at.asc())
-        .all()
-    )
-
-    for run in agent_runs:
-        event_counter += 1
-        # Agent start event
-        events.append(TraceEvent(
-            id=f"evt-{event_counter}",
-            type="agent_start",
-            agent=run.agent_id,
-            timestamp=run.started_at.isoformat() if run.started_at else "",
-            data={
-                "agent_run_id": str(run.id),
-                "status": run.status,
-                "iteration_count": run.iteration_count,
-            },
-        ))
-
-        if run.completed_at:
-            event_counter += 1
-            events.append(TraceEvent(
-                id=f"evt-{event_counter}",
-                type="agent_complete",
-                agent=run.agent_id,
-                timestamp=run.completed_at.isoformat(),
-                data={
-                    "agent_run_id": str(run.id),
-                    "status": run.status,
-                },
-            ))
-
-    # Get tool calls
-    tool_calls = (
-        db.query(ToolCall)
-        .filter(ToolCall.session_id == session_id)
-        .order_by(ToolCall.created_at.asc())
-        .all()
-    )
-
-    for tc in tool_calls:
-        event_counter += 1
-        # Get agent_id from agent_run if available
-        agent_id = None
-        if tc.agent_run_id:
-            agent_run = db.query(AgentRun).filter(AgentRun.id == tc.agent_run_id).first()
-            if agent_run:
-                agent_id = agent_run.agent_id
-
-        events.append(TraceEvent(
-            id=f"evt-{event_counter}",
-            type="tool_call",
-            agent=agent_id,
-            timestamp=tc.created_at.isoformat() if tc.created_at else "",
-            tool=f"{tc.mcp_server}:{tc.tool_name}",
-            args={a.arg_name: a.arg_value[:100] if a.arg_value else None for a in tc.arguments} if tc.arguments else {},
-            result={"status": tc.status, "error": tc.error_message} if tc.error_message else {"status": tc.status},
-            duration_ms=int((tc.executed_at - tc.created_at).total_seconds() * 1000) if tc.executed_at and tc.created_at else None,
-            data={"tool_call_id": str(tc.id), "mcp_server": tc.mcp_server},
-        ))
-
-    # Get LLM calls
-    llm_calls = (
-        db.query(LlmCall)
-        .filter(LlmCall.session_id == session_id)
-        .order_by(LlmCall.created_at.asc())
-        .all()
-    )
-
-    for call in llm_calls:
-        event_counter += 1
-        # Get agent_id from agent_run if available
-        agent_id = None
-        if call.agent_run_id:
-            agent_run = db.query(AgentRun).filter(AgentRun.id == call.agent_run_id).first()
-            if agent_run:
-                agent_id = agent_run.agent_id
-
-        events.append(TraceEvent(
-            id=f"evt-{event_counter}",
-            type="llm_call",
-            agent=agent_id,
-            timestamp=call.created_at.isoformat() if call.created_at else "",
-            duration_ms=call.duration_ms,
-            data={
-                "provider": call.provider,
-                "model": call.model,
-                "usage": {
-                    "prompt_tokens": call.prompt_tokens,
-                    "completion_tokens": call.completion_tokens,
-                    "total_tokens": call.total_tokens,
-                },
-            },
-        ))
-
-    # Add pending approvals as events too (so they show in debug panel)
-    from druppie.db.models import Approval
-
-    pending_approvals = (
-        db.query(Approval)
-        .filter(Approval.session_id == session_id, Approval.status == "pending")
-        .order_by(Approval.created_at.asc())
-        .all()
-    )
-
-    for approval in pending_approvals:
-        event_counter += 1
-        # Safely handle arguments which could be dict, str, or None
-        approval_args = None
-        if approval.arguments:
-            if isinstance(approval.arguments, dict):
-                approval_args = approval.arguments
-            elif isinstance(approval.arguments, str):
-                try:
-                    import json
-                    approval_args = json.loads(approval.arguments)
-                except Exception:
-                    approval_args = {"raw": approval.arguments[:200]}
-        events.append(TraceEvent(
-            id=f"evt-{event_counter}",
-            type="approval_pending",
-            agent=approval.agent_id,
-            timestamp=approval.created_at.isoformat() if approval.created_at else "",
-            tool=approval.tool_name,
-            args=approval_args,
-            data={
-                "approval_id": str(approval.id),
-                "required_role": approval.required_role,
-                "status": approval.status,
-            },
-        ))
-
-    # Sort events by timestamp
-    events.sort(key=lambda e: e.timestamp or "")
-
-    return events
-
-
-def _build_trace_summary_from_db(events: list[TraceEvent], session, db=None) -> TraceSummary:
-    """Build summary statistics from trace events."""
-    from datetime import datetime
-
-    agents_used = set()
-    tools_called = 0
-    llm_calls_count = 0
-
-    for evt in events:
-        if evt.agent:
-            agents_used.add(evt.agent)
-        if evt.type == "tool_call":
-            tools_called += 1
-        if evt.type == "llm_call":
-            llm_calls_count += 1
-
-    # Calculate total duration from timestamps
-    total_duration_ms = 0
-    if events:
-        try:
-            first_ts = events[0].timestamp
-            last_ts = events[-1].timestamp
-            if first_ts and last_ts:
-                first_dt = datetime.fromisoformat(first_ts.replace("Z", "+00:00"))
-                last_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
-                total_duration_ms = int((last_dt - first_dt).total_seconds() * 1000)
-        except (ValueError, TypeError):
-            pass
-
-    # Calculate per-agent token breakdown for transparency
-    tokens_by_agent = {}
-    if db and session.id:
-        from druppie.db.models import AgentRun
-        agent_runs = (
-            db.query(AgentRun)
-            .filter(AgentRun.session_id == session.id)
-            .all()
-        )
-        for run in agent_runs:
-            if run.agent_id and run.total_tokens:
-                if run.agent_id not in tokens_by_agent:
-                    tokens_by_agent[run.agent_id] = 0
-                tokens_by_agent[run.agent_id] += run.total_tokens
-
-    return TraceSummary(
-        total_events=len(events),
-        agents_used=sorted(list(agents_used)),
-        tools_called=tools_called,
-        llm_calls=llm_calls_count,
-        total_duration_ms=total_duration_ms,
-        prompt_tokens=session.prompt_tokens or 0,
-        completion_tokens=session.completion_tokens or 0,
-        total_tokens=session.total_tokens or 0,
-        tokens_by_agent=tokens_by_agent,
-    )
-
-
-@router.get("/sessions/{session_id}/trace", response_model=SessionTraceResponse)
-async def get_session_trace(
-    session_id: str,
-    user: dict = Depends(get_current_user),
-    db: DBSession = Depends(get_db),
-):
-    """Get the full execution trace for a session.
-
-    Returns a structured trace with all workflow events, LLM calls,
-    and tool executions in a format suitable for the frontend Debug Panel.
-
-    The trace includes:
-    - All agent_runs (agent starts, completions)
-    - All llm_calls (model calls with provider/model info)
-    - All tool_calls (MCP tool executions with args)
-    - Timeline data (timestamps for each event)
-    - Agent information (which agent executed what)
-    """
-    from druppie.db.models import LlmCall, AgentRun
-
-    session = crud.get_session(db, session_id)
-    if not session:
-        raise NotFoundError("session", session_id)
-
-    # Check access (owner, admin, or has pending approval)
-    check_session_access(user, session, db)
-
-    # Build trace events from normalized tables
-    events = _build_trace_events_from_db(db, session.id)
-
-    # Build summary (pass db for per-agent token breakdown)
-    summary = _build_trace_summary_from_db(events, session, db)
-
-    logger.info(
-        "session_trace_retrieved",
-        session_id=session_id,
-        total_events=summary.total_events,
-        agents_used=summary.agents_used,
-    )
-
-    # Build raw LLM calls list from database
-    llm_calls = (
-        db.query(LlmCall)
-        .filter(LlmCall.session_id == session.id)
-        .order_by(LlmCall.created_at.asc())
-        .all()
-    )
-
-    raw_llm_calls = []
-    for i, call in enumerate(llm_calls):
-        # Get agent_id from agent_run if available
-        agent_id = None
-        if call.agent_run_id:
-            agent_run = db.query(AgentRun).filter(AgentRun.id == call.agent_run_id).first()
-            if agent_run:
-                agent_id = agent_run.agent_id
-
-        # Build response dict from stored data
-        response = None
-        if call.response_content or call.response_tool_calls:
-            response = {
-                "content": call.response_content,
-                "tool_calls": call.response_tool_calls or [],
-            }
-
-        raw_llm_calls.append(RawLLMCall(
-            agent_id=agent_id,
-            iteration=i + 1,  # Use 1-based index as iteration
-            timestamp=call.created_at.isoformat() if call.created_at else None,
-            duration_ms=call.duration_ms,
-            model=call.model,
-            provider=call.provider,
-            messages=call.request_messages or [],  # Full messages from database
-            tools=call.tools_provided,  # Tools from database
-            response=response,  # Response content and tool calls
-            usage={
-                "prompt_tokens": call.prompt_tokens,
-                "completion_tokens": call.completion_tokens,
-                "total_tokens": call.total_tokens,
-            },
-        ))
-
-    return SessionTraceResponse(
-        session_id=session_id,
-        status=session.status,
-        trace=TraceData(
-            events=events,
-            summary=summary,
-            raw_llm_calls=raw_llm_calls,
-        ),
-    )

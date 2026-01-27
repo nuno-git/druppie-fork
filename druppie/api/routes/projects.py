@@ -762,17 +762,17 @@ async def get_project_sessions(
 
     return {
         "project_id": project_id,
-        "sessions": [
+        "items": [
             {
-                "id": s.id,
+                "id": str(s.id),
                 "status": s.status,
-                "preview": s.title,  # Session model uses 'title' field
+                "preview": s.title,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "updated_at": s.updated_at.isoformat() if s.updated_at else None,
             }
             for s in sessions
         ],
-        "count": len(sessions),
+        "total": len(sessions),
     }
 
 

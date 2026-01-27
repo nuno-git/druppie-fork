@@ -89,7 +89,7 @@ const Navigation = () => {
     refetchInterval: 30000, // Refresh every 30 seconds
   })
 
-  const pendingApprovalsCount = tasksData?.approvals?.length || 0
+  const pendingApprovalsCount = tasksData?.items?.length || 0
 
   const navItems = [
     { path: '/', icon: Home, label: 'Dashboard' },

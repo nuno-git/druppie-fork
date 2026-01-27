@@ -355,7 +355,7 @@ class ApprovalResponse(BaseModel):
 class ApprovalListResponse(BaseModel):
     """List of approvals response."""
 
-    approvals: list[ApprovalResponse]
+    items: list[ApprovalResponse]
     total: int
     page: int
     limit: int
@@ -526,7 +526,7 @@ async def list_approvals(
     ]
 
     return ApprovalListResponse(
-        approvals=approvals_response,
+        items=approvals_response,
         total=total,
         page=page,
         limit=limit,

@@ -1106,7 +1106,7 @@ const Chat = () => {
   }
 
   const handleDebugSession = (sessionId) => {
-    const session = sessionsData?.sessions?.find(s => s.id === sessionId)
+    const session = sessionsData?.items?.find(s => s.id === sessionId)
     if (session) {
       handleSelectPlan(session)
       setTimeout(() => setDebugPanelOpen(true), 100)
