@@ -836,17 +836,17 @@ def _build_trace_events_from_db(db, session_id) -> list[TraceEvent]:
 
     for approval in pending_approvals:
         event_counter += 1
-        # Safely handle mcp_arguments which could be dict, str, or None
+        # Safely handle arguments which could be dict, str, or None
         approval_args = None
-        if approval.mcp_arguments:
-            if isinstance(approval.mcp_arguments, dict):
-                approval_args = approval.mcp_arguments
-            elif isinstance(approval.mcp_arguments, str):
+        if approval.arguments:
+            if isinstance(approval.arguments, dict):
+                approval_args = approval.arguments
+            elif isinstance(approval.arguments, str):
                 try:
                     import json
-                    approval_args = json.loads(approval.mcp_arguments)
+                    approval_args = json.loads(approval.arguments)
                 except Exception:
-                    approval_args = {"raw": approval.mcp_arguments[:200]}
+                    approval_args = {"raw": approval.arguments[:200]}
         events.append(TraceEvent(
             id=f"evt-{event_counter}",
             type="approval_pending",
