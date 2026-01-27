@@ -121,8 +121,9 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   const remainingRoles = requiredRoles.filter(role => !approvedByRoles.includes(role))
 
   // Get tool info
-  const toolName = task.mcp_tool || task.tool_name || 'unknown'
-  const toolDescription = getToolDescription(toolName)
+  const toolName = task.mcp_tool || task.tool_name || null
+  const isWorkflowStep = task.approval_type === 'workflow_step'
+  const toolDescription = toolName ? getToolDescription(toolName) : (isWorkflowStep ? 'Approve workflow checkpoint to proceed to next phase' : 'Approval required')
   const dangerLevel = task.danger_level || 'medium'
   const dangerBadge = getDangerLevelBadge(dangerLevel)
 
@@ -140,7 +141,9 @@ const TaskCard = ({ task, onApprove, onReject }) => {
             </div>
           )}
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-semibold text-lg">{task.name || `Approve ${toolName}`}</h3>
+            <h3 className="font-semibold text-lg">
+              {task.name || (isWorkflowStep ? 'Workflow Checkpoint Approval' : `Approve ${toolName || 'action'}`)}
+            </h3>
             {task.agent_id && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-600 text-xs rounded-full">
                 <Bot className="w-3 h-3" />
@@ -168,20 +171,33 @@ const TaskCard = ({ task, onApprove, onReject }) => {
           What needs your approval:
         </h4>
         <div className="space-y-2">
-          <div className="flex items-start gap-2">
-            <span className="text-blue-700 font-medium">Tool:</span>
-            {(() => {
-              const info = getToolInfo(toolName)
-              const Icon = info.icon
-              return (
-                <span className="flex items-center gap-2">
-                  <Icon className={`w-4 h-4 ${info.color}`} />
-                  <span className="font-medium">{info.label}</span>
-                  <code className="bg-blue-100 px-2 py-0.5 rounded text-blue-800 font-mono text-sm">{toolName}</code>
-                </span>
-              )
-            })()}
-          </div>
+          {/* Tool info - only show for MCP tool approvals, not workflow steps */}
+          {toolName && !isWorkflowStep && (
+            <div className="flex items-start gap-2">
+              <span className="text-blue-700 font-medium">Tool:</span>
+              {(() => {
+                const info = getToolInfo(toolName)
+                const Icon = info.icon
+                return (
+                  <span className="flex items-center gap-2">
+                    <Icon className={`w-4 h-4 ${info.color}`} />
+                    <span className="font-medium">{info.label}</span>
+                    <code className="bg-blue-100 px-2 py-0.5 rounded text-blue-800 font-mono text-sm">{toolName}</code>
+                  </span>
+                )
+              })()}
+            </div>
+          )}
+          {/* Workflow step approval - show phase context */}
+          {isWorkflowStep && (
+            <div className="flex items-start gap-2">
+              <span className="text-blue-700 font-medium">Type:</span>
+              <span className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-blue-600" />
+                <span className="font-medium">Workflow Checkpoint</span>
+              </span>
+            </div>
+          )}
           <div className="text-blue-700">
             <span className="font-medium">Action:</span> {toolDescription}
           </div>
