@@ -677,6 +677,8 @@ class TraceSummary(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    # Per-agent token breakdown for transparency (goal2.md requirement)
+    tokens_by_agent: dict[str, int] = {}
 
 
 class RawLLMCall(BaseModel):
@@ -865,7 +867,7 @@ def _build_trace_events_from_db(db, session_id) -> list[TraceEvent]:
     return events
 
 
-def _build_trace_summary_from_db(events: list[TraceEvent], session) -> TraceSummary:
+def _build_trace_summary_from_db(events: list[TraceEvent], session, db=None) -> TraceSummary:
     """Build summary statistics from trace events."""
     from datetime import datetime
 
@@ -894,6 +896,21 @@ def _build_trace_summary_from_db(events: list[TraceEvent], session) -> TraceSumm
         except (ValueError, TypeError):
             pass
 
+    # Calculate per-agent token breakdown for transparency
+    tokens_by_agent = {}
+    if db and session.id:
+        from druppie.db.models import AgentRun
+        agent_runs = (
+            db.query(AgentRun)
+            .filter(AgentRun.session_id == session.id)
+            .all()
+        )
+        for run in agent_runs:
+            if run.agent_id and run.total_tokens:
+                if run.agent_id not in tokens_by_agent:
+                    tokens_by_agent[run.agent_id] = 0
+                tokens_by_agent[run.agent_id] += run.total_tokens
+
     return TraceSummary(
         total_events=len(events),
         agents_used=sorted(list(agents_used)),
@@ -903,6 +920,7 @@ def _build_trace_summary_from_db(events: list[TraceEvent], session) -> TraceSumm
         prompt_tokens=session.prompt_tokens or 0,
         completion_tokens=session.completion_tokens or 0,
         total_tokens=session.total_tokens or 0,
+        tokens_by_agent=tokens_by_agent,
     )
 
 
@@ -936,8 +954,8 @@ async def get_session_trace(
     # Build trace events from normalized tables
     events = _build_trace_events_from_db(db, session.id)
 
-    # Build summary
-    summary = _build_trace_summary_from_db(events, session)
+    # Build summary (pass db for per-agent token breakdown)
+    summary = _build_trace_summary_from_db(events, session, db)
 
     logger.info(
         "session_trace_retrieved",

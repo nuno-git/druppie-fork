@@ -668,17 +668,49 @@ const TraceSummary = ({ trace }) => {
     { label: 'Duration', value: formatDuration(totalDuration), icon: Timer, color: 'text-cyan-600' },
   ]
 
+  // Per-agent token breakdown for transparency
+  const tokensByAgent = summary.tokens_by_agent || {}
+  const hasAgentBreakdown = Object.keys(tokensByAgent).length > 0
+
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
-      {stats.map(({ label, value, icon: Icon, color }) => (
-        <div key={label} className="bg-white rounded-lg border border-gray-200 p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <Icon className={`w-4 h-4 ${color}`} />
-            <span className="text-xs text-gray-500 uppercase tracking-wide">{label}</span>
+    <div className="space-y-4 mb-6">
+      {/* Main stats grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+        {stats.map(({ label, value, icon: Icon, color }) => (
+          <div key={label} className="bg-white rounded-lg border border-gray-200 p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Icon className={`w-4 h-4 ${color}`} />
+              <span className="text-xs text-gray-500 uppercase tracking-wide">{label}</span>
+            </div>
+            <div className="text-2xl font-bold text-gray-900">{value}</div>
           </div>
-          <div className="text-2xl font-bold text-gray-900">{value}</div>
+        ))}
+      </div>
+
+      {/* Per-agent token breakdown */}
+      {hasAgentBreakdown && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+            <Bot className="w-4 h-4 text-purple-600" />
+            Tokens by Agent
+          </h3>
+          <div className="flex flex-wrap gap-3">
+            {Object.entries(tokensByAgent)
+              .sort((a, b) => b[1] - a[1])
+              .map(([agent, tokens]) => (
+                <div
+                  key={agent}
+                  className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2"
+                >
+                  <span className="text-sm font-medium text-gray-700 capitalize">{agent}</span>
+                  <span className="text-sm bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">
+                    {formatTokens(tokens)}
+                  </span>
+                </div>
+              ))}
+          </div>
         </div>
-      ))}
+      )}
     </div>
   )
 }
