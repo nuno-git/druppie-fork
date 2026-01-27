@@ -105,21 +105,49 @@ const ConversationSidebar = ({
   onToggleCollapse,
 }) => {
   const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all') // all, completed, failed, running
 
   // Extract sessions array from paginated response or use directly if already an array
   const sessionList = Array.isArray(sessions) ? sessions : (sessions?.sessions || [])
   const totalSessions = Array.isArray(sessions) ? sessions.length : (sessions?.total || 0)
 
-  // Filter sessions based on search query
+  // Filter sessions based on search query and status
   const filteredSessions = useMemo(() => {
-    if (!searchQuery.trim()) return sessionList
-    const query = searchQuery.toLowerCase()
-    return sessionList.filter(session => {
-      const preview = (session.preview || session.name || '').toLowerCase()
-      const projectName = (session.project_name || '').toLowerCase()
-      return preview.includes(query) || projectName.includes(query)
+    let filtered = sessionList
+
+    // Apply status filter
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(session => {
+        if (statusFilter === 'completed') return session.status === 'completed'
+        if (statusFilter === 'failed') return session.status === 'failed'
+        if (statusFilter === 'running') return ['active', 'running', 'paused', 'pending_approval', 'paused_hitl'].includes(session.status)
+        return true
+      })
+    }
+
+    // Apply text search
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      filtered = filtered.filter(session => {
+        const preview = (session.preview || session.name || '').toLowerCase()
+        const projectName = (session.project_name || '').toLowerCase()
+        return preview.includes(query) || projectName.includes(query)
+      })
+    }
+
+    return filtered
+  }, [sessionList, searchQuery, statusFilter])
+
+  // Count sessions by status for filter badges
+  const statusCounts = useMemo(() => {
+    const counts = { completed: 0, failed: 0, running: 0 }
+    sessionList.forEach(session => {
+      if (session.status === 'completed') counts.completed++
+      else if (session.status === 'failed') counts.failed++
+      else if (['active', 'running', 'paused', 'pending_approval', 'paused_hitl'].includes(session.status)) counts.running++
     })
-  }, [sessionList, searchQuery])
+    return counts
+  }, [sessionList])
 
   if (isCollapsed) {
     return (
@@ -215,6 +243,56 @@ const ConversationSidebar = ({
             </button>
           )}
         </div>
+        {/* Status filter chips */}
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          <button
+            onClick={() => setStatusFilter('all')}
+            className={`text-xs px-2 py-1 rounded-full transition-colors ${
+              statusFilter === 'all'
+                ? 'bg-gray-800 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            All
+          </button>
+          <button
+            onClick={() => setStatusFilter('completed')}
+            className={`text-xs px-2 py-1 rounded-full transition-colors flex items-center gap-1 ${
+              statusFilter === 'completed'
+                ? 'bg-green-600 text-white'
+                : 'bg-green-50 text-green-700 hover:bg-green-100'
+            }`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-current" />
+            {statusCounts.completed}
+          </button>
+          {statusCounts.failed > 0 && (
+            <button
+              onClick={() => setStatusFilter('failed')}
+              className={`text-xs px-2 py-1 rounded-full transition-colors flex items-center gap-1 ${
+                statusFilter === 'failed'
+                  ? 'bg-red-600 text-white'
+                  : 'bg-red-50 text-red-700 hover:bg-red-100'
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current" />
+              {statusCounts.failed}
+            </button>
+          )}
+          {statusCounts.running > 0 && (
+            <button
+              onClick={() => setStatusFilter('running')}
+              className={`text-xs px-2 py-1 rounded-full transition-colors flex items-center gap-1 ${
+                statusFilter === 'running'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+              {statusCounts.running}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Conversation List */}
@@ -222,7 +300,7 @@ const ConversationSidebar = ({
         <div className="flex items-center justify-between px-2 py-2">
           <div className="flex items-center gap-2 text-xs font-medium text-gray-500 uppercase">
             <History className="w-3 h-3" />
-            {searchQuery ? `Results (${filteredSessions.length})` : 'Recent Conversations'}
+            {(searchQuery || statusFilter !== 'all') ? `Results (${filteredSessions.length})` : 'Recent Conversations'}
           </div>
         </div>
         <div className="space-y-1">
