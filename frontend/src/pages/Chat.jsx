@@ -190,22 +190,29 @@ const Chat = () => {
       }
       setLiveWorkflowEvents((prev) => [...prev, formattedEvent])
 
-      // Add to display list for inline workflow messages (show more events for transparency)
-      // Include: agent events, tool calls/results, approvals
-      const isDisplayable = eventType.includes('tool_call') || eventType.includes('tool_result') ||
-                           eventType.includes('mcp_') ||
-                           eventType.includes('approval') ||
-                           eventType.includes('agent_started') || eventType.includes('agent_completed') ||
-                           eventType.includes('_started') || eventType.includes('_completed')
+      // Add to display list for inline workflow messages
+      // SIMPLIFIED: Only show specific agent events (router_started not agent_started)
+      // and tool calls. Skip generic events and approval step_started (we show approval_required instead)
+      const isGenericAgentEvent = eventType === 'agent_started' || eventType === 'agent_completed'
+      const isApprovalStepEvent = eventType === 'step_started' && (event.data?.step_id?.includes('approval') || agentId === 'approval')
+      const isDisplayable = (
+        // Tool calls
+        eventType.includes('tool_call') || eventType.includes('tool_result') ||
+        // Approval required (not step_started)
+        eventType === 'approval_required' ||
+        // Specific agent events like router_started, developer_completed (NOT generic agent_started)
+        ((eventType.includes('_started') || eventType.includes('_completed')) && !isGenericAgentEvent && !isApprovalStepEvent)
+      )
       if (isDisplayable) {
         setWorkflowEventsForDisplay((prev) => {
-          // Deduplicate by checking for similar recent events (same type and agent within 2 seconds)
+          // Deduplicate by checking for similar recent events
           const recentEvent = prev.find(e => {
+            const eType = e.type || e.event_type || ''
             const sameAgent = (e.agent || e.data?.agent_id) === (formattedEvent.agent || formattedEvent.data?.agent_id)
-            const sameType = (e.type || e.event_type)?.includes('started') === eventType.includes('started') &&
-                            (e.type || e.event_type)?.includes('completed') === eventType.includes('completed')
+            const bothStarted = eType.includes('started') && eventType.includes('started')
+            const bothCompleted = eType.includes('completed') && eventType.includes('completed')
             const timeDiff = Math.abs(new Date(e.timestamp).getTime() - new Date(formattedEvent.timestamp).getTime())
-            return sameAgent && sameType && timeDiff < 2000
+            return sameAgent && (bothStarted || bothCompleted) && timeDiff < 3000
           })
           if (recentEvent) return prev // Skip duplicate
           return [...prev, formattedEvent]
@@ -576,14 +583,24 @@ const Chat = () => {
     setDebugLLMCalls(llmCalls)
     setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
 
-    // Store workflow events for inline display (show more events for transparency)
+    // Store workflow events for inline display (simplified - no duplicates)
+    // SIMPLIFIED: Only show specific agent events (router_started not agent_started)
+    // and tool calls. Skip generic events and approval step_started (we show approval_required instead)
     const displayableEvents = normalizedEvents.filter(event => {
       const type = event.type || event.event_type || ''
-      // Include: agent events, tool calls/results, approvals
-      return type.includes('agent_started') || type.includes('agent_completed') ||
-             type.includes('tool_call') || type.includes('tool_result') ||
-             type.includes('approval') || type.includes('mcp_') ||
-             type.includes('_started') || type.includes('_completed')
+      const agentId = event.agent || event.data?.agent_id || event.agent_id || ''
+
+      // Skip generic agent_started/agent_completed (we have specific ones like router_started)
+      const isGenericAgentEvent = type === 'agent_started' || type === 'agent_completed'
+      // Skip approval step_started (we show approval_required instead)
+      const isApprovalStepEvent = type === 'step_started' && (event.data?.step_id?.includes('approval') || agentId === 'approval')
+
+      // Include: tool calls, approval_required, and specific agent events
+      return (
+        type.includes('tool_call') || type.includes('tool_result') ||
+        type === 'approval_required' ||
+        ((type.includes('_started') || type.includes('_completed')) && !isGenericAgentEvent && !isApprovalStepEvent)
+      )
     })
     setWorkflowEventsForDisplay(displayableEvents)
     console.log('[Chat] Loaded displayable events:', displayableEvents.length)
@@ -597,6 +614,7 @@ const Chat = () => {
           task_id: task.id,
           task_name: task.name,
           mcp_tool: task.mcp_tool,
+          mcp_arguments: task.mcp_arguments || {},  // Include tool arguments for ApprovalCard display
           required_role: task.required_role,
           approval_type: task.approval_type,
           required_roles: task.required_roles,
