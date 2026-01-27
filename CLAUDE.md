@@ -665,6 +665,50 @@ const requiredRole = task.required_role ||
 **Key Files**: `frontend/src/pages/Dashboard.jsx`
 **Pattern**: Always normalize both `required_role` (string) and `required_roles` (array) when displaying role info
 
+### Issue: Developer Agent Creates Broken HTML/JSX Code
+**Symptom**: Vite/React apps fail to build with "Unable to parse HTML; parse5 error code eof-in-element-that-can-contain-only-text"
+**Cause**: The Developer agent (using glm-4 model) creates HTML/JSX with missing closing tags:
+- `<script>` tags not closed with `</script>`
+- `<div>` tags not closed with `</div>`
+- `<button>` tags not closed with `</button>`
+- `<head>` and `<body>` tags missing entirely in index.html
+**Example**: index.html created with `<script type="module" src="/src/main.jsx">` but no `</script>` tag
+**Impact**: Docker build fails during `npm run build` because Vite cannot parse malformed HTML
+**Workaround**: Manually fix the generated HTML/JSX files before building
+**Root Cause**: LLM model (glm-4) appears to truncate output or not properly close tags when generating code
+**Note**: This is a recurring issue - the model consistently produces truncated code
+
+### Issue: Developer Agent Uses Wrong Dockerfile for Vite/React Apps
+**Symptom**: After fixing HTML syntax, Deployer tries to run `npm run build` manually (fails with exit code 127)
+**Cause**: Despite clear instructions in developer.yaml for multi-stage Dockerfiles, the Developer agent creates:
+```dockerfile
+FROM nginx:alpine
+WORKDIR /usr/share/nginx/html
+COPY dist/ .
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+```
+**Expected**: Multi-stage Dockerfile that builds inside Docker:
+```dockerfile
+# Build stage
+FROM node:18-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+# Production stage
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html/
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+```
+**Impact**: Vite/React apps cannot be deployed because there's no `dist/` folder (it needs to be built first)
+**Key Pattern**: The wrong Dockerfile assumes `dist/` exists, but for Vite apps, the build step creates it
+**Workaround**: Manually replace Dockerfile with multi-stage version and rebuild
+**Root Cause**: Developer agent doesn't consistently follow the Vite/React Dockerfile template despite it being in the system prompt
+
 ### Workflow: Full Architect Flow Testing
 To test the complete architect workflow (including HITL questions and architect approval):
 1. Log in as `normal_user`
