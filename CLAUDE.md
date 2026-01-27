@@ -714,8 +714,9 @@ Chat sidebar shows previous conversations with:
 - Debug links for each session
 - Project associations
 - **Search/filter** - Type to filter sessions by name or project
-- Clear button (X) to reset filter
-- Shows "Results (N)" when filtering is active
+- **Status filter chips** - Filter by All/Completed/Failed/Running
+- Clear button (X) to reset text filter
+- Shows "Results (N)" when any filtering is active
 
 ### Tool Validation
 Validates required arguments before MCP calls:
