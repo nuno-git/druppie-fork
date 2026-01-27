@@ -21,17 +21,38 @@ const request = async (endpoint, options = {}) => {
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const response = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers,
-  })
+  const method = options.method || 'GET'
+  const requestBody = options.body ? JSON.parse(options.body) : null
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
-    throw new Error(error.detail || error.error || `Request failed: ${response.status}`)
+  console.group(`🌐 API ${method} ${endpoint}`)
+  console.log('Request:', { method, endpoint, body: requestBody })
+  console.time('Duration')
+
+  try {
+    const response = await fetch(`${API_URL}${endpoint}`, {
+      ...options,
+      headers,
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+      console.error('❌ Error Response:', { status: response.status, error })
+      console.timeEnd('Duration')
+      console.groupEnd()
+      throw new Error(error.detail || error.error || `Request failed: ${response.status}`)
+    }
+
+    const data = await response.json()
+    console.log('✅ Response:', data)
+    console.timeEnd('Duration')
+    console.groupEnd()
+    return data
+  } catch (err) {
+    console.error('❌ Request Failed:', err.message)
+    console.timeEnd('Duration')
+    console.groupEnd()
+    throw err
   }
-
-  return response.json()
 }
 
 // ============ User ============
