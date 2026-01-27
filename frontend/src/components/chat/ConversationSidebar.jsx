@@ -28,6 +28,10 @@ const ConversationItem = ({ session, isActive, onClick, onDebug }) => {
         return 'bg-blue-500'
       case 'paused':
       case 'pending_approval':
+      case 'paused_approval':
+      case 'paused_hitl':
+      case 'paused_tool':
+      case 'paused_question':
         return 'bg-yellow-500'
       case 'failed':
         return 'bg-red-500'
@@ -120,7 +124,7 @@ const ConversationSidebar = ({
       filtered = filtered.filter(session => {
         if (statusFilter === 'completed') return session.status === 'completed'
         if (statusFilter === 'failed') return session.status === 'failed'
-        if (statusFilter === 'running') return ['active', 'running', 'paused', 'pending_approval', 'paused_hitl'].includes(session.status)
+        if (statusFilter === 'running') return ['active', 'running', 'paused', 'pending_approval', 'paused_approval', 'paused_hitl', 'paused_tool', 'paused_question'].includes(session.status)
         return true
       })
     }
@@ -144,7 +148,7 @@ const ConversationSidebar = ({
     sessionList.forEach(session => {
       if (session.status === 'completed') counts.completed++
       else if (session.status === 'failed') counts.failed++
-      else if (['active', 'running', 'paused', 'pending_approval', 'paused_hitl'].includes(session.status)) counts.running++
+      else if (['active', 'running', 'paused', 'pending_approval', 'paused_approval', 'paused_hitl', 'paused_tool', 'paused_question'].includes(session.status)) counts.running++
     })
     return counts
   }, [sessionList])
