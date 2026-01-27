@@ -679,8 +679,29 @@ const Chat = () => {
       return timeA - timeB
     })
 
+    // Check for app_running event in trace data to show deployment URL
+    // This ensures the URL is shown even on page refresh
+    const appRunningEvent = normalizedEvents.find(
+      event => event.type === 'app_running' && event.data?.url
+    )
+    if (appRunningEvent) {
+      const deployUrl = appRunningEvent.data.url
+      const hasDeploymentMessage = loadedMessages.some(
+        msg => msg.deploymentUrl === deployUrl
+      )
+      if (!hasDeploymentMessage) {
+        loadedMessages.push({
+          role: 'assistant',
+          content: `🎉 Deployment complete! Your application is now running.`,
+          deploymentUrl: deployUrl,
+          containerName: appRunningEvent.data.container_name || 'app',
+          timestamp: appRunningEvent.timestamp || new Date().toISOString(),
+        })
+      }
+    }
+
     // If project has a running build with app_url, add deployment message if not already present
-    if (projectInfo?.app_url) {
+    if (projectInfo?.app_url && !appRunningEvent) {
       const hasDeploymentMessage = loadedMessages.some(
         msg => msg.deploymentUrl === projectInfo.app_url
       )

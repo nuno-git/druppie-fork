@@ -352,6 +352,32 @@ class MCPClient:
                             )
                         except Exception as e:
                             logger.warning("tool_call_update_failed", error=str(e))
+
+                    # Emit app_running event for docker:run cached results
+                    # This ensures the deployment URL is persisted even when returning cached result
+                    if server == "docker" and tool == "run" and isinstance(cached_result, dict):
+                        app_url = cached_result.get("url") or cached_result.get("app_url")
+                        if app_url and cached_result.get("success", True):
+                            context.app_running(
+                                container_name=cached_result.get("container_name") or "",
+                                url=app_url,
+                                port=cached_result.get("port") or 0,
+                                image_name=cached_result.get("image_name"),
+                            )
+                            # Also broadcast via WebSocket
+                            try:
+                                from druppie.api.websocket import emit_deployment_complete
+                                loop = asyncio.get_running_loop()
+                                loop.create_task(emit_deployment_complete(
+                                    session_id=context.session_id,
+                                    url=app_url,
+                                    container_name=cached_result.get("container_name"),
+                                    port=cached_result.get("port"),
+                                    project_id=context.project_id,
+                                ))
+                            except Exception as e:
+                                logger.debug("deployment_broadcast_from_cache_failed", error=str(e))
+
                     return cached_result
 
             # ALWAYS request approval - AI is executing, user must confirm
@@ -558,6 +584,18 @@ class MCPClient:
                     if server == "docker" and tool == "run":
                         app_url = result_dict.get("url") or result_dict.get("app_url")
                         if app_url:
+                            container_name = result_dict.get("container_name")
+                            port = result_dict.get("port")
+
+                            # Persist app_running event to database for history
+                            # This ensures the deployment URL is shown on page refresh
+                            context.app_running(
+                                container_name=container_name or "",
+                                url=app_url,
+                                port=port or 0,
+                                image_name=result_dict.get("image_name"),
+                            )
+
                             # Use direct WebSocket broadcast for reliability
                             # (context.emit_event may not always be configured)
                             try:
@@ -566,8 +604,8 @@ class MCPClient:
                                 loop.create_task(emit_deployment_complete(
                                     session_id=context.session_id,
                                     url=app_url,
-                                    container_name=result_dict.get("container_name"),
-                                    port=result_dict.get("port"),
+                                    container_name=container_name,
+                                    port=port,
                                     project_id=context.project_id,
                                 ))
                             except RuntimeError:
