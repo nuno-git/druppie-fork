@@ -217,6 +217,11 @@ class MCPClient:
                 return t
         return {}
 
+    def is_builtin_server(self, server: str) -> bool:
+        """Check if a server is marked as built-in (no external MCP server)."""
+        mcp = self.config.get("mcps", {}).get(server, {})
+        return mcp.get("builtin", False)
+
     def requires_approval(
         self,
         server: str,
@@ -497,7 +502,11 @@ class MCPClient:
         args: dict[str, Any],
         context: "ExecutionContext",
     ) -> dict[str, Any]:
-        """Execute tool via FastMCP client to MCP server."""
+        """Execute tool via FastMCP client to MCP server, or builtin handler."""
+        # Check if this is a builtin server (like hitl)
+        if self.is_builtin_server(server):
+            return await self._execute_builtin_tool(server, tool, args, context)
+
         url = self.get_mcp_url(server)
 
         # Extract workspace_id from args if present for better log context
@@ -657,6 +666,130 @@ class MCPClient:
                 "error_type": error_type,
                 "retryable": retryable,
                 "recoverable": recoverable,
+            }
+
+    async def _execute_builtin_tool(
+        self,
+        server: str,
+        tool: str,
+        args: dict[str, Any],
+        context: "ExecutionContext",
+    ) -> dict[str, Any]:
+        """Execute a built-in tool (not via HTTP to external MCP server).
+
+        Currently supports:
+        - hitl server: ask_question, ask_choice, progress, notify
+        """
+        logger.info(
+            "builtin_tool_executing",
+            server=server,
+            tool=tool,
+            session_id=context.session_id if context else None,
+        )
+
+        try:
+            if server == "hitl":
+                return await self._execute_hitl_tool(tool, args, context)
+            else:
+                return {
+                    "success": False,
+                    "error": f"Unknown builtin server: {server}",
+                    "error_type": MCPErrorType.FATAL,
+                    "retryable": False,
+                    "recoverable": False,
+                }
+        except Exception as e:
+            logger.error(
+                "builtin_tool_error",
+                server=server,
+                tool=tool,
+                error=str(e),
+                exc_info=True,
+            )
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": MCPErrorType.FATAL,
+                "retryable": False,
+                "recoverable": False,
+            }
+
+    async def _execute_hitl_tool(
+        self,
+        tool: str,
+        args: dict[str, Any],
+        context: "ExecutionContext",
+    ) -> dict[str, Any]:
+        """Execute a built-in HITL tool.
+
+        Supported tools:
+        - ask_question: Ask user a free-form question (pauses workflow)
+        - ask_choice: Ask user a multiple choice question (pauses workflow)
+        - progress: Send progress update to user (non-blocking)
+        - notify: Send notification to user (non-blocking)
+        """
+        from druppie.agents.hitl import ask_question, ask_multiple_choice_question
+
+        agent_id = context.current_agent_id if hasattr(context, 'current_agent_id') else "unknown"
+
+        if tool == "ask_question":
+            # Ask user a free-form question
+            result = await ask_question(
+                question=args.get("question", ""),
+                context=context,
+                agent_id=agent_id,
+                question_context=args.get("context"),
+            )
+            # HITL tools return paused status, which is success for the agent
+            return result
+
+        elif tool == "ask_choice":
+            # Ask user a multiple choice question
+            result = await ask_multiple_choice_question(
+                question=args.get("question", ""),
+                choices=args.get("choices", []),
+                context=context,
+                agent_id=agent_id,
+                allow_other=args.get("allow_other", True),
+                question_context=args.get("context"),
+            )
+            return result
+
+        elif tool == "progress":
+            # Send progress update (non-blocking)
+            message = args.get("message", args.get("status", "Working..."))
+            if context.emit_event:
+                context.emit_event({
+                    "type": "progress",
+                    "event_type": "progress",
+                    "agent_id": agent_id,
+                    "message": message,
+                    "session_id": context.session_id,
+                })
+            return {"success": True, "message": "Progress update sent"}
+
+        elif tool == "notify":
+            # Send notification (non-blocking)
+            message = args.get("message", "")
+            level = args.get("level", "info")
+            if context.emit_event:
+                context.emit_event({
+                    "type": "notification",
+                    "event_type": "notification",
+                    "agent_id": agent_id,
+                    "message": message,
+                    "level": level,
+                    "session_id": context.session_id,
+                })
+            return {"success": True, "message": "Notification sent"}
+
+        else:
+            return {
+                "success": False,
+                "error": f"Unknown HITL tool: {tool}",
+                "error_type": MCPErrorType.FATAL,
+                "retryable": False,
+                "recoverable": False,
             }
 
     async def _request_approval(
@@ -849,17 +982,42 @@ class MCPClient:
 
         # Parse tool name
         server, tool = approval.tool_name.split(":", 1)
+        full_tool_name = f"{server}:{tool}"
 
-        # Filter out context parameters that were stored in approval for context
-        # but shouldn't be passed to the actual tool
-        # These are injected by the approval flow for audit/context purposes
-        context_params = {"project_id", "workspace_path", "branch"}
-        tool_args = {
-            k: v for k, v in (approval.arguments or {}).items()
-            if k not in context_params
-        }
+        # Determine which context params this tool needs
+        # docker:build needs workspace_path, coding tools need workspace_id
+        tools_needing_workspace_path = {"docker:build"}
+        tools_needing_workspace_id = {"coding"}  # All coding tools
 
-        # Execute the tool with filtered arguments
+        # Start with all arguments from approval
+        tool_args = dict(approval.arguments or {})
+
+        # Filter out context params that aren't needed by this specific tool
+        # project_id is never passed to tools (for audit only)
+        if "project_id" in tool_args:
+            del tool_args["project_id"]
+
+        # Keep workspace_path only for tools that need it
+        if full_tool_name not in tools_needing_workspace_path:
+            if "workspace_path" in tool_args:
+                del tool_args["workspace_path"]
+
+        # branch is only for context, not passed to tools
+        if "branch" in tool_args:
+            del tool_args["branch"]
+
+        # Inject workspace context from execution context if not already present
+        if full_tool_name in tools_needing_workspace_path:
+            if "workspace_path" not in tool_args and context and context.workspace_path:
+                tool_args["workspace_path"] = context.workspace_path
+            if "workspace_id" not in tool_args and context and context.workspace_id:
+                tool_args["workspace_id"] = context.workspace_id
+
+        if server in tools_needing_workspace_id:
+            if "workspace_id" not in tool_args and context and context.workspace_id:
+                tool_args["workspace_id"] = context.workspace_id
+
+        # Execute the tool
         return await self._execute_tool(server, tool, tool_args, context)
 
     def get_tools_for_mcps(self, mcp_ids: list[str]) -> list[dict]:
