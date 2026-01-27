@@ -582,7 +582,9 @@ async def execute_workflow_steps(
             try:
                 if step_type == "approval":
                     # Create approval request and pause
-                    result = await _handle_approval_step(db, step, context, exec_ctx)
+                    result = await _handle_approval_step(
+                        db, step, context, exec_ctx, steps=steps, step_index=i
+                    )
                     if result.get("paused"):
                         return result
 
@@ -738,10 +740,37 @@ async def _handle_approval_step(
     step: WorkflowStep,
     context: dict,
     exec_ctx: ExecutionContext,
+    steps: list[WorkflowStep] | None = None,
+    step_index: int | None = None,
 ) -> dict[str, Any]:
     """Handle an approval step - create approval and pause."""
     # Extract approval info from step description
     approval_message = step.description or "Approval required to continue"
+
+    # Generate a meaningful title by looking at surrounding steps
+    # e.g., "Approve architect design before developer phase"
+    title = "Approve to continue workflow"
+    if steps and step_index is not None:
+        # Find the previous agent step (what was just done)
+        prev_agent = None
+        for i in range(step_index - 1, -1, -1):
+            if _get_step_type(steps[i].agent_id) == "agent":
+                prev_agent = steps[i].agent_id
+                break
+
+        # Find the next agent step (what comes after)
+        next_agent = None
+        for i in range(step_index + 1, len(steps)):
+            if _get_step_type(steps[i].agent_id) == "agent":
+                next_agent = steps[i].agent_id
+                break
+
+        if prev_agent and next_agent:
+            title = f"Approve {prev_agent} work before {next_agent} phase"
+        elif prev_agent:
+            title = f"Approve {prev_agent} work to continue"
+        elif next_agent:
+            title = f"Approval needed before {next_agent} phase"
 
     # Create approval record
     # Note: create_approval expects session_id as the second positional argument
@@ -750,7 +779,7 @@ async def _handle_approval_step(
         UUID(exec_ctx.session_id),  # session_id as positional arg
         approval_type="workflow_step",
         workflow_step_id=step.id,
-        title=f"Step Approval: {step.agent_id}",
+        title=title,
         description=approval_message,
         required_role="developer",  # Default role
     )
