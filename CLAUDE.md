@@ -710,9 +710,12 @@ Full execution transparency with:
 
 ### Session History
 Chat sidebar shows previous conversations with:
-- Session previews
-- Debug links
+- Session previews with token counts and costs
+- Debug links for each session
 - Project associations
+- **Search/filter** - Type to filter sessions by name or project
+- Clear button (X) to reset filter
+- Shows "Results (N)" when filtering is active
 
 ### Tool Validation
 Validates required arguments before MCP calls:
