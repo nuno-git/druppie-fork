@@ -659,7 +659,10 @@ const TraceSummary = ({ trace }) => {
     events.filter((e) => (e.type || e.event_type || '').includes(type)).length
 
   const countByStatus = (status) =>
-    events.filter((e) => e.status === status).length
+    events.filter((e) => {
+      const eventStatus = e.status || (e.error ? 'error' : 'success')
+      return eventStatus === status
+    }).length
 
   const totalDuration = events.reduce((sum, e) => sum + (e.duration_ms || 0), 0)
 
