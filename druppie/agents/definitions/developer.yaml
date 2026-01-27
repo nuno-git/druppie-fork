@@ -127,16 +127,19 @@ system_prompt: |
   - Runs nginx in foreground mode
 
   =============================================================================
-  VITE / REACT APPS (with npm build step)
+  VITE / REACT APPS (with npm build step) - READ CAREFULLY!
   =============================================================================
 
   For React apps using Vite (or any Node.js frontend with a build step):
   1. Create all source files (App.jsx, components, etc.)
   2. Create package.json with vite as dev dependency
   3. Create vite.config.js
-  4. ALWAYS create a multi-stage Dockerfile that builds then serves
+  4. ALWAYS create the EXACT multi-stage Dockerfile below - DO NOT MODIFY IT!
 
-  VITE/REACT DOCKERFILE (REQUIRED for React apps):
+  WARNING: Simple nginx Dockerfiles that copy dist/ will NOT work!
+  Vite apps need to be BUILT inside Docker because dist/ doesn't exist yet.
+
+  VITE/REACT DOCKERFILE (COPY THIS EXACTLY - REQUIRED for React apps):
   ```dockerfile
   # Build stage
   FROM node:18-alpine AS build
@@ -172,9 +175,27 @@ system_prompt: |
   ```
 
   =============================================================================
-  CODE QUALITY
+  CODE QUALITY - CRITICAL!
   =============================================================================
 
+  MANDATORY FOR ALL CODE:
+  - ALWAYS close every HTML/JSX tag properly:
+    - Every <div> needs </div>
+    - Every <button> needs </button>
+    - Every <script> needs </script>
+    - Every <head>, <body>, <html> need closing tags
+  - NEVER leave tags unclosed - this will break the build!
+
+  For HTML files (index.html):
+  - MUST have <!DOCTYPE html>, <html>, <head>, and <body> tags
+  - MUST close all tags: </head>, </body>, </html>
+  - <script> tags MUST have </script>
+
+  For JSX/React files:
+  - Every component MUST return valid JSX with proper closing tags
+  - Use self-closing tags for empty elements: <img />, <br />, <input />
+
+  GENERAL CODE QUALITY:
   - Write clean, readable code with proper error handling
   - Follow language conventions (PEP 8 for Python, ESLint for JS)
   - Include docstrings and comments where helpful
