@@ -177,11 +177,25 @@ const Chat = () => {
       setLiveWorkflowEvents((prev) => [...prev, formattedEvent])
 
       // Add to display list for inline workflow messages (filter to relevant events)
-      const isDisplayable = eventType.includes('agent_started') || eventType.includes('agent_completed') ||
-                           eventType.includes('tool_call') || eventType.includes('tool_result') ||
-                           eventType.includes('mcp_')
+      // Use more specific event types to avoid duplicates (e.g., router_started vs agent_started)
+      const isDisplayable = eventType.includes('tool_call') || eventType.includes('tool_result') ||
+                           eventType.includes('mcp_') ||
+                           // Prefer specific agent events (router_started, developer_completed) over generic ones
+                           (eventType.includes('_started') && !eventType.startsWith('agent_')) ||
+                           (eventType.includes('_completed') && !eventType.startsWith('agent_'))
       if (isDisplayable) {
-        setWorkflowEventsForDisplay((prev) => [...prev, formattedEvent])
+        setWorkflowEventsForDisplay((prev) => {
+          // Deduplicate by checking for similar recent events (same type and agent within 2 seconds)
+          const recentEvent = prev.find(e => {
+            const sameAgent = (e.agent || e.data?.agent_id) === (formattedEvent.agent || formattedEvent.data?.agent_id)
+            const sameType = (e.type || e.event_type)?.includes('started') === eventType.includes('started') &&
+                            (e.type || e.event_type)?.includes('completed') === eventType.includes('completed')
+            const timeDiff = Math.abs(new Date(e.timestamp).getTime() - new Date(formattedEvent.timestamp).getTime())
+            return sameAgent && sameType && timeDiff < 2000
+          })
+          if (recentEvent) return prev // Skip duplicate
+          return [...prev, formattedEvent]
+        })
       }
     }
 
