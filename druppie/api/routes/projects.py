@@ -607,6 +607,7 @@ class RunningAppResponse(BaseModel):
     branch: str
     is_preview: bool
     owner_id: str | None
+    owner_username: str | None = None  # Human-readable owner name for transparency
     started_at: str | None
 
 
@@ -619,8 +620,9 @@ async def get_running_apps(
 
     Returns a list of all running builds across all projects that the user can see.
     Admin users can see all running apps, others only see their own.
+    Includes owner_username for transparency.
     """
-    from druppie.db.models import Build
+    from druppie.db.models import Build, User
 
     user_roles = user.get("realm_access", {}).get("roles", [])
     is_admin = "admin" in user_roles
@@ -639,8 +641,16 @@ async def get_running_apps(
 
     results = query.all()
 
+    # Batch load owner usernames to avoid N+1 queries
+    owner_ids = list(set(str(project.owner_id) for _, project in results if project.owner_id))
+    usernames_by_id = {}
+    if owner_ids:
+        users = db.query(User).filter(User.id.in_(owner_ids)).all()
+        usernames_by_id = {str(u.id): u.username for u in users}
+
     running_apps = []
     for build, project in results:
+        owner_id_str = str(project.owner_id) if project.owner_id else None
         running_apps.append(
             RunningAppResponse(
                 build_id=str(build.id),
@@ -651,7 +661,8 @@ async def get_running_apps(
                 port=build.port,
                 branch=build.branch or "main",
                 is_preview=build.is_preview,
-                owner_id=str(project.owner_id) if project.owner_id else None,
+                owner_id=owner_id_str,
+                owner_username=usernames_by_id.get(owner_id_str) if owner_id_str else None,
                 started_at=build.created_at.isoformat() if build.created_at else None,
             )
         )
