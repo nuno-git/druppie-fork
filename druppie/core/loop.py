@@ -71,6 +71,8 @@ from druppie.db import (
     get_workspace_for_session,
     create_llm_call,
     get_llm_calls_for_session,
+    create_session_event,
+    get_session_events,
 )
 from druppie.db.database import get_db
 
@@ -92,6 +94,43 @@ def db_session():
         yield db
     finally:
         db.close()
+
+
+def log_session_event(
+    session_id: UUID,
+    event_type: str,
+    agent_id: str | None = None,
+    title: str | None = None,
+    tool_name: str | None = None,
+    agent_run_id: UUID | None = None,
+    tool_call_id: UUID | None = None,
+    approval_id: UUID | None = None,
+    hitl_question_id: UUID | None = None,
+    event_data: dict | None = None,
+) -> None:
+    """Log an event to the session_events table for timeline display.
+
+    This provides a unified event log that's easy to query,
+    instead of reconstructing events from multiple tables.
+    """
+    try:
+        with db_session() as db:
+            create_session_event(
+                db=db,
+                session_id=session_id,
+                event_type=event_type,
+                agent_id=agent_id,
+                title=title,
+                tool_name=tool_name,
+                agent_run_id=agent_run_id,
+                tool_call_id=tool_call_id,
+                approval_id=approval_id,
+                hitl_question_id=hitl_question_id,
+                event_data=event_data,
+            )
+    except Exception as e:
+        # Don't fail execution due to event logging errors
+        logger.warning("log_session_event_failed", error=str(e), session_id=str(session_id))
 
 
 # =============================================================================
@@ -385,6 +424,15 @@ async def run_agent(
         "agent_run_id": str(agent_run.id),
     })
 
+    # Persist event to database for timeline
+    log_session_event(
+        session_id=UUID(exec_ctx.session_id),
+        event_type="agent_started",
+        agent_id=agent_id,
+        title=f"{agent_id} started",
+        agent_run_id=agent_run.id,
+    )
+
     logger.info(
         "agent_run_started",
         session_id=exec_ctx.session_id,
@@ -465,6 +513,16 @@ async def run_agent(
             "result_preview": str(result)[:200] if result else None,
             "iterations": iteration_count,
         })
+
+        # Persist event to database for timeline
+        log_session_event(
+            session_id=UUID(exec_ctx.session_id),
+            event_type="agent_completed",
+            agent_id=agent_id,
+            title=f"{agent_id} completed",
+            agent_run_id=agent_run.id,
+            event_data={"iterations": iteration_count},
+        )
 
         return {"success": True, "result": result}
 
@@ -773,6 +831,15 @@ async def _handle_approval_step(
         "message": approval_message,
         "step_id": str(step.id),
     })
+
+    # Persist event to database for timeline
+    log_session_event(
+        session_id=UUID(exec_ctx.session_id),
+        event_type="approval_pending",
+        title=f"Approval required: {step.agent_id}",
+        approval_id=approval.id,
+        event_data={"message": approval_message},
+    )
 
     return {
         "success": True,
