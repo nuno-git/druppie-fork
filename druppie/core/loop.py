@@ -380,10 +380,8 @@ async def run_agent(
     )
     exec_ctx.current_agent_run_id = str(agent_run.id)
 
-    exec_ctx.emit("agent_started", {
-        "agent_id": agent_id,
-        "agent_run_id": str(agent_run.id),
-    })
+    # Note: agent_started event is emitted by runtime.py when agent.run() starts
+    # to avoid duplicate events
 
     logger.info(
         "agent_run_started",
@@ -459,12 +457,8 @@ async def run_agent(
             completed_at=datetime.now(timezone.utc),
         )
 
-        exec_ctx.emit("agent_completed", {
-            "agent_id": agent_id,
-            "agent_run_id": str(agent_run.id),
-            "result_preview": str(result)[:200] if result else None,
-            "iterations": iteration_count,
-        })
+        # Note: agent_completed event is emitted by runtime.py when agent.run() completes
+        # to avoid duplicate events
 
         return {"success": True, "result": result}
 
