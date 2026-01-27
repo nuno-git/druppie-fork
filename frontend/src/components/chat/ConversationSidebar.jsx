@@ -1,8 +1,9 @@
 /**
  * ConversationSidebar - Session history sidebar with collapsible view
+ * Includes search/filter functionality for finding sessions
  */
 
-import React from 'react'
+import React, { useState, useMemo } from 'react'
 import {
   MessageSquare,
   Plus,
@@ -11,6 +12,8 @@ import {
   History,
   Bug,
   Zap,
+  Search,
+  X,
 } from 'lucide-react'
 import { formatTokens, formatCost, calculateCost } from '../../utils/tokenUtils'
 
@@ -101,9 +104,22 @@ const ConversationSidebar = ({
   isCollapsed,
   onToggleCollapse,
 }) => {
+  const [searchQuery, setSearchQuery] = useState('')
+
   // Extract sessions array from paginated response or use directly if already an array
   const sessionList = Array.isArray(sessions) ? sessions : (sessions?.sessions || [])
   const totalSessions = Array.isArray(sessions) ? sessions.length : (sessions?.total || 0)
+
+  // Filter sessions based on search query
+  const filteredSessions = useMemo(() => {
+    if (!searchQuery.trim()) return sessionList
+    const query = searchQuery.toLowerCase()
+    return sessionList.filter(session => {
+      const preview = (session.preview || session.name || '').toLowerCase()
+      const projectName = (session.project_name || '').toLowerCase()
+      return preview.includes(query) || projectName.includes(query)
+    })
+  }, [sessionList, searchQuery])
 
   if (isCollapsed) {
     return (
@@ -178,17 +194,40 @@ const ConversationSidebar = ({
           <Plus className="w-4 h-4" aria-hidden="true" />
           New Chat
         </button>
+        {/* Search input */}
+        <div className="relative mt-3">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search sessions..."
+            className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            aria-label="Search sessions"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1 hover:bg-gray-100 rounded"
+              aria-label="Clear search"
+            >
+              <X className="w-3 h-3 text-gray-400" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Conversation List */}
       <div className="flex-1 overflow-y-auto p-2">
-        <div className="flex items-center gap-2 px-2 py-2 text-xs font-medium text-gray-500 uppercase">
-          <History className="w-3 h-3" />
-          Recent Conversations
+        <div className="flex items-center justify-between px-2 py-2">
+          <div className="flex items-center gap-2 text-xs font-medium text-gray-500 uppercase">
+            <History className="w-3 h-3" />
+            {searchQuery ? `Results (${filteredSessions.length})` : 'Recent Conversations'}
+          </div>
         </div>
         <div className="space-y-1">
-          {sessionList.length > 0 ? (
-            sessionList.map((session) => (
+          {filteredSessions.length > 0 ? (
+            filteredSessions.map((session) => (
               <ConversationItem
                 key={session.id}
                 session={session}
@@ -197,6 +236,12 @@ const ConversationSidebar = ({
                 onDebug={onDebugSession}
               />
             ))
+          ) : searchQuery ? (
+            <div className="text-center py-8 text-gray-500 text-sm">
+              <Search className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p>No matching sessions</p>
+              <p className="text-xs mt-1">Try a different search term</p>
+            </div>
           ) : (
             <div className="text-center py-8 text-gray-500 text-sm">
               <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-30" />
