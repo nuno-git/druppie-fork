@@ -58,5 +58,5 @@ approval_overrides:
 
 model: glm-4
 temperature: 0.2
-max_tokens: 4096
+max_tokens: 8192
 max_iterations: 15
