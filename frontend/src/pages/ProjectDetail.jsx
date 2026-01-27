@@ -451,9 +451,9 @@ const ConversationsTab = ({ projectId }) => {
         <h3 className="text-lg font-semibold text-white flex items-center">
           <MessageSquare className="w-5 h-5 mr-2 text-purple-400" />
           Linked Conversations
-          {sessions?.count > 0 && (
+          {sessions?.total > 0 && (
             <span className="ml-2 px-2 py-0.5 bg-purple-600 text-white text-xs rounded-full">
-              {sessions.count}
+              {sessions.total}
             </span>
           )}
         </h3>
@@ -470,9 +470,9 @@ const ConversationsTab = ({ projectId }) => {
           <Loader2 className="w-6 h-6 animate-spin mr-2" />
           Loading conversations...
         </div>
-      ) : sessions?.sessions?.length > 0 ? (
+      ) : sessions?.items?.length > 0 ? (
         <div className="space-y-3">
-          {sessions.sessions.map((session) => (
+          {sessions.items.map((session) => (
             <Link
               key={session.id}
               to={`/chat?session=${session.id}`}

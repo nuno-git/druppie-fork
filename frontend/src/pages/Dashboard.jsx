@@ -63,8 +63,8 @@ const Dashboard = () => {
   })
 
   // Extract arrays from paginated responses
-  const plans = plansResponse?.sessions || []
-  const tasks = tasksResponse?.approvals || []
+  const plans = plansResponse?.items || []
+  const tasks = tasksResponse?.items || []
 
   const { data: status } = useQuery({
     queryKey: ['status'],

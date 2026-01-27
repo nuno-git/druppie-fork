@@ -52,24 +52,24 @@ export const cancelChat = (sessionId) =>
   request(`/api/chat/${sessionId}/cancel`, { method: 'POST' })
 
 // ============ Sessions (replaces Plans) ============
-// Paginated sessions for sidebar (new format with preview & project_name)
+// Paginated sessions for sidebar
 export const getSessions = (page = 1, limit = 20) =>
   request(`/api/sessions?page=${page}&limit=${limit}`)
+
+// Get complete session with ALL data (messages, llm_calls, events, approvals, etc.)
 export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
+
+// Resume from chat endpoint (for HITL/approval continuation)
 export const resumeSession = (sessionId, answer = null) =>
-  request(`/api/sessions/${sessionId}/resume`, {
+  request(`/api/chat/${sessionId}/resume`, {
     method: 'POST',
     body: JSON.stringify({ answer }),
   })
 
-// Session trace endpoint for debug panel data
-export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}/trace`)
-
-// Legacy plan endpoints (mapped to sessions/list for backwards compatibility)
-export const getPlans = () => request('/api/sessions/list')
+// Legacy aliases (use getSession instead - it returns everything)
+export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}`)
+export const getPlans = (page = 1, limit = 20) => request(`/api/sessions?page=${page}&limit=${limit}`)
 export const getPlan = (planId) => request(`/api/sessions/${planId}`)
-export const createPlan = (data) =>
-  request('/api/sessions', { method: 'POST', body: JSON.stringify(data) })
 
 // ============ Approvals ============
 export const getApprovals = () => request('/api/approvals')
@@ -96,11 +96,11 @@ export const getApprovalHistory = async (limit = 20) => {
   ])
   // Combine and sort by created_at descending
   const allApprovals = [
-    ...(approved?.approvals || []),
-    ...(rejected?.approvals || []),
+    ...(approved?.items || []),
+    ...(rejected?.items || []),
   ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
   return {
-    approvals: allApprovals.slice(0, limit),
+    items: allApprovals.slice(0, limit),
     total: (approved?.total || 0) + (rejected?.total || 0),
   }
 }

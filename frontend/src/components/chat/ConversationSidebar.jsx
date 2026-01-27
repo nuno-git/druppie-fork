@@ -111,9 +111,9 @@ const ConversationSidebar = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all') // all, completed, failed, running
 
-  // Extract sessions array from paginated response or use directly if already an array
-  const sessionList = Array.isArray(sessions) ? sessions : (sessions?.sessions || [])
-  const totalSessions = Array.isArray(sessions) ? sessions.length : (sessions?.total || 0)
+  // Extract sessions from paginated response
+  const sessionList = sessions?.items || []
+  const totalSessions = sessions?.total || 0
 
   // Filter sessions based on search query and status
   const filteredSessions = useMemo(() => {
