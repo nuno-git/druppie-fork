@@ -4,16 +4,41 @@ This module provides a context object that collects:
 - Workflow events (agent started, completed, tool calls, etc.)
 - LLM calls with full request/response details
 - Real-time event emission via callback
+- Persists events to session_events table
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
+from uuid import UUID
 import time
 
 import structlog
 
 logger = structlog.get_logger()
+
+
+def _persist_event(session_id: str, event_type: str, data: dict | None = None) -> None:
+    """Persist event to session_events table."""
+    try:
+        from druppie.db.database import get_db
+        from druppie.db.crud import create_session_event
+
+        db = next(get_db())
+        try:
+            create_session_event(
+                db=db,
+                session_id=UUID(session_id),
+                event_type=event_type,
+                agent_id=data.get("agent_id") if data else None,
+                title=data.get("title") if data else None,
+                tool_name=data.get("tool_name") if data else None,
+                event_data=data,
+            )
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("persist_event_failed", error=str(e), session_id=session_id)
 
 
 class CancelledException(Exception):
@@ -95,7 +120,7 @@ class ExecutionContext:
         return self._cancelled
 
     def emit(self, event_type: str, data: dict = None) -> None:
-        """Emit an event and store it.
+        """Emit an event, store it, and persist to database.
 
         Args:
             event_type: Type of event (agent_started, tool_call, etc.)
@@ -108,8 +133,11 @@ class ExecutionContext:
             **(data or {}),
         }
 
-        # Store event
+        # Store event in memory
         self.workflow_events.append(event)
+
+        # Persist to database
+        _persist_event(self.session_id, event_type, data)
 
         # Emit to WebSocket if callback is set
         if self.emit_event:
@@ -120,7 +148,6 @@ class ExecutionContext:
                     "event": event,
                 })
             except Exception as e:
-                # Don't fail execution due to emit errors, but log for debugging
                 logger.warning("emit_event_failed", error=str(e), session_id=self.session_id)
 
     def add_llm_call(
