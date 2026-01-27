@@ -185,7 +185,12 @@ class Workflow(Base):
     current_step = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
-    steps = relationship("WorkflowStep", back_populates="workflow", cascade="all, delete-orphan")
+    steps = relationship(
+        "WorkflowStep",
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        order_by="WorkflowStep.step_index",
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
