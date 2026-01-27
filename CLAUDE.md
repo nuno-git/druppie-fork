@@ -590,6 +590,29 @@ const totalDuration = calculateDurationFromTimestamps()
 **Key File**: `frontend/src/pages/Debug.jsx`
 **Result**: Debug page now shows actual duration like "1m 49.5s" calculated from event timestamps
 
+### Issue: Vite/React Apps Fail with "MIME type" Error After Deploy
+**Symptom**: Deployed Vite/React apps show blank page with error: "Failed to load module script: Expected a JavaScript module script but the server responded with a MIME type of 'application/octet-stream'"
+**Cause**: Developer agent was creating simple Dockerfiles that copy source files directly to nginx without running `npm run build`
+**Root Cause**: Vite apps serve `.jsx` files in development mode, but production requires building to static JS/CSS
+**Fix**: Updated `developer.yaml` with a proper multi-stage Dockerfile template for Vite/React:
+```dockerfile
+# Build stage
+FROM node:18-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+# Production stage
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html/
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+```
+**Key File**: `druppie/agents/definitions/developer.yaml`
+**Key Distinction**: Static HTML/CSS/JS pages can use simple nginx copy, but React/Vite apps MUST have a build step
+
 ### Issue: docker-compose Not Loading .env from Project Root
 **Symptom**: Backend container shows empty API keys (`DEEPINFRA_API_KEY=`, `ZAI_API_KEY=`)
 **Cause**: The `compose()` helper function in setup.sh didn't pass `--env-file .env`

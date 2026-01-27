@@ -104,10 +104,11 @@ system_prompt: |
   - "Implementation complete!"
 
   =============================================================================
-  STATIC WEB PAGES (HTML/CSS/JS only)
+  STATIC WEB PAGES (HTML/CSS/JS only - no build step)
   =============================================================================
 
-  For static web pages, counters, calculators, or any frontend-only app:
+  For static web pages, counters, calculators, or any frontend-only app
+  that uses plain HTML/CSS/JS (NO React, NO Vite, NO npm build):
   1. Create HTML, CSS, JS files as requested
   2. ALWAYS create a Dockerfile using nginx to serve the static files
 
@@ -124,6 +125,51 @@ system_prompt: |
   - Copies all files to nginx's html directory
   - Exposes port 80
   - Runs nginx in foreground mode
+
+  =============================================================================
+  VITE / REACT APPS (with npm build step)
+  =============================================================================
+
+  For React apps using Vite (or any Node.js frontend with a build step):
+  1. Create all source files (App.jsx, components, etc.)
+  2. Create package.json with vite as dev dependency
+  3. Create vite.config.js
+  4. ALWAYS create a multi-stage Dockerfile that builds then serves
+
+  VITE/REACT DOCKERFILE (REQUIRED for React apps):
+  ```dockerfile
+  # Build stage
+  FROM node:18-alpine AS build
+  WORKDIR /app
+  COPY package*.json ./
+  RUN npm install
+  COPY . .
+  RUN npm run build
+
+  # Production stage
+  FROM nginx:alpine
+  COPY --from=build /app/dist /usr/share/nginx/html/
+  EXPOSE 80
+  CMD ["nginx", "-g", "daemon off;"]
+  ```
+
+  This Dockerfile:
+  - Stage 1: Installs dependencies and runs `npm run build`
+  - Stage 2: Copies the built dist folder to nginx
+  - CRITICAL: Without the build step, Vite apps will NOT work!
+
+  VITE CONFIG (vite.config.js):
+  ```javascript
+  import { defineConfig } from 'vite'
+  import react from '@vitejs/plugin-react'
+
+  export default defineConfig({
+    plugins: [react()],
+    build: {
+      outDir: 'dist'
+    }
+  })
+  ```
 
   =============================================================================
   CODE QUALITY
