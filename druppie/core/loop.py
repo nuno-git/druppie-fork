@@ -583,7 +583,6 @@ async def execute_workflow_steps(
             exec_ctx.check_cancelled()
 
             step = steps[i]
-            step_type = _get_step_type(step.agent_id)
 
             logger.info(
                 "executing_step",
@@ -592,7 +591,6 @@ async def execute_workflow_steps(
                 step_index=i,
                 step_id=str(step.id),
                 agent_id=step.agent_id,
-                step_type=step_type,
             )
 
             # Update current step in workflow
@@ -615,75 +613,61 @@ async def execute_workflow_steps(
             })
 
             try:
-                if step_type == "approval":
-                    # Create approval request and pause
-                    result = await _handle_approval_step(
-                        db, step, context, exec_ctx, steps=steps, step_index=i
-                    )
-                    if result.get("paused"):
-                        return result
+                # Run the agent with workflow info for resume support
+                result = await run_agent(
+                    db=db,
+                    agent_id=step.agent_id,
+                    prompt=step.description or "",
+                    context=context,
+                    exec_ctx=exec_ctx,
+                    workflow_step_id=step.id,
+                    workflow_id=workflow.id,
+                    step_index=i,
+                )
 
-                elif step_type == "agent":
-                    # Run the agent with workflow info for resume support
-                    result = await run_agent(
-                        db=db,
-                        agent_id=step.agent_id,
-                        prompt=step.description or "",
-                        context=context,
-                        exec_ctx=exec_ctx,
-                        workflow_step_id=step.id,
-                        workflow_id=workflow.id,
-                        step_index=i,
-                    )
+                if result.get("paused"):
+                    return result
 
-                    if result.get("paused"):
-                        return result
-
-                    if not result.get("success"):
-                        # Step failed
-                        update_workflow_step(
-                            db,
-                            step.id,
-                            status="failed",
-                            result_summary=result.get("error", "Unknown error"),
-                            completed_at=datetime.now(timezone.utc),
-                        )
-
-                        exec_ctx.emit("step_failed", {
-                            "step_index": i,
-                            "step_id": str(step.id),
-                            "error": result.get("error"),
-                        })
-
-                        # Stop workflow on error (unless continue_on_error)
-                        break
-
-                    # Step succeeded
-                    step_result = result.get("result")
-                    result_summary = _summarize_result(step_result)
-
+                if not result.get("success"):
+                    # Step failed
                     update_workflow_step(
                         db,
                         step.id,
-                        status="completed",
-                        result_summary=result_summary,
+                        status="failed",
+                        result_summary=result.get("error", "Unknown error"),
                         completed_at=datetime.now(timezone.utc),
                     )
 
-                    results.append({
+                    exec_ctx.emit("step_failed", {
+                        "step_index": i,
                         "step_id": str(step.id),
-                        "agent_id": step.agent_id,
-                        "success": True,
-                        "result": step_result,
+                        "error": result.get("error"),
                     })
 
-                    # Add result to context for next steps
-                    context[f"step_{i}_result"] = step_result
+                    # Stop workflow on error (unless continue_on_error)
+                    break
 
-                else:
-                    # Unknown step type - skip
-                    logger.warning("unknown_step_type", agent_id=step.agent_id)
-                    update_workflow_step(db, step.id, status="skipped")
+                # Step succeeded
+                step_result = result.get("result")
+                result_summary = _summarize_result(step_result)
+
+                update_workflow_step(
+                    db,
+                    step.id,
+                    status="completed",
+                    result_summary=result_summary,
+                    completed_at=datetime.now(timezone.utc),
+                )
+
+                results.append({
+                    "step_id": str(step.id),
+                    "agent_id": step.agent_id,
+                    "success": True,
+                    "result": step_result,
+                })
+
+                # Add result to context for next steps
+                context[f"step_{i}_result"] = step_result
 
                 exec_ctx.emit("step_completed", {
                     "step_index": i,
@@ -747,13 +731,6 @@ async def execute_workflow_steps(
         return {"success": False, "error": str(e)}
 
 
-def _get_step_type(agent_id: str) -> str:
-    """Determine step type from agent_id."""
-    if agent_id.startswith("approval"):
-        return "approval"
-    return "agent"
-
-
 def _summarize_result(result: Any) -> str:
     """Create a summary of a step result for storage."""
     if result is None:
@@ -768,76 +745,6 @@ def _summarize_result(result: Any) -> str:
         if "url" in result:
             return f"URL: {result['url']}"
     return str(result)[:1000]
-
-
-async def _handle_approval_step(
-    db: DBSession,
-    step: WorkflowStep,
-    context: dict,
-    exec_ctx: ExecutionContext,
-    steps: list[WorkflowStep] | None = None,
-    step_index: int | None = None,
-) -> dict[str, Any]:
-    """Handle an approval step - create approval and pause."""
-    # Extract approval info from step description
-    approval_message = step.description or "Approval required to continue"
-
-    # Generate a meaningful title by looking at surrounding steps
-    # e.g., "Approve architect design before developer phase"
-    title = "Approve to continue workflow"
-    if steps and step_index is not None:
-        # Find the previous agent step (what was just done)
-        prev_agent = None
-        for i in range(step_index - 1, -1, -1):
-            if _get_step_type(steps[i].agent_id) == "agent":
-                prev_agent = steps[i].agent_id
-                break
-
-        # Find the next agent step (what comes after)
-        next_agent = None
-        for i in range(step_index + 1, len(steps)):
-            if _get_step_type(steps[i].agent_id) == "agent":
-                next_agent = steps[i].agent_id
-                break
-
-        if prev_agent and next_agent:
-            title = f"Approve {prev_agent} work before {next_agent} phase"
-        elif prev_agent:
-            title = f"Approve {prev_agent} work to continue"
-        elif next_agent:
-            title = f"Approval needed before {next_agent} phase"
-
-    # Create approval record
-    # Note: create_approval expects session_id as the second positional argument
-    approval = create_approval(
-        db,
-        UUID(exec_ctx.session_id),  # session_id as positional arg
-        approval_type="workflow_step",
-        workflow_step_id=step.id,
-        title=title,
-        description=approval_message,
-        required_role="developer",  # Default role
-    )
-
-    # Update step status
-    update_workflow_step(db, step.id, status="waiting_approval")
-
-    # Update session status
-    update_session(db, UUID(exec_ctx.session_id), status="paused_approval")
-
-    exec_ctx.emit("approval_required", {
-        "approval_id": str(approval.id),
-        "approval_type": "workflow_step",
-        "message": approval_message,
-        "step_id": str(step.id),
-    })
-
-    return {
-        "success": True,
-        "paused": True,
-        "approval_id": str(approval.id),
-        "message": f"Waiting for approval: {approval_message}",
-    }
 
 
 # =============================================================================

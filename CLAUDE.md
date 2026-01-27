@@ -713,12 +713,17 @@ CMD ["nginx", "-g", "daemon off;"]
 To test the complete architect workflow (including HITL questions and architect approval):
 1. Log in as `normal_user`
 2. Send "Build me a todo app" (complex app triggers architect)
-3. Planner creates plan: architect → approval:step_2 → developer → deployer
-4. Architect calls coding:write_file → requires architect role approval
+3. Planner creates plan: architect → developer → deployer (3 steps)
+4. Architect calls coding:write_file → requires architect role approval (from approval_overrides)
 5. Log in as `architect` user, go to Approvals, approve the write_file
-6. Session continues to approval:step_2 → requires developer role approval
-7. Log in as `seniordev` user, go to Approvals, approve step_2
-8. Session continues with developer agent, then deployer
+6. Session continues with developer agent
+7. Deployer calls docker:build and docker:run → requires developer role approval (from mcp_config.yaml)
+8. Log in as `seniordev` user, go to Approvals, approve docker operations
+9. Session completes with deployed app URL
+
+**Note**: Workflow step approvals are deprecated. All approvals now happen via MCP tool permissions defined in:
+- `mcp_config.yaml` - Global defaults (e.g., docker:build needs developer)
+- Agent `approval_overrides` - Per-agent overrides (e.g., architect's write_file needs architect)
 
 ### Architecture Reminder
 - `loop.py` - Keep simple/abstract, orchestrates LangGraph states
