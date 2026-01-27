@@ -641,6 +641,14 @@ const formatTokens = (count) => {
   return count.toString()
 }
 
+// Calculate and format cost from tokens ($0.40 per million tokens for DeepInfra)
+const formatCost = (tokens) => {
+  if (!tokens) return null
+  const cost = (tokens / 1000000) * 0.40
+  if (cost < 0.01) return '<$0.01'
+  return `$${cost.toFixed(2)}`
+}
+
 // Summary stats component
 const TraceSummary = ({ trace }) => {
   // Calculate stats from trace
@@ -706,6 +714,11 @@ const TraceSummary = ({ trace }) => {
                   <span className="text-sm bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">
                     {formatTokens(tokens)}
                   </span>
+                  {formatCost(tokens) && (
+                    <span className="text-xs text-gray-500">
+                      ({formatCost(tokens)})
+                    </span>
+                  )}
                 </div>
               ))}
           </div>
