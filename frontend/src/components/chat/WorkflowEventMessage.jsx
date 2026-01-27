@@ -29,7 +29,8 @@ const WorkflowEventMessage = ({ event }) => {
 
   // Determine event category and styling
   const getEventDisplay = () => {
-    if (eventType.includes('agent_started') || eventType === 'agent_start') {
+    // Handle specific agent events (router_started, developer_completed) and generic ones
+    if (eventType.includes('_started') || eventType.includes('agent_started') || eventType === 'agent_start') {
       return {
         title: `${agentConfig?.name || agentId || 'Agent'} started working`,
         icon: Play,
@@ -41,7 +42,7 @@ const WorkflowEventMessage = ({ event }) => {
       }
     }
 
-    if (eventType.includes('agent_completed') || eventType === 'agent_complete') {
+    if (eventType.includes('_completed') || eventType.includes('agent_completed') || eventType === 'agent_complete') {
       return {
         title: `${agentConfig?.name || agentId || 'Agent'} finished`,
         icon: CheckCircle,
