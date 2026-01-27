@@ -163,6 +163,11 @@ const Dashboard = () => {
                   </span>
                 </div>
                 <div className="text-sm text-gray-500 mb-3">
+                  {app.owner_username && (
+                    <span className="mr-3">
+                      By: <span className="font-medium text-gray-700">{app.owner_username}</span>
+                    </span>
+                  )}
                   Branch: <span className="font-mono">{app.branch}</span>
                   {app.port && <span className="ml-2">Port: {app.port}</span>}
                 </div>
