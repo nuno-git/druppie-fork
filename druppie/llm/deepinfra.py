@@ -519,6 +519,22 @@ class ChatDeepInfra(BaseLLM):
                 # Clean up the match - it should be JSON
                 json_str = match.strip()
 
+                # Handle malformed JSON - missing opening brace
+                # e.g., '"name": "hitl_ask_question", "arguments": {...}'
+                if not json_str.startswith('{') and '"name"' in json_str:
+                    json_str = '{' + json_str
+                    # Find or add closing brace
+                    if not json_str.rstrip().endswith('}'):
+                        # Count braces to see if we need to add one
+                        open_braces = json_str.count('{')
+                        close_braces = json_str.count('}')
+                        if open_braces > close_braces:
+                            json_str = json_str + '}' * (open_braces - close_braces)
+                    logger.debug(
+                        "fixed_malformed_json_tool_call",
+                        fixed_json_preview=json_str[:200] if len(json_str) > 200 else json_str,
+                    )
+
                 # Try to find valid JSON by finding matching braces
                 if json_str.startswith('{'):
                     brace_count = 0
