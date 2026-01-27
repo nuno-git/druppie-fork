@@ -541,20 +541,31 @@ with db_session() as db:
 **Key Files**: `druppie/core/loop.py` (lines ~1205 and ~1753)
 **Result**: Debug page now shows complete execution history (48 events instead of 3)
 
-### Issue: Workflow Stuck After Second MCP Tool Approval
-**Symptom**: After approving second `coding:write_file` from architect, workflow doesn't continue to next step
+### Issue: Workflow Stuck After Second MCP Tool Approval (FIXED)
+**Symptom**: After approving second MCP tool (e.g., docker:run after docker:build), workflow doesn't continue - session stays at `paused_approval` status
 **Observation**:
-- Session status stays as `paused_hitl`
-- Debug panel shows architect as "running" even though tool completed successfully
 - Backend logs show `resuming_mcp_tool_approval_with_state` with `agent_id=None` and `current_step=None`
-- WebSocket errors: "Unexpected ASGI message 'websocket.send', after sending 'websocket.close'"
-**Root Cause**: The workflow state isn't properly preserved or restored when resuming from approval
-**Impact**: Multi-step workflows get stuck after the first approval/HITL round
-**To Investigate**:
-1. Check how `agent_state` is being saved when creating approval records
-2. Verify `resume_from_step_approval` properly restores workflow position
-3. Check if WebSocket disconnection during approval affects workflow continuation
-**Workaround**: Session may need to be manually restarted or workflow resumed via API
+- Session status never updates to `completed`
+**Root Cause**: In `resume_from_step_approval`, when an agent paused again for a SECOND MCP approval, the new approval record was created but `agent_state` was NOT saved to it. This meant when the second approval was approved, there was no agent state to resume from.
+**Fix**: In `resume_from_step_approval` (loop.py ~lines 1237-1249), after detecting the agent paused for a new approval, call `update_approval()` to save the agent_state:
+```python
+# Check if agent paused again for MCP approval
+if result.get("paused") and result.get("approval_id"):
+    update_session(db, UUID(session_id), status="paused_approval")
+    # BUG FIX: Save agent_state to the NEW approval for resumption
+    if result.get("agent_state"):
+        update_approval(
+            db, result["approval_id"], {"agent_state": result["agent_state"]}
+        )
+        logger.info(
+            "saved_agent_state_for_approval_in_resume_from_step_approval",
+            approval_id=result["approval_id"],
+            agent_id=result["agent_state"].get("agent_id"),
+        )
+```
+**Key Files**: `druppie/core/loop.py`
+**Test**: Create project → docker:build (approve) → docker:run (approve) → session should now complete
+**Result**: Multi-approval workflows (like deployer's docker:build + docker:run) now complete properly
 
 ### Issue: docker-compose Not Loading .env from Project Root
 **Symptom**: Backend container shows empty API keys (`DEEPINFRA_API_KEY=`, `ZAI_API_KEY=`)
