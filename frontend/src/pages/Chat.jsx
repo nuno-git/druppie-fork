@@ -7,7 +7,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Send, Bug, FolderOpen, ExternalLink } from 'lucide-react'
-import { sendChat, getSessions, getPlan, answerQuestion, approveTask, rejectTask, submitHITLResponse, getProject, cancelChat, getSessionTrace } from '../services/api'
+import { sendChat, getSessions, getPlan, answerQuestion, approveTask, rejectTask, submitHITLResponse, getProject, cancelChat } from '../services/api'
 import { useAuth } from '../App'
 import {
   initSocket,
@@ -63,7 +63,6 @@ const Chat = () => {
   const [isAgentWorking, setIsAgentWorking] = useState(false) // For showing typing indicator after approval
   const [currentAgentId, setCurrentAgentId] = useState(null) // Track which agent is currently working
   const [toolExecutions, setToolExecutions] = useState([]) // Track tool executions with approval status
-  const seenApprovalIds = useRef(new Set()) // Track seen approval IDs to prevent duplicates
   const [workflowEventsForDisplay, setWorkflowEventsForDisplay] = useState([]) // Workflow events to render as messages
 
   // Fetch session history
@@ -120,160 +119,94 @@ const Chat = () => {
     if (currentPlanId) joinPlanRoom(currentPlanId)
   }, [currentPlanId])
 
-  // Workflow event listener
+  // Workflow event listener - simplified to just trigger refetch and update UI state
   useEffect(() => {
     const handleWorkflowEvent = (data) => {
-      console.log('[Chat] handleWorkflowEvent called:', data)
       const eventSessionId = data.session_id || data.plan_id
-      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) {
-        console.log('[Chat] Ignoring event - session mismatch:', eventSessionId, '!==', currentPlanId)
-        return
-      }
+      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) return
 
       const event = data.event
-      if (!event) {
-        console.log('[Chat] No event in data, skipping')
-        return
-      }
+      if (!event) return
 
       const eventType = event.type || event.event_type || ''
-      console.log('[Chat] Processing workflow event:', eventType, event)
 
       // Update agent working state based on event type
       if (eventType === 'agent_started' || eventType.includes('_started')) {
         const agentId = event.data?.agent_id || event.agent_id
-        console.log('[Chat] Agent started:', agentId)
         setIsAgentWorking(true)
         if (agentId) setCurrentAgentId(agentId)
+        setCurrentStep(`${agentId || 'Agent'} is working...`)
       }
 
-      const stepTitle = event.title || event.data?.description || formatEventTitle(event)
-      if (stepTitle) setCurrentStep(stepTitle)
-
-      // Check if workflow is complete or failed - stop the working indicator
+      // Check if workflow is complete or failed - stop the working indicator and refetch
       if (eventType.includes('workflow_completed') || eventType.includes('workflow_failed') ||
           eventType.includes('session_completed') || eventType.includes('session_failed') ||
           eventType.includes('execution_complete') || eventType.includes('execution_failed')) {
-        console.log('[Chat] Workflow/session completed or failed, stopping indicator')
         setIsAgentWorking(false)
         setCurrentStep(null)
         setCurrentAgentId(null)
-      }
-
-      // Agent completed - check if it's the last agent (deployer usually)
-      if (eventType === 'agent_completed' || eventType.includes('_completed')) {
-        const agentId = event.data?.agent_id || event.agent_id
-        if (agentId) setCurrentAgentId(agentId)
-        // If deployer completed, it's likely the end of the workflow
-        if (agentId === 'deployer') {
-          console.log('[Chat] Deployer completed, stopping indicator')
-          setIsAgentWorking(false)
-          setCurrentStep(null)
+        // Refetch session data to get the final state
+        if (currentPlanId) {
+          getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
         }
       }
 
-      // Tool approval required - stop the indicator
+      // Agent completed - refetch to update the UI
+      if (eventType === 'agent_completed' || eventType.includes('_completed')) {
+        const agentId = event.data?.agent_id || event.agent_id
+        if (agentId === 'deployer') {
+          setIsAgentWorking(false)
+          setCurrentStep(null)
+        }
+        // Refetch to show the latest tool calls
+        if (currentPlanId) {
+          getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
+        }
+      }
+
+      // Tool approval required - stop indicator and refetch
       if (eventType.includes('approval_required') || eventType.includes('approval_pending')) {
-        console.log('[Chat] Approval required, stopping indicator')
         setIsAgentWorking(false)
         setCurrentStep(null)
+        if (currentPlanId) {
+          getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
+        }
       }
 
-      const formattedEvent = {
+      // For live events during execution, just add to the live list for typing indicator
+      setLiveWorkflowEvents((prev) => [...prev, {
         ...event,
         event_type: event.type,
-        title: stepTitle,
-        description: event.data?.description || event.description,
-        status: event.status || (event.type?.includes('completed') || event.type?.includes('success') ? 'success' : 'working'),
-        data: event.data || event,
         timestamp: event.timestamp || new Date().toISOString(),
-      }
-      setLiveWorkflowEvents((prev) => [...prev, formattedEvent])
-
-      // Add to display list for inline workflow messages
-      // SIMPLE RULES: Only known agents and tool calls (ApprovalCard handles approvals)
-      const knownAgents = ['router', 'planner', 'architect', 'developer', 'deployer', 'reviewer', 'tester']
-      const isDisplayable = (
-        // Tool calls are always shown
-        eventType.includes('tool_call') ||
-        // Agent start/complete only if known agent
-        ((eventType === 'agent_started' || eventType === 'agent_completed') && knownAgents.includes(agentId))
-      )
-      if (isDisplayable) {
-        setWorkflowEventsForDisplay((prev) => {
-          // Deduplicate by checking for similar recent events
-          const recentEvent = prev.find(e => {
-            const eType = e.type || e.event_type || ''
-            const sameAgent = (e.agent || e.data?.agent_id) === (formattedEvent.agent || formattedEvent.data?.agent_id)
-            const bothStarted = eType.includes('started') && eventType.includes('started')
-            const bothCompleted = eType.includes('completed') && eventType.includes('completed')
-            const timeDiff = Math.abs(new Date(e.timestamp).getTime() - new Date(formattedEvent.timestamp).getTime())
-            return sameAgent && (bothStarted || bothCompleted) && timeDiff < 3000
-          })
-          if (recentEvent) return prev // Skip duplicate
-          return [...prev, formattedEvent]
-        })
-      }
+      }])
     }
 
     const unsubscribe = onWorkflowEvent(handleWorkflowEvent)
     return () => unsubscribe()
   }, [currentPlanId])
 
-  // Approval event listeners
+  // Approval event listeners - simplified to refetch session data
   useEffect(() => {
     const handleTaskApproved = (data) => {
       const approverId = data.approver_id
       const approverUsername = data.approver_username || data.approver_role || 'User'
       const approverRole = data.approver_role || 'user'
       const toolName = data.tool_name || data.name || 'action'
-      const approvalId = data.approval_id || data.id
       const agentId = data.agent_id
-
-      // Update the tool execution status instead of adding a message
-      setToolExecutions((prev) => {
-        const existing = prev.find(t => t.approvalId === approvalId)
-        if (existing) {
-          return prev.map(t => t.approvalId === approvalId ? {
-            ...t,
-            status: 'approved',
-            approverUsername,
-            approverRole,
-            approvedAt: new Date().toISOString(),
-          } : t)
-        }
-        // If not found, add it (for real-time updates from other sessions)
-        return [...prev, {
-          id: approvalId,
-          approvalId,
-          agentId: agentId || 'developer',
-          toolName,
-          parameters: data.args || {},
-          status: 'approved',
-          approverUsername,
-          approverRole,
-          approvedAt: new Date().toISOString(),
-        }]
-      })
 
       // Only show notification if it's from another user
       if (approverId && approverId !== user?.id) {
         toast.success('Task Approved', `${approverUsername} (${approverRole}) approved: ${toolName}`)
-
         // Show typing indicator since agent is now working
         setCurrentStep(`${agentId || 'Agent'} is continuing execution...`)
         setCurrentAgentId(agentId || 'developer')
         setIsAgentWorking(true)
-        setLiveWorkflowEvents([])
       }
 
-      // Remove the pending approval from messages and session-level approvals
-      setMessages((prev) => prev.map((msg) => {
-        if (!msg.pendingApprovals) return msg
-        return { ...msg, pendingApprovals: msg.pendingApprovals.filter(a => (a.task_id || a.id) !== approvalId) }
-      }))
-      setSessionPendingApprovals((prev) => prev.filter(a => (a.task_id || a.id) !== approvalId))
-
+      // Refetch session to get updated state
+      if (currentPlanId) {
+        getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
+      }
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
     }
@@ -283,46 +216,16 @@ const Chat = () => {
       const rejectorUsername = data.approver_username || data.approver_role || 'User'
       const rejectorRole = data.approver_role || 'user'
       const toolName = data.tool_name || data.name || 'action'
-      const approvalId = data.approval_id || data.id
-      const agentId = data.agent_id
-
-      // Update the tool execution status instead of adding a message
-      setToolExecutions((prev) => {
-        const existing = prev.find(t => t.approvalId === approvalId)
-        if (existing) {
-          return prev.map(t => t.approvalId === approvalId ? {
-            ...t,
-            status: 'rejected',
-            approverUsername: rejectorUsername,
-            approverRole: rejectorRole,
-            rejectionReason: data.reason || data.comment,
-          } : t)
-        }
-        return [...prev, {
-          id: approvalId,
-          approvalId,
-          agentId: agentId || 'developer',
-          toolName,
-          parameters: data.args || {},
-          status: 'rejected',
-          approverUsername: rejectorUsername,
-          approverRole: rejectorRole,
-          rejectionReason: data.reason || data.comment,
-        }]
-      })
 
       // Only show notification if it's from another user
       if (rejectorId && rejectorId !== user?.id) {
         toast.warning('Task Rejected', `${rejectorUsername} (${rejectorRole}) rejected: ${toolName}`)
       }
 
-      // Remove the pending approval from messages
-      setMessages((prev) => prev.map((msg) => {
-        if (!msg.pendingApprovals) return msg
-        return { ...msg, pendingApprovals: msg.pendingApprovals.filter(a => (a.task_id || a.id) !== approvalId) }
-      }))
-      setSessionPendingApprovals((prev) => prev.filter(a => (a.task_id || a.id) !== approvalId))
-
+      // Refetch session to get updated state
+      if (currentPlanId) {
+        getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
+      }
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
     }
@@ -330,7 +233,7 @@ const Chat = () => {
     const unsubApproved = onTaskApproved(handleTaskApproved)
     const unsubRejected = onTaskRejected(handleTaskRejected)
     return () => { unsubApproved(); unsubRejected() }
-  }, [queryClient, user?.id, toast])
+  }, [queryClient, user?.id, toast, currentPlanId])
 
   // Execution cancelled listener
   useEffect(() => {
@@ -347,116 +250,40 @@ const Chat = () => {
     return () => unsub()
   }, [currentPlanId, toast])
 
-  // HITL event listeners
+  // HITL event listeners - simplified to refetch session data
   useEffect(() => {
     const handleHITLQuestion = (data) => {
-      console.log('[Chat] handleHITLQuestion called:', data)
-      // Filter by session - only show questions for our session
       const eventSessionId = data.session_id
-      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) {
-        console.log('[Chat] Ignoring question - session mismatch:', eventSessionId, '!==', currentPlanId)
-        return
-      }
-
-      console.log('[Chat] Processing HITL question for session:', eventSessionId)
-
-      // Create question data with agent info for proper display
-      const questionData = {
-        id: data.request_id || data.question_id,
-        question: data.question,
-        input_type: data.input_type,
-        choices: data.choices || [],
-        allow_other: data.allow_other !== false,
-        context: data.context,
-        session_id: data.session_id || currentPlanId,
-        agent_id: data.agent_id || 'unknown',
-      }
+      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) return
 
       // Stop showing typing indicator when waiting for user input
       setIsAgentWorking(false)
       setCurrentStep(null)
 
-      // Add as a separate question message (not embedded in assistant message)
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'question',
-          questionData,
-          timestamp: new Date().toISOString(),
-        },
-      ])
-
       const agentName = data.agent_id ? data.agent_id.charAt(0).toUpperCase() + data.agent_id.slice(1) : 'Agent'
-      toast.info(`Question from ${agentName}`, data.question.substring(0, 80) + (data.question.length > 80 ? '...' : ''))
+      toast.info(`Question from ${agentName}`, data.question?.substring(0, 80) + (data.question?.length > 80 ? '...' : ''))
+
+      // Refetch session to get the question
+      if (currentPlanId) {
+        getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
+      }
     }
 
     const handleApprovalRequired = (data) => {
-      // Filter by session - only show approvals for our session
       const eventSessionId = data.session_id
-      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) {
-        return
-      }
+      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) return
 
-      // Deduplicate - skip if we've already seen this approval
-      const approvalId = data.approval_id
-      if (seenApprovalIds.current.has(approvalId)) {
-        return
-      }
-      seenApprovalIds.current.add(approvalId)
+      // Stop showing typing indicator when waiting for approval
+      setIsAgentWorking(false)
+      setCurrentStep(null)
 
-      // Handle both tool approvals (data.tool) and step approvals (data.message)
-      const isStepApproval = data.tool?.startsWith('approval:') || data.message
-      const taskName = isStepApproval
-        ? (data.message || 'Approval checkpoint')
-        : data.tool
-
-      const approvalData = {
-        task_id: data.approval_id,
-        task_name: taskName,
-        mcp_tool: isStepApproval ? null : data.tool,
-        required_roles: data.required_roles || ['developer'],
-        approval_type: data.required_roles?.length > 1 ? 'multi' : 'self',
-        current_approvals: 0,
-        required_approvals: 1,
-        approved_by_roles: [],
-        approved_by_ids: [],
-        args: data.args || data.context,
-        step_id: data.step_id,
-      }
-
-      // Add to tool executions for ToolExecutionCard display (only for tool approvals, not step approvals)
-      if (!isStepApproval) {
-        setToolExecutions((prev) => {
-          // Avoid duplicates
-          if (prev.find(t => t.approvalId === data.approval_id)) return prev
-          return [...prev, {
-            id: data.approval_id,
-            approvalId: data.approval_id,
-            agentId: data.agent_id || currentAgentId || 'developer',
-            toolName: data.tool,
-            parameters: data.args || data.context || {},
-            status: 'pending',
-          }]
-        })
-        // Stop showing typing indicator when waiting for approval
-        setIsAgentWorking(false)
-        setCurrentStep(null)
-      }
-
-      setMessages((prev) => {
-        const lastMsg = prev[prev.length - 1]
-        if (lastMsg && lastMsg.role !== 'user') {
-          return prev.map((msg, idx) => idx === prev.length - 1
-            ? { ...msg, pendingApprovals: [...(msg.pendingApprovals || []), approvalData] }
-            : msg
-          )
-        }
-        const content = isStepApproval
-          ? taskName
-          : `I need approval to run: ${data.tool}`
-        return [...prev, { role: 'assistant', content, pendingApprovals: [approvalData], timestamp: new Date().toISOString() }]
-      })
+      const taskName = data.tool || data.message || 'Approval Required'
       toast.warning('Approval Required', taskName)
+
+      // Refetch session to get the approval
+      if (currentPlanId) {
+        getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
+      }
     }
 
     const handleHITLProgress = (data) => {
@@ -475,37 +302,19 @@ const Chat = () => {
     return () => { unsubQuestion(); unsubApproval(); unsubProgress() }
   }, [currentPlanId, toast])
 
-  // Deployment complete listener - shows the app URL when docker:run succeeds
+  // Deployment complete listener - simplified to refetch and show toast
   useEffect(() => {
     const handleDeploymentComplete = (data) => {
       const sessionId = data.session_id
       if (sessionId && currentPlanId && sessionId !== currentPlanId) return
 
       const url = data.url
-      const containerName = data.container_name
-
-      // Add or update the last message with deployment info
-      setMessages((prev) => {
-        const lastMsg = prev[prev.length - 1]
-        if (lastMsg && lastMsg.role !== 'user') {
-          // Update the last assistant message with deployment URL
-          return prev.map((msg, idx) =>
-            idx === prev.length - 1
-              ? { ...msg, deploymentUrl: url, containerName: containerName }
-              : msg
-          )
-        }
-        // Add a new deployment message
-        return [...prev, {
-          role: 'assistant',
-          content: `🎉 Deployment complete! Your application is now running.`,
-          deploymentUrl: url,
-          containerName: containerName,
-          timestamp: new Date().toISOString(),
-        }]
-      })
-
       toast.success('Deployment Successful!', `Your app is running at ${url}`)
+
+      // Refetch session to get the final state with deployment info
+      if (currentPlanId) {
+        getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
+      }
     }
 
     const unsub = onDeploymentComplete(handleDeploymentComplete)
@@ -531,122 +340,131 @@ const Chat = () => {
       setCurrentProject(null)
     }
 
-    // Fetch trace data from the normalized database endpoint
-    let normalizedEvents = []
-    let llmCalls = []
-    try {
-      const traceData = await getSessionTrace(sessionId)
-      if (traceData?.trace) {
-        // Convert trace events to DebugPanel format
-        normalizedEvents = (traceData.trace.events || []).map(event => ({
-          id: event.id,
-          type: event.type,
-          event_type: event.type,
-          title: formatEventTitle({ type: event.type, event_type: event.type, data: { agent_id: event.agent, ...event.data } }),
-          description: event.tool ? `Tool: ${event.tool}` : '',
-          status: event.type.includes('complete') ? 'success' : event.type.includes('error') ? 'error' : 'working',
-          timestamp: event.timestamp,
-          data: {
-            agent_id: event.agent,
-            tool_name: event.tool,
-            tool: event.tool,
-            args_preview: event.args ? JSON.stringify(event.args).substring(0, 100) : null,
-            arguments: event.args,
-            result: event.result,
-            ...event.data,
-          },
-          duration_ms: event.duration_ms,
-        }))
+    // Use the new nested agent_runs structure directly from session data
+    // Each agent_run now contains: llm_calls, tool_calls, approvals, hitl_questions
+    const agentRuns = fullSession.agent_runs || []
 
-        // Convert raw LLM calls to DebugPanel format
-        llmCalls = (traceData.trace.raw_llm_calls || []).map((call, idx) => ({
-          agent_id: call.agent_id,
-          iteration: call.iteration || idx + 1,
-          model: call.model,
-          provider: call.provider,
-          duration_ms: call.duration_ms,
-          usage: call.usage,
-          timestamp: call.timestamp,
-          tool_calls: [],  // Not stored in normalized schema
-          response: call.response,
-        }))
+    // Flatten all LLM calls from agent runs for debug panel
+    const llmCalls = agentRuns.flatMap(run =>
+      (run.llm_calls || []).map(call => ({
+        agent_id: run.agent_id,
+        model: call.model,
+        provider: call.provider,
+        duration_ms: call.duration_ms,
+        usage: call.token_usage,
+        timestamp: call.created_at,
+        response: call.response_content,
+      }))
+    )
+
+    // Build workflow events from agent runs and their tool calls
+    const normalizedEvents = []
+    const knownAgents = ['router', 'planner', 'architect', 'developer', 'deployer', 'reviewer', 'tester']
+
+    for (const run of agentRuns) {
+      // Add agent_started event if this is a known agent
+      if (knownAgents.includes(run.agent_id)) {
+        normalizedEvents.push({
+          id: `${run.id}-start`,
+          type: 'agent_started',
+          event_type: 'agent_started',
+          agent: run.agent_id,
+          data: { agent_id: run.agent_id },
+          timestamp: run.started_at,
+          title: formatEventTitle({ type: 'agent_started', data: { agent_id: run.agent_id } }),
+        })
       }
-    } catch (err) {
-      console.error('Error loading trace data:', err)
+
+      // Add tool calls from this agent run
+      for (const tc of (run.tool_calls || [])) {
+        normalizedEvents.push({
+          id: tc.id,
+          type: 'tool_call',
+          event_type: 'tool_call',
+          agent: run.agent_id,
+          tool: tc.tool_name,
+          args: tc.arguments || {},
+          data: {
+            agent_id: run.agent_id,
+            tool_name: tc.tool_name,
+            tool: tc.tool_name,
+            arguments: tc.arguments || {},
+            result: tc.result,
+          },
+          timestamp: tc.created_at,
+          status: tc.status,
+        })
+      }
+
+      // Add agent_completed event if completed and known agent
+      if (run.status === 'completed' && knownAgents.includes(run.agent_id)) {
+        normalizedEvents.push({
+          id: `${run.id}-complete`,
+          type: 'agent_completed',
+          event_type: 'agent_completed',
+          agent: run.agent_id,
+          data: { agent_id: run.agent_id },
+          timestamp: run.completed_at || run.started_at,
+          title: formatEventTitle({ type: 'agent_completed', data: { agent_id: run.agent_id } }),
+        })
+      }
     }
+
+    // Sort events by timestamp
+    normalizedEvents.sort((a, b) => {
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0
+      return timeA - timeB
+    })
 
     setDebugWorkflowEvents(normalizedEvents)
     setDebugLLMCalls(llmCalls)
     setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
 
-    // Store workflow events for inline display
-    // SIMPLE RULES:
-    // 1. Only show agent_started/agent_completed if we have a KNOWN agent
-    // 2. Show tool_call events
-    // 3. Skip approval_pending/approval_required (ApprovalCard handles those)
-    // 4. Skip everything else (step_started, generic events, etc.)
-    const knownAgents = ['router', 'planner', 'architect', 'developer', 'deployer', 'reviewer', 'tester']
-    const displayableEvents = normalizedEvents.filter(event => {
-      const type = event.type || event.event_type || ''
-      const agentId = event.agent || event.data?.agent_id || event.agent_id || ''
+    // Use all normalized events for display (they're already filtered to known agents)
+    setWorkflowEventsForDisplay(normalizedEvents)
+    console.log('[Chat] Loaded displayable events:', normalizedEvents.length)
 
-      // Tool calls are always shown
-      if (type.includes('tool_call')) return true
-
-      // Agent start/complete only if we have a KNOWN agent ID
-      if (type === 'agent_started' || type === 'agent_completed') {
-        return knownAgents.includes(agentId)
-      }
-
-      // Skip approval events (ApprovalCard and ToolExecutionCard handle those)
-      // Skip everything else (step_started, step_completed, tool_result, generic events)
-      return false
-    })
-    setWorkflowEventsForDisplay(displayableEvents)
-    console.log('[Chat] Loaded displayable events:', displayableEvents.length)
-
+    // Load pending approvals from the new nested structure (session.approvals)
+    // and convert to the format expected by ApprovalCard
     let pendingApprovals = []
     let loadedToolExecutions = []
-    if (fullSession.tasks) {
-      pendingApprovals = fullSession.tasks
-        .filter(task => task.status === 'pending_approval')
-        .map(task => ({
-          task_id: task.id,
-          task_name: task.name,
-          mcp_tool: task.mcp_tool,
-          mcp_arguments: task.mcp_arguments || {},  // Include tool arguments for ApprovalCard display
-          required_role: task.required_role,
-          approval_type: task.approval_type,
-          required_roles: task.required_roles,
-          required_approvals: task.required_approvals || 1,
-          current_approvals: task.approvals?.filter(a => a.decision === 'approved').length || 0,
-          approved_by_roles: task.approvals?.filter(a => a.decision === 'approved').map(a => a.role) || [],
-          approved_by_ids: task.approvals?.filter(a => a.decision === 'approved').map(a => a.approved_by || a.approver_id) || [],
-          created_at: task.created_at,  // For timeline sorting
-        }))
 
-      // Load all tool executions (pending, approved, rejected) for ToolExecutionCard display
-      loadedToolExecutions = fullSession.tasks
-        .filter(task => task.mcp_tool && !task.mcp_tool.startsWith('approval:'))
-        .map(task => {
-          const lastApproval = task.approvals?.slice(-1)[0]
-          const isApproved = task.status === 'approved' || task.status === 'completed'
-          const isRejected = task.status === 'rejected'
+    // Session-level approvals list (flattened from all agent_runs)
+    const allApprovals = fullSession.approvals || []
 
-          return {
-            id: task.id,
-            approvalId: task.id,
-            agentId: task.agent_id || 'developer',
-            toolName: task.mcp_tool,
-            parameters: task.mcp_arguments || {},
-            status: isApproved ? 'approved' : isRejected ? 'rejected' : 'pending',
-            approverUsername: lastApproval?.approver_username || lastApproval?.approved_by_username,
-            approverRole: lastApproval?.role,
-            approvedAt: lastApproval?.created_at,
-            rejectionReason: isRejected ? (lastApproval?.comment || task.rejection_reason) : undefined,
-          }
-        })
-    }
+    pendingApprovals = allApprovals
+      .filter(a => a.status === 'pending')
+      .map(a => ({
+        task_id: a.id,
+        task_name: a.title || a.tool_name || 'Approval Required',
+        mcp_tool: a.tool_name,
+        mcp_arguments: a.arguments || {},
+        required_role: a.required_roles?.[0],
+        approval_type: a.approval_type,
+        required_roles: a.required_roles || ['developer'],
+        required_approvals: 1,
+        current_approvals: 0,
+        approved_by_roles: [],
+        approved_by_ids: [],
+        created_at: a.created_at,
+      }))
+
+    // Load all tool executions (pending, approved, rejected) for ToolExecutionCard display
+    loadedToolExecutions = allApprovals
+      .filter(a => a.tool_name && a.approval_type === 'tool_call')
+      .map(a => ({
+        id: a.id,
+        approvalId: a.id,
+        agentId: a.agent_id || 'developer',
+        toolName: a.tool_name,
+        parameters: a.arguments || {},
+        status: a.status === 'approved' ? 'approved' : a.status === 'rejected' ? 'rejected' : 'pending',
+        approverUsername: a.resolved_by_username,
+        approverRole: a.required_roles?.[0],
+        approvedAt: a.resolved_at,
+        rejectionReason: a.status === 'rejected' ? a.rejection_reason : undefined,
+      }))
 
     setToolExecutions(loadedToolExecutions)
 
@@ -1082,7 +900,6 @@ const Chat = () => {
     setCurrentAgentId(null)
     setToolExecutions([])
     setWorkflowEventsForDisplay([])
-    seenApprovalIds.current.clear()
     setSearchParams({})
     setMessages([{ role: 'assistant', content: `Hello ${user?.firstName || user?.username}! I'm Druppie, your AI governance assistant.\n\nI can help you:\n• Create applications (just describe what you want!)\n• Manage code deployments\n• Check compliance and permissions\n\nWhat would you like to build today?` }])
   }
@@ -1094,7 +911,6 @@ const Chat = () => {
     setWorkflowEventsForDisplay([])
     setCurrentAgentId(null)
     setIsAgentWorking(false)
-    seenApprovalIds.current.clear()
     setSearchParams({ session: session.id })
     try {
       const fullSession = await getPlan(session.id)
