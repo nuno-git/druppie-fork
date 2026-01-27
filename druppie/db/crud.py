@@ -22,6 +22,7 @@ from .models import (
     Message,
     Project,
     Session,
+    SessionEvent,
     ToolCall,
     ToolCallArgument,
     User,
@@ -1170,3 +1171,64 @@ def get_llm_calls_for_session(db: DBSession, session_id: UUID) -> list[LlmCall]:
         .order_by(LlmCall.created_at.asc())
         .all()
     )
+
+
+# =============================================================================
+# SESSION EVENTS CRUD (unified event log)
+# =============================================================================
+
+
+def create_session_event(
+    db: DBSession,
+    session_id: UUID,
+    event_type: str,
+    agent_id: str | None = None,
+    title: str | None = None,
+    tool_name: str | None = None,
+    agent_run_id: UUID | None = None,
+    tool_call_id: UUID | None = None,
+    approval_id: UUID | None = None,
+    hitl_question_id: UUID | None = None,
+    event_data: dict | None = None,
+    timestamp: datetime | None = None,
+) -> SessionEvent:
+    """Create a session event for the unified timeline.
+
+    Event types:
+    - agent_started, agent_completed
+    - tool_call, tool_result
+    - approval_pending, approval_granted, approval_rejected
+    - hitl_question, hitl_answered
+    - deployment_started, deployment_complete
+    - error
+    """
+    event = SessionEvent(
+        id=uuid4(),
+        session_id=session_id,
+        event_type=event_type,
+        agent_id=agent_id,
+        title=title,
+        tool_name=tool_name,
+        agent_run_id=agent_run_id,
+        tool_call_id=tool_call_id,
+        approval_id=approval_id,
+        hitl_question_id=hitl_question_id,
+        event_data=event_data,
+        timestamp=timestamp or utcnow(),
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+def get_session_events(
+    db: DBSession,
+    session_id: UUID,
+    event_type: str | None = None,
+) -> list[SessionEvent]:
+    """Get all events for a session, optionally filtered by type."""
+    query = db.query(SessionEvent).filter(SessionEvent.session_id == session_id)
+    if event_type:
+        query = query.filter(SessionEvent.event_type == event_type)
+    return query.order_by(SessionEvent.timestamp.asc()).all()

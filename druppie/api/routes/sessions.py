@@ -11,7 +11,7 @@ import structlog
 from druppie.api.deps import get_current_user, get_db, check_resource_ownership, get_user_roles
 from druppie.api.errors import NotFoundError, AuthorizationError
 from druppie.db import crud
-from druppie.db.models import Session as SessionModel, Approval
+from druppie.db.models import Session as SessionModel, Approval, SessionEvent
 
 logger = structlog.get_logger()
 
@@ -716,10 +716,32 @@ class SessionTraceResponse(BaseModel):
 
 
 def _build_trace_events_from_db(db, session_id) -> list[TraceEvent]:
-    """Build a list of trace events from normalized tables.
+    """Build trace events from session_events table."""
+    events = []
 
-    Combines agent_runs, tool_calls, and llm_calls into a unified timeline.
-    """
+    session_events = (
+        db.query(SessionEvent)
+        .filter(SessionEvent.session_id == session_id)
+        .order_by(SessionEvent.timestamp.asc())
+        .all()
+    )
+
+    for evt in session_events:
+        events.append(TraceEvent(
+            id=str(evt.id),
+            type=evt.event_type,
+            agent=evt.agent_id,
+            timestamp=evt.timestamp.isoformat() if evt.timestamp else "",
+            tool=evt.tool_name,
+            args=evt.event_data.get("args") if evt.event_data else None,
+            data=evt.event_data or {},
+        ))
+
+    return events
+
+
+def _build_trace_events_from_db_legacy(db, session_id) -> list[TraceEvent]:
+    """Legacy: Build trace events by reconstructing from multiple tables."""
     from druppie.db.models import AgentRun, ToolCall, LlmCall
 
     events = []

@@ -361,6 +361,47 @@ CREATE INDEX idx_llm_calls_session ON llm_calls(session_id);
 CREATE INDEX idx_llm_calls_agent_run ON llm_calls(agent_run_id);
 
 -- =============================================================================
+-- SESSION EVENTS (unified event log for timeline display)
+-- =============================================================================
+-- This table provides a single source of truth for session timeline/history.
+-- Instead of reconstructing events from multiple tables, we log each event here.
+-- Links to detailed records in other tables for full data.
+
+CREATE TABLE session_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+
+    -- Event classification
+    event_type VARCHAR(50) NOT NULL,            -- agent_started, agent_completed, tool_call,
+                                                -- tool_result, approval_pending, approval_granted,
+                                                -- approval_rejected, hitl_question, hitl_answered,
+                                                -- deployment_started, deployment_complete, error
+
+    -- Actor identification
+    agent_id VARCHAR(100),                      -- Which agent triggered this event
+
+    -- Event details (denormalized for easy display)
+    title VARCHAR(500),                         -- Human-readable event title
+    tool_name VARCHAR(200),                     -- For tool events: coding:write_file
+
+    -- References to detailed records (optional, for drill-down)
+    agent_run_id UUID REFERENCES agent_runs(id),
+    tool_call_id UUID REFERENCES tool_calls(id),
+    approval_id UUID REFERENCES approvals(id),
+    hitl_question_id UUID REFERENCES hitl_questions(id),
+
+    -- Event-specific data (minimal, for display only)
+    -- Using JSON only for truly variable event metadata
+    event_data JSONB,
+
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_session_events_session ON session_events(session_id);
+CREATE INDEX idx_session_events_timestamp ON session_events(session_id, timestamp);
+CREATE INDEX idx_session_events_type ON session_events(event_type);
+
+-- =============================================================================
 -- NOTES
 -- =============================================================================
 -- Users and roles: Synced from Keycloak
