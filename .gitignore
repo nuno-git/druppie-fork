@@ -1,3 +1,4 @@
+*.env
 # Python
 __pycache__/
 *.py[cod]
@@ -19,11 +20,9 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
 # Virtual environments
 venv/
 ENV/
-.env
 
 # Node.js
 node_modules/

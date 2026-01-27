@@ -5,7 +5,6 @@ Provides factory methods and singleton access to LLM providers.
 Supported providers:
 - zai: Z.AI GLM models (default)
 - deepinfra: DeepInfra OpenAI-compatible API (Qwen, Llama, etc.)
-- mock: Mock provider for testing
 """
 
 import os
@@ -15,7 +14,6 @@ import httpx
 import structlog
 
 from .base import BaseLLM
-from .mock import ChatMock
 from .zai import ChatZAI
 from .deepinfra import ChatDeepInfra
 
@@ -39,7 +37,7 @@ class LLMService:
         ZAI_BASE_URL: Base URL for Z.AI API
         DEEPINFRA_API_KEY: API key for DeepInfra
         DEEPINFRA_MODEL: Model name for DeepInfra (default: Qwen/Qwen3-Next-80B-A3B-Instruct)
-        DEEPINFRA_BASE_URL: Base URL for DeepInfra API
+        DEEPINFRA_BASE_URL: Base URL for DeepInfra
     """
 
     def __init__(self):
@@ -54,20 +52,18 @@ class LLMService:
             LLMConfigurationError: If no API key is configured and provider is not 'mock'
         """
         if self._provider is not None:
+            print(f"[LLM SERVICE] Cached provider: {self._provider}")
             return self._provider
 
         provider = os.getenv("LLM_PROVIDER", "auto").lower()
         zai_key = os.getenv("ZAI_API_KEY", "")
         deepinfra_key = os.getenv("DEEPINFRA_API_KEY", "")
 
-        if provider == "mock":
-            self._provider = "mock"
-        elif provider == "zai":
-            if not zai_key:
-                raise LLMConfigurationError(
-                    "ZAI_API_KEY environment variable is required when LLM_PROVIDER=zai. "
-                    "Please set ZAI_API_KEY in your .env file or environment."
-                )
+        print(f"[LLM SERVICE] Environment LLM_PROVIDER: {provider}")
+        print(f"[LLM SERVICE] ZAI_API_KEY present: {bool(zai_key)}")
+        print(f"[LLM SERVICE] DEEPINFRA_API_KEY present: {bool(deepinfra_key)}")
+
+        if provider == "zai" and zai_key:
             self._provider = "zai"
         elif provider == "deepinfra":
             if not deepinfra_key:
@@ -83,25 +79,62 @@ class LLMService:
             elif zai_key:
                 self._provider = "zai"
             else:
-                raise LLMConfigurationError(
-                    "No LLM API key configured! Please set one of:\n"
-                    "  - ZAI_API_KEY for Z.AI GLM models\n"
-                    "  - DEEPINFRA_API_KEY for DeepInfra models\n"
-                    "Or set LLM_PROVIDER=mock for testing (not recommended for production)."
+                logger.error("no_llm_provider_configured")
+                raise ValueError(
+                    "No LLM provider configured. Please set either ZAI_API_KEY or DEEPINFRA_API_KEY environment variable."
                 )
         else:
-            raise LLMConfigurationError(
-                f"Unknown LLM_PROVIDER: {provider}. "
-                "Valid options: zai, deepinfra, mock, auto"
-            )
+            # Fallback logic
+            if deepinfra_key:
+                self._provider = "deepinfra"
+            elif zai_key:
+                self._provider = "zai"
+            else:
+                logger.error("no_llm_provider_configured")
+                raise ValueError(
+                    "No LLM provider configured. Please set either ZAI_API_KEY or DEEPINFRA_API_KEY environment variable."
+                )
 
+        print(f"[LLM SERVICE] Selected provider: {self._provider}")
         logger.info("llm_provider_selected", provider=self._provider)
         return self._provider
 
     def get_llm(self) -> BaseLLM:
-        """Get or create the LLM client."""
+        """Get or create LLM client."""
         if self._llm is not None:
             return self._llm
+
+        provider = self.get_provider()
+
+        if provider == "deepinfra":
+            self._llm = ChatDeepInfra(
+                api_key=os.getenv("DEEPINFRA_API_KEY"),
+                model=os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct"),
+                base_url=os.getenv(
+                    "DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"
+                ),
+            )
+            logger.info(
+                "using_deepinfra_llm",
+                model=self._llm.model,
+                base_url=self._llm.base_url,
+            )
+        else:
+            # Default to Z.AI
+            self._llm = ChatZAI(
+                api_key=os.getenv("ZAI_API_KEY"),
+                model=os.getenv("ZAI_MODEL", "GLM-4.7"),
+                base_url=os.getenv(
+                    "ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4"
+                ),
+            )
+            logger.info(
+                "using_zai_llm",
+                model=self._llm.model,
+                base_url=self._llm.base_url,
+            )
+
+        return self._llm
 
         provider = self.get_provider()
 

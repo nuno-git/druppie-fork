@@ -182,3 +182,31 @@ mcps:
       - name: notify
         description: "Send notification to user"
         requires_approval: false
+
+  filesearch:
+    url: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
+    description: "Local file search in dataset directory"
+    tools:
+      - name: search_files
+        description: "Search for text content in files within dataset"
+        requires_approval: false
+
+      - name: list_directory
+        description: "List files and directories in dataset"
+        requires_approval: false
+
+      - name: read_file
+        description: "Read file content from dataset"
+        requires_approval: false
+
+      - name: get_search_stats
+        description: "Get statistics about files in dataset"
+        requires_approval: false
+
+      - name: search_web
+        description: "Search the web for information"
+        requires_approval: false
+
+      - name: get_page_info
+        description: "Get basic information about a web page"
+        requires_approval: false
