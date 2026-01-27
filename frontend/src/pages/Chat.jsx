@@ -191,17 +191,13 @@ const Chat = () => {
       setLiveWorkflowEvents((prev) => [...prev, formattedEvent])
 
       // Add to display list for inline workflow messages
-      // SIMPLIFIED: Only show specific agent events (router_started not agent_started)
-      // and tool calls. Skip generic events and approval step_started (we show approval_required instead)
-      const isGenericAgentEvent = eventType === 'agent_started' || eventType === 'agent_completed'
-      const isApprovalStepEvent = eventType === 'step_started' && (event.data?.step_id?.includes('approval') || agentId === 'approval')
+      // SIMPLE RULES: Only known agents and tool calls (ApprovalCard handles approvals)
+      const knownAgents = ['router', 'planner', 'architect', 'developer', 'deployer', 'reviewer', 'tester']
       const isDisplayable = (
-        // Tool calls
-        eventType.includes('tool_call') || eventType.includes('tool_result') ||
-        // Approval required (not step_started)
-        eventType === 'approval_required' ||
-        // Specific agent events like router_started, developer_completed (NOT generic agent_started)
-        ((eventType.includes('_started') || eventType.includes('_completed')) && !isGenericAgentEvent && !isApprovalStepEvent)
+        // Tool calls are always shown
+        eventType.includes('tool_call') ||
+        // Agent start/complete only if known agent
+        ((eventType === 'agent_started' || eventType === 'agent_completed') && knownAgents.includes(agentId))
       )
       if (isDisplayable) {
         setWorkflowEventsForDisplay((prev) => {
@@ -583,24 +579,28 @@ const Chat = () => {
     setDebugLLMCalls(llmCalls)
     setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
 
-    // Store workflow events for inline display (simplified - no duplicates)
-    // SIMPLIFIED: Only show specific agent events (router_started not agent_started)
-    // and tool calls. Skip generic events and approval step_started (we show approval_required instead)
+    // Store workflow events for inline display
+    // SIMPLE RULES:
+    // 1. Only show agent_started/agent_completed if we have a KNOWN agent
+    // 2. Show tool_call events
+    // 3. Skip approval_pending/approval_required (ApprovalCard handles those)
+    // 4. Skip everything else (step_started, generic events, etc.)
+    const knownAgents = ['router', 'planner', 'architect', 'developer', 'deployer', 'reviewer', 'tester']
     const displayableEvents = normalizedEvents.filter(event => {
       const type = event.type || event.event_type || ''
       const agentId = event.agent || event.data?.agent_id || event.agent_id || ''
 
-      // Skip generic agent_started/agent_completed (we have specific ones like router_started)
-      const isGenericAgentEvent = type === 'agent_started' || type === 'agent_completed'
-      // Skip approval step_started (we show approval_required instead)
-      const isApprovalStepEvent = type === 'step_started' && (event.data?.step_id?.includes('approval') || agentId === 'approval')
+      // Tool calls are always shown
+      if (type.includes('tool_call')) return true
 
-      // Include: tool calls, approval_required, and specific agent events
-      return (
-        type.includes('tool_call') || type.includes('tool_result') ||
-        type === 'approval_required' ||
-        ((type.includes('_started') || type.includes('_completed')) && !isGenericAgentEvent && !isApprovalStepEvent)
-      )
+      // Agent start/complete only if we have a KNOWN agent ID
+      if (type === 'agent_started' || type === 'agent_completed') {
+        return knownAgents.includes(agentId)
+      }
+
+      // Skip approval events (ApprovalCard and ToolExecutionCard handle those)
+      // Skip everything else (step_started, step_completed, tool_result, generic events)
+      return false
     })
     setWorkflowEventsForDisplay(displayableEvents)
     console.log('[Chat] Loaded displayable events:', displayableEvents.length)
@@ -622,6 +622,7 @@ const Chat = () => {
           current_approvals: task.approvals?.filter(a => a.decision === 'approved').length || 0,
           approved_by_roles: task.approvals?.filter(a => a.decision === 'approved').map(a => a.role) || [],
           approved_by_ids: task.approvals?.filter(a => a.decision === 'approved').map(a => a.approved_by || a.approver_id) || [],
+          created_at: task.created_at,  // For timeline sorting
         }))
 
       // Load all tool executions (pending, approved, rejected) for ToolExecutionCard display
@@ -1183,22 +1184,40 @@ const Chat = () => {
           </button>
         </div>
 
-        {/* Messages and Workflow Events - Combined and sorted by timestamp */}
+        {/* Messages, Workflow Events, and Approvals - All combined and sorted by timestamp */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {(() => {
-            // Combine messages and workflow events for unified timeline
+            // Combine ALL items into one unified timeline
             const allItems = [
+              // User and assistant messages
               ...messages.map((msg, idx) => ({
                 ...msg,
                 itemType: 'message',
                 sortKey: msg.timestamp ? new Date(msg.timestamp).getTime() : idx,
                 key: `msg-${idx}`,
               })),
+              // Workflow events (agent start/complete, tool calls)
               ...workflowEventsForDisplay.map((event, idx) => ({
                 ...event,
                 itemType: 'workflow',
                 sortKey: event.timestamp ? new Date(event.timestamp).getTime() : idx + 10000,
                 key: `event-${event.id || idx}`,
+              })),
+              // Completed tool executions (approved/rejected) - sorted by approval time
+              ...toolExecutions
+                .filter((execution) => execution.status !== 'pending')
+                .map((execution) => ({
+                  ...execution,
+                  itemType: 'toolExecution',
+                  sortKey: execution.approvedAt ? new Date(execution.approvedAt).getTime() : Date.now(),
+                  key: `tool-${execution.id || execution.approvalId}`,
+                })),
+              // Pending approvals - sorted by creation time (show where they should be in timeline)
+              ...sessionPendingApprovals.map((approval, i) => ({
+                ...approval,
+                itemType: 'pendingApproval',
+                sortKey: approval.created_at ? new Date(approval.created_at).getTime() : Date.now(),
+                key: `approval-${approval.task_id || approval.id || i}`,
               })),
             ]
 
@@ -1213,6 +1232,35 @@ const Chat = () => {
             return allItems.map((item) => {
               if (item.itemType === 'workflow') {
                 return <WorkflowEventMessage key={item.key} event={item} />
+              }
+              if (item.itemType === 'toolExecution') {
+                return (
+                  <ToolExecutionCard
+                    key={item.key}
+                    agentId={item.agentId}
+                    toolName={item.toolName}
+                    parameters={item.parameters}
+                    status={item.status}
+                    approverUsername={item.approverUsername}
+                    approverRole={item.approverRole}
+                    approvedAt={item.approvedAt}
+                    rejectionReason={item.rejectionReason}
+                  />
+                )
+              }
+              if (item.itemType === 'pendingApproval' && !chatMutation.isPending && !isAgentWorking) {
+                return (
+                  <ApprovalCard
+                    key={item.key}
+                    approval={item}
+                    onApprove={handleApproveTask}
+                    onReject={handleRejectTask}
+                    isProcessing={approveMutation.isPending || rejectMutation.isPending}
+                    currentUserId={user?.id}
+                    sessionId={currentPlanId}
+                    userRoles={user?.roles || []}
+                  />
+                )
               }
               if (item.role === 'question') {
                 return (
@@ -1242,22 +1290,6 @@ const Chat = () => {
               )
             })
           })()}
-          {/* Render completed tool executions (approved/rejected) - pending ones shown via ApprovalCard */}
-          {toolExecutions
-            .filter((execution) => execution.status !== 'pending')
-            .map((execution) => (
-              <ToolExecutionCard
-                key={execution.id || execution.approvalId}
-                agentId={execution.agentId}
-                toolName={execution.toolName}
-                parameters={execution.parameters}
-                status={execution.status}
-                approverUsername={execution.approverUsername}
-                approverRole={execution.approverRole}
-                approvedAt={execution.approvedAt}
-                rejectionReason={execution.rejectionReason}
-              />
-            ))}
 
           {(chatMutation.isPending || isAgentWorking) && (
             <TypingIndicator
@@ -1267,24 +1299,6 @@ const Chat = () => {
               isStopping={isStopping}
               agentId={currentAgentId}
             />
-          )}
-
-          {/* Session-level pending approvals - shown when not attached to any message */}
-          {!chatMutation.isPending && !isAgentWorking && sessionPendingApprovals.length > 0 && (
-            <div className="space-y-3">
-              {sessionPendingApprovals.map((approval, i) => (
-                <ApprovalCard
-                  key={approval.task_id || approval.id || i}
-                  approval={approval}
-                  onApprove={handleApproveTask}
-                  onReject={handleRejectTask}
-                  isProcessing={approveMutation.isPending || rejectMutation.isPending}
-                  currentUserId={user?.id}
-                  sessionId={currentPlanId}
-                  userRoles={user?.roles || []}
-                />
-              ))}
-            </div>
           )}
 
           <div ref={messagesEndRef} />
