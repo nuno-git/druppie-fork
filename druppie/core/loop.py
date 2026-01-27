@@ -76,6 +76,14 @@ from druppie.db.database import get_db
 
 
 logger = structlog.get_logger()
+
+# Import WORKSPACE_ROOT for path fallback computation
+try:
+    from druppie.core.workspace import WORKSPACE_ROOT
+except ImportError:
+    from pathlib import Path
+    import os
+    WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace"))
 settings = get_settings()
 
 
@@ -190,6 +198,33 @@ def build_plan_from_workflow(workflow: Workflow, steps: list[WorkflowStep]) -> d
     }
 
 
+def get_workspace_path_with_fallback(workspace: Workspace | None) -> str | None:
+    """Get workspace path, computing from session_id if local_path is None.
+
+    This handles cases where the workspace record exists but local_path wasn't
+    saved properly (legacy records or resumption from approval).
+    """
+    if not workspace:
+        return None
+
+    if workspace.local_path:
+        return workspace.local_path
+
+    # Fallback: compute from session_id (same logic as workspace.py)
+    if workspace.session_id:
+        computed_path = WORKSPACE_ROOT / str(workspace.session_id)
+        if computed_path.exists():
+            return str(computed_path)
+        logger.warning(
+            "workspace_path_fallback_not_found",
+            workspace_id=workspace.id,
+            session_id=workspace.session_id,
+            computed_path=str(computed_path),
+        )
+
+    return None
+
+
 def build_context_from_workspace(workspace: Workspace | None) -> dict:
     """Build execution context dict from workspace record."""
     if not workspace:
@@ -198,7 +233,7 @@ def build_context_from_workspace(workspace: Workspace | None) -> dict:
     return {
         "workspace_id": str(workspace.id) if workspace.id else None,
         "project_id": str(workspace.project_id) if workspace.project_id else None,
-        "workspace_path": workspace.local_path,
+        "workspace_path": get_workspace_path_with_fallback(workspace),
         "branch": workspace.branch,
     }
 
@@ -1115,7 +1150,7 @@ class MainLoop:
                 if workspace:
                     exec_ctx.workspace_id = str(workspace.id)
                     exec_ctx.project_id = str(workspace.project_id) if workspace.project_id else None
-                    exec_ctx.workspace_path = workspace.local_path
+                    exec_ctx.workspace_path = get_workspace_path_with_fallback(workspace)
                     exec_ctx.branch = workspace.branch
 
                 exec_ctx.emit("execution_resumed", {
@@ -1215,7 +1250,7 @@ class MainLoop:
                 if workspace:
                     exec_ctx.workspace_id = str(workspace.id)
                     exec_ctx.project_id = str(workspace.project_id) if workspace.project_id else None
-                    exec_ctx.workspace_path = workspace.local_path
+                    exec_ctx.workspace_path = get_workspace_path_with_fallback(workspace)
                     exec_ctx.branch = workspace.branch
 
                 # Restore HITL clarifications if available
@@ -1435,7 +1470,7 @@ class MainLoop:
                 if workspace:
                     exec_ctx.workspace_id = str(workspace.id)
                     exec_ctx.project_id = str(workspace.project_id) if workspace.project_id else None
-                    exec_ctx.workspace_path = workspace.local_path
+                    exec_ctx.workspace_path = get_workspace_path_with_fallback(workspace)
                     exec_ctx.branch = workspace.branch
 
                 # Update session status
@@ -1538,7 +1573,7 @@ class MainLoop:
                 if workspace:
                     exec_ctx.workspace_id = str(workspace.id)
                     exec_ctx.project_id = str(workspace.project_id) if workspace.project_id else None
-                    exec_ctx.workspace_path = workspace.local_path
+                    exec_ctx.workspace_path = get_workspace_path_with_fallback(workspace)
                     exec_ctx.branch = workspace.branch
 
                 exec_ctx.emit("question_answered", {
@@ -1765,22 +1800,23 @@ class MainLoop:
     ) -> dict[str, Any]:
         """Initialize workspace for the session."""
         try:
-            from druppie.core.workspace import get_workspace_service, WORKSPACE_ROOT
+            from druppie.core.workspace import get_workspace_service
 
             with db_session() as db:
                 # Check if workspace already exists
                 existing = get_workspace_for_session(db, UUID(session_id))
                 if existing:
+                    workspace_path = get_workspace_path_with_fallback(existing)
                     exec_ctx.set_workspace(
                         workspace_id=str(existing.id),
                         project_id=str(existing.project_id) if existing.project_id else None,
-                        workspace_path=existing.local_path,
+                        workspace_path=workspace_path,
                         branch=existing.branch,
                     )
                     return {
                         "workspace_id": str(existing.id),
                         "project_id": str(existing.project_id) if existing.project_id else None,
-                        "workspace_path": existing.local_path,
+                        "workspace_path": workspace_path,
                         "branch": existing.branch,
                     }
 
@@ -1798,10 +1834,13 @@ class MainLoop:
                     project_name=project_name,
                 )
 
+                # Get workspace path (use helper for safety even on new workspace)
+                workspace_path = get_workspace_path_with_fallback(workspace)
+
                 exec_ctx.set_workspace(
                     workspace_id=str(workspace.id),
                     project_id=str(workspace.project_id) if workspace.project_id else None,
-                    workspace_path=workspace.local_path,
+                    workspace_path=workspace_path,
                     branch=workspace.branch,
                 )
 
@@ -1812,21 +1851,28 @@ class MainLoop:
                 db.commit()
 
                 # Register with MCP servers
-                mcp_path = workspace.local_path.replace(str(WORKSPACE_ROOT), "/workspaces")
-                await self._register_workspace_with_mcp(
-                    workspace_id=str(workspace.id),
-                    workspace_path=mcp_path,
-                    project_id=str(workspace.project_id) if workspace.project_id else None,
-                    branch=workspace.branch,
-                    user_id=user_id,
-                    session_id=session_id,
-                    exec_ctx=exec_ctx,
-                )
+                if workspace_path:
+                    mcp_path = workspace_path.replace(str(WORKSPACE_ROOT), "/workspaces")
+                    await self._register_workspace_with_mcp(
+                        workspace_id=str(workspace.id),
+                        workspace_path=mcp_path,
+                        project_id=str(workspace.project_id) if workspace.project_id else None,
+                        branch=workspace.branch,
+                        user_id=user_id,
+                        session_id=session_id,
+                        exec_ctx=exec_ctx,
+                    )
+                else:
+                    logger.warning(
+                        "workspace_path_missing_skipping_mcp_registration",
+                        workspace_id=str(workspace.id),
+                        session_id=session_id,
+                    )
 
                 return {
                     "workspace_id": str(workspace.id),
                     "project_id": str(workspace.project_id) if workspace.project_id else None,
-                    "workspace_path": workspace.local_path,
+                    "workspace_path": workspace_path,
                     "branch": workspace.branch,
                 }
 
