@@ -766,7 +766,7 @@ async def get_project_sessions(
             {
                 "id": s.id,
                 "status": s.status,
-                "preview": s.preview,
+                "preview": s.title,  # Session model uses 'title' field
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "updated_at": s.updated_at.isoformat() if s.updated_at else None,
             }
