@@ -111,26 +111,62 @@ These require HTTP calls to separate MCP server containers:
 | docker | `stop` | Stop container |
 | docker | `logs` | Get container logs |
 
-## What Gets Logged in a Session
+## Session Structure
 
-A session contains EVERYTHING that happened:
+A session contains EVERYTHING in one unified timeline:
 
 ```
 Session
-├── Messages (user input, assistant responses)
-├── Agent Runs (each agent that executed)
-│   ├── Raw LLM Requests (full prompt sent to LLM)
-│   ├── Raw LLM Responses (exactly what LLM returned)
-│   ├── Tool Calls (what tools were invoked)
-│   │   ├── Arguments (what was passed)
-│   │   ├── Results (what was returned)
-│   │   └── Errors (if failed)
-│   ├── Approvals (if tool needed approval)
-│   └── HITL Questions (if agent asked user something)
-├── Workflow (if multi-step plan)
-│   └── Steps (each step and its status)
-└── Events (timeline of everything)
+│
+├── GENERAL INFO
+│   ├── id, user_id, title, status
+│   ├── token_usage: { prompt_tokens, completion_tokens, total_tokens }
+│   ├── tokens_by_agent: { router: 1000, developer: 5000, ... }
+│   ├── created_at, updated_at
+│   │
+│   └── project (full details if linked, null otherwise)
+│       ├── id, name, description
+│       ├── git_url (Gitea repo URL)
+│       ├── status (active/archived)
+│       └── deployment (if deployed)
+│           ├── status (running/stopped)
+│           ├── app_url (http://localhost:9100)
+│           ├── container_name
+│           └── started_at
+│
+└── CHAT (single chronological timeline - NO separate events/messages arrays)
+    │
+    ├── { type: "system_message", content: "Hello! I'm Druppie...", timestamp }
+    │
+    ├── { type: "user_message", content: "Build a todo app", timestamp }
+    │
+    ├── { type: "agent_run", agent_id: "router", status: "completed",
+    │     token_usage: {...},
+    │     steps: [
+    │       { type: "llm_call", model: "glm-4", provider: "zai", ... },
+    │       { type: "tool_execution", tool: "coding:write_file",
+    │         arguments: {...}, status: "executed",
+    │         approval: { status: "approved", resolved_by: "..." } }  ← EMBEDDED
+    │       { type: "hitl_question", question: "...", answer: "..." } ← EMBEDDED
+    │     ]
+    │   }
+    │
+    ├── { type: "assistant_message", content: "I'll create...", agent_id: "router" }
+    │
+    ├── { type: "user_message", content: "Now add auth", timestamp }
+    │
+    └── ... continues in order
 ```
+
+**Key design decisions:**
+
+| Decision | Why |
+|----------|-----|
+| One `chat` array, no separate `events` | Events IS the chat - no duplication |
+| Approvals embedded in tool_execution | No need to match approval to tool call |
+| HITL questions embedded in agent_run | No need for separate lookup |
+| Full project info included | Frontend doesn't need separate API call |
+| Steps inside agent_run | Shows exactly what happened in order |
 
 ## How a Message Flows
 

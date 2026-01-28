@@ -56,8 +56,6 @@ Response:
 {
   "id": "uuid",
   "user_id": "uuid",
-  "project_id": "uuid | null",
-  "workspace_id": "uuid | null",
   "title": "Build a todo app",
   "status": "completed",
   "token_usage": {
@@ -71,6 +69,21 @@ Response:
   },
   "created_at": "2024-01-01T00:00:00Z",
   "updated_at": "2024-01-01T00:00:00Z",
+
+  "project": {
+    "id": "uuid",
+    "name": "todo-app",
+    "description": "A simple todo application",
+    "git_url": "http://gitea:3000/org/todo-app",
+    "status": "active",
+    "deployment": {
+      "status": "running",
+      "app_url": "http://localhost:9100",
+      "container_name": "todo-app-main",
+      "started_at": "2024-01-01T00:00:00Z"
+    }
+  },
+
   "chat": [
     {
       "type": "system_message",
