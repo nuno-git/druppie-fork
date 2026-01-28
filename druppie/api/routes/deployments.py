@@ -22,10 +22,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 import structlog
 
-from druppie.api.deps import get_current_user, get_db, check_resource_ownership
+from druppie.api.deps import get_current_user, get_db, check_resource_ownership, get_user_roles
 from druppie.api.errors import NotFoundError, ExternalServiceError
 from druppie.db.models import Build, Project
 from druppie.core.builder import get_builder_service
+from druppie.domain import DeploymentSummary
 
 logger = structlog.get_logger()
 
@@ -33,21 +34,8 @@ router = APIRouter()
 
 
 # =============================================================================
-# RESPONSE MODELS
+# RESPONSE MODELS (action responses only - list uses domain model)
 # =============================================================================
-
-
-class DeploymentSummary(BaseModel):
-    """Deployment (running container) summary."""
-
-    id: str
-    project_id: str
-    project_name: str
-    container_name: str | None = None
-    host_port: int | None = None
-    app_url: str | None = None
-    status: str
-    started_at: str | None = None
 
 
 class DeploymentListResponse(BaseModel):
@@ -97,8 +85,8 @@ async def list_deployments(
         List of running deployments with container info
     """
     user_id = user.get("sub")
-    roles = user.get("realm_access", {}).get("roles", [])
-    is_admin = "admin" in roles
+    user_roles = get_user_roles(user)
+    is_admin = "admin" in user_roles
 
     # Query running builds with project info
     query = (
@@ -115,14 +103,14 @@ async def list_deployments(
 
     items = [
         DeploymentSummary(
-            id=str(build.id),
-            project_id=str(project.id),
+            id=build.id,
+            project_id=project.id,
             project_name=project.name,
             container_name=build.container_name,
             host_port=build.port,
             app_url=build.app_url,
             status=build.status,
-            started_at=build.created_at.isoformat() if build.created_at else None,
+            started_at=build.created_at,
         )
         for build, project in results
     ]
@@ -132,7 +120,7 @@ async def list_deployments(
 
 @router.post("/deployments/{deployment_id}/stop", response_model=StopResponse)
 async def stop_deployment(
-    deployment_id: str,
+    deployment_id: UUID,
     user: dict = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ) -> StopResponse:
@@ -154,7 +142,7 @@ async def stop_deployment(
     build = db.query(Build).filter(Build.id == deployment_id).first()
 
     if not build:
-        raise NotFoundError("deployment", deployment_id)
+        raise NotFoundError("deployment", str(deployment_id))
 
     # Check ownership via project
     project = db.query(Project).filter(Project.id == build.project_id).first()
@@ -165,7 +153,7 @@ async def stop_deployment(
         builder = get_builder_service(db)
         success = await builder.stop_project(build.id)
 
-        logger.info("deployment_stopped", deployment_id=deployment_id)
+        logger.info("deployment_stopped", deployment_id=str(deployment_id))
 
         return StopResponse(
             success=success,
@@ -173,13 +161,13 @@ async def stop_deployment(
         )
 
     except Exception as e:
-        logger.error("stop_failed", deployment_id=deployment_id, error=str(e))
+        logger.error("stop_failed", deployment_id=str(deployment_id), error=str(e))
         raise ExternalServiceError("docker", f"Stop failed: {str(e)}", str(e))
 
 
 @router.post("/deployments/{deployment_id}/restart", response_model=RestartResponse)
 async def restart_deployment(
-    deployment_id: str,
+    deployment_id: UUID,
     user: dict = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ) -> RestartResponse:
@@ -201,7 +189,7 @@ async def restart_deployment(
     build = db.query(Build).filter(Build.id == deployment_id).first()
 
     if not build:
-        raise NotFoundError("deployment", deployment_id)
+        raise NotFoundError("deployment", str(deployment_id))
 
     # Check ownership via project
     project = db.query(Project).filter(Project.id == build.project_id).first()
@@ -215,7 +203,7 @@ async def restart_deployment(
         await builder.stop_project(build.id)
         updated_build = await builder.run_project(build.id)
 
-        logger.info("deployment_restarted", deployment_id=deployment_id)
+        logger.info("deployment_restarted", deployment_id=str(deployment_id))
 
         return RestartResponse(
             success=True,
@@ -224,13 +212,13 @@ async def restart_deployment(
         )
 
     except Exception as e:
-        logger.error("restart_failed", deployment_id=deployment_id, error=str(e))
+        logger.error("restart_failed", deployment_id=str(deployment_id), error=str(e))
         raise ExternalServiceError("docker", f"Restart failed: {str(e)}", str(e))
 
 
 @router.get("/deployments/{deployment_id}/logs", response_model=LogsResponse)
 async def get_deployment_logs(
-    deployment_id: str,
+    deployment_id: UUID,
     tail: int = Query(100, ge=1, le=1000, description="Number of lines"),
     user: dict = Depends(get_current_user),
     db: DBSession = Depends(get_db),
@@ -254,7 +242,7 @@ async def get_deployment_logs(
     build = db.query(Build).filter(Build.id == deployment_id).first()
 
     if not build:
-        raise NotFoundError("deployment", deployment_id)
+        raise NotFoundError("deployment", str(deployment_id))
 
     # Check ownership via project
     project = db.query(Project).filter(Project.id == build.project_id).first()
@@ -262,7 +250,7 @@ async def get_deployment_logs(
         check_resource_ownership(user, project.owner_id)
 
     if not build.container_name:
-        raise NotFoundError("container", deployment_id, "No container for this deployment")
+        raise NotFoundError("container", str(deployment_id), "No container for this deployment")
 
     try:
         builder = get_builder_service(db)
@@ -274,5 +262,5 @@ async def get_deployment_logs(
         )
 
     except Exception as e:
-        logger.error("logs_failed", deployment_id=deployment_id, error=str(e))
+        logger.error("logs_failed", deployment_id=str(deployment_id), error=str(e))
         raise ExternalServiceError("docker", f"Failed to get logs: {str(e)}", str(e))

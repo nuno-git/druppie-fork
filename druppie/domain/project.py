@@ -14,11 +14,23 @@ if TYPE_CHECKING:
 
 
 class DeploymentInfo(BaseModel):
-    """Deployment status (from Docker MCP labels)."""
+    """Deployment status (embedded in ProjectDetail)."""
     status: DeploymentStatus
     container_name: str
     app_url: str | None
     host_port: int | None
+    started_at: datetime | None
+
+
+class DeploymentSummary(BaseModel):
+    """Deployment summary for list views (includes project info)."""
+    id: UUID
+    project_id: UUID
+    project_name: str
+    container_name: str | None
+    host_port: int | None
+    app_url: str | None
+    status: str
     started_at: datetime | None
 
 
