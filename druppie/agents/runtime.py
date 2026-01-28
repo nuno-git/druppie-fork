@@ -311,6 +311,159 @@ class Agent:
             start_iteration=start_iteration,
         )
 
+    async def continue_run(
+        self,
+        session_id: UUID | str,
+        agent_run_id: UUID | str,
+    ) -> Any:
+        """Continue a paused agent run by reconstructing state from the database.
+
+        This method:
+        1. Loads all LLM calls for this agent run from DB
+        2. Reconstructs the message history including tool results
+        3. Continues the agent loop from where it left off
+
+        The HITL answer is already saved as a tool call result in the DB,
+        so it will automatically be included in the reconstructed messages.
+
+        Args:
+            session_id: Session UUID
+            agent_run_id: Agent run UUID to continue
+
+        Returns:
+            Parsed result from agent's final response, or paused state
+        """
+        from druppie.repositories import ExecutionRepository
+
+        # Convert string IDs to UUIDs
+        if isinstance(session_id, str):
+            session_id = UUID(session_id)
+        if isinstance(agent_run_id, str):
+            agent_run_id = UUID(agent_run_id)
+
+        execution_repo = ExecutionRepository(self.db)
+
+        # Get the agent run to get the prompt
+        agent_run = execution_repo.get_by_id(agent_run_id)
+        if not agent_run:
+            raise ValueError(f"Agent run not found: {agent_run_id}")
+
+        prompt = agent_run.planned_prompt or ""
+
+        # Get all LLM calls for this run
+        llm_calls = execution_repo.get_llm_calls_for_run(agent_run_id)
+
+        if not llm_calls:
+            # No previous LLM calls - start fresh
+            logger.warning(
+                "continue_run_no_llm_calls",
+                agent_run_id=str(agent_run_id),
+            )
+            messages = [
+                {"role": "system", "content": self._build_system_prompt()},
+                {"role": "user", "content": prompt},
+            ]
+            return await self._run_loop(
+                messages=messages,
+                prompt=prompt,
+                context=None,
+                session_id=session_id,
+                agent_run_id=agent_run_id,
+                start_iteration=0,
+            )
+
+        # Reconstruct message history from LLM calls
+        messages = self._reconstruct_messages_from_db(llm_calls, execution_repo)
+        iteration = len(llm_calls)
+
+        logger.info(
+            "agent_continue_run",
+            agent_id=self.id,
+            agent_run_id=str(agent_run_id),
+            llm_calls_count=len(llm_calls),
+            messages_count=len(messages),
+            continuing_from_iteration=iteration,
+        )
+
+        return await self._run_loop(
+            messages=messages,
+            prompt=prompt,
+            context=None,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            start_iteration=iteration,
+        )
+
+    def _reconstruct_messages_from_db(
+        self,
+        llm_calls: list,
+        execution_repo,
+    ) -> list[dict]:
+        """Reconstruct message history from stored LLM calls.
+
+        For each LLM call:
+        1. Add the request_messages (first call has system + user)
+        2. Add the assistant response (with tool_calls if any)
+        3. Add tool results for each tool call
+
+        Returns:
+            Reconstructed messages list ready for next LLM call
+        """
+        messages = []
+
+        for i, llm_call in enumerate(llm_calls):
+            # For first LLM call, use the full request_messages (system + user)
+            if i == 0 and llm_call.request_messages:
+                messages.extend(llm_call.request_messages)
+            elif llm_call.request_messages:
+                # For subsequent calls, skip system/user (already added)
+                # Just ensure we have continuity
+                pass
+
+            # Add assistant response with tool calls
+            # Check for non-empty list (empty list [] is falsy in Python)
+            if llm_call.response_tool_calls and len(llm_call.response_tool_calls) > 0:
+                # Assistant made tool calls
+                messages.append({
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": tc.get("id", f"call_{i}_{j}"),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("name"),
+                                "arguments": json.dumps(tc.get("args", {})),
+                            },
+                        }
+                        for j, tc in enumerate(llm_call.response_tool_calls)
+                    ],
+                })
+
+                # Add tool results from the database
+                # Match tool_calls by index to get the correct ID
+                for j, tool_call_db in enumerate(llm_call.tool_calls):
+                    if tool_call_db.result or tool_call_db.error_message:
+                        # Get the tool call ID from the stored response_tool_calls
+                        tool_call_id = f"call_{i}_{j}"  # Default
+                        if j < len(llm_call.response_tool_calls):
+                            tool_call_id = llm_call.response_tool_calls[j].get("id", tool_call_id)
+
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": tool_call_db.result or f"Error: {tool_call_db.error_message}",
+                        })
+
+            elif llm_call.response_content:
+                # Assistant gave text response (no tool calls)
+                messages.append({
+                    "role": "assistant",
+                    "content": llm_call.response_content,
+                })
+
+        return messages
+
     async def _run_loop(
         self,
         messages: list[dict],
@@ -370,12 +523,24 @@ class Agent:
             duration_ms = int((time.time() - start_time) * 1000)
 
             # Update LLM call with response
+            # Store the full raw response as JSON for debugging
+            raw_response_json = json.dumps({
+                "content": response.raw_content if hasattr(response, 'raw_content') else response.content,
+                "tool_calls": response.tool_calls or [],
+                "prompt_tokens": response.prompt_tokens or 0,
+                "completion_tokens": response.completion_tokens or 0,
+                "total_tokens": response.total_tokens or 0,
+            })
             execution_repo.update_llm_response(
                 llm_call_id=llm_call_id,
-                response_content=response.content[:5000] if response.content else None,
+                response_content=raw_response_json[:10000],  # Full JSON response
                 response_tool_calls=[
-                    {"name": tc.get("name"), "args": tc.get("args")}
-                    for tc in (response.tool_calls or [])
+                    {
+                        "id": tc.get("id", f"call_{iteration}_{idx}"),
+                        "name": tc.get("name"),
+                        "args": tc.get("args"),
+                    }
+                    for idx, tc in enumerate(response.tool_calls or [])
                 ],
                 prompt_tokens=response.prompt_tokens or 0,
                 completion_tokens=response.completion_tokens or 0,
@@ -584,6 +749,7 @@ class Agent:
         This method:
         1. Injects dynamic tool descriptions from mcp_config.yaml
         2. Adds shared tool usage instructions for non-router/planner agents
+        3. Conditionally adds XML format instructions based on LLM capabilities
 
         Router and planner agents have special JSON output formats and don't
         need the built-in tools documentation.
@@ -598,9 +764,67 @@ class Agent:
 
         # Router and planner output JSON directly - no built-in tools needed
         if self.id in ("router", "planner"):
+            # For LLMs that don't support native tools, add XML format instructions
+            if not self.llm.supports_native_tools:
+                base_prompt += self._get_xml_format_instructions()
             return base_prompt
 
-        shared_tool_instructions = """
+        # For other agents, add full tool usage instructions
+        shared_tool_instructions = self._get_shared_tool_instructions()
+        return base_prompt + shared_tool_instructions
+
+    def _get_xml_format_instructions(self) -> str:
+        """Get XML format instructions for LLMs that don't support native tool calling."""
+        return """
+
+## TOOL CALL FORMAT
+
+You MUST output tool calls using this XML format:
+<tool_call>{"name": "tool_name", "arguments": {"arg1": "value1"}}</tool_call>
+
+Example:
+<tool_call>{"name": "done", "arguments": {"summary": "Task completed"}}</tool_call>
+"""
+
+    def _get_shared_tool_instructions(self) -> str:
+        """Get shared tool instructions, with XML format only for non-native LLMs."""
+        # Check if LLM supports native tools
+        uses_native_tools = self.llm.supports_native_tools
+
+        if uses_native_tools:
+            # Minimal instructions for native tool calling
+            return """
+
+###############################################################################
+#                    CRITICAL: TOOL USAGE INSTRUCTIONS                        #
+###############################################################################
+
+You are an AI agent that can ONLY interact through TOOL CALLS.
+You MUST NOT output plain text - always use a tool.
+
+## BUILT-IN TOOLS (always available)
+
+1. **hitl_ask_question** - Ask the user a free-form question
+   Required: question (string)
+   Optional: context (string)
+
+2. **hitl_ask_multiple_choice_question** - Ask user to select from options
+   Required: question (string), choices (array of strings)
+   Optional: allow_other (boolean)
+
+3. **done** - Signal that your task is complete
+   Required: summary (string) - Brief description of what you accomplished
+
+## CRITICAL RULES
+
+1. NEVER output plain text to communicate - use hitl_ask_question instead
+2. NEVER announce what you will do - just call the tool directly
+3. ALWAYS call done() when you have finished your task
+4. Tool names use UNDERSCORES not colons (e.g., hitl_ask_question not hitl:ask_question)
+"""
+        else:
+            # Full instructions with XML format for non-native LLMs
+            return """
 
 ###############################################################################
 #                    CRITICAL: TOOL USAGE INSTRUCTIONS                        #
@@ -611,15 +835,8 @@ You MUST NOT output plain text - always use a tool.
 
 ## TOOL CALL FORMAT
 
-You MUST output tool calls in ONE of these two formats:
-
-### Option 1: XML Format (recommended)
-```
+You MUST output tool calls using this XML format:
 <tool_call>{"name": "tool_name", "arguments": {"arg1": "value1", "arg2": "value2"}}</tool_call>
-```
-
-### Option 2: OpenAI Function Call Format
-The API will handle this automatically if your response includes proper function calls.
 
 ## EXAMPLES OF CORRECT TOOL CALLS
 
@@ -674,7 +891,6 @@ RIGHT (tool call):
 <tool_call>{"name": "done", "arguments": {"summary": "Created the requested file"}}</tool_call>
 ```
 """
-        return base_prompt + shared_tool_instructions
 
     def _inject_tool_descriptions(self, prompt: str, tool_descriptions: str) -> str:
         """Inject dynamic tool descriptions into the system prompt.
