@@ -4,6 +4,8 @@ from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
 
+from .common import QuestionStatus
+
 
 class QuestionChoice(BaseModel):
     """A choice in a multiple-choice question."""
@@ -21,7 +23,7 @@ class QuestionDetail(BaseModel):
     question: str
     question_type: str  # text, multiple_choice
     choices: list[QuestionChoice] = []
-    status: str  # pending, answered
+    status: QuestionStatus
     answer: str | None
     answered_at: datetime | None
     created_at: datetime

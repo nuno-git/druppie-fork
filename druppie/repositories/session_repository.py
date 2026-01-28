@@ -1,19 +1,23 @@
 """Session repository for database access."""
 
 from uuid import UUID
-from sqlalchemy import func
 from sqlalchemy.orm import Session as DbSession
 
 from .base import BaseRepository
 from ..domain import (
     SessionSummary,
     SessionDetail,
+    SessionStatus,
     ChatItem,
     TokenUsage,
+    LLMMessage,
     AgentRunDetail,
+    AgentRunStatus,
     LLMCallDetail,
     ToolCallDetail,
+    ToolCallStatus,
     ApprovalSummary,
+    ApprovalStatus,
     ProjectSummary,
 )
 from ..db.models import (
@@ -57,6 +61,21 @@ class SessionRepository(BaseRepository):
 
         return [self._to_summary(s) for s in sessions], total
 
+    def list_for_project(
+        self,
+        project_id: UUID,
+        limit: int = 10,
+    ) -> list[SessionSummary]:
+        """List recent sessions for a project."""
+        sessions = (
+            self.db.query(SessionModel)
+            .filter_by(project_id=project_id)
+            .order_by(SessionModel.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return [self._to_summary(s) for s in sessions]
+
     def get_with_chat(self, session_id: UUID) -> SessionDetail | None:
         """Get session with full chat timeline."""
         session = self.get_by_id(session_id)
@@ -64,24 +83,25 @@ class SessionRepository(BaseRepository):
             return None
 
         chat = self._build_chat_timeline(session_id)
-        tokens_by_agent = self._get_tokens_by_agent(session_id)
         project = self._get_project_summary(session.project_id) if session.project_id else None
 
         return SessionDetail(
+            # Inherited from SessionSummary
             id=session.id,
-            user_id=session.user_id,
             title=session.title or "Untitled",
-            status=session.status,
+            status=SessionStatus(session.status),
+            project_id=session.project_id,
             token_usage=TokenUsage(
                 prompt_tokens=session.prompt_tokens or 0,
                 completion_tokens=session.completion_tokens or 0,
                 total_tokens=session.total_tokens or 0,
             ),
-            tokens_by_agent=tokens_by_agent,
-            project=project,
-            chat=chat,
             created_at=session.created_at,
             updated_at=session.updated_at,
+            # SessionDetail specific
+            user_id=session.user_id,
+            project=project,
+            chat=chat,
         )
 
     def create(
@@ -95,15 +115,15 @@ class SessionRepository(BaseRepository):
             user_id=user_id,
             title=title,
             project_id=project_id,
-            status="active",
+            status=SessionStatus.ACTIVE.value,
         )
         self.db.add(session)
         self.db.flush()
         return session
 
-    def update_status(self, session_id: UUID, status: str) -> None:
+    def update_status(self, session_id: UUID, status: SessionStatus) -> None:
         """Update session status."""
-        self.db.query(SessionModel).filter_by(id=session_id).update({"status": status})
+        self.db.query(SessionModel).filter_by(id=session_id).update({"status": status.value})
 
     def delete(self, session_id: UUID) -> None:
         """Delete session (cascades to related data)."""
@@ -114,7 +134,7 @@ class SessionRepository(BaseRepository):
         return SessionSummary(
             id=session.id,
             title=session.title or "Untitled",
-            status=session.status,
+            status=SessionStatus(session.status),
             project_id=session.project_id,
             token_usage=TokenUsage(
                 prompt_tokens=session.prompt_tokens or 0,
@@ -173,7 +193,7 @@ class SessionRepository(BaseRepository):
         return AgentRunDetail(
             id=run.id,
             agent_id=run.agent_id,
-            status=run.status,
+            status=AgentRunStatus(run.status),
             token_usage=TokenUsage(
                 prompt_tokens=run.prompt_tokens or 0,
                 completion_tokens=run.completion_tokens or 0,
@@ -195,8 +215,10 @@ class SessionRepository(BaseRepository):
 
         result = []
         for llm in llm_calls_db:
+            # Convert raw messages to LLMMessage objects
+            messages = self._parse_messages(llm.request_messages)
+
             # Get tool calls that were executed after this LLM call
-            # We match by created_at since tool_calls don't have direct llm_call_id
             tool_calls = self._build_tool_calls_for_llm(llm)
 
             result.append(LLMCallDetail(
@@ -209,12 +231,30 @@ class SessionRepository(BaseRepository):
                     total_tokens=llm.total_tokens,
                 ),
                 duration_ms=llm.duration_ms,
-                messages=llm.request_messages or [],
+                messages=messages,
                 response_content=llm.response_content,
                 tool_calls=tool_calls,
             ))
 
         return result
+
+    def _parse_messages(self, raw_messages: list | None) -> list[LLMMessage]:
+        """Parse raw message dicts into LLMMessage objects."""
+        if not raw_messages:
+            return []
+
+        messages = []
+        for msg in raw_messages:
+            if not isinstance(msg, dict):
+                continue
+            messages.append(LLMMessage(
+                role=msg.get("role", "unknown"),
+                content=msg.get("content"),
+                tool_calls=msg.get("tool_calls"),
+                tool_call_id=msg.get("tool_call_id"),
+                name=msg.get("name"),
+            ))
+        return messages
 
     def _build_tool_calls_for_llm(self, llm: LlmCall) -> list[ToolCallDetail]:
         """Build tool call details from LLM response_tool_calls."""
@@ -223,7 +263,7 @@ class SessionRepository(BaseRepository):
         # The LLM's response_tool_calls contains what the LLM decided
         llm_tool_calls = llm.response_tool_calls or []
 
-        for tc_response in llm_tool_calls:
+        for index, tc_response in enumerate(llm_tool_calls):
             if not isinstance(tc_response, dict):
                 continue
 
@@ -231,7 +271,6 @@ class SessionRepository(BaseRepository):
             tool_name = function_info.get("name", "")
 
             # Find the matching ToolCall record in DB
-            # Match by agent_run_id and tool_name (approximate match)
             tool_call_db = (
                 self.db.query(ToolCall)
                 .filter_by(agent_run_id=llm.agent_run_id, tool_name=tool_name)
@@ -241,11 +280,11 @@ class SessionRepository(BaseRepository):
             )
 
             if tool_call_db:
-                tool_calls.append(self._build_tool_call_detail(tool_call_db))
+                tool_calls.append(self._build_tool_call_detail(tool_call_db, index))
 
         return tool_calls
 
-    def _build_tool_call_detail(self, tc: ToolCall) -> ToolCallDetail:
+    def _build_tool_call_detail(self, tc: ToolCall, index: int) -> ToolCallDetail:
         """Build a single tool call detail."""
         # Determine tool type
         tool_type = "mcp"
@@ -265,7 +304,7 @@ class SessionRepository(BaseRepository):
         if approval:
             approval_summary = ApprovalSummary(
                 id=approval.id,
-                status=approval.status,
+                status=ApprovalStatus(approval.status),
                 required_role=approval.required_role or "admin",
                 resolved_by=approval.resolved_by,
                 resolved_at=approval.resolved_at,
@@ -290,29 +329,17 @@ class SessionRepository(BaseRepository):
 
         return ToolCallDetail(
             id=tc.id,
+            index=index,
             tool_type=tool_type,
             mcp_server=mcp_server,
             tool_name=tc.tool_name,
             arguments=arguments,
-            status=tc.status,
+            status=ToolCallStatus(tc.status),
             result=tc.result,
             error=tc.error_message,
             approval=approval_summary,
             child_run=child_run,
         )
-
-    def _get_tokens_by_agent(self, session_id: UUID) -> dict[str, int]:
-        """Get token usage grouped by agent."""
-        results = (
-            self.db.query(
-                AgentRun.agent_id,
-                func.sum(AgentRun.total_tokens).label("total"),
-            )
-            .filter_by(session_id=session_id)
-            .group_by(AgentRun.agent_id)
-            .all()
-        )
-        return {r.agent_id: r.total or 0 for r in results}
 
     def _get_project_summary(self, project_id: UUID) -> ProjectSummary | None:
         """Get project summary for a session."""
@@ -324,6 +351,5 @@ class SessionRepository(BaseRepository):
             name=project.name,
             description=project.description,
             repo_url=project.repo_url,
-            status=project.status,
             created_at=project.created_at,
         )

@@ -4,7 +4,7 @@ from uuid import UUID
 from datetime import datetime, timezone
 
 from .base import BaseRepository
-from ..domain import QuestionDetail, QuestionChoice, PendingQuestionList
+from ..domain import QuestionDetail, QuestionChoice, PendingQuestionList, QuestionStatus
 from ..db.models import HitlQuestion, HitlQuestionChoice, Session as SessionModel
 
 
@@ -15,26 +15,13 @@ class QuestionRepository(BaseRepository):
         """Get raw question model."""
         return self.db.query(HitlQuestion).filter_by(id=question_id).first()
 
-    def get_pending_for_session(self, session_id: UUID) -> PendingQuestionList:
-        """Get pending questions for a session."""
-        questions = (
-            self.db.query(HitlQuestion)
-            .filter_by(session_id=session_id, status="pending")
-            .order_by(HitlQuestion.created_at)
-            .all()
-        )
-        return PendingQuestionList(
-            items=[self._to_detail(q) for q in questions],
-            total=len(questions),
-        )
-
     def get_pending_for_user(self, user_id: UUID) -> PendingQuestionList:
         """Get all pending questions for sessions owned by user."""
         questions = (
             self.db.query(HitlQuestion)
             .join(SessionModel, HitlQuestion.session_id == SessionModel.id)
             .filter(SessionModel.user_id == user_id)
-            .filter(HitlQuestion.status == "pending")
+            .filter(HitlQuestion.status == QuestionStatus.PENDING.value)
             .order_by(HitlQuestion.created_at)
             .all()
         )
@@ -52,7 +39,7 @@ class QuestionRepository(BaseRepository):
         """Update question with answer."""
         self.db.query(HitlQuestion).filter_by(id=question_id).update({
             "answer": answer,
-            "status": "answered",
+            "status": QuestionStatus.ANSWERED.value,
             "answered_at": datetime.now(timezone.utc),
         })
         if selected_choices:
@@ -85,7 +72,7 @@ class QuestionRepository(BaseRepository):
                 )
                 for c in choices
             ],
-            status=question.status,
+            status=QuestionStatus(question.status),
             answer=question.answer,
             answered_at=question.answered_at,
             created_at=question.created_at,
