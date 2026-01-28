@@ -1,0 +1,243 @@
+# Druppie Platform - Development Infrastructure Only
+#
+# This compose file runs ONLY the infrastructure services.
+# Backend and Frontend run locally with hot reload.
+#
+# Usage: docker compose -f docker-compose.dev.yml up -d
+#
+# Ports used:
+#   - Keycloak: 8180
+#   - Postgres: 5533
+#   - Gitea: 3100
+#   - MCP Coding: 9001
+#   - MCP Docker: 9002
+#   - Adminer: 8081
+
+services:
+  # =============================================================================
+  # DATABASES
+  # =============================================================================
+
+  druppie-db:
+    image: postgres:15-alpine
+    container_name: druppie-dev-db
+    environment:
+      POSTGRES_DB: druppie
+      POSTGRES_USER: druppie
+      POSTGRES_PASSWORD: druppie_secret
+    volumes:
+      - druppie_dev_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "druppie"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5533:5432"
+    networks:
+      - druppie-dev-network
+
+  keycloak-db:
+    image: postgres:15-alpine
+    container_name: druppie-dev-keycloak-db
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak_secret
+    volumes:
+      - druppie_dev_keycloak_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - druppie-dev-network
+
+  gitea-db:
+    image: postgres:15-alpine
+    container_name: druppie-dev-gitea-db
+    environment:
+      POSTGRES_DB: gitea
+      POSTGRES_USER: gitea
+      POSTGRES_PASSWORD: gitea_secret
+    volumes:
+      - druppie_dev_gitea_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "gitea"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - druppie-dev-network
+
+  # =============================================================================
+  # GITEA
+  # =============================================================================
+
+  gitea:
+    image: gitea/gitea:1.21
+    container_name: druppie-dev-gitea
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+      GITEA__database__DB_TYPE: postgres
+      GITEA__database__HOST: gitea-db:5432
+      GITEA__database__NAME: gitea
+      GITEA__database__USER: gitea
+      GITEA__database__PASSWD: gitea_secret
+      GITEA__server__ROOT_URL: http://localhost:3100/
+      GITEA__server__HTTP_PORT: 3000
+      GITEA__server__DOMAIN: localhost
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__service__DISABLE_REGISTRATION: "false"
+    volumes:
+      - druppie_dev_gitea:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "3100:3000"
+      - "2223:22"
+    depends_on:
+      gitea-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - druppie-dev-network
+
+  # =============================================================================
+  # KEYCLOAK
+  # =============================================================================
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: druppie-dev-keycloak
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak_secret
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: 8180
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY: edge
+      KC_HEALTH_ENABLED: "true"
+      JAVA_OPTS_APPEND: "-Xms256m -Xmx512m -XX:MaxGCPauseMillis=100 -Djava.net.preferIPv4Stack=true"
+      KC_CACHE: local
+      KC_CACHE_STACK: udp
+    command: start-dev
+    ports:
+      - "8180:8080"
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    mem_limit: 768m
+    mem_reservation: 384m
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e 'GET /health/ready HTTP/1.1\r\nhost: localhost\r\nConnection: close\r\n\r\n' >&3;if [ $? -eq 0 ]; then echo 'Healthcheck Successful';exit 0;else echo 'Healthcheck Failed';exit 1;fi;"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+    networks:
+      - druppie-dev-network
+
+  # =============================================================================
+  # MCP SERVERS (still in Docker - they need docker socket access)
+  # =============================================================================
+
+  mcp-coding:
+    build:
+      context: ./mcp-servers/coding
+      dockerfile: Dockerfile
+    container_name: druppie-dev-mcp-coding
+    environment:
+      WORKSPACE_ROOT: /workspaces
+      MCP_PORT: "9001"
+      GITEA_INTERNAL_URL: http://gitea:3000
+      GITEA_ORG: druppie
+      GITEA_TOKEN: ${GITEA_TOKEN:-}
+      GITEA_USER: gitea_admin
+      GITEA_PASSWORD: GiteaAdmin123
+    volumes:
+      - druppie_dev_workspace:/workspaces
+    ports:
+      - "9001:9001"
+    depends_on:
+      gitea:
+        condition: service_healthy
+    networks:
+      - druppie-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  mcp-docker:
+    build:
+      context: ./mcp-servers/docker
+      dockerfile: Dockerfile
+    container_name: druppie-dev-mcp-docker
+    environment:
+      MCP_PORT: "9002"
+      WORKSPACE_ROOT: /workspaces
+      DOCKER_NETWORK: druppie-dev-network
+    volumes:
+      - druppie_dev_workspace:/workspaces
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "9002:9002"
+    networks:
+      - druppie-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # =============================================================================
+  # DATABASE ADMIN (optional)
+  # =============================================================================
+
+  adminer:
+    image: adminer:latest
+    container_name: druppie-dev-adminer
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: druppie-db
+      ADMINER_DESIGN: pepa-linha-dark
+    depends_on:
+      druppie-db:
+        condition: service_healthy
+    networks:
+      - druppie-dev-network
+
+volumes:
+  druppie_dev_postgres:
+    name: druppie_dev_postgres
+  druppie_dev_keycloak_postgres:
+    name: druppie_dev_keycloak_postgres
+  druppie_dev_workspace:
+    name: druppie_dev_workspace
+  druppie_dev_gitea:
+    name: druppie_dev_gitea
+  druppie_dev_gitea_postgres:
+    name: druppie_dev_gitea_postgres
+
+networks:
+  druppie-dev-network:
+    name: druppie-dev-network
+    driver: bridge
