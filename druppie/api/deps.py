@@ -120,6 +120,11 @@ def get_project_service(
     return ProjectService(project_repo, session_repo)
 
 
+def get_loop() -> MainLoop:
+    """Get the main execution loop."""
+    return get_main_loop()
+
+
 def get_workflow_service(
     loop: MainLoop = Depends(get_loop),
 ) -> WorkflowService:
@@ -129,11 +134,6 @@ def get_workflow_service(
     resuming paused workflows (after questions, approvals, etc.).
     """
     return WorkflowService(loop)
-
-
-def get_loop() -> MainLoop:
-    """Get the main execution loop."""
-    return get_main_loop()
 
 
 def get_auth() -> AuthService:

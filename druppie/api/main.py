@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import admin, agents, chat, sessions, approvals, mcps, projects, questions, workspace, workflows
+from druppie.api.routes import agents, approvals, chat, deployments, mcps, projects, questions, sessions, workspace
 from druppie.api.websocket import handle_websocket
 from druppie.api.errors import register_exception_handlers
 from druppie.core.loop import get_main_loop
@@ -73,14 +73,13 @@ def create_app() -> FastAPI:
     # Include routers
     app.include_router(chat.router, prefix="/api", tags=["Chat"])
     app.include_router(sessions.router, prefix="/api", tags=["Sessions"])
-    app.include_router(approvals.router, prefix="/api", tags=["Approvals"])
-    app.include_router(mcps.router, prefix="/api", tags=["MCPs"])
-    app.include_router(projects.router, prefix="/api", tags=["Projects"])
+    app.include_router(approvals.router, prefix="/api/approvals", tags=["Approvals"])
     app.include_router(questions.router, prefix="/api/questions", tags=["Questions"])
+    app.include_router(projects.router, prefix="/api", tags=["Projects"])
+    app.include_router(deployments.router, prefix="/api", tags=["Deployments"])
     app.include_router(workspace.router, prefix="/api", tags=["Workspace"])
-    app.include_router(workflows.router, prefix="/api", tags=["Workflows"])
-    app.include_router(admin.router, prefix="/api", tags=["Admin"])
     app.include_router(agents.router, prefix="/api", tags=["Agents"])
+    app.include_router(mcps.router, prefix="/api", tags=["MCPs"])
 
     @app.get("/health")
     async def health_check():
