@@ -25,17 +25,39 @@ import {
   Check,
   X,
   Loader2,
+  ExternalLink,
+  Rocket,
+  Package,
 } from 'lucide-react'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
 
 // Helper to get tool icon
 const getToolIcon = (toolName) => {
   if (!toolName) return Hammer
+  if (toolName.includes('docker_run') || toolName.includes('docker:run')) return Rocket
+  if (toolName.includes('docker_build') || toolName.includes('docker:build')) return Package
   if (toolName.includes('write_file') || toolName.includes('batch_write')) return FileCode
   if (toolName.includes('run_command') || toolName.includes('run_tests')) return Terminal
   if (toolName.includes('commit') || toolName.includes('git')) return GitBranch
   if (toolName.includes('hitl') || toolName.includes('ask')) return MessageCircle
   return Hammer
+}
+
+// Helper to extract deployment URL from docker_run args
+const getDeploymentUrl = (toolName, args) => {
+  if (!toolName || !args) return null
+  if (!toolName.includes('docker_run') && !toolName.includes('docker:run')) return null
+
+  // Extract port mapping to build URL
+  const portMapping = args.port_mapping || args.portMapping
+  if (portMapping) {
+    const hostPort = portMapping.split(':')[0]
+    return `http://localhost:${hostPort}`
+  }
+
+  // Fallback to container_port
+  const containerPort = args.container_port || args.containerPort || 8080
+  return `http://localhost:${containerPort}`
 }
 
 const ToolDecisionCard = ({
@@ -199,6 +221,10 @@ const ToolDecisionCard = ({
   const isApproved = approvalStatus === 'approved'
   const isRejected = approvalStatus === 'rejected'
 
+  // Check if this is a docker_run tool and get deployment URL
+  const isDockerRun = toolName && (toolName.includes('docker_run') || toolName.includes('docker:run'))
+  const deploymentUrl = getDeploymentUrl(toolName, args)
+
   // Determine colors based on status
   let bgColor = 'bg-purple-50'
   let borderColor = 'border-purple-200'
@@ -317,8 +343,8 @@ const ToolDecisionCard = ({
           </div>
         )}
 
-        {/* Execution result */}
-        {executed && execution_result && (
+        {/* Execution result - hide for docker_run success since we show deployment card */}
+        {executed && execution_result && !(isDockerRun && !execution_error) && (
           <div className="mt-3 pt-3 border-t border-gray-200">
             <div className="text-xs font-semibold text-gray-600 mb-2">
               {execution_error ? 'Error:' : 'Result:'}
@@ -327,6 +353,33 @@ const ToolDecisionCard = ({
               <pre className={`whitespace-pre-wrap break-all ${execution_error ? 'text-red-700' : 'text-gray-700'}`}>
                 {execution_result.substring(0, 500)}
               </pre>
+            </div>
+          </div>
+        )}
+
+        {/* Deployment success card for docker_run */}
+        {isDockerRun && (isApproved || executed) && !execution_error && deploymentUrl && (
+          <div className="mt-3 pt-3 border-t border-green-200">
+            <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200 p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Rocket className="w-5 h-5 text-green-600" />
+                <span className="text-sm font-bold text-green-800">Deployment Successful!</span>
+              </div>
+              <div className="text-xs text-gray-600 mb-3">
+                Container: <span className="font-mono font-semibold">{args.container_name || args.containerName || 'app'}</span>
+              </div>
+              <a
+                href={deploymentUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shadow-sm"
+              >
+                <ExternalLink className="w-4 h-4" />
+                Open Application
+              </a>
+              <div className="mt-2 text-xs text-gray-500">
+                {deploymentUrl}
+              </div>
             </div>
           </div>
         )}
