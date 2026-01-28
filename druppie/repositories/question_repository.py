@@ -34,41 +34,41 @@ class QuestionRepository(BaseRepository):
     def create(
         self,
         session_id: UUID,
-        agent_run_id: UUID | None,
-        agent_id: str,
+        agent_run_id: UUID,
+        tool_call_id: UUID,
         question: str,
         question_type: str = "text",
         choices: list[dict[str, str]] | None = None,
-        agent_state: dict[str, Any] | None = None,
-    ) -> QuestionDetail:
+        agent_id: str | None = None,
+    ) -> Question:
         """Create a new question.
 
         Args:
             session_id: Session this question belongs to
             agent_run_id: Agent run that asked the question
-            agent_id: ID of the agent asking
+            tool_call_id: ToolCall this question is for
             question: The question text
-            question_type: "text", "single_choice", or "multiple_choice"
+            question_type: "text" or "choice"
             choices: List of choice dicts [{"text": "Option A"}, ...]
-            agent_state: Saved state for resumption after answer
+            agent_id: ID of the agent asking (optional)
 
         Returns:
-            QuestionDetail domain object
+            Created Question model
         """
         question_model = Question(
             id=uuid4(),
             session_id=session_id,
             agent_run_id=agent_run_id,
+            tool_call_id=tool_call_id,
             agent_id=agent_id,
             question=question,
             question_type=question_type,
             choices=choices,
             status=QuestionStatus.PENDING.value,
-            agent_state=agent_state,
         )
         self.db.add(question_model)
         self.db.flush()
-        return self._to_detail(question_model)
+        return question_model
 
     def get_pending_for_user(self, user_id: UUID) -> PendingQuestionList:
         """Get all pending questions for sessions owned by user.

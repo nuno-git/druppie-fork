@@ -149,6 +149,51 @@ class ExecutionRepository(BaseRepository):
         self.db.flush()
         return tool_call.id
 
+    def get_tool_call(self, tool_call_id: UUID) -> ToolCall | None:
+        """Get tool call by ID (returns raw model for ToolExecutor)."""
+        return self.db.query(ToolCall).filter(ToolCall.id == tool_call_id).first()
+
+    def get_tool_calls_for_run(self, agent_run_id: UUID) -> list[ToolCall]:
+        """Get all tool calls for an agent run."""
+        return (
+            self.db.query(ToolCall)
+            .filter(ToolCall.agent_run_id == agent_run_id)
+            .order_by(ToolCall.created_at)
+            .all()
+        )
+
+    def update_tool_call(
+        self,
+        tool_call_id: UUID,
+        status: str | None = None,
+        result: dict | str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Update tool call with result.
+
+        Args:
+            tool_call_id: ID of tool call to update
+            status: New status (pending, executing, waiting_approval, waiting_answer, completed, failed)
+            result: Tool result (will be serialized to JSON if dict)
+            error: Error message if failed
+        """
+        import json
+
+        tool_call = self.db.query(ToolCall).filter(ToolCall.id == tool_call_id).first()
+        if tool_call:
+            if status is not None:
+                tool_call.status = status
+            if result is not None:
+                # Serialize dict to JSON string
+                if isinstance(result, dict):
+                    tool_call.result = json.dumps(result)
+                else:
+                    tool_call.result = result
+            if error is not None:
+                tool_call.error_message = error
+            if status in ("completed", "failed"):
+                tool_call.executed_at = datetime.now(timezone.utc)
+
     def update_tool_result(
         self,
         tool_call_id: UUID,
@@ -156,7 +201,7 @@ class ExecutionRepository(BaseRepository):
         result: str | None = None,
         error: str | None = None,
     ) -> None:
-        """Update tool call result."""
+        """Update tool call result (legacy method, use update_tool_call instead)."""
         tool_call = self.db.query(ToolCall).filter(ToolCall.id == tool_call_id).first()
         if tool_call:
             tool_call.status = status

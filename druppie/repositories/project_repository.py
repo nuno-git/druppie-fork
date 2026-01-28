@@ -21,6 +21,26 @@ class ProjectRepository(BaseRepository):
         """Get raw project model."""
         return self.db.query(Project).filter_by(id=project_id).first()
 
+    def get_by_user(self, user_id: UUID) -> list[Project]:
+        """Get all projects for a user (for router injection)."""
+        return (
+            self.db.query(Project)
+            .filter_by(owner_id=user_id)
+            .order_by(Project.created_at.desc())
+            .all()
+        )
+
+    def create(self, name: str, user_id: UUID, description: str | None = None) -> Project:
+        """Create a new project."""
+        project = Project(
+            name=name,
+            owner_id=user_id,
+            description=description,
+        )
+        self.db.add(project)
+        self.db.flush()
+        return project
+
     def list_for_user(
         self,
         user_id: UUID,

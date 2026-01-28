@@ -140,6 +140,10 @@ class SessionRepository(BaseRepository):
         """Update session status."""
         self.db.query(SessionModel).filter_by(id=session_id).update({"status": status.value})
 
+    def update_project(self, session_id: UUID, project_id: UUID) -> None:
+        """Update session's project."""
+        self.db.query(SessionModel).filter_by(id=session_id).update({"project_id": project_id})
+
     def delete(self, session_id: UUID) -> None:
         """Delete session (cascades to related data)."""
         self.db.query(SessionModel).filter_by(id=session_id).delete()

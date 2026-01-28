@@ -32,6 +32,7 @@ class Question(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"))
     agent_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id"))
+    tool_call_id = Column(UUID(as_uuid=True), ForeignKey("tool_calls.id"))  # Links to ToolCall
     agent_id = Column(String(50))  # Direct reference to agent name (router, architect, etc.)
 
     question = Column(Text, nullable=False)
@@ -72,6 +73,7 @@ class Question(Base):
             "id": str(self.id),
             "session_id": str(self.session_id) if self.session_id else None,
             "agent_run_id": str(self.agent_run_id) if self.agent_run_id else None,
+            "tool_call_id": str(self.tool_call_id) if self.tool_call_id else None,
             "agent_id": self.agent_id,
             "question": self.question,
             "question_type": self.question_type,
@@ -82,7 +84,3 @@ class Question(Base):
             "agent_state": self.agent_state,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
-
-
-# Backward compatibility alias
-HitlQuestion = Question
