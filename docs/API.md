@@ -311,13 +311,22 @@ Response includes builds and deployments.
 DELETE /projects/{project_id}
 ```
 
-## Deployments
+## Deployments (Bridge to Docker MCP)
+
+The deployments API is a **bridge** to the docker MCP. It lets the frontend manage containers that agents have deployed.
+
+**How it works:**
+```
+Frontend → POST /api/deployments/{id}/stop → Backend → docker MCP: stop → Container stopped
+```
 
 ### List Running Deployments
 
 ```
 GET /deployments
 ```
+
+**Backend:** Queries database for deployment records.
 
 Response:
 ```json
@@ -343,14 +352,51 @@ Response:
 POST /deployments/{deployment_id}/stop
 ```
 
+**Backend calls:** `docker:stop`
+
+Response:
+```json
+{
+  "success": true,
+  "status": "stopped"
+}
+```
+
+### Restart Deployment
+
+```
+POST /deployments/{deployment_id}/restart
+```
+
+**Backend calls:** `docker:stop` then `docker:run`
+
+Response:
+```json
+{
+  "success": true,
+  "status": "running",
+  "app_url": "http://localhost:9100"
+}
+```
+
 ### Get Deployment Logs
 
 ```
-GET /deployments/{deployment_id}/logs
+GET /deployments/{deployment_id}/logs?tail=100
 ```
+
+**Backend calls:** `docker:logs`
 
 Query params:
 - `tail` (int, default=100) - Number of lines
+
+Response:
+```json
+{
+  "container_name": "todo-app-main",
+  "logs": "2024-01-01 10:00:00 Starting server...\n..."
+}
+```
 
 ## Agents
 
@@ -420,20 +466,26 @@ Response:
 }
 ```
 
-## Workspace
+## Workspace (Bridge to Coding MCP)
 
-The workspace API lets the frontend browse files that agents have written. This is separate from the coding MCP - the MCP is for agents to write files, this API is for humans to view them.
+The workspace API is a **bridge** to the coding MCP. It lets the frontend browse files that agents have written.
 
-### Get Workspace Files
+**How it works:**
+```
+Frontend → GET /api/workspace/files → Backend → coding MCP: list_dir → Files
+```
+
+### List Files
 
 ```
-GET /workspace?session_id={session_id}&path={path}
+GET /workspace/files?session_id={session_id}&path={path}
 ```
 
 Query params:
 - `session_id` (required) - Session to get workspace for
 - `path` (optional) - Subdirectory to list
-- `recursive` (optional, default=false) - List all files recursively
+
+**Backend calls:** `coding:list_dir`
 
 Response:
 ```json
@@ -446,8 +498,7 @@ Response:
   ],
   "directories": [
     {"name": "components", "path": "src/components", "type": "directory"}
-  ],
-  "count": 2
+  ]
 }
 ```
 
@@ -457,23 +508,16 @@ Response:
 GET /workspace/file?session_id={session_id}&path={path}
 ```
 
+**Backend calls:** `coding:read_file`
+
 Response:
 ```json
 {
   "path": "src/app.py",
   "content": "from flask import Flask...",
-  "binary": false,
   "size": 1234
 }
 ```
-
-### Download File
-
-```
-GET /workspace/download?session_id={session_id}&path={path}
-```
-
-Returns file as download.
 
 ## Health
 

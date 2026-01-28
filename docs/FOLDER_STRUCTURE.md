@@ -63,9 +63,12 @@ api/
 │   ├── approvals.py         # /api/approvals - List, approve, reject
 │   ├── questions.py         # /api/questions - HITL question answers
 │   ├── projects.py          # /api/projects - Project management
-│   ├── workspace.py         # /api/workspace - Browse files created by agents
-│   │                        #   (Reads from shared volume, NOT via MCP)
-│   │                        #   Frontend uses this to show files to users
+│   ├── workspace.py         # /api/workspace - BRIDGE to coding MCP
+│   │                        #   Calls coding MCP tools (list_dir, read_file)
+│   │                        #   Frontend uses this to browse files
+│   ├── deployments.py       # /api/deployments - BRIDGE to docker MCP
+│   │                        #   Calls docker MCP tools (stop, logs)
+│   │                        #   Frontend uses this to manage containers
 │   ├── agents.py            # /api/agents - List agent configurations
 │   ├── mcps.py              # /api/mcps - List MCP servers and tools
 │   └── health.py            # /api/health - Health checks
