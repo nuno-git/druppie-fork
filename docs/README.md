@@ -10,6 +10,7 @@ Druppie is a governance platform where AI agents execute tasks through MCP (Mode
 | [Folder Structure](./FOLDER_STRUCTURE.md) | What each folder contains and why |
 | [API Reference](./API.md) | All API endpoints |
 | [Database](./DATABASE.md) | Schema and data model |
+| [Migration Plan](./MIGRATION_PLAN.md) | Step-by-step implementation guide |
 
 ## What is Druppie?
 
