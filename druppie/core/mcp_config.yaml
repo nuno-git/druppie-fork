@@ -29,39 +29,112 @@ mcps:
       - name: read_file
         description: "Read file from workspace"
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            path:
+              type: string
+              description: "File path relative to workspace root"
+          required:
+            - path
 
       - name: write_file
         description: "Write file to workspace (auto-commits)"
         # DEFAULT: No approval needed for write_file
         # Agents can OVERRIDE this (e.g., architect requires architect approval)
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            path:
+              type: string
+              description: "File path relative to workspace root"
+            content:
+              type: string
+              description: "File content to write"
+          required:
+            - path
+            - content
 
       - name: batch_write_files
         description: "Write multiple files at once with a single git commit"
         # DEFAULT: No approval needed for batch writes
         # Agents can OVERRIDE this (e.g., architect requires architect approval)
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            files:
+              type: object
+              description: "Map of file path to content"
+            commit_message:
+              type: string
+              description: "Git commit message for the batch"
+          required:
+            - files
 
       - name: list_dir
         description: "List directory contents"
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            path:
+              type: string
+              description: "Directory path relative to workspace root (use '.' for root)"
+          required:
+            - path
 
       - name: delete_file
         description: "Delete file from workspace"
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            path:
+              type: string
+              description: "File path to delete"
+          required:
+            - path
 
       - name: run_command
         description: "Execute shell command in workspace"
         requires_approval: true
         required_role: developer
+        parameters:
+          type: object
+          properties:
+            command:
+              type: string
+              description: "Shell command to run"
+          required:
+            - command
 
       - name: run_tests
         description: "Run tests in workspace with auto-detection of test framework"
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            test_command:
+              type: string
+              description: "Test command (auto-detects if not provided)"
+            timeout:
+              type: integer
+              description: "Timeout in seconds (default 120)"
+          required: []
 
       - name: commit_and_push
         description: "Commit and push changes to Gitea"
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            message:
+              type: string
+              description: "Git commit message"
+          required:
+            - message
 
       - name: create_branch
         description: "Create a new git branch"
@@ -161,7 +234,7 @@ mcps:
         required_role: developer
 
   hitl:
-    # NOTE: HITL is now BUILT-IN to the backend (druppie/agents/hitl.py)
+    # HITL tools are BUILT-IN to the backend (druppie/agents/builtin_tools.py)
     # No external MCP server needed - these tools are implemented directly
     url: builtin://hitl
     description: "Human-in-the-loop (built-in) - questions stored directly in database"
@@ -170,7 +243,36 @@ mcps:
       - name: ask_question
         description: "Ask user a free-form text question"
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            question:
+              type: string
+              description: "The question to ask the user"
+            context:
+              type: string
+              description: "Optional context explaining why this question is being asked"
+          required:
+            - question
 
       - name: ask_choice
         description: "Ask user a multiple choice question"
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            question:
+              type: string
+              description: "The question to ask the user"
+            choices:
+              type: array
+              description: "List of choices for the user to select from"
+            allow_other:
+              type: boolean
+              description: "Whether to allow a custom 'Other' answer (default: true)"
+            context:
+              type: string
+              description: "Optional context explaining why this question is being asked"
+          required:
+            - question
+            - choices

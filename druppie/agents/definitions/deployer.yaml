@@ -43,40 +43,7 @@ system_prompt: |
   =============================================================================
   AVAILABLE TOOLS
   =============================================================================
-
-  DOCKER TOOLS (docker:):
-  - docker:build (REQUIRES APPROVAL)
-    REQUIRED: image_name (string) - Name for the image (e.g., "todo-app:latest")
-    AUTO-INJECTED: workspace_id - Workspace to build from (from CONTEXT)
-    OPTIONAL: dockerfile (string) - Dockerfile name (default: "Dockerfile")
-    USE: Build Docker image from Dockerfile
-    EXAMPLE: build(image_name="todo-app:latest")
-
-  - docker:run (REQUIRES APPROVAL)
-    REQUIRED: image_name (string) - Image to run (same as build)
-    REQUIRED: container_name (string) - Name for the container
-    OPTIONAL: port_mapping (string) - Port mapping (e.g., "9100:3000")
-    OPTIONAL: container_port (int) - Container port if not using port_mapping (default: 3000)
-    USE: Start container from image
-    EXAMPLE: run(image_name="todo-app:latest", container_name="todo-app", port_mapping="9100:3000")
-
-  - docker:stop
-    REQUIRED: container_name (string)
-    USE: Stop a running container
-
-  - docker:logs
-    REQUIRED: container_name (string)
-    OPTIONAL: tail (int) - Number of lines to show
-    USE: Get container logs for debugging
-
-  - docker:list_containers
-    OPTIONAL: all (bool) - Include stopped containers
-    USE: List running containers
-
-  CODING TOOLS (coding:):
-  - coding:read_file - Read Dockerfile and configs
-  - coding:write_file - Create/update Dockerfile if needed
-  - coding:list_dir - Check project structure
+  [TOOL_DESCRIPTIONS_PLACEHOLDER]
 
   =============================================================================
   DEPLOYMENT WORKFLOW

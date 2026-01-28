@@ -25,6 +25,7 @@ from druppie.agents.models import AgentDefinition
 from druppie.agents.builtin_tools import BUILTIN_TOOLS, execute_builtin_tool, is_builtin_tool
 from druppie.llm import get_llm_service
 from druppie.core.execution_context import get_current_context
+from druppie.core.mcp_client import generate_tool_descriptions
 
 logger = structlog.get_logger()
 
@@ -731,12 +732,24 @@ class Agent:
     def _build_system_prompt(self) -> str:
         """Build the system prompt with shared tool usage instructions.
 
+        This method:
+        1. Injects dynamic tool descriptions from mcp_config.yaml
+        2. Adds shared tool usage instructions for non-router/planner agents
+
         Router and planner agents have special JSON output formats and don't
         need the built-in tools documentation.
         """
+        base_prompt = self.definition.system_prompt
+
+        # Generate dynamic tool descriptions from MCP config
+        if self.definition.mcps:
+            tool_descriptions = generate_tool_descriptions(self.definition.mcps)
+            # Inject tool descriptions into the prompt
+            base_prompt = self._inject_tool_descriptions(base_prompt, tool_descriptions)
+
         # Router and planner output JSON directly - no built-in tools needed
         if self.id in ("router", "planner"):
-            return self.definition.system_prompt
+            return base_prompt
 
         shared_tool_instructions = """
 
@@ -812,7 +825,54 @@ RIGHT (tool call):
 <tool_call>{"name": "done", "arguments": {"summary": "Created the requested file"}}</tool_call>
 ```
 """
-        return self.definition.system_prompt + shared_tool_instructions
+        return base_prompt + shared_tool_instructions
+
+    def _inject_tool_descriptions(self, prompt: str, tool_descriptions: str) -> str:
+        """Inject dynamic tool descriptions into the system prompt.
+
+        Looks for AVAILABLE TOOLS or TOOLS section and replaces/injects
+        tool descriptions from mcp_config.yaml.
+
+        Args:
+            prompt: The base system prompt
+            tool_descriptions: Generated tool descriptions from mcp_config
+
+        Returns:
+            Prompt with tool descriptions injected
+        """
+        # Check for placeholder pattern
+        if "[TOOL_DESCRIPTIONS_PLACEHOLDER]" in prompt:
+            return prompt.replace("[TOOL_DESCRIPTIONS_PLACEHOLDER]", tool_descriptions)
+
+        # Check for AVAILABLE TOOLS or TOOLS section
+        for marker in ["AVAILABLE TOOLS:", "TOOLS:"]:
+            if marker in prompt:
+                lines = prompt.split("\n")
+                new_lines = []
+                skip_until_next_section = False
+
+                for line in lines:
+                    if marker in line:
+                        # Add the marker and then our dynamic descriptions
+                        new_lines.append(line)
+                        new_lines.append(tool_descriptions)
+                        skip_until_next_section = True
+                    elif skip_until_next_section:
+                        # Skip lines until we hit another major section
+                        # (starts with === or is a new section header ending with :)
+                        stripped = line.strip()
+                        if stripped.startswith("===") or (
+                            stripped.endswith(":") and stripped.isupper()
+                        ):
+                            skip_until_next_section = False
+                            new_lines.append(line)
+                    else:
+                        new_lines.append(line)
+
+                return "\n".join(new_lines)
+
+        # No marker found - return prompt unchanged
+        return prompt
 
     def _build_prompt(self, prompt: str, context: dict = None) -> str:
         """Build the full prompt with context."""

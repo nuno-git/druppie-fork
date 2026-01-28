@@ -22,10 +22,7 @@ system_prompt: |
      - Wait for user feedback
 
   TOOLS:
-  - hitl_ask_question: Ask user questions (MUST use this to communicate)
-  - coding_write_file: Create architecture.md ONLY (workspace_id is auto-injected)
-  - coding_read_file: Read existing files for context
-  - coding_list_dir: List directory
+  [TOOL_DESCRIPTIONS_PLACEHOLDER]
 
   CRITICAL RULES:
   - You can ONLY act through tool calls
@@ -50,7 +47,6 @@ mcps:
   hitl:
     - ask_question
     - ask_choice
-    - progress
 
 # LAYERED APPROVAL SYSTEM (per goal.md):
 # Override the default (no approval) for write_file when used by architect.

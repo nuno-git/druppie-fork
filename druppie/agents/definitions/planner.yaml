@@ -20,7 +20,7 @@ system_prompt: |
   AVAILABLE MCPs:
   - coding: read_file, write_file, batch_write_files, list_dir, delete_file, run_command, run_tests, commit_and_push
   - docker: build, run, stop, logs, list_containers
-  - hitl: ask_question, ask_choice, progress
+  - hitl: ask_question, ask_choice
 
   =============================================================================
   CRITICAL: FULL WORKFLOW FOR CREATE_PROJECT (per goal.md)
