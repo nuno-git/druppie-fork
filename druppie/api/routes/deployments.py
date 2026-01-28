@@ -20,7 +20,7 @@ from pydantic import BaseModel
 import structlog
 
 from druppie.api.deps import get_current_user, get_user_roles
-from druppie.api.errors import NotFoundError, NotImplementedError
+from druppie.api.errors import NotFoundError
 
 logger = structlog.get_logger()
 

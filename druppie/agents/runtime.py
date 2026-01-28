@@ -1,8 +1,8 @@
 """Agent runtime - clean abstraction for running agents.
 
 Usage:
-    result = await Agent("router").run("Create a todo app")
-    result = await Agent("developer").run("Implement the API", context={...})
+    result = await Agent("router").run("Create a todo app", session_id="...", agent_run_id="...")
+    result = await Agent("developer").run("Implement the API", session_id="...", agent_run_id="...")
 
 HITL (Human-in-the-Loop):
     Agents have built-in HITL tools that do NOT require a separate MCP server:
@@ -24,7 +24,6 @@ import yaml
 from druppie.agents.models import AgentDefinition
 from druppie.agents.builtin_tools import BUILTIN_TOOLS, execute_builtin_tool, is_builtin_tool
 from druppie.llm import get_llm_service
-from druppie.core.execution_context import get_current_context
 from druppie.core.mcp_client import generate_tool_descriptions
 
 logger = structlog.get_logger()
@@ -53,10 +52,11 @@ class Agent:
     - Building messages with system prompt
     - Running tool-calling loop
     - Parsing output
-    - Tracking events and LLM calls via ExecutionContext
 
     The agent can call any MCP tool. If it calls hitl:ask,
-    execution pauses automatically via LangGraph's interrupt().
+    execution pauses and saves state to database.
+
+    Session and agent_run IDs are passed explicitly (no global state).
     """
 
     _definitions_path: str = None
@@ -143,17 +143,17 @@ class Agent:
     async def run(
         self,
         prompt: str,
+        session_id: str,
+        agent_run_id: str,
         context: dict = None,
-        workflow_id: str = None,
-        workflow_step: int = None,
     ) -> Any:
         """Run the agent with the given prompt.
 
         Args:
             prompt: User prompt or task description
+            session_id: Session ID
+            agent_run_id: Agent run ID for tracking
             context: Optional context dict (previous results, etc.)
-            workflow_id: ID of the workflow this agent is part of (for continuation)
-            workflow_step: Current step in the workflow
 
         Returns:
             Parsed result from agent's final response, or paused state with agent_state
@@ -163,9 +163,6 @@ class Agent:
             cause execution to pause. The question is saved to the database and
             the workflow resumes when the user answers.
         """
-        # Get execution context for event tracking
-        exec_ctx = get_current_context()
-
         messages = [
             {"role": "system", "content": self._build_system_prompt()},
             {"role": "user", "content": self._build_prompt(prompt, context)},
@@ -175,9 +172,8 @@ class Agent:
             messages=messages,
             prompt=prompt,
             context=context,
-            exec_ctx=exec_ctx,
-            workflow_id=workflow_id,
-            workflow_step=workflow_step,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
             start_iteration=0,
         )
 
@@ -185,25 +181,24 @@ class Agent:
         self,
         agent_state: dict,
         answer: str,
+        session_id: str,
+        agent_run_id: str,
     ) -> Any:
         """Resume the agent from a paused state with the user's answer.
 
         Args:
             agent_state: The saved agent state from when it paused
             answer: User's answer to the HITL question
+            session_id: Session ID
+            agent_run_id: Agent run ID for tracking
 
         Returns:
             Parsed result from agent's final response, or paused state
         """
-        # Get execution context for event tracking
-        exec_ctx = get_current_context()
-
         # Restore state
         messages = agent_state.get("messages", [])
         prompt = agent_state.get("prompt", "")
         context = agent_state.get("context", {})
-        workflow_id = agent_state.get("workflow_id")
-        workflow_step = agent_state.get("workflow_step")
         start_iteration = agent_state.get("iteration", 0)
         question = agent_state.get("question", "")
 
@@ -226,21 +221,12 @@ class Agent:
             answer_preview=answer[:50] if answer else "",
         )
 
-        # Emit agent resumed event
-        if exec_ctx:
-            exec_ctx.emit("agent_resumed", {
-                "agent_id": self.id,
-                "iteration": start_iteration,
-                "answer": answer[:100] if answer else "",
-            })
-
         return await self._run_loop(
             messages=messages,
             prompt=prompt,
             context=context,
-            exec_ctx=exec_ctx,
-            workflow_id=workflow_id,
-            workflow_step=workflow_step,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
             start_iteration=start_iteration,
         )
 
@@ -248,25 +234,24 @@ class Agent:
         self,
         agent_state: dict,
         tool_result: dict,
+        session_id: str,
+        agent_run_id: str,
     ) -> Any:
         """Resume the agent from a paused state after MCP tool approval.
 
         Args:
             agent_state: The saved agent state from when it paused
             tool_result: Result from the approved tool execution
+            session_id: Session ID
+            agent_run_id: Agent run ID for tracking
 
         Returns:
             Parsed result from agent's final response, or paused state
         """
-        # Get execution context for event tracking
-        exec_ctx = get_current_context()
-
         # Restore state
         messages = agent_state.get("messages", [])
         prompt = agent_state.get("prompt", "")
         context = agent_state.get("context", {})
-        workflow_id = agent_state.get("workflow_id")
-        workflow_step = agent_state.get("workflow_step")
         start_iteration = agent_state.get("iteration", 0)
         tool_call_id = agent_state.get("tool_call_id", f"call_{start_iteration}")
 
@@ -286,22 +271,12 @@ class Agent:
             tool_result_preview=str(tool_result)[:100] if tool_result else "",
         )
 
-        # Emit agent resumed event
-        if exec_ctx:
-            exec_ctx.emit("agent_resumed", {
-                "agent_id": self.id,
-                "iteration": start_iteration,
-                "reason": "mcp_tool_approved",
-                "tool": agent_state.get("tool_name"),
-            })
-
         return await self._run_loop(
             messages=messages,
             prompt=prompt,
             context=context,
-            exec_ctx=exec_ctx,
-            workflow_id=workflow_id,
-            workflow_step=workflow_step,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
             start_iteration=start_iteration,
         )
 
@@ -310,9 +285,8 @@ class Agent:
         messages: list[dict],
         prompt: str,
         context: dict | None,
-        exec_ctx,
-        workflow_id: str | None,
-        workflow_step: int | None,
+        session_id: str,
+        agent_run_id: str,
         start_iteration: int,
     ) -> Any:
         """Internal tool-calling loop.
@@ -321,9 +295,8 @@ class Agent:
             messages: Current message history
             prompt: Original prompt
             context: Original context
-            exec_ctx: Execution context
-            workflow_id: Workflow ID for continuation
-            workflow_step: Current workflow step
+            session_id: Session ID
+            agent_run_id: Agent run ID for tracking
             start_iteration: Iteration to start from
 
         Returns:
@@ -359,26 +332,22 @@ class Agent:
                 agent_id=self.id,
                 prompt_length=len(prompt),
                 tools_count=len(tools),
+                session_id=session_id,
+                agent_run_id=agent_run_id,
             )
-            # Emit agent started event
-            if exec_ctx:
-                exec_ctx.agent_started(self.id, prompt)
 
         for iteration in range(start_iteration, max_iterations):
             start_time = time.time()
             response = await self.llm.achat(messages, tools)
             duration_ms = int((time.time() - start_time) * 1000)
 
-            # Track LLM call
-            if exec_ctx:
-                exec_ctx.add_llm_call(
-                    agent_id=self.id,
-                    iteration=iteration,
-                    messages=messages.copy(),
-                    response=response,
-                    tools=tools,
-                    duration_ms=duration_ms,
-                )
+            logger.debug(
+                "llm_call",
+                agent_id=self.id,
+                iteration=iteration,
+                duration_ms=duration_ms,
+                has_tool_calls=bool(response.tool_calls),
+            )
 
             # No tool calls - check if agent is trying to communicate without tools
             if not response.tool_calls:
@@ -418,9 +387,8 @@ class Agent:
                     "agent_run_complete",
                     agent_id=self.id,
                     iterations=iteration + 1,
+                    session_id=session_id,
                 )
-                if exec_ctx:
-                    exec_ctx.agent_completed(self.id, iteration + 1, success=True)
                 return self._parse_output(response.content)
 
             # Execute tools
@@ -433,11 +401,8 @@ class Agent:
                     agent_id=self.id,
                     tool=tool_name,
                     iteration=iteration,
+                    session_id=session_id,
                 )
-
-                # Emit tool call event
-                if exec_ctx:
-                    exec_ctx.tool_call(self.id, tool_name, tool_args)
 
                 # Check if this is a built-in HITL tool
                 if is_builtin_tool(tool_name):
@@ -450,7 +415,8 @@ class Agent:
                     result = await execute_builtin_tool(
                         tool_name=tool_name,
                         tool_args=tool_args,
-                        context=exec_ctx,
+                        session_id=session_id,
+                        agent_run_id=agent_run_id,
                         agent_id=self.id,
                     )
 
@@ -461,6 +427,7 @@ class Agent:
                             agent_id=self.id,
                             tool=tool_name,
                             question_id=result.get("question_id"),
+                            session_id=session_id,
                         )
 
                         # Add the assistant message with the HITL tool call
@@ -479,28 +446,48 @@ class Agent:
                             }],
                         })
 
-                        if exec_ctx:
-                            exec_ctx.agent_paused(self.id, iteration + 1, "hitl_question")
+                        # Build agent state for resumption
+                        agent_state = {
+                            "agent_id": self.id,
+                            "messages": messages,
+                            "prompt": prompt,
+                            "context": context,
+                            "iteration": iteration,
+                            "tool_call_id": tool_call_id,
+                            "question": result.get("question"),
+                        }
+
+                        # Save agent_state to Question record for resumption
+                        question_id = result.get("question_id")
+                        if question_id:
+                            try:
+                                from druppie.api.deps import get_db
+                                from druppie.repositories import QuestionRepository
+                                from uuid import UUID
+
+                                db = next(get_db())
+                                question_repo = QuestionRepository(db)
+                                question_repo.update_agent_state(
+                                    UUID(question_id), agent_state
+                                )
+                                db.commit()
+                                db.close()
+                            except Exception as e:
+                                logger.warning(
+                                    "failed_to_save_question_agent_state",
+                                    question_id=question_id,
+                                    error=str(e),
+                                )
 
                         # Return full state for resumption
                         return {
                             "paused": True,
-                            "question_id": result.get("question_id"),
+                            "question_id": question_id,
                             "question": result.get("question"),
                             "question_type": result.get("question_type"),
                             "choices": result.get("choices"),
                             "tool": tool_name,
-                            "agent_state": {
-                                "agent_id": self.id,
-                                "messages": messages,
-                                "prompt": prompt,
-                                "context": context,
-                                "iteration": iteration,
-                                "tool_call_id": tool_call_id,
-                                "question": result.get("question"),
-                                "workflow_id": workflow_id,
-                                "workflow_step": workflow_step,
-                            },
+                            "agent_state": agent_state,
                         }
 
                     # Check if agent signaled task completion
@@ -510,9 +497,8 @@ class Agent:
                             agent_id=self.id,
                             tool=tool_name,
                             summary=result.get("summary", "")[:100],
+                            session_id=session_id,
                         )
-                        if exec_ctx:
-                            exec_ctx.agent_completed(self.id, iteration + 1, success=True)
                         return {
                             "success": True,
                             "result": result.get("summary", "Task completed"),
@@ -554,42 +540,8 @@ class Agent:
                     server = "coding"
                     tool = mcp_tool_name
 
-                # Inject context into tool args
-                # Only inject fields that are accepted by the MCP tool schemas
-                if exec_ctx:
-                    injected = {}
-                    if server == "coding":
-                        # Coding tools accept: workspace_id, path, content
-                        if "workspace_id" not in tool_args and exec_ctx.workspace_id:
-                            tool_args["workspace_id"] = exec_ctx.workspace_id
-                            injected["workspace_id"] = exec_ctx.workspace_id
-                    if server == "docker":
-                        # Only docker:build accepts workspace_id - it needs to know where to find Dockerfile
-                        # Other docker tools (run, stop, logs, list_containers) don't use workspace_id
-                        docker_tools_with_workspace = {"build", "register_workspace"}
-                        if tool in docker_tools_with_workspace:
-                            if "workspace_id" not in tool_args and exec_ctx.workspace_id:
-                                tool_args["workspace_id"] = exec_ctx.workspace_id
-                                injected["workspace_id"] = exec_ctx.workspace_id
-                        else:
-                            # Remove workspace_id if LLM incorrectly added it to a tool that doesn't use it
-                            if "workspace_id" in tool_args:
-                                del tool_args["workspace_id"]
-                                logger.debug(
-                                    "removed_invalid_workspace_id",
-                                    agent_id=self.id,
-                                    tool=mcp_tool_name,
-                                )
-                    # Note: hitl MCP is no longer used - we use built-in HITL tools instead
-
-                    if injected:
-                        logger.debug(
-                            "context_injected_into_tool",
-                            agent_id=self.id,
-                            tool=mcp_tool_name,
-                            injected_fields=list(injected.keys()),
-                            injected_values=injected,
-                        )
+                # Note: workspace_id injection will be handled by Coding MCP
+                # using session_id to look up workspace info
 
                 # Validate required arguments before MCP call
                 schema = tool_schemas.get(tool_name, {})
@@ -621,7 +573,9 @@ class Agent:
                 else:
                     # Execute tool via MCP client with agent definition for layered approval
                     result = await self.mcp_client.call_tool(
-                        server, tool, tool_args, exec_ctx,
+                        server, tool, tool_args,
+                        session_id=session_id,
+                        agent_run_id=agent_run_id,
                         agent_id=self.id,
                         agent_definition=self.definition,
                     )
@@ -644,12 +598,8 @@ class Agent:
                         }],
                     })
 
-                    if exec_ctx:
-                        exec_ctx.agent_paused(self.id, iteration + 1, "mcp_tool_approval")
-
                     # Return paused state with full agent_state for resumption
-                    # IMPORTANT: This allows proper resumption after approval
-                    logger.info("agent_paused_for_approval", agent_id=self.id, tool=mcp_tool_name)
+                    logger.info("agent_paused_for_approval", agent_id=self.id, tool=mcp_tool_name, session_id=session_id)
                     return {
                         "paused": True,
                         "approval_id": result.get("approval_id"),
@@ -664,8 +614,6 @@ class Agent:
                             "tool_call_id": tool_call_id,
                             "tool_name": mcp_tool_name,
                             "tool_args": tool_args,
-                            "workflow_id": workflow_id,
-                            "workflow_step": workflow_step,
                         },
                     }
 
@@ -684,11 +632,8 @@ class Agent:
                         error_type=error_type,
                         recoverable=is_recoverable,
                         iteration=iteration,
+                        session_id=session_id,
                     )
-
-                    # Emit tool error event
-                    if exec_ctx:
-                        exec_ctx.tool_error(self.id, mcp_tool_name, error_msg)
 
                     # Format error result clearly for the agent
                     # This helps the agent understand what went wrong and decide how to proceed
@@ -722,9 +667,7 @@ class Agent:
                     "content": json.dumps(result) if isinstance(result, (dict, list)) else str(result),
                 })
 
-        logger.warning("agent_max_iterations", agent_id=self.id)
-        if exec_ctx:
-            exec_ctx.agent_error(self.id, f"Exceeded {max_iterations} iterations")
+        logger.warning("agent_max_iterations", agent_id=self.id, session_id=session_id)
         raise AgentMaxIterationsError(
             f"Agent '{self.id}' exceeded {max_iterations} iterations"
         )

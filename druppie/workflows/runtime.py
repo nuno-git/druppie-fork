@@ -1,10 +1,11 @@
 """Workflow runtime - execute pre-defined sequences of agents and MCP tools.
 
 Usage:
-    result = await Workflow("feature_dev").run({
-        "project_path": "/workspace/myapp",
-        "feature_description": "Add user authentication",
-    })
+    result = await Workflow("feature_dev").run(
+        session_id="...",
+        agent_run_id="...",
+        inputs={"project_path": "/workspace/myapp", "feature_description": "..."},
+    )
 """
 
 import os
@@ -16,7 +17,6 @@ import yaml
 
 from druppie.agents import Agent
 from druppie.core.models import WorkflowDefinition, StepType
-from druppie.core.execution_context import get_current_context
 
 logger = structlog.get_logger()
 
@@ -115,10 +115,17 @@ class Workflow:
             self._mcp_client = get_mcp_client(db)
         return self._mcp_client
 
-    async def run(self, inputs: dict[str, Any] = None) -> dict[str, Any]:
+    async def run(
+        self,
+        session_id: str,
+        agent_run_id: str,
+        inputs: dict[str, Any] = None,
+    ) -> dict[str, Any]:
         """Run the workflow with given inputs.
 
         Args:
+            session_id: Session ID
+            agent_run_id: Agent run ID for tracking
             inputs: Input variables for the workflow (used in templates)
 
         Returns:
@@ -126,6 +133,8 @@ class Workflow:
         """
         inputs = inputs or {}
         context = {**inputs}
+        self._session_id = session_id
+        self._agent_run_id = agent_run_id
         results = []
 
         # Validate required inputs
@@ -232,7 +241,12 @@ class Workflow:
         prompt = self._render_template(prompt_template, context)
 
         agent = Agent(agent_id)
-        return await agent.run(prompt, context)
+        return await agent.run(
+            prompt,
+            session_id=self._session_id,
+            agent_run_id=self._agent_run_id,
+            context=context,
+        )
 
     async def _execute_mcp_step(
         self, step_data: dict[str, Any], context: dict[str, Any]
@@ -258,11 +272,13 @@ class Workflow:
             server = "coding"
             tool_name = tool
 
-        # Get execution context for the call
-        exec_ctx = get_current_context()
-
         # Call via MCP client
-        return await self.mcp_client.call_tool(server, tool_name, inputs, exec_ctx)
+        return await self.mcp_client.call_tool(
+            server, tool_name, inputs,
+            session_id=self._session_id,
+            agent_run_id=self._agent_run_id,
+            agent_id="workflow",  # Workflow-level MCP calls
+        )
 
     def _render_template(self, template: str, context: dict[str, Any]) -> str:
         """Render a template string with context variables.

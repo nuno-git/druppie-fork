@@ -24,7 +24,7 @@ from pydantic import BaseModel
 import structlog
 
 from druppie.api.deps import get_current_user
-from druppie.api.errors import NotFoundError, ValidationError, NotImplementedError
+from druppie.api.errors import NotFoundError, ValidationError
 
 logger = structlog.get_logger()
 

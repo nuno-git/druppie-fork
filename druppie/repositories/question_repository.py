@@ -112,6 +112,20 @@ class QuestionRepository(BaseRepository):
 
         self.db.query(Question).filter_by(id=question_id).update(updates)
 
+    def update_agent_state(
+        self,
+        question_id: UUID,
+        agent_state: dict[str, Any],
+    ) -> None:
+        """Update question with agent state for resumption.
+
+        This is called after the agent pauses for a question. The agent_state
+        contains everything needed to resume execution after the user answers.
+        """
+        self.db.query(Question).filter_by(id=question_id).update({
+            "agent_state": agent_state,
+        })
+
     def _to_detail(self, question: Question) -> QuestionDetail:
         """Convert question model to detail domain object.
 
