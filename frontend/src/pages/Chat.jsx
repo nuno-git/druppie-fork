@@ -472,26 +472,10 @@ const Chat = () => {
       }
     })
 
-    // Add HITL questions (both pending and answered) as separate question messages
-    // Extract from agent_runs since hitl_questions is now embedded (not at top level)
+    // NOTE: HITL questions are now rendered via ToolDecisionCard in the timeline,
+    // embedded within the tool call that triggered them. No need to add as separate messages.
+    // Extract hitlQuestions for use in typing indicator logic
     const hitlQuestions = agentRuns.flatMap(run => run.hitl_questions || [])
-    for (const q of hitlQuestions) {
-      const isAnswered = q.status === 'answered'
-      loadedMessages.push({
-        role: 'question',
-        questionData: {
-          id: q.id,
-          question: q.question,
-          choices: q.choices || [],
-          context: q.context,
-          agent_id: q.agent_id || 'unknown',
-          session_id: sessionId,
-        },
-        answered: isAnswered,
-        userAnswer: q.answer,
-        timestamp: q.created_at,
-      })
-    }
 
     // Sort all messages by timestamp to ensure correct order
     loadedMessages.sort((a, b) => {
@@ -544,14 +528,18 @@ const Chat = () => {
     setSessionPendingApprovals(pendingApprovals)
 
     // Restore typing indicator state based on session status
-    // If session is still executing, show the typing indicator
-    // BUT NOT if there's a pending question - we're waiting for user input
+    // The backend now properly sets session status to:
+    // - "active" when executing
+    // - "paused_approval" when waiting for tool approval
+    // - "paused_question" when waiting for HITL answer
+    // - "completed", "failed", "cancelled" when done
     const sessionStatus = fullSession.status
-    const isExecuting = ['executing', 'in_progress', 'running', 'active'].includes(sessionStatus)
-    const isPausedForApproval = sessionStatus === 'paused_approval' && pendingApprovals.length > 0
-    const hasPendingQuestion = hitlQuestions.some(q => q.status === 'pending')
+    const isActivelyExecuting = sessionStatus === 'active'
 
-    if (isExecuting && !hasPendingQuestion) {
+    // Only show typing indicator if session is actively executing
+    const shouldShowTypingIndicator = isActivelyExecuting
+
+    if (shouldShowTypingIndicator) {
       // Find the last active agent from timeline items
       const lastAgentEvent = timelineItems
         .filter(e => e.agent_id)
@@ -562,7 +550,7 @@ const Chat = () => {
       setCurrentAgentId(lastAgentId || null)
       setCurrentStep(lastAgentId ? `${lastAgentId.charAt(0).toUpperCase() + lastAgentId.slice(1)} is working...` : 'Agent is working...')
     } else {
-      // Clear typing indicator - either not executing, waiting for question, or waiting for approval
+      // Clear typing indicator - completed, paused for question, or waiting for approval
       setIsAgentWorking(false)
       setCurrentAgentId(null)
       setCurrentStep(null)
@@ -606,23 +594,9 @@ const Chat = () => {
         timestamp: new Date().toISOString(),
       }]
 
-      // Convert pending_questions to separate question messages
-      if (data.pending_questions && data.pending_questions.length > 0) {
-        for (const q of data.pending_questions) {
-          newMessages.push({
-            role: 'question',
-            questionData: {
-              id: q.id,
-              question: q.question,
-              choices: q.choices || [],
-              context: q.context,
-              agent_id: q.agent_id || 'unknown',
-              session_id: data.plan_id,
-            },
-            timestamp: new Date().toISOString(),
-          })
-        }
-      }
+      // NOTE: HITL questions are now rendered via ToolDecisionCard in the timeline,
+      // embedded within the tool call that triggered them. No need to add as separate messages.
+      // The WebSocket 'question' event and subsequent session refetch will update the timeline.
 
       setMessages((prev) => [...prev, ...newMessages])
       setCurrentPlanId(data.plan_id)
@@ -929,7 +903,7 @@ const Chat = () => {
   const suggestions = ['Create a todo app with Flask', 'Build a simple calculator', 'Make a notes app with React', 'Create a weather dashboard']
 
   return (
-    <div className="flex h-[calc(100vh-10rem)] -mx-4 sm:-mx-6 lg:-mx-8">
+    <div className="flex h-[calc(100vh-10rem)] -mx-4 sm:-mx-6 lg:-mx-8 overflow-hidden">
       <ConversationSidebar
         sessions={sessionsData}
         activeSessionId={currentPlanId}

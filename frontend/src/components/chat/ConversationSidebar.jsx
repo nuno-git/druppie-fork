@@ -155,7 +155,7 @@ const ConversationSidebar = ({
 
   if (isCollapsed) {
     return (
-      <div className="w-12 bg-white border-r border-gray-200 flex flex-col h-full">
+      <div className="w-12 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col h-full">
         {/* Collapsed header with expand button */}
         <div className="p-2 border-b border-gray-200">
           <button
@@ -200,7 +200,7 @@ const ConversationSidebar = ({
   }
 
   return (
-    <div className="w-72 bg-white border-r border-gray-200 flex flex-col h-full">
+    <div className="w-72 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col h-full">
       {/* Header with collapse button */}
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center gap-2 mb-3">

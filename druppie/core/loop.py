@@ -470,6 +470,25 @@ async def run_agent(
                         agent_id=agent_id,
                     )
 
+                # Update session status to paused
+                session_id = str(exec_ctx.session_id)
+                if result.get("approval_id"):
+                    update_session(db, UUID(session_id), status="paused_approval")
+                    logger.info(
+                        "session_paused_for_approval",
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        approval_id=result.get("approval_id"),
+                    )
+                elif result.get("question_id"):
+                    update_session(db, UUID(session_id), status="paused_question")
+                    logger.info(
+                        "session_paused_for_question",
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        question_id=result.get("question_id"),
+                    )
+
                 exec_ctx.emit("agent_paused", {
                     "agent_id": agent_id,
                     "agent_run_id": str(agent_run.id),
