@@ -212,16 +212,20 @@ start_backend() {
     export WORKSPACE_PATH="$(pwd)/workspace"
     export INTERNAL_API_KEY="druppie-internal-secret-key"
     export USE_MCP_MICROSERVICES="true"
-    export MCP_CODING_URL="http://localhost:9001"
-    export MCP_DOCKER_URL="http://localhost:9002"
     export PYTHONPATH="$(pwd)"
 
-    # Load API keys from .env if exists
+    # Load API keys from .env if exists (LLM keys, etc.)
     if [ -f ".env" ]; then
         set -a
         source .env
         set +a
     fi
+
+    # IMPORTANT: Override MCP URLs AFTER sourcing .env
+    # .env has Docker hostnames (mcp-coding:9001) for production
+    # We need localhost URLs for local development
+    export MCP_CODING_URL="http://localhost:9001"
+    export MCP_DOCKER_URL="http://localhost:9002"
 
     log "Starting uvicorn on port 8100 with hot reload..."
 
