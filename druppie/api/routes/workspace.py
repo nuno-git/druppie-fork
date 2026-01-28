@@ -17,7 +17,7 @@ import structlog
 
 from druppie.api.deps import get_current_user, get_db
 from druppie.api.errors import NotFoundError, ValidationError
-from druppie.db import crud
+from druppie.db.models import Workspace
 
 logger = structlog.get_logger()
 
@@ -128,7 +128,7 @@ async def list_workspace_files(
     session's workspace directory.
     """
     # Get workspace for session
-    workspace = crud.get_workspace_by_session(db, session_id)
+    workspace = db.query(Workspace).filter(Workspace.session_id == session_id).first()
 
     if not workspace:
         return WorkspaceFilesResponse(
@@ -179,7 +179,7 @@ async def get_workspace_file(
     Maximum file size is 10MB.
     """
     # Get workspace for session
-    workspace = crud.get_workspace_by_session(db, session_id)
+    workspace = db.query(Workspace).filter(Workspace.session_id == session_id).first()
 
     if not workspace:
         raise NotFoundError("workspace", session_id, "Workspace not found for session")
