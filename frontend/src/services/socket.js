@@ -372,20 +372,6 @@ export const isSocketConnected = () => {
 }
 
 /**
- * Subscribe to HITL progress events
- */
-export const onHITLProgress = (callback) => {
-  return registerCallback('progress', callback)
-}
-
-/**
- * Subscribe to HITL notification events
- */
-export const onHITLNotification = (callback) => {
-  return registerCallback('notification', callback)
-}
-
-/**
  * Subscribe to execution cancelled events
  */
 export const onExecutionCancelled = (callback) => {

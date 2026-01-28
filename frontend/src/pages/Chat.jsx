@@ -18,7 +18,6 @@ import {
   onWorkflowEvent,
   onHITLQuestion,
   onApprovalRequired,
-  onHITLProgress,
   onExecutionCancelled,
   onDeploymentComplete,
   disconnectSocket,
@@ -286,20 +285,9 @@ const Chat = () => {
       }
     }
 
-    const handleHITLProgress = (data) => {
-      setLiveWorkflowEvents((prev) => [...prev, {
-        event_type: 'progress',
-        title: data.step || 'Progress Update',
-        description: data.message,
-        status: 'working',
-        data: { percent: data.percent },
-      }])
-    }
-
     const unsubQuestion = onHITLQuestion(handleHITLQuestion)
     const unsubApproval = onApprovalRequired(handleApprovalRequired)
-    const unsubProgress = onHITLProgress(handleHITLProgress)
-    return () => { unsubQuestion(); unsubApproval(); unsubProgress() }
+    return () => { unsubQuestion(); unsubApproval() }
   }, [currentPlanId, toast])
 
   // Deployment complete listener - simplified to refetch and show toast
@@ -376,9 +364,6 @@ const Chat = () => {
       // Process each LLM call's tool decisions
       for (const llmCall of (run.llm_calls || [])) {
         for (const toolDecision of (llmCall.response_tool_calls || [])) {
-          // Skip internal tools like hitl_progress
-          if (toolDecision.name === 'hitl_progress') continue
-
           // Each toolDecision now has all embedded data from the backend
           timelineItems.push({
             id: toolDecision.id || `${llmCall.id}-${toolDecision.name}`,
