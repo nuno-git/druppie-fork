@@ -310,10 +310,9 @@ class SessionRepository(BaseRepository):
                 resolved_at=approval.resolved_at,
             )
 
-        # Build arguments dict from relationship
-        arguments = {}
-        if tc.arguments:
-            arguments = {a.arg_name: a.arg_value for a in tc.arguments}
+        # Arguments are stored as JSONB directly in tool_calls.arguments
+        # No separate table or relationship needed
+        arguments = tc.arguments or {}
 
         # Check for child run (execute_agent)
         child_run = None
