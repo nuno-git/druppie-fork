@@ -22,12 +22,12 @@ def _persist_event(session_id: str, event_type: str, data: dict | None = None) -
     """Persist event to session_events table."""
     try:
         from druppie.db.database import get_db
-        from druppie.db.crud import create_session_event
+        from druppie.repositories import SessionRepository
 
         db = next(get_db())
         try:
-            create_session_event(
-                db=db,
+            session_repo = SessionRepository(db)
+            session_repo.create_event(
                 session_id=UUID(session_id),
                 event_type=event_type,
                 agent_id=data.get("agent_id") if data else None,
@@ -35,6 +35,7 @@ def _persist_event(session_id: str, event_type: str, data: dict | None = None) -
                 tool_name=data.get("tool_name") if data else None,
                 event_data=data,
             )
+            db.commit()
         finally:
             db.close()
     except Exception as e:

@@ -23,7 +23,7 @@ import yaml
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
-from druppie.db.crud import create_tool_call, update_tool_call
+from druppie.repositories import ExecutionRepository, ApprovalRepository
 
 
 # =============================================================================
@@ -159,6 +159,8 @@ class MCPClient:
             db: Database session
         """
         self.db = db
+        self.execution_repo = ExecutionRepository(db)
+        self.approval_repo = ApprovalRepository(db)
         self._config: dict | None = None
         self._clients: dict[str, Client] = {}
 
@@ -312,11 +314,10 @@ class MCPClient:
         tool_name = f"{server}:{tool}"
 
         # Create tool_call record in database for tracing
-        tool_call_record = None
+        tool_call_id = None
         try:
             agent_run_id = UUID(context.current_agent_run_id) if context.current_agent_run_id else None
-            tool_call_record = create_tool_call(
-                self.db,
+            tool_call_id = self.execution_repo.create_tool_call(
                 session_id=UUID(context.session_id),
                 agent_run_id=agent_run_id,
                 mcp_server=server,
@@ -347,11 +348,10 @@ class MCPClient:
                     # Clear the cached result so it's not reused again
                     del context.completed_tool_results[tool_name]
                     # Update tool_call record as completed
-                    if tool_call_record:
+                    if tool_call_id:
                         try:
-                            update_tool_call(
-                                self.db,
-                                tool_call_record.id,
+                            self.execution_repo.update_tool_result(
+                                tool_call_id,
                                 status="completed",
                                 result=json.dumps(cached_result)[:4000] if cached_result else None,
                             )
@@ -389,9 +389,9 @@ class MCPClient:
             # Convert required_role to list for backwards compatibility
             required_roles = [required_role] if required_role else []
             # Update tool_call record as pending approval
-            if tool_call_record:
+            if tool_call_id:
                 try:
-                    update_tool_call(self.db, tool_call_record.id, status="pending_approval")
+                    self.execution_repo.update_tool_result(tool_call_id, status="pending_approval")
                 except Exception as e:
                     logger.warning("tool_call_update_failed", error=str(e))
             return await self._request_approval(
@@ -400,24 +400,23 @@ class MCPClient:
 
         # No approval needed for this tool - execute with retry for transient errors
         # Update tool_call record as executing
-        if tool_call_record:
+        if tool_call_id:
             try:
-                update_tool_call(self.db, tool_call_record.id, status="executing")
+                self.execution_repo.update_tool_result(tool_call_id, status="executing")
             except Exception as e:
                 logger.warning("tool_call_update_failed", error=str(e))
 
         result = await self._execute_tool_with_retry(server, tool, args, context)
 
         # Update tool_call record with result
-        if tool_call_record:
+        if tool_call_id:
             try:
                 is_success = result.get("success", False)
-                update_tool_call(
-                    self.db,
-                    tool_call_record.id,
+                self.execution_repo.update_tool_result(
+                    tool_call_id,
                     status="completed" if is_success else "failed",
                     result=json.dumps(result)[:4000] if is_success else None,
-                    error_message=result.get("error")[:4000] if result.get("error") else None,
+                    error=result.get("error")[:4000] if result.get("error") else None,
                 )
             except Exception as e:
                 logger.warning("tool_call_update_failed", error=str(e))
@@ -775,8 +774,6 @@ class MCPClient:
         agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Request approval and pause execution."""
-        from druppie.db import crud
-
         tool_name = f"{server}:{tool}"
 
         # Include workspace context from ExecutionContext in the arguments
@@ -820,9 +817,6 @@ class MCPClient:
         # Extract workspace_id from args for logging
         workspace_id = args_with_context.get("workspace_id")
 
-        # Create approval record in DB
-        approval_id = str(uuid.uuid4())
-
         # Get agent state for resumption
         agent_state = context.get_state() if hasattr(context, "get_state") else None
 
@@ -835,25 +829,25 @@ class MCPClient:
             has_agent_state=agent_state is not None,
         )
 
-        approval = crud.create_approval(
-            self.db,
-            {
-                "id": approval_id,
-                "session_id": context.session_id,
-                "tool_name": tool_name,
-                "arguments": args_with_context,
-                "required_roles": required_roles or ["developer", "admin"],
-                "danger_level": danger_level,
-                "description": f"Execute {tool_name} with args: {json.dumps(args_with_context)[:200]}",
-                "status": "pending",
-                "agent_id": agent_id,
-                "agent_state": agent_state,
-            },
+        # Convert roles list to comma-separated string for storage
+        roles_list = required_roles or ["developer", "admin"]
+        required_role_str = ",".join(roles_list)
+
+        approval = self.approval_repo.create(
+            session_id=context.session_id,
+            tool_name=tool_name,
+            arguments=args_with_context,
+            required_role=required_role_str,
+            danger_level=danger_level,
+            description=f"Execute {tool_name} with args: {json.dumps(args_with_context)[:200]}",
+            agent_id=agent_id,
+            mcp_server=server,
+            agent_state=agent_state,
         )
 
         logger.info(
             "approval_requested",
-            approval_id=approval_id,
+            approval_id=str(approval.id),
             tool=tool_name,
             session_id=context.session_id,
             workspace_id=workspace_id,
@@ -868,7 +862,7 @@ class MCPClient:
         if context.emit_event:
             context.emit_event({
                 "type": "approval_required",
-                "approval_id": approval_id,
+                "approval_id": str(approval.id),
                 "tool": tool_name,
                 "agent_id": agent_id,
                 "args": args_with_context,
@@ -880,7 +874,7 @@ class MCPClient:
         return {
             "status": "paused",
             "reason": "approval_required",
-            "approval_id": approval_id,
+            "approval_id": str(approval.id),
             "tool": tool_name,
             "required_roles": required_roles,
             "danger_level": danger_level,
@@ -943,9 +937,7 @@ class MCPClient:
         Returns:
             Tool result
         """
-        from druppie.db import crud
-
-        approval = crud.get_approval(self.db, approval_id)
+        approval = self.approval_repo.get_by_id(UUID(approval_id))
         if not approval:
             return {"success": False, "error": "Approval not found"}
 
