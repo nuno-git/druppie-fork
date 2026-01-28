@@ -6,19 +6,40 @@ from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
 
+from enum import Enum
+
 from .common import TokenUsage, SessionStatus
-from .agent_run import AgentRunDetail
+from .agent_run import AgentRunSummary
 from .project import ProjectSummary
 
 
-class ChatItem(BaseModel):
-    """Single item in chat timeline."""
-    type: str  # system_message, user_message, agent_run, assistant_message
-    content: str | None = None
+class ChatItemType(str, Enum):
+    """Type of chat item."""
+    MESSAGE = "message"
+    AGENT_RUN = "agent_run"
+
+
+class MessageSummary(BaseModel):
+    """A message in the chat timeline."""
+    id: UUID
+    role: str  # user, assistant, system
+    content: str
     agent_id: str | None = None
-    timestamp: datetime
-    # For agent_run type - nested structure
-    agent_run: AgentRunDetail | None = None
+    created_at: datetime
+
+
+class ChatItem(BaseModel):
+    """Single item in chat timeline - either a message or an agent run."""
+    type: ChatItemType
+
+    # For messages (user input, assistant response)
+    message: MessageSummary | None = None
+
+    # For agent runs (pending, running, completed, paused...)
+    agent_run: AgentRunSummary | None = None
+
+    # For ordering
+    created_at: datetime
 
 
 class SessionSummary(BaseModel):

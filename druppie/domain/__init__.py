@@ -14,8 +14,8 @@ from .common import (
 from .common import TokenUsage, TimestampMixin, LLMMessage
 
 # Entity models
-from .session import SessionSummary, SessionDetail, ChatItem
-from .agent_run import AgentRunDetail, LLMCallDetail, ToolCallDetail
+from .session import SessionSummary, SessionDetail, ChatItem, ChatItemType, MessageSummary
+from .agent_run import AgentRunSummary, AgentRunDetail, LLMCallDetail, ToolCallDetail
 from .approval import ApprovalSummary, ApprovalDetail, PendingApprovalList
 from .question import QuestionDetail, QuestionChoice, PendingQuestionList
 from .project import ProjectSummary, ProjectDetail, DeploymentInfo, DeploymentSummary
@@ -37,7 +37,10 @@ __all__ = [
     "SessionSummary",
     "SessionDetail",
     "ChatItem",
+    "ChatItemType",
+    "MessageSummary",
     # Agent run
+    "AgentRunSummary",
     "AgentRunDetail",
     "LLMCallDetail",
     "ToolCallDetail",

@@ -241,7 +241,16 @@ class WorkflowStep(Base):
 
 
 class AgentRun(Base):
-    """Tracks each agent execution for message isolation."""
+    """Tracks each agent execution for message isolation.
+
+    Agent runs can be:
+    - Created by planner with status='pending' (planned runs)
+    - Created at runtime with status='running' (immediate execution)
+
+    For pending runs created by planner:
+    - planned_prompt: The task description for the agent
+    - sequence_number: Execution order (0, 1, 2...)
+    """
 
     __tablename__ = "agent_runs"
 
@@ -251,8 +260,13 @@ class AgentRun(Base):
     agent_id = Column(String(100), nullable=False)
     parent_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id"))
 
-    status = Column(String(20), default="running")  # running, paused_tool, paused_hitl, completed, failed
+    # pending = created by planner, not started yet
+    status = Column(String(20), default="running")  # pending, running, paused_tool, paused_hitl, completed, failed
     iteration_count = Column(Integer, default=0)
+
+    # For pending runs created by planner
+    planned_prompt = Column(Text)  # Task description for the agent
+    sequence_number = Column(Integer)  # Execution order (0, 1, 2...)
 
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)
@@ -274,6 +288,8 @@ class AgentRun(Base):
             "parent_run_id": str(self.parent_run_id) if self.parent_run_id else None,
             "status": self.status,
             "iteration_count": self.iteration_count,
+            "planned_prompt": self.planned_prompt,
+            "sequence_number": self.sequence_number,
             "prompt_tokens": self.prompt_tokens or 0,
             "completion_tokens": self.completion_tokens or 0,
             "total_tokens": self.total_tokens or 0,
