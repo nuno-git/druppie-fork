@@ -246,6 +246,41 @@ class SessionRepository:
         ...
 ```
 
+## Shared Volume Architecture
+
+The workspace (where agents write files) is a **shared Docker volume** mounted in multiple containers:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              Docker Volume: druppie_new_workspace                │
+│                                                                  │
+│   Contains all project files created by agents:                 │
+│   /user-123/project-abc/src/app.py                              │
+│   /user-456/project-xyz/Dockerfile                              │
+│   ...                                                           │
+└─────────────────────────────────────────────────────────────────┘
+              │                              │
+              │ mounted at                   │ mounted at
+              │ /workspaces                  │ /app/workspace
+              ▼                              ▼
+     ┌─────────────────┐            ┌─────────────────┐
+     │   Coding MCP    │            │     Backend     │
+     │                 │            │                 │
+     │ Agents write    │            │ Humans browse   │
+     │ files here      │            │ files here      │
+     │ (via MCP tools) │            │ (via REST API)  │
+     └─────────────────┘            └─────────────────┘
+```
+
+**Why two paths to the same files?**
+
+| Path | Who Uses It | How |
+|------|-------------|-----|
+| Coding MCP | Agents | MCP protocol (write_file, read_file) |
+| Backend /api/workspace | Frontend/Users | REST API (browse, view, download) |
+
+Same files, different access patterns. Agents need structured tool calls. Humans need a browsable UI.
+
 ## Key Files
 
 | File | What It Does |
