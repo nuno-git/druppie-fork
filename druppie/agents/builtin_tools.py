@@ -7,13 +7,25 @@ Tools:
   - hitl_ask_question: Free-form text question (pauses for user response)
   - hitl_ask_multiple_choice_question: Multiple choice question (pauses for user response)
 
+- Planning:
+  - make_plan: Create an execution plan (pending agent runs)
+
 - Completion:
   - done: Signal that the agent has completed its task
+
+Note: HITL tool execution (Question record creation) is handled by ToolExecutor.
+This module provides:
+1. Tool definitions (BUILTIN_TOOLS) for LLM
+2. execute_builtin() for non-HITL tools (done, make_plan)
 """
 
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session as DBSession
 
 logger = structlog.get_logger()
 
@@ -127,147 +139,6 @@ BUILTIN_TOOLS = [
     },
 ]
 
-# For backwards compatibility
-HITL_TOOLS = BUILTIN_TOOLS
-
-
-# =============================================================================
-# HITL TOOL IMPLEMENTATIONS
-# =============================================================================
-
-async def ask_question(
-    question: str,
-    session_id: str,
-    agent_run_id: str,
-    agent_id: str,
-    question_context: str | None = None,
-) -> dict:
-    """Ask the user a free-form text question.
-
-    This saves the question to the database and returns a paused state.
-    The workflow will resume when the user answers.
-
-    Args:
-        question: The question to ask
-        session_id: Session ID
-        agent_run_id: Agent run ID for tracking
-        agent_id: ID of the calling agent
-        question_context: Optional context for the question
-    """
-    from druppie.api.deps import get_db
-    from druppie.repositories import QuestionRepository
-
-    logger.info(
-        "hitl_ask_question",
-        session_id=session_id,
-        agent_id=agent_id,
-        agent_run_id=agent_run_id,
-        question=question[:100] + "..." if len(question) > 100 else question,
-    )
-
-    # Save question to database
-    db = next(get_db())
-    try:
-        question_repo = QuestionRepository(db)
-        hitl_question = question_repo.create(
-            session_id=UUID(session_id),
-            agent_run_id=UUID(agent_run_id),
-            agent_id=agent_id,
-            question=question,
-            question_type="text",
-            choices=None,
-        )
-        db.commit()
-
-        question_id = str(hitl_question.id)
-
-        logger.info(
-            "hitl_question_created",
-            question_id=question_id,
-            session_id=session_id,
-        )
-    finally:
-        db.close()
-
-    return {
-        "status": "paused",
-        "reason": "waiting_for_answer",
-        "question_id": question_id,
-        "question": question,
-        "question_type": "text",
-    }
-
-
-async def ask_multiple_choice_question(
-    question: str,
-    choices: list[str],
-    session_id: str,
-    agent_run_id: str,
-    agent_id: str,
-    allow_other: bool = True,
-    question_context: str | None = None,
-) -> dict:
-    """Ask the user a multiple choice question.
-
-    This saves the question to the database and returns a paused state.
-    The workflow will resume when the user answers.
-
-    Args:
-        question: The question to ask
-        choices: List of choices
-        session_id: Session ID
-        agent_run_id: Agent run ID for tracking
-        agent_id: ID of the calling agent
-        allow_other: Whether to allow custom answer
-        question_context: Optional context for the question
-    """
-    from druppie.api.deps import get_db
-    from druppie.repositories import QuestionRepository
-
-    logger.info(
-        "hitl_ask_multiple_choice_question",
-        session_id=session_id,
-        agent_id=agent_id,
-        agent_run_id=agent_run_id,
-        question=question[:100] + "..." if len(question) > 100 else question,
-        choices_count=len(choices),
-        allow_other=allow_other,
-    )
-
-    # Save question to database - convert choices to format expected by repository
-    choices_dicts = [{"text": c} for c in choices]
-    db = next(get_db())
-    try:
-        question_repo = QuestionRepository(db)
-        hitl_question = question_repo.create(
-            session_id=UUID(session_id),
-            agent_run_id=UUID(agent_run_id),
-            agent_id=agent_id,
-            question=question,
-            question_type="choice",
-            choices=choices_dicts,
-        )
-        db.commit()
-
-        question_id = str(hitl_question.id)
-
-        logger.info(
-            "hitl_choice_question_created",
-            question_id=question_id,
-            session_id=session_id,
-        )
-    finally:
-        db.close()
-
-    return {
-        "status": "paused",
-        "reason": "waiting_for_answer",
-        "question_id": question_id,
-        "question": question,
-        "question_type": "choice",
-        "choices": choices,
-        "allow_other": allow_other,
-    }
 
 
 # =============================================================================
@@ -276,9 +147,9 @@ async def ask_multiple_choice_question(
 
 async def make_plan(
     steps: list[dict],
-    session_id: str,
-    agent_run_id: str,
-    agent_id: str,
+    session_id: UUID,
+    agent_run_id: UUID,
+    db: "DBSession",
 ) -> dict:
     """Create an execution plan as pending agent runs.
 
@@ -287,22 +158,19 @@ async def make_plan(
 
     Args:
         steps: List of steps, each with agent_id and prompt
-        session_id: Session ID
-        agent_run_id: Agent run ID for tracking
-        agent_id: ID of the calling agent (planner)
+        session_id: Session UUID
+        agent_run_id: Agent run UUID for tracking
+        db: Database session (caller commits)
 
     Returns:
         Success message with plan details
     """
     from druppie.db.models import AgentRun
-    from druppie.api.deps import get_db
-
-    session_uuid = UUID(session_id)
 
     logger.info(
         "make_plan",
-        session_id=session_id,
-        agent_id=agent_id,
+        session_id=str(session_id),
+        agent_run_id=str(agent_run_id),
         step_count=len(steps),
     )
 
@@ -313,45 +181,42 @@ async def make_plan(
         }
 
     # Create pending agent runs
-    db = next(get_db())
-    try:
-        created_runs = []
-        for i, step in enumerate(steps):
-            step_agent_id = step.get("agent_id")
-            step_prompt = step.get("prompt")
+    created_runs = []
+    for i, step in enumerate(steps):
+        step_agent_id = step.get("agent_id")
+        step_prompt = step.get("prompt")
 
-            if not step_agent_id or not step_prompt:
-                logger.warning(
-                    "invalid_plan_step",
-                    step_index=i,
-                    agent_id=step_agent_id,
-                    has_prompt=bool(step_prompt),
-                )
-                continue
-
-            agent_run = AgentRun(
-                session_id=session_uuid,
+        if not step_agent_id or not step_prompt:
+            logger.warning(
+                "invalid_plan_step",
+                step_index=i,
                 agent_id=step_agent_id,
-                status="pending",
-                planned_prompt=step_prompt,
-                sequence_number=i,
+                has_prompt=bool(step_prompt),
             )
-            db.add(agent_run)
-            created_runs.append({
-                "sequence": i,
-                "agent_id": step_agent_id,
-                "prompt_preview": step_prompt[:100] + "..." if len(step_prompt) > 100 else step_prompt,
-            })
+            continue
 
-        db.commit()
-
-        logger.info(
-            "plan_created",
+        agent_run = AgentRun(
             session_id=session_id,
-            step_count=len(created_runs),
+            agent_id=step_agent_id,
+            status="pending",
+            planned_prompt=step_prompt,
+            sequence_number=i,
         )
-    finally:
-        db.close()
+        db.add(agent_run)
+        created_runs.append({
+            "sequence": i,
+            "agent_id": step_agent_id,
+            "prompt_preview": step_prompt[:100] + "..." if len(step_prompt) > 100 else step_prompt,
+        })
+
+    # Note: Caller (ToolExecutor) commits the transaction
+    db.flush()
+
+    logger.info(
+        "plan_created",
+        session_id=str(session_id),
+        step_count=len(created_runs),
+    )
 
     return {
         "success": True,
@@ -366,9 +231,8 @@ async def make_plan(
 
 async def done(
     summary: str,
-    session_id: str,
-    agent_run_id: str,
-    agent_id: str,
+    session_id: UUID,
+    agent_run_id: UUID,
 ) -> dict:
     """Signal that the agent has completed its task.
 
@@ -376,15 +240,16 @@ async def done(
 
     Args:
         summary: Summary of what was accomplished
-        session_id: Session ID
-        agent_run_id: Agent run ID for tracking
-        agent_id: ID of the calling agent
+        session_id: Session UUID
+        agent_run_id: Agent run UUID for tracking
+
+    Returns:
+        Completion status with summary
     """
     logger.info(
         "agent_done",
-        session_id=session_id,
-        agent_run_id=agent_run_id,
-        agent_id=agent_id,
+        session_id=str(session_id),
+        agent_run_id=str(agent_run_id),
         summary=summary[:200] if summary else "",
     )
 
@@ -395,59 +260,44 @@ async def done(
 
 
 # =============================================================================
-# TOOL EXECUTION
+# TOOL EXECUTION (called by ToolExecutor)
 # =============================================================================
 
-async def execute_builtin_tool(
+async def execute_builtin(
     tool_name: str,
-    tool_args: dict,
-    session_id: str,
-    agent_run_id: str,
-    agent_id: str,
+    args: dict,
+    session_id: UUID,
+    agent_run_id: UUID,
+    db: "DBSession",
 ) -> dict:
-    """Execute a built-in tool.
+    """Execute a non-HITL built-in tool.
+
+    Called by ToolExecutor for builtin tools that are NOT HITL tools.
+    HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question)
+    are handled separately by ToolExecutor._execute_hitl_tool().
 
     Args:
-        tool_name: Tool name
-        tool_args: Tool arguments
-        session_id: Session ID
-        agent_run_id: Agent run ID for tracking
-        agent_id: ID of the calling agent
+        tool_name: Tool name (done, make_plan)
+        args: Tool arguments
+        session_id: Session UUID
+        agent_run_id: Agent run UUID for tracking
+        db: Database session (caller commits)
 
     Returns:
-        Tool result (paused state for HITL, completed state for done)
+        Tool result dict
     """
-    if tool_name == "hitl_ask_question":
-        return await ask_question(
-            question=tool_args.get("question", ""),
-            session_id=session_id,
-            agent_run_id=agent_run_id,
-            agent_id=agent_id,
-            question_context=tool_args.get("context"),
-        )
-    elif tool_name == "hitl_ask_multiple_choice_question":
-        return await ask_multiple_choice_question(
-            question=tool_args.get("question", ""),
-            choices=tool_args.get("choices", []),
-            session_id=session_id,
-            agent_run_id=agent_run_id,
-            agent_id=agent_id,
-            allow_other=tool_args.get("allow_other", True),
-            question_context=tool_args.get("context"),
-        )
-    elif tool_name == "done":
+    if tool_name == "done":
         return await done(
-            summary=tool_args.get("summary", ""),
+            summary=args.get("summary", ""),
             session_id=session_id,
             agent_run_id=agent_run_id,
-            agent_id=agent_id,
         )
     elif tool_name == "make_plan":
         return await make_plan(
-            steps=tool_args.get("steps", []),
+            steps=args.get("steps", []),
             session_id=session_id,
             agent_run_id=agent_run_id,
-            agent_id=agent_id,
+            db=db,
         )
     else:
         return {
@@ -458,9 +308,17 @@ async def execute_builtin_tool(
 
 def is_builtin_tool(tool_name: str) -> bool:
     """Check if a tool name is a built-in tool."""
-    return tool_name in ("hitl_ask_question", "hitl_ask_multiple_choice_question", "done", "make_plan")
+    return tool_name in (
+        "hitl_ask_question",
+        "hitl_ask_multiple_choice_question",
+        "done",
+        "make_plan",
+    )
 
 
-# Backwards compatibility aliases
-execute_hitl_tool = execute_builtin_tool
-is_hitl_tool = is_builtin_tool
+def is_hitl_tool(tool_name: str) -> bool:
+    """Check if a tool name is a HITL tool (requires user answer)."""
+    return tool_name in (
+        "hitl_ask_question",
+        "hitl_ask_multiple_choice_question",
+    )

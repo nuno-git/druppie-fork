@@ -40,8 +40,8 @@ from .llm_call import LlmCall
 # Approval model
 from .approval import Approval
 
-# Question model (renamed from HitlQuestion)
-from .question import Question, HitlQuestion  # HitlQuestion is alias for backward compat
+# Question model (HITL questions from agents)
+from .question import Question
 
 __all__ = [
     # Base
@@ -65,5 +65,4 @@ __all__ = [
     "Approval",
     # Question
     "Question",
-    "HitlQuestion",  # Backward compat alias
 ]

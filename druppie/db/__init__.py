@@ -31,7 +31,6 @@ from .models import (
     Approval,
     # Questions
     Question,
-    HitlQuestion,  # Backward compat alias
     # LLM Tracking
     LlmCall,
 )
@@ -55,6 +54,5 @@ __all__ = [
     "ToolCall",
     "Approval",
     "Question",
-    "HitlQuestion",
     "LlmCall",
 ]

@@ -14,48 +14,48 @@ class ApprovalRepository(BaseRepository):
     def create(
         self,
         session_id: UUID,
+        agent_run_id: UUID,
+        tool_call_id: UUID,
+        mcp_server: str,
         tool_name: str,
         arguments: dict,
         required_role: str,
-        danger_level: str,
-        description: str,
-        agent_id: str | None = None,
-        agent_run_id: UUID | None = None,
-        tool_call_id: UUID | None = None,
-        mcp_server: str | None = None,
-        agent_state: dict | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        danger_level: str | None = None,
+        approval_type: str = "tool_call",
     ) -> Approval:
         """Create a new approval record.
 
         Args:
             session_id: Session this approval belongs to
-            tool_name: Full tool name (e.g., "coding:write_file")
+            agent_run_id: Agent run requesting approval
+            tool_call_id: ToolCall this approval is for
+            mcp_server: MCP server name (e.g., "coding")
+            tool_name: Tool name (e.g., "write_file")
             arguments: Tool arguments
             required_role: Role required to approve (e.g., "developer")
-            danger_level: Risk level ("low", "medium", "high")
+            title: Human-readable title
             description: Human-readable description
-            agent_id: ID of the agent requesting approval
-            agent_run_id: ID of the agent run
-            tool_call_id: ID of the associated tool call
-            mcp_server: MCP server name
-            agent_state: Agent state for resumption after approval
+            danger_level: Risk level ("low", "medium", "high")
+            approval_type: Type of approval (default: "tool_call")
 
         Returns:
             Created Approval model
         """
         approval = Approval(
             session_id=session_id,
-            tool_name=tool_name,
-            arguments=arguments,
-            required_role=required_role,
-            danger_level=danger_level,
-            description=description,
-            status=ApprovalStatus.PENDING.value,
-            agent_id=agent_id,
             agent_run_id=agent_run_id,
             tool_call_id=tool_call_id,
+            approval_type=approval_type,
             mcp_server=mcp_server,
-            agent_state=agent_state,
+            tool_name=tool_name,
+            title=title or f"Approve {mcp_server}:{tool_name}",
+            description=description or f"Execute {tool_name}",
+            required_role=required_role,
+            danger_level=danger_level,
+            arguments=arguments,
+            status=ApprovalStatus.PENDING.value,
         )
         self.db.add(approval)
         self.db.flush()

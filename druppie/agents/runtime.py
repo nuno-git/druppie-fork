@@ -1,30 +1,37 @@
 """Agent runtime - clean abstraction for running agents.
 
 Usage:
-    result = await Agent("router").run("Create a todo app", session_id="...", agent_run_id="...")
-    result = await Agent("developer").run("Implement the API", session_id="...", agent_run_id="...")
+    agent = Agent("router", db=db_session)
+    result = await agent.run("Create a todo app", session_id=uuid, agent_run_id=uuid)
 
-HITL (Human-in-the-Loop):
-    Agents have built-in HITL tools that do NOT require a separate MCP server:
-    - hitl_ask_question: Ask user a free-form text question
-    - hitl_ask_multiple_choice_question: Ask user to select from choices
+Tool Execution:
+    All tools are executed via ToolExecutor:
+    - Builtin tools (done, make_plan) - executed directly
+    - HITL tools (hitl_ask_question) - creates Question record, pauses
+    - MCP tools - checks approval, executes via MCPHttp
 
-    When an agent calls these tools, execution pauses and the question is
-    saved to the database. The workflow resumes when the user answers.
+    Agent only completes when it calls the `done` tool.
 """
 
 import json
 import os
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 import structlog
 import yaml
 
 from druppie.agents.models import AgentDefinition
-from druppie.agents.builtin_tools import BUILTIN_TOOLS, execute_builtin_tool, is_builtin_tool
+from druppie.agents.builtin_tools import BUILTIN_TOOLS, is_builtin_tool, is_hitl_tool
 from druppie.llm import get_llm_service
 from druppie.core.mcp_client import generate_tool_descriptions
+from druppie.core.mcp_config import MCPConfig
+from druppie.execution.tool_executor import ToolExecutor, ToolCallStatus
+from druppie.execution.mcp_http import MCPHttp
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session as DBSession
 
 logger = structlog.get_logger()
 
@@ -50,28 +57,28 @@ class Agent:
     Handles:
     - Loading YAML definition
     - Building messages with system prompt
-    - Running tool-calling loop
-    - Parsing output
+    - Running tool-calling loop via ToolExecutor
+    - Agent only completes when calling `done` tool
 
-    The agent can call any MCP tool. If it calls hitl:ask,
-    execution pauses and saves state to database.
-
-    Session and agent_run IDs are passed explicitly (no global state).
+    All tool execution goes through ToolExecutor.
     """
 
     _definitions_path: str = None
     _cache: dict[str, "AgentDefinition"] = {}
 
-    def __init__(self, agent_id: str):
+    def __init__(self, agent_id: str, db: "DBSession | None" = None):
         """Initialize agent by ID.
 
         Args:
             agent_id: Agent identifier (e.g., "router", "developer")
+            db: Database session (required for tool execution)
         """
         self.id = agent_id
         self.definition = self._load_definition(agent_id)
+        self._db = db
         self._llm = None
-        self._mcp_client = None
+        self._tool_executor = None
+        self._mcp_config = None
 
     @classmethod
     def set_definitions_path(cls, path: str) -> None:
@@ -120,49 +127,63 @@ class Agent:
         ]
 
     @property
-    def llm(self):
-        """Get LLM service (lazy loaded).
+    def db(self) -> "DBSession":
+        """Get database session (lazy loaded if not provided)."""
+        if self._db is None:
+            from druppie.api.deps import get_db
+            self._db = next(get_db())
+        return self._db
 
-        Note: Currently uses global LLM config from environment.
-        Agent-specific model/temperature settings in YAML are ignored.
-        """
+    @property
+    def llm(self):
+        """Get LLM service (lazy loaded)."""
         if self._llm is None:
             self._llm = get_llm_service().get_llm()
         return self._llm
 
     @property
-    def mcp_client(self):
-        """Get MCP client (lazy loaded)."""
-        if self._mcp_client is None:
-            from druppie.api.deps import get_db
-            from druppie.core.mcp_client import get_mcp_client
-            db = next(get_db())
-            self._mcp_client = get_mcp_client(db)
-        return self._mcp_client
+    def mcp_config(self) -> MCPConfig:
+        """Get MCP configuration (lazy loaded)."""
+        if self._mcp_config is None:
+            self._mcp_config = MCPConfig()
+        return self._mcp_config
+
+    @property
+    def tool_executor(self) -> ToolExecutor:
+        """Get tool executor (lazy loaded)."""
+        if self._tool_executor is None:
+            mcp_http = MCPHttp(self.mcp_config)
+            self._tool_executor = ToolExecutor(self.db, mcp_http, self.mcp_config)
+        return self._tool_executor
 
     async def run(
         self,
         prompt: str,
-        session_id: str,
-        agent_run_id: str,
+        session_id: UUID | str,
+        agent_run_id: UUID | str,
         context: dict = None,
     ) -> Any:
         """Run the agent with the given prompt.
 
         Args:
             prompt: User prompt or task description
-            session_id: Session ID
-            agent_run_id: Agent run ID for tracking
+            session_id: Session UUID
+            agent_run_id: Agent run UUID for tracking
             context: Optional context dict (previous results, etc.)
 
         Returns:
-            Parsed result from agent's final response, or paused state with agent_state
+            Parsed result from agent's final response, or paused state
 
         Note:
-            Built-in HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question)
-            cause execution to pause. The question is saved to the database and
-            the workflow resumes when the user answers.
+            All tools are executed via ToolExecutor.
+            Agent only completes when it calls the `done` tool.
         """
+        # Convert string IDs to UUIDs
+        if isinstance(session_id, str):
+            session_id = UUID(session_id)
+        if isinstance(agent_run_id, str):
+            agent_run_id = UUID(agent_run_id)
+
         messages = [
             {"role": "system", "content": self._build_system_prompt()},
             {"role": "user", "content": self._build_prompt(prompt, context)},
@@ -181,20 +202,26 @@ class Agent:
         self,
         agent_state: dict,
         answer: str,
-        session_id: str,
-        agent_run_id: str,
+        session_id: UUID | str,
+        agent_run_id: UUID | str,
     ) -> Any:
         """Resume the agent from a paused state with the user's answer.
 
         Args:
             agent_state: The saved agent state from when it paused
             answer: User's answer to the HITL question
-            session_id: Session ID
-            agent_run_id: Agent run ID for tracking
+            session_id: Session UUID
+            agent_run_id: Agent run UUID for tracking
 
         Returns:
             Parsed result from agent's final response, or paused state
         """
+        # Convert string IDs to UUIDs
+        if isinstance(session_id, str):
+            session_id = UUID(session_id)
+        if isinstance(agent_run_id, str):
+            agent_run_id = UUID(agent_run_id)
+
         # Restore state
         messages = agent_state.get("messages", [])
         prompt = agent_state.get("prompt", "")
@@ -203,7 +230,6 @@ class Agent:
         question = agent_state.get("question", "")
 
         # Add the HITL answer as a tool response
-        # The last assistant message should have the HITL tool call
         messages.append({
             "role": "tool",
             "tool_call_id": agent_state.get("tool_call_id", f"hitl_{start_iteration}"),
@@ -234,20 +260,26 @@ class Agent:
         self,
         agent_state: dict,
         tool_result: dict,
-        session_id: str,
-        agent_run_id: str,
+        session_id: UUID | str,
+        agent_run_id: UUID | str,
     ) -> Any:
         """Resume the agent from a paused state after MCP tool approval.
 
         Args:
             agent_state: The saved agent state from when it paused
             tool_result: Result from the approved tool execution
-            session_id: Session ID
-            agent_run_id: Agent run ID for tracking
+            session_id: Session UUID
+            agent_run_id: Agent run UUID for tracking
 
         Returns:
             Parsed result from agent's final response, or paused state
         """
+        # Convert string IDs to UUIDs
+        if isinstance(session_id, str):
+            session_id = UUID(session_id)
+        if isinstance(agent_run_id, str):
+            agent_run_id = UUID(agent_run_id)
+
         # Restore state
         messages = agent_state.get("messages", [])
         prompt = agent_state.get("prompt", "")
@@ -256,7 +288,6 @@ class Agent:
         tool_call_id = agent_state.get("tool_call_id", f"call_{start_iteration}")
 
         # Add the tool result as a tool response
-        # The last message should be the assistant message with the tool call
         messages.append({
             "role": "tool",
             "tool_call_id": tool_call_id,
@@ -285,60 +316,47 @@ class Agent:
         messages: list[dict],
         prompt: str,
         context: dict | None,
-        session_id: str,
-        agent_run_id: str,
+        session_id: UUID,
+        agent_run_id: UUID,
         start_iteration: int,
     ) -> Any:
         """Internal tool-calling loop.
 
-        Args:
-            messages: Current message history
-            prompt: Original prompt
-            context: Original context
-            session_id: Session ID
-            agent_run_id: Agent run ID for tracking
-            start_iteration: Iteration to start from
+        All tool execution goes through ToolExecutor:
+        1. Create ToolCall record
+        2. Call ToolExecutor.execute(tool_call_id)
+        3. Handle status (completed, waiting_approval, waiting_answer, failed)
 
-        Returns:
-            Parsed result or paused state
+        Agent only completes when calling the `done` tool.
         """
-        # Get tools for this agent's MCPs with full schemas from servers
-        # Filter out 'hitl' from MCP IDs - we use built-in HITL tools instead
+        from druppie.repositories import ExecutionRepository
+
+        execution_repo = ExecutionRepository(self.db)
+
+        # Get tools from MCP config
         mcp_ids = self.definition.get_mcp_names() if hasattr(self.definition, 'get_mcp_names') else self.definition.mcps
-        mcp_ids = [m for m in mcp_ids if m != "hitl"]
-        tools = await self.mcp_client.to_openai_tools_async(mcp_ids)
+        mcp_ids = [m for m in mcp_ids if m != "hitl"]  # hitl is builtin
+        tools = self.mcp_config.get_all_tools_for_agent(mcp_ids)
 
-        # Add built-in HITL tools (always available to all agents)
-        tools.extend(BUILTIN_TOOLS)
-
-        # Build a mapping of tool_name -> required_fields for validation
-        tool_schemas: dict[str, dict] = {}
-        for tool in tools:
-            if tool.get("type") == "function" and "function" in tool:
-                func = tool["function"]
-                tool_name = func.get("name", "")
-                params = func.get("parameters", {})
-                tool_schemas[tool_name] = {
-                    "required": params.get("required", []),
-                    "properties": params.get("properties", {}),
-                }
+        # Convert to OpenAI format and add builtin tools
+        openai_tools = self._to_openai_tools(tools)
+        openai_tools.extend(BUILTIN_TOOLS)
 
         max_iterations = self.definition.max_iterations or 10
 
-        # Only log start on first iteration
         if start_iteration == 0:
             logger.info(
                 "agent_run_start",
                 agent_id=self.id,
                 prompt_length=len(prompt),
-                tools_count=len(tools),
-                session_id=session_id,
-                agent_run_id=agent_run_id,
+                tools_count=len(openai_tools),
+                session_id=str(session_id),
+                agent_run_id=str(agent_run_id),
             )
 
         for iteration in range(start_iteration, max_iterations):
             start_time = time.time()
-            response = await self.llm.achat(messages, tools)
+            response = await self.llm.achat(messages, openai_tools)
             duration_ms = int((time.time() - start_time) * 1000)
 
             logger.debug(
@@ -349,328 +367,190 @@ class Agent:
                 has_tool_calls=bool(response.tool_calls),
             )
 
-            # No tool calls - check if agent is trying to communicate without tools
+            # No tool calls - check if agent is done or needs reminder
             if not response.tool_calls:
-                # Router and planner have special JSON output formats - don't retry them
-                # They output their results directly without using tools
-                agents_with_direct_output = ("router", "planner")
+                # Router and planner have special JSON output formats
+                if self.id in ("router", "planner"):
+                    return self._parse_output(response.content)
 
-                # If agent output content without using tools, remind it and retry
-                # (but not for router/planner which have special output formats)
-                if (response.content
-                    and iteration < max_iterations - 1
-                    and self.id not in agents_with_direct_output):
+                # Remind agent to use tools
+                if response.content and iteration < max_iterations - 1:
                     logger.warning(
                         "agent_no_tool_calls_retry",
                         agent_id=self.id,
                         iteration=iteration,
-                        content_preview=response.content[:100] if response.content else "",
                     )
-                    # Add the agent's response and a reminder to use tools
                     messages.append({"role": "assistant", "content": response.content})
                     messages.append({
                         "role": "user",
-                        "content": (
-                            "ERROR: You output plain text instead of a tool call. Your text was ignored.\n\n"
-                            "You MUST use a tool call. Use this exact format:\n"
-                            '<tool_call>{"name": "tool_name", "arguments": {"key": "value"}}</tool_call>\n\n'
-                            "Examples:\n"
-                            '- To ask user: <tool_call>{"name": "hitl_ask_question", "arguments": {"question": "Your question?"}}</tool_call>\n'
-                            '- When done: <tool_call>{"name": "done", "arguments": {"summary": "What you accomplished"}}</tool_call>\n\n'
-                            "Try again with a proper tool call."
-                        ),
+                        "content": "ERROR: You MUST use a tool call. Call `done` when finished.",
                     })
-                    continue  # Retry with reminder
+                    continue
 
-                # Agent is done (no content or last iteration)
-                logger.info(
-                    "agent_run_complete",
-                    agent_id=self.id,
-                    iterations=iteration + 1,
-                    session_id=session_id,
-                )
                 return self._parse_output(response.content)
 
-            # Execute tools
-            for tool_call in response.tool_calls:
-                tool_name = tool_call.get("name", "")
-                tool_args = tool_call.get("args", {})
+            # Execute each tool call via ToolExecutor
+            for llm_tool_call in response.tool_calls:
+                tool_name = llm_tool_call.get("name", "")
+                tool_args = llm_tool_call.get("args", {})
+                llm_call_id = llm_tool_call.get("id", f"call_{iteration}")
+
+                # Parse server:tool from name
+                if is_builtin_tool(tool_name):
+                    server = "builtin"
+                    tool = tool_name
+                elif ":" in tool_name:
+                    server, tool = tool_name.split(":", 1)
+                else:
+                    # Convert coding_read_file -> coding:read_file
+                    parts = tool_name.split("_", 1)
+                    server = parts[0] if len(parts) > 1 else "coding"
+                    tool = parts[1] if len(parts) > 1 else tool_name
 
                 logger.debug(
                     "agent_tool_call",
                     agent_id=self.id,
-                    tool=tool_name,
+                    tool=f"{server}:{tool}",
                     iteration=iteration,
-                    session_id=session_id,
                 )
 
-                # Check if this is a built-in HITL tool
-                if is_builtin_tool(tool_name):
-                    logger.info(
-                        "agent_hitl_tool_call",
-                        agent_id=self.id,
-                        tool=tool_name,
-                        question=tool_args.get("question", "")[:100],
-                    )
-                    result = await execute_builtin_tool(
-                        tool_name=tool_name,
-                        tool_args=tool_args,
-                        session_id=session_id,
-                        agent_run_id=agent_run_id,
-                        agent_id=self.id,
-                    )
+                # Create ToolCall record
+                tool_call_id = execution_repo.create_tool_call(
+                    session_id=session_id,
+                    agent_run_id=agent_run_id,
+                    mcp_server=server,
+                    tool_name=tool,
+                    arguments=tool_args,
+                )
+                self.db.commit()
 
-                    # Check if paused for question
-                    if result.get("status") == "paused":
-                        logger.info(
-                            "agent_paused_for_question",
-                            agent_id=self.id,
-                            tool=tool_name,
-                            question_id=result.get("question_id"),
-                            session_id=session_id,
-                        )
+                # Execute via ToolExecutor
+                status = await self.tool_executor.execute(tool_call_id)
 
-                        # Add the assistant message with the HITL tool call
-                        # This is needed so when we resume, we can add the tool response
-                        tool_call_id = tool_call.get("id", f"hitl_{iteration}")
-                        messages.append({
-                            "role": "assistant",
-                            "content": "",
-                            "tool_calls": [{
-                                "id": tool_call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": tool_name,
-                                    "arguments": json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args),
-                                },
-                            }],
-                        })
+                # Get updated tool call for result
+                tool_call_record = execution_repo.get_tool_call(tool_call_id)
+                result_str = tool_call_record.result if tool_call_record else "{}"
 
-                        # Build agent state for resumption
-                        agent_state = {
-                            "agent_id": self.id,
-                            "messages": messages,
-                            "prompt": prompt,
-                            "context": context,
-                            "iteration": iteration,
-                            "tool_call_id": tool_call_id,
-                            "question": result.get("question"),
-                        }
-
-                        # Save agent_state to Question record for resumption
-                        question_id = result.get("question_id")
-                        if question_id:
-                            try:
-                                from druppie.api.deps import get_db
-                                from druppie.repositories import QuestionRepository
-                                from uuid import UUID
-
-                                db = next(get_db())
-                                question_repo = QuestionRepository(db)
-                                question_repo.update_agent_state(
-                                    UUID(question_id), agent_state
-                                )
-                                db.commit()
-                                db.close()
-                            except Exception as e:
-                                logger.warning(
-                                    "failed_to_save_question_agent_state",
-                                    question_id=question_id,
-                                    error=str(e),
-                                )
-
-                        # Return full state for resumption
-                        return {
-                            "paused": True,
-                            "question_id": question_id,
-                            "question": result.get("question"),
-                            "question_type": result.get("question_type"),
-                            "choices": result.get("choices"),
-                            "tool": tool_name,
-                            "agent_state": agent_state,
-                        }
-
-                    # Check if agent signaled task completion
-                    if result.get("status") == "completed":
-                        logger.info(
-                            "agent_task_complete",
-                            agent_id=self.id,
-                            tool=tool_name,
-                            summary=result.get("summary", "")[:100],
-                            session_id=session_id,
-                        )
-                        return {
-                            "success": True,
-                            "result": result.get("summary", "Task completed"),
-                        }
-
-                    # Add tool result to messages
+                # Handle status
+                if status == ToolCallStatus.WAITING_ANSWER:
+                    # HITL tool - paused for user answer
                     messages.append({
                         "role": "assistant",
                         "content": "",
                         "tool_calls": [{
-                            "id": tool_call.get("id", f"call_{iteration}"),
+                            "id": llm_call_id,
                             "type": "function",
                             "function": {
                                 "name": tool_name,
-                                "arguments": json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args),
-                            },
-                        }],
-                    })
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.get("id", f"call_{iteration}"),
-                        "content": json.dumps(result) if isinstance(result, (dict, list)) else str(result),
-                    })
-                    continue
-
-                # Convert OpenAI format to MCP format (coding_read_file -> coding:read_file)
-                # Only do the conversion if there's no colon already (LLM might output either format)
-                if ":" in tool_name:
-                    # Already in MCP format (coding:read_file)
-                    mcp_tool_name = tool_name
-                else:
-                    # OpenAI format (coding_read_file) - convert first underscore to colon
-                    mcp_tool_name = tool_name.replace("_", ":", 1)
-
-                # Parse server:tool format
-                if ":" in mcp_tool_name:
-                    server, tool = mcp_tool_name.split(":", 1)
-                else:
-                    server = "coding"
-                    tool = mcp_tool_name
-
-                # Note: workspace_id injection will be handled by Coding MCP
-                # using session_id to look up workspace info
-
-                # Validate required arguments before MCP call
-                schema = tool_schemas.get(tool_name, {})
-                required_fields = schema.get("required", [])
-                provided_args = set(tool_args.keys())
-                missing_fields = [f for f in required_fields if f not in provided_args]
-
-                if missing_fields:
-                    missing_field = missing_fields[0]  # Report first missing field
-                    logger.warning(
-                        "agent_tool_validation_error",
-                        agent_id=self.id,
-                        tool=tool_name,
-                        missing_field=missing_field,
-                        missing_fields=missing_fields,
-                        provided_args=list(provided_args),
-                        required_args=required_fields,
-                    )
-                    result = {
-                        "success": False,
-                        "error": f"Missing required argument: {missing_field}",
-                        "error_type": "validation",
-                        "recoverable": True,
-                        "tool": tool_name,
-                        "provided_args": list(provided_args),
-                        "required_args": list(required_fields),
-                        "suggested_fix": f"Please call {tool_name} again with argument: {missing_field}",
-                    }
-                else:
-                    # Execute tool via MCP client with agent definition for layered approval
-                    result = await self.mcp_client.call_tool(
-                        server, tool, tool_args,
-                        session_id=session_id,
-                        agent_run_id=agent_run_id,
-                        agent_id=self.id,
-                        agent_definition=self.definition,
-                    )
-
-                # Check if paused for approval
-                if result.get("status") == "paused":
-                    # Add the assistant message with the tool call before returning
-                    # This is needed so when we resume, we can add the tool response
-                    tool_call_id = tool_call.get("id", f"call_{iteration}")
-                    messages.append({
-                        "role": "assistant",
-                        "content": "",
-                        "tool_calls": [{
-                            "id": tool_call_id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_name,
-                                "arguments": json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args),
+                                "arguments": json.dumps(tool_args),
                             },
                         }],
                     })
 
-                    # Return paused state with full agent_state for resumption
-                    logger.info("agent_paused_for_approval", agent_id=self.id, tool=mcp_tool_name, session_id=session_id)
-                    return {
-                        "paused": True,
-                        "approval_id": result.get("approval_id"),
-                        "tool": mcp_tool_name,
+                    agent_state = {
+                        "agent_id": self.id,
+                        "messages": messages,
+                        "prompt": prompt,
+                        "context": context,
                         "iteration": iteration,
-                        "agent_state": {
-                            "agent_id": self.id,
-                            "messages": messages,
-                            "prompt": prompt,
-                            "context": context,
-                            "iteration": iteration,
-                            "tool_call_id": tool_call_id,
-                            "tool_name": mcp_tool_name,
-                            "tool_args": tool_args,
-                        },
+                        "tool_call_id": llm_call_id,
                     }
 
-                # Check for MCP tool errors (success=False or error field)
-                is_error = result.get("success") is False or "error" in result
-                if is_error:
-                    error_msg = result.get("error", "Unknown MCP tool error")
-                    error_type = result.get("error_type", "mcp_error")
-                    is_recoverable = result.get("recoverable", True)
+                    return {
+                        "status": "paused",
+                        "paused": True,
+                        "reason": "waiting_answer",
+                        "tool_call_id": str(tool_call_id),
+                        "agent_state": agent_state,
+                    }
 
-                    logger.warning(
-                        "agent_tool_error",
+                if status == ToolCallStatus.WAITING_APPROVAL:
+                    # MCP tool needs approval
+                    messages.append({
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": llm_call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(tool_args),
+                            },
+                        }],
+                    })
+
+                    agent_state = {
+                        "agent_id": self.id,
+                        "messages": messages,
+                        "prompt": prompt,
+                        "context": context,
+                        "iteration": iteration,
+                        "tool_call_id": llm_call_id,
+                    }
+
+                    return {
+                        "status": "paused",
+                        "paused": True,
+                        "reason": "waiting_approval",
+                        "tool_call_id": str(tool_call_id),
+                        "agent_state": agent_state,
+                    }
+
+                # Parse result
+                try:
+                    result = json.loads(result_str) if result_str else {}
+                except json.JSONDecodeError:
+                    result = {"content": result_str}
+
+                # Check if agent called `done`
+                if tool == "done" and result.get("status") == "completed":
+                    logger.info(
+                        "agent_task_complete",
                         agent_id=self.id,
-                        tool=mcp_tool_name,
-                        error=error_msg,
-                        error_type=error_type,
-                        recoverable=is_recoverable,
-                        iteration=iteration,
-                        session_id=session_id,
+                        summary=result.get("summary", "")[:100],
                     )
-
-                    # Format error result clearly for the agent
-                    # This helps the agent understand what went wrong and decide how to proceed
-                    result = {
-                        "success": False,
-                        "error": error_msg,
-                        "error_type": error_type,
-                        "recoverable": is_recoverable,
-                        "tool": mcp_tool_name,
-                        "original_args": tool_args,
-                        "hint": "Check the error message and either retry with corrected arguments or try a different approach.",
+                    return {
+                        "success": True,
+                        "result": result.get("summary", "Task completed"),
                     }
 
-                # Add tool result to messages
-                # IMPORTANT: Use json.dumps for proper JSON format (not Python repr)
+                # Add tool result to messages for next LLM call
                 messages.append({
                     "role": "assistant",
                     "content": "",
                     "tool_calls": [{
-                        "id": tool_call.get("id", f"call_{iteration}"),
+                        "id": llm_call_id,
                         "type": "function",
                         "function": {
                             "name": tool_name,
-                            "arguments": json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args),
+                            "arguments": json.dumps(tool_args),
                         },
                     }],
                 })
                 messages.append({
                     "role": "tool",
-                    "tool_call_id": tool_call.get("id", f"call_{iteration}"),
-                    "content": json.dumps(result) if isinstance(result, (dict, list)) else str(result),
+                    "tool_call_id": llm_call_id,
+                    "content": json.dumps(result),
                 })
 
-        logger.warning("agent_max_iterations", agent_id=self.id, session_id=session_id)
+        logger.warning("agent_max_iterations", agent_id=self.id)
         raise AgentMaxIterationsError(
             f"Agent '{self.id}' exceeded {max_iterations} iterations"
         )
+
+    def _to_openai_tools(self, tools: list[dict]) -> list[dict]:
+        """Convert MCP tool config to OpenAI function format."""
+        openai_tools = []
+        for tool in tools:
+            openai_tools.append({
+                "type": "function",
+                "function": {
+                    "name": f"{tool['server']}_{tool['name']}",
+                    "description": tool.get("description", f"Execute {tool['name']}"),
+                    "parameters": tool.get("parameters", {"type": "object", "properties": {}}),
+                },
+            })
+        return openai_tools
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt with shared tool usage instructions.
