@@ -6,20 +6,9 @@ from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
 
-from .common import TokenUsage
+from .common import TokenUsage, SessionStatus
 from .agent_run import AgentRunDetail
 from .project import ProjectSummary
-
-
-class SessionSummary(BaseModel):
-    """Lightweight session for lists."""
-    id: UUID
-    title: str
-    status: str
-    project_id: UUID | None
-    token_usage: TokenUsage
-    created_at: datetime
-    updated_at: datetime | None
 
 
 class ChatItem(BaseModel):
@@ -32,15 +21,19 @@ class ChatItem(BaseModel):
     agent_run: AgentRunDetail | None = None
 
 
-class SessionDetail(BaseModel):
-    """Full session with chat timeline."""
+class SessionSummary(BaseModel):
+    """Lightweight session for lists."""
     id: UUID
-    user_id: UUID
     title: str
-    status: str
+    status: SessionStatus
+    project_id: UUID | None
     token_usage: TokenUsage
-    tokens_by_agent: dict[str, int]
-    project: ProjectSummary | None
-    chat: list[ChatItem]
     created_at: datetime
     updated_at: datetime | None
+
+
+class SessionDetail(SessionSummary):
+    """Full session with chat timeline. Inherits from SessionSummary."""
+    user_id: UUID
+    project: ProjectSummary | None
+    chat: list[ChatItem]

@@ -4,32 +4,30 @@ from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
 
+from .common import ApprovalStatus
+
 
 class ApprovalSummary(BaseModel):
-    """Lightweight approval for embedding."""
+    """Lightweight approval for embedding in tool calls."""
     id: UUID
-    status: str  # pending, approved, rejected
+    status: ApprovalStatus
     required_role: str
-    resolved_by: UUID | None
-    resolved_at: datetime | None
+    resolved_by: UUID | None = None
+    resolved_at: datetime | None = None
 
 
-class ApprovalDetail(BaseModel):
-    """Full approval with context."""
-    id: UUID
+class ApprovalDetail(ApprovalSummary):
+    """Full approval with context. Inherits from ApprovalSummary."""
     session_id: UUID
     agent_run_id: UUID | None
-    tool_call_id: UUID | None
-    approval_type: str  # tool_call, workflow_step
-    mcp_server: str | None
-    tool_name: str | None
+    tool_call_id: UUID
+    # Tool info
+    mcp_server: str
+    tool_name: str
     arguments: dict
-    status: str
-    required_role: str
+    # Context
     agent_id: str | None
-    resolved_by: UUID | None
-    resolved_at: datetime | None
-    rejection_reason: str | None
+    rejection_reason: str | None = None
     created_at: datetime
 
 

@@ -4,7 +4,7 @@ from uuid import UUID
 from datetime import datetime, timezone
 
 from .base import BaseRepository
-from ..domain import ApprovalDetail, ApprovalSummary, PendingApprovalList
+from ..domain import ApprovalDetail, ApprovalSummary, PendingApprovalList, ApprovalStatus
 from ..db.models import Approval
 
 
@@ -19,7 +19,7 @@ class ApprovalRepository(BaseRepository):
         """Get pending approvals that the user's roles can approve."""
         approvals = (
             self.db.query(Approval)
-            .filter(Approval.status == "pending")
+            .filter(Approval.status == ApprovalStatus.PENDING.value)
             .filter(Approval.required_role.in_(roles))
             .order_by(Approval.created_at.desc())
             .all()
@@ -29,26 +29,16 @@ class ApprovalRepository(BaseRepository):
             total=len(approvals),
         )
 
-    def get_for_session(self, session_id: UUID) -> list[ApprovalDetail]:
-        """Get all approvals for a session."""
-        approvals = (
-            self.db.query(Approval)
-            .filter_by(session_id=session_id)
-            .order_by(Approval.created_at)
-            .all()
-        )
-        return [self._to_detail(a) for a in approvals]
-
     def update_status(
         self,
         approval_id: UUID,
-        status: str,
+        status: ApprovalStatus,
         resolved_by: UUID | None = None,
         rejection_reason: str | None = None,
     ) -> None:
         """Update approval status."""
         updates = {
-            "status": status,
+            "status": status.value,
             "resolved_by": resolved_by,
             "resolved_at": datetime.now(timezone.utc) if resolved_by else None,
         }
@@ -59,19 +49,20 @@ class ApprovalRepository(BaseRepository):
     def _to_detail(self, approval: Approval) -> ApprovalDetail:
         """Convert approval model to detail domain object."""
         return ApprovalDetail(
+            # From ApprovalSummary
             id=approval.id,
+            status=ApprovalStatus(approval.status),
+            required_role=approval.required_role or "admin",
+            resolved_by=approval.resolved_by,
+            resolved_at=approval.resolved_at,
+            # ApprovalDetail specific
             session_id=approval.session_id,
             agent_run_id=approval.agent_run_id,
             tool_call_id=approval.tool_call_id,
-            approval_type=approval.approval_type or "tool_call",
-            mcp_server=approval.mcp_server,
-            tool_name=approval.tool_name,
+            mcp_server=approval.mcp_server or "",
+            tool_name=approval.tool_name or "",
             arguments=approval.arguments or {},
-            status=approval.status,
-            required_role=approval.required_role or "admin",
             agent_id=approval.agent_id,
-            resolved_by=approval.resolved_by,
-            resolved_at=approval.resolved_at,
             rejection_reason=approval.rejection_reason,
             created_at=approval.created_at,
         )
@@ -80,7 +71,7 @@ class ApprovalRepository(BaseRepository):
         """Convert approval model to summary domain object."""
         return ApprovalSummary(
             id=approval.id,
-            status=approval.status,
+            status=ApprovalStatus(approval.status),
             required_role=approval.required_role or "admin",
             resolved_by=approval.resolved_by,
             resolved_at=approval.resolved_at,
