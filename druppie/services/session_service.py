@@ -42,12 +42,15 @@ class SessionService:
 
     def list_for_user(
         self,
-        user_id: UUID,
+        user_id: UUID | None,
         page: int = 1,
         limit: int = 20,
         status: str | None = None,
     ) -> tuple[list[SessionSummary], int]:
-        """List sessions for a user."""
+        """List sessions for a user.
+
+        If user_id is None, returns all sessions (admin view).
+        """
         offset = (page - 1) * limit
         return self.session_repo.list_for_user(user_id, limit, offset, status)
 
