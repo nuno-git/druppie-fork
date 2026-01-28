@@ -402,15 +402,20 @@ def _build_session_detail(session: SessionModel, db: DBSession) -> SessionDetail
                         )
                         break
 
-            # Find execution result
+            # Find execution result - try all normalized variants of tool_name
             executed = False
             execution_status = None
             execution_result = None
             execution_error = None
             executed_at = None
             if run_id_str and not is_hitl:
-                tc_key = f"{run_id_str}:{tool_name}"
-                matching_tc = tool_calls_by_run_and_name.get(tc_key)
+                # Try all name variants to find a match
+                matching_tc = None
+                for variant in normalize_tool_name(tool_name):
+                    tc_key = f"{run_id_str}:{variant}"
+                    matching_tc = tool_calls_by_run_and_name.get(tc_key)
+                    if matching_tc:
+                        break
                 if matching_tc:
                     executed = matching_tc.status in ("completed", "failed")
                     execution_status = matching_tc.status
