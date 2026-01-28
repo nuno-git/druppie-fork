@@ -125,6 +125,16 @@ def get_loop() -> MainLoop:
     return get_main_loop()
 
 
+def get_orchestrator(db: Session = Depends(get_db)):
+    """Get the orchestrator for message processing.
+
+    The Orchestrator is the new simplified entry point that replaces MainLoop.
+    It coordinates: router → planner → execute pending runs.
+    """
+    from druppie.core.orchestrator import Orchestrator
+    return Orchestrator(db)
+
+
 def get_workflow_service(
     loop: MainLoop = Depends(get_loop),
 ) -> WorkflowService:
