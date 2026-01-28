@@ -1,215 +1,501 @@
-# Proposal: Domain Models as Universal Contract
+# Proposal: Clean Architecture for Core Layer
 
 ## Goal
 
-Make the entire application use domain models consistently. The database is the single source of truth.
+Refactor the core layer (loop.py) to:
+1. **Use repositories** for all database access (not crud.py)
+2. **Work with domain models** throughout
+3. **Split into focused modules** for maintainability
+4. **Return domain models** (or UUIDs that callers use to fetch domain models)
 
-## Current Problem
+## Current Problems
 
-```python
-# MainLoop returns arbitrary dicts
-async def process_message(...) -> dict[str, Any]:
-    return {
-        "success": True,
-        "response": "...",
-        "session_id": "...",
-        "paused": True,
-        "approval_id": "...",
-    }
-
-# chat.py has to parse these dicts
-result = await loop.process_message(...)
-if result.get("paused"):
-    if result.get("approval_id"):
-        status = "paused_approval"
-    # ... complex parsing logic
+```
+core/loop.py (2000+ lines)
+├── Uses crud.py directly ❌
+├── Returns arbitrary dicts ❌
+├── Mixed responsibilities ❌
+│   ├── Session management
+│   ├── Workflow execution
+│   ├── Agent running
+│   ├── Approval handling
+│   └── Question handling
+└── No clear boundaries ❌
 ```
 
-## Solution: Database is Source of Truth
-
-MainLoop already saves everything to the database. It should just return the session_id, and callers fetch the SessionDetail to see what happened.
+## Target Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                           CHAT ROUTE                                 │
+│                           API LAYER                                  │
 │                                                                      │
-│   1. Call MainLoop.process_message() → returns session_id           │
-│   2. Call SessionService.get_detail(session_id) → returns SessionDetail │
-│   3. Return SessionDetail to frontend                               │
+│   Routes receive/return domain models                               │
+│   chat.py → SessionDetail                                           │
+│   approvals.py → ApprovalDetail                                     │
 └─────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                          MAIN LOOP                                   │
+│                        SERVICE LAYER                                 │
 │                                                                      │
-│   1. Creates/updates session in DB                                  │
-│   2. Runs agents, saves agent_runs, messages, etc.                  │
-│   3. Updates session.status (completed, paused_approval, etc.)      │
-│   4. Returns session_id (just the ID, nothing else)                 │
+│   SessionService, ApprovalService, QuestionService                  │
+│   Coordinates repositories + core orchestrator                      │
 └─────────────────────────────────────────────────────────────────────┘
                               │
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                          DATABASE                                    │
-│                                                                      │
-│   Session (status = paused_approval | paused_hitl | completed)      │
-│   ChatItem (messages, agent_runs in timeline)                       │
-│   Approval (pending approval with details)                          │
-│   HitlQuestion (pending question with details)                      │
-└─────────────────────────────────────────────────────────────────────┘
+              ┌───────────────┴───────────────┐
+              ▼                               ▼
+┌─────────────────────────┐     ┌─────────────────────────────────────┐
+│   REPOSITORY LAYER      │     │         CORE LAYER (refactored)     │
+│                         │     │                                     │
+│   SessionRepository     │◄────┤   Orchestrator                      │
+│   ApprovalRepository    │     │     │                               │
+│   QuestionRepository    │     │     ├── SessionManager              │
+│   AgentRunRepository    │     │     ├── WorkflowExecutor            │
+│   MessageRepository     │     │     ├── AgentRunner                 │
+│                         │     │     ├── ApprovalHandler             │
+│   All return domain     │     │     └── QuestionHandler             │
+│   models                │     │                                     │
+└─────────────────────────┘     │   All use repositories              │
+                                │   All work with domain models       │
+                                └─────────────────────────────────────┘
 ```
 
-## Existing Models We Reuse
+## New Core Structure
+
+Split `loop.py` (2000 lines) into focused modules:
+
+```
+druppie/core/
+├── __init__.py
+├── orchestrator.py       # Main entry point (replaces MainLoop class)
+│                         # ~200 lines - coordinates the flow
+│
+├── session_manager.py    # Session lifecycle
+│                         # create_session, update_status, get_state
+│                         # Uses SessionRepository
+│
+├── workflow_executor.py  # Executes workflow steps
+│                         # run_workflow, execute_step
+│                         # Uses WorkflowRepository
+│
+├── agent_runner.py       # Runs individual agents
+│                         # run_agent, handle_tool_calls
+│                         # Uses AgentRunRepository, MessageRepository
+│
+├── approval_handler.py   # Approval pause/resume
+│                         # create_approval, resume_from_approval
+│                         # Uses ApprovalRepository
+│
+├── question_handler.py   # HITL question pause/resume
+│                         # create_question, resume_from_question
+│                         # Uses QuestionRepository
+│
+├── mcp_client.py         # MCP tool calls (already exists)
+├── execution_context.py  # Execution context (already exists)
+└── config.py             # Settings (already exists)
+```
+
+## How Modules Work Together
+
+### Example: process_message flow
 
 ```python
-# Session status already has what we need
-class SessionStatus(str, Enum):
-    ACTIVE = "active"
-    PAUSED_APPROVAL = "paused_approval"
-    PAUSED_HITL = "paused_hitl"
-    COMPLETED = "completed"
-    FAILED = "failed"
+# core/orchestrator.py
 
-# SessionDetail already includes everything
-class SessionDetail(BaseModel):
-    id: UUID
-    status: SessionStatus  # ← tells us if paused/completed
-    chat: list[ChatItem]   # ← includes all messages and agent runs
-    # ... pending approvals/questions visible in chat timeline
+class Orchestrator:
+    """Main entry point for processing messages."""
+
+    def __init__(
+        self,
+        session_manager: SessionManager,
+        workflow_executor: WorkflowExecutor,
+        agent_runner: AgentRunner,
+    ):
+        self.session_manager = session_manager
+        self.workflow_executor = workflow_executor
+        self.agent_runner = agent_runner
+
+    async def process_message(
+        self,
+        message: str,
+        session_id: UUID | None,
+        user_id: UUID | None,
+        project_id: UUID | None,
+    ) -> UUID:
+        """Process a user message.
+
+        Returns:
+            session_id - Caller fetches SessionDetail to see result
+        """
+        # 1. Create or get session
+        session = self.session_manager.get_or_create(
+            session_id=session_id,
+            user_id=user_id,
+            project_id=project_id,
+            title=message[:100],
+        )
+
+        # 2. Save user message
+        self.session_manager.add_message(
+            session_id=session.id,
+            role="user",
+            content=message,
+        )
+
+        # 3. Run router agent
+        router_result = await self.agent_runner.run(
+            session_id=session.id,
+            agent_id="router",
+            prompt=message,
+        )
+
+        # 4. If paused (approval/question), return session_id
+        #    Session status is already updated in DB
+        if router_result.status in (AgentRunStatus.PAUSED_TOOL, AgentRunStatus.PAUSED_HITL):
+            return session.id
+
+        # 5. Run planner and workflow
+        workflow = await self.workflow_executor.create_and_run(
+            session_id=session.id,
+            intent=router_result.intent,
+            message=message,
+        )
+
+        # 6. Update session status based on workflow result
+        self.session_manager.update_status(
+            session_id=session.id,
+            status=SessionStatus.COMPLETED if workflow.completed else SessionStatus.PAUSED_APPROVAL,
+        )
+
+        return session.id
 ```
 
-## Changes Required
-
-### 1. Update MainLoop return type
+### Example: SessionManager using repositories
 
 ```python
-# core/loop.py
+# core/session_manager.py
 
-# Before
-async def process_message(...) -> dict[str, Any]:
-    ...
-    return {
-        "success": True,
-        "response": response,
-        "session_id": session_id,
-        "paused": True,
-        "approval_id": str(approval.id),
-    }
+class SessionManager:
+    """Manages session lifecycle."""
 
-# After
-async def process_message(...) -> UUID:
-    ...
-    # All data is saved to DB, just return the session ID
-    return UUID(session_id)
+    def __init__(
+        self,
+        session_repo: SessionRepository,
+        message_repo: MessageRepository,
+        workspace_repo: WorkspaceRepository,
+    ):
+        self.session_repo = session_repo
+        self.message_repo = message_repo
+        self.workspace_repo = workspace_repo
+
+    def get_or_create(
+        self,
+        session_id: UUID | None,
+        user_id: UUID | None,
+        project_id: UUID | None,
+        title: str,
+    ) -> Session:
+        """Get existing session or create new one."""
+        if session_id:
+            session = self.session_repo.get_by_id(session_id)
+            if session:
+                return session
+
+        # Create new session
+        session = self.session_repo.create(
+            user_id=user_id,
+            project_id=project_id,
+            title=title,
+        )
+        self.session_repo.commit()
+
+        # Initialize workspace
+        self.workspace_repo.create_for_session(session.id)
+        self.workspace_repo.commit()
+
+        return session
+
+    def add_message(
+        self,
+        session_id: UUID,
+        role: str,
+        content: str,
+        agent_id: str | None = None,
+    ) -> Message:
+        """Add a message to the session."""
+        message = self.message_repo.create(
+            session_id=session_id,
+            role=role,
+            content=content,
+            agent_id=agent_id,
+        )
+        self.message_repo.commit()
+        return message
+
+    def update_status(self, session_id: UUID, status: SessionStatus) -> None:
+        """Update session status."""
+        self.session_repo.update_status(session_id, status)
+        self.session_repo.commit()
 ```
 
-### 2. Update resume methods
+### Example: AgentRunner using repositories
 
 ```python
-# Before
-async def resume_from_approval(...) -> dict[str, Any]:
-    return {"success": True, "response": "..."}
+# core/agent_runner.py
 
-# After
-async def resume_from_approval(...) -> UUID:
-    # Resumes execution, updates DB
-    return session_id
+class AgentRunner:
+    """Runs individual agents."""
+
+    def __init__(
+        self,
+        agent_run_repo: AgentRunRepository,
+        message_repo: MessageRepository,
+        tool_call_repo: ToolCallRepository,
+        llm_call_repo: LLMCallRepository,
+        mcp_client: MCPClient,
+        approval_handler: ApprovalHandler,
+        question_handler: QuestionHandler,
+    ):
+        self.agent_run_repo = agent_run_repo
+        self.message_repo = message_repo
+        self.tool_call_repo = tool_call_repo
+        self.llm_call_repo = llm_call_repo
+        self.mcp_client = mcp_client
+        self.approval_handler = approval_handler
+        self.question_handler = question_handler
+
+    async def run(
+        self,
+        session_id: UUID,
+        agent_id: str,
+        prompt: str,
+        context: dict | None = None,
+        parent_run_id: UUID | None = None,
+    ) -> AgentRunDetail:
+        """Run an agent and return the result as domain model."""
+
+        # Create agent run record
+        agent_run = self.agent_run_repo.create(
+            session_id=session_id,
+            agent_id=agent_id,
+            parent_run_id=parent_run_id,
+        )
+        self.agent_run_repo.commit()
+
+        try:
+            # Load agent config
+            agent_config = load_agent_config(agent_id)
+
+            # Build messages
+            messages = self._build_messages(agent_config, prompt, context)
+
+            # Run LLM loop
+            while True:
+                # Call LLM
+                llm_response = await self._call_llm(agent_run.id, agent_config, messages)
+
+                # Check for tool calls
+                if not llm_response.tool_calls:
+                    # No tools, agent is done
+                    break
+
+                # Execute tool calls
+                for tool_call in llm_response.tool_calls:
+                    result = await self._execute_tool(agent_run.id, tool_call)
+
+                    # Check if paused for approval
+                    if result.status == ToolCallStatus.WAITING_APPROVAL:
+                        self.agent_run_repo.update_status(
+                            agent_run.id,
+                            AgentRunStatus.PAUSED_TOOL,
+                        )
+                        self.agent_run_repo.commit()
+                        return self.agent_run_repo.get_detail(agent_run.id)
+
+                    # Check if paused for HITL
+                    if result.status == ToolCallStatus.WAITING_HITL:
+                        self.agent_run_repo.update_status(
+                            agent_run.id,
+                            AgentRunStatus.PAUSED_HITL,
+                        )
+                        self.agent_run_repo.commit()
+                        return self.agent_run_repo.get_detail(agent_run.id)
+
+                    # Add tool result to messages
+                    messages.append(self._tool_result_message(tool_call, result))
+
+            # Agent completed
+            self.agent_run_repo.update_status(agent_run.id, AgentRunStatus.COMPLETED)
+            self.agent_run_repo.commit()
+
+            return self.agent_run_repo.get_detail(agent_run.id)
+
+        except Exception as e:
+            self.agent_run_repo.update_status(agent_run.id, AgentRunStatus.FAILED)
+            self.agent_run_repo.commit()
+            raise
 ```
 
-### 3. Simplify chat.py
+## New Repositories Needed
+
+Add these to support the core layer:
 
 ```python
-# Before (~180 lines with dict parsing)
-@router.post("/chat")
-async def chat(request: ChatRequest, ...) -> ChatResponse:
-    result = await loop.process_message(...)
+# repositories/message_repository.py
+class MessageRepository(BaseRepository):
+    def create(self, session_id, role, content, agent_id=None) -> Message
+    def get_for_session(self, session_id) -> list[Message]
+    def get_for_agent_run(self, agent_run_id) -> list[Message]
 
-    # Parse dict to determine status
-    status = "completed"
-    approval_id = None
-    if result.get("paused"):
-        if result.get("approval_id"):
-            status = "paused_approval"
-            approval_id = result.get("approval_id")
+# repositories/agent_run_repository.py
+class AgentRunRepository(BaseRepository):
+    def create(self, session_id, agent_id, parent_run_id=None) -> AgentRun
+    def get_by_id(self, agent_run_id) -> AgentRun
+    def get_detail(self, agent_run_id) -> AgentRunDetail  # Domain model!
+    def update_status(self, agent_run_id, status) -> None
+    def update_tokens(self, agent_run_id, tokens) -> None
 
-    return ChatResponse(
-        success=result.get("success"),
-        session_id=result.get("session_id"),
-        status=status,
-        ...
-    )
+# repositories/tool_call_repository.py
+class ToolCallRepository(BaseRepository):
+    def create(self, agent_run_id, tool_name, arguments) -> ToolCall
+    def update_result(self, tool_call_id, result, status) -> None
+    def get_detail(self, tool_call_id) -> ToolCallDetail  # Domain model!
 
-# After (~20 lines)
-@router.post("/chat")
-async def chat(
-    request: ChatRequest,
-    session_service: SessionService = Depends(get_session_service),
-    loop: MainLoop = Depends(get_loop),
-    user: dict = Depends(get_current_user),
-) -> SessionDetail:
-    session_id = await loop.process_message(
-        message=request.message,
-        session_id=UUID(request.session_id) if request.session_id else None,
-        user_id=user.get("sub"),
-        project_id=UUID(request.project_id) if request.project_id else None,
-    )
-    return session_service.get_detail(session_id, UUID(user["sub"]), get_user_roles(user))
+# repositories/llm_call_repository.py
+class LLMCallRepository(BaseRepository):
+    def create(self, agent_run_id, model, provider, messages) -> LLMCall
+    def update_response(self, llm_call_id, response, tokens, duration) -> None
+
+# repositories/workspace_repository.py
+class WorkspaceRepository(BaseRepository):
+    def create_for_session(self, session_id) -> Workspace
+    def get_for_session(self, session_id) -> Workspace
 ```
 
-### 4. Update WorkflowService
+## Migration Plan
 
-```python
-# Before
-async def resume_from_approval(self, session_id, approval_id) -> dict:
-    return await self.main_loop.resume_from_approval(...)
+### Phase 1: Add New Repositories
+1. Create `message_repository.py`
+2. Create `agent_run_repository.py`
+3. Create `tool_call_repository.py`
+4. Create `llm_call_repository.py`
+5. Create `workspace_repository.py`
 
-# After
-async def resume_from_approval(self, session_id, approval_id) -> UUID:
-    return await self.main_loop.resume_from_approval(...)
-```
+### Phase 2: Create Core Modules
+1. Create `core/session_manager.py`
+2. Create `core/agent_runner.py`
+3. Create `core/workflow_executor.py`
+4. Create `core/approval_handler.py`
+5. Create `core/question_handler.py`
+6. Create `core/orchestrator.py`
 
-### 5. Update approvals.py and questions.py
+### Phase 3: Update Dependency Injection
+1. Add repository dependencies in `deps.py`
+2. Add core module dependencies
+3. Wire everything together
 
-```python
-# Before - returns workflow_result dict
-return ApprovalResponse(
-    approval=approval,
-    workflow_resumed=True,
-    workflow_result={"success": True, ...},
-)
+### Phase 4: Migrate loop.py
+1. Move code from loop.py to new modules one piece at a time
+2. Each module uses repositories
+3. Each module returns domain models
+4. Keep loop.py working during migration (facade pattern)
 
-# After - returns session_id, caller can fetch session if needed
-return ApprovalResponse(
-    approval=approval,
-    workflow_resumed=True,
-    session_id=session_id,  # Just the ID
-)
-```
+### Phase 5: Update Routes
+1. `chat.py` calls Orchestrator, returns SessionDetail
+2. `approvals.py` uses ApprovalHandler
+3. `questions.py` uses QuestionHandler
 
-## Files to Change
+### Phase 6: Cleanup
+1. Delete old crud.py functions that are now in repositories
+2. Delete loop.py (replaced by orchestrator + modules)
 
-| File | Change |
-|------|--------|
-| `core/loop.py` | Return `UUID` instead of `dict` |
-| `api/routes/chat.py` | Fetch SessionDetail after process_message |
-| `services/workflow_service.py` | Return `UUID` |
-| `api/routes/approvals.py` | Simplify response |
-| `api/routes/questions.py` | Simplify response |
+## File Changes Summary
+
+| Action | File | Lines |
+|--------|------|-------|
+| CREATE | `repositories/message_repository.py` | ~50 |
+| CREATE | `repositories/agent_run_repository.py` | ~80 |
+| CREATE | `repositories/tool_call_repository.py` | ~50 |
+| CREATE | `repositories/llm_call_repository.py` | ~40 |
+| CREATE | `repositories/workspace_repository.py` | ~30 |
+| CREATE | `core/session_manager.py` | ~100 |
+| CREATE | `core/agent_runner.py` | ~300 |
+| CREATE | `core/workflow_executor.py` | ~200 |
+| CREATE | `core/approval_handler.py` | ~100 |
+| CREATE | `core/question_handler.py` | ~100 |
+| CREATE | `core/orchestrator.py` | ~200 |
+| UPDATE | `api/deps.py` | Add new dependencies |
+| UPDATE | `api/routes/chat.py` | Use Orchestrator |
+| DELETE | `core/loop.py` | -2000 (moved to modules) |
+| DELETE | `db/crud.py` | -1200 (moved to repositories) |
+
+**Net change:** More files, but each is small and focused (~50-300 lines)
 
 ## Benefits
 
-1. **No new models** - Reuse existing SessionDetail, ChatItem
-2. **Single source of truth** - Database, not return values
-3. **Type safety** - UUID return is clear and typed
-4. **Simpler code** - chat.py becomes trivial
-5. **Consistent** - Same pattern everywhere
+1. **Single Responsibility** - Each module does one thing
+2. **Testable** - Can unit test each module with mock repositories
+3. **Type Safe** - Domain models everywhere
+4. **Maintainable** - 200-line files instead of 2000-line file
+5. **Consistent** - Same patterns in API and Core layers
+6. **No Duplication** - crud.py and repositories merged
 
-## Implementation Steps
+## Diagram: Full Architecture
 
-1. Update `MainLoop.process_message()` to return `UUID`
-2. Update `MainLoop.resume_from_approval()` to return `UUID`
-3. Update `MainLoop.resume_from_question()` to return `UUID`
-4. Update `chat.py` to fetch SessionDetail
-5. Update `WorkflowService` return types
-6. Update `approvals.py` response
-7. Update `questions.py` response
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              FRONTEND                                         │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼ HTTP
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           API ROUTES                                          │
+│  chat.py, sessions.py, approvals.py, questions.py, projects.py               │
+│  All return domain models (SessionDetail, ApprovalDetail, etc.)              │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           SERVICES                                            │
+│  SessionService, ApprovalService, QuestionService, ProjectService            │
+│  Business logic, permissions, coordinates repos + core                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                    ┌───────────────┴───────────────┐
+                    ▼                               ▼
+┌───────────────────────────────┐   ┌───────────────────────────────────────────┐
+│        REPOSITORIES           │   │              CORE                          │
+│                               │   │                                           │
+│  SessionRepository            │   │  ┌─────────────────────────────────────┐ │
+│  ApprovalRepository           │◄──┼──│         Orchestrator                 │ │
+│  QuestionRepository           │   │  │  process_message() → UUID            │ │
+│  ProjectRepository            │   │  │  resume_from_approval() → UUID       │ │
+│  MessageRepository            │   │  │  resume_from_question() → UUID       │ │
+│  AgentRunRepository           │   │  └─────────────────────────────────────┘ │
+│  ToolCallRepository           │   │              │                           │
+│  LLMCallRepository            │   │              ▼                           │
+│  WorkspaceRepository          │   │  ┌─────────────────────────────────────┐ │
+│                               │   │  │  SessionManager                     │ │
+│  All return domain models     │   │  │  WorkflowExecutor                   │ │
+│                               │   │  │  AgentRunner                        │ │
+└───────────────────────────────┘   │  │  ApprovalHandler                    │ │
+              │                     │  │  QuestionHandler                    │ │
+              │                     │  └─────────────────────────────────────┘ │
+              │                     │              │                           │
+              ▼                     │              ▼                           │
+┌───────────────────────────────┐   │  ┌─────────────────────────────────────┐ │
+│        DATABASE               │   │  │         MCP Client                  │ │
+│  PostgreSQL                   │   │  │  Calls coding/docker MCP servers    │ │
+└───────────────────────────────┘   │  └─────────────────────────────────────┘ │
+                                    └───────────────────────────────────────────┘
+```
+
+## Ready to Implement?
+
+This is a significant refactor. Suggested approach:
+1. Start with Phase 1 (new repositories) - low risk
+2. Then Phase 2 (new core modules) - parallel to existing loop.py
+3. Then Phase 3-5 (wire together) - gradual migration
+4. Finally Phase 6 (cleanup) - delete old code
+
+Each phase can be tested independently before moving to the next.
