@@ -1,9 +1,9 @@
 """Database module for Druppie platform.
 
 Database design principles:
-- Tables for entities we need to query (sessions, approvals, questions, etc.)
-- JSONB for display-only data (tool arguments, question choices)
-- SQLAlchemy models in druppie/db/models/ are the source of truth
+- Simple 1:1 mapping between tables and domain models
+- Repositories handle all database access
+- MCPs handle their own state (workspaces, containers)
 
 Use repositories (druppie/repositories/) for all database access.
 """
@@ -29,17 +29,11 @@ from .models import (
     ToolCall,
     # Approvals
     Approval,
-    # HITL
-    HitlQuestion,
-    # Workspaces
-    Workspace,
-    # Builds & Deployments
-    Build,
-    Deployment,
+    # Questions
+    Question,
+    HitlQuestion,  # Backward compat alias
     # LLM Tracking
     LlmCall,
-    # Session Events
-    SessionEvent,
 )
 
 __all__ = [
@@ -60,10 +54,7 @@ __all__ = [
     "Message",
     "ToolCall",
     "Approval",
+    "Question",
     "HitlQuestion",
-    "Workspace",
-    "Build",
-    "Deployment",
     "LlmCall",
-    "SessionEvent",
 ]

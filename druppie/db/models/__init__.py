@@ -1,7 +1,24 @@
 """SQLAlchemy database models for Druppie platform.
 
-Models are organized into separate files for clean code.
-All models use the shared Base from base.py.
+Simplified schema with 1:1 mapping to domain models:
+
+Database Table    SQLAlchemy Model    Domain Model(s)
+─────────────────────────────────────────────────────
+users             User                UserInfo
+projects          Project             ProjectSummary, ProjectDetail
+sessions          Session             SessionSummary, SessionDetail
+messages          Message             Message
+agent_runs        AgentRun            AgentRunSummary, AgentRunDetail
+llm_calls         LlmCall             LlmCallSummary
+tool_calls        ToolCall            ToolCallSummary, ToolCallDetail
+approvals         Approval            ApprovalSummary, ApprovalDetail
+questions         Question            QuestionSummary, QuestionDetail
+
+Removed tables (handled by MCPs):
+- workspaces: Coding MCP manages workspace lifecycle
+- builds: Docker MCP tracks via container labels
+- deployments: Docker MCP tracks via container labels
+- session_events: Derived from other tables, not stored
 """
 
 from .base import Base, utcnow, new_uuid
@@ -23,17 +40,8 @@ from .llm_call import LlmCall
 # Approval model
 from .approval import Approval
 
-# HITL question model
-from .question import HitlQuestion
-
-# Workspace model
-from .workspace import Workspace
-
-# Build and deployment models
-from .build import Build, Deployment
-
-# Event model
-from .event import SessionEvent
+# Question model (renamed from HitlQuestion)
+from .question import Question, HitlQuestion  # HitlQuestion is alias for backward compat
 
 __all__ = [
     # Base
@@ -55,13 +63,7 @@ __all__ = [
     "LlmCall",
     # Approval
     "Approval",
-    # HITL
-    "HitlQuestion",
-    # Workspace
-    "Workspace",
-    # Build/Deployment
-    "Build",
-    "Deployment",
-    # Event
-    "SessionEvent",
+    # Question
+    "Question",
+    "HitlQuestion",  # Backward compat alias
 ]

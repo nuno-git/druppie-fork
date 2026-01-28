@@ -8,9 +8,9 @@ from ..domain import (
     SessionSummary,
     SessionDetail,
     SessionStatus,
-    ChatItem,
-    ChatItemType,
-    MessageSummary,
+    TimelineEntry,
+    TimelineEntryType,
+    Message,
     TokenUsage,
     LLMMessage,
     AgentRunSummary,
@@ -26,12 +26,11 @@ from ..domain import (
 from ..db.models import (
     Session as SessionModel,
     AgentRun,
-    Message,
+    Message as MessageModel,
     ToolCall,
     LlmCall,
     Approval,
     Project,
-    SessionEvent,
 )
 
 
@@ -87,13 +86,13 @@ class SessionRepository(BaseRepository):
         )
         return [self._to_summary(s) for s in sessions]
 
-    def get_with_chat(self, session_id: UUID) -> SessionDetail | None:
-        """Get session with full chat timeline."""
+    def get_detail(self, session_id: UUID) -> SessionDetail | None:
+        """Get session with full timeline."""
         session = self.get_by_id(session_id)
         if not session:
             return None
 
-        chat = self._build_chat_timeline(session_id)
+        timeline = self._build_timeline(session_id)
         project = self._get_project_summary(session.project_id) if session.project_id else None
 
         return SessionDetail(
@@ -112,8 +111,13 @@ class SessionRepository(BaseRepository):
             # SessionDetail specific
             user_id=session.user_id,
             project=project,
-            chat=chat,
+            timeline=timeline,
         )
+
+    # Backward compat alias
+    def get_with_chat(self, session_id: UUID) -> SessionDetail | None:
+        """Alias for get_detail (backward compatibility)."""
+        return self.get_detail(session_id)
 
     def create(
         self,
@@ -156,37 +160,37 @@ class SessionRepository(BaseRepository):
             updated_at=session.updated_at,
         )
 
-    def _build_chat_timeline(self, session_id: UUID) -> list[ChatItem]:
-        """Build chronological chat timeline from messages and agent runs.
+    def _build_timeline(self, session_id: UUID) -> list[TimelineEntry]:
+        """Build chronological timeline from messages and agent runs.
 
-        Returns a unified list of ChatItem objects, each containing either:
-        - A MessageSummary (user input, assistant response, system message)
+        Returns a unified list of TimelineEntry objects, each containing either:
+        - A Message (user input, assistant response, system message)
         - An AgentRunSummary (pending, running, completed agent runs)
 
-        Items are sorted by created_at for chronological display.
+        Items are sorted by timestamp for chronological display.
         """
-        items = []
+        entries = []
 
         # Get messages (user, system, assistant)
         messages = (
-            self.db.query(Message)
+            self.db.query(MessageModel)
             .filter_by(session_id=session_id)
-            .filter(Message.role.in_(["user", "system", "assistant"]))
-            .order_by(Message.created_at)
+            .filter(MessageModel.role.in_(["user", "system", "assistant"]))
+            .order_by(MessageModel.created_at)
             .all()
         )
 
         for msg in messages:
-            items.append(ChatItem(
-                type=ChatItemType.MESSAGE,
-                message=MessageSummary(
+            entries.append(TimelineEntry(
+                type=TimelineEntryType.MESSAGE,
+                timestamp=msg.created_at,
+                message=Message(
                     id=msg.id,
                     role=msg.role,
                     content=msg.content or "",
                     agent_id=msg.agent_id,
                     created_at=msg.created_at,
                 ),
-                created_at=msg.created_at,
             ))
 
         # Get agent runs (top-level only - parent_run_id is NULL)
@@ -200,15 +204,15 @@ class SessionRepository(BaseRepository):
         for run in agent_runs:
             # Use started_at for running/completed runs, created_at for pending
             timestamp = run.started_at or run.created_at
-            items.append(ChatItem(
-                type=ChatItemType.AGENT_RUN,
+            entries.append(TimelineEntry(
+                type=TimelineEntryType.AGENT_RUN,
+                timestamp=timestamp,
                 agent_run=self._to_agent_run_summary(run),
-                created_at=timestamp,
             ))
 
-        # Sort by created_at for chronological order
-        items.sort(key=lambda x: x.created_at)
-        return items
+        # Sort by timestamp for chronological order
+        entries.sort(key=lambda x: x.timestamp)
+        return entries
 
     def _to_agent_run_summary(self, run: AgentRun) -> AgentRunSummary:
         """Convert AgentRun model to AgentRunSummary domain model."""
@@ -386,49 +390,3 @@ class SessionRepository(BaseRepository):
             repo_url=project.repo_url,
             created_at=project.created_at,
         )
-
-    def create_event(
-        self,
-        session_id: UUID,
-        event_type: str,
-        title: str | None = None,
-        agent_id: str | None = None,
-        tool_name: str | None = None,
-        agent_run_id: UUID | None = None,
-        tool_call_id: UUID | None = None,
-        approval_id: UUID | None = None,
-        hitl_question_id: UUID | None = None,
-        event_data: dict | None = None,
-    ) -> UUID:
-        """Create a session event for timeline display.
-
-        Args:
-            session_id: Session this event belongs to
-            event_type: Type of event (agent_started, tool_call, etc.)
-            title: Human-readable event title
-            agent_id: Agent that triggered this event
-            tool_name: Tool name for tool events
-            agent_run_id: Reference to agent run
-            tool_call_id: Reference to tool call
-            approval_id: Reference to approval
-            hitl_question_id: Reference to HITL question
-            event_data: Additional event-specific data
-
-        Returns:
-            The created event's ID
-        """
-        event = SessionEvent(
-            session_id=session_id,
-            event_type=event_type,
-            title=title,
-            agent_id=agent_id,
-            tool_name=tool_name,
-            agent_run_id=agent_run_id,
-            tool_call_id=tool_call_id,
-            approval_id=approval_id,
-            hitl_question_id=hitl_question_id,
-            event_data=event_data,
-        )
-        self.db.add(event)
-        self.db.flush()
-        return event.id

@@ -1,4 +1,4 @@
-"""HITL question database model."""
+"""Question database model (HITL questions)."""
 
 from typing import Any
 from uuid import uuid4
@@ -10,10 +10,10 @@ from sqlalchemy.orm import relationship
 from .base import Base, utcnow
 
 
-class HitlQuestion(Base):
+class Question(Base):
     """A question from an agent to the user (human-in-the-loop).
 
-    HITL questions allow agents to ask for user input during execution.
+    Questions allow agents to ask for user input during execution.
     There are three question types:
     - text: Free-form text answer (choices is NULL)
     - single_choice: One option must be selected
@@ -27,7 +27,7 @@ class HitlQuestion(Base):
     the selected choice texts joined (for display).
     """
 
-    __tablename__ = "hitl_questions"
+    __tablename__ = "questions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"))
@@ -82,3 +82,7 @@ class HitlQuestion(Base):
             "agent_state": self.agent_state,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+# Backward compatibility alias
+HitlQuestion = Question

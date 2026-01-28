@@ -1,10 +1,10 @@
-"""Question repository for HITL questions database access.
+"""Question repository for database access.
 
-HITL (Human-in-the-Loop) questions allow agents to ask for user input.
+Questions allow agents to ask for user input (Human-in-the-Loop).
 Questions can be text (free-form) or choice-based (single/multiple selection).
 
-Design decision: Choices are stored as JSONB in hitl_questions.choices instead
-of a separate table. See druppie/db/models.py for detailed rationale.
+Design decision: Choices are stored as JSONB in questions.choices instead
+of a separate table. See druppie/db/models/question.py for detailed rationale.
 """
 
 from uuid import UUID, uuid4
@@ -13,13 +13,13 @@ from typing import Any
 
 from .base import BaseRepository
 from ..domain import QuestionDetail, QuestionChoice, PendingQuestionList, QuestionStatus
-from ..db.models import HitlQuestion, Session as SessionModel
+from ..db.models import Question, Session as SessionModel
 
 
 class QuestionRepository(BaseRepository):
-    """Database access for HITL questions.
+    """Database access for questions.
 
-    Questions are stored in the hitl_questions table. For choice questions,
+    Questions are stored in the questions table. For choice questions,
     the available options are stored as JSONB in the `choices` column:
         [{"text": "Option A"}, {"text": "Option B"}]
 
@@ -27,9 +27,9 @@ class QuestionRepository(BaseRepository):
         [0, 2] means first and third options were selected
     """
 
-    def get_by_id(self, question_id: UUID) -> HitlQuestion | None:
+    def get_by_id(self, question_id: UUID) -> Question | None:
         """Get raw question model."""
-        return self.db.query(HitlQuestion).filter_by(id=question_id).first()
+        return self.db.query(Question).filter_by(id=question_id).first()
 
     def create(
         self,
@@ -41,7 +41,7 @@ class QuestionRepository(BaseRepository):
         choices: list[dict[str, str]] | None = None,
         agent_state: dict[str, Any] | None = None,
     ) -> QuestionDetail:
-        """Create a new HITL question.
+        """Create a new question.
 
         Args:
             session_id: Session this question belongs to
@@ -55,7 +55,7 @@ class QuestionRepository(BaseRepository):
         Returns:
             QuestionDetail domain object
         """
-        hitl_question = HitlQuestion(
+        question_model = Question(
             id=uuid4(),
             session_id=session_id,
             agent_run_id=agent_run_id,
@@ -66,9 +66,9 @@ class QuestionRepository(BaseRepository):
             status=QuestionStatus.PENDING.value,
             agent_state=agent_state,
         )
-        self.db.add(hitl_question)
+        self.db.add(question_model)
         self.db.flush()
-        return self._to_detail(hitl_question)
+        return self._to_detail(question_model)
 
     def get_pending_for_user(self, user_id: UUID) -> PendingQuestionList:
         """Get all pending questions for sessions owned by user.
@@ -77,11 +77,11 @@ class QuestionRepository(BaseRepository):
         Users can see and answer questions from any of their sessions.
         """
         questions = (
-            self.db.query(HitlQuestion)
-            .join(SessionModel, HitlQuestion.session_id == SessionModel.id)
+            self.db.query(Question)
+            .join(SessionModel, Question.session_id == SessionModel.id)
             .filter(SessionModel.user_id == user_id)
-            .filter(HitlQuestion.status == QuestionStatus.PENDING.value)
-            .order_by(HitlQuestion.created_at)
+            .filter(Question.status == QuestionStatus.PENDING.value)
+            .order_by(Question.created_at)
             .all()
         )
         return PendingQuestionList(
@@ -110,9 +110,9 @@ class QuestionRepository(BaseRepository):
         if selected_choices is not None:
             updates["selected_indices"] = selected_choices
 
-        self.db.query(HitlQuestion).filter_by(id=question_id).update(updates)
+        self.db.query(Question).filter_by(id=question_id).update(updates)
 
-    def _to_detail(self, question: HitlQuestion) -> QuestionDetail:
+    def _to_detail(self, question: Question) -> QuestionDetail:
         """Convert question model to detail domain object.
 
         Choices are read from the JSONB `choices` column and combined with
