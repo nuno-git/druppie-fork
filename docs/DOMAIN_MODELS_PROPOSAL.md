@@ -8,68 +8,449 @@ Refactor the core layer (loop.py) to:
 3. **Split into focused modules** for maintainability
 4. **Return session_id** (callers fetch SessionDetail to see result)
 
-## Analysis: How Plans Work Today
+---
 
-### Planner Agent Output
+## Simplified Plan Storage
 
-The planner agent (druppie/agents/definitions/planner.yaml) outputs JSON:
+### Key Insight
 
-```json
-{
-  "name": "Build Todo App",
-  "description": "Design, implement, and deploy a todo application",
-  "steps": [
-    {
-      "id": "step_1",
-      "type": "agent",
-      "agent_id": "architect",
-      "prompt": "Design the architecture..."
-    },
-    {
-      "id": "step_2",
-      "type": "agent",
-      "agent_id": "developer",
-      "prompt": "Implement the Todo application..."
-    },
-    {
-      "id": "step_3",
-      "type": "mcp",
-      "tool": "docker:build",
-      "inputs": {"context": "."}
-    }
-  ]
-}
+Workflow steps ARE just agent runs that haven't started yet. Instead of separate Workflow/WorkflowStep tables, we use AgentRun with a `pending` status.
+
+### Current (overcomplicated)
+```
+Session → Workflow → WorkflowStep → AgentRun
 ```
 
-### Current Database Storage
-
-The plan is stored in `workflows` and `workflow_steps` tables:
-
+### New (simpler)
 ```
-workflows:
-  - id, session_id, name, status, current_step, created_at
-
-workflow_steps:
-  - id, workflow_id, step_index, agent_id, description, status,
-    result_summary, started_at, completed_at
+Session → AgentRun (status=pending for planned runs)
 ```
 
-### What's Lost
+### How It Works
 
-Currently we lose some planner output:
-- `step.id` - We generate our own UUIDs
-- `step.type` - Not stored (assumed to be "agent")
-- For MCP steps: `tool` and `inputs` - Not supported yet
-
-### What We Need
-
-1. **Domain models** for Workflow/WorkflowStep
-2. **WorkflowRepository** to replace crud.py workflow functions
-3. **Support for both step types** (agent + mcp)
+1. **Planner agent** gets a `make_plan` built-in tool
+2. Tool creates AgentRun records with `status=pending`
+3. Execution loop picks up pending runs in sequence order
+4. No separate workflow tables needed
 
 ---
 
-## Current Problems
+## AgentRun Changes
+
+### Add PENDING status
+
+```python
+# domain/agent_run.py
+
+class AgentRunStatus(str, Enum):
+    """Agent run execution status."""
+    PENDING = "pending"        # Created by planner, not started yet
+    RUNNING = "running"        # Currently executing
+    PAUSED_TOOL = "paused_tool"  # Waiting for tool approval
+    PAUSED_HITL = "paused_hitl"  # Waiting for HITL answer
+    COMPLETED = "completed"    # Finished successfully
+    FAILED = "failed"          # Finished with error
+```
+
+### Add fields for planned runs
+
+```python
+# db/models.py - AgentRun model
+
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+
+    # Existing fields
+    id = Column(UUID, primary_key=True)
+    session_id = Column(UUID, ForeignKey("sessions.id"))
+    agent_id = Column(String(100), nullable=False)
+    parent_run_id = Column(UUID, ForeignKey("agent_runs.id"))
+    status = Column(String(20), default="running")
+    iteration_count = Column(Integer, default=0)
+    # ... tokens, timestamps, etc.
+
+    # NEW: For pending runs created by planner
+    planned_prompt = Column(Text)           # Task description for the agent
+    sequence_number = Column(Integer)       # Execution order (0, 1, 2...)
+```
+
+### Database migration
+
+```sql
+-- Add columns to agent_runs table
+ALTER TABLE agent_runs ADD COLUMN planned_prompt TEXT;
+ALTER TABLE agent_runs ADD COLUMN sequence_number INTEGER;
+
+-- Index for efficient pending run queries
+CREATE INDEX idx_agent_runs_pending ON agent_runs (session_id, status, sequence_number)
+    WHERE status = 'pending';
+```
+
+---
+
+## The make_plan Tool
+
+Built-in tool given to the planner agent:
+
+```python
+# agents/tools/plan.py
+
+def make_plan(steps: list[dict]) -> str:
+    """
+    Create execution plan as pending agent runs.
+
+    Called by planner agent to create the plan.
+
+    Args:
+        steps: List of steps, each with:
+            - agent_id: Which agent to run (architect, developer, deployer)
+            - prompt: Task description for the agent
+
+    Example:
+        make_plan([
+            {"agent_id": "architect", "prompt": "Design the todo app architecture..."},
+            {"agent_id": "developer", "prompt": "Implement based on architecture.md..."},
+            {"agent_id": "deployer", "prompt": "Build and deploy the application..."}
+        ])
+    """
+    session_id = get_current_session_id()
+
+    for i, step in enumerate(steps):
+        execution_repo.create_agent_run(
+            session_id=session_id,
+            agent_id=step["agent_id"],
+            planned_prompt=step["prompt"],
+            sequence_number=i,
+            status=AgentRunStatus.PENDING,
+        )
+
+    execution_repo.commit()
+    return f"Created plan with {len(steps)} steps"
+```
+
+### Planner agent config update
+
+```yaml
+# agents/definitions/planner.yaml
+
+id: planner
+name: Planner Agent
+description: Creates execution plans from user intent
+
+system_prompt: |
+  You are the Planner Agent. Given a user's intent, create an execution plan
+  using the make_plan tool.
+
+  AVAILABLE AGENTS:
+  - architect: Designs system architecture, creates architecture.md
+  - developer: Writes code, creates files, implements features
+  - deployer: Handles Docker build and deployment
+
+  WORKFLOW FOR CREATE_PROJECT:
+  Call make_plan with steps for architect → developer → deployer
+
+  WORKFLOW FOR UPDATE_PROJECT:
+  Call make_plan with developer step (and optionally deployer)
+
+  Example for "build a todo app":
+
+  make_plan([
+    {"agent_id": "architect", "prompt": "Design architecture for a Todo app..."},
+    {"agent_id": "developer", "prompt": "Implement the Todo app based on architecture.md..."},
+    {"agent_id": "deployer", "prompt": "Build and deploy the Todo application..."}
+  ])
+
+# Planner gets the make_plan built-in tool
+builtin_tools:
+  - make_plan
+
+model: glm-4
+temperature: 0.1
+```
+
+---
+
+## Execution Flow
+
+### Process message
+
+```python
+# core/orchestrator.py
+
+async def process_message(self, message: str, session_id: UUID) -> UUID:
+    # 1. Run router
+    router = Agent("router", session_id=session_id)
+    router_result = await router.run(message)
+
+    if router_result.paused:
+        return session_id
+
+    # 2. Run planner (creates pending AgentRuns via make_plan tool)
+    planner = Agent("planner", session_id=session_id)
+    await planner.run(f"User request: {message}")
+
+    # 3. Execute pending runs
+    await self.execute_pending_runs(session_id)
+
+    return session_id
+```
+
+### Execute pending runs
+
+```python
+# core/orchestrator.py
+
+async def execute_pending_runs(self, session_id: UUID) -> None:
+    """Execute all pending agent runs in sequence."""
+
+    while True:
+        # Get next pending run
+        next_run = self.execution_repo.get_next_pending(session_id)
+
+        if not next_run:
+            break  # All done
+
+        # Update status to running
+        self.execution_repo.update_status(next_run.id, AgentRunStatus.RUNNING)
+
+        # Execute using existing Agent class
+        agent = Agent(
+            next_run.agent_id,
+            session_id=session_id,
+            agent_run_id=next_run.id,  # Reuse the pending run record
+        )
+        result = await agent.run(next_run.planned_prompt)
+
+        if result.paused:
+            # Agent paused for approval or HITL - stop here
+            # Will resume later via resume_from_approval/resume_from_question
+            return
+
+        # Agent completed - loop continues to next pending run
+```
+
+### Resume after approval
+
+```python
+# core/orchestrator.py
+
+async def resume_from_approval(self, session_id: UUID, approval_id: UUID) -> UUID:
+    """Resume execution after approval."""
+
+    # Get the paused agent run
+    paused_run = self.execution_repo.get_paused_run(session_id)
+
+    if paused_run:
+        # Resume the agent
+        agent = Agent(paused_run.agent_id, session_id=session_id)
+        result = await agent.resume_from_approval(approval_id)
+
+        if not result.paused:
+            # Agent completed - continue with remaining pending runs
+            await self.execute_pending_runs(session_id)
+
+    return session_id
+```
+
+---
+
+## Repository Changes
+
+### ExecutionRepository additions
+
+```python
+# repositories/execution_repository.py
+
+class ExecutionRepository(BaseRepository):
+    """Combined repository for execution records."""
+
+    # ... existing methods ...
+
+    def get_next_pending(self, session_id: UUID) -> AgentRun | None:
+        """Get next pending agent run for a session."""
+        return (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status == "pending",
+            )
+            .order_by(AgentRun.sequence_number)
+            .first()
+        )
+
+    def get_pending_runs(self, session_id: UUID) -> list[AgentRunSummary]:
+        """Get all pending runs (the 'plan') for a session."""
+        runs = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status == "pending",
+            )
+            .order_by(AgentRun.sequence_number)
+            .all()
+        )
+        return [self._to_summary(r) for r in runs]
+
+    def get_paused_run(self, session_id: UUID) -> AgentRun | None:
+        """Get the paused agent run for a session."""
+        return (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status.in_(["paused_tool", "paused_hitl"]),
+            )
+            .first()
+        )
+```
+
+### SessionRepository - building the chat list
+
+```python
+# repositories/session_repository.py
+
+def get_detail(self, session_id: UUID) -> SessionDetail:
+    """Get session with chat items in chronological order."""
+    session = self.get_by_id(session_id)
+
+    # Get messages
+    messages = self.db.query(Message).filter(
+        Message.session_id == session_id
+    ).all()
+
+    # Get agent runs
+    agent_runs = self.db.query(AgentRun).filter(
+        AgentRun.session_id == session_id
+    ).all()
+
+    # Combine into chat items and sort by created_at
+    chat_items = []
+
+    for msg in messages:
+        chat_items.append(ChatItem(
+            type=ChatItemType.MESSAGE,
+            message=self._to_message_summary(msg),
+            created_at=msg.created_at,
+        ))
+
+    for run in agent_runs:
+        chat_items.append(ChatItem(
+            type=ChatItemType.AGENT_RUN,
+            agent_run=self._to_agent_run_summary(run),
+            created_at=run.started_at or run.created_at,
+        ))
+
+    # Sort by time
+    chat_items.sort(key=lambda x: x.created_at)
+
+    return SessionDetail(
+        id=session.id,
+        # ... other fields ...
+        chat=chat_items,
+    )
+```
+
+---
+
+## Domain Model Updates
+
+### ChatItem (unified)
+
+```python
+# domain/session.py
+
+class ChatItemType(str, Enum):
+    """Type of chat item."""
+    MESSAGE = "message"
+    AGENT_RUN = "agent_run"
+
+class ChatItem(BaseModel):
+    """A chat item - either a message or an agent run."""
+    type: ChatItemType
+
+    # For messages (user input, assistant response)
+    message: MessageSummary | None = None
+
+    # For agent runs (pending, running, completed, paused...)
+    agent_run: AgentRunSummary | None = None
+
+    # For ordering
+    created_at: datetime
+```
+
+### AgentRunSummary (updated)
+
+```python
+# domain/agent_run.py
+
+class AgentRunSummary(BaseModel):
+    """Agent run for list views."""
+    id: UUID
+    session_id: UUID
+    agent_id: str
+    status: AgentRunStatus
+
+    # For pending runs (the plan)
+    planned_prompt: str | None
+    sequence_number: int | None
+
+    # For completed runs
+    iteration_count: int
+    total_tokens: int
+    started_at: datetime | None
+    completed_at: datetime | None
+```
+
+### SessionDetail (simplified)
+
+```python
+# domain/session.py
+
+class SessionDetail(BaseModel):
+    """Full session with chat history."""
+    id: UUID
+    user_id: UUID | None
+    project_id: UUID | None
+    title: str | None
+    status: SessionStatus
+
+    # Everything in chronological order
+    # Messages and agent runs (pending, running, completed) all together
+    chat: list[ChatItem]
+
+    # Token usage
+    total_tokens: int
+
+    created_at: datetime
+    updated_at: datetime
+```
+
+### Frontend usage
+
+```tsx
+// Just iterate through chat items in order
+{session.chat.map(item =>
+    item.type === "message"
+        ? <Message data={item.message} />
+        : <AgentRun data={item.agent_run} />
+)}
+```
+
+Pending agent runs appear in the chat at the position they were created (right after the planner ran), giving a natural timeline view.
+
+---
+
+## What Gets Deleted
+
+No need for:
+- `workflows` table
+- `workflow_steps` table
+- `WorkflowRepository`
+- `WorkflowDetail`, `WorkflowStepSummary` domain models
+- Workflow-related crud.py functions
+
+---
+
+## Current Problems (unchanged)
 
 ```
 core/loop.py (2000+ lines)
@@ -77,112 +458,11 @@ core/loop.py (2000+ lines)
 ├── Returns arbitrary dicts ❌
 ├── Mixed responsibilities ❌
 │   ├── Session management
-│   ├── Workflow execution
-│   ├── Agent running (ALREADY EXISTS in agents/runtime.py!)
+│   ├── Workflow execution (simplified!)
+│   ├── Agent running (use existing runtime.py)
 │   ├── Approval handling
 │   └── Question handling
 └── No clear boundaries ❌
-```
-
----
-
-## Key Design Decisions
-
-### 1. Use Existing Agent Runtime
-
-**DO NOT** create an AgentRunner class. We already have `druppie/agents/runtime.py` with the `Agent` class that handles:
-- Agent execution loop
-- Tool calling
-- HITL questions
-- Resumption from approval/questions
-
-The core layer should USE the Agent class, not duplicate it.
-
-### 2. No WorkspaceRepository
-
-Workspace operations are handled by the **coding MCP server**, not the backend. The backend only stores a workspace reference (session_id, project_id, local_path) for tracking.
-
-### 3. Combined Execution Repository
-
-Instead of separate repos for AgentRun, ToolCall, and LLMCall, use ONE `ExecutionRepository`:
-
-```python
-class ExecutionRepository(BaseRepository):
-    """Handles all execution-related records."""
-
-    # Agent runs
-    def create_agent_run(self, session_id, agent_id, ...) -> AgentRun
-    def update_agent_run_status(self, run_id, status) -> None
-    def get_agent_run(self, run_id) -> AgentRunDetail
-
-    # Tool calls (linked to agent run)
-    def create_tool_call(self, agent_run_id, tool, args) -> ToolCall
-    def update_tool_result(self, call_id, result, status) -> None
-
-    # LLM calls (linked to agent run)
-    def create_llm_call(self, agent_run_id, model, messages) -> LLMCall
-    def update_llm_response(self, call_id, response, tokens) -> None
-```
-
-### 4. Add Workflow Domain Models
-
-New domain models for plans/workflows:
-
-```python
-# domain/workflow.py
-
-class WorkflowStepType(str, Enum):
-    """Type of workflow step."""
-    AGENT = "agent"
-    MCP = "mcp"
-
-class WorkflowStatus(str, Enum):
-    """Workflow execution status."""
-    PENDING = "pending"
-    RUNNING = "running"
-    PAUSED = "paused"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-class WorkflowStepStatus(str, Enum):
-    """Step execution status."""
-    PENDING = "pending"
-    RUNNING = "running"
-    WAITING_APPROVAL = "waiting_approval"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    SKIPPED = "skipped"
-
-class WorkflowStepSummary(BaseModel):
-    """Workflow step for list views."""
-    id: UUID
-    step_index: int
-    step_type: WorkflowStepType
-    agent_id: str | None  # For agent steps
-    tool_name: str | None  # For MCP steps (e.g., "docker:build")
-    description: str
-    status: WorkflowStepStatus
-    result_summary: str | None
-
-class WorkflowSummary(BaseModel):
-    """Workflow for list views."""
-    id: UUID
-    session_id: UUID
-    name: str
-    status: WorkflowStatus
-    current_step: int
-    total_steps: int
-    created_at: datetime
-
-class WorkflowDetail(BaseModel):
-    """Full workflow with steps."""
-    id: UUID
-    session_id: UUID
-    name: str
-    status: WorkflowStatus
-    current_step: int
-    steps: list[WorkflowStepSummary]
-    created_at: datetime
 ```
 
 ---
@@ -194,15 +474,14 @@ class WorkflowDetail(BaseModel):
 │                           API LAYER                                  │
 │                                                                      │
 │   Routes receive/return domain models                               │
-│   chat.py → SessionDetail                                           │
-│   approvals.py → ApprovalDetail                                     │
+│   chat.py → SessionDetail (chat: list[ChatItem] in order)           │
 └─────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        SERVICE LAYER                                 │
 │                                                                      │
-│   SessionService, ApprovalService, QuestionService, WorkflowService │
+│   SessionService, ApprovalService, QuestionService                  │
 │   Coordinates repositories + core orchestrator                      │
 └─────────────────────────────────────────────────────────────────────┘
                               │
@@ -213,14 +492,15 @@ class WorkflowDetail(BaseModel):
 │                         │     │                                     │
 │   SessionRepository     │◄────┤   Orchestrator                      │
 │   ApprovalRepository    │     │     │                               │
-│   QuestionRepository    │     │     ├── SessionManager              │
-│   WorkflowRepository    │     │     ├── WorkflowExecutor            │
-│   ExecutionRepository   │     │     ├── ApprovalHandler             │
-│   (AgentRun+ToolCall+   │     │     └── QuestionHandler             │
+│   QuestionRepository    │     │     ├── execute_pending_runs()      │
+│   ExecutionRepository   │     │     ├── resume_from_approval()      │
+│   (AgentRun+ToolCall+   │     │     └── resume_from_question()      │
 │    LLMCall combined)    │     │                                     │
-│                         │     │   Uses existing Agent class from    │
-│   All return domain     │     │   druppie/agents/runtime.py         │
-│   models                │     │                                     │
+│   MessageRepository     │     │   Uses existing Agent class from    │
+│                         │     │   druppie/agents/runtime.py         │
+│   All return domain     │     │                                     │
+│   models                │     │   Planner uses make_plan tool to    │
+│                         │     │   create pending AgentRuns          │
 └─────────────────────────┘     └─────────────────────────────────────┘
 ```
 
@@ -228,508 +508,82 @@ class WorkflowDetail(BaseModel):
 
 ## New Core Structure
 
-Split `loop.py` (2000 lines) into focused modules:
-
 ```
 druppie/core/
 ├── __init__.py
-├── orchestrator.py       # Main entry point (replaces MainLoop class)
-│                         # ~200 lines - coordinates the flow
-│
-├── session_manager.py    # Session lifecycle
-│                         # create_session, update_status, get_state
-│                         # Uses SessionRepository
-│
-├── workflow_executor.py  # Executes workflow steps
-│                         # create_from_plan(), execute_steps()
-│                         # Uses WorkflowRepository
-│                         # Uses Agent from agents/runtime.py
-│
-├── approval_handler.py   # Approval pause/resume
-│                         # create_approval, resume_from_approval
-│                         # Uses ApprovalRepository
-│
-├── question_handler.py   # HITL question pause/resume
-│                         # create_question, resume_from_question
-│                         # Uses QuestionRepository
+├── orchestrator.py       # Main entry point
+│                         # process_message, execute_pending_runs
+│                         # resume_from_approval, resume_from_question
 │
 ├── mcp_client.py         # MCP tool calls (already exists)
 ├── execution_context.py  # Execution context (already exists)
 └── config.py             # Settings (already exists)
+
+druppie/agents/
+├── runtime.py            # Agent class (already exists, use as-is)
+├── tools/
+│   └── plan.py           # make_plan built-in tool (NEW)
+└── definitions/
+    └── planner.yaml      # Updated to use make_plan tool
 ```
 
-**Note:** No `agent_runner.py` - we use existing `agents/runtime.py`!
-
----
-
-## How Modules Work Together
-
-### Example: process_message flow
-
-```python
-# core/orchestrator.py
-
-class Orchestrator:
-    """Main entry point for processing messages."""
-
-    def __init__(
-        self,
-        session_manager: SessionManager,
-        workflow_executor: WorkflowExecutor,
-    ):
-        self.session_manager = session_manager
-        self.workflow_executor = workflow_executor
-
-    async def process_message(
-        self,
-        message: str,
-        session_id: UUID | None,
-        user_id: UUID | None,
-        project_id: UUID | None,
-    ) -> UUID:
-        """Process a user message.
-
-        Returns:
-            session_id - Caller fetches SessionDetail to see result
-        """
-        # 1. Create or get session
-        session = self.session_manager.get_or_create(
-            session_id=session_id,
-            user_id=user_id,
-            project_id=project_id,
-            title=message[:100],
-        )
-
-        # 2. Save user message
-        self.session_manager.add_message(
-            session_id=session.id,
-            role="user",
-            content=message,
-        )
-
-        # 3. Run router agent (uses Agent from runtime.py)
-        from druppie.agents.runtime import Agent
-        router = Agent("router", db=self.db, session_id=session.id)
-        router_result = await router.run(message)
-
-        # 4. If paused (approval/question), return session_id
-        if router_result.paused:
-            return session.id
-
-        # 5. Run planner and create workflow
-        planner = Agent("planner", db=self.db, session_id=session.id)
-        plan_result = await planner.run(f"User request: {message}")
-
-        plan = self._extract_plan(plan_result)
-        workflow = self.workflow_executor.create_from_plan(session.id, plan)
-
-        # 6. Execute workflow steps
-        await self.workflow_executor.execute_steps(workflow)
-
-        return session.id
-```
-
-### Example: WorkflowExecutor using Agent
-
-```python
-# core/workflow_executor.py
-
-from druppie.agents.runtime import Agent
-
-class WorkflowExecutor:
-    """Executes workflow plans."""
-
-    def __init__(
-        self,
-        workflow_repo: WorkflowRepository,
-        execution_repo: ExecutionRepository,
-    ):
-        self.workflow_repo = workflow_repo
-        self.execution_repo = execution_repo
-
-    def create_from_plan(
-        self,
-        session_id: UUID,
-        plan: dict,
-    ) -> WorkflowDetail:
-        """Create workflow from planner output."""
-        workflow = self.workflow_repo.create(
-            session_id=session_id,
-            name=plan.get("name", "Execution Plan"),
-        )
-
-        for i, step in enumerate(plan.get("steps", [])):
-            step_type = WorkflowStepType(step.get("type", "agent"))
-
-            self.workflow_repo.add_step(
-                workflow_id=workflow.id,
-                step_index=i,
-                step_type=step_type,
-                agent_id=step.get("agent_id") if step_type == WorkflowStepType.AGENT else None,
-                tool_name=step.get("tool") if step_type == WorkflowStepType.MCP else None,
-                description=step.get("prompt", step.get("description", "")),
-                tool_inputs=step.get("inputs") if step_type == WorkflowStepType.MCP else None,
-            )
-
-        self.workflow_repo.commit()
-        return self.workflow_repo.get_detail(workflow.id)
-
-    async def execute_steps(
-        self,
-        workflow: WorkflowDetail,
-        start_from: int = 0,
-    ) -> WorkflowDetail:
-        """Execute workflow steps from a given index."""
-
-        for step in workflow.steps[start_from:]:
-            self.workflow_repo.update_step_status(step.id, WorkflowStepStatus.RUNNING)
-
-            if step.step_type == WorkflowStepType.AGENT:
-                # Use Agent class from runtime.py
-                agent = Agent(
-                    step.agent_id,
-                    db=self.db,
-                    session_id=workflow.session_id,
-                    workflow_step_id=step.id,
-                )
-                result = await agent.run(step.description)
-
-                if result.paused:
-                    # Agent paused for approval or HITL
-                    self.workflow_repo.update_step_status(
-                        step.id,
-                        WorkflowStepStatus.WAITING_APPROVAL
-                    )
-                    self.workflow_repo.update_status(
-                        workflow.id,
-                        WorkflowStatus.PAUSED,
-                        current_step=step.step_index,
-                    )
-                    return self.workflow_repo.get_detail(workflow.id)
-
-            else:  # MCP step
-                # Direct MCP call (with approval if needed)
-                result = await self._execute_mcp_step(step)
-
-            self.workflow_repo.update_step_status(
-                step.id,
-                WorkflowStepStatus.COMPLETED,
-                result_summary=str(result)[:500],
-            )
-
-        # All steps completed
-        self.workflow_repo.update_status(workflow.id, WorkflowStatus.COMPLETED)
-        return self.workflow_repo.get_detail(workflow.id)
-```
-
----
-
-## New Repositories Needed
-
-### WorkflowRepository (NEW)
-
-```python
-# repositories/workflow_repository.py
-
-class WorkflowRepository(BaseRepository):
-    """Repository for workflow operations."""
-
-    def create(self, session_id: UUID, name: str) -> Workflow:
-        """Create a new workflow."""
-
-    def add_step(
-        self,
-        workflow_id: UUID,
-        step_index: int,
-        step_type: WorkflowStepType,
-        agent_id: str | None,
-        tool_name: str | None,
-        description: str,
-        tool_inputs: dict | None = None,
-    ) -> WorkflowStep:
-        """Add a step to a workflow."""
-
-    def get_by_id(self, workflow_id: UUID) -> Workflow | None:
-        """Get workflow by ID."""
-
-    def get_for_session(self, session_id: UUID) -> Workflow | None:
-        """Get the active workflow for a session."""
-
-    def get_detail(self, workflow_id: UUID) -> WorkflowDetail:
-        """Get full workflow with steps (domain model)."""
-
-    def update_status(
-        self,
-        workflow_id: UUID,
-        status: WorkflowStatus,
-        current_step: int | None = None,
-    ) -> None:
-        """Update workflow status."""
-
-    def update_step_status(
-        self,
-        step_id: UUID,
-        status: WorkflowStepStatus,
-        result_summary: str | None = None,
-    ) -> None:
-        """Update step status and result."""
-```
-
-### ExecutionRepository (Combined)
-
-```python
-# repositories/execution_repository.py
-
-class ExecutionRepository(BaseRepository):
-    """Combined repository for execution records (agent_runs, tool_calls, llm_calls)."""
-
-    # Agent runs
-    def create_agent_run(
-        self,
-        session_id: UUID,
-        agent_id: str,
-        workflow_step_id: UUID | None = None,
-        parent_run_id: UUID | None = None,
-    ) -> AgentRun:
-        """Create an agent run record."""
-
-    def update_agent_run(
-        self,
-        run_id: UUID,
-        status: str | None = None,
-        iteration_count: int | None = None,
-        tokens: dict | None = None,
-    ) -> None:
-        """Update agent run."""
-
-    def get_agent_run_detail(self, run_id: UUID) -> AgentRunDetail:
-        """Get agent run as domain model."""
-
-    # Tool calls
-    def create_tool_call(
-        self,
-        session_id: UUID,
-        agent_run_id: UUID,
-        mcp_server: str,
-        tool_name: str,
-        arguments: dict,
-    ) -> ToolCall:
-        """Create a tool call record."""
-
-    def update_tool_result(
-        self,
-        call_id: UUID,
-        status: str,
-        result: str | None = None,
-        error: str | None = None,
-    ) -> None:
-        """Update tool call result."""
-
-    # LLM calls
-    def create_llm_call(
-        self,
-        session_id: UUID,
-        agent_run_id: UUID,
-        provider: str,
-        model: str,
-        messages: list[dict],
-    ) -> LLMCall:
-        """Create an LLM call record."""
-
-    def update_llm_response(
-        self,
-        call_id: UUID,
-        response_content: str,
-        response_tool_calls: list[dict] | None,
-        tokens: dict,
-        duration_ms: int,
-    ) -> None:
-        """Update LLM call response."""
-```
-
-### MessageRepository (NEW)
-
-```python
-# repositories/message_repository.py
-
-class MessageRepository(BaseRepository):
-    """Repository for session messages."""
-
-    def create(
-        self,
-        session_id: UUID,
-        role: str,
-        content: str,
-        agent_run_id: UUID | None = None,
-        agent_id: str | None = None,
-    ) -> Message:
-        """Create a message."""
-
-    def get_for_session(self, session_id: UUID) -> list[MessageSummary]:
-        """Get all messages for a session."""
-
-    def get_for_agent_run(self, agent_run_id: UUID) -> list[MessageSummary]:
-        """Get messages for an agent run (for isolation)."""
-```
-
----
-
-## Database Schema Changes
-
-Add `step_type` and `tool_inputs` to workflow_steps:
-
-```sql
--- Add to workflow_steps table
-ALTER TABLE workflow_steps ADD COLUMN step_type VARCHAR(20) DEFAULT 'agent';
-ALTER TABLE workflow_steps ADD COLUMN tool_name VARCHAR(200);
-ALTER TABLE workflow_steps ADD COLUMN tool_inputs JSONB;
-
--- Update constraint: either agent_id (for agent steps) or tool_name (for mcp steps)
-ALTER TABLE workflow_steps ALTER COLUMN agent_id DROP NOT NULL;
-ALTER TABLE workflow_steps ADD CONSTRAINT step_type_check
-    CHECK (
-        (step_type = 'agent' AND agent_id IS NOT NULL) OR
-        (step_type = 'mcp' AND tool_name IS NOT NULL)
-    );
-```
+**Much simpler than before!** No separate session_manager, workflow_executor, etc.
 
 ---
 
 ## Migration Plan
 
-### Phase 1: Add New Domain Models & Repositories
-1. Create `domain/workflow.py` with WorkflowDetail, WorkflowStepSummary
-2. Create `repositories/workflow_repository.py`
-3. Create `repositories/execution_repository.py` (combined)
-4. Create `repositories/message_repository.py`
+### Phase 1: Database & Domain Models
+1. Add `planned_prompt`, `sequence_number` to AgentRun model
+2. Add `PENDING` to AgentRunStatus enum
+3. Run migration
+4. Update AgentRunSummary domain model
 
-### Phase 2: Create Core Modules
-1. Create `core/session_manager.py`
-2. Create `core/workflow_executor.py` (uses Agent from runtime.py)
-3. Create `core/approval_handler.py`
-4. Create `core/question_handler.py`
-5. Create `core/orchestrator.py`
+### Phase 2: Create make_plan Tool
+1. Create `agents/tools/plan.py` with make_plan function
+2. Update planner.yaml to use make_plan tool
+3. Register make_plan as built-in tool in agent runtime
 
-### Phase 3: Update Dependency Injection
-1. Add repository dependencies in `deps.py`
-2. Add core module dependencies
-3. Wire everything together
+### Phase 3: Create Orchestrator
+1. Create `core/orchestrator.py`
+2. Implement `process_message`, `execute_pending_runs`
+3. Implement `resume_from_approval`, `resume_from_question`
 
-### Phase 4: Migrate loop.py
-1. Move code from loop.py to new modules one piece at a time
-2. Each module uses repositories
-3. Each module returns domain models (or UUIDs)
-4. Keep loop.py working during migration (facade pattern)
+### Phase 4: Update Routes & Services
+1. Update chat.py to use Orchestrator
+2. SessionRepository builds chat list (messages + agent runs sorted by created_at)
 
-### Phase 5: Update Routes
-1. `chat.py` calls Orchestrator, fetches SessionDetail
-2. `approvals.py` uses ApprovalHandler
-3. `questions.py` uses QuestionHandler
-
-### Phase 6: Cleanup
-1. Delete old crud.py workflow functions (moved to WorkflowRepository)
-2. Delete loop.py (replaced by orchestrator + modules)
+### Phase 5: Cleanup
+1. Delete Workflow/WorkflowStep models
+2. Delete workflow crud functions
+3. Delete old loop.py code
 
 ---
 
 ## File Changes Summary
 
-| Action | File | Lines |
+| Action | File | Notes |
 |--------|------|-------|
-| CREATE | `domain/workflow.py` | ~80 |
-| CREATE | `repositories/workflow_repository.py` | ~100 |
-| CREATE | `repositories/execution_repository.py` | ~120 |
-| CREATE | `repositories/message_repository.py` | ~50 |
-| CREATE | `core/session_manager.py` | ~100 |
-| CREATE | `core/workflow_executor.py` | ~200 |
-| CREATE | `core/approval_handler.py` | ~100 |
-| CREATE | `core/question_handler.py` | ~100 |
-| CREATE | `core/orchestrator.py` | ~200 |
-| UPDATE | `api/deps.py` | Add new dependencies |
+| UPDATE | `db/models.py` | Add planned_prompt, sequence_number to AgentRun |
+| UPDATE | `domain/agent_run.py` | Add PENDING status, update AgentRunSummary |
+| UPDATE | `domain/session.py` | Add ChatItem, SessionDetail.chat |
+| CREATE | `agents/tools/plan.py` | make_plan built-in tool (~30 lines) |
+| UPDATE | `agents/definitions/planner.yaml` | Use make_plan tool |
+| UPDATE | `repositories/execution_repository.py` | Add get_next_pending, get_pending_runs |
+| CREATE | `core/orchestrator.py` | Main entry point (~150 lines) |
 | UPDATE | `api/routes/chat.py` | Use Orchestrator |
-| UPDATE | `db/models.py` | Add step_type, tool_inputs |
-| DELETE | `core/loop.py` | -2000 (moved to modules) |
-| UPDATE | `db/crud.py` | Remove workflow functions |
+| DELETE | `db/models.py` | Remove Workflow, WorkflowStep |
+| DELETE | `db/crud.py` | Remove workflow functions |
 
-**Net change:** More files, but each is small and focused (~50-200 lines)
+**Net result:** Simpler schema, less code, same functionality.
 
 ---
 
 ## Benefits
 
-1. **Single Responsibility** - Each module does one thing
-2. **No Duplication** - Uses existing Agent class from runtime.py
-3. **Type Safe** - Domain models everywhere
-4. **Maintainable** - 200-line files instead of 2000-line file
-5. **Consistent** - Same patterns in API and Core layers
-6. **Plan Storage** - Full planner output saved (including MCP steps)
-
----
-
-## Full Architecture Diagram
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                              FRONTEND                                         │
-└──────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼ HTTP
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                           API ROUTES                                          │
-│  chat.py, sessions.py, approvals.py, questions.py, projects.py               │
-│  All return domain models (SessionDetail, ApprovalDetail, etc.)              │
-└──────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                           SERVICES                                            │
-│  SessionService, ApprovalService, QuestionService, ProjectService            │
-│  Business logic, permissions, coordinates repos + core                       │
-└──────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                    ┌───────────────┴───────────────┐
-                    ▼                               ▼
-┌───────────────────────────────┐   ┌───────────────────────────────────────────┐
-│        REPOSITORIES           │   │              CORE                          │
-│                               │   │                                           │
-│  SessionRepository            │   │  ┌─────────────────────────────────────┐ │
-│  ApprovalRepository           │◄──┼──│         Orchestrator                 │ │
-│  QuestionRepository           │   │  │  process_message() → UUID            │ │
-│  WorkflowRepository           │   │  │  resume_from_approval() → UUID       │ │
-│  ExecutionRepository          │   │  │  resume_from_question() → UUID       │ │
-│  MessageRepository            │   │  └─────────────────────────────────────┘ │
-│                               │   │              │                           │
-│  All return domain models     │   │              ▼                           │
-│                               │   │  ┌─────────────────────────────────────┐ │
-└───────────────────────────────┘   │  │  SessionManager                     │ │
-              │                     │  │  WorkflowExecutor                   │ │
-              │                     │  │  ApprovalHandler                    │ │
-              │                     │  │  QuestionHandler                    │ │
-              │                     │  └─────────────────────────────────────┘ │
-              │                     │              │                           │
-              │                     │              ▼                           │
-              │                     │  ┌─────────────────────────────────────┐ │
-              ▼                     │  │  Agent (from agents/runtime.py)     │ │
-┌───────────────────────────────┐   │  │  Already exists - handles execution │ │
-│        DATABASE               │   │  │  run(), resume(), tool_calls, etc.  │ │
-│  PostgreSQL                   │   │  └─────────────────────────────────────┘ │
-└───────────────────────────────┘   │              │                           │
-                                    │              ▼                           │
-                                    │  ┌─────────────────────────────────────┐ │
-                                    │  │         MCP Client                  │ │
-                                    │  │  Calls coding/docker MCP servers    │ │
-                                    │  └─────────────────────────────────────┘ │
-                                    └───────────────────────────────────────────┘
-```
-
----
-
-## Ready to Implement?
-
-This is a significant refactor. Suggested approach:
-1. Start with Phase 1 (domain models + repositories) - low risk
-2. Then Phase 2 (new core modules using existing Agent class)
-3. Then Phase 3-5 (wire together)
-4. Finally Phase 6 (cleanup)
-
-Each phase can be tested independently before moving to the next.
+1. **Simpler mental model** - Plan = pending agent runs
+2. **No extra tables** - Reuse AgentRun for planning
+3. **Tool-based planning** - Planner uses make_plan like any other tool
+4. **Easy to query** - Get plan = get pending runs for session
+5. **Unified tracking** - All agent runs (planned or not) in one place
+6. **Less code** - No workflow executor, just execute_pending_runs loop
