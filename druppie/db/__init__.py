@@ -1,7 +1,11 @@
 """Database module for Druppie platform.
 
-NO JSON columns - everything is properly normalized.
-Single source of truth: druppie/db/schema.sql
+Database design principles:
+- Tables for entities we need to query (sessions, approvals, questions, etc.)
+- JSONB for display-only data (tool arguments, question choices)
+- Single source of truth: druppie/db/schema.sql
+
+See models.py for detailed design decision comments.
 """
 
 from .database import get_db, init_db, SessionLocal, engine
@@ -24,14 +28,12 @@ from .models import (
     AgentRun,
     # Messages
     Message,
-    # Tool Calls
+    # Tool Calls (arguments stored as JSONB in tool_calls.arguments)
     ToolCall,
-    ToolCallArgument,
     # Approvals
     Approval,
-    # HITL
+    # HITL (choices stored as JSONB in hitl_questions.choices)
     HitlQuestion,
-    HitlQuestionChoice,
     # Workspaces
     Workspace,
     # Builds & Deployments
@@ -134,10 +136,10 @@ __all__ = [
     "AgentRun",
     "Message",
     "ToolCall",
-    "ToolCallArgument",
+    # NOTE: ToolCallArgument removed - arguments now JSONB in ToolCall.arguments
     "Approval",
     "HitlQuestion",
-    "HitlQuestionChoice",
+    # NOTE: HitlQuestionChoice removed - choices now JSONB in HitlQuestion.choices
     "Workspace",
     "Build",
     "Deployment",

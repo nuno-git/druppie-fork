@@ -326,10 +326,40 @@ class Message(Base):
 # =============================================================================
 # TOOL CALLS
 # =============================================================================
+#
+# DESIGN DECISION: Using JSONB for tool arguments instead of a separate table.
+#
+# We considered two approaches:
+#
+# 1. NORMALIZED (separate tool_call_arguments table):
+#    - Pros: Can query by argument value, SQL constraints
+#    - Cons: Multiple inserts, JOINs for every display, more complex
+#
+# 2. JSONB COLUMN (arguments stored as JSON in tool_calls):
+#    - Pros: Single insert, faster reads, simpler schema
+#    - Cons: Can't efficiently query by argument value
+#
+# We chose JSONB because:
+# - We NEVER query tool calls by argument values (e.g., "find calls where path=/etc")
+# - We ALWAYS fetch all arguments together for display
+# - The `approvals` table already uses JSONB for the same data (consistency)
+# - Matches how the domain layer represents it (dict[str, Any])
+#
+# =============================================================================
 
 
 class ToolCall(Base):
-    """A tool call made by an agent."""
+    """A tool call made by an agent.
+
+    Tool calls represent MCP tool invocations (e.g., coding:write_file) or
+    built-in tools (e.g., execute_agent, done).
+
+    The `arguments` column stores tool parameters as JSONB. This is consistent
+    with how `approvals.arguments` stores the same data. We use JSONB because:
+    1. Arguments are only used for display, never queried individually
+    2. Simpler schema (no separate table, no JOINs)
+    3. Single atomic insert when creating a tool call
+    """
 
     __tablename__ = "tool_calls"
 
@@ -340,6 +370,11 @@ class ToolCall(Base):
     mcp_server = Column(String(100), nullable=False)
     tool_name = Column(String(200), nullable=False)
 
+    # Tool arguments as JSONB - e.g., {"path": "/app/main.py", "content": "..."}
+    # Previously this was a separate `tool_call_arguments` table, but that added
+    # complexity without benefit since we never query by argument values.
+    arguments = Column(JSON)
+
     status = Column(String(20), default="pending")  # pending, executing, completed, failed
     result = Column(Text)
     error_message = Column(Text)
@@ -348,7 +383,6 @@ class ToolCall(Base):
     executed_at = Column(DateTime(timezone=True))
 
     agent_run = relationship("AgentRun", back_populates="tool_calls")
-    arguments = relationship("ToolCallArgument", back_populates="tool_call", cascade="all, delete-orphan")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -360,22 +394,15 @@ class ToolCall(Base):
             "status": self.status,
             "result": self.result,
             "error_message": self.error_message,
-            "arguments": {a.arg_name: a.arg_value for a in self.arguments} if self.arguments else {},
+            "arguments": self.arguments or {},
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "executed_at": self.executed_at.isoformat() if self.executed_at else None,
         }
 
 
-class ToolCallArgument(Base):
-    """Arguments for a tool call (normalized, no JSON)."""
-
-    __tablename__ = "tool_call_arguments"
-
-    tool_call_id = Column(UUID(as_uuid=True), ForeignKey("tool_calls.id", ondelete="CASCADE"), primary_key=True)
-    arg_name = Column(String(100), primary_key=True)
-    arg_value = Column(Text)
-
-    tool_call = relationship("ToolCall", back_populates="arguments")
+# NOTE: ToolCallArgument table has been REMOVED.
+# Tool arguments are now stored as JSONB in tool_calls.arguments.
+# See the design decision comment above for rationale.
 
 
 # =============================================================================
@@ -488,10 +515,41 @@ class Approval(Base):
 # =============================================================================
 # HITL (Human-in-the-Loop) QUESTIONS
 # =============================================================================
+#
+# DESIGN DECISION: Using JSONB for question choices instead of a separate table.
+#
+# Same reasoning as tool_calls.arguments:
+# - We ALWAYS fetch all choices together for display
+# - We NEVER query questions by choice text
+# - When user answers, we store the answer text and optionally selected indices
+#
+# The `choices` JSONB column stores an array of choice objects:
+#   [{"text": "Option A"}, {"text": "Option B"}, {"text": "Option C"}]
+#
+# The `selected_indices` column stores which choices were selected (for multiple choice):
+#   [0, 2] means first and third options were selected
+#
+# This is simpler than a separate table and matches how the domain layer works.
+#
+# =============================================================================
 
 
 class HitlQuestion(Base):
-    """A question from an agent to the user."""
+    """A question from an agent to the user (human-in-the-loop).
+
+    HITL questions allow agents to ask for user input during execution.
+    There are three question types:
+    - text: Free-form text answer (choices is NULL)
+    - single_choice: One option must be selected
+    - multiple_choice: Multiple options can be selected
+
+    For choice questions, the `choices` column stores the available options as
+    JSONB array: [{"text": "Option A"}, {"text": "Option B"}]
+
+    When answered, `selected_indices` stores which choices were picked: [0, 2]
+    The `answer` field contains the text of the answer (for text questions) or
+    the selected choice texts joined (for display).
+    """
 
     __tablename__ = "hitl_questions"
 
@@ -503,8 +561,20 @@ class HitlQuestion(Base):
     question = Column(Text, nullable=False)
     question_type = Column(String(20), default="text")  # text, single_choice, multiple_choice
 
+    # Choices for single_choice/multiple_choice questions as JSONB array.
+    # Format: [{"text": "Option A"}, {"text": "Option B"}]
+    # NULL for text questions.
+    # Previously this was a separate `hitl_question_choices` table, but that added
+    # complexity without benefit since we never query by choice text.
+    choices = Column(JSON)
+
+    # Which choices were selected (indices into the choices array).
+    # Format: [0, 2] means first and third options selected.
+    # NULL for text questions or unanswered questions.
+    selected_indices = Column(JSON)
+
     status = Column(String(20), default="pending")  # pending, answered
-    answer = Column(Text)
+    answer = Column(Text)  # Text answer or display string of selected choices
     answered_at = Column(DateTime(timezone=True))
 
     # Agent state for resumption (messages, iteration, context, workflow info)
@@ -512,10 +582,20 @@ class HitlQuestion(Base):
 
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
-    choices = relationship("HitlQuestionChoice", back_populates="question", cascade="all, delete-orphan")
     agent_run = relationship("AgentRun", foreign_keys=[agent_run_id])
 
     def to_dict(self) -> dict[str, Any]:
+        # Build choices list with selection state for API compatibility
+        choices_with_selection = []
+        if self.choices:
+            selected = self.selected_indices or []
+            for idx, choice in enumerate(self.choices):
+                choices_with_selection.append({
+                    "choice_index": idx,
+                    "choice_text": choice.get("text", ""),
+                    "is_selected": idx in selected,
+                })
+
         return {
             "id": str(self.id),
             "session_id": str(self.session_id) if self.session_id else None,
@@ -523,7 +603,7 @@ class HitlQuestion(Base):
             "agent_id": self.agent_id,
             "question": self.question,
             "question_type": self.question_type,
-            "choices": [c.to_dict() for c in self.choices] if self.choices else [],
+            "choices": choices_with_selection,
             "status": self.status,
             "answer": self.answer,
             "answered_at": self.answered_at.isoformat() if self.answered_at else None,
@@ -532,24 +612,10 @@ class HitlQuestion(Base):
         }
 
 
-class HitlQuestionChoice(Base):
-    """A choice for a HITL question (normalized, no JSON)."""
-
-    __tablename__ = "hitl_question_choices"
-
-    question_id = Column(UUID(as_uuid=True), ForeignKey("hitl_questions.id", ondelete="CASCADE"), primary_key=True)
-    choice_index = Column(Integer, primary_key=True)
-    choice_text = Column(String(500), nullable=False)
-    is_selected = Column(Boolean, default=False)
-
-    question = relationship("HitlQuestion", back_populates="choices")
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "choice_index": self.choice_index,
-            "choice_text": self.choice_text,
-            "is_selected": self.is_selected,
-        }
+# NOTE: HitlQuestionChoice table has been REMOVED.
+# Question choices are now stored as JSONB in hitl_questions.choices.
+# Selected choices are tracked in hitl_questions.selected_indices.
+# See the design decision comment above for rationale.
 
 
 # =============================================================================

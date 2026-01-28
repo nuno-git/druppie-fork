@@ -1,7 +1,12 @@
 """CRUD operations for Druppie database.
 
 Simple database operations matching schema.sql.
-NO JSON operations - everything is properly normalized.
+
+Design principles:
+- Tables for entities we query (sessions, approvals, questions)
+- JSONB for display-only data (tool arguments, question choices)
+
+See models.py for detailed design decision comments on JSONB usage.
 """
 
 from datetime import datetime, timezone
@@ -17,14 +22,14 @@ from .models import (
     Build,
     Deployment,
     HitlQuestion,
-    HitlQuestionChoice,
+    # NOTE: HitlQuestionChoice removed - choices now JSONB in HitlQuestion.choices
     LlmCall,
     Message,
     Project,
     Session,
     SessionEvent,
     ToolCall,
-    ToolCallArgument,
+    # NOTE: ToolCallArgument removed - arguments now JSONB in ToolCall.arguments
     User,
     UserRole,
     UserToken,
@@ -502,28 +507,23 @@ def create_tool_call(
     tool_name: str,
     arguments: dict[str, Any] | None = None,
 ) -> ToolCall:
-    """Create a tool call with arguments."""
+    """Create a tool call with arguments.
+
+    Arguments are stored as JSONB directly in the tool_calls table.
+    This is simpler than a separate table since we never query by argument values.
+    See models.py for the design decision rationale.
+    """
     tool_call = ToolCall(
         id=uuid4(),
         session_id=session_id,
         agent_run_id=agent_run_id,
         mcp_server=mcp_server,
         tool_name=tool_name,
+        # Arguments stored as JSONB - no separate table needed
+        arguments=arguments,
         status="pending",
     )
     db.add(tool_call)
-    db.flush()
-
-    # Add arguments (normalized)
-    if arguments:
-        for arg_name, arg_value in arguments.items():
-            arg = ToolCallArgument(
-                tool_call_id=tool_call.id,
-                arg_name=arg_name,
-                arg_value=str(arg_value) if arg_value is not None else None,
-            )
-            db.add(arg)
-
     db.commit()
     db.refresh(tool_call)
     return tool_call
@@ -746,7 +746,21 @@ def create_hitl_question(
     choices: list[str] | None = None,
     agent_id: str | None = None,
 ) -> HitlQuestion:
-    """Create a HITL question."""
+    """Create a HITL question.
+
+    Choices are stored as JSONB directly in the hitl_questions table.
+    Format: [{"text": "Option A"}, {"text": "Option B"}]
+
+    This is simpler than a separate table since we never query by choice text.
+    See models.py for the design decision rationale.
+    """
+    # Convert choices list to JSONB format
+    # Input: ["Option A", "Option B"]
+    # Stored: [{"text": "Option A"}, {"text": "Option B"}]
+    choices_json = None
+    if choices:
+        choices_json = [{"text": choice_text} for choice_text in choices]
+
     hitl_question = HitlQuestion(
         id=uuid4(),
         session_id=session_id,
@@ -754,22 +768,11 @@ def create_hitl_question(
         agent_id=agent_id,
         question=question,
         question_type=question_type,
+        # Choices stored as JSONB - no separate table needed
+        choices=choices_json,
         status="pending",
     )
     db.add(hitl_question)
-    db.flush()
-
-    # Add choices (normalized)
-    if choices:
-        for i, choice_text in enumerate(choices):
-            choice = HitlQuestionChoice(
-                question_id=hitl_question.id,
-                choice_index=i,
-                choice_text=choice_text,
-                is_selected=False,
-            )
-            db.add(choice)
-
     db.commit()
     db.refresh(hitl_question)
     return hitl_question
@@ -796,7 +799,14 @@ def answer_hitl_question(
     answer: str,
     selected_choices: list[int] | None = None,
 ) -> HitlQuestion | None:
-    """Answer a HITL question."""
+    """Answer a HITL question.
+
+    For choice questions, selected_choices is a list of indices into the choices array.
+    For example, [0, 2] means the first and third options were selected.
+
+    The selected_indices column stores this list for later retrieval.
+    The to_dict() method in the model reconstructs the is_selected state.
+    """
     question = get_hitl_question(db, question_id)
     if not question:
         return None
@@ -805,10 +815,10 @@ def answer_hitl_question(
     question.answered_at = utcnow()
     question.status = "answered"
 
-    # Mark selected choices
+    # Store selected choice indices as JSONB array
+    # The model's to_dict() will reconstruct is_selected state for each choice
     if selected_choices:
-        for choice in question.choices:
-            choice.is_selected = choice.choice_index in selected_choices
+        question.selected_indices = selected_choices
 
     db.commit()
     db.refresh(question)

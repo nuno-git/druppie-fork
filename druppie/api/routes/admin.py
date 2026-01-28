@@ -1,6 +1,12 @@
 """Admin API routes for database exploration.
 
 Full database browser with navigation between linked records.
+
+NOTE: The following tables have been removed (data now stored as JSONB):
+- tool_call_arguments → arguments now in tool_calls.arguments
+- hitl_question_choices → choices now in hitl_questions.choices
+
+See druppie/db/models.py for design decision rationale.
 """
 
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -14,8 +20,10 @@ from druppie.db.models import (
     User, UserRole, UserToken,
     Project, Session, Workspace,
     Workflow, WorkflowStep,
-    AgentRun, Message, ToolCall, ToolCallArgument,
-    Approval, HitlQuestion, HitlQuestionChoice,
+    AgentRun, Message, ToolCall,
+    # NOTE: ToolCallArgument removed - arguments now JSONB in ToolCall.arguments
+    Approval, HitlQuestion,
+    # NOTE: HitlQuestionChoice removed - choices now JSONB in HitlQuestion.choices
     Build, Deployment, LlmCall,
     SessionEvent,
 )
@@ -25,6 +33,7 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 # All models mapped by table name
+# NOTE: tool_call_arguments and hitl_question_choices removed - data now in JSONB columns
 MODELS = {
     "users": User,
     "user_roles": UserRole,
@@ -37,10 +46,10 @@ MODELS = {
     "agent_runs": AgentRun,
     "messages": Message,
     "tool_calls": ToolCall,
-    "tool_call_arguments": ToolCallArgument,
+    # tool_call_arguments removed - see tool_calls.arguments JSONB column
     "approvals": Approval,
     "hitl_questions": HitlQuestion,
-    "hitl_question_choices": HitlQuestionChoice,
+    # hitl_question_choices removed - see hitl_questions.choices JSONB column
     "builds": Build,
     "deployments": Deployment,
     "llm_calls": LlmCall,
@@ -76,9 +85,7 @@ RELATIONS = {
         "session_id": ("sessions", "id"),
         "agent_run_id": ("agent_runs", "id"),
     },
-    "tool_call_arguments": {
-        "tool_call_id": ("tool_calls", "id"),
-    },
+    # tool_call_arguments removed - arguments now JSONB in tool_calls.arguments
     "approvals": {
         "session_id": ("sessions", "id"),
         "agent_run_id": ("agent_runs", "id"),
@@ -90,9 +97,7 @@ RELATIONS = {
         "session_id": ("sessions", "id"),
         "agent_run_id": ("agent_runs", "id"),
     },
-    "hitl_question_choices": {
-        "question_id": ("hitl_questions", "id"),
-    },
+    # hitl_question_choices removed - choices now JSONB in hitl_questions.choices
     "builds": {
         "project_id": ("projects", "id"),
         "session_id": ("sessions", "id"),

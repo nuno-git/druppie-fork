@@ -1,14 +1,32 @@
 # Database Schema
 
-Druppie uses PostgreSQL with a normalized schema.
+Druppie uses PostgreSQL with a hybrid normalized/JSONB schema.
 
 ## Design Principles
 
-1. **No JSON columns for operational data** - Everything normalized into proper tables
-2. **JSON only for debug/resume data** - `agent_state`, `request_messages`, `event_data`
-3. **Cascade deletes** - Deleting a session cleans up all related data
-4. **Agent isolation** - Messages linked to `agent_run_id` so agents don't share history
-5. **Nested execution** - Agent runs can be nested via `parent_run_id` for full traceability
+1. **Tables for queryable entities** - Sessions, approvals, questions get their own tables
+2. **JSONB for display-only data** - Tool arguments, question choices stored as JSONB
+3. **JSON for debug/resume data** - `agent_state`, `request_messages`, `event_data`
+4. **Cascade deletes** - Deleting a session cleans up all related data
+5. **Agent isolation** - Messages linked to `agent_run_id` so agents don't share history
+6. **Nested execution** - Agent runs can be nested via `parent_run_id` for full traceability
+
+### JSONB vs Normalized Tables
+
+We use JSONB for data that is:
+- Only used for display (never queried individually)
+- Always fetched together (e.g., all tool arguments at once)
+
+Examples:
+- `tool_calls.arguments` - JSONB dict of tool parameters
+- `hitl_questions.choices` - JSONB array of choice options
+- `hitl_questions.selected_indices` - JSONB array of selected choice indices
+
+We use separate tables for data that is:
+- Queried independently (e.g., find pending approvals by role)
+- Has relationships to other entities
+
+See `druppie/db/models.py` for detailed design decision comments.
 
 ## Execution Model
 
@@ -118,12 +136,12 @@ SESSION
         ▼              ▼                   ▼                   ▼
 ┌───────────────┐ ┌───────────┐   ┌───────────────┐   ┌───────────────┐
 │   workflows   │ │ messages  │   │  agent_runs   │◄─┐│ hitl_questions│
-└───────┬───────┘ └───────────┘   └───────┬───────┘  ││ └───────┬───────┘
-        │                                 │          ││         │
-        │                                 │ parent_  ││         ▼
-        │                                 │ run_id   ││ ┌───────────────────┐
-        │                                 └──────────┘│ │hitl_question_choices│
-        │                                             │ └───────────────────┘
+└───────┬───────┘ └───────────┘   └───────┬───────┘  ││ └───────────────┘
+        │                                 │          ││  (choices as JSONB)
+        │                                 │ parent_  ││
+        │                                 │ run_id   ││
+        │                                 └──────────┘│
+        │                                             │
         ▼                   ┌──────────────┬──────────┘
 ┌───────────────┐           │              │
 │workflow_steps │◄──────────│──────────────│─────────────────────┐
@@ -131,7 +149,8 @@ SESSION
         │                   ▼              ▼                     │
         │           ┌───────────┐  ┌───────────────┐             │
         │           │ llm_calls │  │  tool_calls   │─────────────┤
-        │           └───────────┘  └───────┬───────┘             │
+        │           └───────────┘  └───────────────┘             │
+        │                          (arguments as JSONB)          │
         │                                  │                     │
         │                                  │ child_agent_run_id  │
         │                                  │ (execute_agent)     │
@@ -140,15 +159,20 @@ SESSION
         │                          │  agent_runs   │ (nested)    │
         │                          └───────────────┘             │
         │                                                        │
-        │         ┌──────────────────────┬───────────────────────┘
-        │         │                      │
-        │         ▼                      ▼
-        │ ┌───────────────────┐  ┌───────────────┐
-        │ │tool_call_arguments│  │   approvals   │
-        │ └───────────────────┘  └───────────────┘
+        │                                  ┌──────────────────────┘
+        │                                  │
+        │                                  ▼
+        │                          ┌───────────────┐
+        │                          │   approvals   │
+        │                          └───────────────┘
         │
         └─── workflow_step_id ───► agent_runs
 ```
+
+**JSONB columns (no separate tables):**
+- `tool_calls.arguments` - Tool parameters as `{"path": "...", "content": "..."}`
+- `hitl_questions.choices` - Question options as `[{"text": "Option A"}, ...]`
+- `hitl_questions.selected_indices` - Selected choices as `[0, 2]`
 
 **Key relationships for nesting:**
 - `agent_runs.parent_run_id` → Self-reference for execute_agent nesting
@@ -256,11 +280,17 @@ Tool invocations (MCP tools and built-in tools).
 | tool_type | VARCHAR(50) | `mcp` or `builtin` |
 | mcp_server | VARCHAR(100) | Server name (coding, docker) - NULL for builtin |
 | tool_name | VARCHAR(100) | Tool name (write_file, execute_agent, done) |
+| arguments | JSONB | Tool arguments (e.g., `{"path": "/app/main.py", "content": "..."}`) |
 | child_agent_run_id | UUID | FK to agent_runs - set when tool_name=execute_agent |
 | status | VARCHAR(50) | pending, executing, completed, failed |
 | result | TEXT | Tool result |
 | error | TEXT | Error message (if failed) |
 | created_at | TIMESTAMP | |
+
+**Arguments as JSONB:**
+Tool arguments are stored as JSONB in `tool_calls.arguments` rather than a separate table.
+This is simpler because we never query by argument values - we always fetch all arguments together.
+See `druppie/db/models.py` for design decision rationale.
 
 **Tool types:**
 - `mcp` tools: `coding:write_file`, `docker:build`, etc.
@@ -269,17 +299,6 @@ Tool invocations (MCP tools and built-in tools).
 **execute_agent nesting:**
 When `tool_name = 'execute_agent'`, the `child_agent_run_id` points to the spawned agent's run.
 This creates the nested structure visible in the execution trace.
-
-### tool_call_arguments
-
-Normalized tool arguments (not JSON).
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | UUID | Primary key |
-| tool_call_id | UUID | FK to tool_calls |
-| arg_name | VARCHAR(255) | Argument name |
-| arg_value | TEXT | Argument value |
 
 ### approvals
 
@@ -316,24 +335,20 @@ Human-in-the-loop questions.
 | agent_run_id | UUID | FK to agent_runs |
 | agent_id | VARCHAR(100) | Agent that asked |
 | question | TEXT | Question text |
-| question_type | VARCHAR(50) | text, multiple_choice |
+| question_type | VARCHAR(50) | text, single_choice, multiple_choice |
+| choices | JSONB | For choice questions: `[{"text": "Option A"}, {"text": "Option B"}]` |
+| selected_indices | JSONB | Indices of selected choices: `[0, 2]` |
 | status | VARCHAR(50) | pending, answered |
-| answer | TEXT | User's answer |
+| answer | TEXT | User's answer (text or selected choice texts) |
 | agent_state | JSON | Saved state for resumption |
 | answered_at | TIMESTAMP | |
 | created_at | TIMESTAMP | |
 
-### hitl_question_choices
-
-Choices for multiple-choice questions (normalized).
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | UUID | Primary key |
-| question_id | UUID | FK to hitl_questions |
-| choice_index | INTEGER | Order (0, 1, 2...) |
-| choice_text | TEXT | Choice text |
-| is_selected | BOOLEAN | Whether selected |
+**Choices as JSONB:**
+Question choices are stored as JSONB in `hitl_questions.choices` rather than a separate table.
+When answered, `selected_indices` stores which choices were picked (e.g., `[0, 2]` means first and third).
+This is simpler because we never query by choice text - we always fetch all choices together.
+See `druppie/db/models.py` for design decision rationale.
 
 ### llm_calls
 
@@ -570,6 +585,7 @@ The application layer then:
 | AgentRun → ToolCalls | CASCADE |
 | AgentRun → LlmCalls | NO CASCADE (audit) |
 | ToolCall → Child AgentRun | SET NULL (don't delete spawned run) |
-| ToolCall → Arguments | CASCADE |
 | Project → Sessions | SET NULL (orphans) |
-| HitlQuestion → Choices | CASCADE |
+
+**Note:** `tool_calls.arguments` and `hitl_questions.choices` are JSONB columns,
+not separate tables, so they are deleted automatically with their parent row.
