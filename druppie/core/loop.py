@@ -1193,10 +1193,17 @@ class MainLoop:
                 if not agent_id:
                     return {"success": False, "error": "No agent_id in saved state"}
 
+                # Get the agent_run BEFORE resuming so we can set current_agent_run_id
+                # This is needed for HITL tool calls to have the correct agent_run_id
+                agent_run = get_active_agent_run(db, UUID(session_id), agent_id)
+                if agent_run:
+                    exec_ctx.current_agent_run_id = str(agent_run.id)
+
                 logger.info(
                     "resuming_agent_from_step_approval",
                     session_id=session_id,
                     agent_id=agent_id,
+                    agent_run_id=str(agent_run.id) if agent_run else None,
                     tool=last_tool_result.get("tool"),
                     workflow_id=agent_state.get("workflow_id"),
                     workflow_step=agent_state.get("workflow_step"),
@@ -1214,9 +1221,6 @@ class MainLoop:
                 # Create and resume agent
                 agent = Agent(agent_id)
                 result = await agent.resume_from_approval(agent_state, tool_result)
-
-                # Get the agent_run to persist LLM calls
-                agent_run = get_active_agent_run(db, UUID(session_id), agent_id)
 
                 # Check if agent paused again
                 if result.get("paused"):
@@ -1554,19 +1558,22 @@ class MainLoop:
                     workflow_id = agent_state.get("workflow_id")
                     workflow_step = agent_state.get("workflow_step")
 
+                    # Get the agent_run BEFORE resuming so we can set current_agent_run_id
+                    # This is needed for HITL tool calls to have the correct agent_run_id
+                    agent_run = get_active_agent_run(db, UUID(session_id), agent_id)
+                    if agent_run:
+                        exec_ctx.current_agent_run_id = str(agent_run.id)
+
                     logger.info(
                         "resuming_agent_from_state",
                         agent_id=agent_id,
+                        agent_run_id=str(agent_run.id) if agent_run else None,
                         workflow_id=workflow_id,
                         workflow_step=workflow_step,
                     )
 
                     agent = Agent(agent_id)
                     result = await agent.resume(agent_state, answer)
-
-                    # Get the agent_run to persist LLM calls
-                    # The agent_run should be the active one for this agent in this session
-                    agent_run = get_active_agent_run(db, UUID(session_id), agent_id)
 
                     # Check if agent paused again
                     if result.get("paused"):
