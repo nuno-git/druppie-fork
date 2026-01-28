@@ -11,12 +11,9 @@ from ..domain import (
     ChatItem,
     TokenUsage,
     AgentRunDetail,
-    AgentRunStep,
     LLMCallDetail,
-    ToolExecutionDetail,
+    ToolCallDetail,
     ApprovalSummary,
-    QuestionDetail,
-    QuestionChoice,
     ProjectSummary,
 )
 from ..db.models import (
@@ -26,8 +23,6 @@ from ..db.models import (
     ToolCall,
     LlmCall,
     Approval,
-    HitlQuestion,
-    HitlQuestionChoice,
     Project,
 )
 
@@ -172,9 +167,8 @@ class SessionRepository(BaseRepository):
         return items
 
     def _build_agent_run_detail(self, run: AgentRun) -> AgentRunDetail:
-        """Build full agent run detail with steps."""
-        steps = self._build_agent_run_steps(run.id)
-        child_runs = self._get_child_runs(run.id)
+        """Build full agent run detail with LLM calls and their tool executions."""
+        llm_calls = self._build_llm_calls(run.id)
 
         return AgentRunDetail(
             id=run.id,
@@ -187,157 +181,125 @@ class SessionRepository(BaseRepository):
             ),
             started_at=run.started_at,
             completed_at=run.completed_at,
-            steps=steps,
-            child_runs=child_runs,
+            llm_calls=llm_calls,
         )
 
-    def _build_agent_run_steps(self, agent_run_id: UUID) -> list[AgentRunStep]:
-        """Build steps for an agent run (LLM calls, tool executions, questions)."""
-        steps = []
-
-        # Get LLM calls
-        llm_calls = (
+    def _build_llm_calls(self, agent_run_id: UUID) -> list[LLMCallDetail]:
+        """Build LLM calls with their tool executions for an agent run."""
+        llm_calls_db = (
             self.db.query(LlmCall)
             .filter_by(agent_run_id=agent_run_id)
             .order_by(LlmCall.created_at)
             .all()
         )
 
-        for llm in llm_calls:
-            # Parse tools_decided from response_tool_calls
-            tools_decided = []
-            if llm.response_tool_calls:
-                for tc in llm.response_tool_calls:
-                    if isinstance(tc, dict) and "function" in tc:
-                        tools_decided.append(tc["function"].get("name", ""))
+        result = []
+        for llm in llm_calls_db:
+            # Get tool calls that were executed after this LLM call
+            # We match by created_at since tool_calls don't have direct llm_call_id
+            tool_calls = self._build_tool_calls_for_llm(llm)
 
-            steps.append(AgentRunStep(
-                type="llm_call",
-                llm_call=LLMCallDetail(
-                    id=llm.id,
-                    model=llm.model,
-                    provider=llm.provider,
-                    token_usage=TokenUsage(
-                        prompt_tokens=llm.prompt_tokens,
-                        completion_tokens=llm.completion_tokens,
-                        total_tokens=llm.total_tokens,
-                    ),
-                    duration_ms=llm.duration_ms,
-                    tools_decided=tools_decided,
+            result.append(LLMCallDetail(
+                id=llm.id,
+                model=llm.model,
+                provider=llm.provider,
+                token_usage=TokenUsage(
+                    prompt_tokens=llm.prompt_tokens,
+                    completion_tokens=llm.completion_tokens,
+                    total_tokens=llm.total_tokens,
                 ),
+                duration_ms=llm.duration_ms,
+                messages=llm.request_messages or [],
+                response_content=llm.response_content,
+                tool_calls=tool_calls,
             ))
 
-        # Get tool calls
-        tool_calls = (
-            self.db.query(ToolCall)
-            .filter_by(agent_run_id=agent_run_id)
-            .order_by(ToolCall.created_at)
-            .all()
-        )
+        return result
 
-        for tc in tool_calls:
-            # Get approval for this tool call if any
-            approval = (
-                self.db.query(Approval)
-                .filter_by(tool_call_id=tc.id)
+    def _build_tool_calls_for_llm(self, llm: LlmCall) -> list[ToolCallDetail]:
+        """Build tool call details from LLM response_tool_calls."""
+        tool_calls = []
+
+        # The LLM's response_tool_calls contains what the LLM decided
+        llm_tool_calls = llm.response_tool_calls or []
+
+        for tc_response in llm_tool_calls:
+            if not isinstance(tc_response, dict):
+                continue
+
+            function_info = tc_response.get("function", {})
+            tool_name = function_info.get("name", "")
+
+            # Find the matching ToolCall record in DB
+            # Match by agent_run_id and tool_name (approximate match)
+            tool_call_db = (
+                self.db.query(ToolCall)
+                .filter_by(agent_run_id=llm.agent_run_id, tool_name=tool_name)
+                .filter(ToolCall.created_at >= llm.created_at)
+                .order_by(ToolCall.created_at)
                 .first()
             )
 
-            approval_summary = None
-            if approval:
-                approval_summary = ApprovalSummary(
-                    id=approval.id,
-                    status=approval.status,
-                    required_role=approval.required_role or "admin",
-                    resolved_by=approval.resolved_by,
-                    resolved_at=approval.resolved_at,
-                )
+            if tool_call_db:
+                tool_calls.append(self._build_tool_call_detail(tool_call_db))
 
-            # Build arguments dict from relationship
-            arguments = {}
-            if tc.arguments:
-                arguments = {a.arg_name: a.arg_value for a in tc.arguments}
+        return tool_calls
 
-            tool_type = "mcp"
-            if tc.mcp_server in ["builtin", "hitl"]:
-                tool_type = "builtin"
+    def _build_tool_call_detail(self, tc: ToolCall) -> ToolCallDetail:
+        """Build a single tool call detail."""
+        # Determine tool type
+        tool_type = "mcp"
+        mcp_server = tc.mcp_server
+        if tc.mcp_server in ["builtin", "hitl"]:
+            tool_type = "builtin"
+            mcp_server = None
 
-            steps.append(AgentRunStep(
-                type="tool_execution",
-                tool_execution=ToolExecutionDetail(
-                    id=tc.id,
-                    tool=f"{tc.mcp_server}:{tc.tool_name}",
-                    tool_type=tool_type,
-                    arguments=arguments,
-                    status=tc.status,
-                    result=tc.result,
-                    error=tc.error_message,
-                    approval=approval_summary,
-                ),
-            ))
-
-        # Get HITL questions
-        questions = (
-            self.db.query(HitlQuestion)
-            .filter_by(agent_run_id=agent_run_id)
-            .order_by(HitlQuestion.created_at)
-            .all()
+        # Get approval if any
+        approval = (
+            self.db.query(Approval)
+            .filter_by(tool_call_id=tc.id)
+            .first()
         )
 
-        for q in questions:
-            choices = (
-                self.db.query(HitlQuestionChoice)
-                .filter_by(question_id=q.id)
-                .order_by(HitlQuestionChoice.choice_index)
-                .all()
+        approval_summary = None
+        if approval:
+            approval_summary = ApprovalSummary(
+                id=approval.id,
+                status=approval.status,
+                required_role=approval.required_role or "admin",
+                resolved_by=approval.resolved_by,
+                resolved_at=approval.resolved_at,
             )
 
-            steps.append(AgentRunStep(
-                type="hitl_question",
-                question=QuestionDetail(
-                    id=q.id,
-                    session_id=q.session_id,
-                    agent_run_id=q.agent_run_id,
-                    agent_id=q.agent_id or "",
-                    question=q.question,
-                    question_type=q.question_type or "text",
-                    choices=[
-                        QuestionChoice(
-                            index=c.choice_index,
-                            text=c.choice_text,
-                            is_selected=c.is_selected or False,
-                        )
-                        for c in choices
-                    ],
-                    status=q.status,
-                    answer=q.answer,
-                    answered_at=q.answered_at,
-                    created_at=q.created_at,
-                ),
-            ))
+        # Build arguments dict from relationship
+        arguments = {}
+        if tc.arguments:
+            arguments = {a.arg_name: a.arg_value for a in tc.arguments}
 
-        # Sort steps by their timestamp
-        def get_step_timestamp(step: AgentRunStep):
-            if step.llm_call:
-                return step.llm_call.id  # Use ID as proxy for timestamp order
-            if step.tool_execution:
-                return step.tool_execution.id
-            if step.question:
-                return step.question.created_at
-            return None
+        # Check for child run (execute_agent)
+        child_run = None
+        if tc.tool_name == "execute_agent":
+            child_run_db = (
+                self.db.query(AgentRun)
+                .filter_by(parent_run_id=tc.agent_run_id)
+                .order_by(AgentRun.started_at)
+                .first()
+            )
+            if child_run_db:
+                child_run = self._build_agent_run_detail(child_run_db)
 
-        # Note: Already ordered by DB queries, but could merge and sort if needed
-        return steps
-
-    def _get_child_runs(self, parent_run_id: UUID) -> list[AgentRunDetail]:
-        """Get child agent runs (from execute_agent)."""
-        children = (
-            self.db.query(AgentRun)
-            .filter_by(parent_run_id=parent_run_id)
-            .order_by(AgentRun.started_at)
-            .all()
+        return ToolCallDetail(
+            id=tc.id,
+            tool_type=tool_type,
+            mcp_server=mcp_server,
+            tool_name=tc.tool_name,
+            arguments=arguments,
+            status=tc.status,
+            result=tc.result,
+            error=tc.error_message,
+            approval=approval_summary,
+            child_run=child_run,
         )
-        return [self._build_agent_run_detail(child) for child in children]
 
     def _get_tokens_by_agent(self, session_id: UUID) -> dict[str, int]:
         """Get token usage grouped by agent."""

@@ -2,7 +2,7 @@
 
 from .common import TokenUsage, TimestampMixin
 from .session import SessionSummary, SessionDetail, ChatItem
-from .agent_run import AgentRunDetail, AgentRunStep, LLMCallDetail, ToolExecutionDetail
+from .agent_run import AgentRunDetail, LLMCallDetail, ToolCallDetail
 from .approval import ApprovalSummary, ApprovalDetail, PendingApprovalList
 from .question import QuestionDetail, QuestionChoice, PendingQuestionList
 from .project import ProjectSummary, ProjectDetail, DeploymentInfo
@@ -15,9 +15,8 @@ __all__ = [
     "SessionDetail",
     "ChatItem",
     "AgentRunDetail",
-    "AgentRunStep",
     "LLMCallDetail",
-    "ToolExecutionDetail",
+    "ToolCallDetail",
     "ApprovalSummary",
     "ApprovalDetail",
     "PendingApprovalList",

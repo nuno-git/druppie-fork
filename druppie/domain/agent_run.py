@@ -5,50 +5,56 @@ from __future__ import annotations
 from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
+from typing import Any
 
 from .common import TokenUsage
 from .approval import ApprovalSummary
-from .question import QuestionDetail
+
+
+class ToolCallDetail(BaseModel):
+    """A tool the LLM decided to call and its execution result."""
+    id: UUID
+    tool_type: str  # "builtin" or "mcp"
+    mcp_server: str | None  # "coding", "docker" (None for builtin)
+    tool_name: str  # "write_file", "done", "hitl_ask_question", "execute_agent"
+    arguments: dict
+
+    # Execution result
+    status: str  # pending, waiting_approval, executing, completed, failed
+    result: str | None
+    error: str | None
+
+    # For MCP tools that needed approval
+    approval: ApprovalSummary | None = None
+
+    # For execute_agent - the spawned child run
+    child_run: "AgentRunDetail | None" = None
 
 
 class LLMCallDetail(BaseModel):
-    """Single LLM API call."""
+    """One round-trip to the LLM."""
     id: UUID
     model: str
     provider: str
     token_usage: TokenUsage
     duration_ms: int | None
-    tools_decided: list[str]
 
+    # The full prompt sent to the LLM (including system prompt)
+    messages: list[dict[str, Any]]
 
-class ToolExecutionDetail(BaseModel):
-    """Single tool execution."""
-    id: UUID
-    tool: str  # "coding:write_file" or "builtin:done"
-    tool_type: str  # "mcp" or "builtin"
-    arguments: dict
-    status: str  # pending, executing, completed, failed
-    result: str | None
-    error: str | None
-    approval: ApprovalSummary | None  # Embedded if approval was needed
-
-
-class AgentRunStep(BaseModel):
-    """A step in an agent run (LLM call or tool execution)."""
-    type: str  # "llm_call" or "tool_execution" or "hitl_question"
-    llm_call: LLMCallDetail | None = None
-    tool_execution: ToolExecutionDetail | None = None
-    question: QuestionDetail | None = None
+    # What the LLM decided
+    response_content: str | None  # Text output
+    tool_calls: list[ToolCallDetail]  # Decisions to execute tools
 
 
 class AgentRunDetail(BaseModel):
-    """Full agent run with steps."""
+    """Full agent run - sequence of LLM calls."""
     id: UUID
     agent_id: str
     status: str
     token_usage: TokenUsage
     started_at: datetime
     completed_at: datetime | None
-    steps: list[AgentRunStep]
-    # Nested runs (from execute_agent)
-    child_runs: list[AgentRunDetail] = []
+
+    # The execution trace - each LLM call includes its tool executions
+    llm_calls: list[LLMCallDetail]
