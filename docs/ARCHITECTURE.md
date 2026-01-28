@@ -246,40 +246,85 @@ class SessionRepository:
         ...
 ```
 
-## Shared Volume Architecture
+## API Bridge Architecture
 
-The workspace (where agents write files) is a **shared Docker volume** mounted in multiple containers:
+The backend acts as a **bridge** between the frontend and MCP servers. This keeps MCP servers as the single source of truth for all operations.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│              Docker Volume: druppie_new_workspace                │
-│                                                                  │
-│   Contains all project files created by agents:                 │
-│   /user-123/project-abc/src/app.py                              │
-│   /user-456/project-xyz/Dockerfile                              │
-│   ...                                                           │
-└─────────────────────────────────────────────────────────────────┘
-              │                              │
-              │ mounted at                   │ mounted at
-              │ /workspaces                  │ /app/workspace
-              ▼                              ▼
-     ┌─────────────────┐            ┌─────────────────┐
-     │   Coding MCP    │            │     Backend     │
-     │                 │            │                 │
-     │ Agents write    │            │ Humans browse   │
-     │ files here      │            │ files here      │
-     │ (via MCP tools) │            │ (via REST API)  │
-     └─────────────────┘            └─────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              FRONTEND                                        │
+│                                                                              │
+│   User actions:                                                             │
+│   • Browse files in a project                                               │
+│   • Stop a running container                                                │
+│   • View container logs                                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼ REST API
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              BACKEND                                         │
+│                                                                              │
+│   API Bridge Routes:                                                        │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │  /api/workspace/files    → calls coding MCP: list_dir              │  │
+│   │  /api/workspace/file     → calls coding MCP: read_file             │  │
+│   │  /api/deployments/stop   → calls docker MCP: stop                  │  │
+│   │  /api/deployments/logs   → calls docker MCP: logs                  │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                        │
+│                         Uses: core/mcp_client.py                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼ HTTP (MCP protocol)
+                    ┌───────────────┴───────────────┐
+                    │                               │
+           ┌────────▼────────┐             ┌────────▼────────┐
+           │   CODING MCP    │             │   DOCKER MCP    │
+           │   Port 9001     │             │   Port 9002     │
+           │                 │             │                 │
+           │ • list_dir      │             │ • stop          │
+           │ • read_file     │             │ • logs          │
+           │ • write_file    │             │ • build         │
+           │ • run_command   │             │ • run           │
+           └────────┬────────┘             └────────┬────────┘
+                    │                               │
+                    ▼                               ▼
+           ┌─────────────────┐             ┌─────────────────┐
+           │   Filesystem    │             │  Docker Daemon  │
+           │   (workspace)   │             │  (containers)   │
+           └─────────────────┘             └─────────────────┘
 ```
 
-**Why two paths to the same files?**
+### Two Paths to MCP - Same Tools, Different Entry Points
 
-| Path | Who Uses It | How |
-|------|-------------|-----|
-| Coding MCP | Agents | MCP protocol (write_file, read_file) |
-| Backend /api/workspace | Frontend/Users | REST API (browse, view, download) |
+| Who | Entry Point | Flow |
+|-----|-------------|------|
+| **Agents** | Core loop | Agent → MCP Client → MCP Server |
+| **Users** | REST API | Frontend → Backend Bridge → MCP Client → MCP Server |
 
-Same files, different access patterns. Agents need structured tool calls. Humans need a browsable UI.
+**Why this design?**
+
+1. **Single source of truth** - MCP servers own all file and container operations
+2. **Kubernetes friendly** - No shared volumes between containers needed
+3. **Security** - Only MCP servers need dangerous permissions (docker.sock, filesystem)
+4. **Consistency** - Same tools used by agents and users
+5. **Reuses existing code** - Backend already has MCP client, just adds bridge routes
+
+### Bridge Routes (to be implemented)
+
+**Workspace Bridge** (files created by agents):
+```
+GET  /api/workspace/files?session_id=X&path=Y  → coding:list_dir
+GET  /api/workspace/file?session_id=X&path=Y   → coding:read_file
+```
+
+**Deployment Bridge** (containers):
+```
+GET  /api/deployments                          → list from database + docker:list
+POST /api/deployments/{id}/stop                → docker:stop
+POST /api/deployments/{id}/restart             → docker:stop + docker:run
+GET  /api/deployments/{id}/logs                → docker:logs
+```
 
 ## Key Files
 
