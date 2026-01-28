@@ -15,7 +15,7 @@ from uuid import UUID
 from typing import Any
 import structlog
 
-from ..core.orchestrator import Orchestrator
+from ..execution import Orchestrator
 
 logger = structlog.get_logger()
 
@@ -73,7 +73,7 @@ class WorkflowService:
             answer_preview=answer[:50] if answer else "",
         )
 
-        result_session_id = await self.orchestrator.resume_from_question(
+        result_session_id = await self.orchestrator.resume_after_answer(
             session_id=session_id,
             question_id=question_id,
             answer=answer,
@@ -110,7 +110,7 @@ class WorkflowService:
             approval_id=str(approval_id),
         )
 
-        result_session_id = await self.orchestrator.resume_from_approval(
+        result_session_id = await self.orchestrator.resume_after_approval(
             session_id=session_id,
             approval_id=approval_id,
         )

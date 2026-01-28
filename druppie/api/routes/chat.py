@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 import structlog
 
 from druppie.api.deps import get_optional_user, get_orchestrator, get_session_repository
-from druppie.core.orchestrator import Orchestrator
+from druppie.execution import Orchestrator
 from druppie.repositories import SessionRepository
 from druppie.domain.common import SessionStatus
 
@@ -102,14 +102,23 @@ async def chat(
     Returns:
         Response with session ID and status
     """
-    user_id = UUID(user["sub"]) if user and user.get("sub") else None
+    # User ID is required for the orchestrator (to fetch projects)
+    if not user or not user.get("sub"):
+        return ChatResponse(
+            success=False,
+            session_id="",
+            status="error",
+            message="Authentication required",
+        )
+
+    user_id = UUID(user["sub"])
     project_id = UUID(request.project_id) if request.project_id else None
     session_id = UUID(request.session_id) if request.session_id else None
 
     logger.info(
         "chat_request",
         session_id=str(session_id) if session_id else "new",
-        user_id=str(user_id) if user_id else None,
+        user_id=str(user_id),
         message_length=len(request.message),
     )
 
@@ -117,8 +126,8 @@ async def chat(
         # Process message through orchestrator
         result_session_id = await orchestrator.process_message(
             message=request.message,
-            session_id=session_id,
             user_id=user_id,
+            session_id=session_id,
             project_id=project_id,
         )
 
