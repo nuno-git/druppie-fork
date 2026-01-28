@@ -23,47 +23,41 @@ Druppie uses PostgreSQL with a normalized schema.
             │   projects    │      │   sessions    │      │  user_roles   │
             └───────┬───────┘      └───────┬───────┘      └───────────────┘
                     │                      │
-        ┌───────────┼───────────┐          │
-        │           │           │          │
-        ▼           ▼           ▼          │
-┌───────────┐ ┌───────────┐ ┌───────────┐  │
-│  builds   │ │deployments│ │ workspaces│  │
-└───────────┘ └───────────┘ └───────────┘  │
+        ┌───────────┴───────────┐          │
+        │                       │          │
+        ▼                       ▼          │
+┌───────────────┐      ┌───────────────┐   │
+│    builds     │      │  deployments  │   │
+└───────────────┘      └───────────────┘   │
                                            │
-        ┌──────────────────────────────────┤
-        │                                  │
-        ▼                                  ▼
-┌───────────────┐                  ┌───────────────┐
-│   workflows   │                  │  agent_runs   │◄──┐
-└───────┬───────┘                  └───────┬───────┘   │
-        │                                  │           │
-        ▼                    ┌─────────────┼───────────┤
-┌───────────────┐            │             │           │
-│workflow_steps │            ▼             ▼           │
-└───────────────┘    ┌───────────┐  ┌───────────┐     │
-                     │ messages  │  │ llm_calls │     │
-                     └───────────┘  └───────────┘     │
-                                                       │
-        ┌─────────────────────────────────────────────┤
-        │                     │                        │
-        ▼                     ▼                        │
-┌───────────────┐     ┌───────────────┐               │
-│  tool_calls   │     │   approvals   │───────────────┘
-└───────┬───────┘     └───────────────┘
-        │
-        ▼
-┌───────────────────┐
-│tool_call_arguments│
-└───────────────────┘
+        ┌──────────────┬───────────────────┤
+        │              │                   │
+        ▼              ▼                   ▼
+┌───────────────┐ ┌───────────┐   ┌───────────────┐
+│   workflows   │ │ messages  │   │  agent_runs   │◄──┐
+└───────┬───────┘ └───────────┘   └───────┬───────┘   │
+        │                                 │           │
+        ▼                   ┌─────────────┼───────────┤
+┌───────────────┐           │             │           │
+│workflow_steps │           ▼             ▼           │
+└───────────────┘   ┌───────────┐  ┌───────────┐     │
+                    │ llm_calls │  │tool_calls │     │
+                    └───────────┘  └─────┬─────┘     │
+                                         │           │
+        ┌────────────────────────────────┤           │
+        │                                │           │
+        ▼                                ▼           │
+┌───────────────────┐           ┌───────────────┐   │
+│tool_call_arguments│           │   approvals   │───┘
+└───────────────────┘           └───────────────┘
 
 ┌───────────────┐     ┌─────────────────────┐
 │hitl_questions │────▶│hitl_question_choices│
 └───────────────┘     └─────────────────────┘
-
-┌───────────────┐
-│session_events │ (timeline/audit log)
-└───────────────┘
 ```
+
+**Note:** Workspaces (file storage) are managed by the Coding MCP server, not the database.
+The chat timeline is built from messages + agent_runs + tool_calls - no separate events table needed.
 
 ## Tables
 
@@ -264,19 +258,6 @@ Git repositories.
 | status | VARCHAR(50) | active, archived |
 | created_at | TIMESTAMP | |
 
-### workspaces
-
-Local git sandboxes for sessions.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | UUID | Primary key |
-| session_id | UUID | FK to sessions |
-| project_id | UUID | FK to projects |
-| branch | VARCHAR(255) | Git branch |
-| local_path | VARCHAR(500) | Filesystem path |
-| created_at | TIMESTAMP | |
-
 ### builds
 
 Docker builds.
@@ -338,26 +319,6 @@ Steps in a workflow.
 | result_summary | TEXT | Output summary |
 | created_at | TIMESTAMP | |
 
-### session_events
-
-Timeline/audit log.
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | UUID | Primary key |
-| session_id | UUID | FK to sessions |
-| event_type | VARCHAR(100) | agent_started, tool_call, approval_required, etc. |
-| agent_id | VARCHAR(100) | |
-| title | VARCHAR(500) | Event title |
-| tool_name | VARCHAR(100) | |
-| approval_id | UUID | FK to approvals |
-| question_id | UUID | FK to hitl_questions |
-| llm_call_id | UUID | FK to llm_calls |
-| tool_call_id | UUID | FK to tool_calls |
-| event_data | JSONB | Additional data |
-| duration_ms | INTEGER | |
-| timestamp | TIMESTAMP | |
-
 ## Common Queries
 
 ### Get session with all data
@@ -393,14 +354,25 @@ WHERE ar.session_id = $1
 GROUP BY ar.agent_id;
 ```
 
-### Session timeline
+### Build chat timeline
+
+The chat timeline is built by querying and merging:
 
 ```sql
-SELECT event_type, agent_id, tool_name, timestamp
-FROM session_events
-WHERE session_id = $1
-ORDER BY timestamp;
+-- Get messages ordered by sequence
+SELECT 'message' as type, role, content, created_at
+FROM messages WHERE session_id = $1
+ORDER BY sequence_number;
+
+-- Get agent runs with their tool calls
+SELECT ar.*, tc.*
+FROM agent_runs ar
+LEFT JOIN tool_calls tc ON tc.agent_run_id = ar.id
+WHERE ar.session_id = $1
+ORDER BY ar.started_at, tc.created_at;
 ```
+
+The application layer merges these into a single chronological `chat` array.
 
 ## Cascade Behavior
 
