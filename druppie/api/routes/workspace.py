@@ -1,10 +1,19 @@
 """Workspace API routes.
 
-Bridge to session workspaces - lets the frontend browse files that agents have written.
+Bridge to Coding MCP - lets the frontend browse files that agents have written.
+
+TODO: This file needs to be rewritten to use Coding MCP directly instead of
+the deleted Workspace database model. The Coding MCP manages workspace lifecycle
+(clone, register) and can list/read files.
+
+Architecture (target):
+    Route (this file)
+      │
+      └──▶ Coding MCP (list_dir, read_file)
 
 Endpoints:
-- GET /workspace/files - List files in a session's workspace
-- GET /workspace/file - Get file content from a session's workspace
+- GET /workspace/files - List files via Coding MCP
+- GET /workspace/file - Get file content via Coding MCP
 """
 
 import os
@@ -12,18 +21,16 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session as DBSession
 import structlog
 
-from druppie.api.deps import get_current_user, get_db
-from druppie.api.errors import NotFoundError, ValidationError
-from druppie.db.models import Workspace
+from druppie.api.deps import get_current_user
+from druppie.api.errors import NotFoundError, ValidationError, NotImplementedError
 
 logger = structlog.get_logger()
 
 router = APIRouter()
 
-# Workspace root directory
+# Workspace root directory (used for fallback path resolution)
 WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace"))
 
 
@@ -42,7 +49,6 @@ class FileInfo(BaseModel):
 
 class WorkspaceFilesResponse(BaseModel):
     """Response for listing workspace files."""
-    workspace_id: str | None = None
     session_id: str
     path: str
     files: list[FileInfo] = []
@@ -112,6 +118,8 @@ def list_directory(dir_path: Path, workspace_root: Path) -> tuple[list[FileInfo]
 
 # =============================================================================
 # ROUTES
+# TODO: Reimplement these to use Coding MCP list_dir/read_file
+# For now, use filesystem directly with session-based path convention
 # =============================================================================
 
 
@@ -120,31 +128,19 @@ async def list_workspace_files(
     session_id: str = Query(..., description="Session ID to get workspace for"),
     path: str = Query("", description="Path within workspace to list"),
     user: dict = Depends(get_current_user),
-    db: DBSession = Depends(get_db),
 ) -> WorkspaceFilesResponse:
     """List files in a session's workspace.
 
     Returns files and directories at the specified path within the
     session's workspace directory.
+
+    TODO: Replace with Coding MCP list_dir call
     """
-    # Get workspace for session
-    workspace = db.query(Workspace).filter(Workspace.session_id == session_id).first()
-
-    if not workspace:
-        return WorkspaceFilesResponse(
-            workspace_id=None,
-            session_id=session_id,
-            path=path or ".",
-            files=[],
-            directories=[],
-        )
-
-    # Get workspace path
-    workspace_path = Path(workspace.local_path) if workspace.local_path else WORKSPACE_ROOT / session_id
+    # Convention: workspace path is WORKSPACE_ROOT / session_id
+    workspace_path = WORKSPACE_ROOT / session_id
 
     if not workspace_path.exists():
         return WorkspaceFilesResponse(
-            workspace_id=str(workspace.id),
             session_id=session_id,
             path=path or ".",
             files=[],
@@ -158,7 +154,6 @@ async def list_workspace_files(
     files, directories = list_directory(target_path, workspace_path)
 
     return WorkspaceFilesResponse(
-        workspace_id=str(workspace.id),
         session_id=session_id,
         path=path or ".",
         files=files,
@@ -171,24 +166,19 @@ async def get_workspace_file(
     session_id: str = Query(..., description="Session ID"),
     path: str = Query(..., description="File path within workspace"),
     user: dict = Depends(get_current_user),
-    db: DBSession = Depends(get_db),
 ) -> FileContentResponse:
     """Get file content from a session's workspace.
 
     Returns the text content of a file. Binary files return content=null.
     Maximum file size is 10MB.
+
+    TODO: Replace with Coding MCP read_file call
     """
-    # Get workspace for session
-    workspace = db.query(Workspace).filter(Workspace.session_id == session_id).first()
-
-    if not workspace:
-        raise NotFoundError("workspace", session_id, "Workspace not found for session")
-
-    # Get workspace path
-    workspace_path = Path(workspace.local_path) if workspace.local_path else WORKSPACE_ROOT / session_id
+    # Convention: workspace path is WORKSPACE_ROOT / session_id
+    workspace_path = WORKSPACE_ROOT / session_id
 
     if not workspace_path.exists():
-        raise NotFoundError("workspace", str(workspace_path), "Workspace directory not found")
+        raise NotFoundError("workspace", session_id, "Workspace directory not found")
 
     # Resolve file path safely
     file_path = resolve_safe_path(workspace_path, path)

@@ -1,26 +1,36 @@
-"""Session domain models."""
+"""Session domain models.
+
+Session contains a timeline of events:
+- User messages
+- Agent runs (which contain LLM calls, tool calls, etc.)
+
+The TimelineEntry model provides a unified view for the frontend.
+"""
 
 from __future__ import annotations
 
 from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
-
 from enum import Enum
+from typing import Literal
 
 from .common import TokenUsage, SessionStatus
 from .agent_run import AgentRunSummary
 from .project import ProjectSummary
 
 
-class ChatItemType(str, Enum):
-    """Type of chat item."""
+class TimelineEntryType(str, Enum):
+    """Type of timeline entry."""
     MESSAGE = "message"
     AGENT_RUN = "agent_run"
 
 
-class MessageSummary(BaseModel):
-    """A message in the chat timeline."""
+class Message(BaseModel):
+    """A message in the session (user, assistant, or system).
+
+    Maps 1:1 to the messages table.
+    """
     id: UUID
     role: str  # user, assistant, system
     content: str
@@ -28,22 +38,27 @@ class MessageSummary(BaseModel):
     created_at: datetime
 
 
-class ChatItem(BaseModel):
-    """Single item in chat timeline - either a message or an agent run."""
-    type: ChatItemType
+class TimelineEntry(BaseModel):
+    """Single entry in session timeline - either a message or an agent run.
+
+    This provides a unified, chronologically sorted view of the session
+    for the frontend to render.
+    """
+    type: TimelineEntryType
+    timestamp: datetime
 
     # For messages (user input, assistant response)
-    message: MessageSummary | None = None
+    message: Message | None = None
 
     # For agent runs (pending, running, completed, paused...)
     agent_run: AgentRunSummary | None = None
 
-    # For ordering
-    created_at: datetime
-
 
 class SessionSummary(BaseModel):
-    """Lightweight session for lists."""
+    """Lightweight session for lists.
+
+    Maps 1:1 to the sessions table (summary fields only).
+    """
     id: UUID
     title: str
     status: SessionStatus
@@ -54,7 +69,17 @@ class SessionSummary(BaseModel):
 
 
 class SessionDetail(SessionSummary):
-    """Full session with chat timeline. Inherits from SessionSummary."""
+    """Full session with timeline.
+
+    Includes the complete timeline of messages and agent runs,
+    sorted chronologically.
+    """
     user_id: UUID
     project: ProjectSummary | None
-    chat: list[ChatItem]
+    timeline: list[TimelineEntry]
+
+
+# Backward compatibility aliases
+ChatItemType = TimelineEntryType
+ChatItem = TimelineEntry
+MessageSummary = Message
