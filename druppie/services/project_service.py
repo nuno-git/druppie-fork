@@ -26,6 +26,15 @@ class ProjectService:
         offset = (page - 1) * limit
         return self.project_repo.list_for_user(user_id, limit, offset)
 
+    def list_all(
+        self,
+        page: int = 1,
+        limit: int = 20,
+    ) -> tuple[list[ProjectSummary], int]:
+        """List all projects (admin only)."""
+        offset = (page - 1) * limit
+        return self.project_repo.list_all(limit, offset)
+
     def get_detail(
         self,
         project_id: UUID,

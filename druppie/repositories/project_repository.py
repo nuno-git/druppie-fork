@@ -38,6 +38,22 @@ class ProjectRepository(BaseRepository):
         )
         return [self._to_summary(p) for p in projects], total
 
+    def list_all(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[ProjectSummary], int]:
+        """List all projects (for admin)."""
+        query = self.db.query(Project)
+        total = query.count()
+        projects = (
+            query.order_by(Project.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+            .all()
+        )
+        return [self._to_summary(p) for p in projects], total
+
     def get_detail(self, project_id: UUID, session_limit: int = 10) -> ProjectDetail | None:
         """Get full project detail with stats and recent sessions."""
         project = self.get_by_id(project_id)

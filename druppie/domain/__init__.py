@@ -18,7 +18,7 @@ from .session import SessionSummary, SessionDetail, ChatItem
 from .agent_run import AgentRunDetail, LLMCallDetail, ToolCallDetail
 from .approval import ApprovalSummary, ApprovalDetail, PendingApprovalList
 from .question import QuestionDetail, QuestionChoice, PendingQuestionList
-from .project import ProjectSummary, ProjectDetail, DeploymentInfo
+from .project import ProjectSummary, ProjectDetail, DeploymentInfo, DeploymentSummary
 from .user import UserInfo
 
 __all__ = [
@@ -53,6 +53,7 @@ __all__ = [
     "ProjectSummary",
     "ProjectDetail",
     "DeploymentInfo",
+    "DeploymentSummary",
     # User
     "UserInfo",
 ]
