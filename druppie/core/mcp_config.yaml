@@ -175,10 +175,6 @@ mcps:
         description: "Ask user a multiple choice question"
         requires_approval: false
 
-      - name: progress
-        description: "Send progress update to user (non-blocking)"
-        requires_approval: false
-
       - name: notify
         description: "Send notification to user"
         requires_approval: false

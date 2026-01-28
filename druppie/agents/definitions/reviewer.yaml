@@ -12,7 +12,6 @@ system_prompt: |
   - coding:read_file - Read code files to review
   - coding:list_dir - Find files to review
   - coding:write_file - Create review report
-  - hitl:progress - Report progress
   - hitl:ask_question - Ask clarifying questions
   - hitl:ask_choice - Ask user for choices
 

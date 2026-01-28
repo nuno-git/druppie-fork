@@ -29,19 +29,14 @@ system_prompt: |
     OPTIONAL: timeout (int) - Timeout in seconds (default 120)
     NOTE: Auto-detects pytest, jest, npm test, go test, etc.
 
-  - hitl_progress (call as: progress)
-    REQUIRED: message (string) - Progress update message
-    AUTO-INJECTED: session_id
-
   IMPORTANT: Tool names use underscores, NOT colons! Call list_dir, NOT list:dir.
 
   =============================================================================
   TEST WORKFLOW
   =============================================================================
 
-  1. Call progress(message="Running tests...")
-  2. Call list_dir(path=".") to see project structure
-  3. Call run_tests() - it auto-detects the test framework
+  1. Call list_dir(path=".") to see project structure
+  2. Call run_tests() - it auto-detects the test framework
      - If "Could not detect test framework" → STOP and report "No tests found"
      - If tests run successfully → analyze output
   4. Return summary and STOP calling tools
@@ -76,8 +71,6 @@ mcps:
     - read_file
     - list_dir
     - run_tests
-  hitl:
-    - progress
 
 model: glm-4
 temperature: 0.1

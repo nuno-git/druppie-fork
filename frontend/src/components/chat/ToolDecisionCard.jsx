@@ -343,18 +343,19 @@ const ToolDecisionCard = ({
           </div>
         )}
 
-        {/* Execution result - hide for docker_run success since we show deployment card */}
+        {/* Execution result - collapsible, hide for docker_run success since we show deployment card */}
         {executed && execution_result && !(isDockerRun && !execution_error) && (
-          <div className="mt-3 pt-3 border-t border-gray-200">
-            <div className="text-xs font-semibold text-gray-600 mb-2">
-              {execution_error ? 'Error:' : 'Result:'}
-            </div>
-            <div className={`bg-white rounded-lg border p-3 text-xs overflow-x-auto max-h-32 overflow-y-auto ${execution_error ? 'border-red-200' : 'border-gray-200'}`}>
+          <details className="mt-3 pt-3 border-t border-gray-200">
+            <summary className={`text-xs font-semibold cursor-pointer select-none flex items-center gap-1 ${execution_error ? 'text-red-600' : 'text-green-600'}`}>
+              <ChevronRight className="w-3 h-3 transform transition-transform details-open:rotate-90" />
+              {execution_error ? 'Error' : 'Result'}: {execution_result.length > 50 ? execution_result.substring(0, 50) + '...' : execution_result.substring(0, 50)}
+            </summary>
+            <div className={`mt-2 bg-white rounded-lg border p-3 text-xs overflow-x-auto max-h-48 overflow-y-auto ${execution_error ? 'border-red-200' : 'border-gray-200'}`}>
               <pre className={`whitespace-pre-wrap break-all ${execution_error ? 'text-red-700' : 'text-gray-700'}`}>
-                {execution_result.substring(0, 500)}
+                {execution_result}
               </pre>
             </div>
-          </div>
+          </details>
         )}
 
         {/* Deployment success card for docker_run */}

@@ -60,11 +60,6 @@ system_prompt: |
     AUTO-INJECTED: workspace_id
     EXAMPLE: run_command(command="npm install")
 
-  - hitl:progress
-    REQUIRED: message (string) - Progress update message to show user
-    AUTO-INJECTED: session_id
-    EXAMPLE: progress(message="Creating file structure...")
-
   ERROR RECOVERY:
   If you get "Missing required argument" error:
   1. Check the error message for which argument is missing
@@ -79,29 +74,16 @@ system_prompt: |
   =============================================================================
 
   For MULTI-FILE PROJECTS (apps, services):
-  1. Use hitl:progress("Starting implementation...")
-  2. Check SPEC.md if it exists: coding:read_file(path="SPEC.md")
-  3. Use coding:batch_write_files to create ALL files at once with a single commit
+  1. Check SPEC.md if it exists: coding:read_file(path="SPEC.md")
+  2. Use coding:batch_write_files to create ALL files at once with a single commit
      - Include ALL necessary files: source code, config files, Dockerfile, etc.
      - Use a descriptive commit_message
-  4. Use hitl:progress("Files created, pushing to git...")
-  5. Use coding:commit_and_push to push all changes to remote
-  6. Return summary of files created
+  3. Use coding:commit_and_push to push all changes to remote
+  4. Return summary of files created
 
   For SIMPLE FILE OPERATIONS:
   1. Use coding:write_file (auto-commits)
   2. Return summary
-
-  =============================================================================
-  PROGRESS UPDATES
-  =============================================================================
-
-  Use hitl:progress to send real-time progress updates to the user:
-  - "Starting implementation based on SPEC.md..."
-  - "Creating file structure..."
-  - "Writing server.js, index.html, and other files..."
-  - "Pushing changes to git..."
-  - "Implementation complete!"
 
   =============================================================================
   STATIC WEB PAGES (HTML/CSS/JS only - no build step)
@@ -260,8 +242,6 @@ mcps:
     - list_dir
     - delete_file
     - run_command
-  hitl:
-    - progress
 
 # NO approval_overrides needed!
 # Per goal.md:
