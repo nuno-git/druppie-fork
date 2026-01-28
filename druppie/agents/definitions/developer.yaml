@@ -20,45 +20,8 @@ system_prompt: |
   - After creating files, use commit_and_push to push to remote
 
   AVAILABLE TOOLS:
-  NOTE: workspace_id is auto-injected for coding tools, session_id is auto-injected for hitl tools.
-
-  - coding:read_file
-    REQUIRED: path (string) - File path relative to workspace root
-    AUTO-INJECTED: workspace_id
-    EXAMPLE: read_file(path="src/main.py")
-
-  - coding:write_file
-    REQUIRED: path (string) - File path relative to workspace root
-    REQUIRED: content (string) - File content to write
-    AUTO-INJECTED: workspace_id
-    EXAMPLE: write_file(path="src/main.py", content="print('hello')")
-
-  - coding:batch_write_files
-    REQUIRED: files (dict) - Map of path to content
-    AUTO-INJECTED: workspace_id
-    OPTIONAL: commit_message (string) - Git commit message for the batch
-    EXAMPLE: batch_write_files(files={"src/main.py": "code...", "package.json": "{...}"}, commit_message="Initial project structure")
-
-  - coding:commit_and_push
-    REQUIRED: message (string) - Git commit message
-    AUTO-INJECTED: workspace_id
-    EXAMPLE: commit_and_push(message="Add todo app implementation")
-    USE: After creating/modifying files to push changes to remote git
-
-  - coding:list_dir
-    REQUIRED: path (string) - Directory path (use "." for root)
-    AUTO-INJECTED: workspace_id
-    EXAMPLE: list_dir(path=".")
-
-  - coding:delete_file
-    REQUIRED: path (string) - File path to delete
-    AUTO-INJECTED: workspace_id
-    EXAMPLE: delete_file(path="old_file.txt")
-
-  - coding:run_command (REQUIRES APPROVAL)
-    REQUIRED: command (string) - Shell command to run
-    AUTO-INJECTED: workspace_id
-    EXAMPLE: run_command(command="npm install")
+  NOTE: workspace_id is auto-injected for coding tools.
+  [TOOL_DESCRIPTIONS_PLACEHOLDER]
 
   ERROR RECOVERY:
   If you get "Missing required argument" error:

@@ -9,11 +9,7 @@ system_prompt: |
   CRITICAL: You can ONLY act through MCP tools.
 
   AVAILABLE TOOLS:
-  - coding:read_file - Read code files to review
-  - coding:list_dir - Find files to review
-  - coding:write_file - Create review report
-  - hitl:ask_question - Ask clarifying questions
-  - hitl:ask_choice - Ask user for choices
+  [TOOL_DESCRIPTIONS_PLACEHOLDER]
 
   REVIEW CHECKLIST:
   1. Code Quality

@@ -1153,3 +1153,118 @@ def get_mcp_client(db: "DBSession") -> MCPClient:
         # Update db session
         _mcp_client.db = db
     return _mcp_client
+
+
+# =============================================================================
+# TOOL DESCRIPTION GENERATION
+# =============================================================================
+
+
+def generate_tool_descriptions(agent_mcps: list[str] | dict[str, list[str]]) -> str:
+    """Generate tool descriptions for agent system prompt from MCP config.
+
+    This function dynamically generates tool descriptions based on the agent's
+    mcps configuration. It reads from mcp_config.yaml and formats the tool
+    information for inclusion in the agent's system prompt.
+
+    Args:
+        agent_mcps: Either a list of MCP names (all tools allowed) or a dict
+                    mapping MCP names to lists of specific tool names.
+                    Examples:
+                    - ["coding", "hitl"] - all tools from these MCPs
+                    - {"coding": ["read_file"], "hitl": ["ask_question"]} - specific tools
+
+    Returns:
+        Formatted string with tool descriptions for system prompt
+    """
+    # Load MCP config
+    config_path = Path(__file__).parent / "mcp_config.yaml"
+    with open(config_path) as f:
+        content = f.read()
+
+    # Handle ${VAR:-default} syntax
+    def replace_with_default(match):
+        var_name = match.group(1)
+        default = match.group(2)
+        return os.getenv(var_name, default)
+
+    content = re.sub(r"\$\{(\w+):-([^}]+)\}", replace_with_default, content)
+
+    # Handle ${VAR} syntax
+    def replace_simple(match):
+        var_name = match.group(1)
+        return os.getenv(var_name, "")
+
+    content = re.sub(r"\$\{(\w+)\}", replace_simple, content)
+
+    config = yaml.safe_load(content)
+
+    # Generate tool descriptions
+    sections = []
+
+    # Add MCP tools based on agent's mcps configuration
+    # Handle both list format (all tools) and dict format (specific tools)
+    if isinstance(agent_mcps, list):
+        # Simple list format - include all tools from each MCP
+        for server_name in agent_mcps:
+            mcp = config.get("mcps", {}).get(server_name, {})
+            if not mcp:
+                continue
+
+            server_tools = mcp.get("tools", [])
+            if not server_tools:
+                continue
+
+            sections.append(f"  {server_name.upper()} TOOLS ({server_name}:):")
+            for tool in server_tools:
+                _add_tool_to_sections(tool, server_name, sections)
+            sections.append("")
+    else:
+        # Dict format - include only specified tools
+        for server_name, tool_names in agent_mcps.items():
+            mcp = config.get("mcps", {}).get(server_name, {})
+            if not mcp:
+                continue
+
+            server_tools = mcp.get("tools", [])
+            if not server_tools:
+                continue
+
+            sections.append(f"  {server_name.upper()} TOOLS ({server_name}:):")
+            for tool in server_tools:
+                # Only include tools that the agent has access to
+                if tool_names and tool["name"] not in tool_names:
+                    continue
+                _add_tool_to_sections(tool, server_name, sections)
+            sections.append("")
+
+    return "\n".join(sections)
+
+
+def _add_tool_to_sections(tool: dict, server_name: str, sections: list[str]) -> None:
+    """Add a single tool's description to the sections list.
+
+    Helper function for generate_tool_descriptions.
+
+    Args:
+        tool: Tool configuration from mcp_config.yaml
+        server_name: Name of the MCP server
+        sections: List to append formatted tool description to
+    """
+    tool_name = f"{server_name}:{tool['name']}"
+    sections.append(f"  - {tool_name}: {tool.get('description', '')}")
+
+    # Add approval requirement
+    if tool.get("requires_approval"):
+        required_role = tool.get("required_role", "developer")
+        sections.append(f"    (REQUIRES APPROVAL by {required_role})")
+
+    # Add parameter info if available
+    params = tool.get("parameters", {})
+    if params.get("properties"):
+        required = params.get("required", [])
+        if required:
+            sections.append(f"    REQUIRED: {', '.join(required)}")
+        optional = [k for k in params["properties"].keys() if k not in required]
+        if optional:
+            sections.append(f"    OPTIONAL: {', '.join(optional)}")

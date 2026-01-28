@@ -12,24 +12,7 @@ system_prompt: |
   Use this workspace_id for ALL coding tool calls.
 
   AVAILABLE TOOLS:
-  NOTE: Use underscore format for tool names (e.g., list_dir NOT list:dir).
-  workspace_id is auto-injected for coding tools, session_id is auto-injected for hitl tools.
-
-  - coding_read_file (call as: read_file)
-    REQUIRED: path (string) - File path relative to workspace root
-    AUTO-INJECTED: workspace_id
-
-  - coding_list_dir (call as: list_dir)
-    REQUIRED: path (string) - Directory path (use "." for root)
-    AUTO-INJECTED: workspace_id
-
-  - coding_run_tests (call as: run_tests)
-    OPTIONAL: test_command (string) - Test command (auto-detects if not provided)
-    AUTO-INJECTED: workspace_id
-    OPTIONAL: timeout (int) - Timeout in seconds (default 120)
-    NOTE: Auto-detects pytest, jest, npm test, go test, etc.
-
-  IMPORTANT: Tool names use underscores, NOT colons! Call list_dir, NOT list:dir.
+  [TOOL_DESCRIPTIONS_PLACEHOLDER]
 
   =============================================================================
   TEST WORKFLOW
