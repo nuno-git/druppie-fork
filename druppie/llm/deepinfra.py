@@ -406,9 +406,11 @@ class ChatDeepInfra(BaseLLM):
     def _extract_python_style_tool_call(self, content: str) -> dict | None:
         """Extract Python-style function calls from LLM output.
 
+        DEPRECATED: Prefer using <tool_call> XML format instead.
+        This is kept as a fallback for models that output Python-style calls.
+
         Handles output like:
         - done(summary="Task completed successfully")
-        - done(summary="...", artifacts=[], data={})
         - fail(reason="Could not complete task")
 
         Args:
@@ -421,59 +423,55 @@ class ChatDeepInfra(BaseLLM):
         builtin_tools = ["done", "fail"]
 
         for tool_name in builtin_tools:
-            # Pattern to match: tool_name(arg="value", ...)
-            # Handle both single and double quotes, and keyword arguments
-            pattern = rf'^[\s\n]*{tool_name}\s*\(\s*(.*?)\s*\)\s*$'
-            match = re.search(pattern, content.strip(), re.DOTALL)
+            # Pattern to match: tool_name(arg="value", ...) anywhere in text
+            pattern = rf'\b{tool_name}\s*\(\s*(.*?)\s*\)'
+            match = re.search(pattern, content, re.DOTALL)
 
-            if match:
-                args_str = match.group(1)
-                args = {}
+            if not match:
+                continue
 
-                if tool_name == "done":
-                    # Extract summary - handle various quote styles
-                    summary_match = re.search(
-                        r'summary\s*=\s*["\']([^"\']*)["\']',
-                        args_str,
-                        re.DOTALL
-                    )
-                    if summary_match:
-                        args["summary"] = summary_match.group(1)
-                    else:
-                        # Try to extract any string content as summary
-                        string_match = re.search(r'["\']([^"\']+)["\']', args_str)
-                        if string_match:
-                            args["summary"] = string_match.group(1)
-                        else:
-                            args["summary"] = "Task completed"
+            args_str = match.group(1)
+            args = {}
 
-                    # Set defaults for done tool
-                    args.setdefault("artifacts", [])
-                    args.setdefault("data", {})
+            if tool_name == "done":
+                # Extract summary
+                summary_match = re.search(
+                    r'summary\s*=\s*["\']([^"\']*)["\']',
+                    args_str,
+                    re.DOTALL
+                )
+                if summary_match:
+                    args["summary"] = summary_match.group(1)
+                else:
+                    args["summary"] = "Task completed"
 
-                    return {
-                        "id": "python_call_done",
-                        "name": "done",
-                        "args": args,
-                    }
+                logger.info(
+                    "extracted_python_style_tool_call",
+                    tool_name=tool_name,
+                )
 
-                elif tool_name == "fail":
-                    # Extract reason
-                    reason_match = re.search(
-                        r'reason\s*=\s*["\']([^"\']*)["\']',
-                        args_str,
-                        re.DOTALL
-                    )
-                    if reason_match:
-                        args["reason"] = reason_match.group(1)
-                    else:
-                        args["reason"] = args_str[:200] if args_str else "Unknown error"
+                return {
+                    "id": "python_call_done",
+                    "name": "done",
+                    "args": args,
+                }
 
-                    return {
-                        "id": "python_call_fail",
-                        "name": "fail",
-                        "args": args,
-                    }
+            elif tool_name == "fail":
+                reason_match = re.search(
+                    r'reason\s*=\s*["\']([^"\']*)["\']',
+                    args_str,
+                    re.DOTALL
+                )
+                if reason_match:
+                    args["reason"] = reason_match.group(1)
+                else:
+                    args["reason"] = args_str[:200] if args_str else "Unknown error"
+
+                return {
+                    "id": "python_call_fail",
+                    "name": "fail",
+                    "args": args,
+                }
 
         return None
 
