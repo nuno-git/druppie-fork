@@ -211,7 +211,7 @@ class SessionRepository(BaseRepository):
             entries.append(TimelineEntry(
                 type=TimelineEntryType.AGENT_RUN,
                 timestamp=timestamp,
-                agent_run=self._to_agent_run_summary(run),
+                agent_run=self._build_agent_run_detail(run),
             ))
 
         # Sort by timestamp for chronological order

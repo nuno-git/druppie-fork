@@ -16,7 +16,7 @@ from enum import Enum
 from typing import Literal
 
 from .common import TokenUsage, SessionStatus
-from .agent_run import AgentRunSummary
+from .agent_run import AgentRunSummary, AgentRunDetail
 from .project import ProjectSummary
 
 
@@ -50,8 +50,8 @@ class TimelineEntry(BaseModel):
     # For messages (user input, assistant response)
     message: Message | None = None
 
-    # For agent runs (pending, running, completed, paused...)
-    agent_run: AgentRunSummary | None = None
+    # For agent runs (includes full detail: llm_calls, tool_calls, approvals)
+    agent_run: AgentRunDetail | None = None
 
 
 class SessionSummary(BaseModel):

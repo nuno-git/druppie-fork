@@ -29,6 +29,7 @@ import ConnectionStatus from './components/ConnectionStatus'
 import Dashboard from './pages/Dashboard'
 import Tasks from './pages/Tasks'
 import Chat from './pages/Chat'
+import NewChat from './pages/NewChat'
 import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import Debug from './pages/Debug'
@@ -94,6 +95,7 @@ const Navigation = () => {
   const navItems = [
     { path: '/', icon: Home, label: 'Dashboard' },
     { path: '/chat', icon: MessageSquare, label: 'Chat' },
+    { path: '/new-chat', icon: Bug, label: 'New Chat' },
     { path: '/tasks', icon: CheckSquare, label: 'Approvals', badge: pendingApprovalsCount },
     { path: '/projects', icon: FolderOpen, label: 'Projects' },
     { path: '/settings', icon: SettingsIcon, label: 'Settings' },
@@ -284,6 +286,14 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <Chat />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/new-chat"
+                  element={
+                    <ProtectedRoute>
+                      <NewChat />
                     </ProtectedRoute>
                   }
                 />

@@ -17,7 +17,7 @@ class Project(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     name = Column(String(255), nullable=False)
     description = Column(Text)
-    repo_name = Column(String(255), nullable=False)  # org/repo
+    repo_name = Column(String(255), nullable=True)  # org/repo - set when deployed to Gitea
     repo_url = Column(String(512))
     clone_url = Column(String(512))
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))

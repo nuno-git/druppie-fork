@@ -355,9 +355,33 @@ class Agent:
             )
 
         for iteration in range(start_iteration, max_iterations):
+            # Create LLM call record BEFORE calling LLM
+            llm_call_id = execution_repo.create_llm_call(
+                session_id=session_id,
+                agent_run_id=agent_run_id,
+                provider=self.llm.provider_name if hasattr(self.llm, 'provider_name') else "unknown",
+                model=self.llm.model if hasattr(self.llm, 'model') else self.definition.model or "unknown",
+                messages=[{"role": m.get("role"), "content": m.get("content", "")[:1000]} for m in messages],
+            )
+            self.db.commit()
+
             start_time = time.time()
             response = await self.llm.achat(messages, openai_tools)
             duration_ms = int((time.time() - start_time) * 1000)
+
+            # Update LLM call with response
+            execution_repo.update_llm_response(
+                llm_call_id=llm_call_id,
+                response_content=response.content[:5000] if response.content else None,
+                response_tool_calls=[
+                    {"name": tc.get("name"), "args": tc.get("args")}
+                    for tc in (response.tool_calls or [])
+                ],
+                prompt_tokens=response.prompt_tokens or 0,
+                completion_tokens=response.completion_tokens or 0,
+                duration_ms=duration_ms,
+            )
+            self.db.commit()
 
             logger.debug(
                 "llm_call",
@@ -390,10 +414,10 @@ class Agent:
                 return self._parse_output(response.content)
 
             # Execute each tool call via ToolExecutor
-            for llm_tool_call in response.tool_calls:
+            for tool_index, llm_tool_call in enumerate(response.tool_calls):
                 tool_name = llm_tool_call.get("name", "")
                 tool_args = llm_tool_call.get("args", {})
-                llm_call_id = llm_tool_call.get("id", f"call_{iteration}")
+                llm_tool_call_str_id = llm_tool_call.get("id", f"call_{iteration}_{tool_index}")
 
                 # Parse server:tool from name
                 if is_builtin_tool(tool_name):
@@ -414,13 +438,15 @@ class Agent:
                     iteration=iteration,
                 )
 
-                # Create ToolCall record
+                # Create ToolCall record (linked to the LLM call)
                 tool_call_id = execution_repo.create_tool_call(
                     session_id=session_id,
                     agent_run_id=agent_run_id,
                     mcp_server=server,
                     tool_name=tool,
                     arguments=tool_args,
+                    llm_call_id=llm_call_id,
+                    tool_call_index=tool_index,
                 )
                 self.db.commit()
 
@@ -438,7 +464,7 @@ class Agent:
                         "role": "assistant",
                         "content": "",
                         "tool_calls": [{
-                            "id": llm_call_id,
+                            "id": llm_tool_call_str_id,
                             "type": "function",
                             "function": {
                                 "name": tool_name,
@@ -453,7 +479,7 @@ class Agent:
                         "prompt": prompt,
                         "context": context,
                         "iteration": iteration,
-                        "tool_call_id": llm_call_id,
+                        "tool_call_id": llm_tool_call_str_id,
                     }
 
                     return {
@@ -470,7 +496,7 @@ class Agent:
                         "role": "assistant",
                         "content": "",
                         "tool_calls": [{
-                            "id": llm_call_id,
+                            "id": llm_tool_call_str_id,
                             "type": "function",
                             "function": {
                                 "name": tool_name,
@@ -485,7 +511,7 @@ class Agent:
                         "prompt": prompt,
                         "context": context,
                         "iteration": iteration,
-                        "tool_call_id": llm_call_id,
+                        "tool_call_id": llm_tool_call_str_id,
                     }
 
                     return {
@@ -519,7 +545,7 @@ class Agent:
                     "role": "assistant",
                     "content": "",
                     "tool_calls": [{
-                        "id": llm_call_id,
+                        "id": llm_tool_call_str_id,
                         "type": "function",
                         "function": {
                             "name": tool_name,
@@ -529,7 +555,7 @@ class Agent:
                 })
                 messages.append({
                     "role": "tool",
-                    "tool_call_id": llm_call_id,
+                    "tool_call_id": llm_tool_call_str_id,
                     "content": json.dumps(result),
                 })
 

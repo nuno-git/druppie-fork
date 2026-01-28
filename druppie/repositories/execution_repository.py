@@ -135,14 +135,18 @@ class ExecutionRepository(BaseRepository):
         mcp_server: str,
         tool_name: str,
         arguments: dict,
+        llm_call_id: UUID | None = None,
+        tool_call_index: int = 0,
     ) -> UUID:
         """Create a tool call record."""
         tool_call = ToolCall(
             session_id=session_id,
             agent_run_id=agent_run_id,
+            llm_call_id=llm_call_id,
             mcp_server=mcp_server,
             tool_name=tool_name,
             arguments=arguments,
+            tool_call_index=tool_call_index,
             status="pending",
         )
         self.db.add(tool_call)
