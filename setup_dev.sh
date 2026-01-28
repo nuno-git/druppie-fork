@@ -135,12 +135,11 @@ start_infra() {
 
     log "Starting databases, Keycloak, Gitea, and MCP servers..."
 
-    # Start all services first
-    $DOCKER_COMPOSE -f "$COMPOSE_FILE" --env-file .env up -d
-
-    # Stop frontend and backend containers (we'll run them locally)
-    log "Stopping frontend and backend containers (will run locally)..."
-    $DOCKER_COMPOSE -f "$COMPOSE_FILE" stop druppie-backend druppie-frontend 2>/dev/null || true
+    # Start infrastructure services only, NOT frontend/backend (we'll run them locally)
+    # Use --scale to skip the services that would conflict with local dev servers
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" --env-file .env up -d \
+        --scale druppie-frontend=0 \
+        --scale druppie-backend=0
 
     log "Waiting for services to be healthy..."
 
@@ -227,9 +226,8 @@ start_backend() {
     log "Starting uvicorn on port 8100 with hot reload..."
 
     # Start backend in background on port 8100 (same as docker-compose)
-    cd druppie
-    nohup ../venv/bin/uvicorn main:app --host 0.0.0.0 --port 8100 --reload > /tmp/druppie-backend.log 2>&1 &
-    cd ..
+    # Run from project root with correct module path (matches Dockerfile)
+    nohup venv/bin/uvicorn druppie.api.main:app --host 0.0.0.0 --port 8100 --reload > /tmp/druppie-backend.log 2>&1 &
 
     echo $! > "$BACKEND_PID_FILE"
 
