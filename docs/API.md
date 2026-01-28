@@ -1,738 +1,399 @@
-# Druppie API Documentation
+# API Reference
 
-## Overview
+All endpoints require authentication via Keycloak (Bearer token).
 
-Druppie provides a REST API for managing AI governance workflows, projects, and agent interactions. The API supports real-time updates via WebSocket and implements role-based access control through Keycloak.
-
-**Base URL**: `http://localhost:8100/api`
-
-**API Version**: 2.0.0
-
----
-
-## Authentication
-
-### JWT Authentication
-
-Most endpoints require a valid JWT token from Keycloak in the `Authorization` header:
+## Base URL
 
 ```
-Authorization: Bearer <token>
+http://localhost:8100/api
 ```
 
-### Internal API Key
+## Sessions
 
-MCP servers use internal API key authentication for server-to-server calls:
+### List Sessions
 
 ```
-X-Internal-API-Key: <internal_api_key>
+GET /sessions
 ```
 
-### Authentication Levels
+Query params:
+- `page` (int, default=1) - Page number
+- `limit` (int, default=20) - Items per page
+- `status` (string, optional) - Filter by status
 
-| Level | Description |
-|-------|-------------|
-| Required | Must provide valid JWT token |
-| Optional | Works with or without authentication |
-| Admin | Requires admin role |
-| Internal | Requires internal API key |
-
----
-
-## Error Handling
-
-All errors follow a consistent format:
-
-```json
-{
-  "error_code": "NOT_FOUND",
-  "message": "Session not found",
-  "details": {
-    "resource": "session",
-    "id": "123e4567-e89b-12d3-a456-426614174000"
-  },
-  "timestamp": "2025-01-28T12:00:00Z",
-  "request_id": "abc-123"
-}
-```
-
-### Error Codes
-
-| Code | HTTP Status | Description |
-|------|-------------|-------------|
-| AUTH_REQUIRED | 401 | Authentication required |
-| AUTH_INVALID_TOKEN | 401 | Invalid or malformed token |
-| AUTH_TOKEN_EXPIRED | 401 | Token has expired |
-| FORBIDDEN | 403 | Access denied |
-| ROLE_REQUIRED | 403 | Specific role required |
-| NOT_FOUND | 404 | Resource not found |
-| SESSION_NOT_FOUND | 404 | Session not found |
-| PROJECT_NOT_FOUND | 404 | Project not found |
-| APPROVAL_NOT_FOUND | 404 | Approval not found |
-| VALIDATION_ERROR | 422 | Request validation failed |
-| CONFLICT | 409 | Resource conflict |
-| APPROVAL_ALREADY_PROCESSED | 409 | Approval already handled |
-| LLM_ERROR | 502 | LLM service error |
-| MCP_ERROR | 502 | MCP server error |
-| INTERNAL_ERROR | 500 | Server error |
-
----
-
-## Health Check Endpoints
-
-### GET /health
-
-Simple health check.
-
-**Response**: `200 OK`
-
----
-
-### GET /health/ready
-
-Readiness check including database and agent status.
-
-**Response**:
-```json
-{
-  "status": "ready",
-  "database": true,
-  "agents": 7
-}
-```
-
----
-
-### GET /api/status
-
-Full system status with all dependencies.
-
-**Response**:
-```json
-{
-  "status": "healthy",
-  "version": "2.0.0",
-  "environment": "development",
-  "keycloak": true,
-  "database": true,
-  "llm": true,
-  "gitea": true,
-  "agents_count": 7,
-  "workflows_count": 3,
-  "llm_provider": "deepinfra",
-  "llm_model": "Qwen/Qwen3-Next-80B"
-}
-```
-
----
-
-## Chat API
-
-### POST /api/chat
-
-Send a message and receive AI response. This is the main entry point for agent interactions.
-
-**Auth**: Optional (creates anonymous session if not authenticated)
-
-**Request**:
-```json
-{
-  "message": "Build me a todo app",
-  "session_id": "optional-session-uuid",
-  "project_id": "optional-project-uuid",
-  "project_name": "optional-project-name",
-  "conversation_history": []
-}
-```
-
-**Response**:
-```json
-{
-  "success": true,
-  "type": "response|question|plan|approval_required|error",
-  "response": "I'll help you build a todo app...",
-  "session_id": "session-uuid",
-  "project_id": "project-uuid",
-  "workspace_id": "workspace-uuid",
-  "status": "completed|paused_approval|paused_question|running",
-  "total_usage": {
-    "prompt_tokens": 1500,
-    "completion_tokens": 500,
-    "total_tokens": 2000
-  },
-  "pending_approvals": [],
-  "pending_questions": []
-}
-```
-
-**Response Types**:
-- `response` - Normal agent response
-- `question` - HITL question requires user answer
-- `plan` - Execution plan for approval
-- `approval_required` - MCP tool needs approval
-- `error` - Execution error
-
----
-
-### POST /api/chat/{session_id}/resume
-
-Resume a paused session by providing an answer or approval.
-
-**Auth**: Required
-
-**Request**:
-```json
-{
-  "answer": "yes",
-  "approved": true
-}
-```
-
-**Response**: Same as POST /api/chat
-
----
-
-### GET /api/chat/{session_id}/status
-
-Get current session status with pending items.
-
-**Auth**: Required
-
-**Response**:
-```json
-{
-  "session_id": "uuid",
-  "status": "paused_approval",
-  "pending_approvals": [
-    {
-      "id": "approval-uuid",
-      "tool_name": "docker:build",
-      "required_roles": ["developer"],
-      "status": "pending"
-    }
-  ],
-  "pending_questions": []
-}
-```
-
----
-
-### GET /api/chat/{session_id}/events
-
-Retrieve missed WebSocket events for a session.
-
-**Auth**: Required
-
-**Response**:
-```json
-{
-  "events": [
-    {
-      "type": "agent_started",
-      "agent_id": "developer",
-      "timestamp": "2025-01-28T12:00:00Z"
-    }
-  ]
-}
-```
-
----
-
-### POST /api/chat/{session_id}/cancel
-
-Cancel an ongoing execution.
-
-**Auth**: Required
-
-**Response**:
-```json
-{
-  "success": true,
-  "message": "Session cancelled"
-}
-```
-
----
-
-## Sessions API
-
-### GET /api/sessions
-
-List sessions with pagination and filtering.
-
-**Auth**: Required
-
-**Query Parameters**:
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| page | int | 1 | Page number |
-| limit | int | 20 | Items per page (max 100) |
-| project_id | uuid | - | Filter by project |
-| status | string | - | Filter by status |
-
-**Response**:
+Response:
 ```json
 {
   "items": [
     {
-      "id": "session-uuid",
-      "title": "Build todo app",
+      "id": "uuid",
+      "title": "Build a todo app",
       "status": "completed",
-      "project_id": "project-uuid",
-      "project_name": "todo-app",
-      "prompt_tokens": 5000,
-      "completion_tokens": 2000,
-      "total_tokens": 7000,
-      "created_at": "2025-01-28T12:00:00Z",
-      "updated_at": "2025-01-28T12:05:00Z"
+      "project_id": "uuid | null",
+      "token_usage": {
+        "prompt_tokens": 1000,
+        "completion_tokens": 500,
+        "total_tokens": 1500
+      },
+      "created_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-01-01T00:00:00Z"
     }
   ],
-  "total": 42,
+  "total": 100,
   "page": 1,
   "limit": 20
 }
 ```
 
----
+### Get Session Detail
 
-### GET /api/sessions/{id}
+```
+GET /sessions/{session_id}
+```
 
-Get complete session details including execution tree.
-
-**Auth**: Required
-
-**Response**:
+Response:
 ```json
 {
-  "id": "session-uuid",
-  "title": "Build todo app",
+  "id": "uuid",
+  "user_id": "uuid",
+  "project_id": "uuid | null",
+  "workspace_id": "uuid | null",
+  "title": "Build a todo app",
   "status": "completed",
-  "project_id": "project-uuid",
-  "project_name": "todo-app",
-  "workspace_id": "workspace-uuid",
-  "prompt_tokens": 5000,
-  "completion_tokens": 2000,
-  "total_tokens": 7000,
-  "agent_runs": [
+  "token_usage": {
+    "prompt_tokens": 6014,
+    "completion_tokens": 318,
+    "total_tokens": 6332
+  },
+  "tokens_by_agent": {
+    "router": 2000,
+    "developer": 4332
+  },
+  "created_at": "2024-01-01T00:00:00Z",
+  "updated_at": "2024-01-01T00:00:00Z",
+  "chat": [
     {
-      "id": "run-uuid",
+      "type": "system_message",
+      "content": "Hello! I'm Druppie...",
+      "timestamp": "2024-01-01T00:00:00Z"
+    },
+    {
+      "type": "user_message",
+      "content": "Build a todo app",
+      "timestamp": "2024-01-01T00:00:01Z"
+    },
+    {
+      "type": "agent_run",
+      "id": "uuid",
       "agent_id": "router",
       "status": "completed",
-      "started_at": "2025-01-28T12:00:00Z",
-      "completed_at": "2025-01-28T12:00:05Z",
-      "prompt_tokens": 500,
-      "completion_tokens": 100,
-      "llm_calls": [...],
-      "tool_calls": [...],
-      "approvals": [...],
-      "questions": [...]
-    }
-  ],
-  "messages": [
+      "token_usage": {...},
+      "started_at": "...",
+      "completed_at": "...",
+      "steps": [
+        {
+          "type": "llm_call",
+          "id": "uuid",
+          "model": "glm-4",
+          "provider": "zai",
+          "token_usage": {...},
+          "tools_decided": ["hitl:ask_question"]
+        },
+        {
+          "type": "tool_execution",
+          "id": "uuid",
+          "tool": "coding:write_file",
+          "arguments": {"path": "app.py", "content": "..."},
+          "status": "executed",
+          "approval": null
+        }
+      ]
+    },
     {
-      "role": "user",
-      "content": "Build me a todo app",
-      "agent_id": null,
-      "tool_name": null,
-      "created_at": "2025-01-28T12:00:00Z"
+      "type": "assistant_message",
+      "content": "I've created your todo app...",
+      "agent_id": "developer",
+      "timestamp": "..."
     }
-  ],
-  "events": [...],
-  "workflow": {
-    "name": "development",
-    "status": "completed",
-    "current_step": 3,
-    "steps": [...]
-  }
+  ]
 }
 ```
 
----
+### Delete Session
 
-### DELETE /api/sessions/{id}
+```
+DELETE /sessions/{session_id}
+```
 
-Delete a session.
+Response: `204 No Content`
 
-**Auth**: Required (owner or admin)
+## Chat
 
-**Response**: `204 No Content`
+### Send Message
 
----
+```
+POST /chat
+```
 
-### GET /api/sessions/{id}/approvals
+Request:
+```json
+{
+  "message": "Build a todo app with Flask",
+  "session_id": "uuid | null",
+  "project_id": "uuid | null"
+}
+```
 
-Get all approvals for a session.
+Response:
+```json
+{
+  "success": true,
+  "session_id": "uuid",
+  "message": "I'll help you build a todo app...",
+  "status": "completed | paused_approval | paused_hitl",
+  "approval_id": "uuid | null",
+  "question_id": "uuid | null"
+}
+```
 
-**Auth**: Required
+## Approvals
 
----
+### List Pending Approvals
 
-### GET /api/sessions/{id}/events
+```
+GET /approvals
+```
 
-Get session events for debugging.
+Returns approvals the current user can act on (based on their roles).
 
-**Auth**: Required
-
----
-
-## Approvals API
-
-### GET /api/approvals
-
-List pending approvals for current user based on their roles.
-
-**Auth**: Required
-
-**Response**:
+Response:
 ```json
 {
   "items": [
     {
-      "id": "approval-uuid",
-      "session_id": "session-uuid",
-      "tool_name": "docker:build",
-      "mcp_server": "docker",
-      "mcp_tool": "build",
-      "required_roles": ["developer"],
-      "status": "pending",
+      "id": "uuid",
+      "session_id": "uuid",
+      "agent_run_id": "uuid",
+      "tool": "docker:build",
       "arguments": {
-        "dockerfile": "Dockerfile",
-        "tag": "myapp:latest"
+        "image_name": "myapp",
+        "dockerfile_path": "./Dockerfile"
       },
-      "agent_id": "deployer",
-      "approval_type": "mcp_tool",
-      "created_at": "2025-01-28T12:00:00Z"
+      "status": "pending",
+      "required_role": "developer",
+      "created_at": "..."
     }
   ],
   "total": 5
 }
 ```
 
----
+### Get Approval Detail
 
-### GET /api/approvals/{id}
-
-Get approval details.
-
-**Auth**: Required
-
-**Response**:
-```json
-{
-  "id": "approval-uuid",
-  "session_id": "session-uuid",
-  "tool_name": "docker:build",
-  "mcp_server": "docker",
-  "mcp_tool": "build",
-  "required_roles": ["developer"],
-  "status": "pending",
-  "arguments": {
-    "dockerfile": "Dockerfile",
-    "tag": "myapp:latest"
-  },
-  "agent_id": "deployer",
-  "approval_type": "mcp_tool",
-  "created_at": "2025-01-28T12:00:00Z",
-  "session": {
-    "id": "session-uuid",
-    "title": "Build todo app"
-  }
-}
+```
+GET /approvals/{approval_id}
 ```
 
----
+### Approve
 
-### POST /api/approvals/{id}/approve
+```
+POST /approvals/{approval_id}/approve
+```
 
-Approve a pending request. User must have one of the required roles.
-
-**Auth**: Required (role-based)
-
-**Request**:
+Request:
 ```json
 {
   "comment": "Looks good, approved"
 }
 ```
 
-**Response**:
+Response:
 ```json
 {
   "success": true,
-  "approval_id": "approval-uuid",
   "status": "approved",
-  "message": "Approval processed successfully"
+  "tool_result": {...}
 }
 ```
 
-**Error Cases**:
-- `403` - User lacks required role
-- `409` - Approval already processed
-- `502` - Tool execution failed after approval
+### Reject
 
----
+```
+POST /approvals/{approval_id}/reject
+```
 
-### POST /api/approvals/{id}/reject
-
-Reject a pending request.
-
-**Auth**: Required (role-based)
-
-**Request**:
+Request:
 ```json
 {
-  "reason": "Security concern with this operation"
+  "reason": "Code needs security review first"
 }
 ```
 
-**Response**:
-```json
-{
-  "success": true,
-  "approval_id": "approval-uuid",
-  "status": "rejected"
-}
+## HITL Questions
+
+### List Pending Questions
+
+```
+GET /questions
 ```
 
----
-
-### GET /api/approvals/session/{session_id}
-
-Get all approvals for a specific session.
-
-**Auth**: Required
-
----
-
-## Projects API
-
-### GET /api/projects
-
-List user's projects.
-
-**Auth**: Required
-
-**Response**:
+Response:
 ```json
 {
   "items": [
     {
-      "id": "project-uuid",
-      "name": "todo-app",
-      "description": "A simple todo application",
-      "repo_url": "http://gitea:3000/user/todo-app",
-      "created_at": "2025-01-28T12:00:00Z",
-      "token_usage": {
-        "prompt_tokens": 10000,
-        "completion_tokens": 5000,
-        "total_tokens": 15000
-      },
-      "session_count": 5,
-      "main_build": {
-        "id": "build-uuid",
-        "status": "running",
-        "app_url": "http://localhost:9100",
-        "port": 9100
-      }
-    }
-  ],
-  "total": 10
-}
-```
-
----
-
-### GET /api/projects/{id}
-
-Get project details with builds, sessions, and repository info.
-
-**Auth**: Required
-
-**Response**:
-```json
-{
-  "id": "project-uuid",
-  "name": "todo-app",
-  "description": "A simple todo application",
-  "repo_url": "http://gitea:3000/user/todo-app",
-  "created_at": "2025-01-28T12:00:00Z",
-  "token_usage": {
-    "prompt_tokens": 10000,
-    "completion_tokens": 5000,
-    "total_tokens": 15000
-  },
-  "session_count": 5,
-  "main_build": {...},
-  "preview_builds": [...],
-  "app_url": "http://localhost:9100"
-}
-```
-
----
-
-### POST /api/projects
-
-Create a new project.
-
-**Auth**: Required
-
-**Request**:
-```json
-{
-  "name": "my-project",
-  "description": "Project description"
-}
-```
-
-**Response**: Project object
-
----
-
-### PUT /api/projects/{id}
-
-Update project details.
-
-**Auth**: Required (owner or admin)
-
-**Request**:
-```json
-{
-  "name": "new-name",
-  "description": "Updated description"
-}
-```
-
----
-
-### DELETE /api/projects/{id}
-
-Delete a project.
-
-**Auth**: Required (owner or admin)
-
----
-
-### GET /api/projects/{id}/sessions
-
-List sessions for a project.
-
-**Auth**: Required
-
----
-
-### GET /api/projects/{id}/files
-
-Browse project files from Gitea.
-
-**Auth**: Required
-
-**Query Parameters**:
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| path | string | "" | Directory path |
-| branch | string | "main" | Git branch |
-
-**Response**:
-```json
-{
-  "files": [
-    {
-      "name": "src",
-      "path": "src",
-      "type": "dir",
-      "size": 0
-    },
-    {
-      "name": "package.json",
-      "path": "package.json",
-      "type": "file",
-      "size": 1234,
-      "sha": "abc123"
+      "id": "uuid",
+      "session_id": "uuid",
+      "agent_id": "architect",
+      "question": "What database do you prefer?",
+      "question_type": "multiple_choice",
+      "choices": ["PostgreSQL", "MySQL", "SQLite"],
+      "status": "pending",
+      "created_at": "..."
     }
   ]
 }
 ```
 
----
+### Answer Question
 
-### GET /api/projects/{id}/file
+```
+POST /questions/{question_id}/answer
+```
 
-Get file content from Gitea.
-
-**Auth**: Required
-
-**Query Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| path | string | File path (required) |
-| branch | string | Git branch |
-
-**Response**:
+Request:
 ```json
 {
-  "content": "file content here...",
-  "path": "src/main.py",
-  "size": 1234,
-  "encoding": "utf-8"
+  "answer": "PostgreSQL",
+  "selected_choices": [0]
 }
 ```
 
----
+## Projects
 
-### GET /api/projects/{id}/branches
+### List Projects
 
-List git branches.
+```
+GET /projects
+```
 
-**Auth**: Required
-
----
-
-### GET /api/projects/{id}/commits
-
-Get recent commits.
-
-**Auth**: Required
-
-**Query Parameters**:
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| branch | string | "main" | Branch name |
-| limit | int | 10 | Number of commits |
-
----
-
-### GET /api/projects/{id}/builds
-
-List builds for project.
-
-**Auth**: Required
-
----
-
-### POST /api/projects/{id}/build
-
-Trigger a new build.
-
-**Auth**: Required
-
-**Request**:
+Response:
 ```json
 {
-  "branch": "main"
+  "items": [
+    {
+      "id": "uuid",
+      "name": "todo-app",
+      "description": "A todo application",
+      "repo_url": "http://gitea:3000/org/todo-app",
+      "status": "active",
+      "token_usage": {
+        "total_tokens": 15000,
+        "session_count": 3
+      },
+      "created_at": "..."
+    }
+  ]
 }
 ```
 
----
+### Get Project Detail
 
-## MCP API
+```
+GET /projects/{project_id}
+```
 
-### GET /api/mcps
+Response includes builds and deployments.
 
-List all MCP servers and their tools.
+### Delete Project
 
-**Auth**: Required
+```
+DELETE /projects/{project_id}
+```
 
-**Response**:
+## Deployments
+
+### List Running Deployments
+
+```
+GET /deployments
+```
+
+Response:
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "project_id": "uuid",
+      "project_name": "todo-app",
+      "container_name": "todo-app-main",
+      "host_port": 9100,
+      "app_url": "http://localhost:9100",
+      "status": "running",
+      "started_at": "..."
+    }
+  ]
+}
+```
+
+### Stop Deployment
+
+```
+POST /deployments/{deployment_id}/stop
+```
+
+### Get Deployment Logs
+
+```
+GET /deployments/{deployment_id}/logs
+```
+
+Query params:
+- `tail` (int, default=100) - Number of lines
+
+## Agents
+
+### List Agents
+
+```
+GET /agents
+```
+
+Response:
+```json
+{
+  "items": [
+    {
+      "id": "router",
+      "name": "Router Agent",
+      "description": "Classifies user intent",
+      "model": "glm-4",
+      "temperature": 0.1,
+      "max_tokens": 2048,
+      "mcps": []
+    },
+    {
+      "id": "developer",
+      "name": "Developer",
+      "description": "Writes code",
+      "model": "glm-4",
+      "temperature": 0.2,
+      "mcps": ["coding", "hitl"]
+    }
+  ]
+}
+```
+
+## MCP Servers
+
+### List MCP Servers and Tools
+
+```
+GET /mcps
+```
+
+Response:
 ```json
 {
   "servers": [
@@ -743,714 +404,137 @@ List all MCP servers and their tools.
       "status": "healthy",
       "tools": [
         {
-          "id": "coding:read_file",
-          "name": "read_file",
-          "description": "Read a file from the workspace",
-          "requires_approval": false,
-          "required_roles": []
-        },
-        {
-          "id": "coding:write_file",
           "name": "write_file",
           "description": "Write content to a file",
-          "requires_approval": false,
-          "required_roles": []
-        }
-      ]
-    },
-    {
-      "id": "docker",
-      "name": "Docker MCP",
-      "url": "http://mcp-docker:9002",
-      "status": "healthy",
-      "tools": [
+          "requires_approval": false
+        },
         {
-          "id": "docker:build",
-          "name": "build",
-          "description": "Build a Docker image",
+          "name": "run_command",
+          "description": "Run a shell command",
           "requires_approval": true,
-          "required_roles": ["developer"]
+          "required_role": "developer"
         }
       ]
     }
-  ],
-  "total_tools": 12
+  ]
 }
 ```
 
----
+## Workspace
 
-### GET /api/mcps/servers
+The workspace API lets the frontend browse files that agents have written. This is separate from the coding MCP - the MCP is for agents to write files, this API is for humans to view them.
 
-List MCP servers with health status.
+### Get Workspace Files
 
-**Auth**: Required
-
----
-
-### GET /api/mcps/tools
-
-List all tools across all servers.
-
-**Auth**: Required
-
----
-
-### GET /api/mcps/tools/{tool_id}
-
-Get tool details. Tool ID format: `server:tool_name`
-
-**Auth**: Required
-
----
-
-### GET /api/mcps/{server_id}
-
-Get MCP server details.
-
-**Auth**: Required
-
----
-
-## Agents API
-
-### GET /api/agents
-
-List all configured agents.
-
-**Auth**: Required
-
-**Response**:
-```json
-{
-  "items": [
-    {
-      "id": "router",
-      "name": "Router",
-      "description": "Classifies user intent and routes to appropriate agent",
-      "model": "glm-4",
-      "temperature": 0.1,
-      "max_tokens": 4096,
-      "mcps": ["hitl"],
-      "category": "system"
-    },
-    {
-      "id": "developer",
-      "name": "Developer",
-      "description": "Writes and modifies code",
-      "model": "glm-4",
-      "temperature": 0.1,
-      "max_tokens": 8192,
-      "mcps": ["coding", "hitl"],
-      "category": "execution"
-    }
-  ],
-  "count": 7
-}
+```
+GET /workspace?session_id={session_id}&path={path}
 ```
 
-**Agent Categories**:
-- `system` - Router, Planner
-- `execution` - Developer, Architect
-- `quality` - Reviewer, Tester
-- `deployment` - Deployer
+Query params:
+- `session_id` (required) - Session to get workspace for
+- `path` (optional) - Subdirectory to list
+- `recursive` (optional, default=false) - List all files recursively
 
----
-
-### GET /api/agents/{agent_id}
-
-Get agent configuration.
-
-**Auth**: Required
-
----
-
-## Workspace API
-
-### GET /api/workspace
-
-List workspace files for a session.
-
-**Auth**: Required
-
-**Query Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| session_id | uuid | Session ID (required) |
-| path | string | Directory path |
-| recursive | bool | Include subdirectories |
-
-**Response**:
+Response:
 ```json
 {
+  "workspace_id": "uuid",
+  "session_id": "uuid",
+  "path": "src",
   "files": [
-    {
-      "name": "main.py",
-      "path": "src/main.py",
-      "type": "file",
-      "size": 1234
-    }
+    {"name": "app.py", "path": "src/app.py", "type": "file", "size": 1234}
   ],
   "directories": [
-    {
-      "name": "components",
-      "path": "src/components",
-      "type": "dir"
-    }
+    {"name": "components", "path": "src/components", "type": "directory"}
   ],
-  "workspace_id": "workspace-uuid",
-  "base_path": "/workspaces/abc123"
+  "count": 2
 }
 ```
 
----
+### Get File Content
 
-### GET /api/workspace/file
+```
+GET /workspace/file?session_id={session_id}&path={path}
+```
 
-Get file content from workspace.
-
-**Auth**: Required
-
-**Query Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| session_id | uuid | Session ID (required) |
-| path | string | File path (required) |
-
-**Response**:
+Response:
 ```json
 {
-  "content": "file content...",
-  "path": "src/main.py",
-  "size": 1234,
-  "is_binary": false
+  "path": "src/app.py",
+  "content": "from flask import Flask...",
+  "binary": false,
+  "size": 1234
 }
 ```
 
----
+### Download File
 
-### GET /api/workspace/download
-
-Download file as attachment.
-
-**Auth**: Required
-
----
-
-### GET /api/workspace/{workspace_id}
-
-Get workspace by ID.
-
-**Auth**: Required
-
----
-
-### GET /api/workspaces
-
-List workspaces.
-
-**Auth**: Required
-
-**Query Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| project_id | uuid | Filter by project |
-| limit | int | Max results |
-
----
-
-## Questions API (HITL)
-
-### GET /api/questions
-
-List pending HITL questions for current user.
-
-**Auth**: Required
-
-**Response**:
-```json
-{
-  "items": [
-    {
-      "id": "question-uuid",
-      "session_id": "session-uuid",
-      "agent_id": "architect",
-      "question": "Should I use React or Vue for the frontend?",
-      "question_type": "choice",
-      "choices": ["React", "Vue", "Angular"],
-      "status": "pending",
-      "created_at": "2025-01-28T12:00:00Z"
-    }
-  ]
-}
+```
+GET /workspace/download?session_id={session_id}&path={path}
 ```
 
----
+Returns file as download.
 
-### GET /api/questions/{question_id}
+## Health
 
-Get question details.
+### Health Check
 
-**Auth**: Required
-
----
-
-### POST /api/questions/{question_id}/answer
-
-Answer a question and resume workflow.
-
-**Auth**: Required
-
-**Request**:
-```json
-{
-  "answer": "React"
-}
+```
+GET /health
 ```
 
-**Response**:
+Response:
 ```json
 {
-  "success": true,
-  "question_id": "question-uuid",
-  "session_id": "session-uuid",
-  "message": "Answer recorded, workflow resumed"
-}
-```
-
----
-
-### GET /api/questions/session/{session_id}
-
-Get questions for a session.
-
-**Auth**: Required
-
-**Query Parameters**:
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| status | string | Filter: pending, answered, all |
-
----
-
-### POST /api/questions/internal/create
-
-Create HITL question (internal API for MCP servers).
-
-**Auth**: Internal API Key
-
-**Request**:
-```json
-{
-  "question_id": "uuid",
-  "session_id": "session-uuid",
-  "agent_id": "architect",
-  "question": "Which database should we use?",
-  "question_type": "choice",
-  "choices": ["PostgreSQL", "MySQL", "MongoDB"]
-}
-```
-
----
-
-## Workflows API
-
-### GET /api/workflows
-
-List available workflows.
-
-**Auth**: Optional
-
-**Response**:
-```json
-{
-  "items": [
-    {
-      "id": "development",
-      "name": "Development Workflow",
-      "description": "Full development cycle with architect, developer, and deployer",
-      "inputs": ["user_request", "project_id"],
-      "entry_point": "router"
-    }
-  ]
-}
-```
-
----
-
-### GET /api/workflows/{workflow_id}
-
-Get workflow definition.
-
-**Auth**: Optional
-
----
-
-### POST /api/workflows/{workflow_id}/run
-
-Run a workflow with inputs.
-
-**Auth**: Required
-
-**Request**:
-```json
-{
-  "inputs": {
-    "user_request": "Build a todo app",
-    "project_id": "project-uuid"
+  "status": "healthy",
+  "database": "connected",
+  "mcp_servers": {
+    "coding": "healthy",
+    "docker": "healthy"
   }
 }
 ```
 
----
+## WebSocket
 
-## Admin API
+### Session Updates
 
-All admin endpoints require the `admin` role.
+```
+WS /ws/session/{session_id}
+```
 
-### GET /api/admin/tables
-
-List all database tables.
-
-**Response**:
+Events:
 ```json
-{
-  "tables": [
-    {
-      "name": "sessions",
-      "row_count": 150
-    },
-    {
-      "name": "projects",
-      "row_count": 25
-    }
-  ],
-  "total_records": 5000
-}
+{"type": "agent_started", "agent_id": "developer", "timestamp": "..."}
+{"type": "tool_call", "tool": "coding:write_file", "timestamp": "..."}
+{"type": "approval_required", "approval_id": "uuid", "tool": "docker:build"}
+{"type": "question_asked", "question_id": "uuid", "question": "..."}
+{"type": "agent_completed", "agent_id": "developer", "timestamp": "..."}
+{"type": "session_completed", "status": "completed"}
 ```
 
----
+## Error Responses
 
-### GET /api/admin/table/{table_name}
-
-Get paginated table data with filtering.
-
-**Query Parameters**:
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| page | int | 1 | Page number |
-| limit | int | 50 | Items per page |
-| order_by | string | id | Sort column |
-| order_dir | string | desc | asc or desc |
-| filter_field | string | - | Field to filter |
-| filter_value | string | - | Filter value |
-
----
-
-### GET /api/admin/table/{table_name}/{record_id}
-
-Get single record with relationships.
-
----
-
-### GET /api/admin/stats
-
-Database statistics summary.
-
----
-
-## WebSocket API
-
-### Connection
-
-**General Connection**:
-```
-ws://localhost:8100/ws
-```
-
-**Session-Specific Connection**:
-```
-ws://localhost:8100/ws/session/{session_id}
-```
-
-### Client Messages
-
-**Join Session**:
-```json
-{
-  "type": "join_session",
-  "session_id": "session-uuid"
-}
-```
-
-**Join Approval Rooms**:
-```json
-{
-  "type": "join_approvals",
-  "roles": ["admin", "developer"]
-}
-```
-
-**Ping**:
-```json
-{
-  "type": "ping"
-}
-```
-
-### Server Events
-
-**Connection Established**:
-```json
-{
-  "type": "connected",
-  "message": "Connected to Druppie WebSocket"
-}
-```
-
-**Session Updates**:
-```json
-{
-  "type": "session_updated",
-  "session_id": "uuid",
-  "status": "running",
-  "data": {...}
-}
-```
-
-**Agent Lifecycle**:
-```json
-{
-  "type": "agent_started",
-  "session_id": "uuid",
-  "agent_id": "developer",
-  "timestamp": "2025-01-28T12:00:00Z"
-}
-```
+All errors follow this format:
 
 ```json
 {
-  "type": "agent_completed",
-  "session_id": "uuid",
-  "agent_id": "developer",
-  "result": {...},
-  "timestamp": "2025-01-28T12:00:05Z"
+  "code": "NOT_FOUND",
+  "message": "Session not found",
+  "details": {
+    "resource": "session",
+    "id": "uuid"
+  },
+  "timestamp": "2024-01-01T00:00:00Z",
+  "request_id": "uuid"
 }
 ```
 
-**Tool Execution**:
-```json
-{
-  "type": "tool_call",
-  "session_id": "uuid",
-  "agent_id": "developer",
-  "tool_name": "coding:write_file",
-  "arguments": {...}
-}
-```
-
-```json
-{
-  "type": "tool_result",
-  "session_id": "uuid",
-  "tool_name": "coding:write_file",
-  "success": true,
-  "result": {...}
-}
-```
-
-**Approval Required**:
-```json
-{
-  "type": "approval_required",
-  "approval_id": "uuid",
-  "session_id": "uuid",
-  "tool_name": "docker:build",
-  "required_roles": ["developer"],
-  "agent_id": "deployer",
-  "args": {...}
-}
-```
-
-**Approval Decision**:
-```json
-{
-  "type": "approval_approved",
-  "approval_id": "uuid",
-  "session_id": "uuid",
-  "approved": true,
-  "approver_id": "user-uuid",
-  "approver_role": "admin",
-  "approver_username": "admin_user"
-}
-```
-
-**HITL Question**:
-```json
-{
-  "type": "question_pending",
-  "question_id": "uuid",
-  "session_id": "uuid",
-  "question": "Which framework should I use?",
-  "options": ["React", "Vue"]
-}
-```
-
-**Deployment Complete**:
-```json
-{
-  "type": "deployment_complete",
-  "session_id": "uuid",
-  "url": "http://localhost:9100",
-  "container_name": "app-abc123",
-  "port": 9100,
-  "project_id": "project-uuid"
-}
-```
-
-### Event Types Summary
-
-| Event Type | Description |
-|------------|-------------|
-| connected | WebSocket connection established |
-| session_updated | Session status changed |
-| session_completed | Session finished successfully |
-| session_failed | Session failed with error |
-| session_paused | Session paused for approval/question |
-| workflow_event | Generic workflow event |
-| workflow_started | Workflow execution started |
-| workflow_completed | Workflow finished |
-| agent_started | Agent began execution |
-| agent_completed | Agent finished successfully |
-| agent_failed | Agent encountered error |
-| tool_call | Tool invocation started |
-| tool_result | Tool returned result |
-| approval_required | MCP tool needs approval |
-| approval_approved | Approval granted |
-| approval_rejected | Approval denied |
-| question_pending | HITL question waiting |
-| question_answered | HITL question answered |
-| deployment_complete | App deployed successfully |
-
----
-
-## Rate Limiting
-
-Currently no rate limiting is implemented. Consider implementing if needed for production.
-
----
-
-## Pagination
-
-List endpoints follow a consistent pagination pattern:
-
-**Request Parameters**:
-- `page` - Page number (1-indexed, default: 1)
-- `limit` - Items per page (default: 20, max: 100)
-
-**Response Format**:
-```json
-{
-  "items": [...],
-  "total": 100,
-  "page": 1,
-  "limit": 20
-}
-```
-
----
-
-## Common Response Codes
-
-| Code | Description |
-|------|-------------|
-| 200 | Success |
-| 201 | Created |
-| 204 | No Content (successful delete) |
-| 400 | Bad Request |
-| 401 | Unauthorized |
-| 403 | Forbidden |
-| 404 | Not Found |
-| 409 | Conflict |
-| 422 | Validation Error |
-| 500 | Internal Server Error |
-| 502 | External Service Error |
-
----
-
-## Example Workflows
-
-### 1. Start a Chat Session
-
-```bash
-# Send initial message
-curl -X POST http://localhost:8100/api/chat \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Build me a todo app"}'
-
-# Response indicates session_id and status
-```
-
-### 2. Handle Approval Request
-
-```bash
-# List pending approvals
-curl http://localhost:8100/api/approvals \
-  -H "Authorization: Bearer $TOKEN"
-
-# Approve specific request
-curl -X POST http://localhost:8100/api/approvals/{id}/approve \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"comment": "Approved"}'
-```
-
-### 3. Answer HITL Question
-
-```bash
-# List pending questions
-curl http://localhost:8100/api/questions \
-  -H "Authorization: Bearer $TOKEN"
-
-# Answer question
-curl -X POST http://localhost:8100/api/questions/{id}/answer \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"answer": "React"}'
-```
-
-### 4. WebSocket Connection
-
-```javascript
-const ws = new WebSocket('ws://localhost:8100/ws');
-
-ws.onopen = () => {
-  // Join session for real-time updates
-  ws.send(JSON.stringify({
-    type: 'join_session',
-    session_id: 'your-session-id'
-  }));
-
-  // Join approval rooms based on roles
-  ws.send(JSON.stringify({
-    type: 'join_approvals',
-    roles: ['admin', 'developer']
-  }));
-};
-
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  console.log('Event:', data.type, data);
-};
-```
-
----
-
-## OpenAPI Specification
-
-The full OpenAPI specification is available at:
-
-- Swagger UI: `http://localhost:8100/docs`
-- ReDoc: `http://localhost:8100/redoc`
-- OpenAPI JSON: `http://localhost:8100/openapi.json`
+Error codes:
+- `AUTH_REQUIRED` (401)
+- `FORBIDDEN` (403)
+- `NOT_FOUND` (404)
+- `VALIDATION_ERROR` (422)
+- `CONFLICT` (409)
+- `INTERNAL_ERROR` (500)
+- `EXTERNAL_SERVICE_ERROR` (502)
