@@ -383,47 +383,6 @@ async def ask_choice(
 
 
 @mcp.tool()
-async def progress(
-    session_id: str,
-    message: str,
-    percent: int | None = None,
-    step: str | None = None,
-) -> dict:
-    """Send progress update to user (non-blocking).
-
-    Args:
-        session_id: Session ID
-        message: Progress message
-        percent: Optional percentage (0-100)
-        step: Optional step name
-
-    Returns:
-        Dict with success
-    """
-    logger.debug(
-        "progress: session=%s, percent=%s, step=%s, message=%s",
-        session_id,
-        percent,
-        step,
-        message[:50] + "..." if len(message) > 50 else message,
-    )
-
-    # Publish progress event
-    redis_client.publish(
-        f"hitl:{session_id}",
-        json.dumps({
-            "type": "progress",
-            "message": message,
-            "percent": percent,
-            "step": step,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }),
-    )
-
-    return {"success": True, "acknowledged": True}
-
-
-@mcp.tool()
 async def submit_response(
     request_id: str,
     answer: str,
@@ -460,45 +419,6 @@ async def submit_response(
     )
 
     logger.debug("Pushed response to Redis queue hitl:response:%s", request_id)
-
-    return {"success": True}
-
-
-@mcp.tool()
-async def notify(
-    session_id: str,
-    title: str,
-    message: str,
-    level: str = "info",
-) -> dict:
-    """Send notification to user (non-blocking).
-
-    Args:
-        session_id: Session ID
-        title: Notification title
-        message: Notification message
-        level: Notification level (info, success, warning, error)
-
-    Returns:
-        Dict with success
-    """
-    logger.info(
-        "notify: session=%s, level=%s, title=%s",
-        session_id,
-        level,
-        title,
-    )
-
-    redis_client.publish(
-        f"hitl:{session_id}",
-        json.dumps({
-            "type": "notification",
-            "title": title,
-            "message": message,
-            "level": level,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }),
-    )
 
     return {"success": True}
 

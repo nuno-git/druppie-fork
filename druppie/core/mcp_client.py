@@ -755,34 +755,6 @@ class MCPClient:
             )
             return result
 
-        elif tool == "progress":
-            # Send progress update (non-blocking)
-            message = args.get("message", args.get("status", "Working..."))
-            if context.emit_event:
-                context.emit_event({
-                    "type": "progress",
-                    "event_type": "progress",
-                    "agent_id": agent_id,
-                    "message": message,
-                    "session_id": context.session_id,
-                })
-            return {"success": True, "message": "Progress update sent"}
-
-        elif tool == "notify":
-            # Send notification (non-blocking)
-            message = args.get("message", "")
-            level = args.get("level", "info")
-            if context.emit_event:
-                context.emit_event({
-                    "type": "notification",
-                    "event_type": "notification",
-                    "agent_id": agent_id,
-                    "message": message,
-                    "level": level,
-                    "session_id": context.session_id,
-                })
-            return {"success": True, "message": "Notification sent"}
-
         else:
             return {
                 "success": False,

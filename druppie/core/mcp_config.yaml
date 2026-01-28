@@ -174,7 +174,3 @@ mcps:
       - name: ask_choice
         description: "Ask user a multiple choice question"
         requires_approval: false
-
-      - name: notify
-        description: "Send notification to user"
-        requires_approval: false
