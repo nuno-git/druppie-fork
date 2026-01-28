@@ -166,6 +166,15 @@ class ExecutionRepository(BaseRepository):
             .all()
         )
 
+    def get_llm_calls_for_run(self, agent_run_id: UUID) -> list[LlmCall]:
+        """Get all LLM calls for an agent run, ordered by creation time."""
+        return (
+            self.db.query(LlmCall)
+            .filter(LlmCall.agent_run_id == agent_run_id)
+            .order_by(LlmCall.created_at)
+            .all()
+        )
+
     def update_tool_call(
         self,
         tool_call_id: UUID,

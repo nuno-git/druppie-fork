@@ -69,6 +69,11 @@ class ChatDeepInfra(BaseLLM):
     def provider_name(self) -> str:
         return "deepinfra"
 
+    @property
+    def supports_native_tools(self) -> bool:
+        """DeepInfra models support native OpenAI-style tool calling."""
+        return True
+
     def bind_tools(self, tools: list[dict[str, Any]]) -> "ChatDeepInfra":
         """Create new instance with tools bound."""
         new_instance = ChatDeepInfra(
@@ -315,7 +320,8 @@ class ChatDeepInfra(BaseLLM):
 
         choice = data["choices"][0]
         message = choice.get("message", {})
-        raw_content = message.get("content", "")
+        original_content = message.get("content") or ""  # Preserve original (handle None)
+        raw_content = original_content
 
         # Parse tool calls from OpenAI format first
         tool_calls = []
@@ -369,6 +375,7 @@ class ChatDeepInfra(BaseLLM):
 
         return LLMResponse(
             content=content,
+            raw_content=original_content,  # Preserve original for debugging
             tool_calls=tool_calls,
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),

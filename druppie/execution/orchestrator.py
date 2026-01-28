@@ -297,8 +297,16 @@ USER REQUEST:
         agent_run_id: UUID,
         agent_id: str,
         prompt: str,
+        context: dict = None,
     ) -> str:
         """Run a single agent.
+
+        Args:
+            session_id: Session UUID
+            agent_run_id: Agent run UUID
+            agent_id: Agent identifier
+            prompt: Task prompt
+            context: Optional context dict (e.g., with clarifications from HITL)
 
         Returns:
             "completed" or "paused"
@@ -310,6 +318,7 @@ USER REQUEST:
             session_id=str(session_id),
             agent_run_id=str(agent_run_id),
             agent_id=agent_id,
+            has_context=bool(context),
         )
 
         # Create and run agent
@@ -318,6 +327,7 @@ USER REQUEST:
             prompt=prompt,
             session_id=session_id,
             agent_run_id=agent_run_id,
+            context=context,
         )
 
         # Check if paused
@@ -373,10 +383,21 @@ USER REQUEST:
         question_id: UUID,
         answer: str,
     ) -> UUID:
-        """Resume execution after a HITL question is answered."""
+        """Resume execution after a HITL question is answered.
+
+        This method:
+        1. Saves the answer to the tool call result in DB
+        2. Continues the paused agent run (it will reconstruct state from DB)
+        3. After that agent completes, executes any remaining pending runs
+
+        The agent's continue_run() method loads all LLM calls and tool results
+        from the database, so the answer is automatically included.
+        """
         from druppie.execution.tool_executor import ToolExecutor, ToolCallStatus
         from druppie.execution.mcp_http import MCPHttp
         from druppie.core.mcp_config import MCPConfig
+        from druppie.db.models import Question
+        from druppie.agents.runtime import Agent
 
         logger.info(
             "resume_after_answer",
@@ -389,9 +410,64 @@ USER REQUEST:
         mcp_http = MCPHttp(mcp_config)
         tool_executor = ToolExecutor(db, mcp_http, mcp_config)
 
+        # Step 1: Get the question to find the agent run
+        question = db.query(Question).filter_by(id=question_id).first()
+        if not question or not question.agent_run_id:
+            logger.error("question_missing_agent_run", question_id=str(question_id))
+            await self.execute_pending_runs(session_id)
+            return session_id
+
+        # Step 2: Complete the HITL tool call (saves answer to DB)
         status = await tool_executor.complete_after_answer(question_id, answer)
 
-        if status == ToolCallStatus.COMPLETED:
-            await self.execute_pending_runs(session_id)
+        if status != ToolCallStatus.COMPLETED:
+            logger.error("complete_after_answer_failed", status=status)
+            return session_id
 
+        # Step 3: Get the paused agent run
+        agent_run = self.execution_repo.get_by_id(question.agent_run_id)
+        if not agent_run:
+            logger.error("agent_run_not_found", agent_run_id=str(question.agent_run_id))
+            await self.execute_pending_runs(session_id)
+            return session_id
+
+        logger.info(
+            "resuming_paused_agent",
+            agent_run_id=str(agent_run.id),
+            agent_id=agent_run.agent_id,
+            previous_status=agent_run.status,
+        )
+
+        # Step 4: Set status back to running
+        self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
+        self.execution_repo.commit()
+
+        # Step 5: Continue the agent - it will load state from DB including the answer
+        agent = Agent(agent_run.agent_id, db=db)
+        result = await agent.continue_run(
+            session_id=session_id,
+            agent_run_id=agent_run.id,
+        )
+
+        # Step 6: Handle result
+        if result.get("status") == "paused" or result.get("paused"):
+            pause_reason = result.get("reason", "unknown")
+            if pause_reason == "waiting_answer":
+                self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_HITL)
+            else:
+                self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_TOOL)
+            self.execution_repo.commit()
+            return session_id
+
+        # Completed - mark agent and continue with pending runs
+        self.execution_repo.update_status(agent_run.id, AgentRunStatus.COMPLETED)
+        self.execution_repo.commit()
+
+        logger.info(
+            "agent_resumed_and_completed",
+            agent_run_id=str(agent_run.id),
+            agent_id=agent_run.agent_id,
+        )
+
+        await self.execute_pending_runs(session_id)
         return session_id
