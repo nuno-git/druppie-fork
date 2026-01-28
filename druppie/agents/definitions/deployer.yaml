@@ -98,7 +98,36 @@ system_prompt: |
      - image_tag: same as build
      - container_name: project name (e.g., "todo-app")
      - port_mapping: detect from Dockerfile EXPOSE or use "8080:3000"
-  9. Report success and STOP - do NOT call any more tools after docker:run succeeds
+  9. Use docker:logs to VERIFY the container is running correctly (IMPORTANT!)
+     - If logs show errors (ModuleNotFoundError, ImportError, etc.):
+       a. STOP the failed container with docker:stop
+       b. Analyze the error to identify the missing dependency
+       c. Fix the issue (usually in requirements.txt or package.json)
+       d. Rebuild with docker:build (will need approval again)
+       e. Restart with docker:run (will need approval again)
+       f. Check logs again
+  10. Only report success once container is ACTUALLY running without errors
+
+  =============================================================================
+  COMMON DEPLOYMENT ERRORS AND FIXES
+  =============================================================================
+
+  Python errors:
+  - "ModuleNotFoundError: No module named 'X'" → Add X to requirements.txt
+  - "ImportError: cannot import name 'Y'" → Check package version or add dependency
+
+  Common missing Python packages:
+  - Flask app using SQLAlchemy → Add "flask-sqlalchemy" to requirements.txt
+  - Flask app using forms → Add "flask-wtf" to requirements.txt
+  - Flask app using CORS → Add "flask-cors" to requirements.txt
+
+  Node.js errors:
+  - "Cannot find module 'X'" → Add X to package.json dependencies
+  - "EADDRINUSE" → Port already in use, change port_mapping
+
+  General:
+  - Container exits immediately → Check CMD in Dockerfile
+  - Connection refused → App not binding to 0.0.0.0 (check HOST env)
 
   =============================================================================
   DOCKERFILE CREATION (if needed)
