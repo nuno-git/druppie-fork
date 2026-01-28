@@ -2,17 +2,80 @@
 
 This document outlines the step-by-step migration from the current architecture to the clean architecture described in our documentation.
 
+## Understanding the Layers
+
+Before we start, let's clarify what each layer does:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         API ROUTES                                   │
+│  • Receive HTTP requests                                             │
+│  • Validate input                                                    │
+│  • Call services                                                     │
+│  • Return responses                                                  │
+│  Example: @router.get("/sessions/{id}") → calls SessionService      │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      SERVICE LAYER (NEW)                             │
+│  • Permission checks (can user X see session Y?)                    │
+│  • Business validation (is this action allowed?)                    │
+│  • Orchestrate repository calls                                     │
+│  Example: SessionService.get_detail() checks ownership              │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                     REPOSITORY LAYER (NEW)                           │
+│  • Database queries only                                             │
+│  • Returns domain objects                                            │
+│  • No business logic                                                 │
+│  Example: SessionRepository.get_with_chat() builds ChatItem[]       │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      DOMAIN LAYER (NEW)                              │
+│  • Pydantic schemas (data shapes)                                   │
+│  • No logic, just structure                                          │
+│  Example: SessionDetail, ChatItem, AgentRunDetail                   │
+└─────────────────────────────────────────────────────────────────────┘
+
+
+SEPARATE from the above (NOT being replaced):
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                      CORE LAYER (loop.py)                            │
+│  • AI orchestration engine                                          │
+│  • Agent execution (router → planner → workflow)                    │
+│  • MCP tool calls                                                   │
+│  • Pause/resume handling                                            │
+│  • Token tracking                                                   │
+│  Example: loop.py runs agents, handles approvals                    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Key insight:**
+- Service layer = "who can do what" (web app permissions)
+- Core layer = "how agents execute" (AI orchestration)
+
+Both are needed. We're adding services, not replacing loop.py.
+
+---
+
 ## Overview
 
 ```
 Phase 1: Database Schema Updates
-Phase 2: Docker MCP (Git-Based)
-Phase 3: Domain Layer (Pydantic Schemas)
-Phase 4: Repository Layer (Database Access)
-Phase 5: Service Layer (Business Logic)
-Phase 6: API Routes (Thin Handlers)
-Phase 7: API Bridge (MCP Proxy)
-Phase 8: Folder Rename & Cleanup
+Phase 2: execute_agent Tool (Sub-Agent Support)  ← NEW
+Phase 3: Docker MCP (Git-Based)
+Phase 4: Domain Layer (Pydantic Schemas)
+Phase 5: Repository Layer (Database Access)
+Phase 6: Service Layer (Business Logic)
+Phase 7: API Routes (Thin Handlers)
+Phase 8: API Bridge (MCP Proxy)
+Phase 9: Folder Rename & Cleanup
 ```
 
 ---
@@ -57,11 +120,203 @@ File: `druppie/db/migrations.py`
 
 ---
 
-## Phase 2: Docker MCP (Git-Based)
+## Phase 2: execute_agent Tool (Sub-Agent Support)
+
+**Goal:** Allow agents to spawn sub-agents dynamically
+
+**Current state:** `execute_agent` is documented but does NOT exist. The `parent_run_id` column exists but is never used.
+
+### 2.1 Add tool definition to builtin_tools.py
+
+```python
+# Add to BUILTIN_TOOLS list
+{
+    "type": "function",
+    "function": {
+        "name": "execute_agent",
+        "description": "Execute another agent to perform a sub-task. The sub-agent will run with full context and return its result. Use this to delegate specialized work.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "ID of the agent to execute (e.g., 'developer', 'reviewer', 'tester')",
+                },
+                "task": {
+                    "type": "string",
+                    "description": "Description of the task for the sub-agent to perform",
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Additional context to pass to the sub-agent",
+                },
+            },
+            "required": ["agent_id", "task"],
+        },
+    },
+},
+```
+
+### 2.2 Implement execute_agent function
+
+```python
+async def execute_agent(
+    agent_id: str,
+    task: str,
+    context: "ExecutionContext",
+    calling_agent_id: str,
+    task_context: str | None = None,
+) -> dict:
+    """Execute a sub-agent to perform a task.
+
+    Creates a nested agent_run with parent_run_id pointing to the caller.
+    """
+    from druppie.agents import Agent
+    from druppie.api.deps import get_db
+    from druppie.db.crud import create_agent_run, update_tool_call
+
+    logger.info(
+        "execute_agent_start",
+        calling_agent=calling_agent_id,
+        target_agent=agent_id,
+        task=task[:100],
+        parent_run_id=context.current_agent_run_id,
+    )
+
+    db = next(get_db())
+    try:
+        # Create nested agent run with parent_run_id
+        child_run = create_agent_run(
+            db=db,
+            session_id=UUID(context.session_id),
+            agent_id=agent_id,
+            parent_run_id=UUID(context.current_agent_run_id),  # Key: links to parent
+            status="running",
+        )
+        db.commit()
+        child_run_id = str(child_run.id)
+
+        # Update tool_call with child_agent_run_id
+        if context.current_tool_call_id:
+            update_tool_call(
+                db=db,
+                tool_call_id=UUID(context.current_tool_call_id),
+                child_agent_run_id=child_run.id,
+            )
+            db.commit()
+    finally:
+        db.close()
+
+    # Create child context
+    child_context = context.create_child_context(
+        agent_run_id=child_run_id,
+        agent_id=agent_id,
+    )
+
+    # Build prompt with task
+    prompt = f"{task}"
+    if task_context:
+        prompt = f"{task_context}\n\n{prompt}"
+
+    # Run the sub-agent
+    agent = Agent(agent_id)
+    result = await agent.run(prompt, child_context)
+
+    logger.info(
+        "execute_agent_complete",
+        calling_agent=calling_agent_id,
+        target_agent=agent_id,
+        child_run_id=child_run_id,
+        result_status=result.get("status"),
+    )
+
+    return {
+        "status": "completed",
+        "agent_id": agent_id,
+        "child_run_id": child_run_id,
+        "result": result,
+    }
+```
+
+### 2.3 Update execute_builtin_tool dispatcher
+
+```python
+async def execute_builtin_tool(...) -> dict:
+    # ... existing code ...
+    elif tool_name == "execute_agent":
+        return await execute_agent(
+            agent_id=tool_args.get("agent_id", ""),
+            task=tool_args.get("task", ""),
+            context=context,
+            calling_agent_id=agent_id,
+            task_context=tool_args.get("context"),
+        )
+    # ... rest of code ...
+```
+
+### 2.4 Update is_builtin_tool check
+
+```python
+def is_builtin_tool(tool_name: str) -> bool:
+    return tool_name in (
+        "hitl_ask_question",
+        "hitl_ask_multiple_choice_question",
+        "done",
+        "execute_agent",  # Add this
+    )
+```
+
+### 2.5 Add create_child_context to ExecutionContext
+
+File: `druppie/core/execution_context.py`
+
+```python
+def create_child_context(self, agent_run_id: str, agent_id: str) -> "ExecutionContext":
+    """Create a child context for a nested agent run."""
+    child = ExecutionContext(
+        session_id=self.session_id,
+        user_id=self.user_id,
+        workspace_id=self.workspace_id,
+        project_id=self.project_id,
+    )
+    child.current_agent_run_id = agent_run_id
+    child.parent_context = self  # Keep reference to parent
+    child.emit_event = self.emit_event  # Share event emitter
+    return child
+```
+
+### 2.6 Update crud.py for child_agent_run_id
+
+```python
+def update_tool_call(
+    db: Session,
+    tool_call_id: UUID,
+    child_agent_run_id: UUID | None = None,
+    # ... other fields ...
+) -> ToolCall:
+    tool_call = db.query(ToolCall).filter_by(id=tool_call_id).first()
+    if child_agent_run_id:
+        tool_call.child_agent_run_id = child_agent_run_id
+    db.commit()
+    return tool_call
+```
+
+### Verification
+- [ ] `execute_agent` tool definition added
+- [ ] `execute_agent` function implemented
+- [ ] Creates agent_run with `parent_run_id` set
+- [ ] Updates tool_call with `child_agent_run_id`
+- [ ] Child context created correctly
+- [ ] Sub-agent runs and returns result
+- [ ] Nested runs visible in debug page
+
+---
+
+## Phase 3: Docker MCP (Git-Based)
 
 **Goal:** Docker MCP clones from git, uses labels, no workspace dependency
 
-### 2.1 Update build tool
+### 3.1 Update build tool
 
 File: `druppie/mcp-servers/docker/server.py`
 
@@ -92,7 +347,7 @@ async def build(
     # 5. Return result
 ```
 
-### 2.2 Update run tool
+### 3.2 Update run tool
 
 Add label parameters and apply them:
 
@@ -120,7 +375,7 @@ async def run(
     ]
 ```
 
-### 2.3 Update list_containers tool
+### 3.3 Update list_containers tool
 
 Add project_id filtering and return labels:
 
@@ -139,7 +394,7 @@ async def list_containers(
     # Parse and return with labels
 ```
 
-### 2.4 Remove workspace registry
+### 3.4 Remove workspace registry
 
 Remove:
 - `workspaces` dict
@@ -586,11 +841,11 @@ async def get_logs(
 
 ---
 
-## Phase 8: Folder Rename & Cleanup
+## Phase 9: Folder Rename & Cleanup
 
 **Goal:** Clean up folder structure
 
-### 8.1 Rename folders
+### 9.1 Rename folders
 
 ```bash
 # Rename backend folder
@@ -604,7 +859,7 @@ mv frontend druppie-frontend
 # Update CLAUDE.md references
 ```
 
-### 8.2 Remove old files
+### 9.2 Remove old files
 
 ```bash
 # Remove old crud.py (replaced by repositories)
@@ -614,7 +869,7 @@ rm druppie-backend/db/crud.py
 rm druppie-backend/api/schemas.py
 ```
 
-### 8.3 Update imports
+### 9.3 Update imports
 
 Update all imports to use new paths:
 - `from druppie.` → `from druppie_backend.`
@@ -634,13 +889,22 @@ Update all imports to use new paths:
 - [ ] Migration 007: Add tool_type, child_agent_run_id to tool_calls
 - [ ] Migration 008: Drop builds, deployments tables
 
-### Phase 2: Docker MCP ⬜
+### Phase 2: execute_agent Tool ⬜
+- [ ] Add execute_agent to BUILTIN_TOOLS
+- [ ] Implement execute_agent function
+- [ ] Update execute_builtin_tool dispatcher
+- [ ] Update is_builtin_tool check
+- [ ] Add create_child_context to ExecutionContext
+- [ ] Update crud.py for child_agent_run_id
+- [ ] Test nested agent runs
+
+### Phase 3: Docker MCP ⬜
 - [ ] build() uses git_url instead of workspace
 - [ ] run() adds druppie.* labels
 - [ ] list_containers() filters by project_id
 - [ ] Remove workspace registry
 
-### Phase 3: Domain ⬜
+### Phase 4: Domain ⬜
 - [ ] domain/__init__.py
 - [ ] domain/common.py
 - [ ] domain/session.py
@@ -651,7 +915,7 @@ Update all imports to use new paths:
 - [ ] domain/project.py
 - [ ] domain/user.py
 
-### Phase 4: Repository ⬜
+### Phase 5: Repository ⬜
 - [ ] repositories/base.py
 - [ ] repositories/session_repository.py
 - [ ] repositories/agent_run_repository.py
@@ -660,7 +924,7 @@ Update all imports to use new paths:
 - [ ] repositories/project_repository.py
 - [ ] repositories/user_repository.py
 
-### Phase 5: Service ⬜
+### Phase 6: Service ⬜
 - [ ] services/session_service.py
 - [ ] services/approval_service.py
 - [ ] services/question_service.py
@@ -668,18 +932,18 @@ Update all imports to use new paths:
 - [ ] services/deployment_service.py
 - [ ] services/mcp_bridge_service.py
 
-### Phase 6: Routes ⬜
+### Phase 7: Routes ⬜
 - [ ] Simplify routes/sessions.py
 - [ ] Simplify routes/approvals.py
 - [ ] Simplify routes/questions.py
 - [ ] Simplify routes/projects.py
 - [ ] Update api/deps.py
 
-### Phase 7: API Bridge ⬜
+### Phase 8: API Bridge ⬜
 - [ ] routes/workspace.py
 - [ ] routes/deployments.py
 
-### Phase 8: Cleanup ⬜
+### Phase 9: Cleanup ⬜
 - [ ] Rename druppie → druppie-backend
 - [ ] Rename frontend → druppie-frontend
 - [ ] Remove old files
