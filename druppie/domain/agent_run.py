@@ -47,14 +47,24 @@ class LLMCallDetail(BaseModel):
     tool_calls: list[ToolCallDetail]  # Decisions to execute tools (ordered by index)
 
 
-class AgentRunDetail(BaseModel):
-    """Full agent run - sequence of LLM calls."""
+class AgentRunSummary(BaseModel):
+    """Lightweight agent run for chat timeline."""
     id: UUID
     agent_id: str
     status: AgentRunStatus
+
+    # For pending runs (created by planner)
+    planned_prompt: str | None = None
+    sequence_number: int | None = None
+
+    # For completed runs
     token_usage: TokenUsage
-    started_at: datetime
-    completed_at: datetime | None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class AgentRunDetail(AgentRunSummary):
+    """Full agent run - sequence of LLM calls. Inherits from AgentRunSummary."""
 
     # The execution trace - each LLM call includes its tool executions
-    llm_calls: list[LLMCallDetail]
+    llm_calls: list[LLMCallDetail] = []

@@ -98,6 +98,38 @@ BUILTIN_TOOLS = [
             },
         },
     },
+    # Planning Tool (for planner agent)
+    {
+        "type": "function",
+        "function": {
+            "name": "make_plan",
+            "description": "Create an execution plan. Call this to define which agents should run and in what order. Each step specifies an agent and the prompt/task for that agent.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "agent_id": {
+                                    "type": "string",
+                                    "description": "The agent to run (architect, developer, deployer)",
+                                },
+                                "prompt": {
+                                    "type": "string",
+                                    "description": "The task description for the agent",
+                                },
+                            },
+                            "required": ["agent_id", "prompt"],
+                        },
+                        "description": "List of steps to execute in order",
+                    },
+                },
+                "required": ["steps"],
+            },
+        },
+    },
 ]
 
 # For backwards compatibility
@@ -284,6 +316,102 @@ async def ask_multiple_choice_question(
 
 
 # =============================================================================
+# PLANNING TOOL IMPLEMENTATION
+# =============================================================================
+
+async def make_plan(
+    steps: list[dict],
+    context: "ExecutionContext",
+    agent_id: str,
+) -> dict:
+    """Create an execution plan as pending agent runs.
+
+    Called by planner agent to create the plan. Creates AgentRun records
+    with status='pending' that will be executed in sequence.
+
+    Args:
+        steps: List of steps, each with agent_id and prompt
+        context: Execution context
+        agent_id: ID of the calling agent (planner)
+
+    Returns:
+        Success message with plan details
+    """
+    from druppie.db.models import AgentRun
+    from druppie.api.deps import get_db
+
+    session_id = context.session_id
+    session_uuid = UUID(session_id)
+
+    logger.info(
+        "make_plan",
+        session_id=session_id,
+        agent_id=agent_id,
+        step_count=len(steps),
+    )
+
+    if not steps:
+        return {
+            "success": False,
+            "error": "No steps provided",
+        }
+
+    # Create pending agent runs
+    db = next(get_db())
+    try:
+        created_runs = []
+        for i, step in enumerate(steps):
+            step_agent_id = step.get("agent_id")
+            step_prompt = step.get("prompt")
+
+            if not step_agent_id or not step_prompt:
+                logger.warning(
+                    "invalid_plan_step",
+                    step_index=i,
+                    agent_id=step_agent_id,
+                    has_prompt=bool(step_prompt),
+                )
+                continue
+
+            agent_run = AgentRun(
+                session_id=session_uuid,
+                agent_id=step_agent_id,
+                status="pending",
+                planned_prompt=step_prompt,
+                sequence_number=i,
+            )
+            db.add(agent_run)
+            created_runs.append({
+                "sequence": i,
+                "agent_id": step_agent_id,
+                "prompt_preview": step_prompt[:100] + "..." if len(step_prompt) > 100 else step_prompt,
+            })
+
+        db.commit()
+
+        logger.info(
+            "plan_created",
+            session_id=session_id,
+            step_count=len(created_runs),
+        )
+    finally:
+        db.close()
+
+    # Emit event
+    context.emit("plan_created", {
+        "agent_id": agent_id,
+        "step_count": len(created_runs),
+        "steps": created_runs,
+    })
+
+    return {
+        "success": True,
+        "message": f"Created plan with {len(created_runs)} steps",
+        "steps": created_runs,
+    }
+
+
+# =============================================================================
 # COMPLETION TOOL IMPLEMENTATION
 # =============================================================================
 
@@ -358,6 +486,12 @@ async def execute_builtin_tool(
             context=context,
             agent_id=agent_id,
         )
+    elif tool_name == "make_plan":
+        return await make_plan(
+            steps=tool_args.get("steps", []),
+            context=context,
+            agent_id=agent_id,
+        )
     else:
         return {
             "success": False,
@@ -367,7 +501,7 @@ async def execute_builtin_tool(
 
 def is_builtin_tool(tool_name: str) -> bool:
     """Check if a tool name is a built-in tool."""
-    return tool_name in ("hitl_ask_question", "hitl_ask_multiple_choice_question", "done")
+    return tool_name in ("hitl_ask_question", "hitl_ask_multiple_choice_question", "done", "make_plan")
 
 
 # Backwards compatibility aliases

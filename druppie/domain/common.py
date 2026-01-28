@@ -22,6 +22,7 @@ class SessionStatus(str, Enum):
 
 class AgentRunStatus(str, Enum):
     """Agent run execution status."""
+    PENDING = "pending"  # Created by planner, not started yet
     RUNNING = "running"
     PAUSED_TOOL = "paused_tool"  # Waiting for tool approval
     PAUSED_HITL = "paused_hitl"  # Waiting for user answer

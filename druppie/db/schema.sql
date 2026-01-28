@@ -127,8 +127,13 @@ CREATE TABLE agent_runs (
     parent_run_id UUID REFERENCES agent_runs(id),  -- Who called this agent (for context chain)
 
     -- Execution state
-    status VARCHAR(20) DEFAULT 'running',   -- running, paused_tool, paused_hitl, completed, failed
+    -- pending = created by planner, not started yet
+    status VARCHAR(20) DEFAULT 'running',   -- pending, running, paused_tool, paused_hitl, completed, failed
     iteration_count INTEGER DEFAULT 0,      -- How many LLM calls in this run
+
+    -- For pending runs created by planner (the "plan")
+    planned_prompt TEXT,                    -- Task description for the agent
+    sequence_number INTEGER,                -- Execution order (0, 1, 2...)
 
     -- Token usage for this run
     prompt_tokens INTEGER DEFAULT 0,
@@ -141,6 +146,7 @@ CREATE TABLE agent_runs (
 
 CREATE INDEX idx_agent_runs_session ON agent_runs(session_id);
 CREATE INDEX idx_agent_runs_parent ON agent_runs(parent_run_id);
+CREATE INDEX idx_agent_runs_pending ON agent_runs(session_id, status, sequence_number) WHERE status = 'pending';
 
 -- =============================================================================
 -- MESSAGES (all messages saved, linked to agent_run for isolation)
