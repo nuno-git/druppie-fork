@@ -244,29 +244,6 @@ Request:
 
 ## HITL Questions
 
-### List Pending Questions
-
-```
-GET /questions
-```
-
-Response:
-```json
-{
-  "items": [
-    {
-      "id": "uuid",
-      "session_id": "uuid",
-      "agent_id": "architect",
-      "question": "What database do you prefer?",
-      "question_type": "multiple_choice",
-      "choices": ["PostgreSQL", "MySQL", "SQLite"],
-      "status": "pending",
-      "created_at": "..."
-    }
-  ]
-}
-```
 
 ### Answer Question
 

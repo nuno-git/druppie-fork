@@ -1,75 +1,102 @@
-"""Approval service for business logic."""
+"""Approval service for business logic.
+
+This service handles database operations for tool approvals.
+It does NOT handle workflow resumption - that's the WorkflowService's job.
+
+Architecture:
+    Route
+      │
+      ├──▶ ApprovalService (this) ──▶ ApprovalRepository ──▶ Database
+      │         (DB operations)
+      │
+      └──▶ WorkflowService ──▶ MainLoop
+              (resumption)
+
+The route coordinates both services:
+1. ApprovalService.approve/reject() - updates DB status
+2. WorkflowService.resume_from_approval() - resumes the workflow
+"""
 
 from uuid import UUID
 import structlog
 
-from ..repositories import ApprovalRepository, SessionRepository
-from ..domain import ApprovalDetail, PendingApprovalList
-from ..api.errors import NotFoundError, AuthorizationError, ConflictError, ErrorCode
+from ..repositories import ApprovalRepository
+from ..domain import ApprovalDetail, PendingApprovalList, ApprovalStatus
+from ..api.errors import NotFoundError, AuthorizationError, ConflictError
 
 logger = structlog.get_logger()
 
 
 class ApprovalService:
-    """Business logic for approvals."""
+    """Business logic for approvals.
 
-    def __init__(
-        self,
-        approval_repo: ApprovalRepository,
-        session_repo: SessionRepository,
-    ):
+    This service handles:
+    - Listing pending approvals for user's roles
+    - Recording approve/reject decisions in the database
+
+    It does NOT handle workflow resumption. After calling approve/reject(),
+    the route should call WorkflowService.resume_from_approval().
+    """
+
+    def __init__(self, approval_repo: ApprovalRepository):
         self.approval_repo = approval_repo
-        self.session_repo = session_repo
 
-    def get_pending_for_user(
+    def get_pending_for_roles(
         self,
-        user_id: UUID,
         user_roles: list[str],
     ) -> PendingApprovalList:
-        """Get approvals user can act on based on their roles."""
-        # Admin sees all, others see only matching roles
+        """Get approvals user can act on based on their roles.
+
+        Admin users see all pending approvals.
+        Other users see only approvals matching their roles.
+        """
         if "admin" in user_roles:
-            roles_to_check = ["admin", "architect", "developer"]  # All roles
+            # Admin sees all - check all common roles
+            roles_to_check = ["admin", "architect", "developer"]
         else:
             roles_to_check = user_roles
 
         return self.approval_repo.get_pending_for_roles(roles_to_check)
 
-    def get_detail(
+    def approve(
         self,
         approval_id: UUID,
         user_id: UUID,
         user_roles: list[str],
     ) -> ApprovalDetail:
-        """Get approval detail with access check."""
-        approval = self.approval_repo.get_by_id(approval_id)
-        if not approval:
-            raise NotFoundError("approval", str(approval_id))
+        """Record approval decision in database.
 
-        # Check user can see this approval
-        required_role = approval.required_role or "admin"
-        if required_role not in user_roles and "admin" not in user_roles:
-            raise AuthorizationError(
-                f"Requires {required_role} role",
-                required_roles=[required_role],
+        This method ONLY updates the database. It does NOT resume the workflow
+        - that's handled by WorkflowService.
+
+        Args:
+            approval_id: The approval to approve
+            user_id: The user approving
+            user_roles: User's roles (must include required_role)
+
+        Returns:
+            Updated ApprovalDetail
+
+        Raises:
+            NotFoundError: Approval doesn't exist
+            AuthorizationError: User lacks required role
+            ConflictError: Approval already processed
+
+        Usage in route:
+            # 1. Record approval in DB
+            approval = approval_service.approve(approval_id, user_id, user_roles)
+
+            # 2. Resume workflow (separate concern)
+            result = await workflow_service.resume_from_approval(
+                session_id=approval.session_id,
+                approval_id=approval_id,
             )
-
-        return self.approval_repo._to_detail(approval)
-
-    async def approve(
-        self,
-        approval_id: UUID,
-        user_id: UUID,
-        user_roles: list[str],
-        main_loop,  # MainLoop instance for resumption
-        comment: str | None = None,
-    ) -> dict:
-        """Approve and execute the tool."""
+        """
         approval = self.approval_repo.get_by_id(approval_id)
         if not approval:
             raise NotFoundError("approval", str(approval_id))
 
-        # Check role
+        # Check role authorization
         required_role = approval.required_role or "admin"
         if required_role not in user_roles and "admin" not in user_roles:
             raise AuthorizationError(
@@ -77,16 +104,14 @@ class ApprovalService:
                 required_roles=[required_role],
             )
 
-        if approval.status != "pending":
-            raise ConflictError(
-                f"Approval already {approval.status}",
-                error_code=ErrorCode.APPROVAL_ALREADY_PROCESSED,
-            )
+        # Check not already processed
+        if approval.status != ApprovalStatus.PENDING.value:
+            raise ConflictError(f"Approval already {approval.status}")
 
-        # Update status
+        # Update status in database
         self.approval_repo.update_status(
             approval_id=approval_id,
-            status="approved",
+            status=ApprovalStatus.APPROVED,
             resolved_by=user_id,
         )
         self.approval_repo.commit()
@@ -98,45 +123,53 @@ class ApprovalService:
             tool=f"{approval.mcp_server}:{approval.tool_name}",
         )
 
-        # Resume execution
-        result = await main_loop.resume_from_step_approval(
-            session_id=str(approval.session_id),
-            approval_id=str(approval_id),
-            approved=True,
-        )
+        # Return updated approval
+        updated = self.approval_repo.get_by_id(approval_id)
+        return self.approval_repo._to_detail(updated)
 
-        return {
-            "success": True,
-            "status": "approved",
-            "tool_result": result,
-        }
-
-    async def reject(
+    def reject(
         self,
         approval_id: UUID,
         user_id: UUID,
         user_roles: list[str],
-        main_loop,  # MainLoop instance for resumption
         reason: str,
-    ) -> dict:
-        """Reject the approval."""
+    ) -> ApprovalDetail:
+        """Record rejection decision in database.
+
+        This method ONLY updates the database. It does NOT resume the workflow
+        - that's handled by WorkflowService.
+
+        Args:
+            approval_id: The approval to reject
+            user_id: The user rejecting
+            user_roles: User's roles (must include required_role)
+            reason: Rejection reason
+
+        Returns:
+            Updated ApprovalDetail
+
+        Raises:
+            NotFoundError: Approval doesn't exist
+            AuthorizationError: User lacks required role
+            ConflictError: Approval already processed
+        """
         approval = self.approval_repo.get_by_id(approval_id)
         if not approval:
             raise NotFoundError("approval", str(approval_id))
 
         required_role = approval.required_role or "admin"
         if required_role not in user_roles and "admin" not in user_roles:
-            raise AuthorizationError(f"Requires {required_role} role to reject")
-
-        if approval.status != "pending":
-            raise ConflictError(
-                f"Approval already {approval.status}",
-                error_code=ErrorCode.APPROVAL_ALREADY_PROCESSED,
+            raise AuthorizationError(
+                f"Requires {required_role} role to reject",
+                required_roles=[required_role],
             )
+
+        if approval.status != ApprovalStatus.PENDING.value:
+            raise ConflictError(f"Approval already {approval.status}")
 
         self.approval_repo.update_status(
             approval_id=approval_id,
-            status="rejected",
+            status=ApprovalStatus.REJECTED,
             resolved_by=user_id,
             rejection_reason=reason,
         )
@@ -149,15 +182,5 @@ class ApprovalService:
             reason=reason,
         )
 
-        # Resume with rejection
-        result = await main_loop.resume_from_step_approval(
-            session_id=str(approval.session_id),
-            approval_id=str(approval_id),
-            approved=False,
-        )
-
-        return {
-            "success": True,
-            "status": "rejected",
-            "result": result,
-        }
+        updated = self.approval_repo.get_by_id(approval_id)
+        return self.approval_repo._to_detail(updated)
