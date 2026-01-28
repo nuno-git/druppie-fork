@@ -5,11 +5,15 @@
 #
 # This script provides a fast development experience:
 # - Infrastructure runs in Docker (DBs, Keycloak, Gitea, MCP servers)
-# - Backend runs locally with uvicorn --reload (hot reload)
-# - Frontend runs locally with Vite dev server (HMR)
+# - Backend runs locally with uvicorn --reload (hot reload) on port 8100
+# - Frontend runs locally with Vite dev server (HMR) on port 5273
+#
+# Uses the SAME docker-compose.yml and containers as production setup,
+# just doesn't start frontend/backend containers.
 #
 # Usage:
 #   ./setup_dev.sh          # Start everything
+#   ./setup_dev.sh start    # Start everything
 #   ./setup_dev.sh infra    # Start only infrastructure
 #   ./setup_dev.sh backend  # Start only backend (assumes infra running)
 #   ./setup_dev.sh frontend # Start only frontend (assumes backend running)
@@ -47,7 +51,8 @@ else
     error "Docker Compose not found. Please install Docker."
 fi
 
-COMPOSE_FILE="druppie/docker-compose.dev.yml"
+# Use the SAME docker-compose.yml as production
+COMPOSE_FILE="druppie/docker-compose.yml"
 
 # PID files for tracking local processes
 BACKEND_PID_FILE="/tmp/druppie-backend.pid"
@@ -59,11 +64,16 @@ FRONTEND_PID_FILE="/tmp/druppie-frontend.pid"
 
 check_python() {
     if ! command -v python3 &> /dev/null; then
-        error "Python 3 not found. Please install Python 3.11+."
+        error "Python 3 not found. Please install Python 3.10+."
     fi
 
     PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
     log "Python version: $PYTHON_VERSION"
+
+    # Check if venv module is available
+    if ! python3 -c "import venv" &> /dev/null; then
+        error "Python venv module not found. Please install it:\n\n  sudo apt install python${PYTHON_VERSION}-venv\n"
+    fi
 }
 
 check_node() {
@@ -104,7 +114,7 @@ wait_for_service() {
 
     log "Waiting for $name..."
     while [ $attempt -le $max_attempts ]; do
-        if curl -s -f "$url" > /dev/null 2>&1; then
+        if curl -s -o /dev/null -w "%{http_code}" "$url" | grep -q "200\|302\|401"; then
             success "$name is ready!"
             return 0
         fi
@@ -117,23 +127,37 @@ wait_for_service() {
 }
 
 # =============================================================================
-# INFRASTRUCTURE (Docker)
+# INFRASTRUCTURE (Docker - using main docker-compose.yml)
 # =============================================================================
 
 start_infra() {
     header "Starting Infrastructure (Docker)"
 
     log "Starting databases, Keycloak, Gitea, and MCP servers..."
+
+    # Start all services first
     $DOCKER_COMPOSE -f "$COMPOSE_FILE" --env-file .env up -d
+
+    # Stop frontend and backend containers (we'll run them locally)
+    log "Stopping frontend and backend containers (will run locally)..."
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" stop druppie-backend druppie-frontend 2>/dev/null || true
 
     log "Waiting for services to be healthy..."
 
-    # Wait for critical services
-    wait_for_service "http://localhost:5533" "PostgreSQL" 30 || true
-    wait_for_service "http://localhost:8180/health/ready" "Keycloak" 60 || true
-    wait_for_service "http://localhost:3100/api/healthz" "Gitea" 30 || true
-    wait_for_service "http://localhost:9001/health" "MCP Coding" 20 || true
-    wait_for_service "http://localhost:9002/health" "MCP Docker" 20 || true
+    # Wait for PostgreSQL
+    wait_for_service "http://localhost:5533" "PostgreSQL" 10 || true
+
+    # Wait for Keycloak
+    wait_for_service "http://localhost:8180/health/ready" "Keycloak" 60
+
+    # Wait for Gitea
+    wait_for_service "http://localhost:3100/api/healthz" "Gitea" 30
+
+    # Wait for MCP Coding
+    wait_for_service "http://localhost:9001/health" "MCP Coding" 15
+
+    # Wait for MCP Docker
+    wait_for_service "http://localhost:9002/health" "MCP Docker" 15
 
     success "Infrastructure is running!"
     echo ""
@@ -153,7 +177,7 @@ stop_infra() {
 }
 
 # =============================================================================
-# BACKEND (Local with hot reload)
+# BACKEND (Local with hot reload on port 8100)
 # =============================================================================
 
 start_backend() {
@@ -172,13 +196,14 @@ start_backend() {
     mkdir -p workspace
 
     # Set environment variables for local development
+    # Use the SAME ports as docker-compose.yml
     export DATABASE_URL="postgresql://druppie:druppie_secret@localhost:5533/druppie"
     export DEV_MODE="${DEV_MODE:-false}"
     export KEYCLOAK_SERVER_URL="http://localhost:8180"
     export KEYCLOAK_ISSUER_URL="http://localhost:8180"
     export KEYCLOAK_REALM="druppie"
     export KEYCLOAK_CLIENT_ID="druppie-backend"
-    export CORS_ORIGINS="http://localhost:5173,http://localhost:5273"
+    export CORS_ORIGINS="http://localhost:5273,http://localhost:5173"
     export GITEA_URL="http://localhost:3100"
     export GITEA_INTERNAL_URL="http://localhost:3100"
     export GITEA_ADMIN_USER="gitea_admin"
@@ -199,29 +224,26 @@ start_backend() {
         set +a
     fi
 
-    log "Starting uvicorn with --reload..."
+    log "Starting uvicorn on port 8100 with hot reload..."
 
-    # Start backend in background
-    source venv/bin/activate
-    nohup uvicorn druppie.api.main:app \
-        --host 0.0.0.0 \
-        --port 8000 \
-        --reload \
-        --reload-dir druppie \
-        > /tmp/druppie-backend.log 2>&1 &
+    # Start backend in background on port 8100 (same as docker-compose)
+    cd druppie
+    nohup ../venv/bin/uvicorn main:app --host 0.0.0.0 --port 8100 --reload > /tmp/druppie-backend.log 2>&1 &
+    cd ..
 
     echo $! > "$BACKEND_PID_FILE"
 
-    sleep 2
+    sleep 3
 
     if kill -0 $(cat "$BACKEND_PID_FILE") 2>/dev/null; then
         success "Backend started (PID: $(cat $BACKEND_PID_FILE))"
         echo ""
-        echo "  Backend API: http://localhost:8000"
-        echo "  API Docs:    http://localhost:8000/docs"
+        echo "  Backend:     http://localhost:8100"
+        echo "  API Docs:    http://localhost:8100/docs"
         echo "  Logs:        tail -f /tmp/druppie-backend.log"
         echo ""
     else
+        cat /tmp/druppie-backend.log
         error "Backend failed to start. Check /tmp/druppie-backend.log"
     fi
 }
@@ -245,7 +267,7 @@ stop_backend() {
 }
 
 # =============================================================================
-# FRONTEND (Local with Vite HMR)
+# FRONTEND (Local with Vite HMR on port 5273)
 # =============================================================================
 
 start_frontend() {
@@ -262,16 +284,16 @@ start_frontend() {
 
     cd frontend
 
-    # Set environment variables
-    export VITE_API_URL="http://localhost:8000"
+    # Set environment variables - point to local backend on port 8100
+    export VITE_API_URL="http://localhost:8100"
     export VITE_KEYCLOAK_URL="http://localhost:8180"
     export VITE_KEYCLOAK_REALM="druppie"
     export VITE_KEYCLOAK_CLIENT_ID="druppie-frontend"
 
-    log "Starting Vite dev server with HMR..."
+    log "Starting Vite dev server on port 5273 with HMR..."
 
-    # Start frontend in background
-    nohup npm run dev > /tmp/druppie-frontend.log 2>&1 &
+    # Start frontend in background on port 5273 (same as docker-compose mapping)
+    nohup npm run dev -- --port 5273 > /tmp/druppie-frontend.log 2>&1 &
 
     echo $! > "$FRONTEND_PID_FILE"
 
@@ -282,7 +304,7 @@ start_frontend() {
     if kill -0 $(cat "$FRONTEND_PID_FILE") 2>/dev/null; then
         success "Frontend started (PID: $(cat $FRONTEND_PID_FILE))"
         echo ""
-        echo "  Frontend:    http://localhost:5173"
+        echo "  Frontend:    http://localhost:5273"
         echo "  Logs:        tail -f /tmp/druppie-frontend.log"
         echo ""
     else
@@ -315,25 +337,22 @@ stop_frontend() {
 configure_keycloak() {
     header "Configuring Keycloak"
 
-    if [ -f "scripts/setup_keycloak.py" ]; then
-        source venv/bin/activate
-        python scripts/setup_keycloak.py
-        success "Keycloak configured!"
-    else
-        warn "Keycloak setup script not found"
-    fi
+    log "Running Keycloak setup script..."
+    source venv/bin/activate
+
+    # Set Keycloak admin credentials
+    export KEYCLOAK_ADMIN_USER="admin"
+    export KEYCLOAK_ADMIN_PASSWORD="admin"
+
+    python scripts/setup_keycloak.py || warn "Keycloak setup had issues (may already be configured)"
 }
 
 configure_gitea() {
     header "Configuring Gitea"
 
-    if [ -f "scripts/setup_gitea.py" ]; then
-        source venv/bin/activate
-        python scripts/setup_gitea.py
-        success "Gitea configured!"
-    else
-        warn "Gitea setup script not found"
-    fi
+    log "Running Gitea setup script..."
+    source venv/bin/activate
+    python scripts/setup_gitea.py || warn "Gitea setup had issues (may already be configured)"
 }
 
 # =============================================================================
@@ -350,22 +369,22 @@ show_status() {
     echo "Local Services:"
 
     if [ -f "$BACKEND_PID_FILE" ] && kill -0 $(cat "$BACKEND_PID_FILE") 2>/dev/null; then
-        echo -e "  Backend:  ${GREEN}Running${NC} (PID: $(cat $BACKEND_PID_FILE))"
+        echo -e "  Backend:  ${GREEN}Running${NC} (PID: $(cat $BACKEND_PID_FILE)) - http://localhost:8100"
     else
         echo -e "  Backend:  ${RED}Stopped${NC}"
     fi
 
     if [ -f "$FRONTEND_PID_FILE" ] && kill -0 $(cat "$FRONTEND_PID_FILE") 2>/dev/null; then
-        echo -e "  Frontend: ${GREEN}Running${NC} (PID: $(cat $FRONTEND_PID_FILE))"
+        echo -e "  Frontend: ${GREEN}Running${NC} (PID: $(cat $FRONTEND_PID_FILE)) - http://localhost:5273"
     else
         echo -e "  Frontend: ${RED}Stopped${NC}"
     fi
 
     echo ""
     echo "URLs:"
-    echo "  Frontend:    http://localhost:5173"
-    echo "  Backend:     http://localhost:8000"
-    echo "  API Docs:    http://localhost:8000/docs"
+    echo "  Frontend:    http://localhost:5273"
+    echo "  Backend:     http://localhost:8100"
+    echo "  API Docs:    http://localhost:8100/docs"
     echo "  Keycloak:    http://localhost:8180"
     echo "  Gitea:       http://localhost:3100"
     echo "  Adminer:     http://localhost:8081"
@@ -396,6 +415,10 @@ show_logs() {
 start_all() {
     header "Starting Druppie Development Environment"
 
+    # Check dependencies BEFORE starting infrastructure
+    check_python
+    check_node
+
     start_infra
 
     # Configure Keycloak and Gitea if first run
@@ -409,9 +432,9 @@ start_all() {
 
     success "Development environment is ready!"
     echo ""
-    echo "  Frontend:    http://localhost:5173"
-    echo "  Backend:     http://localhost:8000"
-    echo "  API Docs:    http://localhost:8000/docs"
+    echo "  Frontend:    http://localhost:5273"
+    echo "  Backend:     http://localhost:8100"
+    echo "  API Docs:    http://localhost:8100/docs"
     echo ""
     echo "Hot reload is enabled:"
     echo "  - Backend changes: Auto-reload via uvicorn"
@@ -436,9 +459,19 @@ stop_all() {
 # COMMAND HANDLING
 # =============================================================================
 
-case "${1:-}" in
+case "${1:-start}" in
+    start)
+        start_all
+        ;;
     infra)
+        check_python
         start_infra
+        # Configure if needed
+        if ! curl -s http://localhost:8180/realms/druppie > /dev/null 2>&1; then
+            setup_python_venv
+            configure_keycloak
+            configure_gitea
+        fi
         ;;
     backend)
         start_backend
@@ -449,26 +482,9 @@ case "${1:-}" in
     stop)
         stop_all
         ;;
-    stop-infra)
-        stop_infra
-        ;;
-    stop-backend)
-        stop_backend
-        ;;
-    stop-frontend)
-        stop_frontend
-        ;;
     restart)
         stop_all
         start_all
-        ;;
-    restart-backend)
-        stop_backend
-        start_backend
-        ;;
-    restart-frontend)
-        stop_frontend
-        start_frontend
         ;;
     status)
         show_status
@@ -476,31 +492,20 @@ case "${1:-}" in
     logs)
         show_logs "${2:-}"
         ;;
-    configure)
-        configure_keycloak
-        configure_gitea
-        ;;
-    ""|start)
-        start_all
-        ;;
     *)
-        echo "Usage: $0 {start|infra|backend|frontend|stop|restart|status|logs|configure}"
+        echo "Druppie Development Setup"
+        echo ""
+        echo "Usage: $0 {start|infra|backend|frontend|stop|restart|status|logs}"
         echo ""
         echo "Commands:"
-        echo "  start         Start everything (default)"
-        echo "  infra         Start only infrastructure (Docker)"
-        echo "  backend       Start only backend (local)"
-        echo "  frontend      Start only frontend (local)"
-        echo "  stop          Stop everything"
-        echo "  stop-infra    Stop only infrastructure"
-        echo "  stop-backend  Stop only backend"
-        echo "  stop-frontend Stop only frontend"
-        echo "  restart       Restart everything"
-        echo "  restart-backend   Restart backend only"
-        echo "  restart-frontend  Restart frontend only"
-        echo "  status        Show service status"
-        echo "  logs [svc]    Show logs (infra, backend, or frontend)"
-        echo "  configure     Run Keycloak & Gitea configuration"
+        echo "  start     Start everything (default)"
+        echo "  infra     Start only infrastructure (Docker)"
+        echo "  backend   Start only backend (local, port 8100)"
+        echo "  frontend  Start only frontend (local, port 5273)"
+        echo "  stop      Stop everything"
+        echo "  restart   Restart everything"
+        echo "  status    Show status of all services"
+        echo "  logs      Show logs (optional: backend|frontend|<service>)"
         exit 1
         ;;
 esac
