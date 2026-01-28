@@ -34,6 +34,7 @@ class ToolCallStatus(str, Enum):
     """Tool call execution status."""
     PENDING = "pending"  # Not yet executed
     WAITING_APPROVAL = "waiting_approval"  # Needs approval before execution
+    WAITING_ANSWER = "waiting_answer"  # HITL tool waiting for user answer
     EXECUTING = "executing"  # Currently running
     COMPLETED = "completed"
     FAILED = "failed"
