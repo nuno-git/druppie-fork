@@ -9,8 +9,11 @@ from ..domain import (
     SessionDetail,
     SessionStatus,
     ChatItem,
+    ChatItemType,
+    MessageSummary,
     TokenUsage,
     LLMMessage,
+    AgentRunSummary,
     AgentRunDetail,
     AgentRunStatus,
     LLMCallDetail,
@@ -113,11 +116,11 @@ class SessionRepository(BaseRepository):
 
     def create(
         self,
-        user_id: UUID,
-        title: str,
+        user_id: UUID | None = None,
+        title: str = "New Session",
         project_id: UUID | None = None,
-    ) -> SessionModel:
-        """Create a new session."""
+    ) -> SessionSummary:
+        """Create a new session and return its summary."""
         session = SessionModel(
             user_id=user_id,
             title=title,
@@ -126,7 +129,7 @@ class SessionRepository(BaseRepository):
         )
         self.db.add(session)
         self.db.flush()
-        return session
+        return self._to_summary(session)
 
     def update_status(self, session_id: UUID, status: SessionStatus) -> None:
         """Update session status."""
@@ -153,7 +156,14 @@ class SessionRepository(BaseRepository):
         )
 
     def _build_chat_timeline(self, session_id: UUID) -> list[ChatItem]:
-        """Build chronological chat timeline from messages and agent runs."""
+        """Build chronological chat timeline from messages and agent runs.
+
+        Returns a unified list of ChatItem objects, each containing either:
+        - A MessageSummary (user input, assistant response, system message)
+        - An AgentRunSummary (pending, running, completed agent runs)
+
+        Items are sorted by created_at for chronological display.
+        """
         items = []
 
         # Get messages (user, system, assistant)
@@ -167,10 +177,15 @@ class SessionRepository(BaseRepository):
 
         for msg in messages:
             items.append(ChatItem(
-                type=f"{msg.role}_message",
-                content=msg.content,
-                agent_id=msg.agent_id,
-                timestamp=msg.created_at,
+                type=ChatItemType.MESSAGE,
+                message=MessageSummary(
+                    id=msg.id,
+                    role=msg.role,
+                    content=msg.content or "",
+                    agent_id=msg.agent_id,
+                    created_at=msg.created_at,
+                ),
+                created_at=msg.created_at,
             ))
 
         # Get agent runs (top-level only - parent_run_id is NULL)
@@ -182,16 +197,34 @@ class SessionRepository(BaseRepository):
         )
 
         for run in agent_runs:
+            # Use started_at for running/completed runs, created_at for pending
+            timestamp = run.started_at or run.created_at
             items.append(ChatItem(
-                type="agent_run",
-                agent_id=run.agent_id,
-                timestamp=run.started_at,
-                agent_run=self._build_agent_run_detail(run),
+                type=ChatItemType.AGENT_RUN,
+                agent_run=self._to_agent_run_summary(run),
+                created_at=timestamp,
             ))
 
-        # Sort by timestamp
-        items.sort(key=lambda x: x.timestamp)
+        # Sort by created_at for chronological order
+        items.sort(key=lambda x: x.created_at)
         return items
+
+    def _to_agent_run_summary(self, run: AgentRun) -> AgentRunSummary:
+        """Convert AgentRun model to AgentRunSummary domain model."""
+        return AgentRunSummary(
+            id=run.id,
+            agent_id=run.agent_id,
+            status=AgentRunStatus(run.status),
+            planned_prompt=run.planned_prompt,
+            sequence_number=run.sequence_number,
+            token_usage=TokenUsage(
+                prompt_tokens=run.prompt_tokens or 0,
+                completion_tokens=run.completion_tokens or 0,
+                total_tokens=run.total_tokens or 0,
+            ),
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+        )
 
     def _build_agent_run_detail(self, run: AgentRun) -> AgentRunDetail:
         """Build full agent run detail with LLM calls and their tool executions."""
@@ -201,6 +234,8 @@ class SessionRepository(BaseRepository):
             id=run.id,
             agent_id=run.agent_id,
             status=AgentRunStatus(run.status),
+            planned_prompt=run.planned_prompt,
+            sequence_number=run.sequence_number,
             token_usage=TokenUsage(
                 prompt_tokens=run.prompt_tokens or 0,
                 completion_tokens=run.completion_tokens or 0,

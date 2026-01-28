@@ -125,14 +125,24 @@ def get_loop() -> MainLoop:
     return get_main_loop()
 
 
-def get_orchestrator(db: Session = Depends(get_db)):
+def get_execution_repository(db: Session = Depends(get_db)) -> "ExecutionRepository":
+    """Get ExecutionRepository with DB session injected."""
+    from druppie.repositories import ExecutionRepository
+    return ExecutionRepository(db)
+
+
+def get_orchestrator(
+    session_repo: SessionRepository = Depends(get_session_repository),
+    execution_repo: "ExecutionRepository" = Depends(get_execution_repository),
+):
     """Get the orchestrator for message processing.
 
     The Orchestrator is the new simplified entry point that replaces MainLoop.
     It coordinates: router → planner → execute pending runs.
+    Uses repositories for all database access.
     """
     from druppie.core.orchestrator import Orchestrator
-    return Orchestrator(db)
+    return Orchestrator(session_repo, execution_repo)
 
 
 def get_workflow_service(

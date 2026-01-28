@@ -27,9 +27,9 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_optional_user, get_orchestrator
+from druppie.api.deps import get_optional_user, get_orchestrator, get_session_repository
 from druppie.core.orchestrator import Orchestrator
-from druppie.db.models import Session
+from druppie.repositories import SessionRepository
 from druppie.domain.common import SessionStatus
 
 logger = structlog.get_logger()
@@ -82,6 +82,7 @@ async def chat(
     request: ChatRequest,
     user: dict | None = Depends(get_optional_user),
     orchestrator: Orchestrator = Depends(get_orchestrator),
+    session_repo: SessionRepository = Depends(get_session_repository),
 ) -> ChatResponse:
     """Process a chat message.
 
@@ -121,8 +122,8 @@ async def chat(
             project_id=project_id,
         )
 
-        # Get session status from database
-        session = orchestrator.db.query(Session).filter(Session.id == result_session_id).first()
+        # Get session status using repository
+        session = session_repo.get_by_id(result_session_id)
         status = session.status if session else SessionStatus.ACTIVE.value
 
         return ChatResponse(
