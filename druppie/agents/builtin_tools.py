@@ -220,11 +220,6 @@ async def ask_multiple_choice_question(
         allow_other=allow_other,
     )
 
-    choices_data = {
-        "options": choices,
-        "allow_other": allow_other,
-    }
-
     # Save question to database
     db = next(get_db())
     try:
@@ -234,7 +229,7 @@ async def ask_multiple_choice_question(
             agent_run_id=UUID(agent_run_id) if agent_run_id else None,
             question=question,
             question_type="choice",
-            choices=choices_data,
+            choices=choices,  # Pass the list directly, not wrapped in a dict
             agent_id=agent_id,
         )
         db.commit()
