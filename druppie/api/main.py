@@ -14,7 +14,6 @@ import structlog
 from druppie.api.routes import agents, approvals, chat, deployments, mcps, projects, questions, sessions, workspace
 from druppie.api.websocket import handle_websocket
 from druppie.api.errors import register_exception_handlers
-from druppie.core.loop import get_main_loop
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
 from druppie.agents import Agent
@@ -29,14 +28,13 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("druppie_starting")
 
-    # Initialize main loop and list available agents/workflows
-    get_main_loop()
-    agents = Agent.list_agents()
-    workflows = Workflow.list_workflows()
+    # List available agents and workflows
+    agents_list = Agent.list_agents()
+    workflows_list = Workflow.list_workflows()
     logger.info(
-        "main_loop_initialized",
-        agents=len(agents),
-        workflows=len(workflows),
+        "druppie_initialized",
+        agents=len(agents_list),
+        workflows=len(workflows_list),
     )
 
     yield

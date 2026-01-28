@@ -30,9 +30,7 @@ import structlog
 logger = structlog.get_logger()
 
 from druppie.core.auth import get_auth_service, AuthService
-from druppie.core.loop import get_main_loop, MainLoop
 from druppie.db.database import get_db, init_db, SessionLocal, engine
-from druppie.db import get_or_create_user
 from uuid import UUID
 
 # Import repositories and services for dependency injection
@@ -120,11 +118,6 @@ def get_project_service(
     return ProjectService(project_repo, session_repo)
 
 
-def get_loop() -> MainLoop:
-    """Get the main execution loop."""
-    return get_main_loop()
-
-
 def get_execution_repository(db: Session = Depends(get_db)) -> "ExecutionRepository":
     """Get ExecutionRepository with DB session injected."""
     from druppie.repositories import ExecutionRepository
@@ -146,14 +139,14 @@ def get_orchestrator(
 
 
 def get_workflow_service(
-    loop: MainLoop = Depends(get_loop),
+    orchestrator: "Orchestrator" = Depends(get_orchestrator),
 ) -> WorkflowService:
-    """Get WorkflowService with MainLoop injected.
+    """Get WorkflowService with Orchestrator injected.
 
-    WorkflowService wraps the MainLoop and provides methods for
+    WorkflowService wraps the Orchestrator and provides methods for
     resuming paused workflows (after questions, approvals, etc.).
     """
-    return WorkflowService(loop)
+    return WorkflowService(orchestrator)
 
 
 def get_auth() -> AuthService:
@@ -181,15 +174,17 @@ async def get_current_user(
     try:
         user_id = user.get("sub")
         if user_id:
+            from druppie.repositories import UserRepository
             db = SessionLocal()
             try:
-                get_or_create_user(
-                    db,
+                user_repo = UserRepository(db)
+                user_repo.get_or_create(
                     user_id=UUID(user_id),
                     username=user.get("preferred_username"),
                     email=user.get("email"),
                     display_name=user.get("name"),
                 )
+                db.commit()
             finally:
                 db.close()
     except Exception as e:

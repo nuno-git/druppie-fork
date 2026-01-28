@@ -24,7 +24,6 @@ class ExecutionRepository(BaseRepository):
         planned_prompt: str | None = None,
         sequence_number: int | None = None,
         parent_run_id: UUID | None = None,
-        workflow_step_id: UUID | None = None,
     ) -> AgentRunSummary:
         """Create an agent run record."""
         agent_run = AgentRun(
@@ -34,7 +33,6 @@ class ExecutionRepository(BaseRepository):
             planned_prompt=planned_prompt,
             sequence_number=sequence_number,
             parent_run_id=parent_run_id,
-            workflow_step_id=workflow_step_id,
         )
         self.db.add(agent_run)
         self.db.flush()

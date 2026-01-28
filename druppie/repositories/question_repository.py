@@ -7,8 +7,9 @@ Design decision: Choices are stored as JSONB in hitl_questions.choices instead
 of a separate table. See druppie/db/models.py for detailed rationale.
 """
 
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
+from typing import Any
 
 from .base import BaseRepository
 from ..domain import QuestionDetail, QuestionChoice, PendingQuestionList, QuestionStatus
@@ -29,6 +30,45 @@ class QuestionRepository(BaseRepository):
     def get_by_id(self, question_id: UUID) -> HitlQuestion | None:
         """Get raw question model."""
         return self.db.query(HitlQuestion).filter_by(id=question_id).first()
+
+    def create(
+        self,
+        session_id: UUID,
+        agent_run_id: UUID | None,
+        agent_id: str,
+        question: str,
+        question_type: str = "text",
+        choices: list[dict[str, str]] | None = None,
+        agent_state: dict[str, Any] | None = None,
+    ) -> QuestionDetail:
+        """Create a new HITL question.
+
+        Args:
+            session_id: Session this question belongs to
+            agent_run_id: Agent run that asked the question
+            agent_id: ID of the agent asking
+            question: The question text
+            question_type: "text", "single_choice", or "multiple_choice"
+            choices: List of choice dicts [{"text": "Option A"}, ...]
+            agent_state: Saved state for resumption after answer
+
+        Returns:
+            QuestionDetail domain object
+        """
+        hitl_question = HitlQuestion(
+            id=uuid4(),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            agent_id=agent_id,
+            question=question,
+            question_type=question_type,
+            choices=choices,
+            status=QuestionStatus.PENDING.value,
+            agent_state=agent_state,
+        )
+        self.db.add(hitl_question)
+        self.db.flush()
+        return self._to_detail(hitl_question)
 
     def get_pending_for_user(self, user_id: UUID) -> PendingQuestionList:
         """Get all pending questions for sessions owned by user.

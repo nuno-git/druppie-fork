@@ -152,7 +152,7 @@ async def ask_question(
     The workflow will resume when the user answers.
     """
     from druppie.api.deps import get_db
-    from druppie.db.crud import create_hitl_question
+    from druppie.repositories import QuestionRepository
 
     session_id = context.session_id
     agent_run_id = context.current_agent_run_id
@@ -168,14 +168,14 @@ async def ask_question(
     # Save question to database
     db = next(get_db())
     try:
-        hitl_question = create_hitl_question(
-            db=db,
+        question_repo = QuestionRepository(db)
+        hitl_question = question_repo.create(
             session_id=UUID(session_id),
             agent_run_id=UUID(agent_run_id) if agent_run_id else None,
+            agent_id=agent_id,
             question=question,
             question_type="text",
             choices=None,
-            agent_id=agent_id,
         )
         db.commit()
 
@@ -237,7 +237,7 @@ async def ask_multiple_choice_question(
     The workflow will resume when the user answers.
     """
     from druppie.api.deps import get_db
-    from druppie.db.crud import create_hitl_question
+    from druppie.repositories import QuestionRepository
 
     session_id = context.session_id
     agent_run_id = context.current_agent_run_id
@@ -252,17 +252,18 @@ async def ask_multiple_choice_question(
         allow_other=allow_other,
     )
 
-    # Save question to database
+    # Save question to database - convert choices to format expected by repository
+    choices_dicts = [{"text": c} for c in choices]
     db = next(get_db())
     try:
-        hitl_question = create_hitl_question(
-            db=db,
+        question_repo = QuestionRepository(db)
+        hitl_question = question_repo.create(
             session_id=UUID(session_id),
             agent_run_id=UUID(agent_run_id) if agent_run_id else None,
+            agent_id=agent_id,
             question=question,
             question_type="choice",
-            choices=choices,  # Pass the list directly, not wrapped in a dict
-            agent_id=agent_id,
+            choices=choices_dicts,
         )
         db.commit()
 

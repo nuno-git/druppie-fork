@@ -31,6 +31,7 @@ from ..db.models import (
     LlmCall,
     Approval,
     Project,
+    SessionEvent,
 )
 
 
@@ -299,32 +300,23 @@ class SessionRepository(BaseRepository):
         return messages
 
     def _build_tool_calls_for_llm(self, llm: LlmCall) -> list[ToolCallDetail]:
-        """Build tool call details from LLM response_tool_calls."""
-        tool_calls = []
+        """Build tool call details for an LLM call.
 
-        # The LLM's response_tool_calls contains what the LLM decided
-        llm_tool_calls = llm.response_tool_calls or []
+        Uses llm_call_id foreign key for direct lookup instead of
+        timestamp-based matching.
+        """
+        # Query tool calls directly by llm_call_id, ordered by tool_call_index
+        tool_calls_db = (
+            self.db.query(ToolCall)
+            .filter_by(llm_call_id=llm.id)
+            .order_by(ToolCall.tool_call_index)
+            .all()
+        )
 
-        for index, tc_response in enumerate(llm_tool_calls):
-            if not isinstance(tc_response, dict):
-                continue
-
-            function_info = tc_response.get("function", {})
-            tool_name = function_info.get("name", "")
-
-            # Find the matching ToolCall record in DB
-            tool_call_db = (
-                self.db.query(ToolCall)
-                .filter_by(agent_run_id=llm.agent_run_id, tool_name=tool_name)
-                .filter(ToolCall.created_at >= llm.created_at)
-                .order_by(ToolCall.created_at)
-                .first()
-            )
-
-            if tool_call_db:
-                tool_calls.append(self._build_tool_call_detail(tool_call_db, index))
-
-        return tool_calls
+        return [
+            self._build_tool_call_detail(tc, tc.tool_call_index or idx)
+            for idx, tc in enumerate(tool_calls_db)
+        ]
 
     def _build_tool_call_detail(self, tc: ToolCall, index: int) -> ToolCallDetail:
         """Build a single tool call detail."""
@@ -394,3 +386,49 @@ class SessionRepository(BaseRepository):
             repo_url=project.repo_url,
             created_at=project.created_at,
         )
+
+    def create_event(
+        self,
+        session_id: UUID,
+        event_type: str,
+        title: str | None = None,
+        agent_id: str | None = None,
+        tool_name: str | None = None,
+        agent_run_id: UUID | None = None,
+        tool_call_id: UUID | None = None,
+        approval_id: UUID | None = None,
+        hitl_question_id: UUID | None = None,
+        event_data: dict | None = None,
+    ) -> UUID:
+        """Create a session event for timeline display.
+
+        Args:
+            session_id: Session this event belongs to
+            event_type: Type of event (agent_started, tool_call, etc.)
+            title: Human-readable event title
+            agent_id: Agent that triggered this event
+            tool_name: Tool name for tool events
+            agent_run_id: Reference to agent run
+            tool_call_id: Reference to tool call
+            approval_id: Reference to approval
+            hitl_question_id: Reference to HITL question
+            event_data: Additional event-specific data
+
+        Returns:
+            The created event's ID
+        """
+        event = SessionEvent(
+            session_id=session_id,
+            event_type=event_type,
+            title=title,
+            agent_id=agent_id,
+            tool_name=tool_name,
+            agent_run_id=agent_run_id,
+            tool_call_id=tool_call_id,
+            approval_id=approval_id,
+            hitl_question_id=hitl_question_id,
+            event_data=event_data,
+        )
+        self.db.add(event)
+        self.db.flush()
+        return event.id

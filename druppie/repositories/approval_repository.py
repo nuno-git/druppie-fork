@@ -11,6 +11,56 @@ from ..db.models import Approval
 class ApprovalRepository(BaseRepository):
     """Database access for approvals."""
 
+    def create(
+        self,
+        session_id: UUID,
+        tool_name: str,
+        arguments: dict,
+        required_role: str,
+        danger_level: str,
+        description: str,
+        agent_id: str | None = None,
+        agent_run_id: UUID | None = None,
+        tool_call_id: UUID | None = None,
+        mcp_server: str | None = None,
+        agent_state: dict | None = None,
+    ) -> Approval:
+        """Create a new approval record.
+
+        Args:
+            session_id: Session this approval belongs to
+            tool_name: Full tool name (e.g., "coding:write_file")
+            arguments: Tool arguments
+            required_role: Role required to approve (e.g., "developer")
+            danger_level: Risk level ("low", "medium", "high")
+            description: Human-readable description
+            agent_id: ID of the agent requesting approval
+            agent_run_id: ID of the agent run
+            tool_call_id: ID of the associated tool call
+            mcp_server: MCP server name
+            agent_state: Agent state for resumption after approval
+
+        Returns:
+            Created Approval model
+        """
+        approval = Approval(
+            session_id=session_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            required_role=required_role,
+            danger_level=danger_level,
+            description=description,
+            status=ApprovalStatus.PENDING.value,
+            agent_id=agent_id,
+            agent_run_id=agent_run_id,
+            tool_call_id=tool_call_id,
+            mcp_server=mcp_server,
+            agent_state=agent_state,
+        )
+        self.db.add(approval)
+        self.db.flush()
+        return approval
+
     def get_by_id(self, approval_id: UUID) -> Approval | None:
         """Get raw approval model."""
         return self.db.query(Approval).filter_by(id=approval_id).first()
