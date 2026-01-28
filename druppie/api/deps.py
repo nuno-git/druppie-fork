@@ -112,10 +112,9 @@ def get_question_service(
 
 def get_project_service(
     project_repo: ProjectRepository = Depends(get_project_repository),
-    session_repo: SessionRepository = Depends(get_session_repository),
 ) -> ProjectService:
     """Get ProjectService with repositories injected."""
-    return ProjectService(project_repo, session_repo)
+    return ProjectService(project_repo)
 
 
 def get_execution_repository(db: Session = Depends(get_db)) -> "ExecutionRepository":

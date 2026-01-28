@@ -82,20 +82,52 @@ class Orchestrator:
         )
 
         # 2. Run router agent
-        router = Agent("router", db=self.session_repo.db, session_id=str(current_session_id))
-        router_result = await router.run(message)
+        router_run = self.execution_repo.create_agent_run(
+            session_id=current_session_id,
+            agent_id="router",
+            planned_prompt=message,
+        )
+        self.execution_repo.commit()
 
-        if router_result.get("status") == "paused":
+        router = Agent("router")
+        router_result = await router.run(
+            message,
+            session_id=str(current_session_id),
+            agent_run_id=str(router_run.id),
+        )
+
+        if router_result.get("status") == "paused" or router_result.get("paused"):
             logger.info("router_paused", session_id=str(current_session_id))
+            self.execution_repo.update_status(router_run.id, AgentRunStatus.PAUSED)
+            self.execution_repo.commit()
             return current_session_id
+
+        self.execution_repo.update_status(router_run.id, AgentRunStatus.COMPLETED)
+        self.execution_repo.commit()
 
         # 3. Run planner agent (creates pending runs via make_plan tool)
-        planner = Agent("planner", db=self.session_repo.db, session_id=str(current_session_id))
-        planner_result = await planner.run(f"User request: {message}")
+        planner_run = self.execution_repo.create_agent_run(
+            session_id=current_session_id,
+            agent_id="planner",
+            planned_prompt=f"User request: {message}",
+        )
+        self.execution_repo.commit()
 
-        if planner_result.get("status") == "paused":
+        planner = Agent("planner")
+        planner_result = await planner.run(
+            f"User request: {message}",
+            session_id=str(current_session_id),
+            agent_run_id=str(planner_run.id),
+        )
+
+        if planner_result.get("status") == "paused" or planner_result.get("paused"):
             logger.info("planner_paused", session_id=str(current_session_id))
+            self.execution_repo.update_status(planner_run.id, AgentRunStatus.PAUSED)
+            self.execution_repo.commit()
             return current_session_id
+
+        self.execution_repo.update_status(planner_run.id, AgentRunStatus.COMPLETED)
+        self.execution_repo.commit()
 
         # 4. Execute pending runs
         await self.execute_pending_runs(current_session_id)
@@ -135,14 +167,13 @@ class Orchestrator:
             self.execution_repo.update_status(next_run.id, AgentRunStatus.RUNNING)
             self.execution_repo.commit()
 
-            # Execute using existing Agent class
-            agent = Agent(
-                next_run.agent_id,
-                db=self.session_repo.db,
+            # Execute using Agent class
+            agent = Agent(next_run.agent_id)
+            result = await agent.run(
+                next_run.planned_prompt,
                 session_id=str(session_id),
                 agent_run_id=str(next_run.id),
             )
-            result = await agent.run(next_run.planned_prompt)
 
             if result.get("status") == "paused":
                 logger.info(
@@ -172,6 +203,8 @@ class Orchestrator:
         Resumes the paused agent run and continues executing pending runs.
         """
         from druppie.agents.runtime import Agent
+        from druppie.repositories import ApprovalRepository
+        from druppie.core.mcp_client import get_mcp_client
 
         logger.info(
             "resume_from_approval",
@@ -179,20 +212,39 @@ class Orchestrator:
             approval_id=str(approval_id),
         )
 
-        # Get the paused agent run from repository
+        # Get approval with agent_state
+        approval_repo = ApprovalRepository(self.session_repo.db)
+        approval = approval_repo.get_by_id(approval_id)
+
+        if not approval:
+            logger.error("approval_not_found", approval_id=str(approval_id))
+            return session_id
+
+        if approval.status != "approved":
+            logger.error("approval_not_approved", status=approval.status)
+            return session_id
+
+        # Execute the approved tool
+        mcp_client = get_mcp_client(self.session_repo.db)
+        tool_result = await mcp_client.execute_approved_tool(
+            str(approval_id),
+            session_id=str(session_id),
+        )
+
+        # Get the paused agent run
         paused_run = self.execution_repo.get_paused_run(session_id)
 
-        if paused_run:
+        if paused_run and approval.agent_state:
             # Resume the agent
-            agent = Agent(
-                paused_run.agent_id,
-                db=self.session_repo.db,
+            agent = Agent(paused_run.agent_id)
+            result = await agent.resume_from_approval(
+                agent_state=approval.agent_state,
+                tool_result=tool_result,
                 session_id=str(session_id),
                 agent_run_id=str(paused_run.id),
             )
-            result = await agent.resume_from_approval(str(approval_id))
 
-            if result.get("status") != "paused":
+            if result.get("status") != "paused" and not result.get("paused"):
                 # Agent completed - mark as completed and continue
                 self.execution_repo.update_status(paused_run.id, AgentRunStatus.COMPLETED)
                 self.execution_repo.commit()
@@ -208,6 +260,7 @@ class Orchestrator:
         Resumes the paused agent run and continues executing pending runs.
         """
         from druppie.agents.runtime import Agent
+        from druppie.repositories import QuestionRepository
 
         logger.info(
             "resume_from_question",
@@ -215,20 +268,28 @@ class Orchestrator:
             question_id=str(question_id),
         )
 
-        # Get the paused agent run from repository
+        # Get question with agent_state
+        question_repo = QuestionRepository(self.session_repo.db)
+        question = question_repo.get_by_id(question_id)
+
+        if not question:
+            logger.error("question_not_found", question_id=str(question_id))
+            return session_id
+
+        # Get the paused agent run
         paused_run = self.execution_repo.get_paused_run(session_id)
 
-        if paused_run:
+        if paused_run and question.agent_state:
             # Resume the agent with the answer
-            agent = Agent(
-                paused_run.agent_id,
-                db=self.session_repo.db,
+            agent = Agent(paused_run.agent_id)
+            result = await agent.resume(
+                agent_state=question.agent_state,
+                answer=answer,
                 session_id=str(session_id),
                 agent_run_id=str(paused_run.id),
             )
-            result = await agent.resume_from_question(str(question_id), answer)
 
-            if result.get("status") != "paused":
+            if result.get("status") != "paused" and not result.get("paused"):
                 # Agent completed - mark as completed and continue
                 self.execution_repo.update_status(paused_run.id, AgentRunStatus.COMPLETED)
                 self.execution_repo.commit()

@@ -11,14 +11,9 @@ Tools:
   - done: Signal that the agent has completed its task
 """
 
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
-
-if TYPE_CHECKING:
-    from druppie.core.execution_context import ExecutionContext
 
 logger = structlog.get_logger()
 
@@ -142,7 +137,8 @@ HITL_TOOLS = BUILTIN_TOOLS
 
 async def ask_question(
     question: str,
-    context: "ExecutionContext",
+    session_id: str,
+    agent_run_id: str,
     agent_id: str,
     question_context: str | None = None,
 ) -> dict:
@@ -150,12 +146,16 @@ async def ask_question(
 
     This saves the question to the database and returns a paused state.
     The workflow will resume when the user answers.
+
+    Args:
+        question: The question to ask
+        session_id: Session ID
+        agent_run_id: Agent run ID for tracking
+        agent_id: ID of the calling agent
+        question_context: Optional context for the question
     """
     from druppie.api.deps import get_db
     from druppie.repositories import QuestionRepository
-
-    session_id = context.session_id
-    agent_run_id = context.current_agent_run_id
 
     logger.info(
         "hitl_ask_question",
@@ -171,7 +171,7 @@ async def ask_question(
         question_repo = QuestionRepository(db)
         hitl_question = question_repo.create(
             session_id=UUID(session_id),
-            agent_run_id=UUID(agent_run_id) if agent_run_id else None,
+            agent_run_id=UUID(agent_run_id),
             agent_id=agent_id,
             question=question,
             question_type="text",
@@ -189,31 +189,6 @@ async def ask_question(
     finally:
         db.close()
 
-    # Emit event to frontend via WebSocket
-    if context.emit_event:
-        context.emit_event({
-            "type": "question",
-            "event_type": "question",
-            "request_id": question_id,
-            "question_id": question_id,
-            "session_id": session_id,
-            "agent_id": agent_id,
-            "question": question,
-            "input_type": "text",
-            "question_type": "text",
-            "choices": None,
-            "context": question_context,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-
-    # Also add to workflow events for persistence
-    context.emit("question_asked", {
-        "question_id": question_id,
-        "agent_id": agent_id,
-        "question": question,
-        "question_type": "text",
-    })
-
     return {
         "status": "paused",
         "reason": "waiting_for_answer",
@@ -226,7 +201,8 @@ async def ask_question(
 async def ask_multiple_choice_question(
     question: str,
     choices: list[str],
-    context: "ExecutionContext",
+    session_id: str,
+    agent_run_id: str,
     agent_id: str,
     allow_other: bool = True,
     question_context: str | None = None,
@@ -235,12 +211,18 @@ async def ask_multiple_choice_question(
 
     This saves the question to the database and returns a paused state.
     The workflow will resume when the user answers.
+
+    Args:
+        question: The question to ask
+        choices: List of choices
+        session_id: Session ID
+        agent_run_id: Agent run ID for tracking
+        agent_id: ID of the calling agent
+        allow_other: Whether to allow custom answer
+        question_context: Optional context for the question
     """
     from druppie.api.deps import get_db
     from druppie.repositories import QuestionRepository
-
-    session_id = context.session_id
-    agent_run_id = context.current_agent_run_id
 
     logger.info(
         "hitl_ask_multiple_choice_question",
@@ -259,7 +241,7 @@ async def ask_multiple_choice_question(
         question_repo = QuestionRepository(db)
         hitl_question = question_repo.create(
             session_id=UUID(session_id),
-            agent_run_id=UUID(agent_run_id) if agent_run_id else None,
+            agent_run_id=UUID(agent_run_id),
             agent_id=agent_id,
             question=question,
             question_type="choice",
@@ -276,34 +258,6 @@ async def ask_multiple_choice_question(
         )
     finally:
         db.close()
-
-    # Emit event to frontend via WebSocket
-    if context.emit_event:
-        context.emit_event({
-            "type": "question",
-            "event_type": "question",
-            "request_id": question_id,
-            "question_id": question_id,
-            "session_id": session_id,
-            "agent_id": agent_id,
-            "question": question,
-            "input_type": "choice",
-            "question_type": "choice",
-            "choices": choices,
-            "allow_other": allow_other,
-            "context": question_context,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-
-    # Also add to workflow events for persistence
-    context.emit("question_asked", {
-        "question_id": question_id,
-        "agent_id": agent_id,
-        "question": question,
-        "question_type": "choice",
-        "choices": choices,
-        "allow_other": allow_other,
-    })
 
     return {
         "status": "paused",
@@ -322,7 +276,8 @@ async def ask_multiple_choice_question(
 
 async def make_plan(
     steps: list[dict],
-    context: "ExecutionContext",
+    session_id: str,
+    agent_run_id: str,
     agent_id: str,
 ) -> dict:
     """Create an execution plan as pending agent runs.
@@ -332,7 +287,8 @@ async def make_plan(
 
     Args:
         steps: List of steps, each with agent_id and prompt
-        context: Execution context
+        session_id: Session ID
+        agent_run_id: Agent run ID for tracking
         agent_id: ID of the calling agent (planner)
 
     Returns:
@@ -341,7 +297,6 @@ async def make_plan(
     from druppie.db.models import AgentRun
     from druppie.api.deps import get_db
 
-    session_id = context.session_id
     session_uuid = UUID(session_id)
 
     logger.info(
@@ -398,13 +353,6 @@ async def make_plan(
     finally:
         db.close()
 
-    # Emit event
-    context.emit("plan_created", {
-        "agent_id": agent_id,
-        "step_count": len(created_runs),
-        "steps": created_runs,
-    })
-
     return {
         "success": True,
         "message": f"Created plan with {len(created_runs)} steps",
@@ -418,25 +366,27 @@ async def make_plan(
 
 async def done(
     summary: str,
-    context: "ExecutionContext",
+    session_id: str,
+    agent_run_id: str,
     agent_id: str,
 ) -> dict:
     """Signal that the agent has completed its task.
 
     This does NOT pause execution - it signals completion immediately.
+
+    Args:
+        summary: Summary of what was accomplished
+        session_id: Session ID
+        agent_run_id: Agent run ID for tracking
+        agent_id: ID of the calling agent
     """
     logger.info(
         "agent_done",
-        session_id=context.session_id,
+        session_id=session_id,
+        agent_run_id=agent_run_id,
         agent_id=agent_id,
         summary=summary[:200] if summary else "",
     )
-
-    # Emit completion event
-    context.emit("task_completed", {
-        "agent_id": agent_id,
-        "summary": summary,
-    })
 
     return {
         "status": "completed",
@@ -451,7 +401,8 @@ async def done(
 async def execute_builtin_tool(
     tool_name: str,
     tool_args: dict,
-    context: "ExecutionContext",
+    session_id: str,
+    agent_run_id: str,
     agent_id: str,
 ) -> dict:
     """Execute a built-in tool.
@@ -459,7 +410,8 @@ async def execute_builtin_tool(
     Args:
         tool_name: Tool name
         tool_args: Tool arguments
-        context: Execution context
+        session_id: Session ID
+        agent_run_id: Agent run ID for tracking
         agent_id: ID of the calling agent
 
     Returns:
@@ -468,7 +420,8 @@ async def execute_builtin_tool(
     if tool_name == "hitl_ask_question":
         return await ask_question(
             question=tool_args.get("question", ""),
-            context=context,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
             agent_id=agent_id,
             question_context=tool_args.get("context"),
         )
@@ -476,7 +429,8 @@ async def execute_builtin_tool(
         return await ask_multiple_choice_question(
             question=tool_args.get("question", ""),
             choices=tool_args.get("choices", []),
-            context=context,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
             agent_id=agent_id,
             allow_other=tool_args.get("allow_other", True),
             question_context=tool_args.get("context"),
@@ -484,13 +438,15 @@ async def execute_builtin_tool(
     elif tool_name == "done":
         return await done(
             summary=tool_args.get("summary", ""),
-            context=context,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
             agent_id=agent_id,
         )
     elif tool_name == "make_plan":
         return await make_plan(
             steps=tool_args.get("steps", []),
-            context=context,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
             agent_id=agent_id,
         )
     else:
