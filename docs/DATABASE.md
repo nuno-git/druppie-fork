@@ -108,9 +108,10 @@ SESSION
         ┌───────────┴───────────┐          │
         │                       │          │
         ▼                       ▼          │
-┌───────────────┐      ┌───────────────┐   │
-│    builds     │      │  deployments  │   │
-└───────────────┘      └───────────────┘   │
+┌───────────────────────────────────────┐   │
+│  (containers managed by Docker MCP)   │   │
+│  (no database tables - uses labels)   │   │
+└───────────────────────────────────────┘   │
                                            │
         ┌──────────────┬───────────────────┼───────────────────┐
         │              │                   │                   │
@@ -371,38 +372,35 @@ Git repositories.
 | status | VARCHAR(50) | active, archived |
 | created_at | TIMESTAMP | |
 
-### builds
+### Container Management (No Database Tables)
 
-Docker builds.
+Containers are **NOT** stored in the database. Docker MCP is the source of truth.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | UUID | Primary key |
-| project_id | UUID | FK to projects |
-| branch | VARCHAR(255) | |
-| status | VARCHAR(50) | building, running, stopped, failed |
-| image_name | VARCHAR(255) | Docker image name |
-| container_name | VARCHAR(255) | Container name |
-| port | INTEGER | Container internal port |
-| host_port | INTEGER | Exposed host port |
-| app_url | VARCHAR(500) | Access URL |
-| created_at | TIMESTAMP | |
-| updated_at | TIMESTAMP | |
+**How it works:**
+- Docker MCP clones git repo, builds, and runs containers
+- Containers are labeled with Druppie metadata
+- Backend queries Docker MCP to list containers
 
-### deployments
+**Docker labels:**
+```
+druppie.project_id=<uuid>
+druppie.session_id=<uuid>
+druppie.branch=main
+druppie.git_url=http://gitea:3000/org/todo-app
+```
 
-Running containers.
+**API Bridge:**
+```
+GET /api/deployments
+  → Backend gets user's project IDs
+  → Calls Docker MCP: list_containers(project_id=xxx)
+  → Returns only containers user owns
+```
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | UUID | Primary key |
-| build_id | UUID | FK to builds |
-| project_id | UUID | FK to projects |
-| container_name | VARCHAR(255) | |
-| host_port | INTEGER | |
-| status | VARCHAR(50) | running, stopped |
-| started_at | TIMESTAMP | |
-| stopped_at | TIMESTAMP | |
+This approach:
+- No stale database state (Docker is source of truth)
+- Works with Kubernetes (no shared volumes)
+- User isolation via project_id label filtering
 
 ### workflows
 

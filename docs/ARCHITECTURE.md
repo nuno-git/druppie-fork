@@ -69,17 +69,24 @@ This document explains how all the parts of Druppie fit together.
            │  Port 9001    │             │  Port 9002    │
            │               │             │               │
            │  - read_file  │             │  - build      │
-           │  - write_file │             │  - run        │
-           │  - run_command│             │  - stop       │
-           │  - git ops    │             │  - logs       │
-           │  - run_tests  │             │               │
+           │  - write_file │             │    (clones    │
+           │  - run_command│             │     from git) │
+           │  - git ops    │             │  - run        │
+           │  - run_tests  │             │  - stop       │
+           │               │             │  - logs       │
+           │               │             │  - list       │
            └───────┬───────┘             └───────┬───────┘
                    │                             │
                    ▼                             ▼
            ┌───────────────┐             ┌───────────────┐
            │  Workspace    │             │ Docker Daemon │
            │  (git repos)  │             │ (containers)  │
-           └───────────────┘             └───────────────┘
+           └───────────────┘             │               │
+                                         │ Labels:       │
+                                         │ project_id    │
+                                         │ session_id    │
+                                         │ branch        │
+                                         └───────────────┘
 ```
 
 ## Two Types of Tools
@@ -106,10 +113,47 @@ These require HTTP calls to separate MCP server containers:
 | coding | `run_command` | Execute shell command |
 | coding | `commit_and_push` | Git commit and push |
 | coding | `run_tests` | Auto-detect and run tests |
-| docker | `build` | Build Docker image |
-| docker | `run` | Run container |
+| docker | `build` | Clone git repo, build Docker image |
+| docker | `run` | Run container (adds labels) |
 | docker | `stop` | Stop container |
 | docker | `logs` | Get container logs |
+| docker | `list_containers` | List containers (filter by project_id) |
+
+### Docker MCP: Git-Based Builds
+
+Docker MCP does NOT depend on Coding MCP's workspace. It clones directly from Git:
+
+```
+Agent calls docker:build
+    │
+    ├── Backend injects: project_id, git_url, branch
+    │
+    ▼
+Docker MCP:
+    1. git clone <git_url> --branch <branch> /tmp/build-xxx
+    2. docker build -t <image_name> /tmp/build-xxx
+    3. rm -rf /tmp/build-xxx
+    4. Returns: { success: true, image_name: "..." }
+```
+
+### Docker Labels for Container Ownership
+
+When `docker:run` is called, containers are labeled:
+
+```bash
+docker run \
+  --label druppie.project_id=<uuid> \
+  --label druppie.session_id=<uuid> \
+  --label druppie.branch=main \
+  --label druppie.git_url=http://gitea:3000/org/todo-app \
+  myapp:latest
+```
+
+**Why labels?**
+- No database tables needed (Docker is source of truth)
+- Query containers: `docker ps --filter label=druppie.project_id=xxx`
+- User isolation: Backend filters by user's project IDs
+- Kubernetes-friendly: Works with any container runtime
 
 ## Session Structure
 
@@ -128,7 +172,7 @@ Session
 │       ├── id, name, description
 │       ├── git_url (Gitea repo URL)
 │       ├── status (active/archived)
-│       └── deployment (if deployed)
+│       └── deployment (queried from Docker MCP via labels)
 │           ├── status (running/stopped)
 │           ├── app_url (http://localhost:9100)
 │           ├── container_name
@@ -354,12 +398,16 @@ GET  /api/workspace/files?session_id=X&path=Y  → coding:list_dir
 GET  /api/workspace/file?session_id=X&path=Y   → coding:read_file
 ```
 
-**Deployment Bridge** (containers):
+**Deployment Bridge** (containers - no database, Docker is source of truth):
 ```
-GET  /api/deployments                          → list from database + docker:list
-POST /api/deployments/{id}/stop                → docker:stop
-POST /api/deployments/{id}/restart             → docker:stop + docker:run
-GET  /api/deployments/{id}/logs                → docker:logs
+GET  /api/deployments
+  → Backend gets user's project IDs from DB
+  → Calls docker:list_containers(project_id=xxx) for each project
+  → Returns merged list (user only sees their containers)
+
+POST /api/deployments/{container_name}/stop    → docker:stop
+POST /api/deployments/{container_name}/restart → docker:stop + docker:run
+GET  /api/deployments/{container_name}/logs    → docker:logs
 ```
 
 ## Key Files
