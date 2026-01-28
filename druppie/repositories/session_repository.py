@@ -40,13 +40,20 @@ class SessionRepository(BaseRepository):
 
     def list_for_user(
         self,
-        user_id: UUID,
+        user_id: UUID | None,
         limit: int = 20,
         offset: int = 0,
         status: str | None = None,
     ) -> tuple[list[SessionSummary], int]:
-        """List sessions for a user with pagination."""
-        query = self.db.query(SessionModel).filter_by(user_id=user_id)
+        """List sessions for a user with pagination.
+
+        If user_id is None, returns all sessions (admin view).
+        """
+        query = self.db.query(SessionModel)
+
+        # Filter by user if specified (None means admin viewing all)
+        if user_id is not None:
+            query = query.filter_by(user_id=user_id)
 
         if status:
             query = query.filter_by(status=status)

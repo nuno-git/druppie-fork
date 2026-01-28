@@ -4,6 +4,19 @@ Provides common dependencies for FastAPI route handlers including:
 - Database sessions
 - Authentication and authorization
 - Main execution loop
+- Repository and Service layer injection (clean architecture)
+
+The clean architecture uses dependency injection to wire up:
+  Route → Service → Repository → Database
+
+Example usage in a route:
+    @router.get("/{session_id}")
+    async def get_session(
+        session_id: UUID,
+        service: SessionService = Depends(get_session_service),
+        user: dict = Depends(get_current_user),
+    ) -> SessionDetail:
+        return service.get_detail(session_id, UUID(user["sub"]), get_user_roles(user))
 """
 
 import os
@@ -22,8 +35,83 @@ from druppie.db.database import get_db, init_db, SessionLocal, engine
 from druppie.db import get_or_create_user
 from uuid import UUID
 
+# Import repositories and services for dependency injection
+from druppie.repositories import (
+    SessionRepository,
+    ApprovalRepository,
+    QuestionRepository,
+    ProjectRepository,
+)
+from druppie.services import (
+    SessionService,
+    ApprovalService,
+    QuestionService,
+    ProjectService,
+)
+
 # Initialize database tables on import
 init_db()
+
+
+# =============================================================================
+# REPOSITORY DEPENDENCIES
+# =============================================================================
+# Repositories handle database access. Each repository gets a DB session.
+
+
+def get_session_repository(db: Session = Depends(get_db)) -> SessionRepository:
+    """Get SessionRepository with DB session injected."""
+    return SessionRepository(db)
+
+
+def get_approval_repository(db: Session = Depends(get_db)) -> ApprovalRepository:
+    """Get ApprovalRepository with DB session injected."""
+    return ApprovalRepository(db)
+
+
+def get_question_repository(db: Session = Depends(get_db)) -> QuestionRepository:
+    """Get QuestionRepository with DB session injected."""
+    return QuestionRepository(db)
+
+
+def get_project_repository(db: Session = Depends(get_db)) -> ProjectRepository:
+    """Get ProjectRepository with DB session injected."""
+    return ProjectRepository(db)
+
+
+# =============================================================================
+# SERVICE DEPENDENCIES
+# =============================================================================
+# Services handle business logic. Each service gets its required repositories.
+
+
+def get_session_service(
+    session_repo: SessionRepository = Depends(get_session_repository),
+) -> SessionService:
+    """Get SessionService with repositories injected."""
+    return SessionService(session_repo)
+
+
+def get_approval_service(
+    approval_repo: ApprovalRepository = Depends(get_approval_repository),
+) -> ApprovalService:
+    """Get ApprovalService with repositories injected."""
+    return ApprovalService(approval_repo)
+
+
+def get_question_service(
+    question_repo: QuestionRepository = Depends(get_question_repository),
+) -> QuestionService:
+    """Get QuestionService with repositories injected."""
+    return QuestionService(question_repo)
+
+
+def get_project_service(
+    project_repo: ProjectRepository = Depends(get_project_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
+) -> ProjectService:
+    """Get ProjectService with repositories injected."""
+    return ProjectService(project_repo, session_repo)
 
 
 def get_loop() -> MainLoop:
