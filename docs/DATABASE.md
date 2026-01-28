@@ -8,6 +8,88 @@ Druppie uses PostgreSQL with a normalized schema.
 2. **JSON only for debug/resume data** - `agent_state`, `request_messages`, `event_data`
 3. **Cascade deletes** - Deleting a session cleans up all related data
 4. **Agent isolation** - Messages linked to `agent_run_id` so agents don't share history
+5. **Nested execution** - Agent runs can be nested via `parent_run_id` for full traceability
+
+## Execution Model
+
+Understanding the nested execution flow is critical. Here's how a chat works:
+
+```
+SESSION
+│
+├── [system_message] "I am Druppie..."
+├── [user_message] "Build me a todo app"
+│
+└── agent_runs[] ─────────────────────────────────────────────────────────────
+    │
+    ├── [run_index=0] ROUTER AGENT (always first)
+    │   ├── llm_calls[0]: decides intent
+    │   └── tool_calls[]: (usually none, just thinking)
+    │
+    ├── [run_index=1] PLANNER AGENT (always second)
+    │   ├── llm_calls[0]: creates plan
+    │   └── decides: create workflow OR call agents directly
+    │
+    └── [run_index=2+] EXECUTION (one of these patterns):
+        │
+        ├─────────────────────────────────────────────────────────────────────
+        │ PATTERN A: Workflow Created
+        │
+        │ workflow
+        │ └── workflow_steps[]
+        │     ├── [step_index=0] "architect"
+        │     │   └── agent_run (workflow_step_id set)
+        │     │       ├── llm_calls[]
+        │     │       └── tool_calls[]
+        │     │           ├── coding:write_file → approval?
+        │     │           └── execute_agent("reviewer") ──┐
+        │     │               └── child_agent_run_id ─────┤
+        │     │                   (nested agent run) ◄────┘
+        │     │                   ├── parent_run_id = architect's run
+        │     │                   ├── llm_calls[]
+        │     │                   └── tool_calls[]
+        │     │
+        │     ├── [step_index=1] "developer"
+        │     │   └── agent_run
+        │     │       └── ...
+        │     │
+        │     └── [step_index=2] "deployer"
+        │         └── agent_run
+        │             ├── tool_calls[]
+        │             │   ├── docker:build → approval required
+        │             │   └── docker:run → approval required
+        │             └── ...
+        │
+        ├─────────────────────────────────────────────────────────────────────
+        │ PATTERN B: Direct Agent Calls (no workflow)
+        │
+        │ agent_run [run_index=2] "developer"
+        │ ├── llm_calls[]
+        │ └── tool_calls[]
+        │     └── execute_agent("tester") ──┐
+        │         └── child_agent_run_id ───┤
+        │             (nested agent run) ◄──┘
+        │             ├── parent_run_id = developer's run
+        │             └── ...
+        │
+        └─────────────────────────────────────────────────────────────────────
+```
+
+### Key Relationships
+
+| Field | Purpose |
+|-------|---------|
+| `agent_runs.run_index` | Order within parent (0=router, 1=planner, 2+=execution) |
+| `agent_runs.parent_run_id` | Points to parent agent_run when nested via execute_agent |
+| `agent_runs.workflow_step_id` | Links to workflow_step when running as part of workflow |
+| `tool_calls.child_agent_run_id` | When tool is execute_agent, points to the spawned agent_run |
+
+### Nesting Rules
+
+1. **Top-level runs**: `parent_run_id = NULL`, `workflow_step_id = NULL`
+2. **Workflow step runs**: `parent_run_id = NULL`, `workflow_step_id = <step_id>`
+3. **Nested via execute_agent**: `parent_run_id = <caller's run_id>`
+4. **Double nested**: Both `parent_run_id` AND `workflow_step_id` can be set
 
 ## Entity Relationship Diagram
 
@@ -30,34 +112,49 @@ Druppie uses PostgreSQL with a normalized schema.
 │    builds     │      │  deployments  │   │
 └───────────────┘      └───────────────┘   │
                                            │
-        ┌──────────────┬───────────────────┤
-        │              │                   │
-        ▼              ▼                   ▼
-┌───────────────┐ ┌───────────┐   ┌───────────────┐
-│   workflows   │ │ messages  │   │  agent_runs   │◄──┐
-└───────┬───────┘ └───────────┘   └───────┬───────┘   │
-        │                                 │           │
-        ▼                   ┌─────────────┼───────────┤
-┌───────────────┐           │             │           │
-│workflow_steps │           ▼             ▼           │
-└───────────────┘   ┌───────────┐  ┌───────────┐     │
-                    │ llm_calls │  │tool_calls │     │
-                    └───────────┘  └─────┬─────┘     │
-                                         │           │
-        ┌────────────────────────────────┤           │
-        │                                │           │
-        ▼                                ▼           │
-┌───────────────────┐           ┌───────────────┐   │
-│tool_call_arguments│           │   approvals   │───┘
-└───────────────────┘           └───────────────┘
-
-┌───────────────┐     ┌─────────────────────┐
-│hitl_questions │────▶│hitl_question_choices│
-└───────────────┘     └─────────────────────┘
+        ┌──────────────┬───────────────────┼───────────────────┐
+        │              │                   │                   │
+        ▼              ▼                   ▼                   ▼
+┌───────────────┐ ┌───────────┐   ┌───────────────┐   ┌───────────────┐
+│   workflows   │ │ messages  │   │  agent_runs   │◄─┐│ hitl_questions│
+└───────┬───────┘ └───────────┘   └───────┬───────┘  ││ └───────┬───────┘
+        │                                 │          ││         │
+        │                                 │ parent_  ││         ▼
+        │                                 │ run_id   ││ ┌───────────────────┐
+        │                                 └──────────┘│ │hitl_question_choices│
+        │                                             │ └───────────────────┘
+        ▼                   ┌──────────────┬──────────┘
+┌───────────────┐           │              │
+│workflow_steps │◄──────────│──────────────│─────────────────────┐
+└───────────────┘           │              │                     │
+        │                   ▼              ▼                     │
+        │           ┌───────────┐  ┌───────────────┐             │
+        │           │ llm_calls │  │  tool_calls   │─────────────┤
+        │           └───────────┘  └───────┬───────┘             │
+        │                                  │                     │
+        │                                  │ child_agent_run_id  │
+        │                                  │ (execute_agent)     │
+        │                                  ▼                     │
+        │                          ┌───────────────┐             │
+        │                          │  agent_runs   │ (nested)    │
+        │                          └───────────────┘             │
+        │                                                        │
+        │         ┌──────────────────────┬───────────────────────┘
+        │         │                      │
+        │         ▼                      ▼
+        │ ┌───────────────────┐  ┌───────────────┐
+        │ │tool_call_arguments│  │   approvals   │
+        │ └───────────────────┘  └───────────────┘
+        │
+        └─── workflow_step_id ───► agent_runs
 ```
 
+**Key relationships for nesting:**
+- `agent_runs.parent_run_id` → Self-reference for execute_agent nesting
+- `agent_runs.workflow_step_id` → Links to workflow_steps for workflow execution
+- `tool_calls.child_agent_run_id` → Points to spawned agent_run when execute_agent is called
+
 **Note:** Workspaces (file storage) are managed by the Coding MCP server, not the database.
-The chat timeline is built from messages + agent_runs + tool_calls - no separate events table needed.
 
 ## Tables
 
@@ -109,15 +206,16 @@ Chat conversations.
 
 ### agent_runs
 
-Individual agent executions within a session.
+Individual agent executions within a session. Can be nested.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | id | UUID | Primary key |
 | session_id | UUID | FK to sessions |
-| workflow_step_id | UUID | FK to workflow_steps (optional) |
+| workflow_step_id | UUID | FK to workflow_steps (if part of workflow) |
 | agent_id | VARCHAR(100) | Agent identifier (router, developer, etc.) |
-| parent_run_id | UUID | FK to agent_runs (for nested runs) |
+| parent_run_id | UUID | FK to agent_runs (if spawned by execute_agent) |
+| run_index | INTEGER | Order within parent scope (0=router, 1=planner, 2+=execution) |
 | status | VARCHAR(50) | running, paused_tool, paused_hitl, completed, failed |
 | iteration_count | INTEGER | LLM call count |
 | prompt_tokens | INTEGER | Tokens for this run |
@@ -125,6 +223,11 @@ Individual agent executions within a session.
 | total_tokens | INTEGER | |
 | started_at | TIMESTAMP | |
 | completed_at | TIMESTAMP | |
+
+**Nesting explained:**
+- `parent_run_id = NULL` → Top-level run (router, planner, or direct agent)
+- `parent_run_id = <uuid>` → Spawned by another agent via `execute_agent` tool
+- `workflow_step_id = <uuid>` → Running as part of a workflow step
 
 ### messages
 
@@ -142,19 +245,29 @@ Conversation messages.
 
 ### tool_calls
 
-MCP tool invocations.
+Tool invocations (MCP tools and built-in tools).
 
 | Column | Type | Description |
 |--------|------|-------------|
 | id | UUID | Primary key |
 | session_id | UUID | FK to sessions |
-| agent_run_id | UUID | FK to agent_runs |
-| mcp_server | VARCHAR(100) | Server name (coding, docker) |
-| tool_name | VARCHAR(100) | Tool name (write_file, build) |
+| agent_run_id | UUID | FK to agent_runs (who called this tool) |
+| tool_type | VARCHAR(50) | `mcp` or `builtin` |
+| mcp_server | VARCHAR(100) | Server name (coding, docker) - NULL for builtin |
+| tool_name | VARCHAR(100) | Tool name (write_file, execute_agent, done) |
+| child_agent_run_id | UUID | FK to agent_runs - set when tool_name=execute_agent |
 | status | VARCHAR(50) | pending, executing, completed, failed |
-| result | TEXT | Tool result (optional) |
+| result | TEXT | Tool result |
 | error | TEXT | Error message (if failed) |
 | created_at | TIMESTAMP | |
+
+**Tool types:**
+- `mcp` tools: `coding:write_file`, `docker:build`, etc.
+- `builtin` tools: `execute_agent`, `done`, `hitl_ask_question`, `hitl_ask_multiple_choice_question`
+
+**execute_agent nesting:**
+When `tool_name = 'execute_agent'`, the `child_agent_run_id` points to the spawned agent's run.
+This creates the nested structure visible in the execution trace.
 
 ### tool_call_arguments
 
@@ -354,25 +467,94 @@ WHERE ar.session_id = $1
 GROUP BY ar.agent_id;
 ```
 
-### Build chat timeline
-
-The chat timeline is built by querying and merging:
+### Get execution tree (top-level runs only)
 
 ```sql
--- Get messages ordered by sequence
-SELECT 'message' as type, role, content, created_at
-FROM messages WHERE session_id = $1
-ORDER BY sequence_number;
-
--- Get agent runs with their tool calls
-SELECT ar.*, tc.*
+-- Get top-level agent runs (router, planner, direct agents)
+SELECT ar.*
 FROM agent_runs ar
-LEFT JOIN tool_calls tc ON tc.agent_run_id = ar.id
 WHERE ar.session_id = $1
-ORDER BY ar.started_at, tc.created_at;
+  AND ar.parent_run_id IS NULL
+  AND ar.workflow_step_id IS NULL
+ORDER BY ar.run_index;
 ```
 
-The application layer merges these into a single chronological `chat` array.
+### Get workflow with steps and their agent runs
+
+```sql
+SELECT
+    w.id as workflow_id,
+    w.name as workflow_name,
+    ws.step_index,
+    ws.agent_id as step_agent,
+    ws.status as step_status,
+    ar.id as agent_run_id,
+    ar.status as run_status
+FROM workflows w
+JOIN workflow_steps ws ON ws.workflow_id = w.id
+LEFT JOIN agent_runs ar ON ar.workflow_step_id = ws.id
+WHERE w.session_id = $1
+ORDER BY ws.step_index;
+```
+
+### Get nested agent runs (execute_agent tree)
+
+```sql
+-- Recursive query to get all nested runs
+WITH RECURSIVE run_tree AS (
+    -- Base: top-level run
+    SELECT id, agent_id, parent_run_id, 0 as depth
+    FROM agent_runs
+    WHERE id = $1
+
+    UNION ALL
+
+    -- Recursive: children via parent_run_id
+    SELECT ar.id, ar.agent_id, ar.parent_run_id, rt.depth + 1
+    FROM agent_runs ar
+    JOIN run_tree rt ON ar.parent_run_id = rt.id
+)
+SELECT * FROM run_tree ORDER BY depth;
+```
+
+### Get tool calls with child agent runs
+
+```sql
+-- Find all execute_agent calls and their spawned runs
+SELECT
+    tc.id as tool_call_id,
+    tc.tool_name,
+    tc.child_agent_run_id,
+    child.agent_id as spawned_agent,
+    child.status as spawned_status
+FROM tool_calls tc
+LEFT JOIN agent_runs child ON tc.child_agent_run_id = child.id
+WHERE tc.agent_run_id = $1
+ORDER BY tc.created_at;
+```
+
+### Build full chat timeline
+
+```sql
+-- Step 1: Get messages
+SELECT 'message' as item_type, role, content, created_at, NULL as agent_run_id
+FROM messages WHERE session_id = $1
+
+UNION ALL
+
+-- Step 2: Get agent runs as timeline items
+SELECT 'agent_run' as item_type, agent_id as role, NULL as content,
+       started_at as created_at, id as agent_run_id
+FROM agent_runs
+WHERE session_id = $1 AND parent_run_id IS NULL
+
+ORDER BY created_at;
+```
+
+The application layer then:
+1. Fetches tool_calls, llm_calls, hitl_questions for each agent_run
+2. Recursively fetches child agent_runs via parent_run_id
+3. Merges everything into a nested chat array
 
 ## Cascade Behavior
 
@@ -385,7 +567,11 @@ The application layer merges these into a single chronological `chat` array.
 | Session → HitlQuestions | CASCADE |
 | Session → ToolCalls | CASCADE |
 | Workflow → Steps | CASCADE |
+| WorkflowStep → AgentRuns | CASCADE |
+| AgentRun → Child AgentRuns | CASCADE (via parent_run_id) |
+| AgentRun → ToolCalls | CASCADE |
 | AgentRun → LlmCalls | NO CASCADE (audit) |
+| ToolCall → Child AgentRun | SET NULL (don't delete spawned run) |
+| ToolCall → Arguments | CASCADE |
 | Project → Sessions | SET NULL (orphans) |
 | HitlQuestion → Choices | CASCADE |
-| ToolCall → Arguments | CASCADE |
