@@ -5,6 +5,7 @@ from .session_repository import SessionRepository
 from .approval_repository import ApprovalRepository
 from .question_repository import QuestionRepository
 from .project_repository import ProjectRepository
+from .execution_repository import ExecutionRepository
 
 __all__ = [
     "BaseRepository",
@@ -12,4 +13,5 @@ __all__ = [
     "ApprovalRepository",
     "QuestionRepository",
     "ProjectRepository",
+    "ExecutionRepository",
 ]
