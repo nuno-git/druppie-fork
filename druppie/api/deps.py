@@ -47,6 +47,7 @@ from druppie.services import (
     ApprovalService,
     QuestionService,
     ProjectService,
+    WorkflowService,
 )
 
 # Initialize database tables on import
@@ -101,9 +102,14 @@ def get_approval_service(
 
 def get_question_service(
     question_repo: QuestionRepository = Depends(get_question_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
 ) -> QuestionService:
-    """Get QuestionService with repositories injected."""
-    return QuestionService(question_repo)
+    """Get QuestionService with repositories injected.
+
+    QuestionService needs SessionRepository to check ownership
+    (questions belong to sessions, sessions belong to users).
+    """
+    return QuestionService(question_repo, session_repo)
 
 
 def get_project_service(
@@ -112,6 +118,17 @@ def get_project_service(
 ) -> ProjectService:
     """Get ProjectService with repositories injected."""
     return ProjectService(project_repo, session_repo)
+
+
+def get_workflow_service(
+    loop: MainLoop = Depends(get_loop),
+) -> WorkflowService:
+    """Get WorkflowService with MainLoop injected.
+
+    WorkflowService wraps the MainLoop and provides methods for
+    resuming paused workflows (after questions, approvals, etc.).
+    """
+    return WorkflowService(loop)
 
 
 def get_loop() -> MainLoop:
