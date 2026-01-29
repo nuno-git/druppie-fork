@@ -175,24 +175,38 @@ async def get_current_user(
         )
 
     # Sync user to database (creates if doesn't exist)
-    try:
-        user_id = user.get("sub")
-        if user_id:
-            from druppie.repositories import UserRepository
-            db = SessionLocal()
-            try:
-                user_repo = UserRepository(db)
-                user_repo.get_or_create(
-                    user_id=UUID(user_id),
-                    username=user.get("preferred_username"),
-                    email=user.get("email"),
-                    display_name=user.get("name"),
-                )
-                db.commit()
-            finally:
-                db.close()
-    except Exception as e:
-        logger.warning("user_sync_failed", user_id=user.get("sub"), error=str(e))
+    # This is critical - many operations require user to exist in DB
+    user_id = user.get("sub")
+    if user_id:
+        from druppie.repositories import UserRepository
+        db = SessionLocal()
+        try:
+            user_repo = UserRepository(db)
+            # Use username from token, fall back to user_id if not present
+            username = user.get("preferred_username") or user.get("email") or user_id
+            user_repo.get_or_create(
+                user_id=UUID(user_id),
+                username=username,
+                email=user.get("email"),
+                display_name=user.get("name"),
+            )
+            db.commit()
+            logger.debug("user_synced", user_id=user_id, username=username)
+        except Exception as e:
+            db.rollback()
+            logger.error(
+                "user_sync_failed",
+                user_id=user_id,
+                error=str(e),
+                exc_info=True,
+            )
+            # Re-raise - user must exist in DB for operations to work
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to sync user to database: {str(e)}",
+            )
+        finally:
+            db.close()
 
     return user
 
