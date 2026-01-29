@@ -280,7 +280,10 @@ USER REQUEST:
         project_id: UUID,
         user_id: UUID,
     ) -> tuple[str | None, str | None, str | None]:
-        """Create a Gitea repository for the project under the user's account.
+        """Create a Gitea repository for the project.
+
+        First tries to create under user's Gitea account (if it exists).
+        Falls back to creating in the shared organization.
 
         Args:
             project_name: Name of the project (used as repo name)
@@ -290,7 +293,7 @@ USER REQUEST:
         Returns:
             Tuple of (repo_name, repo_url, repo_owner) or (None, None, None) if failed
         """
-        from druppie.core.gitea import get_gitea_client
+        from druppie.core.gitea import get_gitea_client, GITEA_ORG
         from druppie.db.models import User
 
         # Get username for Gitea account
@@ -308,15 +311,31 @@ USER REQUEST:
 
         try:
             gitea = get_gitea_client()
+
+            # First, try to create under user's account
             result = await gitea.create_repo(
                 name=repo_name,
                 description=f"Project: {project_name}",
-                auto_init=True,  # Creates with README so it's not empty
-                owner=gitea_username,  # Create under user's account
+                auto_init=True,
+                owner=gitea_username,
             )
 
+            # If user doesn't exist in Gitea, fall back to organization
+            if not result.get("success") and result.get("status_code") == 404:
+                logger.info(
+                    "gitea_user_not_found_falling_back_to_org",
+                    gitea_username=gitea_username,
+                    org=GITEA_ORG,
+                )
+                result = await gitea.create_repo(
+                    name=repo_name,
+                    description=f"Project: {project_name} (owner: {gitea_username})",
+                    auto_init=True,
+                    owner=None,  # Uses organization
+                )
+
             if result.get("success"):
-                repo_owner = result.get("owner", gitea_username)
+                repo_owner = result.get("owner", GITEA_ORG)
                 return repo_name, result.get("repo_url"), repo_owner
             else:
                 logger.error(
@@ -324,6 +343,7 @@ USER REQUEST:
                     project_name=project_name,
                     gitea_username=gitea_username,
                     error=result.get("error"),
+                    status_code=result.get("status_code"),
                 )
                 return None, None, None
 
