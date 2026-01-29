@@ -41,7 +41,7 @@ import structlog
 from druppie.domain.common import AgentRunStatus, SessionStatus
 
 if TYPE_CHECKING:
-    from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository
+    from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository
 
 logger = structlog.get_logger()
 
@@ -57,6 +57,7 @@ class Orchestrator:
         session_repo: "SessionRepository",
         execution_repo: "ExecutionRepository",
         project_repo: "ProjectRepository",
+        question_repo: "QuestionRepository",
     ):
         """Initialize orchestrator with repositories.
 
@@ -64,10 +65,12 @@ class Orchestrator:
             session_repo: Repository for session operations
             execution_repo: Repository for agent runs, tool calls
             project_repo: Repository for project operations
+            question_repo: Repository for question operations
         """
         self.session_repo = session_repo
         self.execution_repo = execution_repo
         self.project_repo = project_repo
+        self.question_repo = question_repo
 
     async def process_message(
         self,
@@ -396,7 +399,6 @@ USER REQUEST:
         from druppie.execution.tool_executor import ToolExecutor, ToolCallStatus
         from druppie.execution.mcp_http import MCPHttp
         from druppie.core.mcp_config import MCPConfig
-        from druppie.db.models import Question
         from druppie.agents.runtime import Agent
 
         logger.info(
@@ -411,7 +413,7 @@ USER REQUEST:
         tool_executor = ToolExecutor(db, mcp_http, mcp_config)
 
         # Step 1: Get the question to find the agent run
-        question = db.query(Question).filter_by(id=question_id).first()
+        question = self.question_repo.get_by_id(question_id)
         if not question or not question.agent_run_id:
             logger.error("question_missing_agent_run", question_id=str(question_id))
             await self.execute_pending_runs(session_id)

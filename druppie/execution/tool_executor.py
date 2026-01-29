@@ -116,6 +116,33 @@ class ToolExecutor:
             self._question_repo = QuestionRepository(self.db)
         return self._question_repo
 
+    def _get_agent_definition(self, agent_run_id: UUID | None):
+        """Load agent definition for approval overrides.
+
+        Gets the agent_id from the agent_run, then loads the definition.
+        Returns None if agent_run not found (falls back to global defaults).
+        """
+        if not agent_run_id:
+            return None
+
+        try:
+            # Get agent_run to find agent_id
+            agent_run = self.execution_repo.get_by_id(agent_run_id)
+            if not agent_run or not agent_run.agent_id:
+                return None
+
+            # Load agent definition
+            from druppie.agents.runtime import Agent
+            return Agent._load_definition(agent_run.agent_id)
+
+        except Exception as e:
+            logger.warning(
+                "failed_to_load_agent_definition",
+                agent_run_id=str(agent_run_id),
+                error=str(e),
+            )
+            return None
+
     async def execute(self, tool_call_id: UUID) -> str:
         """Execute a tool call.
 
@@ -151,9 +178,13 @@ class ToolExecutor:
 
         # Step 3: Check approval for MCP tools (not builtin)
         if not is_builtin and tool_call.mcp_server:
+            # Load agent definition for approval overrides
+            agent_definition = self._get_agent_definition(tool_call.agent_run_id)
+
             needs_approval, required_role = self.mcp_config.needs_approval(
                 tool_call.mcp_server,
                 tool_call.tool_name,
+                agent_definition=agent_definition,
             )
             if needs_approval:
                 # Create Approval record and pause execution

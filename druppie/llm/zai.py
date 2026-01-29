@@ -314,7 +314,8 @@ class ChatZAI(BaseLLM):
 
         choice = data["choices"][0]
         message = choice.get("message", {})
-        content = self._clean_response(message.get("content", ""))
+        original_content = message.get("content") or ""  # Preserve original (handle None)
+        content = self._clean_response(original_content)
 
         # Parse tool calls from API response
         tool_calls = []
@@ -367,6 +368,7 @@ class ChatZAI(BaseLLM):
 
         return LLMResponse(
             content=content,
+            raw_content=original_content,  # Preserve original for debugging
             tool_calls=tool_calls,
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),

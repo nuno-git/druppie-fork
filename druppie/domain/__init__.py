@@ -48,7 +48,7 @@ from .session import (
 )
 
 # Agent run models
-from .agent_run import AgentRunSummary, AgentRunDetail, LLMCallDetail, ToolCallDetail
+from .agent_run import AgentRunSummary, AgentRunDetail, LLMCallDetail, LLMRawResponse, ToolCallDetail
 
 # Approval models
 from .approval import ApprovalSummary, ApprovalDetail, PendingApprovalList
@@ -88,6 +88,7 @@ __all__ = [
     "AgentRunSummary",
     "AgentRunDetail",
     "LLMCallDetail",
+    "LLMRawResponse",
     "ToolCallDetail",
     # Approval
     "ApprovalSummary",

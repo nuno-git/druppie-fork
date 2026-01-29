@@ -88,9 +88,13 @@ class MCPHttp:
         try:
             client = self._get_client(server)
 
-            async with asyncio.timeout(timeout_seconds):
+            # Use asyncio.wait_for for Python 3.10 compatibility
+            # (asyncio.timeout requires Python 3.11+)
+            async def _do_call():
                 async with client:
-                    result = await client.call_tool(tool, args)
+                    return await client.call_tool(tool, args)
+
+            result = await asyncio.wait_for(_do_call(), timeout=timeout_seconds)
 
             # Parse FastMCP response
             result_dict = self._parse_result(result)
