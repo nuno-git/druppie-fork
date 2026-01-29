@@ -4,11 +4,12 @@ The orchestrator is the main entry point for processing user messages.
 
 Flow:
 1. Create session
-2. Run router with user's projects injected
-3. Parse router's intent from done() result
-4. Handle project creation/selection based on intent
-5. Create planner with intent injected into prompt
-6. Execute remaining pending runs (planner → architect → developer → deployer)
+2. Save user message to timeline
+3. Run router with user's projects injected
+4. Parse router's intent from done() result
+5. Handle project creation/selection based on intent
+6. Create planner with intent injected into prompt
+7. Execute remaining pending runs (planner → architect → developer → deployer)
 
 Architecture:
     User Message
@@ -17,6 +18,8 @@ Architecture:
     Orchestrator.process_message()
          │
          ├─► Create Session
+         │
+         ├─► Save User Message (to timeline)
          │
          ├─► Run Router (with projects injected)
          │         │
@@ -83,11 +86,12 @@ class Orchestrator:
 
         Flow:
         1. Create or get session
-        2. Get user's projects for router
-        3. Run router to classify intent
-        4. Handle project creation/selection
-        5. Create planner with intent context
-        6. Execute remaining pending runs
+        2. Save user message to timeline
+        3. Get user's projects for router
+        4. Run router to classify intent
+        5. Handle project creation/selection
+        6. Create planner with intent context
+        7. Execute remaining pending runs
 
         Args:
             message: User's message
@@ -119,11 +123,20 @@ class Orchestrator:
             message_preview=message[:50] if message else "",
         )
 
-        # Step 2: Get user's projects for router injection
+        # Step 2: Save user message to the timeline
+        self.execution_repo.create_message(
+            session_id=current_session_id,
+            role="user",
+            content=message,
+            sequence_number=0,
+        )
+        self.execution_repo.commit()
+
+        # Step 3: Get user's projects for router injection
         user_projects = self.project_repo.get_by_user(user_id)
         projects_context = self._format_projects_for_router(user_projects)
 
-        # Step 3: Create and run router
+        # Step 4: Create and run router
         router_prompt = f"{projects_context}\n\nUSER REQUEST:\n{message}"
         router_run = self.execution_repo.create_agent_run(
             session_id=current_session_id,
@@ -142,7 +155,7 @@ class Orchestrator:
             prompt=router_prompt,
         )
 
-        # Step 4: Parse intent from router's done() result
+        # Step 5: Parse intent from router's done() result
         intent_data = self._parse_router_intent(router_run.id)
         intent = intent_data.get("intent", "general_chat")
 
@@ -153,7 +166,7 @@ class Orchestrator:
             intent_data=intent_data,
         )
 
-        # Step 5: Handle project based on intent
+        # Step 6: Handle project based on intent
         final_project_id = project_id
         if intent == "create_project":
             # Create new project
@@ -166,6 +179,20 @@ class Orchestrator:
             final_project_id = new_project.id
             logger.info("project_created", project_id=str(final_project_id), name=project_name)
 
+            # Create Gitea repository for the project under user's account
+            repo_name, repo_url, repo_owner = await self._create_gitea_repo(
+                project_name, final_project_id, user_id
+            )
+            if repo_name and repo_url:
+                self.project_repo.update_repo(final_project_id, repo_name, repo_url, repo_owner)
+                self.project_repo.commit()
+                logger.info(
+                    "gitea_repo_created",
+                    project_id=str(final_project_id),
+                    repo_owner=repo_owner,
+                    repo_url=repo_url,
+                )
+
         elif intent == "update_project":
             # Use existing project
             final_project_id = UUID(intent_data.get("project_id")) if intent_data.get("project_id") else project_id
@@ -175,7 +202,7 @@ class Orchestrator:
             self.session_repo.update_project(current_session_id, final_project_id)
             self.session_repo.commit()
 
-        # Step 6: Create planner with intent context
+        # Step 7: Create planner with intent context
         planner_prompt = self._build_planner_prompt(message, intent, final_project_id)
         self.execution_repo.create_agent_run(
             session_id=current_session_id,
@@ -186,7 +213,7 @@ class Orchestrator:
         )
         self.execution_repo.commit()
 
-        # Step 7: Execute remaining pending runs (planner and beyond)
+        # Step 8: Execute remaining pending runs (planner and beyond)
         await self.execute_pending_runs(current_session_id)
 
         return current_session_id
@@ -246,6 +273,67 @@ PROJECT_ID: {str(project_id) if project_id else 'new'}
 
 USER REQUEST:
 {message}"""
+
+    async def _create_gitea_repo(
+        self,
+        project_name: str,
+        project_id: UUID,
+        user_id: UUID,
+    ) -> tuple[str | None, str | None, str | None]:
+        """Create a Gitea repository for the project under the user's account.
+
+        Args:
+            project_name: Name of the project (used as repo name)
+            project_id: Project UUID (appended to make repo name unique)
+            user_id: User UUID (to look up Gitea username)
+
+        Returns:
+            Tuple of (repo_name, repo_url, repo_owner) or (None, None, None) if failed
+        """
+        from druppie.core.gitea import get_gitea_client
+        from druppie.db.models import User
+
+        # Get username for Gitea account
+        user = self.session_repo.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            logger.error("user_not_found_for_gitea_repo", user_id=str(user_id))
+            return None, None, None
+
+        gitea_username = user.username
+
+        # Make repo name unique by appending short project ID
+        # This handles cases where user creates multiple "todo-app" projects
+        short_id = str(project_id)[:8]
+        repo_name = f"{project_name}-{short_id}"
+
+        try:
+            gitea = get_gitea_client()
+            result = await gitea.create_repo(
+                name=repo_name,
+                description=f"Project: {project_name}",
+                auto_init=True,  # Creates with README so it's not empty
+                owner=gitea_username,  # Create under user's account
+            )
+
+            if result.get("success"):
+                repo_owner = result.get("owner", gitea_username)
+                return repo_name, result.get("repo_url"), repo_owner
+            else:
+                logger.error(
+                    "gitea_repo_creation_failed",
+                    project_name=project_name,
+                    gitea_username=gitea_username,
+                    error=result.get("error"),
+                )
+                return None, None, None
+
+        except Exception as e:
+            logger.error(
+                "gitea_repo_creation_error",
+                project_name=project_name,
+                error=str(e),
+            )
+            return None, None, None
 
     async def execute_pending_runs(self, session_id: UUID) -> None:
         """Execute all pending agent runs in sequence.
@@ -393,11 +481,15 @@ USER REQUEST:
             return session_id
 
         # Step 2: Execute the approved tool
-        status = await tool_executor.execute_after_approval(approval_id)
+        # Note: Even if the tool fails, we continue to resume the agent
+        # so it can see the error and decide what to do (retry, different approach, etc.)
+        tool_status = await tool_executor.execute_after_approval(approval_id)
 
-        if status != ToolCallStatus.COMPLETED:
-            logger.error("execute_after_approval_failed", status=status)
-            return session_id
+        logger.info(
+            "tool_executed_after_approval",
+            approval_id=str(approval_id),
+            tool_status=tool_status,
+        )
 
         # Step 3: Get the paused agent run
         agent_run = self.execution_repo.get_by_id(approval.agent_run_id)

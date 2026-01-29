@@ -1,9 +1,9 @@
-"""Execution repository - handles AgentRun, ToolCall, and LLMCall records."""
+"""Execution repository - handles AgentRun, ToolCall, LLMCall, and Message records."""
 
 from datetime import datetime, timezone
 from uuid import UUID
 
-from druppie.db.models import AgentRun, ToolCall, LlmCall
+from druppie.db.models import AgentRun, ToolCall, LlmCall, Message
 from druppie.domain.common import AgentRunStatus, TokenUsage
 from druppie.domain.agent_run import AgentRunSummary
 from druppie.repositories.base import BaseRepository
@@ -267,3 +267,45 @@ class ExecutionRepository(BaseRepository):
             llm_call.completion_tokens = completion_tokens
             llm_call.total_tokens = prompt_tokens + completion_tokens
             llm_call.duration_ms = duration_ms
+
+    # =========================================================================
+    # MESSAGE METHODS
+    # =========================================================================
+
+    def create_message(
+        self,
+        session_id: UUID,
+        role: str,
+        content: str,
+        agent_run_id: UUID | None = None,
+        agent_id: str | None = None,
+        sequence_number: int = 0,
+    ) -> UUID:
+        """Create a message record.
+
+        Args:
+            session_id: Session ID
+            role: Message role (user, assistant, system)
+            content: Message content
+            agent_run_id: Optional agent run ID (for agent messages)
+            agent_id: Optional agent ID (for assistant messages)
+            sequence_number: Sequence number within session
+
+        Returns:
+            Message ID
+        """
+        message = Message(
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            role=role,
+            content=content,
+            agent_id=agent_id,
+            sequence_number=sequence_number,
+        )
+        self.db.add(message)
+        self.db.flush()
+        return message.id
+
+    def get_message_count(self, session_id: UUID) -> int:
+        """Get total message count for a session (for sequence numbering)."""
+        return self.db.query(Message).filter(Message.session_id == session_id).count()
