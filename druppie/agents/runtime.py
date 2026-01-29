@@ -514,7 +514,7 @@ class Agent:
                 agent_run_id=agent_run_id,
                 provider=self.llm.provider_name if hasattr(self.llm, 'provider_name') else "unknown",
                 model=self.llm.model if hasattr(self.llm, 'model') else self.definition.model or "unknown",
-                messages=[{"role": m.get("role"), "content": m.get("content", "")[:1000]} for m in messages],
+                messages=messages,  # Store full messages without truncation
             )
             self.db.commit()
 
