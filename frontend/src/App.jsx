@@ -30,6 +30,7 @@ import Dashboard from './pages/Dashboard'
 import Tasks from './pages/Tasks'
 import Chat from './pages/Chat'
 import NewChat from './pages/NewChat'
+import NewApprovals from './pages/NewApprovals'
 import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import Debug from './pages/Debug'
@@ -294,6 +295,14 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <NewChat />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/new-approvals"
+                  element={
+                    <ProtectedRoute>
+                      <NewApprovals />
                     </ProtectedRoute>
                   }
                 />
