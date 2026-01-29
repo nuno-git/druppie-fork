@@ -95,15 +95,15 @@ export const getPlan = (planId) => request(`/api/sessions/${planId}`)
 // ============ Approvals ============
 export const getApprovals = () => request('/api/approvals')
 export const getApproval = (approvalId) => request(`/api/approvals/${approvalId}`)
-export const approveApproval = (approvalId) =>
+export const approveApproval = (approvalId, comment = '') =>
   request(`/api/approvals/${approvalId}/approve`, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify({ approved: true, comment }),
   })
-export const rejectApproval = (approvalId, reason = 'Rejected by user') =>
-  request(`/api/approvals/${approvalId}/reject`, {
+export const rejectApproval = (approvalId, comment = '') =>
+  request(`/api/approvals/${approvalId}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({ approved: false, comment }),
   })
 
 // Legacy task endpoints (mapped to approvals for backwards compatibility)
@@ -127,15 +127,15 @@ export const getApprovalHistory = async (limit = 20) => {
 }
 export const getRejectedApprovals = (limit = 20) =>
   request(`/api/approvals?status=rejected&limit=${limit}`)
-export const approveTask = (taskId) =>
+export const approveTask = (taskId, comment = '') =>
   request(`/api/approvals/${taskId}/approve`, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify({ approved: true, comment }),
   })
-export const rejectTask = (taskId, reason = 'Rejected by user') =>
-  request(`/api/approvals/${taskId}/reject`, {
+export const rejectTask = (taskId, comment = '') =>
+  request(`/api/approvals/${taskId}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({ approved: false, comment }),
   })
 export const getUsersByRole = (role) =>
   request(`/api/approvals/users-by-role/${role}`)
