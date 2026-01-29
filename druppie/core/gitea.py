@@ -110,43 +110,73 @@ class GiteaClient:
     # User Operations
     # =========================================================================
 
+    async def get_oauth_source_id(self, source_name: str = "Keycloak") -> int | None:
+        """Get the ID of an OAuth2 authentication source by name.
+
+        Args:
+            source_name: Name of the OAuth source (default: "Keycloak")
+
+        Returns:
+            Source ID or None if not found
+        """
+        result = await self._request("GET", "/admin/auths")
+        if not result.get("success"):
+            return None
+
+        sources = result.get("data", [])
+        for source in sources:
+            if source.get("name") == source_name:
+                return source.get("id")
+
+        return None
+
     async def create_user(
         self,
         username: str,
         email: str,
-        password: str | None = None,
-        must_change_password: bool = False,
+        source_id: int | None = None,
     ) -> dict[str, Any]:
-        """Create a new Gitea user account.
+        """Create a new Gitea user account linked to OAuth.
 
         Args:
             username: Username for the new account
             email: Email address
-            password: Password (generated if not provided)
-            must_change_password: Whether user must change password on first login
+            source_id: OAuth source ID to link user to (for SSO login)
 
         Returns:
             Dict with success, user data
         """
         import secrets
 
-        if not password:
-            password = secrets.token_urlsafe(16)
+        # Create user data
+        user_data = {
+            "username": username,
+            "email": email,
+            "login_name": username,
+            "must_change_password": False,
+        }
+
+        if source_id:
+            # Link to OAuth source - user will login via SSO
+            user_data["source_id"] = source_id
+            # Still need a password for API, but user won't use it
+            user_data["password"] = secrets.token_urlsafe(32)
+        else:
+            # No OAuth source - generate unusable password
+            user_data["password"] = secrets.token_urlsafe(32)
 
         result = await self._request(
             "POST",
             "/admin/users",
-            json_data={
-                "username": username,
-                "email": email,
-                "password": password,
-                "must_change_password": must_change_password,
-                "login_name": username,
-            },
+            json_data=user_data,
         )
 
         if result["success"]:
-            logger.info("gitea_user_created", username=username)
+            logger.info(
+                "gitea_user_created",
+                username=username,
+                oauth_linked=bool(source_id),
+            )
 
         return result
 
@@ -162,6 +192,8 @@ class GiteaClient:
     ) -> dict[str, Any]:
         """Ensure a Gitea user exists, creating if necessary.
 
+        Creates users linked to Keycloak OAuth so they can login via SSO.
+
         Args:
             username: Username to check/create
             email: Email for new user (defaults to username@druppie.local)
@@ -173,14 +205,21 @@ class GiteaClient:
         if await self.user_exists(username):
             return {"success": True, "created": False, "username": username}
 
-        # Create the user
+        # Get Keycloak OAuth source ID for SSO login
+        oauth_source_id = await self.get_oauth_source_id("Keycloak")
+        if oauth_source_id:
+            logger.info("gitea_oauth_source_found", source_id=oauth_source_id)
+        else:
+            logger.warning("gitea_oauth_source_not_found", source_name="Keycloak")
+
+        # Create the user linked to OAuth
         if not email:
             email = f"{username}@druppie.local"
 
         result = await self.create_user(
             username=username,
             email=email,
-            must_change_password=False,
+            source_id=oauth_source_id,
         )
 
         if result.get("success"):
