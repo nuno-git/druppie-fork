@@ -423,6 +423,16 @@ class ToolExecutor:
         """
         args = tool_call.arguments or {}
 
+        # Auto-inject session_id for MCP tools that support it
+        # This enables standalone operation without requiring the LLM to pass session_id
+        if "session_id" not in args and tool_call.session_id:
+            args = {**args, "session_id": str(tool_call.session_id)}
+            logger.debug(
+                "Auto-injected session_id into MCP tool args",
+                tool_name=tool_call.tool_name,
+                session_id=str(tool_call.session_id),
+            )
+
         try:
             # Mark as executing
             self.execution_repo.update_tool_call(
