@@ -32,6 +32,7 @@ import Chat from './pages/Chat'
 import NewChat from './pages/NewChat'
 import NewApprovals from './pages/NewApprovals'
 import NewMCP from './pages/NewMCP'
+import NewProjects from './pages/NewProjects'
 import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import Debug from './pages/Debug'
@@ -100,6 +101,7 @@ const Navigation = () => {
     { path: '/new-chat', icon: Bug, label: 'New Chat' },
     { path: '/new-approvals', icon: Shield, label: 'New Approvals' },
     { path: '/new-mcp', icon: Database, label: 'New MCP' },
+    { path: '/new-projects', icon: FolderOpen, label: 'New Projects' },
     { path: '/tasks', icon: CheckSquare, label: 'Approvals', badge: pendingApprovalsCount },
     { path: '/projects', icon: FolderOpen, label: 'Projects' },
     { path: '/settings', icon: SettingsIcon, label: 'Settings' },
@@ -314,6 +316,14 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <NewMCP />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/new-projects"
+                  element={
+                    <ProtectedRoute>
+                      <NewProjects />
                     </ProtectedRoute>
                   }
                 />
