@@ -124,6 +124,49 @@ def release_port(port: int) -> None:
     used_ports.discard(port)
 
 
+def get_image_exposed_port(image_name: str) -> int | None:
+    """Get the exposed port from a Docker image.
+
+    Inspects the image to find which port it exposes.
+    Returns the first exposed port found, or None if no port is exposed.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", image_name, "--format", "{{json .Config.ExposedPorts}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            logger.warning("Failed to inspect image %s: %s", image_name, result.stderr)
+            return None
+
+        output = result.stdout.strip()
+        if not output or output == "null" or output == "{}":
+            return None
+
+        # Parse JSON like {"80/tcp":{}, "443/tcp":{}}
+        import json
+        ports = json.loads(output)
+        if not ports:
+            return None
+
+        # Get first exposed port (strip /tcp or /udp suffix)
+        for port_spec in ports.keys():
+            port_str = port_spec.split("/")[0]
+            try:
+                port = int(port_str)
+                logger.info("Auto-detected exposed port %d from image %s", port, image_name)
+                return port
+            except ValueError:
+                continue
+
+        return None
+    except Exception as e:
+        logger.warning("Error getting exposed port from image %s: %s", image_name, e)
+        return None
+
+
 def get_gitea_clone_url(repo_name: str, repo_owner: str | None = None) -> str:
     """Get Gitea clone URL with embedded credentials if available.
 
@@ -369,7 +412,7 @@ async def run(
     git_url: str | None = None,
     branch: str | None = None,
     port: int | None = None,
-    container_port: int = 3000,
+    container_port: int | None = None,
     port_mapping: str | None = None,
     env_vars: dict[str, str] | None = None,
     volumes: list[str] | None = None,
@@ -393,7 +436,7 @@ async def run(
         git_url: Git URL used for build (added as label)
         branch: Git branch used for build (added as label)
         port: Host port to expose (auto-assigned if not provided)
-        container_port: Container port to map to (default: 3000)
+        container_port: Container port to map to (auto-detected from image if not provided)
         port_mapping: Full port mapping string (e.g., "8080:3000") - overrides port/container_port
         env_vars: Environment variables
         volumes: Volume mounts (format: "host:container")
@@ -410,13 +453,24 @@ async def run(
 
         # Handle port mapping
         requested_port = None
+        actual_container_port = container_port
         if port_mapping:
             # Parse "host:container" format
             parts = port_mapping.split(":")
             requested_port = int(parts[0])
-            container_port = int(parts[1]) if len(parts) > 1 else 3000
+            actual_container_port = int(parts[1]) if len(parts) > 1 else None
         else:
             requested_port = port
+
+        # Auto-detect container port from image if not specified
+        if actual_container_port is None:
+            detected_port = get_image_exposed_port(image_name)
+            if detected_port:
+                actual_container_port = detected_port
+                logger.info("Using auto-detected container port %d", actual_container_port)
+            else:
+                actual_container_port = 3000
+                logger.info("No exposed port detected, defaulting to 3000")
 
         # Check if requested port is available, auto-select if not
         if requested_port:
@@ -434,7 +488,7 @@ async def run(
 
         logger.info(
             "Running container %s from image %s (port %d:%d, project=%s, session=%s)",
-            container_name, image_name, host_port, container_port, project_id, session_id
+            container_name, image_name, host_port, actual_container_port, project_id, session_id
         )
 
         # Build run command
@@ -442,7 +496,7 @@ async def run(
             "docker", "run", "-d",
             "--name", container_name,
             "--network", DOCKER_NETWORK,
-            "-p", f"{host_port}:{container_port}",
+            "-p", f"{host_port}:{actual_container_port}",
         ]
 
         # Add ownership labels for tracking
