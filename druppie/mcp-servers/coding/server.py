@@ -8,7 +8,9 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -152,10 +154,60 @@ def get_or_create_workspace(
     workspace_path = WORKSPACE_ROOT / user_part / project_part / session_id
     workspace_path.mkdir(parents=True, exist_ok=True)
 
-    # Initialize git if not already a repo
+    # Initialize git: Clone from Gitea if repo exists, otherwise git init
     git_dir = workspace_path / ".git"
     if not git_dir.exists():
-        subprocess.run(["git", "init"], cwd=workspace_path, check=True, capture_output=True)
+        cloned = False
+        if repo_name and is_gitea_configured():
+            # Clone from Gitea to ensure we have the same history
+            remote_url = get_gitea_clone_url(repo_name, repo_owner)
+            try:
+                # Clone into a temp dir first, then move contents
+                # (Can't clone into non-empty dir)
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    clone_result = subprocess.run(
+                        ["git", "clone", remote_url, tmp_dir],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                    if clone_result.returncode == 0:
+                        # Move .git and any files from clone to workspace
+                        tmp_path = Path(tmp_dir)
+                        for item in tmp_path.iterdir():
+                            dest = workspace_path / item.name
+                            if dest.exists():
+                                if dest.is_dir():
+                                    shutil.rmtree(dest)
+                                else:
+                                    dest.unlink()
+                            shutil.move(str(item), str(dest))
+                        cloned = True
+                        logger.info("Cloned from Gitea: %s", remote_url.replace(GITEA_PASSWORD, "***"))
+                    else:
+                        logger.warning(
+                            "Failed to clone from Gitea, falling back to git init: %s",
+                            clone_result.stderr,
+                        )
+            except Exception as e:
+                logger.warning("Clone failed, falling back to git init: %s", e)
+
+        if not cloned:
+            # Fall back to git init
+            subprocess.run(["git", "init"], cwd=workspace_path, check=True, capture_output=True)
+            # Set up remote if repo info provided
+            if repo_name and is_gitea_configured():
+                remote_url = get_gitea_clone_url(repo_name, repo_owner)
+                subprocess.run(
+                    ["git", "remote", "add", "origin", remote_url],
+                    cwd=workspace_path,
+                    check=False,
+                    capture_output=True,
+                )
+                logger.info("Set up git remote: %s", remote_url.replace(GITEA_PASSWORD, "***"))
+            logger.info("Auto-initialized git repo at %s", workspace_path)
+
+        # Configure git user
         subprocess.run(
             ["git", "config", "user.email", "agent@druppie.local"],
             cwd=workspace_path,
@@ -168,17 +220,6 @@ def get_or_create_workspace(
             check=False,
             capture_output=True,
         )
-        # Set up remote if repo info provided
-        if repo_name and is_gitea_configured():
-            remote_url = get_gitea_clone_url(repo_name, repo_owner)
-            subprocess.run(
-                ["git", "remote", "add", "origin", remote_url],
-                cwd=workspace_path,
-                check=False,
-                capture_output=True,
-            )
-            logger.info("Set up git remote: %s", remote_url.replace(GITEA_PASSWORD, "***"))
-        logger.info("Auto-initialized git repo at %s", workspace_path)
 
     # Register workspace
     workspaces[derived_workspace_id] = {

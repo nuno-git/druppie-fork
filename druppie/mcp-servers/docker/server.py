@@ -238,6 +238,31 @@ def clone_and_build(
 
 
 @mcp.tool()
+async def get_available_port() -> dict:
+    """Get an available port for running a container.
+
+    Returns the next available port from the configured range (9100-9199).
+    Use this before running a container to get a port that is guaranteed
+    to be available. The port is reserved until you use it with docker:run.
+
+    Returns:
+        Dict with success, port number
+    """
+    try:
+        port = get_next_port()
+        return {
+            "success": True,
+            "port": port,
+            "message": f"Port {port} is available and reserved for your use",
+        }
+    except RuntimeError as e:
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+@mcp.tool()
 async def build(
     image_name: str,
     git_url: str | None = None,
