@@ -4,7 +4,7 @@ Docker container operations - build, run, stop, logs.
 Uses FastMCP framework for HTTP transport.
 
 This is a STANDALONE service:
-- build: Clones from git URL (no workspace dependency)
+- build: Clones from git URL and builds (no workspace dependency)
 - run: Adds labels for ownership tracking (druppie.project_id, druppie.session_id)
 - list_containers: Can filter by project_id/session_id via labels
 """
@@ -13,7 +13,6 @@ import logging
 import os
 import shutil
 import subprocess
-import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
@@ -31,7 +30,6 @@ logger = logging.getLogger("docker-mcp")
 mcp = FastMCP("Docker MCP Server")
 
 # Configuration
-WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/workspaces"))
 DOCKER_NETWORK = os.getenv("DOCKER_NETWORK", "druppie-new-network")
 PORT_RANGE_START = int(os.getenv("PORT_RANGE_START", "9100"))
 PORT_RANGE_END = int(os.getenv("PORT_RANGE_END", "9199"))
@@ -44,9 +42,6 @@ GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 
 # Track used ports
 used_ports: set[int] = set()
-
-# In-memory workspace registry (for backward compatibility)
-workspaces: dict[str, dict] = {}
 
 
 def get_used_host_ports() -> set[int]:
@@ -127,47 +122,6 @@ def get_next_port() -> int:
 def release_port(port: int) -> None:
     """Release a port back to pool."""
     used_ports.discard(port)
-
-
-def resolve_workspace_path(workspace_id: str | None, workspace_path: str | None) -> Path | None:
-    """Resolve workspace path from workspace_id or direct path.
-
-    NOTE: This is legacy/fallback. Prefer git-based builds using git_url or repo_name.
-
-    Args:
-        workspace_id: Workspace ID to look up
-        workspace_path: Direct path (takes precedence if provided)
-
-    Returns:
-        Resolved Path or None if not found
-    """
-    # Direct path takes precedence
-    if workspace_path:
-        p = Path(workspace_path)
-        if p.exists():
-            return p
-        # Try under workspace root
-        p = WORKSPACE_ROOT / workspace_path
-        if p.exists():
-            return p
-
-    # Look up workspace_id
-    if workspace_id:
-        if workspace_id in workspaces:
-            return Path(workspaces[workspace_id]["path"])
-        # Try to find by scanning workspace root
-        # Pattern: /workspaces/user_id/project_id/session_id
-        for user_dir in WORKSPACE_ROOT.iterdir():
-            if user_dir.is_dir():
-                for project_dir in user_dir.iterdir():
-                    if project_dir.is_dir():
-                        for session_dir in project_dir.iterdir():
-                            if session_dir.is_dir():
-                                # Check if this matches workspace_id pattern
-                                if workspace_id in str(session_dir):
-                                    return session_dir
-
-    return None
 
 
 def get_gitea_clone_url(repo_name: str, repo_owner: str | None = None) -> str:
@@ -278,33 +232,6 @@ def clone_and_build(
             logger.info("Cleaned up build directory: %s", build_path)
 
 
-@mcp.tool()
-async def register_workspace(
-    workspace_id: str,
-    workspace_path: str,
-    project_id: str | None = None,
-    branch: str | None = None,
-) -> dict:
-    """Register a workspace for Docker operations.
-
-    Args:
-        workspace_id: Workspace ID
-        workspace_path: Path to workspace
-        project_id: Optional project ID
-        branch: Optional git branch
-
-    Returns:
-        Dict with success status
-    """
-    workspaces[workspace_id] = {
-        "path": workspace_path,
-        "project_id": project_id,
-        "branch": branch,
-    }
-    logger.info("Registered workspace %s at %s", workspace_id, workspace_path)
-    return {"success": True, "workspace_id": workspace_id}
-
-
 # =============================================================================
 # MCP TOOLS
 # =============================================================================
@@ -319,110 +246,55 @@ async def build(
     branch: str = "main",
     project_id: str | None = None,
     session_id: str | None = None,
-    workspace_id: str | None = None,
-    workspace_path: str | None = None,
     dockerfile: str = "Dockerfile",
     build_args: dict[str, str] | None = None,
 ) -> dict:
-    """Build Docker image.
+    """Build Docker image from a git repository.
 
-    Two modes:
-    1. GIT-BASED (preferred): Clone from git URL, build, cleanup
-       - Use git_url for any git repo
-       - Use repo_name + repo_owner for Gitea repos (will construct URL)
-
-    2. WORKSPACE-BASED (legacy): Build from existing workspace path
+    Clones from git URL, builds, then cleans up the temp directory.
 
     Args:
         image_name: Name for the built image (e.g., "myapp:latest")
-        git_url: Full git URL to clone (preferred)
-        repo_name: Gitea repo name (will construct URL)
+        git_url: Full git URL to clone
+        repo_name: Gitea repo name (will construct URL using Gitea config)
         repo_owner: Gitea repo owner/username (defaults to "druppie" org)
         branch: Git branch (default: main)
-        project_id: Project ID for tracking
-        session_id: Session ID for tracking
-        workspace_id: Legacy workspace ID (will resolve to path)
-        workspace_path: Legacy direct path to workspace with Dockerfile
+        project_id: Project ID for tracking (added to result)
+        session_id: Session ID for tracking (added to result)
         dockerfile: Dockerfile name (default: "Dockerfile")
-        build_args: Optional build arguments
+        build_args: Optional Docker build arguments
 
     Returns:
-        Dict with success, image_name, logs
+        Dict with success, image_name, build_log, project_id, session_id
     """
     try:
-        # Mode 1: Git-based build (preferred)
-        if git_url or repo_name:
-            url = git_url or get_gitea_clone_url(repo_name, repo_owner)
-            logger.info(
-                "Git-based build: %s -> %s (branch: %s, project: %s, session: %s)",
-                url, image_name, branch, project_id, session_id
-            )
-            result = clone_and_build(
-                git_url=url,
-                image_name=image_name,
-                branch=branch,
-                dockerfile=dockerfile,
-                build_args=build_args,
-            )
-            # Add tracking info to result
-            if result.get("success"):
-                result["project_id"] = project_id
-                result["session_id"] = session_id
-                result["build_mode"] = "git"
-            return result
-
-        # Mode 2: Workspace-based build (legacy)
-        workspace = resolve_workspace_path(workspace_id, workspace_path)
-        if workspace is None:
+        if not git_url and not repo_name:
             return {
                 "success": False,
-                "error": "Must provide git_url, repo_name, workspace_id, or workspace_path",
+                "error": "Must provide either git_url or repo_name",
             }
 
-        logger.info("Workspace-based build: %s -> %s", workspace, image_name)
-
-        if not workspace.exists():
-            return {"success": False, "error": f"Workspace not found: {workspace}"}
-
-        dockerfile_path = workspace / dockerfile
-        if not dockerfile_path.exists():
-            return {"success": False, "error": f"Dockerfile not found: {dockerfile}"}
-
-        # Build command
-        cmd = ["docker", "build", "-t", image_name, "-f", str(dockerfile_path)]
-
-        # Add build args
-        if build_args:
-            for key, value in build_args.items():
-                cmd.extend(["--build-arg", f"{key}={value}"])
-
-        cmd.append(str(workspace))
-
-        # Run build
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=600,  # 10 minutes for builds
+        url = git_url or get_gitea_clone_url(repo_name, repo_owner)
+        logger.info(
+            "Building Docker image: %s -> %s (branch: %s, project: %s, session: %s)",
+            url, image_name, branch, project_id, session_id
         )
 
-        if result.returncode != 0:
-            return {
-                "success": False,
-                "error": "Build failed",
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
+        result = clone_and_build(
+            git_url=url,
+            image_name=image_name,
+            branch=branch,
+            dockerfile=dockerfile,
+            build_args=build_args,
+        )
 
-        return {
-            "success": True,
-            "image_name": image_name,
-            "logs": result.stdout,
-            "build_mode": "workspace",
-        }
+        # Add tracking info to result
+        if result.get("success"):
+            result["project_id"] = project_id
+            result["session_id"] = session_id
 
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Build timed out after 10 minutes"}
+        return result
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 
