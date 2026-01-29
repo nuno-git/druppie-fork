@@ -97,6 +97,7 @@ const Navigation = () => {
     { path: '/', icon: Home, label: 'Dashboard' },
     { path: '/chat', icon: MessageSquare, label: 'Chat' },
     { path: '/new-chat', icon: Bug, label: 'New Chat' },
+    { path: '/new-approvals', icon: Shield, label: 'New Approvals' },
     { path: '/tasks', icon: CheckSquare, label: 'Approvals', badge: pendingApprovalsCount },
     { path: '/projects', icon: FolderOpen, label: 'Projects' },
     { path: '/settings', icon: SettingsIcon, label: 'Settings' },
