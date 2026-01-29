@@ -115,6 +115,22 @@ class ProjectRepository(BaseRepository):
             sessions=sessions,
         )
 
+    def update_repo(
+        self,
+        project_id: UUID,
+        repo_name: str,
+        repo_url: str,
+        repo_owner: str | None = None,
+    ) -> None:
+        """Update project with Gitea repository info."""
+        updates = {
+            "repo_name": repo_name,
+            "repo_url": repo_url,
+        }
+        if repo_owner:
+            updates["repo_owner"] = repo_owner
+        self.db.query(Project).filter_by(id=project_id).update(updates)
+
     def delete(self, project_id: UUID) -> None:
         """Delete project."""
         self.db.query(Project).filter_by(id=project_id).delete()

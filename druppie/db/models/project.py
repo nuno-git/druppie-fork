@@ -17,8 +17,9 @@ class Project(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     name = Column(String(255), nullable=False)
     description = Column(Text)
-    repo_name = Column(String(255), nullable=True)  # org/repo - set when deployed to Gitea
-    repo_url = Column(String(512))
+    repo_name = Column(String(255), nullable=True)  # repo name only (e.g., "todo-app-abc12345")
+    repo_owner = Column(String(255), nullable=True)  # Gitea username who owns the repo
+    repo_url = Column(String(512))  # Full public URL (e.g., "http://gitea:3000/username/repo")
     clone_url = Column(String(512))
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     status = Column(String(20), default="active")  # active, archived
@@ -31,6 +32,7 @@ class Project(Base):
             "name": self.name,
             "description": self.description,
             "repo_name": self.repo_name,
+            "repo_owner": self.repo_owner,
             "repo_url": self.repo_url,
             "clone_url": self.clone_url,
             "owner_id": str(self.owner_id) if self.owner_id else None,

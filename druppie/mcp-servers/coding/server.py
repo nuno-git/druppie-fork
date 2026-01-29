@@ -107,6 +107,8 @@ def get_or_create_workspace(
     project_id: str | None = None,
     user_id: str | None = None,
     workspace_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
 ) -> tuple[str, Path]:
     """Get or create a workspace from session_id.
 
@@ -118,20 +120,32 @@ def get_or_create_workspace(
         project_id: Optional project ID
         user_id: Optional user ID
         workspace_id: Optional explicit workspace ID (for backward compat)
+        repo_name: Optional Gitea repo name (for git remote setup)
+        repo_owner: Optional Gitea repo owner (for git remote setup)
 
     Returns:
         Tuple of (workspace_id, workspace_path)
     """
     # If workspace_id provided and registered, use it
     if workspace_id and workspace_id in workspaces:
-        return workspace_id, Path(workspaces[workspace_id]["path"])
+        ws = workspaces[workspace_id]
+        # Update repo info if provided and not already set
+        if repo_name and not ws.get("repo_name"):
+            ws["repo_name"] = repo_name
+            ws["repo_owner"] = repo_owner
+        return workspace_id, Path(ws["path"])
 
     # Derive workspace_id from session_id if not provided
     derived_workspace_id = workspace_id or f"session-{session_id}"
 
     # Check if already registered
     if derived_workspace_id in workspaces:
-        return derived_workspace_id, Path(workspaces[derived_workspace_id]["path"])
+        ws = workspaces[derived_workspace_id]
+        # Update repo info if provided and not already set
+        if repo_name and not ws.get("repo_name"):
+            ws["repo_name"] = repo_name
+            ws["repo_owner"] = repo_owner
+        return derived_workspace_id, Path(ws["path"])
 
     # Auto-create workspace path
     # Path structure: /workspaces/{user_id or "default"}/{project_id or "scratch"}/{session_id}
@@ -156,6 +170,16 @@ def get_or_create_workspace(
             check=False,
             capture_output=True,
         )
+        # Set up remote if repo info provided
+        if repo_name and is_gitea_configured():
+            remote_url = get_gitea_clone_url(repo_name, repo_owner)
+            subprocess.run(
+                ["git", "remote", "add", "origin", remote_url],
+                cwd=workspace_path,
+                check=False,
+                capture_output=True,
+            )
+            logger.info("Set up git remote: %s", remote_url.replace(GITEA_PASSWORD, "***"))
         logger.info("Auto-initialized git repo at %s", workspace_path)
 
     # Register workspace
@@ -165,35 +189,44 @@ def get_or_create_workspace(
         "branch": "main",
         "user_id": user_id,
         "session_id": session_id,
+        "repo_name": repo_name,
+        "repo_owner": repo_owner,
     }
 
     logger.info(
-        "Auto-created workspace %s at %s (session_id=%s)",
+        "Auto-created workspace %s at %s (session_id=%s, repo=%s/%s)",
         derived_workspace_id,
         workspace_path,
         session_id,
+        repo_owner,
+        repo_name,
     )
 
     return derived_workspace_id, workspace_path
 
 
-def get_gitea_clone_url(repo_name: str) -> str:
+def get_gitea_clone_url(repo_name: str, repo_owner: str | None = None) -> str:
     """Get Gitea clone URL with embedded credentials if available.
+
+    Args:
+        repo_name: Repository name
+        repo_owner: Repository owner/username. Defaults to GITEA_ORG if not specified.
 
     If GITEA_USER and GITEA_PASSWORD are set, returns authenticated URL.
     Otherwise returns unauthenticated URL.
     """
+    owner = repo_owner or GITEA_ORG
     # Parse URL to inject credentials
     # GITEA_URL is like "http://gitea:3000"
     if GITEA_USER and GITEA_PASSWORD:
         # Embed credentials in URL for git operations
-        # Result: http://user:pass@gitea:3000/org/repo.git
+        # Result: http://user:pass@gitea:3000/owner/repo.git
         if "://" in GITEA_URL:
             protocol, rest = GITEA_URL.split("://", 1)
             from urllib.parse import quote
-            return f"{protocol}://{quote(GITEA_USER)}:{quote(GITEA_PASSWORD)}@{rest}/{GITEA_ORG}/{repo_name}.git"
+            return f"{protocol}://{quote(GITEA_USER)}:{quote(GITEA_PASSWORD)}@{rest}/{owner}/{repo_name}.git"
     # Fallback: unauthenticated URL (push will fail)
-    return f"{GITEA_URL}/{GITEA_ORG}/{repo_name}.git"
+    return f"{GITEA_URL}/{owner}/{repo_name}.git"
 
 
 def is_gitea_configured() -> bool:
@@ -520,6 +553,8 @@ async def write_file(
     workspace_id: str | None = None,
     project_id: str | None = None,
     user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
     auto_commit: bool = True,
     commit_message: str | None = None,
 ) -> dict:
@@ -536,6 +571,8 @@ async def write_file(
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for git remote setup)
+        repo_owner: Gitea repository owner/username (for git remote setup)
         auto_commit: Whether to auto-commit (default: True)
         commit_message: Optional commit message
 
@@ -550,6 +587,8 @@ async def write_file(
                 project_id=project_id,
                 user_id=user_id,
                 workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
             )
         elif workspace_id:
             ws = get_workspace(workspace_id)
@@ -1304,9 +1343,10 @@ async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
                 # Ensure remote has credentials for push
                 ws = get_workspace(workspace_id)
                 repo_name = ws.get("repo_name")
+                repo_owner = ws.get("repo_owner")
                 if repo_name:
                     # Update remote URL with credentials if needed
-                    auth_url = get_gitea_clone_url(repo_name)
+                    auth_url = get_gitea_clone_url(repo_name, repo_owner)
                     subprocess.run(
                         ["git", "remote", "set-url", "origin", auth_url],
                         cwd=cwd,
@@ -1340,6 +1380,8 @@ async def batch_write_files(
     workspace_id: str | None = None,
     project_id: str | None = None,
     user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
     commit_message: str = "Create multiple files",
 ) -> dict:
     """Write multiple files to workspace in a single operation with one git commit.
@@ -1353,6 +1395,8 @@ async def batch_write_files(
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for git remote setup)
+        repo_owner: Gitea repository owner/username (for git remote setup)
         commit_message: Commit message for all files (default: "Create multiple files")
 
     Returns:
@@ -1377,6 +1421,8 @@ async def batch_write_files(
                 project_id=project_id,
                 user_id=user_id,
                 workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
             )
         elif workspace_id:
             ws = get_workspace(workspace_id)

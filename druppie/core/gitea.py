@@ -116,11 +116,31 @@ class GiteaClient:
         description: str = "",
         private: bool = False,
         auto_init: bool = True,
+        owner: str | None = None,
     ) -> dict[str, Any]:
-        """Create a new repository in the organization."""
+        """Create a new repository.
+
+        Args:
+            name: Repository name
+            description: Repository description
+            private: Whether repo is private
+            auto_init: Initialize with README
+            owner: Username to create repo under (uses admin API).
+                   If None, creates in the organization.
+
+        Returns:
+            Dict with success, repo_url, clone_url, repo_name, owner
+        """
+        if owner:
+            # Create repo under user's account using admin API
+            endpoint = f"/admin/users/{owner}/repos"
+        else:
+            # Create repo in organization
+            endpoint = f"/orgs/{self.org}/repos"
+
         result = await self._request(
             "POST",
-            f"/orgs/{self.org}/repos",
+            endpoint,
             json_data={
                 "name": name,
                 "description": description,
@@ -135,7 +155,13 @@ class GiteaClient:
             result["clone_url"] = repo_data.get("clone_url")
             result["ssh_url"] = repo_data.get("ssh_url")
             result["repo_name"] = repo_data.get("name")
-            logger.info("gitea_repo_created", name=name, url=result.get("repo_url"))
+            result["owner"] = repo_data.get("owner", {}).get("login", owner or self.org)
+            logger.info(
+                "gitea_repo_created",
+                name=name,
+                owner=result.get("owner"),
+                url=result.get("repo_url"),
+            )
 
         return result
 
@@ -475,17 +501,29 @@ class GiteaClient:
     # Clone URL Helper
     # =========================================================================
 
-    def get_clone_url(self, repo_name: str) -> str:
-        """Get the clone URL for a repository (with embedded credentials)."""
-        # Use internal URL for cloning within Docker network
-        # URL format: http://user:pass@host:port/org/repo.git
-        base = GITEA_INTERNAL_URL.replace("http://", "").replace("https://", "")
-        return f"http://{self.admin_user}:{self.admin_password}@{base}/{self.org}/{repo_name}.git"
+    def get_clone_url(self, repo_name: str, owner: str | None = None) -> str:
+        """Get the clone URL for a repository (with embedded credentials).
 
-    def get_public_url(self, repo_name: str) -> str:
-        """Get the public repo URL (without credentials)."""
+        Args:
+            repo_name: Repository name
+            owner: Owner username. If None, uses the organization.
+        """
+        # Use internal URL for cloning within Docker network
+        # URL format: http://user:pass@host:port/owner/repo.git
+        base = GITEA_INTERNAL_URL.replace("http://", "").replace("https://", "")
+        repo_owner = owner or self.org
+        return f"http://{self.admin_user}:{self.admin_password}@{base}/{repo_owner}/{repo_name}.git"
+
+    def get_public_url(self, repo_name: str, owner: str | None = None) -> str:
+        """Get the public repo URL (without credentials).
+
+        Args:
+            repo_name: Repository name
+            owner: Owner username. If None, uses the organization.
+        """
         # Use external URL for display
-        return f"{GITEA_URL}/{self.org}/{repo_name}"
+        repo_owner = owner or self.org
+        return f"{GITEA_URL}/{repo_owner}/{repo_name}"
 
 
 # Singleton instance
