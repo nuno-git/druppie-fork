@@ -110,60 +110,34 @@ class GiteaClient:
     # User Operations
     # =========================================================================
 
-    async def get_oauth_source_id(self, source_name: str = "Keycloak") -> int | None:
-        """Get the ID of an OAuth2 authentication source by name.
-
-        Args:
-            source_name: Name of the OAuth source (default: "Keycloak")
-
-        Returns:
-            Source ID or None if not found
-        """
-        result = await self._request("GET", "/admin/auths")
-        if not result.get("success"):
-            return None
-
-        sources = result.get("data", [])
-        for source in sources:
-            if source.get("name") == source_name:
-                return source.get("id")
-
-        return None
-
     async def create_user(
         self,
         username: str,
         email: str,
-        source_id: int | None = None,
     ) -> dict[str, Any]:
-        """Create a new Gitea user account linked to OAuth.
+        """Create a new Gitea user account.
+
+        The user will be able to login via Keycloak OAuth due to Gitea's
+        ACCOUNT_LINKING=auto setting, which auto-links by email.
 
         Args:
             username: Username for the new account
-            email: Email address
-            source_id: OAuth source ID to link user to (for SSO login)
+            email: Email address (must match Keycloak email for auto-linking)
 
         Returns:
             Dict with success, user data
         """
         import secrets
 
-        # Create user data
+        # Create user with random password - user will login via OAuth
+        # Gitea's ACCOUNT_LINKING=auto will auto-link by email
         user_data = {
             "username": username,
             "email": email,
             "login_name": username,
             "must_change_password": False,
+            "password": secrets.token_urlsafe(32),  # Unused - login via OAuth
         }
-
-        if source_id:
-            # Link to OAuth source - user will login via SSO
-            user_data["source_id"] = source_id
-            # Still need a password for API, but user won't use it
-            user_data["password"] = secrets.token_urlsafe(32)
-        else:
-            # No OAuth source - generate unusable password
-            user_data["password"] = secrets.token_urlsafe(32)
 
         result = await self._request(
             "POST",
@@ -175,7 +149,7 @@ class GiteaClient:
             logger.info(
                 "gitea_user_created",
                 username=username,
-                oauth_linked=bool(source_id),
+                email=email,
             )
 
         return result
@@ -192,11 +166,12 @@ class GiteaClient:
     ) -> dict[str, Any]:
         """Ensure a Gitea user exists, creating if necessary.
 
-        Creates users linked to Keycloak OAuth so they can login via SSO.
+        Users will be able to login via Keycloak OAuth - Gitea auto-links
+        accounts by email when ACCOUNT_LINKING=auto is configured.
 
         Args:
             username: Username to check/create
-            email: Email for new user (defaults to username@druppie.local)
+            email: Email for new user (must match Keycloak email for auto-linking)
 
         Returns:
             Dict with success, created (bool), username
@@ -205,21 +180,13 @@ class GiteaClient:
         if await self.user_exists(username):
             return {"success": True, "created": False, "username": username}
 
-        # Get Keycloak OAuth source ID for SSO login
-        oauth_source_id = await self.get_oauth_source_id("Keycloak")
-        if oauth_source_id:
-            logger.info("gitea_oauth_source_found", source_id=oauth_source_id)
-        else:
-            logger.warning("gitea_oauth_source_not_found", source_name="Keycloak")
-
-        # Create the user linked to OAuth
+        # Create the user - Gitea will auto-link to OAuth by email
         if not email:
             email = f"{username}@druppie.local"
 
         result = await self.create_user(
             username=username,
             email=email,
-            source_id=oauth_source_id,
         )
 
         if result.get("success"):
