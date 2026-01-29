@@ -143,6 +143,37 @@ class ToolExecutor:
             )
             return None
 
+    def _get_project_repo_info(self, session_id: UUID) -> tuple[str | None, str | None]:
+        """Get the repo_name and repo_owner from the session's project.
+
+        Looks up session → project → (repo_name, repo_owner) for auto-injection into docker:build.
+        Returns (None, None) if session has no project or project has no repo.
+        """
+        try:
+            from druppie.db.models import Session, Project
+
+            # Get session to find project_id
+            session = self.db.query(Session).filter(Session.id == session_id).first()
+            if not session or not session.project_id:
+                logger.debug("Session has no project", session_id=str(session_id))
+                return None, None
+
+            # Get project to find repo_name and repo_owner
+            project = self.db.query(Project).filter(Project.id == session.project_id).first()
+            if not project or not project.repo_name:
+                logger.debug("Project has no repo_name", project_id=str(session.project_id))
+                return None, None
+
+            return project.repo_name, project.repo_owner
+
+        except Exception as e:
+            logger.warning(
+                "failed_to_get_project_repo_info",
+                session_id=str(session_id),
+                error=str(e),
+            )
+            return None, None
+
     async def execute(self, tool_call_id: UUID) -> str:
         """Execute a tool call.
 
@@ -463,6 +494,47 @@ class ToolExecutor:
                 tool_name=tool_call.tool_name,
                 session_id=str(tool_call.session_id),
             )
+
+        # Auto-inject repo_name and repo_owner for docker:build calls
+        # This enables git-based builds without requiring LLM to know the repo details
+        if (
+            tool_call.mcp_server == "docker"
+            and tool_call.tool_name == "build"
+            and "repo_name" not in args
+            and "git_url" not in args
+            and tool_call.session_id
+        ):
+            repo_name, repo_owner = self._get_project_repo_info(tool_call.session_id)
+            if repo_name:
+                args = {**args, "repo_name": repo_name}
+                if repo_owner:
+                    args = {**args, "repo_owner": repo_owner}
+                logger.info(
+                    "Auto-injected repo info into docker:build args",
+                    tool_name=tool_call.tool_name,
+                    repo_name=repo_name,
+                    repo_owner=repo_owner,
+                )
+
+        # Auto-inject repo_name and repo_owner for coding MCP write operations
+        # This enables pushing to the correct user repo
+        if (
+            tool_call.mcp_server == "coding"
+            and tool_call.tool_name in ("write_file", "batch_write_files")
+            and "repo_name" not in args
+            and tool_call.session_id
+        ):
+            repo_name, repo_owner = self._get_project_repo_info(tool_call.session_id)
+            if repo_name:
+                args = {**args, "repo_name": repo_name}
+                if repo_owner:
+                    args = {**args, "repo_owner": repo_owner}
+                logger.debug(
+                    "Auto-injected repo info into coding write args",
+                    tool_name=tool_call.tool_name,
+                    repo_name=repo_name,
+                    repo_owner=repo_owner,
+                )
 
         try:
             # Mark as executing

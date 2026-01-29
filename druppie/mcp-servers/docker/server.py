@@ -132,6 +132,8 @@ def release_port(port: int) -> None:
 def resolve_workspace_path(workspace_id: str | None, workspace_path: str | None) -> Path | None:
     """Resolve workspace path from workspace_id or direct path.
 
+    NOTE: This is legacy/fallback. Prefer git-based builds using git_url or repo_name.
+
     Args:
         workspace_id: Workspace ID to look up
         workspace_path: Direct path (takes precedence if provided)
@@ -168,13 +170,19 @@ def resolve_workspace_path(workspace_id: str | None, workspace_path: str | None)
     return None
 
 
-def get_gitea_clone_url(repo_name: str) -> str:
-    """Get Gitea clone URL with embedded credentials if available."""
+def get_gitea_clone_url(repo_name: str, repo_owner: str | None = None) -> str:
+    """Get Gitea clone URL with embedded credentials if available.
+
+    Args:
+        repo_name: Repository name
+        repo_owner: Owner username (defaults to GITEA_ORG if not provided)
+    """
+    owner = repo_owner or "druppie"
     if GITEA_USER and GITEA_PASSWORD:
-        # Authenticated URL: http://user:pass@host:port/org/repo.git
+        # Authenticated URL: http://user:pass@host:port/owner/repo.git
         host_part = GITEA_URL.replace("http://", "").replace("https://", "")
-        return f"http://{GITEA_USER}:{GITEA_PASSWORD}@{host_part}/druppie/{repo_name}.git"
-    return f"{GITEA_URL}/druppie/{repo_name}.git"
+        return f"http://{GITEA_USER}:{GITEA_PASSWORD}@{host_part}/{owner}/{repo_name}.git"
+    return f"{GITEA_URL}/{owner}/{repo_name}.git"
 
 
 def clone_and_build(
@@ -307,6 +315,7 @@ async def build(
     image_name: str,
     git_url: str | None = None,
     repo_name: str | None = None,
+    repo_owner: str | None = None,
     branch: str = "main",
     project_id: str | None = None,
     session_id: str | None = None,
@@ -320,14 +329,15 @@ async def build(
     Two modes:
     1. GIT-BASED (preferred): Clone from git URL, build, cleanup
        - Use git_url for any git repo
-       - Use repo_name for Gitea repos (will construct URL)
+       - Use repo_name + repo_owner for Gitea repos (will construct URL)
 
     2. WORKSPACE-BASED (legacy): Build from existing workspace path
 
     Args:
         image_name: Name for the built image (e.g., "myapp:latest")
         git_url: Full git URL to clone (preferred)
-        repo_name: Gitea repo name (will construct URL: gitea/druppie/{repo_name})
+        repo_name: Gitea repo name (will construct URL)
+        repo_owner: Gitea repo owner/username (defaults to "druppie" org)
         branch: Git branch (default: main)
         project_id: Project ID for tracking
         session_id: Session ID for tracking
@@ -342,7 +352,7 @@ async def build(
     try:
         # Mode 1: Git-based build (preferred)
         if git_url or repo_name:
-            url = git_url or get_gitea_clone_url(repo_name)
+            url = git_url or get_gitea_clone_url(repo_name, repo_owner)
             logger.info(
                 "Git-based build: %s -> %s (branch: %s, project: %s, session: %s)",
                 url, image_name, branch, project_id, session_id

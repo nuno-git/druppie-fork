@@ -10,8 +10,9 @@ workflow: always push and commit changes to git!
 ### Database Rules
 1. **NO JSON/JSONB columns** - Everything must be normalized into proper relational tables
 2. **Config stays in files** - Agent definitions (`agents/*.yaml`), MCP configs (`mcp_config.yaml`), workflows stay in YAML files, not database
-3. **Single source of truth** - Database schema is defined in `druppie/db/schema.sql`
+3. **Single source of truth** - Database schema is defined in SQLAlchemy models (`druppie/db/models/`)
 4. **Agent isolation** - Messages are linked to `agent_run_id` so agents don't share history by default
+5. **NO migrations** - We don't use database migrations. For schema changes, just update the SQLAlchemy models and reset the database with `./setup.sh clean && ./setup.sh all`
 
 ### Code Quality Rules
 1. **NO legacy/fallback code** - We are refactoring to a new normalized database architecture. Do not add backwards compatibility, fallback logic, or "legacy" code paths. Keep the code clean and focused on the new architecture only.
