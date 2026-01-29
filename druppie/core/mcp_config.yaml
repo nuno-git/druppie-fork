@@ -178,7 +178,7 @@ mcps:
             - image_name
 
       - name: run
-        description: "Run Docker container with auto-assigned port"
+        description: "Run Docker container with auto-assigned port and auto-detected container port"
         # GLOBAL: docker:run ALWAYS needs developer approval (per goal.md)
         requires_approval: true
         required_role: developer
@@ -196,7 +196,7 @@ mcps:
               description: "Host port to expose (auto-assigned from 9100-9199 range if not provided)"
             container_port:
               type: integer
-              description: "Container port to map to (default: 3000)"
+              description: "Container port to map to (auto-detected from image EXPOSE if not provided)"
             port_mapping:
               type: string
               description: "Full port mapping (e.g., '8080:3000') - overrides port/container_port"

@@ -18,6 +18,11 @@ const CopyButton = ({ text, label = 'Copy', className = '' }) => {
 
   const handleCopy = async (e) => {
     e.stopPropagation()
+    e.preventDefault()
+    if (text === undefined || text === null) {
+      console.warn('CopyButton: nothing to copy')
+      return
+    }
     try {
       const textToCopy = typeof text === 'string' ? text : JSON.stringify(text, null, 2)
       await navigator.clipboard.writeText(textToCopy)
@@ -47,14 +52,15 @@ const Collapsible = ({ title, children, defaultOpen = false, className = '', hea
 
   return (
     <div className={`border rounded-lg overflow-hidden ${className}`}>
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={`w-full text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 flex items-center gap-2 font-medium ${headerClass}`}
+      <div
+        className={`w-full text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 flex items-center gap-2 font-medium cursor-pointer ${headerClass}`}
       >
-        <span className="text-gray-500">{isOpen ? '▼' : '▶'}</span>
-        <span className="flex-1">{title}</span>
+        <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-2 flex-1 min-w-0">
+          <span className="text-gray-500">{isOpen ? '▼' : '▶'}</span>
+          <span className="flex-1 truncate">{title}</span>
+        </div>
         {copyData && <CopyButton text={copyData} label="Copy" />}
-      </button>
+      </div>
       {isOpen && (
         <div className="p-3 border-t bg-white">
           {children}
