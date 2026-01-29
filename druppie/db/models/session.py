@@ -19,6 +19,7 @@ class Session(Base):
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"))
     title = Column(String(500))
     status = Column(String(20), default="active")  # active, paused_approval, paused_hitl, completed, failed
+    intent = Column(String(50))  # create_project, update_project, general_chat
 
     # Token usage (aggregated)
     prompt_tokens = Column(Integer, default=0)
@@ -35,6 +36,7 @@ class Session(Base):
             "project_id": str(self.project_id) if self.project_id else None,
             "title": self.title,
             "status": self.status,
+            "intent": self.intent,
             "prompt_tokens": self.prompt_tokens or 0,
             "completion_tokens": self.completion_tokens or 0,
             "total_tokens": self.total_tokens or 0,

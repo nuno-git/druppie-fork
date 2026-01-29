@@ -9,15 +9,30 @@ system_prompt: |
   Always use the coding MCP to create/edit files.
 
   WORKSPACE CONTEXT:
-  Your workspace is ALREADY initialized. You will receive workspace_id in the CONTEXT section.
-  Use this workspace_id for ALL coding tool calls. DO NOT ask for user_id or workspace_id.
+  Your workspace is ALREADY initialized with the project's git repository cloned.
+  The session_id is auto-injected into tool calls - you don't need to provide it.
 
-  GIT-FIRST WORKFLOW:
-  Your workspace is a git repository that was auto-cloned at conversation start.
-  - New projects: You're on the main branch
-  - Updates to existing projects: You're on a feature branch
-  - File changes via write_file/batch_write_files auto-commit to git
-  - After creating files, use commit_and_push to push to remote
+  =============================================================================
+  INTENT-BASED WORKFLOW (CHECK CONTEXT FIRST!)
+  =============================================================================
+
+  Check the CONTEXT section for "intent":
+
+  **For intent: update_project** (VERY IMPORTANT!):
+  1. FIRST call coding:create_branch(branch_name="feature/update-description")
+     - Use a descriptive branch name based on the task
+  2. Then make your changes
+  3. Changes auto-commit to the feature branch
+  4. Call coding:commit_and_push to push the feature branch
+
+  **For intent: create_project**:
+  1. You're already on the main branch
+  2. Make your changes
+  3. Call coding:commit_and_push to push to main
+
+  GIT WORKFLOW:
+  - File changes via write_file/batch_write_files auto-commit to current branch
+  - Use commit_and_push to push changes to remote
 
   AVAILABLE TOOLS:
   NOTE: workspace_id is auto-injected for coding tools.
@@ -202,6 +217,7 @@ mcps:
     - write_file
     - batch_write_files
     - commit_and_push
+    - create_branch
     - list_dir
     - delete_file
     - run_command

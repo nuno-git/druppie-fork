@@ -105,6 +105,33 @@ BUILTIN_TOOLS = [
             },
         },
     },
+    # Intent Tool (for router agent)
+    {
+        "type": "function",
+        "function": {
+            "name": "set_intent",
+            "description": "Set the intent for this session. Call this to declare what the user wants to do. This must be called before done().",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "intent": {
+                        "type": "string",
+                        "enum": ["create_project", "update_project", "general_chat"],
+                        "description": "The type of user intent",
+                    },
+                    "project_id": {
+                        "type": "string",
+                        "description": "For update_project: the ID of the project to update",
+                    },
+                    "project_name": {
+                        "type": "string",
+                        "description": "For create_project: the name for the new project",
+                    },
+                },
+                "required": ["intent"],
+            },
+        },
+    },
     # Planning Tool (for planner agent)
     {
         "type": "function",
@@ -139,6 +166,244 @@ BUILTIN_TOOLS = [
     },
 ]
 
+
+
+# =============================================================================
+# INTENT TOOL IMPLEMENTATION
+# =============================================================================
+
+async def set_intent(
+    intent: str,
+    session_id: UUID,
+    agent_run_id: UUID,
+    db: "DBSession",
+    project_id: str | None = None,
+    project_name: str | None = None,
+) -> dict:
+    """Set the intent for the current session.
+
+    Called by router agent to declare the user's intent. Handles all setup:
+    - create_project: Creates Project record + Gitea repo
+    - update_project: Links existing project to session
+    - general_chat: Just sets the intent
+
+    Also updates the pending planner's prompt with intent context.
+
+    Args:
+        intent: Intent type (create_project, update_project, general_chat)
+        session_id: Session UUID
+        agent_run_id: Agent run UUID for tracking
+        db: Database session (caller commits)
+        project_id: For update_project - the project to update
+        project_name: For create_project - name for new project
+
+    Returns:
+        Success message with project details
+    """
+    from druppie.db.models import Session, Project, User, AgentRun
+    from druppie.core.gitea import get_gitea_client
+
+    logger.info(
+        "set_intent",
+        session_id=str(session_id),
+        agent_run_id=str(agent_run_id),
+        intent=intent,
+        project_id=project_id,
+        project_name=project_name,
+    )
+
+    # Validate intent
+    valid_intents = ("create_project", "update_project", "general_chat")
+    if intent not in valid_intents:
+        return {
+            "success": False,
+            "error": f"Invalid intent: {intent}. Must be one of: {valid_intents}",
+        }
+
+    # Get session
+    session = db.query(Session).filter(Session.id == session_id).first()
+    if not session:
+        return {
+            "success": False,
+            "error": f"Session not found: {session_id}",
+        }
+
+    session.intent = intent
+    result = {
+        "success": True,
+        "intent": intent,
+    }
+
+    final_project_id = None
+
+    if intent == "create_project":
+        # Create new project
+        if not project_name:
+            project_name = "new-project"
+
+        new_project = Project(
+            name=project_name,
+            owner_id=session.user_id,
+        )
+        db.add(new_project)
+        db.flush()  # Get the project ID
+
+        session.project_id = new_project.id
+        final_project_id = new_project.id
+        result["project_id"] = str(new_project.id)
+        result["project_name"] = project_name
+
+        logger.info(
+            "project_created",
+            project_id=str(new_project.id),
+            project_name=project_name,
+        )
+
+        # Create Gitea repo
+        try:
+            user = db.query(User).filter(User.id == session.user_id).first()
+            if user:
+                gitea_username = user.username
+                gitea_email = user.email or f"{gitea_username}@druppie.local"
+                short_id = str(new_project.id)[:8]
+                repo_name = f"{project_name}-{short_id}"
+
+                gitea = get_gitea_client()
+
+                # Ensure Gitea user exists
+                user_result = await gitea.ensure_user_exists(
+                    username=gitea_username,
+                    email=gitea_email,
+                )
+
+                if user_result.get("success"):
+                    # Create repo under user's account
+                    repo_result = await gitea.create_repo(
+                        name=repo_name,
+                        description=f"Project: {project_name}",
+                        auto_init=True,
+                        owner=gitea_username,
+                    )
+
+                    if repo_result.get("success"):
+                        repo_owner = repo_result.get("owner", gitea_username)
+                        repo_url = repo_result.get("repo_url")
+
+                        new_project.repo_name = repo_name
+                        new_project.repo_url = repo_url
+                        new_project.repo_owner = repo_owner
+
+                        result["repo_name"] = repo_name
+                        result["repo_url"] = repo_url
+                        result["repo_owner"] = repo_owner
+
+                        logger.info(
+                            "gitea_repo_created",
+                            project_id=str(new_project.id),
+                            repo_name=repo_name,
+                            repo_owner=repo_owner,
+                        )
+                    else:
+                        logger.warning(
+                            "gitea_repo_creation_failed",
+                            error=repo_result.get("error"),
+                        )
+                else:
+                    logger.warning(
+                        "gitea_user_creation_failed",
+                        error=user_result.get("error"),
+                    )
+        except Exception as e:
+            logger.warning("gitea_setup_failed", error=str(e))
+
+        result["message"] = f"Created project '{project_name}' with Gitea repo"
+
+    elif intent == "update_project":
+        if not project_id:
+            return {
+                "success": False,
+                "error": "project_id is required for update_project intent",
+            }
+
+        try:
+            session.project_id = UUID(project_id)
+            final_project_id = UUID(project_id)
+            result["project_id"] = project_id
+            result["message"] = f"Linked to existing project {project_id}"
+        except ValueError:
+            return {
+                "success": False,
+                "error": f"Invalid project_id format: {project_id}",
+            }
+
+    else:  # general_chat
+        result["message"] = "Intent set to general_chat"
+
+    # Update the pending planner's prompt with intent context
+    _update_planner_prompt(db, session_id, intent, final_project_id)
+
+    db.flush()
+
+    logger.info(
+        "intent_set_complete",
+        session_id=str(session_id),
+        intent=intent,
+        project_id=str(session.project_id) if session.project_id else None,
+    )
+
+    return result
+
+
+def _update_planner_prompt(
+    db: "DBSession",
+    session_id: UUID,
+    intent: str,
+    project_id: UUID | None,
+) -> None:
+    """Update the pending planner's prompt with intent context.
+
+    Finds the pending planner AgentRun for this session and prepends
+    intent context to its planned_prompt.
+
+    Args:
+        db: Database session
+        session_id: Session UUID
+        intent: Intent type
+        project_id: Project UUID (or None)
+    """
+    from druppie.db.models import AgentRun
+
+    # Find the pending planner run for this session
+    planner_run = (
+        db.query(AgentRun)
+        .filter(
+            AgentRun.session_id == session_id,
+            AgentRun.agent_id == "planner",
+            AgentRun.status == "pending",
+        )
+        .first()
+    )
+
+    if not planner_run:
+        logger.warning(
+            "planner_run_not_found",
+            session_id=str(session_id),
+        )
+        return
+
+    # Prepend intent context to the existing prompt
+    intent_context = f"""INTENT: {intent}
+PROJECT_ID: {str(project_id) if project_id else 'new'}
+
+"""
+    planner_run.planned_prompt = intent_context + (planner_run.planned_prompt or "")
+
+    logger.info(
+        "planner_prompt_updated",
+        session_id=str(session_id),
+        agent_run_id=str(planner_run.id),
+        intent=intent,
+    )
 
 
 # =============================================================================
@@ -299,6 +564,15 @@ async def execute_builtin(
             agent_run_id=agent_run_id,
             db=db,
         )
+    elif tool_name == "set_intent":
+        return await set_intent(
+            intent=args.get("intent", "general_chat"),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            db=db,
+            project_id=args.get("project_id"),
+            project_name=args.get("project_name"),
+        )
     else:
         return {
             "success": False,
@@ -313,6 +587,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "hitl_ask_multiple_choice_question",
         "done",
         "make_plan",
+        "set_intent",
     )
 
 
