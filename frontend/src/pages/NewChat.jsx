@@ -213,6 +213,19 @@ const LLMCallView = ({ llmCall, index }) => {
           </div>
         </Collapsible>
 
+        {/* Raw request to LLM */}
+        {llmCall.raw_request && (
+          <Collapsible
+            title="Raw Request (messages sent to LLM)"
+            className="text-sm"
+            copyData={llmCall.raw_request}
+          >
+            <pre className="text-xs bg-yellow-50 p-2 rounded overflow-auto max-h-96">
+              {JSON.stringify(llmCall.raw_request, null, 2)}
+            </pre>
+          </Collapsible>
+        )}
+
         {/* Raw response from LLM */}
         {llmCall.raw_response && (
           <Collapsible

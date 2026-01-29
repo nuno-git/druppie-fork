@@ -27,8 +27,20 @@ class ToolCallDetail(BaseModel):
     # For MCP tools that needed approval
     approval: ApprovalSummary | None = None
 
+    # For HITL tools - the question that was created (for answering)
+    question_id: UUID | None = None
+
     # For execute_agent - the spawned child run
     child_run: "AgentRunDetail | None" = None
+
+
+class LLMRawResponse(BaseModel):
+    """Raw response from the LLM API - for debugging."""
+    content: str | None = None  # Text content (may include XML tool calls)
+    tool_calls: list[dict] | None = None  # Tool calls as returned by LLM (before execution)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 class LLMCallDetail(BaseModel):
@@ -42,9 +54,12 @@ class LLMCallDetail(BaseModel):
     # The full prompt sent to the LLM (structured messages)
     messages: list[LLMMessage]
 
-    # What the LLM decided
-    response_content: str | None  # Text output
-    tool_calls: list[ToolCallDetail]  # Decisions to execute tools (ordered by index)
+    # Raw request/response for debugging - full JSON as sent/received
+    raw_request: list[dict] | None = None  # The exact messages array sent to LLM API
+    raw_response: LLMRawResponse | None = None  # What the LLM returned
+
+    # Executed tools with their results (what we did with the LLM's decisions)
+    tool_calls: list[ToolCallDetail]
 
 
 class AgentRunSummary(BaseModel):

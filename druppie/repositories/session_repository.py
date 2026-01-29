@@ -17,6 +17,7 @@ from ..domain import (
     AgentRunDetail,
     AgentRunStatus,
     LLMCallDetail,
+    LLMRawResponse,
     ToolCallDetail,
     ToolCallStatus,
     ApprovalSummary,
@@ -31,6 +32,7 @@ from ..db.models import (
     LlmCall,
     Approval,
     Project,
+    Question,
 )
 
 
@@ -257,6 +259,8 @@ class SessionRepository(BaseRepository):
 
     def _build_llm_calls(self, agent_run_id: UUID) -> list[LLMCallDetail]:
         """Build LLM calls with their tool executions for an agent run."""
+        import json
+
         llm_calls_db = (
             self.db.query(LlmCall)
             .filter_by(agent_run_id=agent_run_id)
@@ -272,6 +276,22 @@ class SessionRepository(BaseRepository):
             # Get tool calls that were executed after this LLM call
             tool_calls = self._build_tool_calls_for_llm(llm)
 
+            # Parse raw_response from JSON (stored in response_content)
+            raw_response = None
+            if llm.response_content:
+                try:
+                    raw_data = json.loads(llm.response_content)
+                    raw_response = LLMRawResponse(
+                        content=raw_data.get("content"),
+                        tool_calls=raw_data.get("tool_calls"),
+                        prompt_tokens=raw_data.get("prompt_tokens", 0),
+                        completion_tokens=raw_data.get("completion_tokens", 0),
+                        total_tokens=raw_data.get("total_tokens", 0),
+                    )
+                except json.JSONDecodeError:
+                    # Fallback for old format (plain text)
+                    raw_response = LLMRawResponse(content=llm.response_content)
+
             result.append(LLMCallDetail(
                 id=llm.id,
                 model=llm.model,
@@ -283,7 +303,8 @@ class SessionRepository(BaseRepository):
                 ),
                 duration_ms=llm.duration_ms,
                 messages=messages,
-                response_content=llm.response_content,
+                raw_request=llm.request_messages,  # Full messages as sent to LLM API
+                raw_response=raw_response,
                 tool_calls=tool_calls,
             ))
 
@@ -368,6 +389,17 @@ class SessionRepository(BaseRepository):
             if child_run_db:
                 child_run = self._build_agent_run_detail(child_run_db)
 
+        # Get question_id for HITL tools
+        question_id = None
+        if tc.tool_name in ("hitl_ask_question", "hitl_ask_multiple_choice_question"):
+            question = (
+                self.db.query(Question)
+                .filter_by(tool_call_id=tc.id)
+                .first()
+            )
+            if question:
+                question_id = question.id
+
         return ToolCallDetail(
             id=tc.id,
             index=index,
@@ -379,6 +411,7 @@ class SessionRepository(BaseRepository):
             result=tc.result,
             error=tc.error_message,
             approval=approval_summary,
+            question_id=question_id,
             child_run=child_run,
         )
 
