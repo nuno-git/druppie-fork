@@ -459,6 +459,44 @@ stop_all() {
 }
 
 # =============================================================================
+# DATABASE RESET
+# =============================================================================
+
+reset_database() {
+    header "Resetting Database"
+
+    # Check if DB is running
+    if ! docker ps | grep -q druppie-new-db; then
+        error "Database container not running. Start infra first: ./setup_dev.sh infra"
+        exit 1
+    fi
+
+    log "Dropping all tables..."
+    docker exec druppie-new-db psql -U druppie -d druppie -c "
+        DROP SCHEMA public CASCADE;
+        CREATE SCHEMA public;
+        GRANT ALL ON SCHEMA public TO druppie;
+    " || error "Failed to drop tables"
+
+    log "Re-creating schema..."
+    source venv/bin/activate
+    export DATABASE_URL="postgresql://druppie:druppie_secret@localhost:5533/druppie"
+    cd druppie
+    python -c "
+from db.database import engine
+from db.models import Base
+Base.metadata.create_all(bind=engine)
+print('Schema created successfully')
+" || error "Failed to create schema"
+    cd ..
+
+    success "Database reset complete!"
+    echo ""
+    echo "NOTE: Users will be created automatically on first login via Keycloak."
+    echo "      No manual user seeding - IDs come from Keycloak."
+}
+
+# =============================================================================
 # COMMAND HANDLING
 # =============================================================================
 
@@ -495,10 +533,13 @@ case "${1:-start}" in
     logs)
         show_logs "${2:-}"
         ;;
+    reset)
+        reset_database
+        ;;
     *)
         echo "Druppie Development Setup"
         echo ""
-        echo "Usage: $0 {start|infra|backend|frontend|stop|restart|status|logs}"
+        echo "Usage: $0 {start|infra|backend|frontend|stop|restart|status|logs|reset}"
         echo ""
         echo "Commands:"
         echo "  start     Start everything (default)"
@@ -509,6 +550,7 @@ case "${1:-start}" in
         echo "  restart   Restart everything"
         echo "  status    Show status of all services"
         echo "  logs      Show logs (optional: backend|frontend|<service>)"
+        echo "  reset     Reset database (drops all tables, recreates schema)"
         exit 1
         ;;
 esac
