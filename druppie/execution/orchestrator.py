@@ -343,6 +343,9 @@ USER REQUEST:
         """
         logger.info("execute_pending_runs_start", session_id=str(session_id))
 
+        # Build project context for agents (repo_name, repo_owner, etc.)
+        context = self._build_project_context(session_id)
+
         while True:
             # Get next pending run
             next_run = self.execution_repo.get_next_pending(session_id)
@@ -365,12 +368,13 @@ USER REQUEST:
             self.execution_repo.update_status(next_run.id, AgentRunStatus.RUNNING)
             self.execution_repo.commit()
 
-            # Run the agent
+            # Run the agent with project context
             status = await self._run_agent(
                 session_id=session_id,
                 agent_run_id=next_run.id,
                 agent_id=next_run.agent_id,
                 prompt=next_run.planned_prompt or "",
+                context=context,
             )
 
             # If paused, stop execution
@@ -381,6 +385,51 @@ USER REQUEST:
                     agent_run_id=str(next_run.id),
                 )
                 return
+
+    def _build_project_context(self, session_id: UUID) -> dict | None:
+        """Build project context for agents.
+
+        Retrieves project info (repo_name, repo_owner, etc.) from the session
+        and returns it as a context dict that will be injected into agent prompts.
+
+        Args:
+            session_id: Session UUID
+
+        Returns:
+            Context dict with project info, or None if no project associated
+        """
+        from druppie.db.models import Session as DBSession, Project
+
+        session = self.session_repo.db.query(DBSession).filter(DBSession.id == session_id).first()
+        if not session or not session.project_id:
+            return None
+
+        project = self.session_repo.db.query(Project).filter(Project.id == session.project_id).first()
+        if not project:
+            return None
+
+        context = {
+            "project_id": str(project.id),
+            "project_name": project.name,
+            "session_id": str(session_id),
+        }
+
+        # Add git repo info if available
+        if project.repo_name:
+            context["repo_name"] = project.repo_name
+        if project.repo_url:
+            context["repo_url"] = project.repo_url
+        if hasattr(project, 'repo_owner') and project.repo_owner:
+            context["repo_owner"] = project.repo_owner
+
+        logger.debug(
+            "project_context_built",
+            session_id=str(session_id),
+            project_id=str(project.id),
+            has_repo=bool(project.repo_name),
+        )
+
+        return context
 
     async def _run_agent(
         self,

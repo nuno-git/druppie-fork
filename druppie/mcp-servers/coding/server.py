@@ -10,11 +10,9 @@ import os
 import re
 import subprocess
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
-import httpx
 from fastmcp import FastMCP
 
 # Configure logging
@@ -234,29 +232,6 @@ def is_gitea_configured() -> bool:
     return bool(GITEA_TOKEN or (GITEA_USER and GITEA_PASSWORD))
 
 
-async def create_gitea_repo(repo_name: str, description: str) -> dict:
-    """Create repository in Gitea."""
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                f"{GITEA_URL}/api/v1/orgs/{GITEA_ORG}/repos",
-                json={
-                    "name": repo_name,
-                    "description": description,
-                    "private": False,
-                    "auto_init": True,
-                },
-                headers={"Authorization": f"token {GITEA_TOKEN}"},
-                timeout=30,
-            )
-            if response.status_code in (200, 201):
-                return response.json()
-            else:
-                return {"error": response.text, "status_code": response.status_code}
-        except Exception as e:
-            return {"error": str(e)}
-
-
 def get_workspace(workspace_id: str) -> dict:
     """Get workspace by ID."""
     if workspace_id not in workspaces:
@@ -294,149 +269,6 @@ def resolve_path(path: str, workspace_path: Path) -> Path:
 # =============================================================================
 # MCP TOOLS
 # =============================================================================
-
-
-@mcp.tool()
-async def register_workspace(
-    workspace_id: str,
-    workspace_path: str,
-    project_id: str,
-    branch: str,
-    user_id: str | None = None,
-    session_id: str | None = None,
-) -> dict:
-    """Register an existing workspace (created by backend).
-
-    This is used when the backend has already initialized the workspace
-    (cloned repo, created branch, etc.) and just needs to register it
-    with the MCP server so tools can access it.
-
-    Args:
-        workspace_id: Workspace ID (from backend)
-        workspace_path: Absolute path to the workspace
-        project_id: Project ID
-        branch: Current git branch
-        user_id: Optional user ID for context
-        session_id: Optional session ID for context
-
-    Returns:
-        Dict with success status
-    """
-    # Validate the path exists
-    path = Path(workspace_path)
-    if not path.exists():
-        return {
-            "success": False,
-            "error": f"Workspace path does not exist: {workspace_path}",
-        }
-
-    # Register workspace in memory
-    workspaces[workspace_id] = {
-        "path": str(path),
-        "project_id": project_id,
-        "branch": branch,
-        "user_id": user_id,
-        "session_id": session_id,
-    }
-
-    return {
-        "success": True,
-        "workspace_id": workspace_id,
-        "workspace_path": str(path),
-        "message": f"Workspace registered: {workspace_id}",
-    }
-
-
-@mcp.tool()
-async def initialize_workspace(
-    user_id: str,
-    session_id: str,
-    project_id: str | None = None,
-    project_name: str | None = None,
-) -> dict:
-    """Initialize workspace for a conversation.
-
-    - New project (project_id=None): Create repo on main branch
-    - Existing project: Clone and create feature branch
-
-    Note: Prefer using register_workspace if the backend has already
-    set up the workspace with git operations.
-
-    Args:
-        user_id: User ID
-        session_id: Session ID
-        project_id: Optional existing project ID
-        project_name: Optional name for new project
-
-    Returns:
-        Dict with workspace_id, workspace_path, project_id, branch
-    """
-    workspace_id = f"{user_id}-{session_id}"
-
-    if project_id is None:
-        # New project
-        project_id = str(uuid.uuid4())
-        repo_name = f"project-{project_id[:8]}"
-
-        # Create Gitea repo
-        if GITEA_TOKEN:
-            await create_gitea_repo(repo_name, project_name or "New Project")
-        branch = "main"
-    else:
-        repo_name = f"project-{project_id[:8]}"
-        branch = f"session-{session_id[:8]}"
-
-    # Create workspace directory
-    workspace_path = WORKSPACE_ROOT / user_id / project_id / session_id
-    workspace_path.mkdir(parents=True, exist_ok=True)
-
-    # Clone repo if Gitea is configured with credentials
-    if is_gitea_configured():
-        repo_url = get_gitea_clone_url(repo_name)
-        try:
-            subprocess.run(
-                ["git", "clone", repo_url, str(workspace_path)],
-                check=True,
-                capture_output=True,
-                timeout=60,
-            )
-        except subprocess.CalledProcessError:
-            # Repo might be empty, init locally
-            subprocess.run(["git", "init"], cwd=workspace_path, check=True)
-            subprocess.run(
-                ["git", "remote", "add", "origin", repo_url],
-                cwd=workspace_path,
-                check=True,
-            )
-
-        # Create feature branch if not main
-        if branch != "main":
-            subprocess.run(
-                ["git", "checkout", "-b", branch],
-                cwd=workspace_path,
-                check=True,
-            )
-    else:
-        # No Gitea - just init local git
-        subprocess.run(["git", "init"], cwd=workspace_path, check=True)
-
-    # Register workspace
-    workspaces[workspace_id] = {
-        "path": str(workspace_path),
-        "project_id": project_id,
-        "branch": branch,
-        "repo_name": repo_name,
-        "user_id": user_id,
-        "session_id": session_id,
-    }
-
-    return {
-        "success": True,
-        "workspace_id": workspace_id,
-        "workspace_path": str(workspace_path),
-        "project_id": project_id,
-        "branch": branch,
-    }
 
 
 @mcp.tool()

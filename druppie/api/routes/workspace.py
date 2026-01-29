@@ -2,22 +2,15 @@
 
 Bridge to Coding MCP - lets the frontend browse files that agents have written.
 
-TODO: This file needs to be rewritten to use Coding MCP directly instead of
-the deleted Workspace database model. The Coding MCP manages workspace lifecycle
-(clone, register) and can list/read files.
-
-Architecture (target):
+Architecture:
     Route (this file)
       │
-      └──▶ Coding MCP (list_dir, read_file)
+      └──▶ MCP Bridge (Coding MCP list_dir, read_file)
 
 Endpoints:
 - GET /workspace/files - List files via Coding MCP
 - GET /workspace/file - Get file content via Coding MCP
 """
-
-import os
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -25,13 +18,36 @@ import structlog
 
 from druppie.api.deps import get_current_user
 from druppie.api.errors import NotFoundError, ValidationError
+from druppie.core.mcp_config import MCPConfig
+from druppie.execution.mcp_http import MCPHttp, MCPHttpError
 
 logger = structlog.get_logger()
 
 router = APIRouter()
 
-# Workspace root directory (used for fallback path resolution)
-WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace"))
+
+# =============================================================================
+# SINGLETON INSTANCES (shared with mcp_bridge.py)
+# =============================================================================
+
+_mcp_config: MCPConfig | None = None
+_mcp_http: MCPHttp | None = None
+
+
+def get_mcp_config() -> MCPConfig:
+    """Get or create MCP config singleton."""
+    global _mcp_config
+    if _mcp_config is None:
+        _mcp_config = MCPConfig()
+    return _mcp_config
+
+
+def get_mcp_http() -> MCPHttp:
+    """Get or create MCP HTTP client singleton."""
+    global _mcp_http
+    if _mcp_http is None:
+        _mcp_http = MCPHttp(get_mcp_config())
+    return _mcp_http
 
 
 # =============================================================================
@@ -63,63 +79,7 @@ class FileContentResponse(BaseModel):
 
 
 # =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-
-def resolve_safe_path(base_path: Path, relative_path: str) -> Path:
-    """Resolve a path safely within the workspace root.
-
-    Prevents path traversal attacks.
-    """
-    resolved = (base_path / relative_path).resolve()
-    try:
-        resolved.relative_to(base_path.resolve())
-    except ValueError:
-        raise ValidationError("Invalid path: path traversal not allowed", field="path")
-    return resolved
-
-
-def list_directory(dir_path: Path, workspace_root: Path) -> tuple[list[FileInfo], list[FileInfo]]:
-    """List files and directories in a path."""
-    files = []
-    directories = []
-
-    if not dir_path.exists() or not dir_path.is_dir():
-        return files, directories
-
-    try:
-        for item in dir_path.iterdir():
-            # Skip hidden files and common ignored directories
-            if item.name.startswith("."):
-                continue
-            if item.name in ["__pycache__", "node_modules"]:
-                continue
-
-            rel_path = str(item.relative_to(workspace_root))
-            if item.is_file():
-                files.append(FileInfo(
-                    name=item.name,
-                    path=rel_path,
-                    type="file",
-                    size=item.stat().st_size,
-                ))
-            elif item.is_dir():
-                directories.append(FileInfo(
-                    name=item.name,
-                    path=rel_path,
-                    type="directory",
-                ))
-    except PermissionError:
-        logger.warning("permission_denied", path=str(dir_path))
-
-    return files, directories
-
-
-# =============================================================================
 # ROUTES
-# TODO: Reimplement these to use Coding MCP list_dir/read_file
-# For now, use filesystem directly with session-based path convention
 # =============================================================================
 
 
@@ -129,36 +89,78 @@ async def list_workspace_files(
     path: str = Query("", description="Path within workspace to list"),
     user: dict = Depends(get_current_user),
 ) -> WorkspaceFilesResponse:
-    """List files in a session's workspace.
+    """List files in a session's workspace via Coding MCP.
 
     Returns files and directories at the specified path within the
     session's workspace directory.
-
-    TODO: Replace with Coding MCP list_dir call
     """
-    # Convention: workspace path is WORKSPACE_ROOT / session_id
-    workspace_path = WORKSPACE_ROOT / session_id
+    mcp_http = get_mcp_http()
 
-    if not workspace_path.exists():
+    try:
+        result = await mcp_http.call(
+            server="coding",
+            tool="list_dir",
+            args={
+                "path": path or ".",
+                "session_id": session_id,
+            },
+            timeout_seconds=30.0,
+        )
+
+        if not result.get("success", False):
+            logger.warning(
+                "workspace_list_dir_failed",
+                session_id=session_id,
+                path=path,
+                error=result.get("error"),
+            )
+            return WorkspaceFilesResponse(
+                session_id=session_id,
+                path=path or ".",
+                files=[],
+                directories=[],
+            )
+
+        # Parse result from Coding MCP (returns files and directories separately)
+        files = [
+            FileInfo(
+                name=f.get("name", ""),
+                path=f.get("path", ""),
+                type="file",
+                size=f.get("size", 0),
+            )
+            for f in result.get("files", [])
+        ]
+        directories = [
+            FileInfo(
+                name=d.get("name", ""),
+                path=d.get("path", ""),
+                type="directory",
+                size=0,
+            )
+            for d in result.get("directories", [])
+        ]
+
+        return WorkspaceFilesResponse(
+            session_id=session_id,
+            path=result.get("path", path or "."),
+            files=files,
+            directories=directories,
+        )
+
+    except MCPHttpError as e:
+        logger.error(
+            "workspace_list_dir_error",
+            session_id=session_id,
+            path=path,
+            error=str(e),
+        )
         return WorkspaceFilesResponse(
             session_id=session_id,
             path=path or ".",
             files=[],
             directories=[],
         )
-
-    # Resolve the target directory
-    target_path = resolve_safe_path(workspace_path, path) if path else workspace_path
-
-    # List directory contents
-    files, directories = list_directory(target_path, workspace_path)
-
-    return WorkspaceFilesResponse(
-        session_id=session_id,
-        path=path or ".",
-        files=files,
-        directories=directories,
-    )
 
 
 @router.get("/workspace/file")
@@ -167,37 +169,40 @@ async def get_workspace_file(
     path: str = Query(..., description="File path within workspace"),
     user: dict = Depends(get_current_user),
 ) -> FileContentResponse:
-    """Get file content from a session's workspace.
+    """Get file content from a session's workspace via Coding MCP.
 
     Returns the text content of a file. Binary files return content=null.
-    Maximum file size is 10MB.
-
-    TODO: Replace with Coding MCP read_file call
     """
-    # Convention: workspace path is WORKSPACE_ROOT / session_id
-    workspace_path = WORKSPACE_ROOT / session_id
+    mcp_http = get_mcp_http()
 
-    if not workspace_path.exists():
-        raise NotFoundError("workspace", session_id, "Workspace directory not found")
-
-    # Resolve file path safely
-    file_path = resolve_safe_path(workspace_path, path)
-
-    if not file_path.exists():
-        raise NotFoundError("file", path)
-
-    if not file_path.is_file():
-        raise ValidationError(f"Path is not a file: {path}", field="path")
-
-    # Check file size (limit to 10MB)
-    size = file_path.stat().st_size
-    if size > 10 * 1024 * 1024:
-        raise ValidationError("File too large (max 10MB)", field="path")
-
-    # Try to read as text
     try:
-        content = file_path.read_text(encoding="utf-8")
-        return FileContentResponse(path=path, content=content, size=size)
-    except UnicodeDecodeError:
-        # Binary file - return null content
-        return FileContentResponse(path=path, content=None, size=size)
+        result = await mcp_http.call(
+            server="coding",
+            tool="read_file",
+            args={
+                "path": path,
+                "session_id": session_id,
+            },
+            timeout_seconds=30.0,
+        )
+
+        if not result.get("success", False):
+            error = result.get("error", "Unknown error")
+            if "not found" in error.lower():
+                raise NotFoundError("file", path)
+            raise ValidationError(f"Failed to read file: {error}", field="path")
+
+        return FileContentResponse(
+            path=path,
+            content=result.get("content"),
+            size=len(result.get("content", "")) if result.get("content") else 0,
+        )
+
+    except MCPHttpError as e:
+        logger.error(
+            "workspace_read_file_error",
+            session_id=session_id,
+            path=path,
+            error=str(e),
+        )
+        raise ValidationError(f"Failed to read file: {e}", field="path")
