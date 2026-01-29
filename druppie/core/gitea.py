@@ -107,6 +107,92 @@ class GiteaClient:
             }
 
     # =========================================================================
+    # User Operations
+    # =========================================================================
+
+    async def create_user(
+        self,
+        username: str,
+        email: str,
+        password: str | None = None,
+        must_change_password: bool = False,
+    ) -> dict[str, Any]:
+        """Create a new Gitea user account.
+
+        Args:
+            username: Username for the new account
+            email: Email address
+            password: Password (generated if not provided)
+            must_change_password: Whether user must change password on first login
+
+        Returns:
+            Dict with success, user data
+        """
+        import secrets
+
+        if not password:
+            password = secrets.token_urlsafe(16)
+
+        result = await self._request(
+            "POST",
+            "/admin/users",
+            json_data={
+                "username": username,
+                "email": email,
+                "password": password,
+                "must_change_password": must_change_password,
+                "login_name": username,
+            },
+        )
+
+        if result["success"]:
+            logger.info("gitea_user_created", username=username)
+
+        return result
+
+    async def user_exists(self, username: str) -> bool:
+        """Check if a Gitea user exists."""
+        result = await self._request("GET", f"/users/{username}")
+        return result.get("success", False)
+
+    async def ensure_user_exists(
+        self,
+        username: str,
+        email: str | None = None,
+    ) -> dict[str, Any]:
+        """Ensure a Gitea user exists, creating if necessary.
+
+        Args:
+            username: Username to check/create
+            email: Email for new user (defaults to username@druppie.local)
+
+        Returns:
+            Dict with success, created (bool), username
+        """
+        # Check if user already exists
+        if await self.user_exists(username):
+            return {"success": True, "created": False, "username": username}
+
+        # Create the user
+        if not email:
+            email = f"{username}@druppie.local"
+
+        result = await self.create_user(
+            username=username,
+            email=email,
+            must_change_password=False,
+        )
+
+        if result.get("success"):
+            return {"success": True, "created": True, "username": username}
+
+        return {
+            "success": False,
+            "error": result.get("error") or result.get("data"),
+            "username": username,
+        }
+
+    # =========================================================================
     # Repository Operations
     # =========================================================================
 

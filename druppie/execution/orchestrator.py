@@ -280,10 +280,9 @@ USER REQUEST:
         project_id: UUID,
         user_id: UUID,
     ) -> tuple[str | None, str | None, str | None]:
-        """Create a Gitea repository for the project.
+        """Create a Gitea repository for the project under the user's account.
 
-        First tries to create under user's Gitea account (if it exists).
-        Falls back to creating in the shared organization.
+        Creates the Gitea user account if it doesn't exist.
 
         Args:
             project_name: Name of the project (used as repo name)
@@ -293,26 +292,46 @@ USER REQUEST:
         Returns:
             Tuple of (repo_name, repo_url, repo_owner) or (None, None, None) if failed
         """
-        from druppie.core.gitea import get_gitea_client, GITEA_ORG
+        from druppie.core.gitea import get_gitea_client
         from druppie.db.models import User
 
-        # Get username for Gitea account
+        # Get username and email for Gitea account
         user = self.session_repo.db.query(User).filter(User.id == user_id).first()
         if not user:
             logger.error("user_not_found_for_gitea_repo", user_id=str(user_id))
             return None, None, None
 
         gitea_username = user.username
+        gitea_email = user.email or f"{gitea_username}@druppie.local"
 
         # Make repo name unique by appending short project ID
-        # This handles cases where user creates multiple "todo-app" projects
         short_id = str(project_id)[:8]
         repo_name = f"{project_name}-{short_id}"
 
         try:
             gitea = get_gitea_client()
 
-            # First, try to create under user's account
+            # Ensure the Gitea user account exists (create if needed)
+            user_result = await gitea.ensure_user_exists(
+                username=gitea_username,
+                email=gitea_email,
+            )
+
+            if not user_result.get("success"):
+                logger.error(
+                    "gitea_user_creation_failed",
+                    gitea_username=gitea_username,
+                    error=user_result.get("error"),
+                )
+                return None, None, None
+
+            if user_result.get("created"):
+                logger.info(
+                    "gitea_user_auto_created",
+                    gitea_username=gitea_username,
+                )
+
+            # Create repo under user's account
             result = await gitea.create_repo(
                 name=repo_name,
                 description=f"Project: {project_name}",
@@ -320,22 +339,8 @@ USER REQUEST:
                 owner=gitea_username,
             )
 
-            # If user doesn't exist in Gitea, fall back to organization
-            if not result.get("success") and result.get("status_code") == 404:
-                logger.info(
-                    "gitea_user_not_found_falling_back_to_org",
-                    gitea_username=gitea_username,
-                    org=GITEA_ORG,
-                )
-                result = await gitea.create_repo(
-                    name=repo_name,
-                    description=f"Project: {project_name} (owner: {gitea_username})",
-                    auto_init=True,
-                    owner=None,  # Uses organization
-                )
-
             if result.get("success"):
-                repo_owner = result.get("owner", GITEA_ORG)
+                repo_owner = result.get("owner", gitea_username)
                 return repo_name, result.get("repo_url"), repo_owner
             else:
                 logger.error(
