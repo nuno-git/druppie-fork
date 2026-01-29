@@ -515,9 +515,21 @@ class ToolExecutor:
         """
         args = tool_call.arguments or {}
 
-        # Auto-inject session_id for MCP tools that support it
-        # This enables standalone operation without requiring the LLM to pass session_id
-        if "session_id" not in args and tool_call.session_id:
+        # Auto-inject session_id ONLY for tools that accept it
+        # Coding MCP: all tools accept session_id
+        # Docker MCP: only build and run accept session_id
+        tools_accepting_session_id = {
+            "coding": None,  # All coding tools accept session_id
+            "docker": {"build", "run"},  # Only these docker tools accept session_id
+        }
+
+        server_tools = tools_accepting_session_id.get(tool_call.mcp_server)
+        should_inject_session = (
+            server_tools is None  # All tools for this server accept it
+            or tool_call.tool_name in server_tools  # This specific tool accepts it
+        )
+
+        if should_inject_session and "session_id" not in args and tool_call.session_id:
             args = {**args, "session_id": str(tool_call.session_id)}
             logger.debug(
                 "Auto-injected session_id into MCP tool args",
