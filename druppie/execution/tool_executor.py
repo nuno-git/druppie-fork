@@ -558,25 +558,21 @@ class ToolExecutor:
                     repo_owner=repo_owner,
                 )
 
-        # Auto-inject repo_name and repo_owner for coding MCP write operations
-        # This enables pushing to the correct user repo
-        if (
-            tool_call.mcp_server == "coding"
-            and tool_call.tool_name in ("write_file", "batch_write_files")
-            and "repo_name" not in args
-            and tool_call.session_id
-        ):
-            repo_name, repo_owner = self._get_project_repo_info(tool_call.session_id)
-            if repo_name:
-                args = {**args, "repo_name": repo_name}
-                if repo_owner:
-                    args = {**args, "repo_owner": repo_owner}
-                logger.debug(
-                    "Auto-injected repo info into coding write args",
-                    tool_name=tool_call.tool_name,
-                    repo_name=repo_name,
-                    repo_owner=repo_owner,
-                )
+        # Auto-inject repo_name and repo_owner for ALL coding MCP tools
+        # This enables cloning from correct repo when workspace is created
+        if tool_call.mcp_server == "coding" and tool_call.session_id:
+            if "repo_name" not in args:
+                repo_name, repo_owner = self._get_project_repo_info(tool_call.session_id)
+                if repo_name:
+                    args = {**args, "repo_name": repo_name}
+                    if repo_owner:
+                        args = {**args, "repo_owner": repo_owner}
+                    logger.debug(
+                        "Auto-injected repo info into coding args",
+                        tool_name=tool_call.tool_name,
+                        repo_name=repo_name,
+                        repo_owner=repo_owner,
+                    )
 
         # Auto-inject user_id and project_id for docker:run calls
         # This enables ownership tracking via container labels

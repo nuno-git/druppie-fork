@@ -120,8 +120,8 @@ def get_or_create_workspace(
         project_id: Optional project ID
         user_id: Optional user ID
         workspace_id: Optional explicit workspace ID (for backward compat)
-        repo_name: Optional Gitea repo name (for git remote setup)
-        repo_owner: Optional Gitea repo owner (for git remote setup)
+        repo_name: Optional Gitea repo name (for cloning and git remote)
+        repo_owner: Optional Gitea repo owner (for cloning and git remote)
 
     Returns:
         Tuple of (workspace_id, workspace_path)
@@ -319,6 +319,8 @@ async def read_file(
     workspace_id: str | None = None,
     project_id: str | None = None,
     user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
 ) -> dict:
     """Read file from workspace.
 
@@ -332,6 +334,8 @@ async def read_file(
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for cloning)
+        repo_owner: Gitea repository owner (for cloning)
 
     Returns:
         Dict with success, content, path, size
@@ -344,6 +348,8 @@ async def read_file(
                 project_id=project_id,
                 user_id=user_id,
                 workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
             )
         elif workspace_id:
             ws = get_workspace(workspace_id)
@@ -535,6 +541,8 @@ async def list_dir(
     project_id: str | None = None,
     user_id: str | None = None,
     recursive: bool = False,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
 ) -> dict:
     """List directory contents.
 
@@ -549,6 +557,8 @@ async def list_dir(
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
         recursive: Whether to list recursively
+        repo_name: Gitea repository name (for cloning)
+        repo_owner: Gitea repository owner (for cloning)
 
     Returns:
         Dict with files and directories
@@ -561,6 +571,8 @@ async def list_dir(
                 project_id=project_id,
                 user_id=user_id,
                 workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
             )
         elif workspace_id:
             ws = get_workspace(workspace_id)
@@ -633,6 +645,8 @@ async def delete_file(
     project_id: str | None = None,
     user_id: str | None = None,
     auto_commit: bool = True,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
 ) -> dict:
     """Delete file from workspace.
 
@@ -643,6 +657,8 @@ async def delete_file(
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
         auto_commit: Whether to auto-commit (default: True)
+        repo_name: Gitea repository name (for cloning)
+        repo_owner: Gitea repository owner (for cloning)
 
     Returns:
         Dict with success, deleted path
@@ -655,6 +671,8 @@ async def delete_file(
                 project_id=project_id,
                 user_id=user_id,
                 workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
             )
         elif workspace_id:
             ws = get_workspace(workspace_id)
@@ -714,6 +732,8 @@ async def run_command(
     project_id: str | None = None,
     user_id: str | None = None,
     timeout: int = 60,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
 ) -> dict:
     """Execute shell command in workspace (requires approval).
 
@@ -724,6 +744,8 @@ async def run_command(
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
         timeout: Timeout in seconds (default: 60)
+        repo_name: Gitea repository name (for cloning)
+        repo_owner: Gitea repository owner (for cloning)
 
     Returns:
         Dict with success, stdout, stderr, return_code
@@ -736,6 +758,8 @@ async def run_command(
                 project_id=project_id,
                 user_id=user_id,
                 workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
             )
             workspace_path = str(workspace_path)
         elif workspace_id:

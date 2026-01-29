@@ -1,15 +1,21 @@
 """Orchestrator - coordinates agent runs and tool execution.
 
 The orchestrator is the main entry point for processing user messages.
+It is intentionally "dumb" - just creates agent runs and executes them.
+All smart logic (intent handling, project creation, planner prompt updates)
+is delegated to built-in tools.
 
 Flow:
 1. Create session
 2. Save user message to timeline
-3. Run router with user's projects injected
-4. Parse router's intent from done() result
-5. Handle project creation/selection based on intent
-6. Create planner with intent injected into prompt
-7. Execute remaining pending runs (planner → architect → developer → deployer)
+3. Create router (seq 0) + planner (seq 1) as PENDING
+4. Execute all pending runs:
+   - Router runs → calls set_intent() which:
+     - Sets session.intent
+     - Creates project + Gitea repo if needed
+     - Updates planner's prompt with intent context
+   - Planner runs (now with updated prompt) → calls make_plan()
+   - Remaining agents execute
 
 Architecture:
     User Message
@@ -21,21 +27,17 @@ Architecture:
          │
          ├─► Save User Message (to timeline)
          │
-         ├─► Run Router (with projects injected)
-         │         │
-         │         └─► done(summary='{"intent": "...", ...}')
-         │
-         ├─► Parse intent, handle project
-         │
-         ├─► Create Planner (with intent injected)
+         ├─► Create Router + Planner (both PENDING)
          │
          └─► execute_pending_runs()
                  │
-                 ▼
-           Planner → Architect → Developer → Deployer
+                 ├─► Router → set_intent() updates planner prompt
+                 │
+                 ├─► Planner → make_plan() creates agent runs
+                 │
+                 └─► Architect → Developer → Deployer
 """
 
-import json
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -84,14 +86,16 @@ class Orchestrator:
     ) -> UUID:
         """Process a user message.
 
+        The orchestrator is intentionally simple - it just creates agent runs
+        and executes them. All smart logic is in built-in tools:
+        - set_intent: handles project creation, session updates, planner prompt
+        - make_plan: creates the execution plan
+
         Flow:
         1. Create or get session
         2. Save user message to timeline
-        3. Get user's projects for router
-        4. Run router to classify intent
-        5. Handle project creation/selection
-        6. Create planner with intent context
-        7. Execute remaining pending runs
+        3. Create router + planner (both PENDING)
+        4. Execute all pending runs
 
         Args:
             message: User's message
@@ -136,74 +140,19 @@ class Orchestrator:
         user_projects = self.project_repo.get_by_user(user_id)
         projects_context = self._format_projects_for_router(user_projects)
 
-        # Step 4: Create and run router
+        # Step 4: Create router + planner (both PENDING)
+        # Router will call set_intent() which updates planner's prompt
         router_prompt = f"{projects_context}\n\nUSER REQUEST:\n{message}"
-        router_run = self.execution_repo.create_agent_run(
+        self.execution_repo.create_agent_run(
             session_id=current_session_id,
             agent_id="router",
             status=AgentRunStatus.PENDING,
             planned_prompt=router_prompt,
             sequence_number=0,
         )
-        self.execution_repo.commit()
 
-        # Run router and get result
-        router_result = await self._run_agent(
-            session_id=current_session_id,
-            agent_run_id=router_run.id,
-            agent_id="router",
-            prompt=router_prompt,
-        )
-
-        # Step 5: Parse intent from router's done() result
-        intent_data = self._parse_router_intent(router_run.id)
-        intent = intent_data.get("intent", "general_chat")
-
-        logger.info(
-            "router_intent_parsed",
-            session_id=str(current_session_id),
-            intent=intent,
-            intent_data=intent_data,
-        )
-
-        # Step 6: Handle project based on intent
-        final_project_id = project_id
-        if intent == "create_project":
-            # Create new project
-            project_name = intent_data.get("project_name", "new-project")
-            new_project = self.project_repo.create(
-                name=project_name,
-                user_id=user_id,
-            )
-            self.project_repo.commit()
-            final_project_id = new_project.id
-            logger.info("project_created", project_id=str(final_project_id), name=project_name)
-
-            # Create Gitea repository for the project under user's account
-            repo_name, repo_url, repo_owner = await self._create_gitea_repo(
-                project_name, final_project_id, user_id
-            )
-            if repo_name and repo_url:
-                self.project_repo.update_repo(final_project_id, repo_name, repo_url, repo_owner)
-                self.project_repo.commit()
-                logger.info(
-                    "gitea_repo_created",
-                    project_id=str(final_project_id),
-                    repo_owner=repo_owner,
-                    repo_url=repo_url,
-                )
-
-        elif intent == "update_project":
-            # Use existing project
-            final_project_id = UUID(intent_data.get("project_id")) if intent_data.get("project_id") else project_id
-
-        # Update session with project
-        if final_project_id:
-            self.session_repo.update_project(current_session_id, final_project_id)
-            self.session_repo.commit()
-
-        # Step 7: Create planner with intent context
-        planner_prompt = self._build_planner_prompt(message, intent, final_project_id)
+        # Planner starts with basic prompt - set_intent will update it with context
+        planner_prompt = f"USER REQUEST:\n{message}"
         self.execution_repo.create_agent_run(
             session_id=current_session_id,
             agent_id="planner",
@@ -213,7 +162,9 @@ class Orchestrator:
         )
         self.execution_repo.commit()
 
-        # Step 8: Execute remaining pending runs (planner and beyond)
+        # Step 5: Execute all pending runs
+        # Router runs first, calls set_intent() which updates planner prompt
+        # Then planner runs with updated prompt
         await self.execute_pending_runs(current_session_id)
 
         return current_session_id
@@ -231,134 +182,6 @@ class Orchestrator:
             lines.append(f"- {project_name} (id: {project_id})")
 
         return "\n".join(lines)
-
-    def _parse_router_intent(self, router_run_id: UUID) -> dict:
-        """Parse intent from router's done() tool call result.
-
-        Router calls done(summary='{"intent": "...", ...}')
-        We find the done tool call and parse the JSON from summary.
-        """
-        # Get all tool calls for this agent run
-        tool_calls = self.execution_repo.get_tool_calls_for_run(router_run_id)
-
-        # Find the done tool call
-        for tc in tool_calls:
-            if tc.tool_name == "done" and tc.result:
-                # tc.result is stored as JSON string in Text column
-                # Parse it to get: {"status": "completed", "summary": "..."}
-                try:
-                    result = json.loads(tc.result) if isinstance(tc.result, str) else tc.result
-                except json.JSONDecodeError:
-                    result = {}
-
-                summary = result.get("summary", "") if isinstance(result, dict) else ""
-
-                # Try to parse summary as JSON (router puts intent here)
-                try:
-                    return json.loads(summary)
-                except (json.JSONDecodeError, TypeError):
-                    # If not JSON, try to extract intent from text
-                    if "create_project" in summary.lower():
-                        return {"intent": "create_project"}
-                    elif "update_project" in summary.lower():
-                        return {"intent": "update_project"}
-                    return {"intent": "general_chat"}
-
-        return {"intent": "general_chat"}
-
-    def _build_planner_prompt(self, message: str, intent: str, project_id: UUID | None) -> str:
-        """Build planner prompt with intent context injected."""
-        return f"""INTENT: {intent}
-PROJECT_ID: {str(project_id) if project_id else 'new'}
-
-USER REQUEST:
-{message}"""
-
-    async def _create_gitea_repo(
-        self,
-        project_name: str,
-        project_id: UUID,
-        user_id: UUID,
-    ) -> tuple[str | None, str | None, str | None]:
-        """Create a Gitea repository for the project under the user's account.
-
-        Creates the Gitea user account if it doesn't exist.
-
-        Args:
-            project_name: Name of the project (used as repo name)
-            project_id: Project UUID (appended to make repo name unique)
-            user_id: User UUID (to look up Gitea username)
-
-        Returns:
-            Tuple of (repo_name, repo_url, repo_owner) or (None, None, None) if failed
-        """
-        from druppie.core.gitea import get_gitea_client
-        from druppie.db.models import User
-
-        # Get username and email for Gitea account
-        user = self.session_repo.db.query(User).filter(User.id == user_id).first()
-        if not user:
-            logger.error("user_not_found_for_gitea_repo", user_id=str(user_id))
-            return None, None, None
-
-        gitea_username = user.username
-        gitea_email = user.email or f"{gitea_username}@druppie.local"
-
-        # Make repo name unique by appending short project ID
-        short_id = str(project_id)[:8]
-        repo_name = f"{project_name}-{short_id}"
-
-        try:
-            gitea = get_gitea_client()
-
-            # Ensure the Gitea user account exists (create if needed)
-            user_result = await gitea.ensure_user_exists(
-                username=gitea_username,
-                email=gitea_email,
-            )
-
-            if not user_result.get("success"):
-                logger.error(
-                    "gitea_user_creation_failed",
-                    gitea_username=gitea_username,
-                    error=user_result.get("error"),
-                )
-                return None, None, None
-
-            if user_result.get("created"):
-                logger.info(
-                    "gitea_user_auto_created",
-                    gitea_username=gitea_username,
-                )
-
-            # Create repo under user's account
-            result = await gitea.create_repo(
-                name=repo_name,
-                description=f"Project: {project_name}",
-                auto_init=True,
-                owner=gitea_username,
-            )
-
-            if result.get("success"):
-                repo_owner = result.get("owner", gitea_username)
-                return repo_name, result.get("repo_url"), repo_owner
-            else:
-                logger.error(
-                    "gitea_repo_creation_failed",
-                    project_name=project_name,
-                    gitea_username=gitea_username,
-                    error=result.get("error"),
-                    status_code=result.get("status_code"),
-                )
-                return None, None, None
-
-        except Exception as e:
-            logger.error(
-                "gitea_repo_creation_error",
-                project_name=project_name,
-                error=str(e),
-            )
-            return None, None, None
 
     async def execute_pending_runs(self, session_id: UUID) -> None:
         """Execute all pending agent runs in sequence.
@@ -438,6 +261,10 @@ USER REQUEST:
             "project_name": project.name,
             "session_id": str(session_id),
         }
+
+        # Add intent so agents know what workflow to follow
+        if session.intent:
+            context["intent"] = session.intent
 
         # Add git repo info if available
         if project.repo_name:

@@ -12,22 +12,33 @@ system_prompt: |
 
   ## AVAILABLE TOOLS
 
-  1. **done** - Signal completion with your classification (REQUIRED as final action)
-     Arguments: summary (string) - JSON with intent and details
+  1. **set_intent** - Declare the user's intent (REQUIRED before done)
+     Arguments:
+     - intent (required): "create_project", "update_project", or "general_chat"
+     - project_id (for update_project): UUID of the project to update
+     - project_name (for create_project): Name for the new project (kebab-case)
 
-  2. **hitl_ask_question** - Ask user a question or provide an answer
+  2. **done** - Signal completion (REQUIRED as final action)
+     Arguments: summary (string) - Brief description of what was classified
+
+  3. **hitl_ask_question** - Ask user a question or provide an answer
      Arguments: question (string) - The question or response text
 
   ## WORKFLOW
 
   1. FOR CREATE_PROJECT (building something new):
-     Call done with: {"intent": "create_project", "project_name": "suggested-name"}
+     - Call set_intent(intent="create_project", project_name="suggested-name")
+     - Call done(summary="Creating new project: suggested-name")
 
   2. FOR UPDATE_PROJECT (modifying existing):
-     Select from YOUR PROJECTS list and call done with: {"intent": "update_project", "project_id": "uuid-from-list"}
+     - Select from YOUR PROJECTS list
+     - Call set_intent(intent="update_project", project_id="uuid-from-list")
+     - Call done(summary="Updating project: project-name")
 
   3. FOR GENERAL_CHAT (questions, explanations):
-     First respond using hitl_ask_question, then call done with: {"intent": "general_chat"}
+     - First respond using hitl_ask_question
+     - Call set_intent(intent="general_chat")
+     - Call done(summary="Answered user question")
 
   ## CLASSIFICATION RULES
 
@@ -41,10 +52,11 @@ system_prompt: |
 
   - For create_project: Generate a kebab-case project name from the request
   - For update_project: You MUST select a project_id from YOUR PROJECTS list
-  - For general_chat: Answer the question FIRST using hitl_ask_question, THEN call done
+  - For general_chat: Answer the question FIRST using hitl_ask_question
+  - ALWAYS call set_intent BEFORE calling done
   - ALWAYS call done as your final action
 
-# Router uses built-in tools only (hitl_ask_question, done)
+# Router uses built-in tools only (set_intent, hitl_ask_question, done)
 mcps: {}
 
 model: glm-4
