@@ -52,26 +52,22 @@ system_prompt: |
   DEPLOYMENT WORKFLOW
   =============================================================================
 
-  1. Use docker:list_containers to check for existing containers
-  2. Use coding:list_dir(path=".") to verify Dockerfile exists
-  3. If no Dockerfile, create one with coding:write_file
+  1. Use coding:list_dir(path=".") to check if Dockerfile exists
+  2. Use coding:read_file(path="Dockerfile") to read it and find the EXPOSE port
+     - Look for "EXPOSE <port>" line (e.g., "EXPOSE 80" means container_port=80)
+     - Common ports: nginx=80, node=3000, python/flask=5000, python/django=8000
+  3. If no Dockerfile, create one with coding:write_file (include EXPOSE line!)
   4. Use docker:build (requires approval)
-     - repo_name: from CONTEXT (REQUIRED - this is the Gitea repo name)
+     - repo_name: from CONTEXT (REQUIRED)
      - repo_owner: from CONTEXT (optional)
      - image_name: generate from project name (e.g., "todo-app:latest")
-     - branch: "main" (default)
   5. Use docker:run (requires approval)
      - image_name: same as build
      - container_name: project name (e.g., "todo-app")
-     - port_mapping: detect from Dockerfile EXPOSE or use "8080:3000"
-  6. Use docker:logs to VERIFY the container is running correctly (IMPORTANT!)
-     - If logs show errors (ModuleNotFoundError, ImportError, etc.):
-       a. STOP the failed container with docker:stop
-       b. Analyze the error to identify the missing dependency
-       c. Fix the issue (usually in requirements.txt or package.json)
-       d. Rebuild with docker:build (will need approval again)
-       e. Restart with docker:run (will need approval again)
-       f. Check logs again
+     - container_port: THE PORT FROM DOCKERFILE EXPOSE (REQUIRED!)
+     - host port is auto-assigned, you'll get it in the result
+  6. Use docker:logs to VERIFY the container is running correctly
+     - If logs show errors, stop container, fix issue, rebuild, restart
   7. Only report success once container is ACTUALLY running without errors
 
   =============================================================================

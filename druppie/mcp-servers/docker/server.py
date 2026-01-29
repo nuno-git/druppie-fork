@@ -124,49 +124,6 @@ def release_port(port: int) -> None:
     used_ports.discard(port)
 
 
-def get_image_exposed_port(image_name: str) -> int | None:
-    """Get the exposed port from a Docker image.
-
-    Inspects the image to find which port it exposes.
-    Returns the first exposed port found, or None if no port is exposed.
-    """
-    try:
-        result = subprocess.run(
-            ["docker", "inspect", image_name, "--format", "{{json .Config.ExposedPorts}}"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            logger.warning("Failed to inspect image %s: %s", image_name, result.stderr)
-            return None
-
-        output = result.stdout.strip()
-        if not output or output == "null" or output == "{}":
-            return None
-
-        # Parse JSON like {"80/tcp":{}, "443/tcp":{}}
-        import json
-        ports = json.loads(output)
-        if not ports:
-            return None
-
-        # Get first exposed port (strip /tcp or /udp suffix)
-        for port_spec in ports.keys():
-            port_str = port_spec.split("/")[0]
-            try:
-                port = int(port_str)
-                logger.info("Auto-detected exposed port %d from image %s", port, image_name)
-                return port
-            except ValueError:
-                continue
-
-        return None
-    except Exception as e:
-        logger.warning("Error getting exposed port from image %s: %s", image_name, e)
-        return None
-
-
 def get_gitea_clone_url(repo_name: str, repo_owner: str | None = None) -> str:
     """Get Gitea clone URL with embedded credentials if available.
 
@@ -406,19 +363,22 @@ def check_and_remove_existing_container(container_name: str) -> dict | None:
 async def run(
     image_name: str,
     container_name: str,
+    container_port: int,
     project_id: str | None = None,
     session_id: str | None = None,
     user_id: str | None = None,
     git_url: str | None = None,
     branch: str | None = None,
     port: int | None = None,
-    container_port: int | None = None,
     port_mapping: str | None = None,
     env_vars: dict[str, str] | None = None,
     volumes: list[str] | None = None,
     command: str | None = None,
 ) -> dict:
     """Run Docker container with ownership tracking via labels.
+
+    The agent should read the Dockerfile to find the EXPOSE port and pass it
+    as container_port. The host port is auto-assigned from a free port range.
 
     Labels added to container for ownership tracking:
     - druppie.project_id: Project this container belongs to
@@ -430,20 +390,20 @@ async def run(
     Args:
         image_name: Docker image to run
         container_name: Name for the container
+        container_port: Container port (from Dockerfile EXPOSE) - REQUIRED
         project_id: Project ID (added as label for tracking)
         session_id: Session ID (added as label for tracking)
         user_id: User ID (added as label for tracking)
         git_url: Git URL used for build (added as label)
         branch: Git branch used for build (added as label)
-        port: Host port to expose (auto-assigned if not provided)
-        container_port: Container port to map to (auto-detected from image if not provided)
+        port: Host port to expose (auto-assigned from 9100-9199 if not provided)
         port_mapping: Full port mapping string (e.g., "8080:3000") - overrides port/container_port
         env_vars: Environment variables
         volumes: Volume mounts (format: "host:container")
         command: Override command
 
     Returns:
-        Dict with success, container_name, port, url, labels
+        Dict with success, container_name, port, container_port, url, labels
     """
     try:
         # Check for and remove existing container with same name
@@ -458,19 +418,9 @@ async def run(
             # Parse "host:container" format
             parts = port_mapping.split(":")
             requested_port = int(parts[0])
-            actual_container_port = int(parts[1]) if len(parts) > 1 else None
+            actual_container_port = int(parts[1]) if len(parts) > 1 else container_port
         else:
             requested_port = port
-
-        # Auto-detect container port from image if not specified
-        if actual_container_port is None:
-            detected_port = get_image_exposed_port(image_name)
-            if detected_port:
-                actual_container_port = detected_port
-                logger.info("Using auto-detected container port %d", actual_container_port)
-            else:
-                actual_container_port = 3000
-                logger.info("No exposed port detected, defaulting to 3000")
 
         # Check if requested port is available, auto-select if not
         if requested_port:

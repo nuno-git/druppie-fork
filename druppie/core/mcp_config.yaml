@@ -178,7 +178,7 @@ mcps:
             - image_name
 
       - name: run
-        description: "Run Docker container with auto-assigned port and auto-detected container port"
+        description: "Run Docker container - host port auto-assigned, you provide the container port from Dockerfile EXPOSE"
         # GLOBAL: docker:run ALWAYS needs developer approval (per goal.md)
         requires_approval: true
         required_role: developer
@@ -191,15 +191,12 @@ mcps:
             container_name:
               type: string
               description: "Name for the container"
-            port:
-              type: integer
-              description: "Host port to expose (auto-assigned from 9100-9199 range if not provided)"
             container_port:
               type: integer
-              description: "Container port to map to (auto-detected from image EXPOSE if not provided)"
-            port_mapping:
-              type: string
-              description: "Full port mapping (e.g., '8080:3000') - overrides port/container_port"
+              description: "Container port from Dockerfile EXPOSE (e.g., 80 for nginx, 3000 for node)"
+            port:
+              type: integer
+              description: "Host port (auto-assigned from 9100-9199 if not provided)"
             env_vars:
               type: object
               description: "Environment variables as key-value pairs"
@@ -212,6 +209,7 @@ mcps:
           required:
             - image_name
             - container_name
+            - container_port
 
       - name: stop
         description: "Stop a running container"
