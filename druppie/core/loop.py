@@ -985,6 +985,34 @@ class MainLoop:
                         "session_id": session_id,
                     }
 
+            if intent == "use_mcp":
+                # User wants to use bestand-zoeker MCP directly
+                # Run router again with MCP tools to execute the search
+                exec_ctx.emit("mcp_usage_started", {})
+                
+                with db_session() as db:
+                    mcp_result = await run_agent(
+                        db=db,
+                        agent_id="router",
+                        prompt=message,
+                        context=context,
+                        exec_ctx=exec_ctx,
+                    )
+
+                if not mcp_result.get("success"):
+                    return await self._handle_error(
+                        session_id,
+                        exec_ctx,
+                        mcp_result.get("error", "MCP execution failed"),
+                    )
+
+                response = _extract_response(mcp_result.get("result"))
+                return await self._complete_session(
+                    session_id,
+                    exec_ctx,
+                    response,
+                )
+
             # Run planner to create workflow
             exec_ctx.emit("planner_started", {})
 
@@ -2002,7 +2030,15 @@ class MainLoop:
 def _extract_intent(result: Any) -> str:
     """Extract intent from router result."""
     if isinstance(result, dict):
-        return result.get("intent", result.get("classification", "execute_plan"))
+        action = result.get("action", result.get("classification", "execute_plan"))
+        # Map router actions to intents
+        if action == "use_mcp":
+            return "use_mcp"
+        if action == "ask_clarification":
+            return "needs_clarification"
+        if action == "general_chat":
+            return "simple_response"
+        return "execute_plan"
     if isinstance(result, str):
         # Try to parse intent from text
         result_lower = result.lower()

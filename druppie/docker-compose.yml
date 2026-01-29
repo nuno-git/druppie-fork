@@ -297,7 +297,7 @@ services:
       SEARCH_ROOT: /dataset
       MCP_PORT: "9005"
     volumes:
-      - druppie_new_dataset:/dataset
+      - ../dataset:/dataset
     ports:
       - "9005:9005"
     networks:
@@ -341,6 +341,8 @@ services:
     container_name: druppie-new-frontend
     ports:
       - "5273:5173"
+    volumes:
+      - ../frontend:/app
     environment:
       - VITE_API_URL=http://localhost:8100
       - VITE_KEYCLOAK_URL=http://localhost:8180
