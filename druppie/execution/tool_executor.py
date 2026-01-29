@@ -174,6 +174,36 @@ class ToolExecutor:
             )
             return None, None
 
+    def _get_session_context(self, session_id: UUID) -> dict:
+        """Get user_id and project_id from session for label injection.
+
+        Looks up session → (user_id, project_id) for auto-injection into docker:run labels.
+        Returns empty dict if session not found.
+        """
+        try:
+            from druppie.db.models import Session
+
+            session = self.db.query(Session).filter(Session.id == session_id).first()
+            if not session:
+                logger.debug("Session not found", session_id=str(session_id))
+                return {}
+
+            context = {}
+            if session.user_id:
+                context["user_id"] = str(session.user_id)
+            if session.project_id:
+                context["project_id"] = str(session.project_id)
+
+            return context
+
+        except Exception as e:
+            logger.warning(
+                "failed_to_get_session_context",
+                session_id=str(session_id),
+                error=str(e),
+            )
+            return {}
+
     async def execute(self, tool_call_id: UUID) -> str:
         """Execute a tool call.
 
@@ -534,6 +564,26 @@ class ToolExecutor:
                     tool_name=tool_call.tool_name,
                     repo_name=repo_name,
                     repo_owner=repo_owner,
+                )
+
+        # Auto-inject user_id and project_id for docker:run calls
+        # This enables ownership tracking via container labels
+        if (
+            tool_call.mcp_server == "docker"
+            and tool_call.tool_name == "run"
+            and tool_call.session_id
+        ):
+            context = self._get_session_context(tool_call.session_id)
+            if "user_id" not in args and context.get("user_id"):
+                args = {**args, "user_id": context["user_id"]}
+            if "project_id" not in args and context.get("project_id"):
+                args = {**args, "project_id": context["project_id"]}
+            if context:
+                logger.info(
+                    "Auto-injected ownership labels into docker:run args",
+                    tool_name=tool_call.tool_name,
+                    user_id=context.get("user_id"),
+                    project_id=context.get("project_id"),
                 )
 
         try:

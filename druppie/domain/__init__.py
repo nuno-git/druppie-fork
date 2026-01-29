@@ -106,3 +106,7 @@ __all__ = [
     # User
     "UserInfo",
 ]
+
+# Rebuild models to resolve forward references (circular imports between session/project)
+ProjectDetail.model_rebuild()
+SessionDetail.model_rebuild()
