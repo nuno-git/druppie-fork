@@ -145,10 +145,6 @@ mcps:
     url: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
     description: "Docker container operations"
     tools:
-      - name: get_available_port
-        description: "Get an available port for running a container (use this before docker:run)"
-        requires_approval: false
-
       - name: build
         description: "Build Docker image from workspace"
         # GLOBAL: docker:build ALWAYS needs developer approval (per goal.md)
