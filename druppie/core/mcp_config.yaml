@@ -146,7 +146,7 @@ mcps:
     description: "Docker container operations"
     tools:
       - name: build
-        description: "Build Docker image from workspace"
+        description: "Build Docker image by cloning from git repository"
         # GLOBAL: docker:build ALWAYS needs developer approval (per goal.md)
         requires_approval: true
         required_role: developer
@@ -156,20 +156,29 @@ mcps:
             image_name:
               type: string
               description: "Name for the built image (e.g., myapp:latest)"
-            workspace_id:
+            git_url:
               type: string
-              description: "Workspace ID (will resolve to path)"
-            workspace_path:
+              description: "Full git URL to clone (alternative to repo_name)"
+            repo_name:
               type: string
-              description: "Direct path to workspace with Dockerfile"
+              description: "Gitea repo name - will construct URL using Gitea config (alternative to git_url)"
+            repo_owner:
+              type: string
+              description: "Gitea repo owner/username (defaults to 'druppie' org)"
+            branch:
+              type: string
+              description: "Git branch (default: main)"
             dockerfile:
               type: string
               description: "Dockerfile name (default: Dockerfile)"
+            build_args:
+              type: object
+              description: "Docker build arguments as key-value pairs"
           required:
             - image_name
 
       - name: run
-        description: "Run Docker container"
+        description: "Run Docker container with auto-assigned port"
         # GLOBAL: docker:run ALWAYS needs developer approval (per goal.md)
         requires_approval: true
         required_role: developer
@@ -184,42 +193,123 @@ mcps:
               description: "Name for the container"
             port:
               type: integer
-              description: "Host port to expose"
+              description: "Host port to expose (auto-assigned from 9100-9199 range if not provided)"
             container_port:
               type: integer
-              description: "Container port (default: 3000)"
+              description: "Container port to map to (default: 3000)"
             port_mapping:
               type: string
-              description: "Port mapping (e.g., 8080:3000)"
+              description: "Full port mapping (e.g., '8080:3000') - overrides port/container_port"
+            env_vars:
+              type: object
+              description: "Environment variables as key-value pairs"
+            volumes:
+              type: array
+              description: "Volume mounts (format: 'host:container')"
+            command:
+              type: string
+              description: "Override command"
           required:
             - image_name
             - container_name
 
       - name: stop
-        description: "Stop running container"
+        description: "Stop a running container"
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            container_name:
+              type: string
+              description: "Name of container to stop"
+            remove:
+              type: boolean
+              description: "Whether to remove container after stopping (default: true)"
+          required:
+            - container_name
 
       - name: logs
         description: "Get container logs"
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            container_name:
+              type: string
+              description: "Name of container to get logs from"
+            tail:
+              type: integer
+              description: "Number of lines to show (default: 100)"
+          required:
+            - container_name
 
       - name: remove
-        description: "Remove container"
+        description: "Remove a container"
         requires_approval: true
         required_role: developer
+        parameters:
+          type: object
+          properties:
+            container_name:
+              type: string
+              description: "Name of container to remove"
+            force:
+              type: boolean
+              description: "Force remove running container (default: false)"
+          required:
+            - container_name
 
       - name: list_containers
-        description: "List Docker containers"
+        description: "List Docker containers with optional filtering by ownership labels"
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            all:
+              type: boolean
+              description: "Include stopped containers (default: false)"
+            project_id:
+              type: string
+              description: "Filter by druppie.project_id label"
+            session_id:
+              type: string
+              description: "Filter by druppie.session_id label"
+            user_id:
+              type: string
+              description: "Filter by druppie.user_id label"
+          required: []
 
       - name: inspect
         description: "Inspect container details"
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            container_name:
+              type: string
+              description: "Name of container to inspect"
+          required:
+            - container_name
 
       - name: exec_command
         description: "Execute command in running container"
         requires_approval: true
         required_role: developer
+        parameters:
+          type: object
+          properties:
+            container_name:
+              type: string
+              description: "Name of container"
+            command:
+              type: string
+              description: "Command to execute"
+            workdir:
+              type: string
+              description: "Working directory inside container"
+          required:
+            - container_name
+            - command
 
   hitl:
     # HITL tools are BUILT-IN to the backend (druppie/agents/builtin_tools.py)
