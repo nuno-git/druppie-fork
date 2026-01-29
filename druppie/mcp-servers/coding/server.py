@@ -102,6 +102,81 @@ GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 workspaces: dict[str, dict] = {}
 
 
+def get_or_create_workspace(
+    session_id: str,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    workspace_id: str | None = None,
+) -> tuple[str, Path]:
+    """Get or create a workspace from session_id.
+
+    This enables standalone operation - callers can just provide session_id
+    and the workspace will be auto-created if it doesn't exist.
+
+    Args:
+        session_id: Session ID (required)
+        project_id: Optional project ID
+        user_id: Optional user ID
+        workspace_id: Optional explicit workspace ID (for backward compat)
+
+    Returns:
+        Tuple of (workspace_id, workspace_path)
+    """
+    # If workspace_id provided and registered, use it
+    if workspace_id and workspace_id in workspaces:
+        return workspace_id, Path(workspaces[workspace_id]["path"])
+
+    # Derive workspace_id from session_id if not provided
+    derived_workspace_id = workspace_id or f"session-{session_id}"
+
+    # Check if already registered
+    if derived_workspace_id in workspaces:
+        return derived_workspace_id, Path(workspaces[derived_workspace_id]["path"])
+
+    # Auto-create workspace path
+    # Path structure: /workspaces/{user_id or "default"}/{project_id or "scratch"}/{session_id}
+    user_part = user_id or "default"
+    project_part = project_id or "scratch"
+    workspace_path = WORKSPACE_ROOT / user_part / project_part / session_id
+    workspace_path.mkdir(parents=True, exist_ok=True)
+
+    # Initialize git if not already a repo
+    git_dir = workspace_path / ".git"
+    if not git_dir.exists():
+        subprocess.run(["git", "init"], cwd=workspace_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "agent@druppie.local"],
+            cwd=workspace_path,
+            check=False,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Druppie Agent"],
+            cwd=workspace_path,
+            check=False,
+            capture_output=True,
+        )
+        logger.info("Auto-initialized git repo at %s", workspace_path)
+
+    # Register workspace
+    workspaces[derived_workspace_id] = {
+        "path": str(workspace_path),
+        "project_id": project_id,
+        "branch": "main",
+        "user_id": user_id,
+        "session_id": session_id,
+    }
+
+    logger.info(
+        "Auto-created workspace %s at %s (session_id=%s)",
+        derived_workspace_id,
+        workspace_path,
+        session_id,
+    )
+
+    return derived_workspace_id, workspace_path
+
+
 def get_gitea_clone_url(repo_name: str) -> str:
     """Get Gitea clone URL with embedded credentials if available.
 
@@ -332,19 +407,43 @@ async def initialize_workspace(
 
 
 @mcp.tool()
-async def read_file(workspace_id: str, path: str) -> dict:
+async def read_file(
+    path: str,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+) -> dict:
     """Read file from workspace.
 
+    Can be called with either:
+    - session_id (preferred): Auto-creates workspace if needed
+    - workspace_id (legacy): Uses pre-registered workspace
+
     Args:
-        workspace_id: Workspace ID
         path: File path relative to workspace
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
 
     Returns:
         Dict with success, content, path, size
     """
     try:
-        ws = get_workspace(workspace_id)
-        workspace_path = Path(ws["path"])
+        # Resolve workspace - session_id preferred, workspace_id for backward compat
+        if session_id:
+            _, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
         file_path = resolve_path(path, workspace_path)
 
         logger.info("Reading file in workspace %s: %s", workspace_id, path)
@@ -415,18 +514,28 @@ async def read_file(workspace_id: str, path: str) -> dict:
 
 @mcp.tool()
 async def write_file(
-    workspace_id: str,
     path: str,
     content: str,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
     auto_commit: bool = True,
     commit_message: str | None = None,
 ) -> dict:
     """Write file to workspace (auto-commits to git).
 
+    Can be called with either:
+    - session_id (preferred): Auto-creates workspace if needed
+    - workspace_id (legacy): Uses pre-registered workspace
+
     Args:
-        workspace_id: Workspace ID
         path: File path relative to workspace
         content: File content
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
         auto_commit: Whether to auto-commit (default: True)
         commit_message: Optional commit message
 
@@ -434,13 +543,25 @@ async def write_file(
         Dict with success, path, committed
     """
     try:
-        ws = get_workspace(workspace_id)
-        workspace_path = Path(ws["path"])
+        # Resolve workspace
+        if session_id:
+            resolved_workspace_id, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+            resolved_workspace_id = workspace_id
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
         file_path = resolve_path(path, workspace_path)
 
         logger.info(
             "Writing file in workspace %s: %s (%d bytes)",
-            workspace_id,
+            resolved_workspace_id,
             path,
             len(content),
         )
@@ -453,7 +574,7 @@ async def write_file(
 
         logger.debug(
             "Successfully wrote file in workspace %s: %s",
-            workspace_id,
+            resolved_workspace_id,
             path,
         )
 
@@ -461,12 +582,13 @@ async def write_file(
             "success": True,
             "path": str(file_path.relative_to(workspace_path)),
             "size": len(content),
+            "workspace_path": str(workspace_path),
         }
 
         # Auto-commit
         if auto_commit:
             commit_result = await _do_commit_and_push(
-                workspace_id,
+                resolved_workspace_id,
                 commit_message or f"Update {path}",
             )
             result["committed"] = commit_result.get("success", False)
@@ -478,7 +600,7 @@ async def write_file(
     except ValueError as e:
         logger.warning(
             "Path resolution error writing file in workspace %s: %s - %s",
-            workspace_id,
+            session_id or workspace_id,
             path,
             str(e),
         )
@@ -486,7 +608,7 @@ async def write_file(
     except Exception as e:
         logger.error(
             "Error writing file in workspace %s: %s - %s",
-            workspace_id,
+            session_id or workspace_id,
             path,
             str(e),
         )
@@ -495,23 +617,44 @@ async def write_file(
 
 @mcp.tool()
 async def list_dir(
-    workspace_id: str,
     path: str = ".",
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
     recursive: bool = False,
 ) -> dict:
     """List directory contents.
 
+    Can be called with either:
+    - session_id (preferred): Auto-creates workspace if needed
+    - workspace_id (legacy): Uses pre-registered workspace
+
     Args:
-        workspace_id: Workspace ID
         path: Directory path (default: ".")
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
         recursive: Whether to list recursively
 
     Returns:
         Dict with files and directories
     """
     try:
-        ws = get_workspace(workspace_id)
-        workspace_path = Path(ws["path"])
+        # Resolve workspace
+        if session_id:
+            _, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
         dir_path = resolve_path(path, workspace_path)
 
         if not dir_path.exists():
@@ -572,29 +715,47 @@ async def list_dir(
 
 @mcp.tool()
 async def delete_file(
-    workspace_id: str,
     path: str,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
     auto_commit: bool = True,
 ) -> dict:
     """Delete file from workspace.
 
     Args:
-        workspace_id: Workspace ID
         path: File path to delete
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
         auto_commit: Whether to auto-commit (default: True)
 
     Returns:
         Dict with success, deleted path
     """
     try:
-        ws = get_workspace(workspace_id)
-        workspace_path = Path(ws["path"])
+        # Resolve workspace
+        if session_id:
+            resolved_workspace_id, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+            resolved_workspace_id = workspace_id
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
         file_path = resolve_path(path, workspace_path)
 
-        logger.info("Deleting file in workspace %s: %s", workspace_id, path)
+        logger.info("Deleting file in workspace %s: %s", resolved_workspace_id, path)
 
         if not file_path.exists():
-            logger.debug("File not found for deletion in workspace %s: %s", workspace_id, path)
+            logger.debug("File not found for deletion in workspace %s: %s", resolved_workspace_id, path)
             return {"success": False, "error": f"File not found: {path}"}
 
         if file_path.is_dir():
@@ -602,7 +763,7 @@ async def delete_file(
 
         file_path.unlink()
 
-        logger.info("Successfully deleted file in workspace %s: %s", workspace_id, path)
+        logger.info("Successfully deleted file in workspace %s: %s", resolved_workspace_id, path)
 
         result = {
             "success": True,
@@ -610,7 +771,7 @@ async def delete_file(
         }
 
         if auto_commit:
-            commit_result = await _do_commit_and_push(workspace_id, f"Delete {path}")
+            commit_result = await _do_commit_and_push(resolved_workspace_id, f"Delete {path}")
             result["committed"] = commit_result.get("success", False)
 
         return result
@@ -618,7 +779,7 @@ async def delete_file(
     except ValueError as e:
         logger.warning(
             "Path resolution error deleting file in workspace %s: %s - %s",
-            workspace_id,
+            session_id or workspace_id,
             path,
             str(e),
         )
@@ -626,7 +787,7 @@ async def delete_file(
     except Exception as e:
         logger.error(
             "Error deleting file in workspace %s: %s - %s",
-            workspace_id,
+            session_id or workspace_id,
             path,
             str(e),
         )
@@ -635,30 +796,49 @@ async def delete_file(
 
 @mcp.tool()
 async def run_command(
-    workspace_id: str,
     command: str,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
     timeout: int = 60,
 ) -> dict:
     """Execute shell command in workspace (requires approval).
 
     Args:
-        workspace_id: Workspace ID
         command: Shell command to execute
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
         timeout: Timeout in seconds (default: 60)
 
     Returns:
         Dict with success, stdout, stderr, return_code
     """
     try:
-        ws = get_workspace(workspace_id)
-        workspace_path = ws["path"]
+        # Resolve workspace
+        if session_id:
+            resolved_workspace_id, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+            workspace_path = str(workspace_path)
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = ws["path"]
+            resolved_workspace_id = workspace_id
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
 
         # Security: Check command against blocklist
         is_blocked, matched_pattern = is_command_blocked(command)
         if is_blocked:
             logger.warning(
                 "Blocked dangerous command in workspace %s: %s (matched pattern: %s)",
-                workspace_id,
+                resolved_workspace_id,
                 command,
                 matched_pattern,
             )
@@ -671,7 +851,7 @@ async def run_command(
 
         logger.info(
             "Executing command in workspace %s: %s",
-            workspace_id,
+            resolved_workspace_id,
             command[:200] + "..." if len(command) > 200 else command,
         )
 
@@ -686,7 +866,7 @@ async def run_command(
 
         logger.info(
             "Command completed in workspace %s with return code %d",
-            workspace_id,
+            resolved_workspace_id,
             result.returncode,
         )
 
@@ -702,14 +882,14 @@ async def run_command(
         logger.warning(
             "Command timed out after %ds in workspace %s: %s",
             timeout,
-            workspace_id,
+            session_id or workspace_id,
             command[:100],
         )
         return {"success": False, "error": f"Command timed out after {timeout}s"}
     except Exception as e:
         logger.error(
             "Command execution failed in workspace %s: %s",
-            workspace_id,
+            session_id or workspace_id,
             str(e),
         )
         return {"success": False, "error": str(e)}
@@ -942,7 +1122,10 @@ def _parse_test_output(stdout: str, stderr: str, framework: str) -> dict:
 
 @mcp.tool()
 async def run_tests(
-    workspace_id: str,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
     test_command: str | None = None,
     timeout: int = 120,
 ) -> dict:
@@ -952,7 +1135,10 @@ async def run_tests(
     and runs the appropriate command (npm test, pytest, etc.).
 
     Args:
-        workspace_id: Workspace to run tests in
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
         test_command: Optional test command to run
         timeout: Timeout in seconds (default 120)
 
@@ -972,8 +1158,19 @@ async def run_tests(
         }
     """
     try:
-        ws = get_workspace(workspace_id)
-        workspace_path = Path(ws["path"])
+        # Resolve workspace
+        if session_id:
+            _, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
 
         # Auto-detect test framework if command not provided
         framework = None
@@ -1138,8 +1335,11 @@ async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
 
 @mcp.tool()
 async def batch_write_files(
-    workspace_id: str,
     files: dict[str, str],
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
     commit_message: str = "Create multiple files",
 ) -> dict:
     """Write multiple files to workspace in a single operation with one git commit.
@@ -1148,8 +1348,11 @@ async def batch_write_files(
     a project structure or scaffolding multiple files at once.
 
     Args:
-        workspace_id: Workspace ID
         files: Dict mapping file paths (relative to workspace) to their contents
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
         commit_message: Commit message for all files (default: "Create multiple files")
 
     Returns:
@@ -1157,7 +1360,7 @@ async def batch_write_files(
 
     Example:
         batch_write_files(
-            workspace_id="...",
+            session_id="...",
             files={
                 "src/index.js": "console.log('hello');",
                 "src/utils.js": "export const add = (a, b) => a + b;",
@@ -1167,8 +1370,20 @@ async def batch_write_files(
         )
     """
     try:
-        ws = get_workspace(workspace_id)
-        workspace_path = Path(ws["path"])
+        # Resolve workspace
+        if session_id:
+            resolved_workspace_id, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+            resolved_workspace_id = workspace_id
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
 
         files_created = []
         errors = []
@@ -1200,6 +1415,7 @@ async def batch_write_files(
             "success": True,
             "files_created": files_created,
             "file_count": len(files_created),
+            "workspace_path": str(workspace_path),
         }
 
         # Add errors if any files failed
@@ -1208,7 +1424,7 @@ async def batch_write_files(
             result["partial_success"] = True
 
         # Commit all changes with a single commit
-        commit_result = await _do_commit_and_push(workspace_id, commit_message)
+        commit_result = await _do_commit_and_push(resolved_workspace_id, commit_message)
         result["committed"] = commit_result.get("success", False)
         if commit_result.get("success"):
             result["commit_message"] = commit_message
@@ -1220,33 +1436,76 @@ async def batch_write_files(
 
 
 @mcp.tool()
-async def commit_and_push(workspace_id: str, message: str) -> dict:
+async def commit_and_push(
+    message: str,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+) -> dict:
     """Commit all changes and push to Gitea.
 
     Args:
-        workspace_id: Workspace ID
         message: Commit message
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
 
     Returns:
         Dict with success, message
     """
-    return await _do_commit_and_push(workspace_id, message)
+    # Resolve workspace
+    if session_id:
+        resolved_workspace_id, _ = get_or_create_workspace(
+            session_id=session_id,
+            project_id=project_id,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
+    elif workspace_id:
+        resolved_workspace_id = workspace_id
+    else:
+        return {"success": False, "error": "Either session_id or workspace_id is required"}
+    return await _do_commit_and_push(resolved_workspace_id, message)
 
 
 @mcp.tool()
-async def create_branch(workspace_id: str, branch_name: str) -> dict:
+async def create_branch(
+    branch_name: str,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+) -> dict:
     """Create and checkout a new git branch.
 
     Args:
-        workspace_id: Workspace ID
         branch_name: Name of the new branch
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
 
     Returns:
         Dict with success, branch name
     """
     try:
-        ws = get_workspace(workspace_id)
-        cwd = ws["path"]
+        # Resolve workspace
+        if session_id:
+            resolved_workspace_id, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+            cwd = str(workspace_path)
+            ws = workspaces[resolved_workspace_id]
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            cwd = ws["path"]
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
 
         subprocess.run(
             ["git", "checkout", "-b", branch_name],
@@ -1266,18 +1525,40 @@ async def create_branch(workspace_id: str, branch_name: str) -> dict:
 
 
 @mcp.tool()
-async def merge_to_main(workspace_id: str) -> dict:
+async def merge_to_main(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+) -> dict:
     """Merge current branch to main (requires approval).
 
     Args:
-        workspace_id: Workspace ID
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
 
     Returns:
         Dict with success, merged branch
     """
     try:
-        ws = get_workspace(workspace_id)
-        cwd = ws["path"]
+        # Resolve workspace
+        if session_id:
+            resolved_workspace_id, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+            cwd = str(workspace_path)
+            ws = workspaces[resolved_workspace_id]
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            cwd = ws["path"]
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
+
         current_branch = ws["branch"]
 
         if current_branch == "main":
@@ -1303,18 +1584,39 @@ async def merge_to_main(workspace_id: str) -> dict:
 
 
 @mcp.tool()
-async def get_git_status(workspace_id: str) -> dict:
+async def get_git_status(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+) -> dict:
     """Get git status for workspace.
 
     Args:
-        workspace_id: Workspace ID
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
 
     Returns:
         Dict with branch, status, files
     """
     try:
-        ws = get_workspace(workspace_id)
-        cwd = ws["path"]
+        # Resolve workspace
+        if session_id:
+            resolved_workspace_id, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+            cwd = str(workspace_path)
+            ws = workspaces[resolved_workspace_id]
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            cwd = ws["path"]
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
 
         # Get current branch
         branch_result = subprocess.run(
