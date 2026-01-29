@@ -357,10 +357,21 @@ USER REQUEST:
         return "completed"
 
     async def resume_after_approval(self, session_id: UUID, approval_id: UUID) -> UUID:
-        """Resume execution after an approval is granted."""
+        """Resume execution after an approval is granted.
+
+        This method:
+        1. Executes the approved tool
+        2. Continues the paused agent run (it will reconstruct state from DB)
+        3. After that agent completes, executes any remaining pending runs
+
+        The agent's continue_run() method loads all LLM calls and tool results
+        from the database, so the tool result is automatically included.
+        """
         from druppie.execution.tool_executor import ToolExecutor, ToolCallStatus
         from druppie.execution.mcp_http import MCPHttp
         from druppie.core.mcp_config import MCPConfig
+        from druppie.agents.runtime import Agent
+        from druppie.repositories import ApprovalRepository
 
         logger.info(
             "resume_after_approval",
@@ -372,12 +383,68 @@ USER REQUEST:
         mcp_config = MCPConfig()
         mcp_http = MCPHttp(mcp_config)
         tool_executor = ToolExecutor(db, mcp_http, mcp_config)
+        approval_repo = ApprovalRepository(db)
 
+        # Step 1: Get the approval to find the agent run
+        approval = approval_repo.get_by_id(approval_id)
+        if not approval or not approval.agent_run_id:
+            logger.error("approval_missing_agent_run", approval_id=str(approval_id))
+            await self.execute_pending_runs(session_id)
+            return session_id
+
+        # Step 2: Execute the approved tool
         status = await tool_executor.execute_after_approval(approval_id)
 
-        if status == ToolCallStatus.COMPLETED:
-            await self.execute_pending_runs(session_id)
+        if status != ToolCallStatus.COMPLETED:
+            logger.error("execute_after_approval_failed", status=status)
+            return session_id
 
+        # Step 3: Get the paused agent run
+        agent_run = self.execution_repo.get_by_id(approval.agent_run_id)
+        if not agent_run:
+            logger.error("agent_run_not_found", agent_run_id=str(approval.agent_run_id))
+            await self.execute_pending_runs(session_id)
+            return session_id
+
+        logger.info(
+            "resuming_paused_agent_after_approval",
+            agent_run_id=str(agent_run.id),
+            agent_id=agent_run.agent_id,
+            previous_status=agent_run.status.value if hasattr(agent_run.status, 'value') else agent_run.status,
+        )
+
+        # Step 4: Set status back to running
+        self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
+        self.execution_repo.commit()
+
+        # Step 5: Continue the agent - it will load state from DB including the tool result
+        agent = Agent(agent_run.agent_id, db=db)
+        result = await agent.continue_run(
+            session_id=session_id,
+            agent_run_id=agent_run.id,
+        )
+
+        # Step 6: Handle result
+        if result.get("status") == "paused" or result.get("paused"):
+            pause_reason = result.get("reason", "unknown")
+            if pause_reason == "waiting_answer":
+                self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_HITL)
+            else:
+                self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_TOOL)
+            self.execution_repo.commit()
+            return session_id
+
+        # Completed - mark agent and continue with pending runs
+        self.execution_repo.update_status(agent_run.id, AgentRunStatus.COMPLETED)
+        self.execution_repo.commit()
+
+        logger.info(
+            "agent_resumed_after_approval_completed",
+            agent_run_id=str(agent_run.id),
+            agent_id=agent_run.agent_id,
+        )
+
+        await self.execute_pending_runs(session_id)
         return session_id
 
     async def resume_after_answer(
