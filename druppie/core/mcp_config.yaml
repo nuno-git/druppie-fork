@@ -18,14 +18,6 @@ mcps:
     url: ${MCP_CODING_URL:-http://mcp-coding:9001}
     description: "File operations and git within workspace sandbox"
     tools:
-      - name: register_workspace
-        description: "Register an existing workspace (created by backend)"
-        requires_approval: false
-
-      - name: initialize_workspace
-        description: "Initialize workspace for user/project/session"
-        requires_approval: false
-
       - name: read_file
         description: "Read file from workspace"
         requires_approval: false
@@ -155,10 +147,6 @@ mcps:
     tools:
       - name: get_available_port
         description: "Get an available port for running a container (use this before docker:run)"
-        requires_approval: false
-
-      - name: register_workspace
-        description: "Register a workspace for Docker operations"
         requires_approval: false
 
       - name: build
