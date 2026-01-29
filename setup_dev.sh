@@ -342,8 +342,9 @@ configure_keycloak() {
     log "Running Keycloak setup script..."
     source venv/bin/activate
 
-    # Set Keycloak admin credentials
-    export KEYCLOAK_ADMIN_USER="admin"
+    # Set Keycloak URL and admin credentials
+    export KEYCLOAK_URL="http://localhost:8180"
+    export KEYCLOAK_ADMIN="admin"
     export KEYCLOAK_ADMIN_PASSWORD="admin"
 
     python scripts/setup_keycloak.py || warn "Keycloak setup had issues (may already be configured)"
