@@ -163,13 +163,14 @@ User: "What is Python?"
 
 ```python
 from druppie.execution import Orchestrator
-from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository
+from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository
 
 # Create orchestrator with repositories
 orchestrator = Orchestrator(
     session_repo=SessionRepository(db),
     execution_repo=ExecutionRepository(db),
     project_repo=ProjectRepository(db),
+    question_repo=QuestionRepository(db),
 )
 
 # Process a message

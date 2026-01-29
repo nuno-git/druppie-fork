@@ -8,19 +8,21 @@ are shown in the session detail view (GET /sessions/{id}) as part of the chat
 timeline. The frontend gets question details from there.
 
 Architecture:
-    Route (this file)
+    POST /questions/{id}/answer
       │
-      ├──▶ QuestionService ──▶ QuestionRepository ──▶ Database
-      │         (DB operations: answer)
-      │
-      └──▶ WorkflowService ──▶ MainLoop
-              (resume workflow after answer)
+      ├── Save answer to DB (fast)
+      ├── Spawn background task
+      └── Return immediately
 
-The route coordinates both services:
-1. QuestionService.answer() - saves the answer to DB
-2. WorkflowService.resume_from_question() - resumes the paused workflow
+    Background task:
+      └──▶ Orchestrator.resume_after_answer()
+              (continues workflow with the answer)
+
+The endpoint returns immediately. The client polls
+GET /api/sessions/{id} to track progress.
 """
 
+import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -30,10 +32,10 @@ import structlog
 from druppie.api.deps import (
     get_current_user,
     get_question_service,
-    get_workflow_service,
 )
-from druppie.services import QuestionService, WorkflowService
+from druppie.services import QuestionService
 from druppie.domain import QuestionDetail
+from druppie.domain.common import SessionStatus
 
 logger = structlog.get_logger()
 
@@ -64,8 +66,74 @@ class AnswerResponse(BaseModel):
     """Response after answering a question."""
 
     question: QuestionDetail
-    workflow_resumed: bool
-    workflow_result: dict | None = None
+    message: str = "Processing started"
+
+
+# =============================================================================
+# BACKGROUND TASK
+# =============================================================================
+
+
+async def _resume_workflow_after_answer(
+    session_id: UUID,
+    question_id: UUID,
+    answer: str,
+) -> None:
+    """Resume workflow in background with its own DB session."""
+    from druppie.db.database import SessionLocal
+    from druppie.repositories import (
+        SessionRepository,
+        ExecutionRepository,
+        ProjectRepository,
+        QuestionRepository,
+    )
+    from druppie.execution import Orchestrator
+
+    db = SessionLocal()
+    try:
+        session_repo = SessionRepository(db)
+        execution_repo = ExecutionRepository(db)
+        project_repo = ProjectRepository(db)
+        question_repo = QuestionRepository(db)
+
+        orchestrator = Orchestrator(
+            session_repo=session_repo,
+            execution_repo=execution_repo,
+            project_repo=project_repo,
+            question_repo=question_repo,
+        )
+
+        await orchestrator.resume_after_answer(
+            session_id=session_id,
+            question_id=question_id,
+            answer=answer,
+        )
+
+        logger.info(
+            "workflow_resumed_from_answer",
+            session_id=str(session_id),
+            question_id=str(question_id),
+        )
+
+    except Exception as e:
+        logger.error(
+            "background_answer_resume_error",
+            session_id=str(session_id),
+            question_id=str(question_id),
+            error=str(e),
+            exc_info=True,
+        )
+        try:
+            session_repo.update_status(session_id, SessionStatus.FAILED)
+            db.commit()
+        except Exception as update_error:
+            logger.error(
+                "failed_to_update_session_status",
+                session_id=str(session_id),
+                error=str(update_error),
+            )
+    finally:
+        db.close()
 
 
 # =============================================================================
@@ -78,14 +146,12 @@ async def answer_question(
     question_id: UUID,
     request: AnswerRequest,
     question_service: QuestionService = Depends(get_question_service),
-    workflow_service: WorkflowService = Depends(get_workflow_service),
     user: dict = Depends(get_current_user),
 ) -> AnswerResponse:
     """Answer a pending HITL question and resume the workflow.
 
-    This endpoint does two things:
-    1. Records the answer in the database (QuestionService)
-    2. Resumes the paused workflow with the answer (WorkflowService)
+    Saves the answer and starts workflow resumption in the background.
+    Returns immediately - poll GET /api/sessions/{id} for progress.
 
     For choice questions, provide both `answer` (text) and `selected_choices`
     (list of indices into the choices array).
@@ -95,7 +161,7 @@ async def answer_question(
         request: The answer details
 
     Returns:
-        The updated question and workflow resumption result
+        The updated question (workflow continues in background)
 
     Raises:
         NotFoundError: Question doesn't exist
@@ -111,7 +177,7 @@ async def answer_question(
         answer_preview=request.answer[:50] if request.answer else "",
     )
 
-    # Step 1: Save answer to database
+    # Step 1: Save answer to database (fast)
     question = question_service.answer(
         question_id=question_id,
         user_id=user_id,
@@ -119,33 +185,22 @@ async def answer_question(
         selected_choices=request.selected_choices,
     )
 
-    # Step 2: Resume the workflow
-    try:
-        workflow_result = await workflow_service.resume_from_question(
+    # Step 2: Spawn background task to resume workflow
+    asyncio.create_task(
+        _resume_workflow_after_answer(
             session_id=question.session_id,
             question_id=question_id,
             answer=request.answer,
         )
-        workflow_resumed = True
-    except Exception as e:
-        # Log but don't fail - the answer was saved successfully
-        logger.error(
-            "workflow_resume_failed",
-            question_id=str(question_id),
-            session_id=str(question.session_id),
-            error=str(e),
-        )
-        workflow_result = {"error": str(e)}
-        workflow_resumed = False
+    )
 
     logger.info(
-        "question_answered",
+        "answer_recorded_resuming_in_background",
         question_id=str(question_id),
-        workflow_resumed=workflow_resumed,
+        session_id=str(question.session_id),
     )
 
     return AnswerResponse(
         question=question,
-        workflow_resumed=workflow_resumed,
-        workflow_result=workflow_result,
+        message="Answered - workflow resuming",
     )
