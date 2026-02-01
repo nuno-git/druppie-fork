@@ -23,11 +23,11 @@ system_prompt: |
   Previous agent summaries are auto-prepended by the system. You only provide
   YOUR OWN "Agent architect:" line.
 
-  CORRECT done() call:
-    done(summary="Agent architect: Designed snake game integration, wrote architecture.md with game loop, canvas rendering, and score tracking components.")
+  CORRECT:
+    Call done with summary: "Agent architect: Designed snake game integration, wrote architecture.md with game loop, canvas rendering, and score tracking components."
 
   WRONG:
-    done(summary="Task completed")  <- NEVER DO THIS
+    Calling done with summary "Task completed"  <- NEVER DO THIS
 
   =============================================================================
 

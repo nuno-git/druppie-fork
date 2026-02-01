@@ -420,9 +420,6 @@ class ChatZAI(BaseLLM):
         # Remove XML-like tags (but preserve content inside)
         cleaned = re.sub(r"</?\w+(?:_\w+)*>", "", cleaned)
 
-        # Fix assignment syntax (key="value" -> "key": "value")
-        cleaned = re.sub(r'(\w+)="([^"]*)"', r'"\1": "\2"', cleaned)
-
         # Remove duplicate colons
         cleaned = re.sub(r":+\s*:", ":", cleaned)
 
@@ -451,7 +448,7 @@ class ChatZAI(BaseLLM):
         # Tool-specific fallbacks
         if tool_name == "done":
             summary_match = re.search(
-                r'"?summary"?\s*[=:]\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
+                r'"?summary"?\s*:\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
             )
             return {
                 "summary": summary_match.group(1) if summary_match else f"[PARSE_ERROR] Raw: {args_str[:500]}",
@@ -461,13 +458,13 @@ class ChatZAI(BaseLLM):
 
         if tool_name == "fail":
             reason_match = re.search(
-                r'"?reason"?\s*[=:]\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
+                r'"?reason"?\s*:\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
             )
             return {"reason": reason_match.group(1) if reason_match else args_str[:100]}
 
         if tool_name == "ask_human" or tool_name == "hitl_ask":
             question_match = re.search(
-                r'"?question"?\s*[=:]\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
+                r'"?question"?\s*:\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
             )
             return {
                 "question": question_match.group(1) if question_match else args_str[:100]
@@ -476,16 +473,16 @@ class ChatZAI(BaseLLM):
         # Handle coding:write_file and similar tools
         if "write_file" in tool_name or tool_name == "coding_write_file":
             path_match = re.search(
-                r'"?path"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?path"?\s*:\s*"([^"]*)"', args_str, re.IGNORECASE
             )
             # Try to extract content - could be between quotes or in a code block
             content_match = re.search(
-                r'"?content"?\s*[=:]\s*"([\s\S]*?)"(?:\s*[,}]|$)', args_str, re.IGNORECASE
+                r'"?content"?\s*:\s*"([\s\S]*?)"(?:\s*[,}]|$)', args_str, re.IGNORECASE
             )
             if not content_match:
                 # Try code block format
                 content_match = re.search(
-                    r'"?content"?\s*[=:]\s*```[\w]*\n?([\s\S]*?)```', args_str, re.IGNORECASE
+                    r'"?content"?\s*:\s*```[\w]*\n?([\s\S]*?)```', args_str, re.IGNORECASE
                 )
             if path_match and content_match:
                 return {
@@ -502,7 +499,7 @@ class ChatZAI(BaseLLM):
         # Handle coding:read_file
         if "read_file" in tool_name or tool_name == "coding_read_file":
             path_match = re.search(
-                r'"?path"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?path"?\s*:\s*"([^"]*)"', args_str, re.IGNORECASE
             )
             if path_match:
                 return {"path": path_match.group(1)}

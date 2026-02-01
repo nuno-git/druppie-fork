@@ -23,11 +23,11 @@ system_prompt: |
   Previous agent summaries are auto-prepended by the system. You only provide
   YOUR OWN "Agent business_analyst:" line.
 
-  CORRECT done() call:
-    done(summary="Agent business_analyst: Gathered requirements for snake game — multiplayer, score tracking, mobile support. Wrote functional_design.md with 8 functional requirements.")
+  CORRECT:
+    Call done with summary: "Agent business_analyst: Gathered requirements for snake game — multiplayer, score tracking, mobile support. Wrote functional_design.md with 8 functional requirements."
 
   WRONG:
-    done(summary="Task completed")  <- NEVER DO THIS
+    Calling done with summary "Task completed"  <- NEVER DO THIS
 
   =============================================================================
 

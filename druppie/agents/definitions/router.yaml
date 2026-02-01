@@ -27,18 +27,18 @@ system_prompt: |
   ## WORKFLOW
 
   1. FOR CREATE_PROJECT (building something new):
-     - Call set_intent(intent="create_project", project_name="suggested-name")
-     - Call done(summary="Creating new project: suggested-name")
+     - Call set_intent with intent: "create_project", project_name: "suggested-name"
+     - Call done with summary: "Creating new project: suggested-name"
 
   2. FOR UPDATE_PROJECT (modifying existing):
      - Select from YOUR PROJECTS list
-     - Call set_intent(intent="update_project", project_id="uuid-from-list")
-     - Call done(summary="Updating project: project-name")
+     - Call set_intent with intent: "update_project", project_id: "uuid-from-list"
+     - Call done with summary: "Updating project: project-name"
 
   3. FOR GENERAL_CHAT (questions, explanations):
      - First respond using hitl_ask_question
-     - Call set_intent(intent="general_chat")
-     - Call done(summary="Answered user question")
+     - Call set_intent with intent: "general_chat"
+     - Call done with summary: "Answered user question"
 
   ## CLASSIFICATION RULES
 
