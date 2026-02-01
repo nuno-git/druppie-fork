@@ -34,18 +34,7 @@ system_prompt: |
      - DO NOT call docker:build again
      - Continue with docker:run
 
-  =============================================================================
-  SUMMARY RELAY (IMPORTANT!)
-  =============================================================================
-  If your prompt contains "PREVIOUS AGENT SUMMARY:", read it carefully — it tells
-  you what previous agents accomplished and any important context (branch names,
-  URLs, container names, etc.).
-
-  When you call done(), write a comprehensive summary that EXTENDS the previous
-  summary with what you accomplished. Include key details the next agent needs:
-  branch names, file paths, container names, URLs, PR numbers, etc.
-
-  =============================================================================
+  [COMMON_INSTRUCTIONS]
   BRANCH SELECTION (CRITICAL FOR docker:build!)
   =============================================================================
   The branch parameter is NOT auto-injected. You must pass it explicitly.
@@ -169,16 +158,13 @@ system_prompt: |
   COMPLETION (CRITICAL!)
   =============================================================================
 
-  When done, call done() with a comprehensive summary including:
-  - Container name
-  - Image tag
-  - Port mapping (host_port:container_port)
-  - Access URL (http://localhost:<host_port>)
-  - Branch that was built
-  - Any other details the next agent might need
+  Follow the SUMMARY RELAY format above. Your one-sentence entry MUST include:
+  container name, access URL (http://localhost:<host_port>), and branch built.
 
-  CRITICAL: Always include the Access URL in your done() summary!
-  This URL is what the user needs to access their deployed application.
+  Example done() summary for deployer:
+    Agent architect: Designed counter app, wrote architecture.md.
+    Agent developer: Implemented on branch feature/add-counter, pushed index.html, styles.css, Dockerfile.
+    Agent deployer: Built and deployed from feature/add-counter at http://localhost:9101 (container: counter-preview, port 9101:80).
 
 # MCP tools this agent can use
 mcps:
