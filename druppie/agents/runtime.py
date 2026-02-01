@@ -22,8 +22,8 @@ from uuid import UUID
 import structlog
 import yaml
 
-from druppie.agents.models import AgentDefinition
-from druppie.agents.builtin_tools import BUILTIN_TOOLS, is_builtin_tool, is_hitl_tool
+from druppie.domain.agent_definition import AgentDefinition
+from druppie.agents.builtin_tools import DEFAULT_BUILTIN_TOOLS, get_builtin_tools, is_builtin_tool, is_hitl_tool
 from druppie.llm import get_llm_service
 from druppie.core.mcp_client import generate_tool_descriptions
 from druppie.core.mcp_config import MCPConfig
@@ -503,14 +503,13 @@ class Agent:
 
         execution_repo = ExecutionRepository(self.db)
 
-        # Get tools from MCP config
-        mcp_ids = self.definition.get_mcp_names() if hasattr(self.definition, 'get_mcp_names') else self.definition.mcps
-        mcp_ids = [m for m in mcp_ids if m != "hitl"]  # hitl is builtin
-        tools = self.mcp_config.get_all_tools_for_agent(mcp_ids)
+        # Get MCP tools from config (per agent YAML)
+        tools = self.mcp_config.get_all_tools_for_agent(self.definition.mcps)
 
-        # Convert to OpenAI format and add builtin tools
+        # Convert to OpenAI format and add builtin tools (per agent YAML config)
         openai_tools = self._to_openai_tools(tools)
-        openai_tools.extend(BUILTIN_TOOLS)
+        builtin_tool_names = DEFAULT_BUILTIN_TOOLS + self.definition.extra_builtin_tools
+        openai_tools.extend(get_builtin_tools(builtin_tool_names))
 
         max_iterations = self.definition.max_iterations or 10
 
@@ -531,7 +530,8 @@ class Agent:
                 agent_run_id=agent_run_id,
                 provider=self.llm.provider_name if hasattr(self.llm, 'provider_name') else "unknown",
                 model=self.llm.model if hasattr(self.llm, 'model') else self.definition.model or "unknown",
-                messages=messages,  # Store full messages without truncation
+                messages=messages,
+                tools=openai_tools,
             )
             self.db.commit()
 

@@ -49,6 +49,7 @@ class ToolCallStatus:
 BUILTIN_TOOLS = {
     "done",
     "make_plan",
+    "set_intent",
     "hitl_ask_question",
     "hitl_ask_multiple_choice_question",
 }
@@ -273,10 +274,27 @@ class ToolExecutor:
         is_builtin = tool_call.mcp_server == "builtin" or tool_call.tool_name in BUILTIN_TOOLS
         is_hitl = tool_call.tool_name in HITL_TOOLS
 
-        # Step 3: Check approval for MCP tools (not builtin)
+        # Step 3: Check tool access and approval for MCP tools (not builtin)
         if not is_builtin and tool_call.mcp_server:
-            # Load agent definition for approval overrides
+            # Load agent definition for approval overrides and access control
             agent_definition = self._get_agent_definition(tool_call.agent_run_id)
+
+            # Validate agent is allowed to use this tool
+            if agent_definition is not None:
+                allowed_tools = agent_definition.get_allowed_tools(tool_call.mcp_server)
+                if allowed_tools is not None and tool_call.tool_name not in allowed_tools:
+                    error_msg = (
+                        f"Agent '{agent_definition.id}' is not allowed to use "
+                        f"'{tool_call.mcp_server}:{tool_call.tool_name}'. "
+                        f"Allowed: {allowed_tools}"
+                    )
+                    logger.warning("tool_access_denied", error=error_msg)
+                    self.execution_repo.update_tool_call(
+                        tool_call.id,
+                        status=ToolCallStatus.FAILED,
+                        error=error_msg,
+                    )
+                    return ToolCallStatus.FAILED
 
             needs_approval, required_role = self.mcp_config.needs_approval(
                 tool_call.mcp_server,

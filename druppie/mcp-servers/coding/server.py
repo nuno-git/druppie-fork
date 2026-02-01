@@ -4,6 +4,7 @@ Combined file operations and git functionality for workspace sandbox.
 Uses FastMCP framework for HTTP transport.
 """
 
+import json
 import logging
 import os
 import shutil
@@ -33,6 +34,31 @@ GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 
 # In-memory workspace registry (in production, use Redis/DB)
 workspaces: dict[str, dict] = {}
+
+
+def _state_file_path(workspace_path: str | Path) -> Path:
+    """Return the path to the workspace state file."""
+    return Path(workspace_path) / ".druppie_state.json"
+
+
+def _save_workspace_state(ws: dict) -> None:
+    """Persist workspace branch state to disk."""
+    try:
+        state_path = _state_file_path(ws["path"])
+        state_path.write_text(json.dumps({"branch": ws["branch"]}), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Failed to save workspace state: %s", e)
+
+
+def _load_workspace_state(workspace_path: str | Path) -> dict | None:
+    """Load persisted workspace state from disk, or None if missing."""
+    try:
+        state_path = _state_file_path(workspace_path)
+        if state_path.exists():
+            return json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("Failed to load workspace state: %s", e)
+    return None
 
 
 def get_or_create_workspace(
@@ -159,6 +185,15 @@ def get_or_create_workspace(
                 logger.info("Set up git remote: %s", remote_url.replace(GITEA_PASSWORD, "***"))
             logger.info("Auto-initialized git repo at %s", workspace_path)
 
+        # Exclude state file from git (local-only, won't pollute .gitignore)
+        exclude_path = workspace_path / ".git" / "info" / "exclude"
+        exclude_path.parent.mkdir(parents=True, exist_ok=True)
+        exclude_entry = ".druppie_state.json"
+        existing = exclude_path.read_text() if exclude_path.exists() else ""
+        if exclude_entry not in existing:
+            with exclude_path.open("a") as f:
+                f.write(f"\n{exclude_entry}\n")
+
         # Configure git user
         subprocess.run(
             ["git", "config", "user.email", "agent@druppie.local"],
@@ -173,11 +208,37 @@ def get_or_create_workspace(
             capture_output=True,
         )
 
+    # Determine branch: persisted state → actual git state → default "main"
+    branch = "main"
+    persisted = _load_workspace_state(workspace_path)
+    if persisted and persisted.get("branch"):
+        branch = persisted["branch"]
+        logger.info("Restored branch from persisted state: %s", branch)
+
+    # Belt-and-suspenders: check actual git branch
+    try:
+        git_branch_result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=str(workspace_path),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        actual_branch = git_branch_result.stdout.strip()
+        if actual_branch and actual_branch != branch:
+            logger.info(
+                "Git branch (%s) differs from persisted (%s), using git branch",
+                actual_branch, branch,
+            )
+            branch = actual_branch
+    except Exception as e:
+        logger.warning("Failed to check actual git branch: %s", e)
+
     # Register workspace
     workspaces[derived_workspace_id] = {
         "path": str(workspace_path),
         "project_id": project_id,
-        "branch": "main",
+        "branch": branch,
         "user_id": user_id,
         "session_id": session_id,
         "repo_name": repo_name,
@@ -935,6 +996,7 @@ async def create_branch(
         if result.returncode == 0:
             # New branch created successfully
             ws["branch"] = branch_name
+            _save_workspace_state(ws)
             logger.info("Created new branch: %s", branch_name)
             return {"success": True, "branch": branch_name, "created": True}
 
@@ -949,6 +1011,7 @@ async def create_branch(
 
         if switch_result.returncode == 0:
             ws["branch"] = branch_name
+            _save_workspace_state(ws)
             return {"success": True, "branch": branch_name, "created": False, "message": "Switched to existing branch"}
 
         return {"success": False, "error": f"Failed to create or switch to branch: {result.stderr} / {switch_result.stderr}"}
@@ -1013,6 +1076,7 @@ async def merge_to_main(
 
         # Update workspace
         ws["branch"] = "main"
+        _save_workspace_state(ws)
 
         return {"success": True, "merged": current_branch}
 
@@ -1202,6 +1266,28 @@ async def create_pull_request(
             return {"success": False, "error": "Either session_id or workspace_id is required"}
 
         current_branch = ws["branch"]
+
+        # Reconcile with actual git state in case persistence was stale
+        try:
+            git_branch_result = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=ws["path"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            actual_branch = git_branch_result.stdout.strip()
+            if actual_branch and actual_branch != current_branch:
+                logger.info(
+                    "create_pull_request: reconciling branch %s → %s (from git)",
+                    current_branch, actual_branch,
+                )
+                current_branch = actual_branch
+                ws["branch"] = actual_branch
+                _save_workspace_state(ws)
+        except Exception as e:
+            logger.warning("Failed to check actual git branch in create_pull_request: %s", e)
+
         if current_branch == "main":
             return {"success": False, "error": "Already on main branch, nothing to PR"}
 
@@ -1323,6 +1409,7 @@ async def merge_pull_request(
             subprocess.run(["git", "checkout", "main"], cwd=cwd, check=True)
             subprocess.run(["git", "pull", "origin", "main"], cwd=cwd, check=True)
             ws["branch"] = "main"
+            _save_workspace_state(ws)
 
             return {
                 "success": True,

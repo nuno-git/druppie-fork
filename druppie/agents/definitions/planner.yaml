@@ -76,8 +76,12 @@ system_prompt: |
   - For general_chat, just call done immediately
   - Always call done after make_plan
   - Include the original user request in the agent prompts
+  - NEVER use hitl_ask_question or hitl_ask_multiple_choice_question. You are the planner — your ONLY job is to call make_plan and then done. The business_analyst agent handles user questions.
 
-# Planner uses built-in tools only (make_plan, done)
+# Planner-specific builtin tool (added on top of defaults: done + hitl)
+extra_builtin_tools:
+  - make_plan
+
 mcps: {}
 
 model: glm-4

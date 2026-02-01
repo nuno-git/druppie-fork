@@ -17,7 +17,6 @@ from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
 from druppie.agents import Agent
-from druppie.workflows import Workflow
 
 logger = structlog.get_logger()
 
@@ -28,14 +27,9 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("druppie_starting")
 
-    # List available agents and workflows
+    # List available agents
     agents_list = Agent.list_agents()
-    workflows_list = Workflow.list_workflows()
-    logger.info(
-        "druppie_initialized",
-        agents=len(agents_list),
-        workflows=len(workflows_list),
-    )
+    logger.info("druppie_initialized", agents=len(agents_list))
 
     yield
 
@@ -178,9 +172,7 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.warning("gitea_health_check_failed", error=str(e))
 
-        # Return status counts instead of internal names to avoid information disclosure
         agents = Agent.list_agents()
-        workflows = Workflow.list_workflows()
 
         return {
             "status": "healthy",
@@ -191,7 +183,6 @@ def create_app() -> FastAPI:
             "llm": llm_healthy,
             "gitea": gitea_healthy,
             "agents_count": len(agents),
-            "workflows_count": len(workflows),
             "llm_provider": llm_provider,
             "llm_model": llm_model,
         }
