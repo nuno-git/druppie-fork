@@ -1,1071 +1,740 @@
 /**
- * Chat Page - Main interface for Druppie governance
- * Shows workflow events and conversation history sidebar
+ * Chat Page - Two-panel polling-based session viewer
+ *
+ * Left sidebar: session list (polls every 5s)
+ * Right panel: new session input or session detail (polls every 0.5s)
+ * URL param ?session=<id> drives which session is shown
  */
 
 import React, { useState, useRef, useEffect } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, Bug, FolderOpen, ExternalLink } from 'lucide-react'
-import { sendChat, getSessions, getPlan, answerQuestion, approveTask, rejectTask, submitHITLResponse, getProject, cancelChat } from '../services/api'
-import { useAuth } from '../App'
+import { Send, ExternalLink, Plus, Copy, Check } from 'lucide-react'
 import {
-  initSocket,
-  joinPlanRoom,
-  joinApprovalsRoom,
-  onTaskApproved,
-  onTaskRejected,
-  onWorkflowEvent,
-  onHITLQuestion,
-  onApprovalRequired,
-  onExecutionCancelled,
-  onDeploymentComplete,
-  disconnectSocket,
-} from '../services/socket'
-import { useToast } from '../components/Toast'
-import { formatEventTitle } from '../utils/eventUtils'
-import {
-  Message,
-  HITLQuestionMessage,
-  TypingIndicator,
-  ConversationSidebar,
-  DebugPanel,
-  ApprovalCard,
-  ToolDecisionCard,
-  WorkflowEventMessage,
-} from '../components/chat'
+  getSessions,
+  getSession,
+  sendChat,
+  approveApproval,
+  rejectApproval,
+  answerQuestion,
+} from '../services/api'
+import { getAgentConfig, getAgentColorClasses } from '../utils/agentConfig'
 
-const Chat = () => {
-  const { user } = useAuth()
-  const toast = useToast()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const messagesEndRef = useRef(null)
+// --- Helpers ---
 
-  // State
-  const [messages, setMessages] = useState([])
-  const [input, setInput] = useState('')
-  const [currentPlanId, setCurrentPlanId] = useState(null)
-  const [currentStep, setCurrentStep] = useState(null)
-  const [debugPanelOpen, setDebugPanelOpen] = useState(false)
-  const [apiCalls, setApiCalls] = useState([])
-  const [liveWorkflowEvents, setLiveWorkflowEvents] = useState([])
-  const [debugWorkflowEvents, setDebugWorkflowEvents] = useState([])
-  const [debugLLMCalls, setDebugLLMCalls] = useState([])
-  const [workspaceInfo, setWorkspaceInfo] = useState(null)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [initialSessionLoaded, setInitialSessionLoaded] = useState(false)
-  const [currentProject, setCurrentProject] = useState(null)
-  const [isStopping, setIsStopping] = useState(false)
-  const [sessionPendingApprovals, setSessionPendingApprovals] = useState([]) // Session-level approvals not attached to messages
-  const [isAgentWorking, setIsAgentWorking] = useState(false) // For showing typing indicator after approval
-  const [currentAgentId, setCurrentAgentId] = useState(null) // Track which agent is currently working
-  const [toolExecutions, setToolExecutions] = useState([]) // Track tool executions with approval status
-  const [workflowEventsForDisplay, setWorkflowEventsForDisplay] = useState([]) // Workflow events to render as messages
+const STATUS_STYLES = {
+  completed: 'bg-green-100 text-green-700',
+  running: 'bg-blue-100 text-blue-700 animate-pulse',
+  pending: 'bg-gray-100 text-gray-600',
+  failed: 'bg-red-100 text-red-700',
+  paused_hitl: 'bg-yellow-100 text-yellow-700',
+  paused_tool: 'bg-yellow-100 text-yellow-700',
+  waiting_approval: 'bg-yellow-100 text-yellow-700',
+  waiting_answer: 'bg-yellow-100 text-yellow-700',
+  approved: 'bg-green-100 text-green-700',
+  rejected: 'bg-red-100 text-red-700',
+}
 
-  // Fetch session history
-  const { data: sessionsData } = useQuery({
-    queryKey: ['sessions'],
-    queryFn: () => getSessions(1, 20),
-    refetchInterval: 30000,
-  })
+const StatusBadge = ({ status }) => (
+  <span
+    className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+      STATUS_STYLES[status] || 'bg-gray-100 text-gray-600'
+    }`}
+  >
+    {status?.replace(/_/g, ' ')}
+  </span>
+)
 
-  // Load session from URL parameter on initial load
-  useEffect(() => {
-    if (initialSessionLoaded) return
-    const sessionIdFromUrl = searchParams.get('session')
-    if (!sessionIdFromUrl) {
-      setInitialSessionLoaded(true)
+const JsonBlock = ({ label, data }) => {
+  if (data === null || data === undefined) return null
+  return (
+    <details className="mt-1" data-label={label}>
+      <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+        {label}
+      </summary>
+      <pre className="mt-1 p-2 bg-gray-50 rounded text-xs overflow-auto max-h-60 whitespace-pre-wrap break-all">
+        {typeof data === 'string' ? data : JSON.stringify(data, null, 2)}
+      </pre>
+    </details>
+  )
+}
+
+const AgentBadge = ({ agentId }) => {
+  const config = getAgentConfig(agentId)
+  const colorClasses = getAgentColorClasses(config.color)
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${colorClasses}`}
+    >
+      {config.name}
+    </span>
+  )
+}
+
+const timeAgo = (dateStr) => {
+  if (!dateStr) return ''
+  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
+  if (seconds < 60) return 'just now'
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
+  return `${Math.floor(seconds / 86400)}d ago`
+}
+
+const copyToClipboard = async (text) => {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-9999px'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+  }
+}
+
+const CopyJsonButton = ({ getData, label = 'Copy JSON' }) => {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    const json = getData()
+    await copyToClipboard(JSON.stringify(json, null, 2))
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors ${
+        copied
+          ? 'bg-green-100 text-green-700'
+          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+      }`}
+      title={label}
+    >
+      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+      {copied ? 'Copied!' : label}
+    </button>
+  )
+}
+
+/**
+ * Build a JSON snapshot reflecting exactly what's expanded in the UI.
+ * Walks the session data and checks the open state of each <details> via data attributes.
+ */
+const buildVisibleJson = (data, containerEl) => {
+  // Session metadata (always included)
+  const result = {
+    id: data.id,
+    title: data.title,
+    status: data.status,
+    ...(data.created_at && { created_at: data.created_at }),
+    ...(data.project_id && { project_id: data.project_id }),
+    ...(data.project_name && { project_name: data.project_name }),
+    ...(data.repo_url && { repo_url: data.repo_url }),
+    ...(data.token_usage && { token_usage: data.token_usage }),
+    timeline: [],
+  }
+
+  if (!containerEl || !data.timeline) return result
+
+  data.timeline.forEach((entry, i) => {
+    if (entry.type === 'message' && entry.message) {
+      const m = entry.message
+      result.timeline.push({
+        type: 'message',
+        role: m.role,
+        content: m.content,
+        ...(m.agent_id && { agent_id: m.agent_id }),
+      })
       return
     }
 
-    const loadSessionFromUrl = async () => {
-      try {
-        const fullSession = await getPlan(sessionIdFromUrl)
-        if (fullSession) {
-          setCurrentPlanId(sessionIdFromUrl)
-          setInitialSessionLoaded(true)
-          loadSessionData(fullSession, sessionIdFromUrl)
-        }
-      } catch (err) {
-        console.error('Error loading session from URL:', err)
-        setInitialSessionLoaded(true)
-      }
-    }
-    loadSessionFromUrl()
-  }, [searchParams, initialSessionLoaded])
+    if (entry.type === 'agent_run' && entry.agent_run) {
+      const run = entry.agent_run
+      const runEl = containerEl.querySelector(
+        `details[data-type="agent-run"][data-timeline-idx="${i}"]`
+      )
 
-  // Initialize with welcome message
-  useEffect(() => {
-    if (messages.length === 0 && !currentPlanId) {
-      setMessages([{
-        role: 'assistant',
-        content: `Hello ${user?.firstName || user?.username}! I'm Druppie, your AI governance assistant.\n\nI can help you:\n• Create applications (just describe what you want!)\n• Manage code deployments\n• Check compliance and permissions\n\nWhat would you like to build today?`,
-      }])
-    }
-  }, [user, currentPlanId])
-
-  // WebSocket setup
-  useEffect(() => {
-    if (!user?.roles) return
-    initSocket()
-    joinApprovalsRoom(user.roles)
-    return () => disconnectSocket()
-  }, [user?.roles])
-
-  useEffect(() => {
-    if (currentPlanId) joinPlanRoom(currentPlanId)
-  }, [currentPlanId])
-
-  // Workflow event listener - simplified to just trigger refetch and update UI state
-  useEffect(() => {
-    const handleWorkflowEvent = (data) => {
-      const eventSessionId = data.session_id || data.plan_id
-      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) return
-
-      const event = data.event
-      if (!event) return
-
-      const eventType = event.type || event.event_type || ''
-
-      // Update agent working state based on event type
-      if (eventType === 'agent_started' || eventType.includes('_started')) {
-        const agentId = event.data?.agent_id || event.agent_id
-        setIsAgentWorking(true)
-        if (agentId) setCurrentAgentId(agentId)
-        setCurrentStep(`${agentId || 'Agent'} is working...`)
-      }
-
-      // Check if workflow is complete or failed - stop the working indicator and refetch
-      if (eventType.includes('workflow_completed') || eventType.includes('workflow_failed') ||
-          eventType.includes('session_completed') || eventType.includes('session_failed') ||
-          eventType.includes('execution_complete') || eventType.includes('execution_failed')) {
-        setIsAgentWorking(false)
-        setCurrentStep(null)
-        setCurrentAgentId(null)
-        // Refetch session data to get the final state
-        if (currentPlanId) {
-          getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
-        }
-      }
-
-      // Agent completed - refetch to update the UI
-      if (eventType === 'agent_completed' || eventType.includes('_completed')) {
-        const agentId = event.data?.agent_id || event.agent_id
-        if (agentId === 'deployer') {
-          setIsAgentWorking(false)
-          setCurrentStep(null)
-        }
-        // Refetch to show the latest tool calls
-        if (currentPlanId) {
-          getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
-        }
-      }
-
-      // Tool approval required - stop indicator and refetch
-      if (eventType.includes('approval_required') || eventType.includes('approval_pending')) {
-        setIsAgentWorking(false)
-        setCurrentStep(null)
-        if (currentPlanId) {
-          getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
-        }
-      }
-
-      // For live events during execution, just add to the live list for typing indicator
-      setLiveWorkflowEvents((prev) => [...prev, {
-        ...event,
-        event_type: event.type,
-        timestamp: event.timestamp || new Date().toISOString(),
-      }])
-    }
-
-    const unsubscribe = onWorkflowEvent(handleWorkflowEvent)
-    return () => unsubscribe()
-  }, [currentPlanId])
-
-  // Approval event listeners - simplified to refetch session data
-  useEffect(() => {
-    const handleTaskApproved = (data) => {
-      const approverId = data.approver_id
-      const approverUsername = data.approver_username || data.approver_role || 'User'
-      const approverRole = data.approver_role || 'user'
-      const toolName = data.tool_name || data.name || 'action'
-      const agentId = data.agent_id
-
-      // Only show notification if it's from another user
-      if (approverId && approverId !== user?.id) {
-        toast.success('Task Approved', `${approverUsername} (${approverRole}) approved: ${toolName}`)
-        // Show typing indicator since agent is now working
-        setCurrentStep(`${agentId || 'Agent'} is continuing execution...`)
-        setCurrentAgentId(agentId || 'developer')
-        setIsAgentWorking(true)
-      }
-
-      // Refetch session to get updated state
-      if (currentPlanId) {
-        getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
-      }
-      queryClient.invalidateQueries({ queryKey: ['sessions'] })
-      queryClient.invalidateQueries({ queryKey: ['tasks'] })
-    }
-
-    const handleTaskRejected = (data) => {
-      const rejectorId = data.approver_id
-      const rejectorUsername = data.approver_username || data.approver_role || 'User'
-      const rejectorRole = data.approver_role || 'user'
-      const toolName = data.tool_name || data.name || 'action'
-
-      // Only show notification if it's from another user
-      if (rejectorId && rejectorId !== user?.id) {
-        toast.warning('Task Rejected', `${rejectorUsername} (${rejectorRole}) rejected: ${toolName}`)
-      }
-
-      // Refetch session to get updated state
-      if (currentPlanId) {
-        getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
-      }
-      queryClient.invalidateQueries({ queryKey: ['sessions'] })
-      queryClient.invalidateQueries({ queryKey: ['tasks'] })
-    }
-
-    const unsubApproved = onTaskApproved(handleTaskApproved)
-    const unsubRejected = onTaskRejected(handleTaskRejected)
-    return () => { unsubApproved(); unsubRejected() }
-  }, [queryClient, user?.id, toast, currentPlanId])
-
-  // Execution cancelled listener
-  useEffect(() => {
-    const handleExecutionCancelled = (data) => {
-      const sessionId = data.session_id
-      if (sessionId && currentPlanId && sessionId !== currentPlanId) return
-
-      toast.info('Execution Cancelled', data.message || 'The execution was stopped.')
-      setCurrentStep(null)
-      setIsStopping(false)
-    }
-
-    const unsub = onExecutionCancelled(handleExecutionCancelled)
-    return () => unsub()
-  }, [currentPlanId, toast])
-
-  // HITL event listeners - simplified to refetch session data
-  useEffect(() => {
-    const handleHITLQuestion = (data) => {
-      const eventSessionId = data.session_id
-      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) return
-
-      // Stop showing typing indicator when waiting for user input
-      setIsAgentWorking(false)
-      setCurrentStep(null)
-
-      const agentName = data.agent_id ? data.agent_id.charAt(0).toUpperCase() + data.agent_id.slice(1) : 'Agent'
-      toast.info(`Question from ${agentName}`, data.question?.substring(0, 80) + (data.question?.length > 80 ? '...' : ''))
-
-      // Refetch session to get the question
-      if (currentPlanId) {
-        getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
-      }
-    }
-
-    const handleApprovalRequired = (data) => {
-      const eventSessionId = data.session_id
-      if (eventSessionId && currentPlanId && eventSessionId !== currentPlanId) return
-
-      // Stop showing typing indicator when waiting for approval
-      setIsAgentWorking(false)
-      setCurrentStep(null)
-
-      const taskName = data.tool || data.message || 'Approval Required'
-      toast.warning('Approval Required', taskName)
-
-      // Refetch session to get the approval
-      if (currentPlanId) {
-        getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
-      }
-    }
-
-    const unsubQuestion = onHITLQuestion(handleHITLQuestion)
-    const unsubApproval = onApprovalRequired(handleApprovalRequired)
-    return () => { unsubQuestion(); unsubApproval() }
-  }, [currentPlanId, toast])
-
-  // Deployment complete listener - simplified to refetch and show toast
-  useEffect(() => {
-    const handleDeploymentComplete = (data) => {
-      const sessionId = data.session_id
-      if (sessionId && currentPlanId && sessionId !== currentPlanId) return
-
-      const url = data.url
-      toast.success('Deployment Successful!', `Your app is running at ${url}`)
-
-      // Refetch session to get the final state with deployment info
-      if (currentPlanId) {
-        getPlan(currentPlanId).then(fullSession => loadSessionData(fullSession, currentPlanId))
-      }
-    }
-
-    const unsub = onDeploymentComplete(handleDeploymentComplete)
-    return () => unsub()
-  }, [currentPlanId, toast])
-
-  // Auto-scroll
-  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  useEffect(() => { scrollToBottom() }, [messages])
-
-  // Helper to load session data
-  const loadSessionData = async (fullSession, sessionId) => {
-    let projectInfo = null
-    if (fullSession.project) {
-      projectInfo = fullSession.project
-      setCurrentProject(fullSession.project)
-    } else if (fullSession.project_id) {
-      try {
-        projectInfo = await getProject(fullSession.project_id)
-        setCurrentProject(projectInfo)
-      } catch { setCurrentProject(null) }
-    } else {
-      setCurrentProject(null)
-    }
-
-    // Use the new nested agent_runs structure directly from session data
-    // Each agent_run now contains: llm_calls, tool_calls, approvals, hitl_questions
-    const agentRuns = fullSession.agent_runs || []
-
-    // Flatten all LLM calls from agent runs for debug panel
-    const llmCalls = agentRuns.flatMap(run =>
-      (run.llm_calls || []).map(call => ({
+      const runEntry = {
+        type: 'agent_run',
         agent_id: run.agent_id,
-        model: call.model,
-        provider: call.provider,
-        duration_ms: call.duration_ms,
-        usage: call.token_usage,
-        timestamp: call.created_at,
-        response: call.response_content,
-      }))
-    )
-
-    // Build unified timeline from agent runs using the enhanced nested structure
-    // The backend now returns response_tool_calls with embedded approval/HITL/execution data
-    const timelineItems = []
-    const knownAgents = ['router', 'planner', 'architect', 'developer', 'deployer', 'reviewer', 'tester']
-
-    for (const run of agentRuns) {
-      // Add agent_started event
-      if (knownAgents.includes(run.agent_id)) {
-        timelineItems.push({
-          id: `${run.id}-start`,
-          type: 'agent_started',
-          agent_id: run.agent_id,
-          timestamp: run.started_at,
-        })
+        status: run.status,
+        sequence_number: run.sequence_number,
       }
 
-      // Process each LLM call's tool decisions
-      for (const llmCall of (run.llm_calls || [])) {
-        for (const toolDecision of (llmCall.response_tool_calls || [])) {
-          // Each toolDecision now has all embedded data from the backend
-          timelineItems.push({
-            id: toolDecision.id || `${llmCall.id}-${toolDecision.name}`,
-            type: 'tool_decision',
-            agent_id: run.agent_id,
-            timestamp: llmCall.created_at,
-            // The full tool decision with embedded data
-            toolDecision: toolDecision,
-          })
-        }
-      }
-
-      // Add agent_completed event
-      if (run.status === 'completed' && knownAgents.includes(run.agent_id)) {
-        const lastLlmCall = (run.llm_calls || []).slice(-1)[0]
-        const doneCall = lastLlmCall?.response_tool_calls?.find(tc => tc.is_done_tool || tc.name === 'done')
-
-        timelineItems.push({
-          id: `${run.id}-complete`,
-          type: 'agent_completed',
-          agent_id: run.agent_id,
-          timestamp: run.completed_at || run.started_at,
-          summary: doneCall?.arguments?.summary,
-        })
-      }
-    }
-
-    // Sort by timestamp
-    timelineItems.sort((a, b) => {
-      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0
-      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0
-      return timeA - timeB
-    })
-
-    setDebugWorkflowEvents(timelineItems)
-    setDebugLLMCalls(llmCalls)
-    setApiCalls(llmCalls.map(call => ({ type: 'llm', ...call })))
-    setWorkflowEventsForDisplay(timelineItems)
-    console.log('[Chat] Loaded timeline items:', timelineItems.length)
-
-    // Session-level approvals for non-tool_call types (workflow_step approvals)
-    // Extract from agent_runs since approvals are now embedded (not at top level)
-    const allApprovals = agentRuns.flatMap(run => run.approvals || [])
-    const pendingApprovals = allApprovals
-      .filter(a => a.status === 'pending' && a.approval_type !== 'tool_call')
-      .map(a => ({
-        task_id: a.id,
-        task_name: a.title || a.tool_name || 'Approval Required',
-        mcp_tool: a.tool_name,
-        mcp_arguments: a.arguments || {},
-        required_role: a.required_roles?.[0],
-        approval_type: a.approval_type,
-        required_roles: a.required_roles || ['developer'],
-        created_at: a.created_at,
-      }))
-
-    setToolExecutions([])
-
-    // Load messages from normalized database
-    // Filter out system messages that are approval notifications (they're shown via ToolExecutionCard)
-    const filteredMessages = (fullSession.messages || []).filter((msg) => {
-      if (msg.role === 'system') {
-        // Filter out approval notification messages
-        const content = msg.content || ''
-        if (content.includes('approved:') || content.includes('rejected:')) {
-          return false
-        }
-      }
-      return true
-    })
-
-    const loadedMessages = filteredMessages.map((msg, idx) => {
-      const isLastAssistant = idx === (filteredMessages.length - 1) && msg.role === 'assistant'
-
-      return {
-        role: msg.role,
-        content: msg.content,
-        agent_id: msg.agent_id,  // Include agent_id for agent attribution
-        timestamp: msg.created_at || msg.timestamp,  // API returns created_at
-        ...(msg.role === 'assistant' && {
-          // Note: workflowEvents are now shown via ToolDecisionCard/WorkflowEventMessage
-          llmCalls: isLastAssistant ? llmCalls : [],
-          deploymentUrl: msg.deployment_url,
-          containerName: msg.container_name,
-        }),
-        ...(isLastAssistant && {
-          planId: sessionId,
-          status: fullSession.status,
-          pendingApprovals,
-        }),
-      }
-    })
-
-    // NOTE: HITL questions are now rendered via ToolDecisionCard in the timeline,
-    // embedded within the tool call that triggered them. No need to add as separate messages.
-    // Extract hitlQuestions for use in typing indicator logic
-    const hitlQuestions = agentRuns.flatMap(run => run.hitl_questions || [])
-
-    // Sort all messages by timestamp to ensure correct order
-    loadedMessages.sort((a, b) => {
-      const timeA = new Date(a.timestamp || 0).getTime()
-      const timeB = new Date(b.timestamp || 0).getTime()
-      return timeA - timeB
-    })
-
-    // NOTE: Deployment URL is now shown inline in the docker_run ToolDecisionCard,
-    // no need for a separate deployment message
-
-    setMessages(loadedMessages)
-
-    // Store session-level pending approvals for display at end of chat
-    // These may not be attached to any message yet
-    setSessionPendingApprovals(pendingApprovals)
-
-    // Restore typing indicator state based on session status
-    // The backend now properly sets session status to:
-    // - "active" when executing
-    // - "paused_approval" when waiting for tool approval
-    // - "paused_question" when waiting for HITL answer
-    // - "completed", "failed", "cancelled" when done
-    const sessionStatus = fullSession.status
-    const isActivelyExecuting = sessionStatus === 'active'
-
-    // Only show typing indicator if session is actively executing
-    const shouldShowTypingIndicator = isActivelyExecuting
-
-    if (shouldShowTypingIndicator) {
-      // Find the last active agent from timeline items
-      const lastAgentEvent = timelineItems
-        .filter(e => e.agent_id)
-        .pop()
-      const lastAgentId = lastAgentEvent?.agent_id
-
-      setIsAgentWorking(true)
-      setCurrentAgentId(lastAgentId || null)
-      setCurrentStep(lastAgentId ? `${lastAgentId.charAt(0).toUpperCase() + lastAgentId.slice(1)} is working...` : 'Agent is working...')
-    } else {
-      // Clear typing indicator - completed, paused for question, or waiting for approval
-      setIsAgentWorking(false)
-      setCurrentAgentId(null)
-      setCurrentStep(null)
-    }
-  }
-
-  // Chat mutation
-  const chatMutation = useMutation({
-    mutationFn: async ({ message, conversationHistory, sessionId }) => {
-      const startTime = Date.now()
-      const effectiveSessionId = sessionId || currentPlanId
-      const requestData = { message, session_id: effectiveSessionId, conversation_history: conversationHistory.length > 0 ? conversationHistory : null }
-
-      try {
-        const response = await sendChat(message, effectiveSessionId, requestData.conversation_history)
-        setApiCalls((prev) => [...prev, { type: 'api', method: 'POST', endpoint: '/api/chat', timestamp: new Date().toISOString(), duration: Date.now() - startTime, status: 'success', request: requestData }, ...(response.llm_calls || []).map(call => ({ type: 'llm', ...call }))])
-        return response
-      } catch (error) {
-        setApiCalls((prev) => [...prev, { type: 'api', method: 'POST', endpoint: '/api/chat', timestamp: new Date().toISOString(), duration: Date.now() - startTime, status: 'error', request: requestData, response: { error: error.message } }])
-        throw error
-      }
-    },
-    onSuccess: (data) => {
-      const normalizedEvents = (data.workflow_events || []).map(event => ({
-        ...event,
-        event_type: event.type || event.event_type,
-        title: event.title || formatEventTitle({ ...event, event_type: event.type }),
-        description: event.data?.description || event.description || '',
-        status: event.status || (event.type?.includes('completed') || event.type?.includes('success') ? 'success' : 'info'),
-        data: event.data || event,
-      }))
-
-      // Create the assistant message
-      const newMessages = [{
-        role: 'assistant',
-        content: data.response,
-        planId: data.plan_id,
-        pendingApprovals: data.pending_approvals,
-        status: data.status,
-        workflowEvents: normalizedEvents,
-        timestamp: new Date().toISOString(),
-      }]
-
-      // NOTE: HITL questions are now rendered via ToolDecisionCard in the timeline,
-      // embedded within the tool call that triggered them. No need to add as separate messages.
-      // The WebSocket 'question' event and subsequent session refetch will update the timeline.
-
-      setMessages((prev) => [...prev, ...newMessages])
-      setCurrentPlanId(data.plan_id)
-
-      // Check response status to determine if we should stop the loading indicator
-      // Keep working if status indicates ongoing execution (unless waiting for approval/question)
-      const responseStatus = data.status
-      const isPaused = responseStatus === 'paused_approval' || responseStatus === 'paused_hitl'
-      const isComplete = responseStatus === 'completed' || responseStatus === 'failed'
-      const hasPendingApprovals = data.pending_approvals && data.pending_approvals.length > 0
-      const hasPendingQuestions = data.pending_questions && data.pending_questions.length > 0
-
-      console.log('[Chat] Response status:', responseStatus, 'isPaused:', isPaused, 'isComplete:', isComplete)
-
-      if (isPaused || isComplete || hasPendingApprovals || hasPendingQuestions) {
-        setCurrentStep(null)
-        setIsAgentWorking(false)
-      } else {
-        // Still processing - keep indicator but update step
-        setCurrentStep(null)
-        setIsAgentWorking(false) // Default to stopping - backend will send events if still working
-      }
-
-      setDebugWorkflowEvents([...liveWorkflowEvents, ...normalizedEvents])
-      setDebugLLMCalls(data.llm_calls || [])
-      setLiveWorkflowEvents([])
-
-      // Update URL with session ID for persistence
-      if (data.plan_id) {
-        setSearchParams({ session: data.plan_id })
-      }
-
-      if (data.workspace_id || data.project_id || data.branch) {
-        setWorkspaceInfo({ workspace_id: data.workspace_id, project_id: data.project_id, branch: data.branch, workspace_path: data.workspace_path })
-      }
-
-      // Set current project with friendly name from response
-      if (data.project_id) {
-        // Use the friendly project_name from the response if available
-        // This provides immediate feedback without waiting for API call
-        if (data.project_name) {
-          setCurrentProject({
-            id: data.project_id,
-            name: data.project_name,
-          })
-        } else {
-          // Fallback: fetch project details from API
-          getProject(data.project_id)
-            .then(projectInfo => setCurrentProject(projectInfo))
-            .catch(() => setCurrentProject({ id: data.project_id, name: 'Project' }))
-        }
-      }
-
-      queryClient.invalidateQueries({ queryKey: ['projects'] })
-      queryClient.invalidateQueries({ queryKey: ['sessions'] })
-    },
-    onError: (error) => {
-      setMessages((prev) => [...prev, { role: 'assistant', content: `Error: ${error.message}` }])
-      setCurrentStep(null)
-      setIsAgentWorking(false)
-      setDebugWorkflowEvents([...liveWorkflowEvents])
-      setLiveWorkflowEvents([])
-    },
-  })
-
-  // Approve/reject mutations
-  const approveMutation = useMutation({
-    mutationFn: (taskId) => approveTask(taskId),
-    onSuccess: (data, taskId) => {
-      // Remove the pending approval from messages and session-level approvals
-      setMessages((prev) => prev.map(msg => msg.pendingApprovals ? { ...msg, pendingApprovals: msg.pendingApprovals.filter(a => a.task_id !== taskId) } : msg))
-      setSessionPendingApprovals((prev) => prev.filter(a => (a.task_id || a.id) !== taskId))
-
-      // Check if the tool execution failed
-      if (data.success === false) {
-        const errorMessage = data.user_message || data.error || 'Tool execution failed'
-        setMessages((prev) => [...prev, {
-          role: 'assistant',
-          content: `❌ Execution failed: ${errorMessage}${data.retryable ? ' (You can try again)' : ''}`,
-          timestamp: new Date().toISOString(),
-        }])
-        setCurrentStep(null)
-        setIsAgentWorking(false)
-        queryClient.invalidateQueries({ queryKey: ['tasks'] })
-        queryClient.invalidateQueries({ queryKey: ['sessions'] })
-        return
-      }
-
-      // Check if we have a resume result with actual response content
-      const resumeResult = data.resume_result
-      if (resumeResult && resumeResult.response) {
-        // Display the actual response from the backend (e.g., deployment complete message)
-        const workflowEvents = (resumeResult.workflow_events || []).map(event => ({
-          ...event,
-          event_type: event.type || event.event_type,
-          title: event.title || formatEventTitle({ ...event, event_type: event.type }),
-          description: event.data?.description || event.description || '',
-          status: event.status || 'success',
-          data: event.data || event,
-        }))
-
-        setMessages((prev) => [...prev, {
-          role: 'assistant',
-          content: resumeResult.response,
-          workflowEvents,
-          deploymentUrl: resumeResult.deployment_url,
-          containerName: resumeResult.container_name,
-          timestamp: new Date().toISOString(),
-        }])
-
-        // Update debug panel with events from the resumed execution
-        if (workflowEvents.length > 0) {
-          setDebugWorkflowEvents(prev => [...prev, ...workflowEvents])
-        }
-        if (resumeResult.llm_calls?.length > 0) {
-          setDebugLLMCalls(prev => [...prev, ...resumeResult.llm_calls])
-        }
-
-        // Clear current step indicator since execution is complete
-        setCurrentStep(null)
-        setIsAgentWorking(false)
-      } else {
-        // Fallback to generic message if no resume result
-        const isFullyApproved = !data.approvals_required || data.approvals_received >= data.approvals_required
-        setMessages((prev) => [...prev, {
-          role: 'assistant',
-          content: isFullyApproved ? '✅ Task fully approved! The action will now proceed.' : `✅ Your approval has been recorded (${data.approvals_received}/${data.approvals_required}). Waiting for more approvals.`,
-          timestamp: new Date().toISOString(),
-        }])
-        setIsAgentWorking(false)
-      }
-
-      queryClient.invalidateQueries({ queryKey: ['tasks'] })
-      queryClient.invalidateQueries({ queryKey: ['sessions'] })
-    },
-    onError: (error) => { setMessages((prev) => [...prev, { role: 'assistant', content: `❌ Error approving task: ${error.message}` }]) },
-  })
-
-  const rejectMutation = useMutation({
-    mutationFn: ({ taskId, reason }) => rejectTask(taskId, reason),
-    onSuccess: (data, { taskId }) => {
-      setMessages((prev) => prev.map(msg => msg.pendingApprovals ? { ...msg, pendingApprovals: msg.pendingApprovals.filter(a => a.task_id !== taskId) } : msg))
-      setSessionPendingApprovals((prev) => prev.filter(a => (a.task_id || a.id) !== taskId))
-      setMessages((prev) => [...prev, { role: 'assistant', content: '🚫 Task rejected. The action has been cancelled.' }])
-      queryClient.invalidateQueries({ queryKey: ['tasks'] })
-      queryClient.invalidateQueries({ queryKey: ['sessions'] })
-    },
-    onError: (error) => { setMessages((prev) => [...prev, { role: 'assistant', content: `❌ Error rejecting task: ${error.message}` }]) },
-  })
-
-  // Answer mutation
-  const answerMutation = useMutation({
-    mutationFn: ({ questionId, answer }) => answerQuestion(questionId, answer),
-    onSuccess: (data) => {
-      if (data.status === 'answered_and_continued' && data.response) {
-        setMessages((prev) => [...prev, { role: 'assistant', content: data.response, planId: data.plan_id, pendingApprovals: data.pending_approvals, pendingQuestions: data.pending_questions || [], workflowEvents: data.workflow_events || [] }])
-        if (data.llm_calls?.length > 0) setApiCalls((prev) => [...prev, ...data.llm_calls.map(call => ({ type: 'llm', ...call }))])
-      }
-      queryClient.invalidateQueries({ queryKey: ['questions'] })
-      queryClient.invalidateQueries({ queryKey: ['sessions'] })
-      setCurrentStep(null)
-      setIsAgentWorking(false)
-    },
-    onError: (error, variables) => {
-      setMessages((prev) => [...prev, { role: 'assistant', content: `Error answering question: ${error.message}` }])
-      setCurrentStep(null)
-      setIsAgentWorking(false)
-    },
-  })
-
-  // Handlers
-  const handleApproveTask = (taskId) => approveMutation.mutate(taskId)
-  const handleRejectTask = (taskId, reason) => rejectMutation.mutate({ taskId, reason })
-
-  const handleAnswerQuestion = async (questionId, answer, selected = null) => {
-    setMessages((prev) => {
-      // Mark the question as answered (don't remove it - keep for history)
-      // The answer is shown inline in the HITLQuestionMessage component, no separate user message needed
-      return prev.map((msg) => {
-        // Mark standalone question messages as answered
-        if (msg.role === 'question' && msg.questionData?.id === questionId) {
-          return { ...msg, answered: true, userAnswer: selected || answer }
-        }
-        // Handle legacy pendingQuestions embedded in assistant messages
-        if (msg.pendingQuestions) {
-          return {
-            ...msg,
-            pendingQuestions: msg.pendingQuestions.filter((q) => q.id !== questionId),
+      // Only include LLM calls if the agent run <details> is open
+      if (runEl?.open && run.llm_calls?.length) {
+        runEntry.llm_calls = run.llm_calls.map((llm, li) => {
+          const llmEl = runEl.querySelector(
+            `details[data-type="llm-call"][data-llm-idx="${li}"]`
+          )
+          const llmEntry = {
+            model: llm.model,
+            total_tokens: llm.token_usage?.total_tokens || 0,
           }
-        }
-        return msg
-      })
-    })
-    setCurrentStep('Processing your answer...')
-    setIsAgentWorking(true)  // Show typing indicator while agent processes answer
-    setLiveWorkflowEvents([])
-    setDebugWorkflowEvents([])
-    setDebugLLMCalls([])
 
-    // All questions now use the database-backed endpoint
-    // (Redis-based HITL MCP server has been removed)
-    answerMutation.mutate({ questionId, answer })
-  }
+          // Only include tool calls if the LLM call <details> is open
+          if (llmEl?.open && llm.tool_calls?.length) {
+            llmEntry.tool_calls = llm.tool_calls.map((tc, ti) => {
+              const tcEl = llmEl.querySelector(
+                `details[data-type="tool-call"][data-tc-idx="${ti}"]`
+              )
+              const tcEntry = {
+                tool_name: tc.tool_name,
+                status: tc.status,
+              }
 
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    if (!input.trim() || chatMutation.isPending) return
+              // Only include args/result/approval if the tool call <details> is open
+              if (tcEl?.open) {
+                const argsOpen = tcEl.querySelector(
+                  'details[data-label="Arguments"]'
+                )?.open
+                const resultOpen = tcEl.querySelector(
+                  'details[data-label="Result"]'
+                )?.open
+                const approvalOpen = tcEl.querySelector(
+                  'details[data-label="Approval details"]'
+                )?.open
 
-    const userMessage = input.trim()
-    setInput('')
-    setCurrentStep('Processing your request...')
-    setLiveWorkflowEvents([])
-    setDebugWorkflowEvents([])
-    setDebugLLMCalls([])
+                if (argsOpen && tc.arguments) tcEntry.arguments = tc.arguments
+                if (resultOpen && tc.result) tcEntry.result = tc.result
+                if (tc.error) tcEntry.error = tc.error
+                if (approvalOpen && tc.approval) tcEntry.approval = tc.approval
+              }
 
-    const sessionId = currentPlanId || crypto.randomUUID()
-    joinPlanRoom(sessionId)
-    if (!currentPlanId) setCurrentPlanId(sessionId)
+              return tcEntry
+            })
+          }
 
-    // Build conversation history from all messages (excluding welcome message)
-    const conversationHistory = messages
-      .filter((msg, idx) => idx > 0)  // Skip welcome message
-      .map((msg) => ({
-        role: msg.role,
-        content: msg.content?.substring(0, 1000),  // Increased limit for better context
-      }))
-
-    setMessages((prev) => [...prev, { role: 'user', content: userMessage, timestamp: new Date().toISOString() }])
-    chatMutation.mutate({ message: userMessage, conversationHistory, sessionId })
-  }
-
-  const handleNewChat = () => {
-    setCurrentPlanId(null)
-    setApiCalls([])
-    setLiveWorkflowEvents([])
-    setDebugWorkflowEvents([])
-    setDebugLLMCalls([])
-    setWorkspaceInfo(null)
-    setCurrentProject(null)
-    setSessionPendingApprovals([])
-    setCurrentStep(null)
-    setIsAgentWorking(false)
-    setCurrentAgentId(null)
-    setToolExecutions([])
-    setWorkflowEventsForDisplay([])
-    setSearchParams({})
-    setMessages([{ role: 'assistant', content: `Hello ${user?.firstName || user?.username}! I'm Druppie, your AI governance assistant.\n\nI can help you:\n• Create applications (just describe what you want!)\n• Manage code deployments\n• Check compliance and permissions\n\nWhat would you like to build today?` }])
-  }
-
-  const handleSelectPlan = async (session) => {
-    setCurrentPlanId(session.id)
-    setLiveWorkflowEvents([])
-    setToolExecutions([])
-    setWorkflowEventsForDisplay([])
-    setCurrentAgentId(null)
-    setIsAgentWorking(false)
-    setSearchParams({ session: session.id })
-    try {
-      const fullSession = await getPlan(session.id)
-      await loadSessionData(fullSession, session.id)
-    } catch (err) {
-      console.error('Error loading session:', err)
-      setCurrentProject(null)
-    }
-  }
-
-  const handleDebugSession = (sessionId) => {
-    const session = sessionsData?.items?.find(s => s.id === sessionId)
-    if (session) {
-      handleSelectPlan(session)
-      setTimeout(() => setDebugPanelOpen(true), 100)
-    }
-  }
-
-  // Handle stop/cancel execution
-  const handleStopExecution = async () => {
-    if (!currentPlanId || isStopping) return
-
-    setIsStopping(true)
-    try {
-      const result = await cancelChat(currentPlanId)
-      if (result.cancelled) {
-        toast.info('Execution Stopped', 'The execution has been cancelled.')
-        setCurrentStep(null)
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: 'assistant',
-            content: 'Execution was stopped by user.',
-            timestamp: new Date().toISOString(),
-          },
-        ])
-      } else {
-        toast.warning('Could Not Stop', result.reason || 'No active execution to cancel.')
+          return llmEntry
+        })
       }
-    } catch (error) {
-      console.error('Error stopping execution:', error)
-      toast.error('Error', 'Failed to stop execution.')
-    } finally {
-      setIsStopping(false)
-    }
-  }
 
-  const suggestions = ['Create a todo app with Flask', 'Build a simple calculator', 'Make a notes app with React', 'Create a weather dashboard']
+      result.timeline.push(runEntry)
+    }
+  })
+
+  return result
+}
+
+const ACTIVE_STATUSES = new Set([
+  'running',
+  'paused_hitl',
+  'paused_tool',
+  'waiting_approval',
+  'waiting_answer',
+])
+
+// --- Tool Call ---
+
+const ToolCallItem = ({ tc, tcIndex, sessionId }) => {
+  const queryClient = useQueryClient()
+  const [answer, setAnswer] = useState('')
+
+  const approveMut = useMutation({
+    mutationFn: () => approveApproval(tc.approval?.id, ''),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
+  })
+
+  const rejectMut = useMutation({
+    mutationFn: () => rejectApproval(tc.approval?.id, ''),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
+  })
+
+  const answerMut = useMutation({
+    mutationFn: () => answerQuestion(tc.question_id, answer),
+    onSuccess: () => {
+      setAnswer('')
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+    },
+  })
+
+  const isPendingApproval = tc.approval?.status === 'pending'
+  const isWaitingAnswer = tc.status === 'waiting_answer' && tc.question_id
+  const needsAction = isPendingApproval || isWaitingAnswer
+
+  const detailsRef = useRef(null)
+  const autoOpenedRef = useRef(false)
+
+  useEffect(() => {
+    if (needsAction && !autoOpenedRef.current && detailsRef.current) {
+      detailsRef.current.open = true
+      autoOpenedRef.current = true
+    }
+  }, [needsAction])
 
   return (
-    <div className="flex h-[calc(100vh-10rem)] -mx-4 sm:-mx-6 lg:-mx-8 overflow-hidden">
-      <ConversationSidebar
-        sessions={sessionsData}
-        activeSessionId={currentPlanId}
-        onSelectSession={handleSelectPlan}
-        onNewChat={handleNewChat}
-        onDebugSession={handleDebugSession}
-        isCollapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-      />
-
-      <div className="flex-1 flex flex-col bg-gray-50">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-white">
-          <div className="flex items-center gap-4">
-            <div className="text-sm text-gray-600">
-              {currentPlanId ? (
-                <span className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                  Active Conversation
-                </span>
-              ) : <span>New Conversation</span>}
-            </div>
-            {currentProject && (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-50 rounded-lg border border-purple-200">
-                <FolderOpen className="w-4 h-4 text-purple-600" />
-                <span className="text-sm font-medium text-purple-900">{currentProject.name}</span>
-                <button onClick={() => navigate(`/projects/${currentProject.id}`)} className="ml-1 flex items-center gap-1 text-xs text-purple-600 hover:text-purple-800 hover:underline focus:outline-none focus:ring-2 focus:ring-purple-500 rounded">
-                  <ExternalLink className="w-3 h-3" />View Project
-                </button>
-              </div>
-            )}
-          </div>
-          <button onClick={() => setDebugPanelOpen(true)} className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <Bug className="w-4 h-4" />Debug
-            {apiCalls.length > 0 && <span className="bg-orange-100 text-orange-700 text-xs px-1.5 py-0.5 rounded-full">{apiCalls.length}</span>}
-          </button>
-        </div>
-
-        {/* Messages and Timeline Events - Combined and sorted by timestamp */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {(() => {
-            // Combine messages and timeline items
-            const allItems = [
-              // User and assistant messages
-              ...messages.map((msg, idx) => ({
-                ...msg,
-                itemType: 'message',
-                sortKey: msg.timestamp ? new Date(msg.timestamp).getTime() : idx,
-                key: `msg-${idx}`,
-              })),
-              // Timeline items from backend (agent_started, tool_decision, agent_completed)
-              ...workflowEventsForDisplay.map((item, idx) => ({
-                ...item,
-                itemType: 'timeline',
-                sortKey: item.timestamp ? new Date(item.timestamp).getTime() : idx + 10000,
-                key: `timeline-${item.id || idx}`,
-              })),
-              // Session-level pending approvals (non-tool_call types)
-              ...sessionPendingApprovals.map((approval, i) => ({
-                ...approval,
-                itemType: 'pendingApproval',
-                sortKey: approval.created_at ? new Date(approval.created_at).getTime() : Date.now(),
-                key: `approval-${approval.task_id || approval.id || i}`,
-              })),
-            ]
-
-            // Sort by timestamp (keeping welcome message first)
-            allItems.sort((a, b) => {
-              if (a.itemType === 'message' && a.key === 'msg-0' && !a.timestamp) return -1
-              if (b.itemType === 'message' && b.key === 'msg-0' && !b.timestamp) return 1
-              return a.sortKey - b.sortKey
-            })
-
-            return allItems.map((item) => {
-              // Timeline items (from the unified backend structure)
-              if (item.itemType === 'timeline') {
-                // tool_decision items use the new ToolDecisionCard
-                if (item.type === 'tool_decision' && item.toolDecision) {
-                  return (
-                    <ToolDecisionCard
-                      key={item.key}
-                      item={item}
-                      onApprove={handleApproveTask}
-                      onReject={handleRejectTask}
-                      onAnswerQuestion={handleAnswerQuestion}
-                      isProcessing={approveMutation.isPending || rejectMutation.isPending}
-                      isAnswering={answerMutation.isPending}
-                      userRoles={user?.roles || []}
-                    />
-                  )
-                }
-                // agent_started and agent_completed use WorkflowEventMessage
-                return (
-                  <WorkflowEventMessage
-                    key={item.key}
-                    event={item}
-                    onApprove={handleApproveTask}
-                    onReject={handleRejectTask}
-                    isProcessing={approveMutation.isPending || rejectMutation.isPending}
-                    userRoles={user?.roles || []}
-                    sessionId={currentPlanId}
-                  />
-                )
-              }
-              // Non-tool_call approvals (workflow_step approvals)
-              if (item.itemType === 'pendingApproval' && !chatMutation.isPending && !isAgentWorking) {
-                return (
-                  <ApprovalCard
-                    key={item.key}
-                    approval={item}
-                    onApprove={handleApproveTask}
-                    onReject={handleRejectTask}
-                    isProcessing={approveMutation.isPending || rejectMutation.isPending}
-                    currentUserId={user?.id}
-                    sessionId={currentPlanId}
-                    userRoles={user?.roles || []}
-                  />
-                )
-              }
-              // Standalone HITL questions (from messages)
-              if (item.role === 'question') {
-                return (
-                  <HITLQuestionMessage
-                    key={item.key}
-                    question={item.questionData}
-                    onAnswer={handleAnswerQuestion}
-                    isAnswering={answerMutation.isPending}
-                    answered={item.answered}
-                    userAnswer={item.userAnswer}
-                  />
-                )
-              }
-              // Regular messages
-              return (
-                <Message
-                  key={item.key}
-                  message={item}
-                  onAnswerQuestion={handleAnswerQuestion}
-                  isAnsweringQuestion={answerMutation.isPending}
-                  onApproveTask={handleApproveTask}
-                  onRejectTask={handleRejectTask}
-                  isApprovingTask={approveMutation.isPending || rejectMutation.isPending}
-                  currentUserId={user?.id}
-                  sessionId={currentPlanId}
-                  userRoles={user?.roles || []}
-                />
-              )
-            })
-          })()}
-
-          {(chatMutation.isPending || isAgentWorking) && (
-            <TypingIndicator
-              currentStep={currentStep}
-              liveEvents={liveWorkflowEvents}
-              onStop={handleStopExecution}
-              isStopping={isStopping}
-              agentId={currentAgentId}
-            />
+    <div className="ml-4 border-l-2 border-gray-200 pl-3 py-1">
+      <details ref={detailsRef} data-type="tool-call" data-tc-idx={tcIndex}>
+        <summary className="cursor-pointer text-sm flex items-center gap-2">
+          <code className="text-purple-600 font-medium">{tc.tool_name}</code>
+          <StatusBadge status={tc.status} />
+          {isPendingApproval && (
+            <span className="text-xs text-yellow-600 font-medium">
+              needs approval
+            </span>
           )}
-
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Suggestions */}
-        {messages.length <= 1 && !currentPlanId && (
-          <div className="px-4 pb-4">
-            <p className="text-sm text-gray-500 mb-2">Try one of these:</p>
-            <div className="flex flex-wrap gap-2">
-              {suggestions.map((suggestion, index) => (
-                <button key={index} onClick={() => setInput(suggestion)} className="px-3 py-1.5 bg-white hover:bg-gray-100 rounded-full text-sm text-gray-700 transition-colors border border-gray-200 shadow-sm">
-                  {suggestion}
-                </button>
-              ))}
+          {isWaitingAnswer && (
+            <span className="text-xs text-yellow-600 font-medium">
+              needs answer
+            </span>
+          )}
+        </summary>
+        <div className="mt-2 space-y-2 text-sm">
+          <JsonBlock label="Arguments" data={tc.arguments} />
+          <JsonBlock label="Result" data={tc.result} />
+          {tc.error && (
+            <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+              <strong>Error:</strong> {tc.error}
             </div>
-          </div>
-        )}
+          )}
+          {tc.approval && <JsonBlock label="Approval details" data={tc.approval} />}
+        </div>
+      </details>
 
-        {/* Input */}
-        <form onSubmit={handleSubmit} className="p-4 border-t border-gray-200 bg-white">
-          <div className="flex space-x-3">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Describe what you want to build..."
-              className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-              disabled={chatMutation.isPending}
-            />
+      {isPendingApproval && (
+        <div className="mt-2 ml-4 p-3 bg-blue-50 border border-blue-200 rounded">
+          <p className="text-sm text-gray-700 mb-2">
+            <strong>{tc.tool_name}</strong> requires approval
+          </p>
+          <div className="flex gap-2">
             <button
-              type="submit"
-              disabled={!input.trim() || chatMutation.isPending}
-              className="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              onClick={() => approveMut.mutate()}
+              disabled={approveMut.isPending}
+              className="px-3 py-1.5 bg-green-600 text-white text-sm rounded hover:bg-green-700 disabled:opacity-50"
             >
-              <Send className="w-5 h-5" />
+              {approveMut.isPending ? 'Approving...' : 'Approve'}
+            </button>
+            <button
+              onClick={() => rejectMut.mutate()}
+              disabled={rejectMut.isPending}
+              className="px-3 py-1.5 bg-red-600 text-white text-sm rounded hover:bg-red-700 disabled:opacity-50"
+            >
+              {rejectMut.isPending ? 'Rejecting...' : 'Reject'}
             </button>
           </div>
-        </form>
-      </div>
+        </div>
+      )}
 
-      <DebugPanel
-        isOpen={debugPanelOpen}
-        onClose={() => setDebugPanelOpen(false)}
-        sessionId={currentPlanId}
-        apiCalls={apiCalls}
-        workflowEvents={liveWorkflowEvents.length > 0 ? liveWorkflowEvents : debugWorkflowEvents}
-        llmCalls={debugLLMCalls}
-        workspaceInfo={workspaceInfo}
-        messages={messages}
-      />
+      {isWaitingAnswer && (
+        <div className="mt-2 ml-4 p-3 bg-yellow-50 border border-yellow-200 rounded">
+          <p className="text-sm font-medium text-yellow-800 mb-2">
+            {tc.arguments?.question || 'Agent is waiting for your answer'}
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+              onKeyDown={(e) =>
+                e.key === 'Enter' && answer.trim() && answerMut.mutate()
+              }
+              placeholder="Type your answer..."
+              className="flex-1 px-3 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            />
+            <button
+              onClick={() => answerMut.mutate()}
+              disabled={!answer.trim() || answerMut.isPending}
+              className="px-3 py-1.5 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700 disabled:opacity-50"
+            >
+              {answerMut.isPending ? 'Sending...' : 'Answer'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-export default Chat
+// --- LLM Call ---
+
+const LLMCallItem = ({ llmCall, index, sessionId }) => {
+  const toolCount = llmCall.tool_calls?.length || 0
+  const hasActionableTools = llmCall.tool_calls?.some(
+    (tc) => tc.approval?.status === 'pending' || (tc.status === 'waiting_answer' && tc.question_id)
+  )
+
+  const detailsRef = useRef(null)
+  const autoOpenedRef = useRef(false)
+
+  useEffect(() => {
+    if (hasActionableTools && !autoOpenedRef.current && detailsRef.current) {
+      detailsRef.current.open = true
+      autoOpenedRef.current = true
+    }
+  }, [hasActionableTools])
+
+  return (
+    <details ref={detailsRef} data-type="llm-call" data-llm-idx={index} className="ml-4 border-l-2 border-blue-200 pl-3 py-1">
+      <summary className="cursor-pointer text-sm flex items-center gap-2">
+        <span className="text-gray-500">LLM #{index + 1}</span>
+        <code className="text-xs text-gray-600">{llmCall.model}</code>
+        <span className="text-xs text-gray-400">
+          {llmCall.token_usage?.total_tokens || 0} tokens
+        </span>
+        {toolCount > 0 && (
+          <span className="text-xs text-purple-600">
+            {toolCount} tool call{toolCount !== 1 ? 's' : ''}
+          </span>
+        )}
+      </summary>
+      <div className="mt-2 space-y-1">
+        {llmCall.tool_calls?.map((tc, i) => (
+          <ToolCallItem key={tc.id || i} tc={tc} tcIndex={i} sessionId={sessionId} />
+        ))}
+        {toolCount === 0 && (
+          <p className="text-xs text-gray-400 ml-4">No tool calls</p>
+        )}
+      </div>
+    </details>
+  )
+}
+
+// --- Agent Run ---
+
+const AgentRunItem = ({ run, timelineIndex, sessionId }) => {
+  const detailsRef = useRef(null)
+  const autoOpenedRef = useRef(false)
+  const isActive = ACTIVE_STATUSES.has(run.status)
+  const llmCount = run.llm_calls?.length || 0
+
+  // Auto-open once when run becomes active, then let user control
+  useEffect(() => {
+    if (isActive && !autoOpenedRef.current && detailsRef.current) {
+      detailsRef.current.open = true
+      autoOpenedRef.current = true
+    }
+  }, [isActive])
+
+  return (
+    <details ref={detailsRef} data-type="agent-run" data-timeline-idx={timelineIndex} className="border rounded-lg overflow-hidden">
+      <summary className="cursor-pointer px-4 py-3 bg-gray-50 hover:bg-gray-100 flex items-center gap-2 text-sm">
+        <AgentBadge agentId={run.agent_id} />
+        <StatusBadge status={run.status} />
+        <span className="text-xs text-gray-500">#{run.sequence_number}</span>
+        <span className="text-xs text-gray-400">
+          {llmCount} LLM call{llmCount !== 1 ? 's' : ''}
+          {run.token_usage?.total_tokens
+            ? ` · ${run.token_usage.total_tokens} tokens`
+            : ''}
+        </span>
+      </summary>
+      <div className="px-4 py-3 space-y-1 border-t">
+        {run.llm_calls?.map((llm, i) => (
+          <LLMCallItem
+            key={llm.id || i}
+            llmCall={llm}
+            index={i}
+            sessionId={sessionId}
+          />
+        ))}
+        {llmCount === 0 && (
+          <p className="text-sm text-gray-400">No LLM calls yet</p>
+        )}
+      </div>
+    </details>
+  )
+}
+
+// --- Message ---
+
+const MessageItem = ({ message }) => {
+  const isUser = message.role === 'user'
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div
+        className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
+          isUser ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'
+        }`}
+      >
+        {message.agent_id && !isUser && (
+          <div className="mb-1">
+            <AgentBadge agentId={message.agent_id} />
+          </div>
+        )}
+        <div className="whitespace-pre-wrap">{message.content}</div>
+        <div
+          className={`text-xs mt-1 ${isUser ? 'text-blue-200' : 'text-gray-400'}`}
+        >
+          {message.created_at &&
+            new Date(message.created_at).toLocaleTimeString()}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// --- Session Detail (right panel when session selected) ---
+
+const SessionDetail = ({ sessionId }) => {
+  const timelineEndRef = useRef(null)
+  const timelineRef = useRef(null)
+  const prevLengthRef = useRef(0)
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['session', sessionId],
+    queryFn: () => getSession(sessionId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      if (status === 'completed' || status === 'failed') return false
+      return 500
+    },
+    enabled: !!sessionId,
+  })
+
+  // Auto-scroll when timeline grows
+  useEffect(() => {
+    const currentLength = data?.timeline?.length || 0
+    if (currentLength > prevLengthRef.current) {
+      timelineEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+    prevLengthRef.current = currentLength
+  }, [data?.timeline?.length])
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-full text-gray-500">
+        <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mr-2" />
+        Loading session...
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-full text-red-500">
+        Error loading session: {error.message}
+      </div>
+    )
+  }
+
+  if (!data) return null
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="px-4 py-3 border-b bg-white flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold truncate">
+            {data.title || 'Untitled Session'}
+          </h2>
+          <StatusBadge status={data.status} />
+          <div className="ml-auto flex-shrink-0">
+            <CopyJsonButton
+              getData={() => buildVisibleJson(data, timelineRef.current)}
+              label="Copy JSON"
+            />
+          </div>
+        </div>
+        <div className="text-xs text-gray-500 mt-1 flex items-center gap-3">
+          <span>ID: {data.id}</span>
+          {data.project_id && (
+            <a
+              href={`/projects/${data.project_id}`}
+              className="inline-flex items-center gap-1 text-blue-600 hover:underline"
+            >
+              <ExternalLink className="w-3 h-3" />
+              {data.project_name || 'Project'}
+            </a>
+          )}
+          {data.token_usage?.total_tokens > 0 && (
+            <span>{data.token_usage.total_tokens} total tokens</span>
+          )}
+        </div>
+      </div>
+
+      {/* Timeline */}
+      <div ref={timelineRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+        {(!data.timeline || data.timeline.length === 0) && (
+          <p className="text-gray-400 text-center py-8">
+            No timeline entries yet
+          </p>
+        )}
+        {data.timeline?.map((entry, i) => (
+          <div key={i}>
+            {entry.type === 'message' && entry.message && (
+              <MessageItem message={entry.message} />
+            )}
+            {entry.type === 'agent_run' && entry.agent_run && (
+              <AgentRunItem run={entry.agent_run} timelineIndex={i} sessionId={sessionId} />
+            )}
+          </div>
+        ))}
+        <div ref={timelineEndRef} />
+      </div>
+    </div>
+  )
+}
+
+// --- Session Sidebar (left panel) ---
+
+const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat }) => {
+  const { data } = useQuery({
+    queryKey: ['sessions'],
+    queryFn: () => getSessions(1, 50),
+    refetchInterval: 5000,
+  })
+
+  const sessions = data?.items || []
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-3 border-b flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
+          Sessions
+        </h2>
+        <button
+          onClick={onNewChat}
+          className="p-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+          title="New chat"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {sessions.length === 0 && (
+          <p className="text-gray-400 text-sm text-center py-8">
+            No sessions yet
+          </p>
+        )}
+        {sessions.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => onSelectSession(s.id)}
+            className={`w-full text-left px-4 py-3 border-b hover:bg-gray-50 transition-colors ${
+              activeSessionId === s.id
+                ? 'bg-blue-50 border-l-2 border-l-blue-600'
+                : ''
+            }`}
+          >
+            <div className="text-sm font-medium truncate">
+              {s.title || 'Untitled'}
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <StatusBadge status={s.status} />
+              {s.project_name && (
+                <span className="text-xs text-gray-400 truncate">
+                  {s.project_name}
+                </span>
+              )}
+              <span className="text-xs text-gray-400 ml-auto">
+                {timeAgo(s.created_at)}
+              </span>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// --- New Session Panel (right panel when no session selected) ---
+
+const NewSessionPanel = ({ onSessionCreated }) => {
+  const [input, setInput] = useState('')
+  const queryClient = useQueryClient()
+
+  const mutation = useMutation({
+    mutationFn: (message) => sendChat(message),
+    onSuccess: (data) => {
+      setInput('')
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      if (data.session_id) {
+        onSessionCreated(data.session_id)
+      }
+    },
+  })
+
+  const handleSend = () => {
+    const trimmed = input.trim()
+    if (!trimmed) return
+    mutation.mutate(trimmed)
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full px-8">
+      <div className="text-center mb-8">
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">New Session</h2>
+        <p className="text-gray-500">
+          Send a message to start a new governance session
+        </p>
+      </div>
+      <div className="w-full max-w-lg">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) =>
+              e.key === 'Enter' && !mutation.isPending && handleSend()
+            }
+            placeholder="Describe what you'd like to build..."
+            className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            disabled={mutation.isPending}
+          />
+          <button
+            onClick={handleSend}
+            disabled={!input.trim() || mutation.isPending}
+            className="px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {mutation.isPending ? (
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Send className="w-5 h-5" />
+            )}
+          </button>
+        </div>
+        {mutation.isError && (
+          <p className="mt-2 text-sm text-red-600">
+            {mutation.error.message}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// --- Main Chat Page ---
+
+const ChatPage = () => {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const sessionId = searchParams.get('session')
+
+  const selectSession = (id) => {
+    setSearchParams({ session: id })
+  }
+
+  const startNewChat = () => {
+    setSearchParams({})
+  }
+
+  return (
+    <div className="flex gap-4 h-[calc(100vh-8rem)]">
+      {/* Left sidebar */}
+      <div className="w-80 flex-shrink-0 bg-white border rounded-lg overflow-hidden">
+        <SessionSidebar
+          activeSessionId={sessionId}
+          onSelectSession={selectSession}
+          onNewChat={startNewChat}
+        />
+      </div>
+
+      {/* Right panel */}
+      <div className="flex-1 bg-white border rounded-lg overflow-hidden">
+        {sessionId ? (
+          <SessionDetail sessionId={sessionId} />
+        ) : (
+          <NewSessionPanel onSessionCreated={selectSession} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+export default ChatPage
