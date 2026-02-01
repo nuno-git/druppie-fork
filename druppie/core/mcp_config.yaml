@@ -17,6 +17,23 @@ mcps:
   coding:
     url: ${MCP_CODING_URL:-http://mcp-coding:9001}
     description: "File operations and git within workspace sandbox"
+    # Declarative injection rules - auto-inject these params from context
+    # Parameters marked hidden: true are removed from LLM-visible schemas
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+      repo_name:
+        from: project.repo_name
+        hidden: true
+        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, run_command]
+      repo_owner:
+        from: project.repo_owner
+        hidden: true
+        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, run_command]
+      # NOTE: commit_and_push does NOT need branch injection.
+      # It pushes whatever branch the workspace is currently on (set by create_branch).
+      # The workspace tracks its own branch internally via ws["branch"].
     tools:
       - name: read_file
         description: "Read file from workspace"
@@ -133,9 +150,40 @@ mcps:
         requires_approval: false
 
       - name: merge_to_main
-        description: "Merge feature branch to main"
+        description: "Merge feature branch to main (direct git merge, no PR)"
         requires_approval: true
         required_role: architect
+
+      - name: create_pull_request
+        description: "Create a pull request from current branch to main on Gitea"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            title:
+              type: string
+              description: "PR title"
+            body:
+              type: string
+              description: "PR description"
+          required:
+            - title
+
+      - name: merge_pull_request
+        description: "Merge a pull request on Gitea and delete the source branch"
+        requires_approval: true
+        required_role: developer
+        parameters:
+          type: object
+          properties:
+            pr_number:
+              type: integer
+              description: "PR number to merge"
+            delete_branch:
+              type: boolean
+              description: "Delete source branch after merge (default: true)"
+          required:
+            - pr_number
 
       - name: get_git_status
         description: "Get git status for workspace"
@@ -144,6 +192,32 @@ mcps:
   docker:
     url: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
     description: "Docker container operations"
+    # Declarative injection rules for docker MCP
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+        tools: [build, run]  # Only these tools accept session_id
+      repo_name:
+        from: project.repo_name
+        hidden: true
+        tools: [build]  # Only build needs repo info
+      repo_owner:
+        from: project.repo_owner
+        hidden: true
+        tools: [build]
+      branch:
+        from: session.branch_name
+        hidden: false
+        tools: [build]  # Build from feature branch or main
+      user_id:
+        from: session.user_id
+        hidden: true
+        tools: [run]  # For ownership labels
+      project_id:
+        from: session.project_id
+        hidden: true
+        tools: [run]  # For ownership labels
     tools:
       - name: build
         description: "Build Docker image by cloning from git repository"

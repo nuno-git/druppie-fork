@@ -116,6 +116,103 @@ class ToolExecutor:
             self._question_repo = QuestionRepository(self.db)
         return self._question_repo
 
+    def _apply_injection_rules(
+        self,
+        server: str,
+        tool_name: str,
+        args: dict,
+        session_id: UUID | None,
+    ) -> dict:
+        """Apply declarative injection rules from mcp_config.yaml.
+
+        Resolves context paths and injects values into tool arguments.
+
+        For hidden params: always override LLM-provided values with the DB value.
+        This prevents the LLM from guessing wrong values for params it shouldn't see.
+
+        For non-hidden params: only inject if not already provided by LLM.
+
+        Args:
+            server: MCP server name
+            tool_name: Tool name
+            args: Original tool arguments
+            session_id: Session ID for context resolution
+
+        Returns:
+            Updated args dict with injected values
+        """
+        from druppie.execution.tool_context import ToolContext
+
+        # Get injection rules for this server/tool
+        rules = self.mcp_config.get_injection_rules(server, tool_name)
+        if not rules:
+            logger.info(
+                "no_injection_rules",
+                server=server,
+                tool=tool_name,
+            )
+            return args
+
+        logger.info(
+            "applying_injection_rules",
+            server=server,
+            tool=tool_name,
+            num_rules=len(rules),
+            rule_params=[r.param for r in rules],
+            session_id=str(session_id) if session_id else None,
+            original_args=list(args.keys()),
+        )
+
+        # Create context for resolving paths
+        context = ToolContext(self.db, session_id)
+
+        # Apply each rule
+        injected_args = dict(args)
+        for rule in rules:
+            # For hidden params: always override (LLM shouldn't provide these)
+            # For non-hidden params: skip if LLM already provided a value
+            if not rule.hidden and rule.param in injected_args:
+                continue
+
+            # Resolve the value from context
+            value = context.resolve(rule.from_path)
+            if value is not None:
+                if rule.hidden and rule.param in injected_args:
+                    logger.warning(
+                        "overriding_llm_value_for_hidden_param",
+                        server=server,
+                        tool=tool_name,
+                        param=rule.param,
+                        llm_value=injected_args[rule.param],
+                        injected_value=value,
+                    )
+                injected_args[rule.param] = value
+                logger.info(
+                    "injected_param",
+                    server=server,
+                    tool=tool_name,
+                    param=rule.param,
+                    from_path=rule.from_path,
+                    value=value,
+                )
+            else:
+                logger.warning(
+                    "injection_value_is_none",
+                    server=server,
+                    tool=tool_name,
+                    param=rule.param,
+                    from_path=rule.from_path,
+                )
+
+        logger.info(
+            "injection_complete",
+            server=server,
+            tool=tool_name,
+            final_args=list(injected_args.keys()),
+        )
+
+        return injected_args
+
     def _get_agent_definition(self, agent_run_id: UUID | None):
         """Load agent definition for approval overrides.
 
@@ -142,67 +239,6 @@ class ToolExecutor:
                 error=str(e),
             )
             return None
-
-    def _get_project_repo_info(self, session_id: UUID) -> tuple[str | None, str | None]:
-        """Get the repo_name and repo_owner from the session's project.
-
-        Looks up session → project → (repo_name, repo_owner) for auto-injection into docker:build.
-        Returns (None, None) if session has no project or project has no repo.
-        """
-        try:
-            from druppie.db.models import Session, Project
-
-            # Get session to find project_id
-            session = self.db.query(Session).filter(Session.id == session_id).first()
-            if not session or not session.project_id:
-                logger.debug("Session has no project", session_id=str(session_id))
-                return None, None
-
-            # Get project to find repo_name and repo_owner
-            project = self.db.query(Project).filter(Project.id == session.project_id).first()
-            if not project or not project.repo_name:
-                logger.debug("Project has no repo_name", project_id=str(session.project_id))
-                return None, None
-
-            return project.repo_name, project.repo_owner
-
-        except Exception as e:
-            logger.warning(
-                "failed_to_get_project_repo_info",
-                session_id=str(session_id),
-                error=str(e),
-            )
-            return None, None
-
-    def _get_session_context(self, session_id: UUID) -> dict:
-        """Get user_id and project_id from session for label injection.
-
-        Looks up session → (user_id, project_id) for auto-injection into docker:run labels.
-        Returns empty dict if session not found.
-        """
-        try:
-            from druppie.db.models import Session
-
-            session = self.db.query(Session).filter(Session.id == session_id).first()
-            if not session:
-                logger.debug("Session not found", session_id=str(session_id))
-                return {}
-
-            context = {}
-            if session.user_id:
-                context["user_id"] = str(session.user_id)
-            if session.project_id:
-                context["project_id"] = str(session.project_id)
-
-            return context
-
-        except Exception as e:
-            logger.warning(
-                "failed_to_get_session_context",
-                session_id=str(session_id),
-                error=str(e),
-            )
-            return {}
 
     async def execute(self, tool_call_id: UUID) -> str:
         """Execute a tool call.
@@ -506,6 +542,8 @@ class ToolExecutor:
         """Execute an MCP tool via HTTP.
 
         MCP tools are executed via MCPHttp which calls the MCP server.
+        Uses declarative injection rules from mcp_config.yaml to inject
+        context values (session_id, repo_name, etc.) into tool arguments.
 
         Args:
             tool_call: The ToolCall model
@@ -515,84 +553,31 @@ class ToolExecutor:
         """
         args = tool_call.arguments or {}
 
-        # Auto-inject session_id ONLY for tools that accept it
-        # Coding MCP: all tools accept session_id
-        # Docker MCP: only build and run accept session_id
-        tools_accepting_session_id = {
-            "coding": None,  # All coding tools accept session_id
-            "docker": {"build", "run"},  # Only these docker tools accept session_id
-        }
-
-        server_tools = tools_accepting_session_id.get(tool_call.mcp_server)
-        should_inject_session = (
-            server_tools is None  # All tools for this server accept it
-            or tool_call.tool_name in server_tools  # This specific tool accepts it
+        logger.info(
+            "mcp_tool_pre_injection",
+            tool_call_id=str(tool_call.id),
+            mcp_server=tool_call.mcp_server,
+            tool_name=tool_call.tool_name,
+            session_id=str(tool_call.session_id) if tool_call.session_id else None,
+            original_args=list(args.keys()),
         )
 
-        if should_inject_session and "session_id" not in args and tool_call.session_id:
-            args = {**args, "session_id": str(tool_call.session_id)}
-            logger.debug(
-                "Auto-injected session_id into MCP tool args",
-                tool_name=tool_call.tool_name,
-                session_id=str(tool_call.session_id),
-            )
+        # Apply declarative injection rules from mcp_config.yaml
+        # This replaces all the hardcoded injection logic
+        args = self._apply_injection_rules(
+            server=tool_call.mcp_server,
+            tool_name=tool_call.tool_name,
+            args=args,
+            session_id=tool_call.session_id,
+        )
 
-        # Auto-inject repo_name and repo_owner for docker:build calls
-        # This enables git-based builds without requiring LLM to know the repo details
-        if (
-            tool_call.mcp_server == "docker"
-            and tool_call.tool_name == "build"
-            and "repo_name" not in args
-            and "git_url" not in args
-            and tool_call.session_id
-        ):
-            repo_name, repo_owner = self._get_project_repo_info(tool_call.session_id)
-            if repo_name:
-                args = {**args, "repo_name": repo_name}
-                if repo_owner:
-                    args = {**args, "repo_owner": repo_owner}
-                logger.info(
-                    "Auto-injected repo info into docker:build args",
-                    tool_name=tool_call.tool_name,
-                    repo_name=repo_name,
-                    repo_owner=repo_owner,
-                )
-
-        # Auto-inject repo_name and repo_owner for ALL coding MCP tools
-        # This enables cloning from correct repo when workspace is created
-        if tool_call.mcp_server == "coding" and tool_call.session_id:
-            if "repo_name" not in args:
-                repo_name, repo_owner = self._get_project_repo_info(tool_call.session_id)
-                if repo_name:
-                    args = {**args, "repo_name": repo_name}
-                    if repo_owner:
-                        args = {**args, "repo_owner": repo_owner}
-                    logger.debug(
-                        "Auto-injected repo info into coding args",
-                        tool_name=tool_call.tool_name,
-                        repo_name=repo_name,
-                        repo_owner=repo_owner,
-                    )
-
-        # Auto-inject user_id and project_id for docker:run calls
-        # This enables ownership tracking via container labels
-        if (
-            tool_call.mcp_server == "docker"
-            and tool_call.tool_name == "run"
-            and tool_call.session_id
-        ):
-            context = self._get_session_context(tool_call.session_id)
-            if "user_id" not in args and context.get("user_id"):
-                args = {**args, "user_id": context["user_id"]}
-            if "project_id" not in args and context.get("project_id"):
-                args = {**args, "project_id": context["project_id"]}
-            if context:
-                logger.info(
-                    "Auto-injected ownership labels into docker:run args",
-                    tool_name=tool_call.tool_name,
-                    user_id=context.get("user_id"),
-                    project_id=context.get("project_id"),
-                )
+        logger.info(
+            "mcp_tool_post_injection",
+            tool_call_id=str(tool_call.id),
+            mcp_server=tool_call.mcp_server,
+            tool_name=tool_call.tool_name,
+            final_args=list(args.keys()),
+        )
 
         try:
             # Mark as executing

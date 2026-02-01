@@ -259,10 +259,13 @@ async def set_intent(
             project_name=project_name,
         )
 
-        # Create Gitea repo
+        # Create Gitea repo - REQUIRED for coding and docker workflows
+        gitea_error = None
         try:
             user = db.query(User).filter(User.id == session.user_id).first()
-            if user:
+            if not user:
+                gitea_error = f"User {session.user_id} not found in database"
+            else:
                 gitea_username = user.username
                 gitea_email = user.email or f"{gitea_username}@druppie.local"
                 short_id = str(new_project.id)[:8]
@@ -304,17 +307,26 @@ async def set_intent(
                             repo_owner=repo_owner,
                         )
                     else:
-                        logger.warning(
-                            "gitea_repo_creation_failed",
-                            error=repo_result.get("error"),
-                        )
+                        gitea_error = f"Gitea repo creation failed: {repo_result.get('error')}"
                 else:
-                    logger.warning(
-                        "gitea_user_creation_failed",
-                        error=user_result.get("error"),
-                    )
+                    gitea_error = f"Gitea user creation failed: {user_result.get('error')}"
         except Exception as e:
-            logger.warning("gitea_setup_failed", error=str(e))
+            gitea_error = f"Gitea setup failed: {str(e)}"
+
+        if gitea_error:
+            logger.error(
+                "gitea_repo_required_but_failed",
+                project_id=str(new_project.id),
+                project_name=project_name,
+                error=gitea_error,
+            )
+            return {
+                "success": False,
+                "error": f"Failed to create Git repository: {gitea_error}. "
+                         "Check that Gitea is running and configured (run: ./setup_dev.sh infra).",
+                "project_id": str(new_project.id),
+                "project_name": project_name,
+            }
 
         result["message"] = f"Created project '{project_name}' with Gitea repo"
 
@@ -329,7 +341,77 @@ async def set_intent(
             session.project_id = UUID(project_id)
             final_project_id = UUID(project_id)
             result["project_id"] = project_id
-            result["message"] = f"Linked to existing project {project_id}"
+
+            # Generate feature branch name and store on session
+            branch_name = f"feature/{str(session_id)[:8]}-update"
+            session.branch_name = branch_name
+            result["branch_name"] = branch_name
+
+            # Create the feature branch in the repo via coding MCP
+            # IMPORTANT: We must first initialize the workspace by calling a tool
+            # with repo_name/repo_owner so the coding MCP clones the repo.
+            # create_branch resolves repo from the workspace's session_id, but
+            # the workspace must already contain the cloned repo.
+            try:
+                from druppie.execution.mcp_http import MCPHttp
+                from druppie.core.mcp_config import MCPConfig
+
+                project = db.query(Project).filter(Project.id == UUID(project_id)).first()
+                if project and project.repo_name:
+                    mcp_config = MCPConfig()
+                    mcp_http = MCPHttp(mcp_config)
+
+                    # Step 1: Initialize workspace by cloning the repo
+                    # list_dir with repo info triggers the workspace setup
+                    init_result = await mcp_http.call(
+                        "coding",
+                        "list_dir",
+                        {
+                            "session_id": str(session_id),
+                            "repo_name": project.repo_name,
+                            "repo_owner": project.repo_owner,
+                            "path": ".",
+                        },
+                    )
+                    logger.info(
+                        "workspace_initialized",
+                        session_id=str(session_id),
+                        repo_name=project.repo_name,
+                        success=init_result.get("success"),
+                        file_count=init_result.get("count", 0),
+                    )
+
+                    # Step 2: Create the feature branch (workspace now has the repo)
+                    branch_result = await mcp_http.call(
+                        "coding",
+                        "create_branch",
+                        {
+                            "session_id": str(session_id),
+                            "branch_name": branch_name,
+                        },
+                    )
+                    if branch_result.get("success"):
+                        logger.info(
+                            "feature_branch_created",
+                            session_id=str(session_id),
+                            branch_name=branch_name,
+                        )
+                    else:
+                        logger.warning(
+                            "feature_branch_creation_failed",
+                            session_id=str(session_id),
+                            branch_name=branch_name,
+                            error=branch_result.get("error"),
+                        )
+            except Exception as e:
+                logger.warning(
+                    "feature_branch_creation_error",
+                    session_id=str(session_id),
+                    branch_name=branch_name,
+                    error=str(e),
+                )
+
+            result["message"] = f"Linked to existing project {project_id} with feature branch {branch_name}"
         except ValueError:
             return {
                 "success": False,

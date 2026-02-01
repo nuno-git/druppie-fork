@@ -12,24 +12,137 @@ import { getToken } from '../services/keycloak'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
-// Copy button component
+// Generate a summary of timeline (includes tool args/results, excludes raw LLM request/response)
+const generateTimelineSummary = (timeline) => {
+  if (!timeline) return null
+
+  return timeline.map(entry => {
+    if (entry.type === 'message' && entry.message) {
+      return {
+        type: 'message',
+        timestamp: entry.timestamp,
+        role: entry.message.role,
+        content: entry.message.content,
+        agent_id: entry.message.agent_id,
+      }
+    }
+    if (entry.type === 'agent_run' && entry.agent_run) {
+      const run = entry.agent_run
+      return {
+        type: 'agent_run',
+        timestamp: entry.timestamp,
+        agent_id: run.agent_id,
+        status: run.status,
+        sequence_number: run.sequence_number,
+        token_usage: run.token_usage,
+        llm_calls: run.llm_calls?.map(llm => ({
+          model: llm.model,
+          provider: llm.provider,
+          duration_ms: llm.duration_ms,
+          token_usage: llm.token_usage,
+          // Include tool calls with full arguments and results
+          tool_calls: llm.tool_calls?.map(tc => ({
+            tool_name: tc.tool_name,
+            status: tc.status,
+            arguments: tc.arguments,
+            result: tc.result,
+            error: tc.error || undefined,
+          }))
+          // Exclude: raw_request, raw_response, messages (the big LLM payloads)
+        }))
+      }
+    }
+    return entry
+  })
+}
+
+// Fallback copy using textarea and execCommand
+const fallbackCopy = (textToCopy) => {
+  const textarea = document.createElement('textarea')
+  textarea.value = textToCopy
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  textarea.style.top = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+
+  try {
+    const success = document.execCommand('copy')
+    document.body.removeChild(textarea)
+    return success
+  } catch (err) {
+    document.body.removeChild(textarea)
+    return false
+  }
+}
+
+// Download data as file
+const downloadAsFile = (data, filename = 'data') => {
+  const textToDownload = typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+  const sizeKB = (textToDownload.length / 1024).toFixed(2)
+  try {
+    console.log(`Downloading ${sizeKB}KB as ${filename}.json...`)
+    const blob = new Blob([textToDownload], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${filename}-${Date.now()}.json`
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    setTimeout(() => {
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    }, 100)
+    return true
+  } catch (err) {
+    console.error('Download failed:', err)
+    return false
+  }
+}
+
+// Simple copy button (no auto-download fallback)
 const CopyButton = ({ text, label = 'Copy', className = '' }) => {
   const [copied, setCopied] = useState(false)
+  const [failed, setFailed] = useState(false)
 
   const handleCopy = async (e) => {
     e.stopPropagation()
     e.preventDefault()
+
     if (text === undefined || text === null) {
-      console.warn('CopyButton: nothing to copy')
+      setFailed(true)
+      setTimeout(() => setFailed(false), 1500)
       return
     }
-    try {
-      const textToCopy = typeof text === 'string' ? text : JSON.stringify(text, null, 2)
-      await navigator.clipboard.writeText(textToCopy)
+
+    const textToCopy = typeof text === 'string' ? text : JSON.stringify(text, null, 2)
+    const sizeKB = (textToCopy.length / 1024).toFixed(2)
+    console.log(`Copying ${sizeKB}KB`)
+
+    let success = false
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(textToCopy)
+        success = true
+      } catch (err) {
+        console.warn('Clipboard API failed:', err.message)
+      }
+    }
+
+    if (!success) {
+      success = fallbackCopy(textToCopy)
+    }
+
+    if (success) {
       setCopied(true)
+      setFailed(false)
       setTimeout(() => setCopied(false), 1500)
-    } catch (err) {
-      console.error('Failed to copy:', err)
+    } else {
+      setFailed(true)
+      setTimeout(() => setFailed(false), 1500)
     }
   }
 
@@ -37,11 +150,37 @@ const CopyButton = ({ text, label = 'Copy', className = '' }) => {
     <button
       onClick={handleCopy}
       className={`px-2 py-0.5 text-xs rounded hover:bg-gray-300 transition-colors ${
-        copied ? 'bg-green-200 text-green-800' : 'bg-gray-200 text-gray-600'
+        copied ? 'bg-green-200 text-green-800' : failed ? 'bg-red-200 text-red-800' : 'bg-gray-200 text-gray-600'
       } ${className}`}
-      title={copied ? 'Copied!' : `Copy ${label}`}
+      title={copied ? 'Copied!' : failed ? 'Failed!' : `Copy ${label}`}
     >
-      {copied ? 'Copied!' : label}
+      {copied ? 'Copied!' : failed ? 'Failed!' : label}
+    </button>
+  )
+}
+
+// Download button component
+const DownloadButton = ({ data, filename = 'data', label = 'Download', className = '' }) => {
+  const [done, setDone] = useState(false)
+
+  const handleDownload = (e) => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (downloadAsFile(data, filename)) {
+      setDone(true)
+      setTimeout(() => setDone(false), 1500)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleDownload}
+      className={`px-2 py-0.5 text-xs rounded hover:bg-blue-300 transition-colors ${
+        done ? 'bg-blue-200 text-blue-800' : 'bg-blue-100 text-blue-600'
+      } ${className}`}
+      title={`Download ${label}`}
+    >
+      {done ? 'Done!' : `↓ ${label}`}
     </button>
   )
 }
@@ -716,14 +855,26 @@ export default function NewChat() {
                 <div>
                   <div className="flex items-center gap-2 mb-3">
                     <h3 className="font-medium">Timeline</h3>
-                    <CopyButton text={sessionDetail.data.timeline} label="Copy All" />
+                    <CopyButton
+                      text={generateTimelineSummary(sessionDetail.data.timeline)}
+                      label="Copy Summary"
+                    />
+                    <DownloadButton
+                      data={sessionDetail.data.timeline}
+                      filename="timeline-full"
+                      label="Full"
+                    />
                   </div>
                   <TimelineView timeline={sessionDetail.data.timeline} />
                 </div>
               )}
 
               {/* Raw JSON (collapsed) */}
-              <Collapsible title="Raw JSON Response" className="text-sm" copyData={sessionDetail}>
+              <Collapsible title="Raw JSON Response" className="text-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <CopyButton text={sessionDetail} label="Copy" />
+                  <DownloadButton data={sessionDetail} filename="session-response" label="Download" />
+                </div>
                 <pre className="bg-gray-100 p-3 rounded-lg text-xs overflow-auto max-h-96">
                   {JSON.stringify(sessionDetail, null, 2)}
                 </pre>

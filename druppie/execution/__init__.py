@@ -17,6 +17,7 @@ Key design decisions:
 from druppie.execution.orchestrator import Orchestrator
 from druppie.execution.tool_executor import ToolExecutor, ToolCallStatus
 from druppie.execution.mcp_http import MCPHttp, MCPHttpError
+from druppie.execution.tool_context import ToolContext
 
 __all__ = [
     "Orchestrator",
@@ -24,4 +25,5 @@ __all__ = [
     "ToolCallStatus",
     "MCPHttp",
     "MCPHttpError",
+    "ToolContext",
 ]

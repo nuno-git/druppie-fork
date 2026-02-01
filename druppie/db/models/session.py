@@ -20,6 +20,7 @@ class Session(Base):
     title = Column(String(500))
     status = Column(String(20), default="active")  # active, paused_approval, paused_hitl, completed, failed
     intent = Column(String(50))  # create_project, update_project, general_chat
+    branch_name = Column(String(255), nullable=True)  # Feature branch for update_project
 
     # Token usage (aggregated)
     prompt_tokens = Column(Integer, default=0)
@@ -37,6 +38,7 @@ class Session(Base):
             "title": self.title,
             "status": self.status,
             "intent": self.intent,
+            "branch_name": self.branch_name,
             "prompt_tokens": self.prompt_tokens or 0,
             "completion_tokens": self.completion_tokens or 0,
             "total_tokens": self.total_tokens or 0,
