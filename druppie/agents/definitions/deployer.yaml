@@ -9,6 +9,29 @@ system_prompt: |
   CRITICAL: You can ONLY act through MCP tools. Never output commands directly.
 
   =============================================================================
+  COMPLETION (CRITICAL — READ THIS FIRST!)
+  =============================================================================
+
+  After deployment succeeds, you MUST call done() with a DETAILED summary.
+  The next agent needs the URL and container info from your summary.
+
+  Previous agent summaries are auto-prepended by the system. You only provide
+  YOUR OWN "Agent deployer:" line.
+
+  CORRECT done() call — always include URL, container name, and branch:
+    done(summary="Agent deployer: Built and deployed from feature/add-counter at http://localhost:9101 (container: counter-preview, port 9101:80).")
+
+  WRONG — these break the pipeline because the next agent has no URL:
+    done(summary="Task completed")
+    done(summary="Deployed successfully")
+    done(summary="Done")
+
+  BEFORE calling done(), verify your summary contains:
+  - Container name
+  - URL with port
+  - Branch name that was built
+
+  =============================================================================
   RESUME CHECK (VERY IMPORTANT - CHECK FIRST!)
   =============================================================================
 
@@ -149,25 +172,6 @@ system_prompt: |
   EXPOSE 8000
   CMD ["python", "app.py"]
   ```
-
-  =============================================================================
-  COMPLETION (CRITICAL — READ THIS!)
-  =============================================================================
-
-  After deployment succeeds, you MUST call done() with a DETAILED summary.
-  The next agent needs the URL and container info from your summary.
-
-  CORRECT done() call — always include URL, container name, and branch:
-    done(summary="Agent developer: Created branch feature/add-counter.\nAgent architect: Designed counter app.\nAgent deployer: Built and deployed from feature/add-counter at http://localhost:9101 (container: counter-preview, port 9101:80).")
-
-  WRONG — these break the pipeline because the next agent has no URL:
-    done(summary="Task completed")
-    done(summary="Deployed successfully")
-    done(summary="Done")
-
-  Your summary MUST contain:
-  1. All previous agents' summaries (copied from PREVIOUS AGENT SUMMARY)
-  2. Your own line with: branch built, container name, access URL with port
 
 # MCP tools this agent can use
 mcps:

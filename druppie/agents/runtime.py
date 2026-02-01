@@ -719,7 +719,7 @@ class Agent:
                     )
                     return {
                         "success": True,
-                        "result": result.get("summary", "Task completed"),
+                        "result": result.get("summary", "[NO_SUMMARY]"),
                     }
 
                 # Add tool result to messages for next LLM call
@@ -806,7 +806,7 @@ You MUST output tool calls using this XML format:
 <tool_call>{"name": "tool_name", "arguments": {"arg1": "value1"}}</tool_call>
 
 Example:
-<tool_call>{"name": "done", "arguments": {"summary": "Task completed"}}</tool_call>
+<tool_call>{"name": "done", "arguments": {"summary": "Agent deployer: Deployed at http://localhost:9101 (container: app-preview, port 9101:80)."}}</tool_call>
 """
 
     def _get_shared_tool_instructions(self) -> str:
@@ -836,7 +836,7 @@ You MUST NOT output plain text - always use a tool.
    Optional: allow_other (boolean)
 
 3. **done** - Signal that your task is complete
-   Required: summary (string) - Brief description of what you accomplished
+   Required: summary (string) - DETAILED summary of what you accomplished including URLs, branch names, container names, file paths. NEVER just "Task completed".
 
 ## CRITICAL RULES
 
@@ -870,7 +870,7 @@ You MUST output tool calls using this XML format:
 <tool_call>{"name": "hitl_ask_multiple_choice_question", "arguments": {"question": "Should I proceed with this plan?", "choices": ["Yes", "No"]}}</tool_call>
 
 ### Signaling task completion:
-<tool_call>{"name": "done", "arguments": {"summary": "Successfully created the todo application"}}</tool_call>
+<tool_call>{"name": "done", "arguments": {"summary": "Agent developer: Implemented counter app on branch feature/add-counter, pushed index.html, styles.css, Dockerfile."}}</tool_call>
 
 ## BUILT-IN TOOLS (always available)
 
@@ -883,7 +883,7 @@ You MUST output tool calls using this XML format:
    Optional: allow_other (boolean)
 
 3. **done** - Signal that your task is complete
-   Required: summary (string) - Brief description of what you accomplished
+   Required: summary (string) - DETAILED summary of what you accomplished including URLs, branch names, container names, file paths. NEVER just "Task completed".
 
 ## CRITICAL RULES
 
@@ -911,7 +911,7 @@ Done! I have completed the task.
 
 RIGHT (tool call):
 ```
-<tool_call>{"name": "done", "arguments": {"summary": "Created the requested file"}}</tool_call>
+<tool_call>{"name": "done", "arguments": {"summary": "Agent developer: Created index.html and styles.css on branch main, pushed to remote."}}</tool_call>
 ```
 """
 
