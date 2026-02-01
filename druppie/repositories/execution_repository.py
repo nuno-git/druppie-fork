@@ -126,6 +126,47 @@ class ExecutionRepository(BaseRepository):
         )
         return self._to_summary(agent_run) if agent_run else None
 
+    def get_completed_runs(self, session_id: UUID) -> list[AgentRunSummary]:
+        """Get all completed agent runs for a session, ordered by completion time."""
+        runs = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status == AgentRunStatus.COMPLETED.value,
+            )
+            .order_by(AgentRun.completed_at)
+            .all()
+        )
+        return [self._to_summary(r) for r in runs]
+
+    def get_done_summary_for_run(self, agent_run_id: UUID) -> str | None:
+        """Extract the summary from the done() tool call result for a completed agent run.
+
+        Looks for a tool_call with tool_name='done' and status='completed',
+        then extracts the summary from its result JSON.
+
+        Returns:
+            The summary string, or None if not found.
+        """
+        import json
+
+        tool_call = (
+            self.db.query(ToolCall)
+            .filter(
+                ToolCall.agent_run_id == agent_run_id,
+                ToolCall.tool_name == "done",
+                ToolCall.status == "completed",
+            )
+            .first()
+        )
+        if tool_call and tool_call.result:
+            try:
+                result = json.loads(tool_call.result)
+                return result.get("summary")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        return None
+
     def _to_summary(self, agent_run: AgentRun) -> AgentRunSummary:
         """Convert AgentRun model to AgentRunSummary domain model."""
         return AgentRunSummary(

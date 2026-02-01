@@ -446,14 +446,14 @@ class ChatDeepInfra(BaseLLM):
             if tool_name == "done":
                 # Extract summary
                 summary_match = re.search(
-                    r'summary\s*=\s*["\']([^"\']*)["\']',
+                    r'summary\s*=\s*["\']((?:[^"\'\\]|\\.)*)["\']',
                     args_str,
                     re.DOTALL
                 )
                 if summary_match:
                     args["summary"] = summary_match.group(1)
                 else:
-                    args["summary"] = "Task completed"
+                    args["summary"] = f"[PARSE_ERROR] Raw: {args_str[:500]}"
 
                 logger.info(
                     "extracted_python_style_tool_call",
@@ -468,7 +468,7 @@ class ChatDeepInfra(BaseLLM):
 
             elif tool_name == "fail":
                 reason_match = re.search(
-                    r'reason\s*=\s*["\']([^"\']*)["\']',
+                    r'reason\s*=\s*["\']((?:[^"\'\\]|\\.)*)["\']',
                     args_str,
                     re.DOTALL
                 )
@@ -658,10 +658,10 @@ class ChatDeepInfra(BaseLLM):
         # Tool-specific fallbacks
         if tool_name == "done":
             summary_match = re.search(
-                r'"?summary"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?summary"?\s*[=:]\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
             )
             return {
-                "summary": summary_match.group(1) if summary_match else "Task completed",
+                "summary": summary_match.group(1) if summary_match else f"[PARSE_ERROR] Raw: {args_str[:500]}",
                 "artifacts": [],
                 "data": {},
             }

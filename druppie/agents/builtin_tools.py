@@ -86,13 +86,13 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "done",
-            "description": "Signal that you have completed your task. Call this when you are done with all your work. You MUST call this tool when finished - do not just output text.",
+            "description": "Signal task completion with a DETAILED summary. The summary is the ONLY way to pass information to the next agent in the pipeline.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "summary": {
                         "type": "string",
-                        "description": "A brief summary of what was accomplished is required",
+                        "description": "DETAILED summary including: (1) your own 'Agent [role]:' line with key outputs (URLs, branch names, container names, file paths). Previous agent summaries are auto-prepended by the system. NEVER write just 'Task completed'.",
                     },
                 },
                 "required": ["summary"],
@@ -517,17 +517,18 @@ async def done(
     """Signal that the agent has completed its task.
 
     This does NOT pause execution - it signals completion immediately.
-    Also relays the summary to the next pending agent by prepending it
-    to that agent's planned_prompt.
+    Auto-collects previous agent summaries and prepends them to create
+    an accumulated summary. Relays the full accumulated summary to the
+    next pending agent by prepending it to that agent's planned_prompt.
 
     Args:
-        summary: Summary of what was accomplished
+        summary: Summary of what was accomplished (this agent's own summary)
         session_id: Session UUID
         agent_run_id: Agent run UUID for tracking
         execution_repo: Execution repository
 
     Returns:
-        Completion status with summary
+        Completion status with accumulated summary
     """
     logger.info(
         "agent_done",
@@ -536,11 +537,52 @@ async def done(
         summary=summary[:200] if summary else "",
     )
 
-    # Relay summary to next pending agent
+    # Auto-collect previous agent summaries from completed runs
+    previous_summaries = []
+    completed_runs = execution_repo.get_completed_runs(session_id)
+    for run in completed_runs:
+        # Skip the current run (it's not completed yet at this point)
+        if run.id == agent_run_id:
+            continue
+        run_summary = execution_repo.get_done_summary_for_run(run.id)
+        if run_summary:
+            # Extract only the agent's own line(s) to avoid duplication.
+            # If the summary already contains accumulated lines from earlier agents,
+            # we only want the last line (this agent's own contribution).
+            # Look for "Agent <role>:" pattern to find individual lines.
+            lines = run_summary.strip().split("\n")
+            for line in lines:
+                stripped = line.strip()
+                if stripped and stripped.startswith("Agent ") and stripped not in previous_summaries:
+                    previous_summaries.append(stripped)
+
+    # Build the accumulated summary: previous summaries + current agent's summary
+    # If the current summary already contains "Agent " lines from previous agents
+    # (because the agent copied them), strip those out to avoid duplication
+    current_lines = summary.strip().split("\n")
+    own_lines = []
+    for line in current_lines:
+        stripped = line.strip()
+        if stripped and stripped not in previous_summaries:
+            own_lines.append(stripped)
+
+    # Combine: previous summaries first, then this agent's own lines
+    all_lines = previous_summaries + own_lines
+    accumulated_summary = "\n".join(all_lines) if all_lines else summary
+
+    logger.info(
+        "agent_done_accumulated",
+        session_id=str(session_id),
+        agent_run_id=str(agent_run_id),
+        previous_count=len(previous_summaries),
+        accumulated_preview=accumulated_summary[:200],
+    )
+
+    # Relay accumulated summary to next pending agent
     next_run = execution_repo.get_next_pending(session_id)
     if next_run and next_run.planned_prompt:
         new_prompt = (
-            f"PREVIOUS AGENT SUMMARY:\n{summary}\n\n---\n\n"
+            f"PREVIOUS AGENT SUMMARY:\n{accumulated_summary}\n\n---\n\n"
             + next_run.planned_prompt
         )
         execution_repo.update_planned_prompt(next_run.id, new_prompt)
@@ -555,7 +597,7 @@ async def done(
 
     return {
         "status": "completed",
-        "summary": summary,
+        "summary": accumulated_summary,
     }
 
 

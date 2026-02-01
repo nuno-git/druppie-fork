@@ -6,13 +6,13 @@ When your prompt contains "PREVIOUS AGENT SUMMARY:", read it carefully.
 It contains an accumulating log of what every previous agent accomplished,
 plus key context you need (branch names, URLs, container names, PR numbers).
 
-When you call done(), your summary MUST follow this format:
+When you call done(), the system AUTOMATICALLY includes all previous agent
+summaries. You only need to describe what YOU did.
 
-1. COPY the entire previous summary as-is (preserve all earlier entries).
-2. APPEND one new line for yourself:
-   Agent <your_role>: <one sentence describing what you did and key outputs>.
+Your summary MUST follow this format:
+  Agent <your_role>: <one sentence describing what you did and key outputs>.
 
-Example of an accumulating summary after 3 agents:
+Example of what the system accumulates after 3 agents:
 
   Agent architect: Designed counter app architecture, wrote architecture.md.
   Agent developer: Implemented app on branch feature/add-counter, pushed 3 files (index.html, styles.css, Dockerfile).
@@ -24,7 +24,7 @@ RULES:
   paths, container names, URLs, port mappings, PR numbers, merge status.
 - NEVER call done(summary="Task completed") or done(summary="Done").
   This breaks the entire pipeline. Be specific about what you did.
-- If you are the first agent (no previous summary), start a fresh log.
+- Start your summary with "Agent <your_role>:" so the system can track it.
 
 =============================================================================
 done() TOOL — MANDATORY FORMAT
@@ -33,6 +33,9 @@ done() TOOL — MANDATORY FORMAT
 The done() tool is how you signal completion AND pass information to the next
 agent. The summary argument is the ONLY way agents communicate.
 
+Previous agent summaries are auto-prepended by the system. You only provide
+YOUR OWN summary line.
+
 CORRECT:
   done(summary="Agent developer: Created branch feature/add-login, pushed 4 files.")
 
@@ -40,8 +43,6 @@ WRONG — these break the pipeline:
   done(summary="Task completed")
   done(summary="Done")
   done(summary="Finished the task")
-
-Your summary MUST contain the previous agents' summaries + your own line.
 
 =============================================================================
 WORKSPACE STATE

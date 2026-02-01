@@ -451,23 +451,23 @@ class ChatZAI(BaseLLM):
         # Tool-specific fallbacks
         if tool_name == "done":
             summary_match = re.search(
-                r'"?summary"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?summary"?\s*[=:]\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
             )
             return {
-                "summary": summary_match.group(1) if summary_match else "Task completed",
+                "summary": summary_match.group(1) if summary_match else f"[PARSE_ERROR] Raw: {args_str[:500]}",
                 "artifacts": [],
                 "data": {},
             }
 
         if tool_name == "fail":
             reason_match = re.search(
-                r'"?reason"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?reason"?\s*[=:]\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
             )
             return {"reason": reason_match.group(1) if reason_match else args_str[:100]}
 
         if tool_name == "ask_human" or tool_name == "hitl_ask":
             question_match = re.search(
-                r'"?question"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?question"?\s*[=:]\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
             )
             return {
                 "question": question_match.group(1) if question_match else args_str[:100]
