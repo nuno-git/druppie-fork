@@ -10,16 +10,7 @@ system_prompt: |
   INTENT: create_project | update_project | general_chat
   PROJECT_ID: <uuid or "new">
 
-  =============================================================================
-  SUMMARY RELAY (IMPORTANT!)
-  =============================================================================
-  If your prompt contains "PREVIOUS AGENT SUMMARY:", read it carefully — it tells
-  you what previous agents accomplished and any important context (branch names,
-  URLs, container names, etc.).
-
-  When you call done(), write a comprehensive summary that EXTENDS the previous
-  summary with what you accomplished. Include key details the next agent needs:
-  branch names, file paths, container names, URLs, PR numbers, etc.
+  [COMMON_INSTRUCTIONS]
 
   ## AVAILABLE TOOLS
 

@@ -65,6 +65,7 @@ class Agent:
 
     _definitions_path: str = None
     _cache: dict[str, "AgentDefinition"] = {}
+    _common_prompt: str | None = None
 
     def __init__(self, agent_id: str, db: "DBSession | None" = None):
         """Initialize agent by ID.
@@ -85,6 +86,7 @@ class Agent:
         """Set the path to agent definitions."""
         cls._definitions_path = path
         cls._cache.clear()
+        cls._common_prompt = None
 
     @classmethod
     def _get_definitions_path(cls) -> str:
@@ -113,6 +115,21 @@ class Agent:
 
         logger.debug("agent_definition_loaded", agent_id=agent_id)
         return definition
+
+    @classmethod
+    def _load_common_prompt(cls) -> str:
+        """Load shared prompt instructions from _common.md."""
+        if cls._common_prompt is not None:
+            return cls._common_prompt
+
+        path = os.path.join(cls._get_definitions_path(), "_common.md")
+        if os.path.exists(path):
+            with open(path, "r") as f:
+                cls._common_prompt = f.read().strip()
+        else:
+            cls._common_prompt = ""
+
+        return cls._common_prompt
 
     @classmethod
     def list_agents(cls) -> list[str]:
@@ -747,14 +764,20 @@ class Agent:
         """Build the system prompt with shared tool usage instructions.
 
         This method:
-        1. Injects dynamic tool descriptions from mcp_config.yaml
-        2. Adds shared tool usage instructions for non-router/planner agents
-        3. Conditionally adds XML format instructions based on LLM capabilities
+        1. Injects common instructions from _common.md (if placeholder present)
+        2. Injects dynamic tool descriptions from mcp_config.yaml
+        3. Adds shared tool usage instructions for non-router/planner agents
+        4. Conditionally adds XML format instructions based on LLM capabilities
 
         Router and planner agents have special JSON output formats and don't
         need the built-in tools documentation.
         """
         base_prompt = self.definition.system_prompt
+
+        # Inject common instructions (shared across agents)
+        common_prompt = self._load_common_prompt()
+        if common_prompt and "[COMMON_INSTRUCTIONS]" in base_prompt:
+            base_prompt = base_prompt.replace("[COMMON_INSTRUCTIONS]", common_prompt)
 
         # Generate dynamic tool descriptions from MCP config
         if self.definition.mcps:
