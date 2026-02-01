@@ -424,9 +424,13 @@ start_all() {
 
     start_infra
 
-    # Configure Keycloak and Gitea if first run
+    # Configure Keycloak if not yet set up
     if ! curl -s http://localhost:8180/realms/druppie > /dev/null 2>&1; then
         configure_keycloak
+    fi
+
+    # Configure Gitea if admin user doesn't exist (independent of Keycloak)
+    if ! curl -s -u "gitea_admin:GiteaAdmin123" http://localhost:3100/api/v1/user -o /dev/null -w "%{http_code}" 2>/dev/null | grep -q "200"; then
         configure_gitea
     fi
 
@@ -507,10 +511,14 @@ case "${1:-start}" in
     infra)
         check_python
         start_infra
-        # Configure if needed
+        # Configure Keycloak if needed
         if ! curl -s http://localhost:8180/realms/druppie > /dev/null 2>&1; then
             setup_python_venv
             configure_keycloak
+        fi
+        # Configure Gitea if needed (independent of Keycloak)
+        if ! curl -s -u "gitea_admin:GiteaAdmin123" http://localhost:3100/api/v1/user -o /dev/null -w "%{http_code}" 2>/dev/null | grep -q "200"; then
+            setup_python_venv
             configure_gitea
         fi
         ;;

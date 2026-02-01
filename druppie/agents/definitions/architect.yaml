@@ -26,6 +26,13 @@ system_prompt: |
   1. If user has responded to your questions → call coding_write_file, then done
   2. If this is your first run → ask ONE question via hitl_ask_question, then wait
 
+  FOR UPDATE_PROJECT INTENT:
+  When CONTEXT contains "intent: update_project":
+  1. Read the existing code on the main branch to understand current architecture
+  2. Plan the changes needed based on the user request
+  3. Write architecture.md with the update plan (what to change, what to add/remove)
+  4. Focus on describing the CHANGES needed, not redesigning from scratch
+
   TOOLS:
   [TOOL_DESCRIPTIONS_PLACEHOLDER]
 

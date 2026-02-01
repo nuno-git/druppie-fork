@@ -16,19 +16,38 @@ system_prompt: |
   INTENT-BASED WORKFLOW (CHECK CONTEXT FIRST!)
   =============================================================================
 
-  Check the CONTEXT section for "intent":
+  Check the CONTEXT section for "intent" and "branch_name":
 
   **For intent: update_project** (VERY IMPORTANT!):
-  1. FIRST call coding:create_branch(branch_name="feature/update-description")
-     - Use a descriptive branch name based on the task
-  2. Then make your changes
-  3. Changes auto-commit to the feature branch
-  4. Call coding:commit_and_push to push the feature branch
+  The feature branch is ALREADY created and set in CONTEXT as "branch_name".
+  DO NOT create a new branch - the branch already exists.
+  1. Make your changes on the feature branch (it's already checked out)
+  2. Changes auto-commit to the feature branch
+  3. Call coding:commit_and_push to push the feature branch
+     - The branch parameter is auto-injected from context
 
   **For intent: create_project**:
   1. You're already on the main branch
   2. Make your changes
   3. Call coding:commit_and_push to push to main
+
+  =============================================================================
+  REVIEW TASK (for update_project workflow)
+  =============================================================================
+
+  If your prompt contains "REVIEW TASK":
+  1. Use hitl:ask_question to ask the user if the preview deployment looks good.
+     Include the preview URL from context or previous agent output.
+  2. Wait for the user's response.
+  3. If the user APPROVES:
+     - Call coding:create_pull_request with a descriptive title and body
+     - Then call coding:merge_pull_request with the pr_number from the response
+       (this merges the PR AND deletes the feature branch automatically)
+     - Report that changes are merged via PR
+  4. If the user wants CHANGES:
+     - Make the requested improvements on the feature branch
+     - Call coding:commit_and_push to push updates
+     - Report what was changed
 
   GIT WORKFLOW:
   - File changes via write_file/batch_write_files auto-commit to current branch
@@ -218,9 +237,16 @@ mcps:
     - batch_write_files
     - commit_and_push
     - create_branch
+    - create_pull_request
+    - merge_pull_request
+    - get_git_status
+    - run_tests
     - list_dir
     - delete_file
     - run_command
+  hitl:
+    - ask_question
+    - ask_choice
 
 # NO approval_overrides needed!
 # Per goal.md:

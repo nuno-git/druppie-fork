@@ -1598,6 +1598,235 @@ async def get_git_status(
 
 
 # =============================================================================
+# PULL REQUEST TOOLS (Gitea API)
+# =============================================================================
+
+
+def _gitea_api_headers() -> dict:
+    """Get headers for Gitea API requests.
+
+    Uses GITEA_TOKEN if available, otherwise falls back to
+    basic auth with GITEA_USER/GITEA_PASSWORD.
+    """
+    headers = {"Content-Type": "application/json"}
+    if GITEA_TOKEN:
+        headers["Authorization"] = f"token {GITEA_TOKEN}"
+    elif GITEA_USER and GITEA_PASSWORD:
+        import base64
+        credentials = base64.b64encode(f"{GITEA_USER}:{GITEA_PASSWORD}".encode()).decode()
+        headers["Authorization"] = f"Basic {credentials}"
+    return headers
+
+
+def _get_repo_info(workspace_id: str) -> tuple[str, str] | None:
+    """Extract repo_owner and repo_name from a workspace's git remote.
+
+    Returns:
+        Tuple of (owner, repo_name) or None if not found.
+    """
+    ws = workspaces.get(workspace_id)
+    if not ws:
+        return None
+
+    cwd = ws["path"]
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+
+        # Parse URL like http://user:pass@gitea:3000/owner/repo.git
+        remote_url = result.stdout.strip()
+        # Remove .git suffix
+        if remote_url.endswith(".git"):
+            remote_url = remote_url[:-4]
+        # Get last two path segments: owner/repo
+        parts = remote_url.rstrip("/").split("/")
+        if len(parts) >= 2:
+            return parts[-2], parts[-1]
+    except Exception:
+        pass
+    return None
+
+
+@mcp.tool()
+async def create_pull_request(
+    title: str,
+    body: str = "",
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+) -> dict:
+    """Create a pull request from the current branch to main on Gitea.
+
+    Args:
+        title: PR title
+        body: PR description (optional)
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
+
+    Returns:
+        Dict with success, pr_number, pr_url, html_url
+    """
+    import httpx
+
+    try:
+        # Resolve workspace
+        if session_id:
+            resolved_workspace_id, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+            ws = workspaces[resolved_workspace_id]
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            resolved_workspace_id = workspace_id
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
+
+        current_branch = ws["branch"]
+        if current_branch == "main":
+            return {"success": False, "error": "Already on main branch, nothing to PR"}
+
+        # Get repo info from remote
+        repo_info = _get_repo_info(resolved_workspace_id)
+        if not repo_info:
+            return {"success": False, "error": "Could not determine repo owner/name from git remote"}
+
+        owner, repo = repo_info
+
+        # Create PR via Gitea API
+        api_url = f"{GITEA_URL}/api/v1/repos/{owner}/{repo}/pulls"
+        payload = {
+            "title": title,
+            "body": body,
+            "head": current_branch,
+            "base": "main",
+        }
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                api_url,
+                json=payload,
+                headers=_gitea_api_headers(),
+                timeout=30.0,
+            )
+
+        if resp.status_code in (200, 201):
+            pr_data = resp.json()
+            return {
+                "success": True,
+                "pr_number": pr_data.get("number"),
+                "pr_url": pr_data.get("url"),
+                "html_url": pr_data.get("html_url"),
+                "head_branch": current_branch,
+                "base_branch": "main",
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"Gitea API error {resp.status_code}: {resp.text}",
+            }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def merge_pull_request(
+    pr_number: int,
+    delete_branch: bool = True,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+) -> dict:
+    """Merge a pull request on Gitea and optionally delete the source branch.
+
+    Args:
+        pr_number: The pull request number to merge
+        delete_branch: Whether to delete the source branch after merge (default: True)
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
+
+    Returns:
+        Dict with success, merged, branch_deleted
+    """
+    import httpx
+
+    try:
+        # Resolve workspace
+        if session_id:
+            resolved_workspace_id, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+            ws = workspaces[resolved_workspace_id]
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            resolved_workspace_id = workspace_id
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
+
+        # Get repo info from remote
+        repo_info = _get_repo_info(resolved_workspace_id)
+        if not repo_info:
+            return {"success": False, "error": "Could not determine repo owner/name from git remote"}
+
+        owner, repo = repo_info
+        cwd = ws["path"]
+
+        # Merge PR via Gitea API
+        merge_url = f"{GITEA_URL}/api/v1/repos/{owner}/{repo}/pulls/{pr_number}/merge"
+        merge_payload = {
+            "Do": "merge",
+            "delete_branch_after_merge": delete_branch,
+        }
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                merge_url,
+                json=merge_payload,
+                headers=_gitea_api_headers(),
+                timeout=30.0,
+            )
+
+        if resp.status_code in (200, 204):
+            # Update local workspace to main branch
+            subprocess.run(["git", "checkout", "main"], cwd=cwd, check=True)
+            subprocess.run(["git", "pull", "origin", "main"], cwd=cwd, check=True)
+            ws["branch"] = "main"
+
+            return {
+                "success": True,
+                "merged": True,
+                "pr_number": pr_number,
+                "branch_deleted": delete_branch,
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"Gitea API error {resp.status_code}: {resp.text}",
+            }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 

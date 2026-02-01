@@ -905,6 +905,9 @@ def generate_tool_descriptions(agent_mcps: list[str] | dict[str, list[str]]) -> 
     mcps configuration. It reads from mcp_config.yaml and formats the tool
     information for inclusion in the agent's system prompt.
 
+    Hidden parameters (from inject rules with hidden: true) are filtered out
+    so the LLM doesn't see or try to provide values for auto-injected params.
+
     Args:
         agent_mcps: Either a list of MCP names (all tools allowed) or a dict
                     mapping MCP names to lists of specific tool names.
@@ -915,27 +918,11 @@ def generate_tool_descriptions(agent_mcps: list[str] | dict[str, list[str]]) -> 
     Returns:
         Formatted string with tool descriptions for system prompt
     """
-    # Load MCP config
-    config_path = Path(__file__).parent / "mcp_config.yaml"
-    with open(config_path) as f:
-        content = f.read()
+    from druppie.core.mcp_config import get_mcp_config
 
-    # Handle ${VAR:-default} syntax
-    def replace_with_default(match):
-        var_name = match.group(1)
-        default = match.group(2)
-        return os.getenv(var_name, default)
-
-    content = re.sub(r"\$\{(\w+):-([^}]+)\}", replace_with_default, content)
-
-    # Handle ${VAR} syntax
-    def replace_simple(match):
-        var_name = match.group(1)
-        return os.getenv(var_name, "")
-
-    content = re.sub(r"\$\{(\w+)\}", replace_simple, content)
-
-    config = yaml.safe_load(content)
+    # Load MCP config via singleton (handles env var substitution)
+    mcp_config = get_mcp_config()
+    config = mcp_config.config
 
     # Generate tool descriptions
     sections = []
@@ -953,9 +940,13 @@ def generate_tool_descriptions(agent_mcps: list[str] | dict[str, list[str]]) -> 
             if not server_tools:
                 continue
 
+            # Get hidden params for this server
+            hidden_params = mcp_config.get_hidden_params(server_name)
+
             sections.append(f"  {server_name.upper()} TOOLS ({server_name}:):")
             for tool in server_tools:
-                _add_tool_to_sections(tool, server_name, sections)
+                tool_hidden = hidden_params.get(tool["name"], set())
+                _add_tool_to_sections(tool, server_name, sections, tool_hidden)
             sections.append("")
     else:
         # Dict format - include only specified tools
@@ -968,18 +959,27 @@ def generate_tool_descriptions(agent_mcps: list[str] | dict[str, list[str]]) -> 
             if not server_tools:
                 continue
 
+            # Get hidden params for this server
+            hidden_params = mcp_config.get_hidden_params(server_name)
+
             sections.append(f"  {server_name.upper()} TOOLS ({server_name}:):")
             for tool in server_tools:
                 # Only include tools that the agent has access to
                 if tool_names and tool["name"] not in tool_names:
                     continue
-                _add_tool_to_sections(tool, server_name, sections)
+                tool_hidden = hidden_params.get(tool["name"], set())
+                _add_tool_to_sections(tool, server_name, sections, tool_hidden)
             sections.append("")
 
     return "\n".join(sections)
 
 
-def _add_tool_to_sections(tool: dict, server_name: str, sections: list[str]) -> None:
+def _add_tool_to_sections(
+    tool: dict,
+    server_name: str,
+    sections: list[str],
+    hidden_params: set[str] | None = None,
+) -> None:
     """Add a single tool's description to the sections list.
 
     Helper function for generate_tool_descriptions.
@@ -988,7 +988,9 @@ def _add_tool_to_sections(tool: dict, server_name: str, sections: list[str]) -> 
         tool: Tool configuration from mcp_config.yaml
         server_name: Name of the MCP server
         sections: List to append formatted tool description to
+        hidden_params: Set of parameter names to hide from LLM
     """
+    hidden_params = hidden_params or set()
     tool_name = f"{server_name}:{tool['name']}"
     sections.append(f"  - {tool_name}: {tool.get('description', '')}")
 
@@ -997,12 +999,18 @@ def _add_tool_to_sections(tool: dict, server_name: str, sections: list[str]) -> 
         required_role = tool.get("required_role", "developer")
         sections.append(f"    (REQUIRES APPROVAL by {required_role})")
 
-    # Add parameter info if available
+    # Add parameter info if available, filtering out hidden params
     params = tool.get("parameters", {})
     if params.get("properties"):
-        required = params.get("required", [])
+        # Filter out hidden params
+        visible_props = {
+            k: v for k, v in params["properties"].items()
+            if k not in hidden_params
+        }
+        required = [r for r in params.get("required", []) if r not in hidden_params]
+
         if required:
             sections.append(f"    REQUIRED: {', '.join(required)}")
-        optional = [k for k in params["properties"].keys() if k not in required]
+        optional = [k for k in visible_props.keys() if k not in required]
         if optional:
             sections.append(f"    OPTIONAL: {', '.join(optional)}")

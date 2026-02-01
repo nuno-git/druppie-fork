@@ -188,11 +188,12 @@ class Orchestrator:
 
         Runs pending agents ordered by sequence_number.
         Stops if an agent pauses (waiting for approval/answer).
+
+        Context is rebuilt before each agent so it picks up changes
+        from previous agents (e.g., router creates project + repo,
+        deployer needs repo_name in context).
         """
         logger.info("execute_pending_runs_start", session_id=str(session_id))
-
-        # Build project context for agents (repo_name, repo_owner, etc.)
-        context = self._build_project_context(session_id)
 
         while True:
             # Get next pending run
@@ -203,6 +204,10 @@ class Orchestrator:
                 self.session_repo.update_status(session_id, SessionStatus.COMPLETED)
                 self.session_repo.commit()
                 return
+
+            # Rebuild context before each agent so it reflects changes
+            # from previous agents (e.g., set_intent creates project/repo)
+            context = self._build_project_context(session_id)
 
             logger.info(
                 "executing_agent_run",
@@ -240,6 +245,9 @@ class Orchestrator:
         Retrieves project info (repo_name, repo_owner, etc.) from the session
         and returns it as a context dict that will be injected into agent prompts.
 
+        Called before each agent run to pick up changes from previous agents
+        (e.g., router creates project + Gitea repo with repo_name).
+
         Args:
             session_id: Session UUID
 
@@ -247,6 +255,11 @@ class Orchestrator:
             Context dict with project info, or None if no project associated
         """
         from druppie.db.models import Session as DBSession, Project
+
+        # Expire cached objects to ensure we read fresh data from DB.
+        # Previous agents (e.g., router's set_intent) may have modified
+        # the project record (adding repo_name) since we last queried.
+        self.session_repo.db.expire_all()
 
         session = self.session_repo.db.query(DBSession).filter(DBSession.id == session_id).first()
         if not session or not session.project_id:
@@ -265,6 +278,10 @@ class Orchestrator:
         # Add intent so agents know what workflow to follow
         if session.intent:
             context["intent"] = session.intent
+
+        # Add feature branch name if available (for update_project workflow)
+        if session.branch_name:
+            context["branch_name"] = session.branch_name
 
         # Add git repo info if available
         if project.repo_name:
