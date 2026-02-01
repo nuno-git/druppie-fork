@@ -434,14 +434,10 @@ async def write_file(
     user_id: str | None = None,
     repo_name: str | None = None,
     repo_owner: str | None = None,
-    auto_commit: bool = True,
-    commit_message: str | None = None,
 ) -> dict:
-    """Write file to workspace (auto-commits to git).
+    """Write file to workspace.
 
-    Can be called with either:
-    - session_id (preferred): Auto-creates workspace if needed
-    - workspace_id (legacy): Uses pre-registered workspace
+    Files are written to disk only. Use commit_and_push to commit and push.
 
     Args:
         path: File path relative to workspace
@@ -452,11 +448,9 @@ async def write_file(
         user_id: User ID for workspace path (optional)
         repo_name: Gitea repository name (for git remote setup)
         repo_owner: Gitea repository owner/username (for git remote setup)
-        auto_commit: Whether to auto-commit (default: True)
-        commit_message: Optional commit message
 
     Returns:
-        Dict with success, path, committed
+        Dict with success, path, size
     """
     try:
         # Resolve workspace
@@ -496,24 +490,12 @@ async def write_file(
             path,
         )
 
-        result = {
+        return {
             "success": True,
             "path": str(file_path.relative_to(workspace_path)),
             "size": len(content),
             "workspace_path": str(workspace_path),
         }
-
-        # Auto-commit
-        if auto_commit:
-            commit_result = await _do_commit_and_push(
-                resolved_workspace_id,
-                commit_message or f"Update {path}",
-            )
-            result["committed"] = commit_result.get("success", False)
-            if commit_result.get("success"):
-                result["commit_message"] = commit_message or f"Update {path}"
-
-        return result
 
     except ValueError as e:
         logger.warning(
@@ -1288,12 +1270,10 @@ async def batch_write_files(
     user_id: str | None = None,
     repo_name: str | None = None,
     repo_owner: str | None = None,
-    commit_message: str = "Create multiple files",
 ) -> dict:
-    """Write multiple files to workspace in a single operation with one git commit.
+    """Write multiple files to workspace in a single operation.
 
-    This is more efficient than calling write_file multiple times when creating
-    a project structure or scaffolding multiple files at once.
+    Files are written to disk only. Use commit_and_push to commit and push.
 
     Args:
         files: Dict mapping file paths (relative to workspace) to their contents
@@ -1303,10 +1283,9 @@ async def batch_write_files(
         user_id: User ID for workspace path (optional)
         repo_name: Gitea repository name (for git remote setup)
         repo_owner: Gitea repository owner/username (for git remote setup)
-        commit_message: Commit message for all files (default: "Create multiple files")
 
     Returns:
-        Dict with success, files_created list, committed status, and commit_message
+        Dict with success, files_created list
 
     Example:
         batch_write_files(
@@ -1315,8 +1294,7 @@ async def batch_write_files(
                 "src/index.js": "console.log('hello');",
                 "src/utils.js": "export const add = (a, b) => a + b;",
                 "package.json": '{"name": "myapp"}'
-            },
-            commit_message="Create initial project structure"
+            }
         )
     """
     try:
@@ -1374,12 +1352,6 @@ async def batch_write_files(
         if errors:
             result["errors"] = errors
             result["partial_success"] = True
-
-        # Commit all changes with a single commit
-        commit_result = await _do_commit_and_push(resolved_workspace_id, commit_message)
-        result["committed"] = commit_result.get("success", False)
-        if commit_result.get("success"):
-            result["commit_message"] = commit_message
 
         return result
 

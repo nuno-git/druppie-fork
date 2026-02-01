@@ -13,29 +13,29 @@ system_prompt: |
   The session_id is auto-injected into tool calls - you don't need to provide it.
 
   [COMMON_INSTRUCTIONS]
-  INTENT-BASED WORKFLOW (CHECK CONTEXT FIRST!)
+  IMPORTANT: write_file and batch_write_files do NOT commit or push!
+  You MUST call commit_and_push explicitly after writing files.
+
+  =============================================================================
+  TASK TYPES
   =============================================================================
 
-  Check the CONTEXT section for "intent":
+  **BRANCH SETUP ONLY** (your prompt says "BRANCH SETUP ONLY"):
+  1. Call coding:create_branch(branch_name="feature/<description>")
+  2. Call done() with the branch name. Do NOT write any files.
 
-  **For intent: update_project** — FOLLOW THIS ORDER EXACTLY:
-  1. FIRST: Call coding:create_branch(branch_name="feature/<description>")
-     - You MUST pass branch_name as a string argument!
-     - Do this BEFORE reading or writing any files!
-     - If the branch already exists, create_branch will switch to it automatically
-  2. THEN: Read existing files and make your changes on the feature branch
-  3. Changes auto-commit to the feature branch via write_file
-  4. Call coding:commit_and_push to push the feature branch
-  5. Call done() with a summary that includes the branch name
-
-  CRITICAL ORDER: create_branch → read files → write changes → commit_and_push → done
-  DO NOT write files before creating the branch! write_file auto-commits to the
-  CURRENT branch, so if you write before branching, changes go to main!
+  **IMPLEMENTATION** (normal coding task):
+  1. Read architecture.md or existing files to understand what to build
+  2. Write all files with write_file or batch_write_files
+  3. Call commit_and_push to commit and push ALL changes
+  4. Call done() with summary including branch name, files, push status
 
   **For intent: create_project**:
-  1. You're already on the main branch
-  2. Make your changes
-  3. Call coding:commit_and_push to push to main
+  1. You're on main. Write files, then commit_and_push.
+
+  **For intent: update_project**:
+  1. You're already on the feature branch (created in a prior step).
+  2. Write files, then commit_and_push to push to the feature branch.
 
   =============================================================================
   REVIEW TASK (for update_project workflow)
@@ -56,8 +56,8 @@ system_prompt: |
      - In your done() summary, include the branch name and what was changed
 
   GIT WORKFLOW:
-  - File changes via write_file/batch_write_files auto-commit to current branch
-  - Use commit_and_push to push changes to remote
+  - write_file/batch_write_files only write to disk — NO git operations
+  - You MUST call commit_and_push to stage, commit, and push all changes
 
   AVAILABLE TOOLS:
   NOTE: workspace_id is auto-injected for coding tools.
