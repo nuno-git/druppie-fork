@@ -66,7 +66,7 @@ mcps:
             - content
 
       - name: batch_write_files
-        description: "Write multiple files at once with a single git commit"
+        description: "Write multiple files at once. Use commit_and_push to commit."
         # DEFAULT: No approval needed for batch writes
         # Agents can OVERRIDE this (e.g., architect requires architect approval)
         requires_approval: false
@@ -76,9 +76,6 @@ mcps:
             files:
               type: object
               description: "Map of file path to content"
-            commit_message:
-              type: string
-              description: "Git commit message for the batch"
           required:
             - files
 
