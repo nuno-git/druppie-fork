@@ -159,6 +159,15 @@ class GiteaClient:
         result = await self._request("GET", f"/users/{username}")
         return result.get("success", False)
 
+    async def find_user_by_email(self, email: str) -> str | None:
+        """Find a Gitea username by email address."""
+        result = await self._request("GET", f"/admin/users")
+        if result.get("success") and isinstance(result.get("data"), list):
+            for user in result["data"]:
+                if user.get("email") == email:
+                    return user.get("login") or user.get("username")
+        return None
+
     async def ensure_user_exists(
         self,
         username: str,
@@ -169,12 +178,15 @@ class GiteaClient:
         Users will be able to login via Keycloak OAuth - Gitea auto-links
         accounts by email when ACCOUNT_LINKING=auto is configured.
 
+        Handles reserved Gitea usernames (e.g., "admin") by prefixing
+        with "druppie_".
+
         Args:
             username: Username to check/create
             email: Email for new user (must match Keycloak email for auto-linking)
 
         Returns:
-            Dict with success, created (bool), username
+            Dict with success, created (bool), username (actual Gitea username)
         """
         # Check if user already exists
         if await self.user_exists(username):
@@ -191,6 +203,37 @@ class GiteaClient:
 
         if result.get("success"):
             return {"success": True, "created": True, "username": username}
+
+        # Handle reserved usernames — retry with "druppie_" prefix
+        error_str = str(result.get("error") or result.get("data") or "")
+        if "reserved" in error_str.lower():
+            alt_username = f"druppie_{username}"
+            logger.info(
+                "gitea_username_reserved_using_alt",
+                original=username,
+                alt=alt_username,
+            )
+
+            if await self.user_exists(alt_username):
+                return {"success": True, "created": False, "username": alt_username}
+
+            alt_result = await self.create_user(
+                username=alt_username,
+                email=email,
+            )
+            if alt_result.get("success"):
+                return {"success": True, "created": True, "username": alt_username}
+
+        # Last resort: find existing user by email (e.g., gitea_admin shares email)
+        if email:
+            existing = await self.find_user_by_email(email)
+            if existing:
+                logger.info(
+                    "gitea_user_found_by_email",
+                    email=email,
+                    gitea_username=existing,
+                )
+                return {"success": True, "created": False, "username": existing}
 
         return {
             "success": False,

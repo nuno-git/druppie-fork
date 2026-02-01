@@ -280,6 +280,9 @@ async def set_intent(
                 )
 
                 if user_result.get("success"):
+                    # Use actual Gitea username (may differ if original was reserved)
+                    gitea_username = user_result.get("username", gitea_username)
+
                     # Create repo under user's account
                     repo_result = await gitea.create_repo(
                         name=repo_name,
