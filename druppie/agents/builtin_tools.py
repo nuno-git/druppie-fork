@@ -99,6 +99,23 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             },
         },
     },
+    "create_message": {
+        "type": "function",
+        "function": {
+            "name": "create_message",
+            "description": "Create a visible message in the chat timeline for the user. Use this to provide a human-friendly summary of what was accomplished.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The message content to display to the user",
+                    },
+                },
+                "required": ["content"],
+            },
+        },
+    },
     "set_intent": {
         "type": "function",
         "function": {
@@ -505,6 +522,47 @@ async def make_plan(
 
 
 # =============================================================================
+# MESSAGE TOOL IMPLEMENTATION
+# =============================================================================
+
+async def create_message(
+    content: str,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Create a visible message in the chat timeline.
+
+    Called by the summarizer agent to post a user-friendly completion message.
+
+    Args:
+        content: Message content to display
+        session_id: Session UUID
+        agent_run_id: Agent run UUID for tracking
+        execution_repo: Execution repository
+
+    Returns:
+        Success status
+    """
+    execution_repo.create_message(
+        session_id=session_id,
+        role="assistant",
+        content=content,
+        agent_id="summarizer",
+    )
+    execution_repo.flush()
+
+    logger.info(
+        "create_message",
+        session_id=str(session_id),
+        agent_run_id=str(agent_run_id),
+        content_preview=content[:100] if content else "",
+    )
+
+    return {"status": "created", "message": "Message added to timeline"}
+
+
+# =============================================================================
 # COMPLETION TOOL IMPLEMENTATION
 # =============================================================================
 
@@ -642,6 +700,13 @@ async def execute_builtin(
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
         )
+    elif tool_name == "create_message":
+        return await create_message(
+            content=args.get("content", ""),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+        )
     elif tool_name == "set_intent":
         return await set_intent(
             intent=args.get("intent", "general_chat"),
@@ -666,6 +731,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "done",
         "make_plan",
         "set_intent",
+        "create_message",
     )
 
 

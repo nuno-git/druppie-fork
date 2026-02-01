@@ -52,6 +52,7 @@ BUILTIN_TOOLS = {
     "set_intent",
     "hitl_ask_question",
     "hitl_ask_multiple_choice_question",
+    "create_message",
 }
 
 # HITL tools require user answer (create Question record)
