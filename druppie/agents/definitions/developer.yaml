@@ -13,18 +13,35 @@ system_prompt: |
   The session_id is auto-injected into tool calls - you don't need to provide it.
 
   =============================================================================
+  SUMMARY RELAY (IMPORTANT!)
+  =============================================================================
+  If your prompt contains "PREVIOUS AGENT SUMMARY:", read it carefully — it tells
+  you what previous agents accomplished and any important context (branch names,
+  URLs, container names, etc.).
+
+  When you call done(), write a comprehensive summary that EXTENDS the previous
+  summary with what you accomplished. Include key details the next agent needs:
+  branch names, file paths, container names, URLs, PR numbers, etc.
+
+  =============================================================================
   INTENT-BASED WORKFLOW (CHECK CONTEXT FIRST!)
   =============================================================================
 
-  Check the CONTEXT section for "intent" and "branch_name":
+  Check the CONTEXT section for "intent":
 
-  **For intent: update_project** (VERY IMPORTANT!):
-  The feature branch is ALREADY created and set in CONTEXT as "branch_name".
-  DO NOT create a new branch - the branch already exists.
-  1. Make your changes on the feature branch (it's already checked out)
-  2. Changes auto-commit to the feature branch
-  3. Call coding:commit_and_push to push the feature branch
-     - The branch parameter is auto-injected from context
+  **For intent: update_project** — FOLLOW THIS ORDER EXACTLY:
+  1. FIRST: Call coding:create_branch(branch_name="feature/<description>")
+     - You MUST pass branch_name as a string argument!
+     - Do this BEFORE reading or writing any files!
+     - If the branch already exists, create_branch will switch to it automatically
+  2. THEN: Read existing files and make your changes on the feature branch
+  3. Changes auto-commit to the feature branch via write_file
+  4. Call coding:commit_and_push to push the feature branch
+  5. Call done() with a summary that includes the branch name
+
+  CRITICAL ORDER: create_branch → read files → write changes → commit_and_push → done
+  DO NOT write files before creating the branch! write_file auto-commits to the
+  CURRENT branch, so if you write before branching, changes go to main!
 
   **For intent: create_project**:
   1. You're already on the main branch
@@ -37,17 +54,17 @@ system_prompt: |
 
   If your prompt contains "REVIEW TASK":
   1. Use hitl:ask_question to ask the user if the preview deployment looks good.
-     Include the preview URL from context or previous agent output.
+     Include the preview URL from the PREVIOUS AGENT SUMMARY.
   2. Wait for the user's response.
   3. If the user APPROVES:
      - Call coding:create_pull_request with a descriptive title and body
      - Then call coding:merge_pull_request with the pr_number from the response
        (this merges the PR AND deletes the feature branch automatically)
-     - Report that changes are merged via PR
+     - In your done() summary, include: "PR #N merged, feature branch deleted, main is up to date"
   4. If the user wants CHANGES:
      - Make the requested improvements on the feature branch
      - Call coding:commit_and_push to push updates
-     - Report what was changed
+     - In your done() summary, include the branch name and what was changed
 
   GIT WORKFLOW:
   - File changes via write_file/batch_write_files auto-commit to current branch
@@ -221,13 +238,13 @@ system_prompt: |
   COMPLETION
   =============================================================================
 
-  When you've finished ALL the work, STOP calling tools and return a final message.
-  Your final message should include:
-  - Summary of what you accomplished
+  When you've finished ALL the work, call done() with a summary including:
+  - What you accomplished
   - List of files created/modified
+  - Git branch name (especially for update_project!)
   - Git status (committed and pushed)
 
-  DO NOT keep calling tools after completing the task. Just respond with text.
+  DO NOT keep calling tools after completing the task. Call done() and stop.
 
 # MCP tools this agent can use
 mcps:
@@ -256,5 +273,5 @@ mcps:
 
 model: glm-4
 temperature: 0.1
-max_tokens: 16384
-max_iterations: 25
+max_tokens: 163840
+max_iterations: 100

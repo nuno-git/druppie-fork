@@ -107,6 +107,25 @@ class ExecutionRepository(BaseRepository):
             agent_run.completion_tokens = (agent_run.completion_tokens or 0) + completion_tokens
             agent_run.total_tokens = agent_run.prompt_tokens + agent_run.completion_tokens
 
+    def update_planned_prompt(self, agent_run_id: UUID, planned_prompt: str) -> None:
+        """Update the planned_prompt for an agent run."""
+        agent_run = self.db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+        if agent_run:
+            agent_run.planned_prompt = planned_prompt
+
+    def get_pending_by_agent_id(self, session_id: UUID, agent_id: str) -> AgentRunSummary | None:
+        """Get a pending agent run by session and agent ID."""
+        agent_run = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.agent_id == agent_id,
+                AgentRun.status == AgentRunStatus.PENDING.value,
+            )
+            .first()
+        )
+        return self._to_summary(agent_run) if agent_run else None
+
     def _to_summary(self, agent_run: AgentRun) -> AgentRunSummary:
         """Convert AgentRun model to AgentRunSummary domain model."""
         return AgentRunSummary(

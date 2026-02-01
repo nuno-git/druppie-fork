@@ -502,7 +502,7 @@ class ToolExecutor:
                 args=args,
                 session_id=tool_call.session_id,
                 agent_run_id=tool_call.agent_run_id,
-                db=self.db,
+                execution_repo=self.execution_repo,
             )
 
             # Mark as completed with result

@@ -153,6 +153,7 @@ class ChatZAI(BaseLLM):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """Send asynchronous chat completion request with retry logic."""
         import asyncio
@@ -169,8 +170,10 @@ class ChatZAI(BaseLLM):
             "stream": False,
         }
 
-        if self.max_tokens:
-            payload["max_tokens"] = self.max_tokens
+        # Per-call max_tokens overrides instance default
+        effective_max_tokens = max_tokens or self.max_tokens
+        if effective_max_tokens:
+            payload["max_tokens"] = effective_max_tokens
 
         if effective_tools:
             payload["tools"] = effective_tools
