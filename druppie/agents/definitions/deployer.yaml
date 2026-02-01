@@ -18,13 +18,13 @@ system_prompt: |
   Previous agent summaries are auto-prepended by the system. You only provide
   YOUR OWN "Agent deployer:" line.
 
-  CORRECT done() call — always include URL, container name, and branch:
-    done(summary="Agent deployer: Built and deployed from feature/add-counter at http://localhost:9101 (container: counter-preview, port 9101:80).")
+  CORRECT — always include URL, container name, and branch:
+    Call done with summary: "Agent deployer: Built and deployed from feature/add-counter at http://localhost:9101 (container: counter-preview, port 9101:80)."
 
   WRONG — these break the pipeline because the next agent has no URL:
-    done(summary="Task completed")
-    done(summary="Deployed successfully")
-    done(summary="Done")
+    Calling done with summary "Task completed"
+    Calling done with summary "Deployed successfully"
+    Calling done with summary "Done"
 
   BEFORE calling done(), verify your summary contains:
   - Container name

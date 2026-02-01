@@ -30,7 +30,7 @@ system_prompt: |
   ## WORKFLOW BASED ON INTENT
 
   1. FOR CREATE_PROJECT:
-     Call make_plan with steps: business_analyst → architect → developer → deployer
+     Call make_plan with steps: business_analyst, architect, developer, deployer
 
   2. FOR UPDATE_PROJECT (feature branch workflow):
      Call make_plan with 7 steps:

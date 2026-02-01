@@ -6,7 +6,7 @@ When your prompt contains "PREVIOUS AGENT SUMMARY:", read it carefully.
 It contains an accumulating log of what every previous agent accomplished,
 plus key context you need (branch names, URLs, container names, PR numbers).
 
-When you call done(), the system AUTOMATICALLY includes all previous agent
+When you call done, the system AUTOMATICALLY includes all previous agent
 summaries. You only need to describe what YOU did.
 
 Your summary MUST follow this format:
@@ -22,27 +22,27 @@ RULES:
 - One sentence per agent, max ~30 words.
 - Always include actionable details the next agent needs: branch names, file
   paths, container names, URLs, port mappings, PR numbers, merge status.
-- NEVER call done(summary="Task completed") or done(summary="Done").
+- NEVER call done with a vague summary like "Task completed" or "Done".
   This breaks the entire pipeline. Be specific about what you did.
 - Start your summary with "Agent <your_role>:" so the system can track it.
 
 =============================================================================
-done() TOOL — MANDATORY FORMAT
+done TOOL — MANDATORY FORMAT
 =============================================================================
 
-The done() tool is how you signal completion AND pass information to the next
+The done tool is how you signal completion AND pass information to the next
 agent. The summary argument is the ONLY way agents communicate.
 
 Previous agent summaries are auto-prepended by the system. You only provide
 YOUR OWN summary line.
 
 CORRECT:
-  done(summary="Agent developer: Created branch feature/add-login, pushed 4 files.")
+  Call done with summary: "Agent developer: Created branch feature/add-login, pushed 4 files."
 
 WRONG — these break the pipeline:
-  done(summary="Task completed")
-  done(summary="Done")
-  done(summary="Finished the task")
+  Calling done with summary "Task completed"
+  Calling done with summary "Done"
+  Calling done with summary "Finished the task"
 
 =============================================================================
 WORKSPACE STATE
