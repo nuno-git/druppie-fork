@@ -23,6 +23,10 @@ roles:
   - name: developer
     description: Developer - approves builds and deployments
 
+  # Business analyst role - approves functional requirements and designs
+  - name: business_analyst
+    description: Business analyst - approves functional requirements and designs
+
   # Admin role - full access (reserved)
   - name: admin
     description: Platform administrator with full access
@@ -31,6 +35,7 @@ roles:
       - user
       - developer
       - architect
+      - business_analyst
 
   # Legacy roles kept for backwards compatibility
   - name: infra-engineer
@@ -143,6 +148,17 @@ users:
     password: "Architect123!"
     realmRoles:
       - architect
+
+  # Business Analyst user - approves functional requirements
+  - username: analyst
+    email: analyst@druppie.local
+    firstName: Business
+    lastName: Analyst
+    enabled: true
+    emailVerified: true
+    password: "Analyst123!"
+    realmRoles:
+      - business_analyst
 
   # Developer user - approves builds and deployments (per goal.md)
   - username: developer
