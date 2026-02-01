@@ -23,7 +23,6 @@ import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole, isK
 import { getTasks } from './services/api'
 import { ToastProvider } from './components/Toast'
 import ErrorBoundary from './components/ErrorBoundary'
-import ConnectionStatus from './components/ConnectionStatus'
 
 // Pages
 import Dashboard from './pages/Dashboard'
@@ -379,7 +378,6 @@ function App() {
                 </Routes>
               </main>
             </div>
-            <ConnectionStatus />
           </BrowserRouter>
         </ToastProvider>
       </AuthContext.Provider>
