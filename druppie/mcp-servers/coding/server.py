@@ -4,16 +4,12 @@ Combined file operations and git functionality for workspace sandbox.
 Uses FastMCP framework for HTTP transport.
 """
 
-import json
 import logging
 import os
-import re
 import shutil
 import subprocess
 import tempfile
-import time
 from pathlib import Path
-from typing import Any
 
 from fastmcp import FastMCP
 
@@ -26,69 +22,6 @@ logger = logging.getLogger("coding-mcp")
 
 # Initialize FastMCP server
 mcp = FastMCP("Coding MCP Server")
-
-# =============================================================================
-# SECURITY: COMMAND BLOCKLIST
-# =============================================================================
-
-# Dangerous command patterns that should never be executed
-BLOCKED_COMMAND_PATTERNS = [
-    # Destructive file operations
-    r"rm\s+(-[rf]+\s+)*\s*/\s*$",  # rm -rf / or rm /
-    r"rm\s+(-[rf]+\s+)*\s*/\*",  # rm -rf /*
-    r"rm\s+(-[rf]+\s+)+\s*/",  # rm -rf /anything at root
-    # Disk/filesystem operations
-    r"\bmkfs\b",  # mkfs (format filesystem)
-    r"\bdd\s+if=",  # dd if= (disk operations)
-    r"\bfdisk\b",  # fdisk (partition management)
-    r"\bparted\b",  # parted (partition management)
-    # Privilege escalation
-    r"\bsudo\b",  # sudo commands
-    r"\bsu\s+-",  # su - (switch user)
-    r"\bsu\s+root",  # su root
-    # Dangerous permission changes
-    r"\bchmod\s+777\b",  # chmod 777 (world-writable)
-    r"\bchmod\s+-R\s+777\b",  # chmod -R 777
-    r"\bchown\s+.*\s+/",  # chown on system directories
-    # System modification
-    r"\bshutdown\b",  # shutdown
-    r"\breboot\b",  # reboot
-    r"\binit\s+[0-6]",  # init runlevel changes
-    r"\bsystemctl\s+(stop|disable|mask)\s+(ssh|sshd|network)",  # Critical service disruption
-    # Network attacks
-    r":\(\)\s*{\s*:\|\s*:&\s*}\s*;",  # Fork bomb
-    r">\s*/dev/sd[a-z]",  # Write to disk devices
-    r">\s*/dev/null\s*2>&1\s*&",  # Background with hidden output (often malicious)
-    # Sensitive file access
-    r">\s*/etc/passwd",  # Overwrite passwd
-    r">\s*/etc/shadow",  # Overwrite shadow
-    r">\s*/etc/sudoers",  # Overwrite sudoers
-    # Reverse shells and remote execution
-    r"\bnc\s+-[elp]",  # netcat listener
-    r"\bbash\s+-i\s+>&\s+/dev/tcp",  # Bash reverse shell
-    r"\bcurl\s+.*\|\s*bash",  # Piping curl to bash
-    r"\bwget\s+.*\|\s*bash",  # Piping wget to bash
-    r"\bcurl\s+.*\|\s*sh",  # Piping curl to sh
-    r"\bwget\s+.*\|\s*sh",  # Piping wget to sh
-]
-
-# Compile patterns for performance
-BLOCKED_PATTERNS_COMPILED = [re.compile(p, re.IGNORECASE) for p in BLOCKED_COMMAND_PATTERNS]
-
-
-def is_command_blocked(command: str) -> tuple[bool, str | None]:
-    """Check if a command matches any blocked patterns.
-
-    Args:
-        command: The command string to check
-
-    Returns:
-        Tuple of (is_blocked, matched_pattern_description)
-    """
-    for i, pattern in enumerate(BLOCKED_PATTERNS_COMPILED):
-        if pattern.search(command):
-            return True, BLOCKED_COMMAND_PATTERNS[i]
-    return False, None
 
 # Configuration
 WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/workspaces"))
@@ -141,11 +74,20 @@ def get_or_create_workspace(
     # Check if already registered
     if derived_workspace_id in workspaces:
         ws = workspaces[derived_workspace_id]
+        workspace_path = Path(ws["path"])
         # Update repo info if provided and not already set
         if repo_name and not ws.get("repo_name"):
             ws["repo_name"] = repo_name
             ws["repo_owner"] = repo_owner
-        return derived_workspace_id, Path(ws["path"])
+            logger.debug(
+                "Updated repo info for workspace %s: %s/%s",
+                derived_workspace_id, repo_owner, repo_name,
+            )
+        logger.debug(
+            "Reusing existing workspace %s (repo=%s/%s, path=%s)",
+            derived_workspace_id, ws.get("repo_owner"), ws.get("repo_name"), workspace_path,
+        )
+        return derived_workspace_id, workspace_path
 
     # Auto-create workspace path
     # Path structure: /workspaces/{user_id or "default"}/{project_id or "scratch"}/{session_id}
@@ -158,6 +100,16 @@ def get_or_create_workspace(
     git_dir = workspace_path / ".git"
     if not git_dir.exists():
         cloned = False
+        logger.debug(
+            "Initializing new workspace %s: repo_name=%s, repo_owner=%s, gitea_configured=%s",
+            derived_workspace_id, repo_name, repo_owner, is_gitea_configured(),
+        )
+        if not repo_name:
+            logger.warning(
+                "No repo_name provided for workspace %s — workspace will be empty (git init only). "
+                "Check that the tool has repo_name in the injection config.",
+                derived_workspace_id,
+            )
         if repo_name and is_gitea_configured():
             # Clone from Gitea to ensure we have the same history
             remote_url = get_gitea_clone_url(repo_name, repo_owner)
@@ -706,477 +658,6 @@ async def delete_file(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
-async def run_command(
-    command: str,
-    session_id: str | None = None,
-    workspace_id: str | None = None,
-    project_id: str | None = None,
-    user_id: str | None = None,
-    timeout: int = 60,
-    repo_name: str | None = None,
-    repo_owner: str | None = None,
-) -> dict:
-    """Execute shell command in workspace (requires approval).
-
-    Args:
-        command: Shell command to execute
-        session_id: Session ID (auto-creates workspace if needed)
-        workspace_id: Legacy workspace ID (optional)
-        project_id: Project ID for workspace path (optional)
-        user_id: User ID for workspace path (optional)
-        timeout: Timeout in seconds (default: 60)
-        repo_name: Gitea repository name (for cloning)
-        repo_owner: Gitea repository owner (for cloning)
-
-    Returns:
-        Dict with success, stdout, stderr, return_code
-    """
-    try:
-        # Resolve workspace
-        if session_id:
-            resolved_workspace_id, workspace_path = get_or_create_workspace(
-                session_id=session_id,
-                project_id=project_id,
-                user_id=user_id,
-                workspace_id=workspace_id,
-                repo_name=repo_name,
-                repo_owner=repo_owner,
-            )
-            workspace_path = str(workspace_path)
-        elif workspace_id:
-            ws = get_workspace(workspace_id)
-            workspace_path = ws["path"]
-            resolved_workspace_id = workspace_id
-        else:
-            return {"success": False, "error": "Either session_id or workspace_id is required"}
-
-        # Security: Check command against blocklist
-        is_blocked, matched_pattern = is_command_blocked(command)
-        if is_blocked:
-            logger.warning(
-                "Blocked dangerous command in workspace %s: %s (matched pattern: %s)",
-                resolved_workspace_id,
-                command,
-                matched_pattern,
-            )
-            return {
-                "success": False,
-                "error": "Command blocked for security reasons",
-                "blocked": True,
-                "reason": "This command matches a dangerous pattern and cannot be executed",
-            }
-
-        logger.info(
-            "Executing command in workspace %s: %s",
-            resolved_workspace_id,
-            command[:200] + "..." if len(command) > 200 else command,
-        )
-
-        result = subprocess.run(
-            command,
-            shell=True,
-            cwd=workspace_path,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-        logger.info(
-            "Command completed in workspace %s with return code %d",
-            resolved_workspace_id,
-            result.returncode,
-        )
-
-        return {
-            "success": result.returncode == 0,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "return_code": result.returncode,
-            "cwd": workspace_path,
-        }
-
-    except subprocess.TimeoutExpired:
-        logger.warning(
-            "Command timed out after %ds in workspace %s: %s",
-            timeout,
-            session_id or workspace_id,
-            command[:100],
-        )
-        return {"success": False, "error": f"Command timed out after {timeout}s"}
-    except Exception as e:
-        logger.error(
-            "Command execution failed in workspace %s: %s",
-            session_id or workspace_id,
-            str(e),
-        )
-        return {"success": False, "error": str(e)}
-
-
-def _detect_test_framework(workspace_path: Path) -> tuple[str | None, str | None]:
-    """Detect test framework from project files.
-
-    Returns:
-        Tuple of (framework_name, test_command)
-    """
-    # Check for Node.js/npm project
-    package_json = workspace_path / "package.json"
-    if package_json.exists():
-        try:
-            pkg = json.loads(package_json.read_text())
-            scripts = pkg.get("scripts", {})
-            if "test" in scripts:
-                # Check for common test frameworks
-                test_script = scripts["test"]
-                if "jest" in test_script:
-                    return ("jest", "npm test")
-                elif "mocha" in test_script:
-                    return ("mocha", "npm test")
-                elif "vitest" in test_script:
-                    return ("vitest", "npm test")
-                elif "ava" in test_script:
-                    return ("ava", "npm test")
-                else:
-                    return ("npm", "npm test")
-        except (json.JSONDecodeError, KeyError):
-            pass
-
-    # Check for Python pytest
-    pytest_ini = workspace_path / "pytest.ini"
-    pyproject_toml = workspace_path / "pyproject.toml"
-    setup_py = workspace_path / "setup.py"
-
-    # Check for test files
-    has_pytest_files = list(workspace_path.glob("test_*.py")) or list(workspace_path.glob("**/test_*.py"))
-    has_tests_dir = (workspace_path / "tests").exists()
-
-    if pytest_ini.exists() or has_pytest_files or has_tests_dir:
-        return ("pytest", "pytest -v")
-
-    # Check pyproject.toml for pytest config
-    if pyproject_toml.exists():
-        try:
-            content = pyproject_toml.read_text()
-            if "[tool.pytest" in content:
-                return ("pytest", "pytest -v")
-        except Exception:
-            pass
-
-    # Check for Go tests
-    go_test_files = list(workspace_path.glob("*_test.go")) or list(workspace_path.glob("**/*_test.go"))
-    go_mod = workspace_path / "go.mod"
-    if go_test_files or go_mod.exists():
-        return ("go", "go test -v ./...")
-
-    # Check for Rust tests
-    cargo_toml = workspace_path / "Cargo.toml"
-    if cargo_toml.exists():
-        return ("cargo", "cargo test")
-
-    # Check for Ruby/RSpec
-    gemfile = workspace_path / "Gemfile"
-    spec_dir = workspace_path / "spec"
-    if spec_dir.exists():
-        return ("rspec", "bundle exec rspec")
-    elif gemfile.exists():
-        try:
-            content = gemfile.read_text()
-            if "rspec" in content.lower():
-                return ("rspec", "bundle exec rspec")
-            elif "minitest" in content.lower():
-                return ("minitest", "bundle exec rake test")
-        except Exception:
-            pass
-
-    # Check for Java/Maven
-    pom_xml = workspace_path / "pom.xml"
-    if pom_xml.exists():
-        return ("maven", "mvn test")
-
-    # Check for Java/Gradle
-    build_gradle = workspace_path / "build.gradle"
-    build_gradle_kts = workspace_path / "build.gradle.kts"
-    if build_gradle.exists() or build_gradle_kts.exists():
-        return ("gradle", "./gradlew test")
-
-    return (None, None)
-
-
-def _parse_test_output(stdout: str, stderr: str, framework: str) -> dict:
-    """Parse test output to extract pass/fail counts.
-
-    Returns:
-        Dict with total, passed, failed, skipped, failed_tests
-    """
-    result = {
-        "total": 0,
-        "passed": 0,
-        "failed": 0,
-        "skipped": 0,
-        "failed_tests": [],
-    }
-
-    combined = stdout + "\n" + stderr
-
-    if framework == "pytest":
-        # pytest output: "5 passed, 2 failed, 1 skipped in 1.23s"
-        match = re.search(
-            r"(\d+)\s+passed(?:,\s+(\d+)\s+failed)?(?:,\s+(\d+)\s+skipped)?",
-            combined,
-        )
-        if match:
-            result["passed"] = int(match.group(1))
-            result["failed"] = int(match.group(2)) if match.group(2) else 0
-            result["skipped"] = int(match.group(3)) if match.group(3) else 0
-            result["total"] = result["passed"] + result["failed"] + result["skipped"]
-
-        # Extract failed test names
-        failed_matches = re.findall(r"FAILED\s+([\w:]+)", combined)
-        result["failed_tests"] = failed_matches
-
-    elif framework in ("jest", "vitest"):
-        # Jest/Vitest: "Tests: 2 failed, 5 passed, 7 total"
-        match = re.search(
-            r"Tests:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(?:(\d+)\s+passed,\s*)?(\d+)\s+total",
-            combined,
-        )
-        if match:
-            result["failed"] = int(match.group(1)) if match.group(1) else 0
-            result["skipped"] = int(match.group(2)) if match.group(2) else 0
-            result["passed"] = int(match.group(3)) if match.group(3) else 0
-            result["total"] = int(match.group(4))
-
-        # Extract failed test names
-        failed_matches = re.findall(r"FAIL\s+(.+)", combined)
-        result["failed_tests"] = failed_matches
-
-    elif framework == "mocha":
-        # Mocha: "5 passing (1s)\n2 failing"
-        passing = re.search(r"(\d+)\s+passing", combined)
-        failing = re.search(r"(\d+)\s+failing", combined)
-        pending = re.search(r"(\d+)\s+pending", combined)
-
-        if passing:
-            result["passed"] = int(passing.group(1))
-        if failing:
-            result["failed"] = int(failing.group(1))
-        if pending:
-            result["skipped"] = int(pending.group(1))
-        result["total"] = result["passed"] + result["failed"] + result["skipped"]
-
-    elif framework == "go":
-        # Go test: "ok  \tpackage\t0.123s" or "FAIL\tpackage\t0.123s"
-        # Also: "--- FAIL: TestName"
-        ok_count = len(re.findall(r"^ok\s+", combined, re.MULTILINE))
-        fail_count = len(re.findall(r"^FAIL\s+", combined, re.MULTILINE))
-        skip_count = len(re.findall(r"^SKIP\s+", combined, re.MULTILINE))
-
-        # Try to get individual test counts
-        pass_match = re.search(r"PASS", combined)
-        individual_fails = re.findall(r"--- FAIL:\s+(\w+)", combined)
-
-        result["passed"] = ok_count if ok_count else (1 if pass_match else 0)
-        result["failed"] = len(individual_fails) if individual_fails else fail_count
-        result["skipped"] = skip_count
-        result["total"] = result["passed"] + result["failed"] + result["skipped"]
-        result["failed_tests"] = individual_fails
-
-    elif framework == "cargo":
-        # Rust/Cargo: "test result: ok. 5 passed; 0 failed; 0 ignored"
-        match = re.search(
-            r"(\d+)\s+passed;\s*(\d+)\s+failed;\s*(\d+)\s+ignored",
-            combined,
-        )
-        if match:
-            result["passed"] = int(match.group(1))
-            result["failed"] = int(match.group(2))
-            result["skipped"] = int(match.group(3))
-            result["total"] = result["passed"] + result["failed"] + result["skipped"]
-
-        # Extract failed test names
-        failed_matches = re.findall(r"---- (\S+) stdout ----", combined)
-        result["failed_tests"] = failed_matches
-
-    elif framework == "rspec":
-        # RSpec: "10 examples, 2 failures, 1 pending"
-        match = re.search(
-            r"(\d+)\s+examples?,\s*(\d+)\s+failures?(?:,\s*(\d+)\s+pending)?",
-            combined,
-        )
-        if match:
-            result["total"] = int(match.group(1))
-            result["failed"] = int(match.group(2))
-            result["skipped"] = int(match.group(3)) if match.group(3) else 0
-            result["passed"] = result["total"] - result["failed"] - result["skipped"]
-
-    elif framework in ("maven", "gradle"):
-        # Maven/Gradle: "Tests run: 10, Failures: 2, Errors: 1, Skipped: 1"
-        match = re.search(
-            r"Tests\s+run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)",
-            combined,
-        )
-        if match:
-            result["total"] = int(match.group(1))
-            result["failed"] = int(match.group(2)) + int(match.group(3))  # failures + errors
-            result["skipped"] = int(match.group(4))
-            result["passed"] = result["total"] - result["failed"] - result["skipped"]
-
-    else:
-        # Generic npm test or unknown - try common patterns
-        # Try "X passing, Y failing" pattern
-        match = re.search(r"(\d+)\s+(?:passing|passed)", combined)
-        if match:
-            result["passed"] = int(match.group(1))
-        match = re.search(r"(\d+)\s+(?:failing|failed)", combined)
-        if match:
-            result["failed"] = int(match.group(1))
-        match = re.search(r"(\d+)\s+(?:pending|skipped)", combined)
-        if match:
-            result["skipped"] = int(match.group(1))
-        result["total"] = result["passed"] + result["failed"] + result["skipped"]
-
-    return result
-
-
-@mcp.tool()
-async def run_tests(
-    session_id: str | None = None,
-    workspace_id: str | None = None,
-    project_id: str | None = None,
-    user_id: str | None = None,
-    test_command: str | None = None,
-    timeout: int = 120,
-) -> dict:
-    """Run tests in the workspace and return structured results.
-
-    If test_command is not provided, auto-detects the test framework
-    and runs the appropriate command (npm test, pytest, etc.).
-
-    Args:
-        session_id: Session ID (auto-creates workspace if needed)
-        workspace_id: Legacy workspace ID (optional)
-        project_id: Project ID for workspace path (optional)
-        user_id: User ID for workspace path (optional)
-        test_command: Optional test command to run
-        timeout: Timeout in seconds (default 120)
-
-    Returns:
-        {
-            "success": true/false,
-            "framework": "pytest",
-            "command_used": "pytest -v",
-            "total": 10,
-            "passed": 8,
-            "failed": 2,
-            "skipped": 0,
-            "failed_tests": ["test_foo", "test_bar"],
-            "stdout": "...",
-            "stderr": "...",
-            "duration_seconds": 5.2
-        }
-    """
-    try:
-        # Resolve workspace
-        if session_id:
-            _, workspace_path = get_or_create_workspace(
-                session_id=session_id,
-                project_id=project_id,
-                user_id=user_id,
-                workspace_id=workspace_id,
-            )
-        elif workspace_id:
-            ws = get_workspace(workspace_id)
-            workspace_path = Path(ws["path"])
-        else:
-            return {"success": False, "error": "Either session_id or workspace_id is required"}
-
-        # Auto-detect test framework if command not provided
-        framework = None
-        command = test_command
-
-        if command is None:
-            framework, command = _detect_test_framework(workspace_path)
-            if command is None:
-                return {
-                    "success": False,
-                    "error": "Could not detect test framework. Please provide test_command.",
-                    "hint": "Supported frameworks: pytest, jest, mocha, vitest, go test, cargo test, rspec, maven, gradle",
-                }
-        else:
-            # Try to determine framework from command
-            if "pytest" in command:
-                framework = "pytest"
-            elif "jest" in command:
-                framework = "jest"
-            elif "vitest" in command:
-                framework = "vitest"
-            elif "mocha" in command:
-                framework = "mocha"
-            elif "go test" in command:
-                framework = "go"
-            elif "cargo test" in command:
-                framework = "cargo"
-            elif "rspec" in command:
-                framework = "rspec"
-            elif "mvn test" in command or "maven" in command:
-                framework = "maven"
-            elif "gradle" in command:
-                framework = "gradle"
-            elif "npm test" in command:
-                # Try to detect from package.json
-                framework, _ = _detect_test_framework(workspace_path)
-                if framework is None:
-                    framework = "npm"
-            else:
-                framework = "unknown"
-
-        # Run the test command
-        start_time = time.time()
-        try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=str(workspace_path),
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-            duration = time.time() - start_time
-
-            # Parse test output
-            parsed = _parse_test_output(result.stdout, result.stderr, framework)
-
-            return {
-                "success": result.returncode == 0,
-                "framework": framework,
-                "command_used": command,
-                "total": parsed["total"],
-                "passed": parsed["passed"],
-                "failed": parsed["failed"],
-                "skipped": parsed["skipped"],
-                "failed_tests": parsed["failed_tests"],
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "return_code": result.returncode,
-                "duration_seconds": round(duration, 2),
-            }
-
-        except subprocess.TimeoutExpired:
-            duration = time.time() - start_time
-            return {
-                "success": False,
-                "framework": framework,
-                "command_used": command,
-                "error": f"Test command timed out after {timeout} seconds",
-                "duration_seconds": round(duration, 2),
-            }
-
-    except ValueError as e:
-        return {"success": False, "error": str(e)}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
 async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
     """Internal function to commit all changes and push to Gitea.
 
@@ -1366,6 +847,8 @@ async def commit_and_push(
     workspace_id: str | None = None,
     project_id: str | None = None,
     user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
 ) -> dict:
     """Commit all changes and push to Gitea.
 
@@ -1375,6 +858,8 @@ async def commit_and_push(
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for git remote setup)
+        repo_owner: Gitea repository owner (for git remote setup)
 
     Returns:
         Dict with success, message
@@ -1386,6 +871,8 @@ async def commit_and_push(
             project_id=project_id,
             user_id=user_id,
             workspace_id=workspace_id,
+            repo_name=repo_name,
+            repo_owner=repo_owner,
         )
     elif workspace_id:
         resolved_workspace_id = workspace_id
@@ -1401,6 +888,8 @@ async def create_branch(
     workspace_id: str | None = None,
     project_id: str | None = None,
     user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
 ) -> dict:
     """Create and switch to a git branch. If the branch already exists, switches to it.
 
@@ -1410,6 +899,8 @@ async def create_branch(
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for cloning)
+        repo_owner: Gitea repository owner (for cloning)
 
     Returns:
         Dict with success, branch name, created (True if new, False if existing)
@@ -1422,6 +913,8 @@ async def create_branch(
                 project_id=project_id,
                 user_id=user_id,
                 workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
             )
             cwd = str(workspace_path)
             ws = workspaces[resolved_workspace_id]
@@ -1470,6 +963,8 @@ async def merge_to_main(
     workspace_id: str | None = None,
     project_id: str | None = None,
     user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
 ) -> dict:
     """Merge current branch to main (requires approval).
 
@@ -1478,6 +973,8 @@ async def merge_to_main(
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for workspace resolution)
+        repo_owner: Gitea repository owner (for workspace resolution)
 
     Returns:
         Dict with success, merged branch
@@ -1490,6 +987,8 @@ async def merge_to_main(
                 project_id=project_id,
                 user_id=user_id,
                 workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
             )
             cwd = str(workspace_path)
             ws = workspaces[resolved_workspace_id]
@@ -1529,6 +1028,8 @@ async def get_git_status(
     workspace_id: str | None = None,
     project_id: str | None = None,
     user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
 ) -> dict:
     """Get git status for workspace.
 
@@ -1537,6 +1038,8 @@ async def get_git_status(
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for cloning)
+        repo_owner: Gitea repository owner (for cloning)
 
     Returns:
         Dict with branch, status, files
@@ -1549,6 +1052,8 @@ async def get_git_status(
                 project_id=project_id,
                 user_id=user_id,
                 workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
             )
             cwd = str(workspace_path)
             ws = workspaces[resolved_workspace_id]
@@ -1658,6 +1163,8 @@ async def create_pull_request(
     workspace_id: str | None = None,
     project_id: str | None = None,
     user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
 ) -> dict:
     """Create a pull request from the current branch to main on Gitea.
 
@@ -1668,6 +1175,8 @@ async def create_pull_request(
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for workspace resolution)
+        repo_owner: Gitea repository owner (for workspace resolution)
 
     Returns:
         Dict with success, pr_number, pr_url, html_url
@@ -1682,6 +1191,8 @@ async def create_pull_request(
                 project_id=project_id,
                 user_id=user_id,
                 workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
             )
             ws = workspaces[resolved_workspace_id]
         elif workspace_id:
@@ -1746,6 +1257,8 @@ async def merge_pull_request(
     workspace_id: str | None = None,
     project_id: str | None = None,
     user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
 ) -> dict:
     """Merge a pull request on Gitea and optionally delete the source branch.
 
@@ -1756,6 +1269,8 @@ async def merge_pull_request(
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for workspace resolution)
+        repo_owner: Gitea repository owner (for workspace resolution)
 
     Returns:
         Dict with success, merged, branch_deleted
@@ -1770,6 +1285,8 @@ async def merge_pull_request(
                 project_id=project_id,
                 user_id=user_id,
                 workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
             )
             ws = workspaces[resolved_workspace_id]
         elif workspace_id:
