@@ -62,6 +62,10 @@ from .project import ProjectSummary, ProjectDetail, DeploymentInfo, DeploymentSu
 # User models
 from .user import UserInfo
 
+# Agent definition (YAML config)
+from .agent_definition import AgentDefinition, ApprovalOverride
+
+
 __all__ = [
     # Enums
     "SessionStatus",
@@ -105,6 +109,9 @@ __all__ = [
     "DeploymentSummary",
     # User
     "UserInfo",
+    # Agent definition
+    "AgentDefinition",
+    "ApprovalOverride",
 ]
 
 # Rebuild models to resolve forward references (circular imports between session/project)

@@ -55,7 +55,7 @@ class LLMCallDetail(BaseModel):
     messages: list[LLMMessage]
 
     # Raw request/response for debugging - full JSON as sent/received
-    raw_request: list[dict] | None = None  # The exact messages array sent to LLM API
+    raw_request: dict | None = None  # The exact request sent to LLM API (messages + tools)
     raw_response: LLMRawResponse | None = None  # What the LLM returned
 
     # Executed tools with their results (what we did with the LLM's decisions)

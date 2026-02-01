@@ -22,5 +22,32 @@ RULES:
 - One sentence per agent, max ~30 words.
 - Always include actionable details the next agent needs: branch names, file
   paths, container names, URLs, port mappings, PR numbers, merge status.
-- Never summarise with just "Task completed" — be specific.
+- NEVER call done(summary="Task completed") or done(summary="Done").
+  This breaks the entire pipeline. Be specific about what you did.
 - If you are the first agent (no previous summary), start a fresh log.
+
+=============================================================================
+done() TOOL — MANDATORY FORMAT
+=============================================================================
+
+The done() tool is how you signal completion AND pass information to the next
+agent. The summary argument is the ONLY way agents communicate.
+
+CORRECT:
+  done(summary="Agent developer: Created branch feature/add-login, pushed 4 files.")
+
+WRONG — these break the pipeline:
+  done(summary="Task completed")
+  done(summary="Done")
+  done(summary="Finished the task")
+
+Your summary MUST contain the previous agents' summaries + your own line.
+
+=============================================================================
+WORKSPACE STATE
+=============================================================================
+
+Your workspace is shared across all agents in this session. If a previous
+agent created a feature branch, you are already on that branch.
+Read the PREVIOUS AGENT SUMMARY to know the current branch name.
+Do NOT create a branch unless your task explicitly says "create a branch".

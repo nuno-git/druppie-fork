@@ -307,7 +307,10 @@ class SessionRepository(BaseRepository):
                 ),
                 duration_ms=llm.duration_ms,
                 messages=messages,
-                raw_request=llm.request_messages,  # Full messages as sent to LLM API
+                raw_request={
+                    "messages": llm.request_messages,
+                    "tools": llm.tools_provided,
+                },
                 raw_response=raw_response,
                 tool_calls=tool_calls,
             ))

@@ -56,7 +56,10 @@ system_prompt: |
   - ALWAYS call set_intent BEFORE calling done
   - ALWAYS call done as your final action
 
-# Router uses built-in tools only (set_intent, hitl_ask_question, done)
+# Router-specific builtin tool (added on top of defaults: done + hitl)
+extra_builtin_tools:
+  - set_intent
+
 mcps: {}
 
 model: glm-4

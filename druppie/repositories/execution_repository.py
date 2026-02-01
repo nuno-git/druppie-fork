@@ -252,6 +252,7 @@ class ExecutionRepository(BaseRepository):
         provider: str,
         model: str,
         messages: list[dict],
+        tools: list[dict] | None = None,
     ) -> UUID:
         """Create an LLM call record."""
         llm_call = LlmCall(
@@ -260,6 +261,7 @@ class ExecutionRepository(BaseRepository):
             provider=provider,
             model=model,
             request_messages=messages,
+            tools_provided=tools,
             prompt_tokens=0,
             completion_tokens=0,
             total_tokens=0,

@@ -1,22 +1,14 @@
 """Built-in tools for agents.
 
 These tools are built into the agent runtime and do not require a separate MCP server.
+Each agent declares which builtin tools it needs in its YAML via `builtin_tools`.
 
-Tools:
-- HITL (Human-in-the-Loop):
-  - hitl_ask_question: Free-form text question (pauses for user response)
-  - hitl_ask_multiple_choice_question: Multiple choice question (pauses for user response)
+Default (all agents): done, hitl_ask_question, hitl_ask_multiple_choice_question
+Router adds: set_intent
+Planner adds: make_plan
 
-- Planning:
-  - make_plan: Create an execution plan (pending agent runs)
-
-- Completion:
-  - done: Signal that the agent has completed its task
-
-Note: HITL tool execution (Question record creation) is handled by ToolExecutor.
-This module provides:
-1. Tool definitions (BUILTIN_TOOLS) for LLM
-2. execute_builtin() for non-HITL tools (done, make_plan)
+Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
+Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
 """
 
 from typing import TYPE_CHECKING
@@ -31,12 +23,15 @@ logger = structlog.get_logger()
 
 
 # =============================================================================
-# TOOL DEFINITIONS (OpenAI function format)
+# TOOL DEFINITIONS (OpenAI function format, keyed by name)
 # =============================================================================
 
-BUILTIN_TOOLS = [
-    # HITL Tools
-    {
+# Default builtin tools every agent gets (unless overridden in YAML)
+DEFAULT_BUILTIN_TOOLS = ["done", "hitl_ask_question", "hitl_ask_multiple_choice_question"]
+
+# All builtin tool definitions, keyed by tool name
+BUILTIN_TOOL_DEFS: dict[str, dict] = {
+    "hitl_ask_question": {
         "type": "function",
         "function": {
             "name": "hitl_ask_question",
@@ -57,7 +52,7 @@ BUILTIN_TOOLS = [
             },
         },
     },
-    {
+    "hitl_ask_multiple_choice_question": {
         "type": "function",
         "function": {
             "name": "hitl_ask_multiple_choice_question",
@@ -87,8 +82,7 @@ BUILTIN_TOOLS = [
             },
         },
     },
-    # Completion Tool
-    {
+    "done": {
         "type": "function",
         "function": {
             "name": "done",
@@ -98,15 +92,14 @@ BUILTIN_TOOLS = [
                 "properties": {
                     "summary": {
                         "type": "string",
-                        "description": "A brief summary of what was accomplished",
+                        "description": "A brief summary of what was accomplished is required",
                     },
                 },
                 "required": ["summary"],
             },
         },
     },
-    # Intent Tool (for router agent)
-    {
+    "set_intent": {
         "type": "function",
         "function": {
             "name": "set_intent",
@@ -132,8 +125,7 @@ BUILTIN_TOOLS = [
             },
         },
     },
-    # Planning Tool (for planner agent)
-    {
+    "make_plan": {
         "type": "function",
         "function": {
             "name": "make_plan",
@@ -164,7 +156,25 @@ BUILTIN_TOOLS = [
             },
         },
     },
-]
+}
+
+
+def get_builtin_tools(tool_names: list[str]) -> list[dict]:
+    """Get builtin tool definitions for a list of tool names.
+
+    Args:
+        tool_names: List of builtin tool names (e.g. ["done", "make_plan"])
+
+    Returns:
+        List of OpenAI function tool definitions
+    """
+    tools = []
+    for name in tool_names:
+        if name in BUILTIN_TOOL_DEFS:
+            tools.append(BUILTIN_TOOL_DEFS[name])
+        else:
+            logger.warning("unknown_builtin_tool", tool_name=name)
+    return tools
 
 
 

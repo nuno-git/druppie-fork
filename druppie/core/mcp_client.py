@@ -143,7 +143,7 @@ def classify_error(error: Exception) -> tuple[str, bool, bool]:
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DBSession
-    from druppie.agents.models import AgentDefinition
+    from druppie.domain.agent_definition import AgentDefinition
 
 logger = structlog.get_logger()
 
@@ -244,7 +244,7 @@ class MCPClient:
             Tuple of (requires_approval, required_role)
             - required_role is singular string (not array) per goal.md
         """
-        from druppie.core.models import AgentDefinition
+        from druppie.domain.agent_definition import AgentDefinition
 
         # Step 1: Check agent-specific override (if agent_definition provided)
         if agent_definition is not None:

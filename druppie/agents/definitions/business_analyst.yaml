@@ -89,9 +89,6 @@ mcps:
     - read_file
     - write_file
     - list_dir
-  hitl:
-    - ask_question
-    - ask_choice
 
 # LAYERED APPROVAL SYSTEM:
 # When business_analyst calls write_file (to create functional_design.md),

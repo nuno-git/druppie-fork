@@ -355,6 +355,12 @@ configure_gitea() {
 
     log "Running Gitea setup script..."
     source venv/bin/activate
+
+    export GITEA_URL="http://localhost:3100"
+    export KEYCLOAK_URL="http://localhost:8180"
+    export KEYCLOAK_ADMIN="admin"
+    export KEYCLOAK_ADMIN_PASSWORD="admin"
+
     python scripts/setup_gitea.py || warn "Gitea setup had issues (may already be configured)"
 }
 
@@ -500,6 +506,34 @@ print('Schema created successfully')
     echo "      No manual user seeding - IDs come from Keycloak."
 }
 
+reset_iac() {
+    header "Resetting Keycloak & Gitea (IAC)"
+
+    setup_python_venv
+
+    log "Stopping Keycloak and Gitea containers..."
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" --env-file .env stop keycloak gitea keycloak-db gitea-db
+
+    log "Removing Keycloak and Gitea containers..."
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" --env-file .env rm -f keycloak gitea keycloak-db gitea-db
+
+    log "Removing Keycloak and Gitea volumes..."
+    docker volume rm druppie_new_keycloak_postgres druppie_new_gitea_postgres druppie_new_gitea 2>/dev/null || true
+
+    log "Restarting Keycloak and Gitea..."
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" --env-file .env up -d keycloak-db gitea-db
+    sleep 5
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" --env-file .env up -d keycloak gitea
+
+    wait_for_service "http://localhost:8180/health/ready" "Keycloak" 60
+    wait_for_service "http://localhost:3100/api/healthz" "Gitea" 30
+
+    configure_keycloak
+    configure_gitea
+
+    success "Keycloak & Gitea reset complete!"
+}
+
 # =============================================================================
 # COMMAND HANDLING
 # =============================================================================
@@ -543,6 +577,7 @@ case "${1:-start}" in
         ;;
     reset)
         reset_database
+        reset_iac
         ;;
     *)
         echo "Druppie Development Setup"
@@ -558,7 +593,7 @@ case "${1:-start}" in
         echo "  restart   Restart everything"
         echo "  status    Show status of all services"
         echo "  logs      Show logs (optional: backend|frontend|<service>)"
-        echo "  reset     Reset database (drops all tables, recreates schema)"
+        echo "  reset     Reset database, Keycloak, and Gitea (full IAC reset)"
         exit 1
         ;;
 esac
