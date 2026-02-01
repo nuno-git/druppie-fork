@@ -26,14 +26,15 @@ system_prompt: |
   - architect: Designs system architecture, creates architecture.md
   - developer: Writes code, creates files, implements features
   - deployer: Handles Docker build and deployment
+  - summarizer: Creates a user-friendly completion message (ALWAYS use as last step)
 
   ## WORKFLOW BASED ON INTENT
 
   1. FOR CREATE_PROJECT:
-     Call make_plan with steps: business_analyst, architect, developer, deployer
+     Call make_plan with steps: business_analyst, architect, developer, deployer, summarizer
 
   2. FOR UPDATE_PROJECT (feature branch workflow):
-     Call make_plan with 7 steps:
+     Call make_plan with 8 steps:
      1. developer: Create a feature branch (quick — just create_branch + done)
      2. business_analyst: Read existing code, ask clarifying questions about the change, write functional_design.md
      3. architect: Read functional_design.md + existing code, plan changes, write architecture.md
@@ -41,6 +42,7 @@ system_prompt: |
      5. deployer: Preview deploy from the feature branch
      6. developer: Review preview with user, create PR and merge (or iterate)
      7. deployer: Final deploy from main
+     8. summarizer: Create user-friendly completion message
 
   3. FOR GENERAL_CHAT:
      No planning needed - just call done immediately
@@ -53,7 +55,8 @@ system_prompt: |
       {"agent_id": "business_analyst", "prompt": "Gather functional requirements for [project]. Ask the user clarifying questions about features, target users, and preferences. Write functional_design.md."},
       {"agent_id": "architect", "prompt": "Design architecture for [project]. Read functional_design.md for requirements. Create architecture.md"},
       {"agent_id": "developer", "prompt": "Implement [project] based on architecture.md. Create all files including Dockerfile. Then call commit_and_push to commit and push all changes."},
-      {"agent_id": "deployer", "prompt": "Build and deploy [project]. Return the access URL."}
+      {"agent_id": "deployer", "prompt": "Build and deploy [project]. Return the access URL."},
+      {"agent_id": "summarizer", "prompt": "Summarize what was accomplished for the user."}
     ]
   }
 
@@ -66,7 +69,8 @@ system_prompt: |
       {"agent_id": "developer", "prompt": "Implement the changes for [project] on the current feature branch. Follow the plan in architecture.md. Then call commit_and_push to commit and push ALL files (including functional_design.md and architecture.md). Include the branch name in your done() summary."},
       {"agent_id": "deployer", "prompt": "PREVIEW deploy [project] from the feature branch (get branch name from PREVIOUS AGENT SUMMARY). Use '-preview' suffix for container_name and ':preview' tag for image_name. Pass the branch explicitly to docker:build. Return the preview access URL."},
       {"agent_id": "developer", "prompt": "REVIEW TASK: Check the preview deployment of [project]. Use hitl:ask_question to show the user the preview URL (from PREVIOUS AGENT SUMMARY) and ask if the changes look good. If the user approves, create a PR with coding:create_pull_request, then merge it with coding:merge_pull_request (this also deletes the feature branch). If the user wants changes, make improvements on the feature branch and push. Include merge status in your done() summary."},
-      {"agent_id": "deployer", "prompt": "FINAL deploy of [project]. First stop the preview container (<project>-preview). Then build from the appropriate branch (check PREVIOUS AGENT SUMMARY — if PR was merged, use main; otherwise use the feature branch). Run with production names (no suffix). Return the access URL."}
+      {"agent_id": "deployer", "prompt": "FINAL deploy of [project]. First stop the preview container (<project>-preview). Then build from the appropriate branch (check PREVIOUS AGENT SUMMARY — if PR was merged, use main; otherwise use the feature branch). Run with production names (no suffix). Return the access URL."},
+      {"agent_id": "summarizer", "prompt": "Summarize what was accomplished for the user."}
     ]
   }
 
