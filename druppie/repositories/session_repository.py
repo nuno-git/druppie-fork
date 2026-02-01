@@ -142,6 +142,10 @@ class SessionRepository(BaseRepository):
         """Update session status."""
         self.db.query(SessionModel).filter_by(id=session_id).update({"status": status.value})
 
+    def update_intent(self, session_id: UUID, intent: str) -> None:
+        """Update session intent."""
+        self.db.query(SessionModel).filter_by(id=session_id).update({"intent": intent})
+
     def update_project(self, session_id: UUID, project_id: UUID) -> None:
         """Update session's project."""
         self.db.query(SessionModel).filter_by(id=session_id).update({"project_id": project_id})

@@ -206,10 +206,6 @@ mcps:
         from: project.repo_owner
         hidden: true
         tools: [build]
-      branch:
-        from: session.branch_name
-        hidden: false
-        tools: [build]  # Build from feature branch or main
       user_id:
         from: session.user_id
         hidden: true

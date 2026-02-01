@@ -98,12 +98,14 @@ class BaseLLM(ABC):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """Send an asynchronous chat completion request.
 
         Args:
             messages: List of message dicts with role and content
             tools: Optional list of tool definitions in OpenAI format
+            max_tokens: Override max tokens for this call (uses instance default if None)
 
         Returns:
             LLMResponse with content and optional tool_calls

@@ -57,5 +57,5 @@ mcps:
 
 model: glm-4
 temperature: 0.1
-max_tokens: 4096
-max_iterations: 10
+max_tokens: 100000
+max_iterations: 30

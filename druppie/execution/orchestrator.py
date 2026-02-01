@@ -279,10 +279,6 @@ class Orchestrator:
         if session.intent:
             context["intent"] = session.intent
 
-        # Add feature branch name if available (for update_project workflow)
-        if session.branch_name:
-            context["branch_name"] = session.branch_name
-
         # Add git repo info if available
         if project.repo_name:
             context["repo_name"] = project.repo_name

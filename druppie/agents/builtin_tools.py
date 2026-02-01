@@ -25,7 +25,7 @@ from uuid import UUID
 import structlog
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session as DBSession
+    from druppie.repositories import ExecutionRepository
 
 logger = structlog.get_logger()
 
@@ -176,7 +176,7 @@ async def set_intent(
     intent: str,
     session_id: UUID,
     agent_run_id: UUID,
-    db: "DBSession",
+    execution_repo: "ExecutionRepository",
     project_id: str | None = None,
     project_name: str | None = None,
 ) -> dict:
@@ -193,15 +193,20 @@ async def set_intent(
         intent: Intent type (create_project, update_project, general_chat)
         session_id: Session UUID
         agent_run_id: Agent run UUID for tracking
-        db: Database session (caller commits)
+        execution_repo: Execution repository (used to derive db and other repos)
         project_id: For update_project - the project to update
         project_name: For create_project - name for new project
 
     Returns:
         Success message with project details
     """
-    from druppie.db.models import Session, Project, User, AgentRun
+    from druppie.repositories import SessionRepository, ProjectRepository, UserRepository
     from druppie.core.gitea import get_gitea_client
+
+    db = execution_repo.db
+    session_repo = SessionRepository(db)
+    project_repo = ProjectRepository(db)
+    user_repo = UserRepository(db)
 
     logger.info(
         "set_intent",
@@ -221,14 +226,14 @@ async def set_intent(
         }
 
     # Get session
-    session = db.query(Session).filter(Session.id == session_id).first()
+    session = session_repo.get_by_id(session_id)
     if not session:
         return {
             "success": False,
             "error": f"Session not found: {session_id}",
         }
 
-    session.intent = intent
+    session_repo.update_intent(session_id, intent)
     result = {
         "success": True,
         "intent": intent,
@@ -241,14 +246,9 @@ async def set_intent(
         if not project_name:
             project_name = "new-project"
 
-        new_project = Project(
-            name=project_name,
-            owner_id=session.user_id,
-        )
-        db.add(new_project)
-        db.flush()  # Get the project ID
+        new_project = project_repo.create(name=project_name, user_id=session.user_id)
 
-        session.project_id = new_project.id
+        session_repo.update_project(session_id, new_project.id)
         final_project_id = new_project.id
         result["project_id"] = str(new_project.id)
         result["project_name"] = project_name
@@ -262,7 +262,7 @@ async def set_intent(
         # Create Gitea repo - REQUIRED for coding and docker workflows
         gitea_error = None
         try:
-            user = db.query(User).filter(User.id == session.user_id).first()
+            user = user_repo.get_by_id(session.user_id)
             if not user:
                 gitea_error = f"User {session.user_id} not found in database"
             else:
@@ -292,9 +292,12 @@ async def set_intent(
                         repo_owner = repo_result.get("owner", gitea_username)
                         repo_url = repo_result.get("repo_url")
 
-                        new_project.repo_name = repo_name
-                        new_project.repo_url = repo_url
-                        new_project.repo_owner = repo_owner
+                        project_repo.update_repo(
+                            project_id=new_project.id,
+                            repo_name=repo_name,
+                            repo_url=repo_url,
+                            repo_owner=repo_owner,
+                        )
 
                         result["repo_name"] = repo_name
                         result["repo_url"] = repo_url
@@ -338,80 +341,10 @@ async def set_intent(
             }
 
         try:
-            session.project_id = UUID(project_id)
+            session_repo.update_project(session_id, UUID(project_id))
             final_project_id = UUID(project_id)
             result["project_id"] = project_id
-
-            # Generate feature branch name and store on session
-            branch_name = f"feature/{str(session_id)[:8]}-update"
-            session.branch_name = branch_name
-            result["branch_name"] = branch_name
-
-            # Create the feature branch in the repo via coding MCP
-            # IMPORTANT: We must first initialize the workspace by calling a tool
-            # with repo_name/repo_owner so the coding MCP clones the repo.
-            # create_branch resolves repo from the workspace's session_id, but
-            # the workspace must already contain the cloned repo.
-            try:
-                from druppie.execution.mcp_http import MCPHttp
-                from druppie.core.mcp_config import MCPConfig
-
-                project = db.query(Project).filter(Project.id == UUID(project_id)).first()
-                if project and project.repo_name:
-                    mcp_config = MCPConfig()
-                    mcp_http = MCPHttp(mcp_config)
-
-                    # Step 1: Initialize workspace by cloning the repo
-                    # list_dir with repo info triggers the workspace setup
-                    init_result = await mcp_http.call(
-                        "coding",
-                        "list_dir",
-                        {
-                            "session_id": str(session_id),
-                            "repo_name": project.repo_name,
-                            "repo_owner": project.repo_owner,
-                            "path": ".",
-                        },
-                    )
-                    logger.info(
-                        "workspace_initialized",
-                        session_id=str(session_id),
-                        repo_name=project.repo_name,
-                        success=init_result.get("success"),
-                        file_count=init_result.get("count", 0),
-                    )
-
-                    # Step 2: Create the feature branch (workspace now has the repo)
-                    branch_result = await mcp_http.call(
-                        "coding",
-                        "create_branch",
-                        {
-                            "session_id": str(session_id),
-                            "branch_name": branch_name,
-                        },
-                    )
-                    if branch_result.get("success"):
-                        logger.info(
-                            "feature_branch_created",
-                            session_id=str(session_id),
-                            branch_name=branch_name,
-                        )
-                    else:
-                        logger.warning(
-                            "feature_branch_creation_failed",
-                            session_id=str(session_id),
-                            branch_name=branch_name,
-                            error=branch_result.get("error"),
-                        )
-            except Exception as e:
-                logger.warning(
-                    "feature_branch_creation_error",
-                    session_id=str(session_id),
-                    branch_name=branch_name,
-                    error=str(e),
-                )
-
-            result["message"] = f"Linked to existing project {project_id} with feature branch {branch_name}"
+            result["message"] = f"Linked to existing project {project_id}"
         except ValueError:
             return {
                 "success": False,
@@ -422,7 +355,7 @@ async def set_intent(
         result["message"] = "Intent set to general_chat"
 
     # Update the pending planner's prompt with intent context
-    _update_planner_prompt(db, session_id, intent, final_project_id)
+    _update_planner_prompt(execution_repo, session_id, intent, final_project_id)
 
     db.flush()
 
@@ -430,14 +363,14 @@ async def set_intent(
         "intent_set_complete",
         session_id=str(session_id),
         intent=intent,
-        project_id=str(session.project_id) if session.project_id else None,
+        project_id=str(final_project_id) if final_project_id else None,
     )
 
     return result
 
 
 def _update_planner_prompt(
-    db: "DBSession",
+    execution_repo: "ExecutionRepository",
     session_id: UUID,
     intent: str,
     project_id: UUID | None,
@@ -448,23 +381,12 @@ def _update_planner_prompt(
     intent context to its planned_prompt.
 
     Args:
-        db: Database session
+        execution_repo: Execution repository
         session_id: Session UUID
         intent: Intent type
         project_id: Project UUID (or None)
     """
-    from druppie.db.models import AgentRun
-
-    # Find the pending planner run for this session
-    planner_run = (
-        db.query(AgentRun)
-        .filter(
-            AgentRun.session_id == session_id,
-            AgentRun.agent_id == "planner",
-            AgentRun.status == "pending",
-        )
-        .first()
-    )
+    planner_run = execution_repo.get_pending_by_agent_id(session_id, "planner")
 
     if not planner_run:
         logger.warning(
@@ -478,7 +400,8 @@ def _update_planner_prompt(
 PROJECT_ID: {str(project_id) if project_id else 'new'}
 
 """
-    planner_run.planned_prompt = intent_context + (planner_run.planned_prompt or "")
+    new_prompt = intent_context + (planner_run.planned_prompt or "")
+    execution_repo.update_planned_prompt(planner_run.id, new_prompt)
 
     logger.info(
         "planner_prompt_updated",
@@ -496,7 +419,7 @@ async def make_plan(
     steps: list[dict],
     session_id: UUID,
     agent_run_id: UUID,
-    db: "DBSession",
+    execution_repo: "ExecutionRepository",
 ) -> dict:
     """Create an execution plan as pending agent runs.
 
@@ -507,12 +430,12 @@ async def make_plan(
         steps: List of steps, each with agent_id and prompt
         session_id: Session UUID
         agent_run_id: Agent run UUID for tracking
-        db: Database session (caller commits)
+        execution_repo: Execution repository
 
     Returns:
         Success message with plan details
     """
-    from druppie.db.models import AgentRun
+    from druppie.domain.common import AgentRunStatus
 
     logger.info(
         "make_plan",
@@ -527,7 +450,7 @@ async def make_plan(
             "error": "No steps provided",
         }
 
-    # Create pending agent runs
+    # Create pending agent runs via repository
     created_runs = []
     for i, step in enumerate(steps):
         step_agent_id = step.get("agent_id")
@@ -542,22 +465,18 @@ async def make_plan(
             )
             continue
 
-        agent_run = AgentRun(
+        execution_repo.create_agent_run(
             session_id=session_id,
             agent_id=step_agent_id,
-            status="pending",
+            status=AgentRunStatus.PENDING,
             planned_prompt=step_prompt,
             sequence_number=i,
         )
-        db.add(agent_run)
         created_runs.append({
             "sequence": i,
             "agent_id": step_agent_id,
             "prompt_preview": step_prompt[:100] + "..." if len(step_prompt) > 100 else step_prompt,
         })
-
-    # Note: Caller (ToolExecutor) commits the transaction
-    db.flush()
 
     logger.info(
         "plan_created",
@@ -580,15 +499,19 @@ async def done(
     summary: str,
     session_id: UUID,
     agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
 ) -> dict:
     """Signal that the agent has completed its task.
 
     This does NOT pause execution - it signals completion immediately.
+    Also relays the summary to the next pending agent by prepending it
+    to that agent's planned_prompt.
 
     Args:
         summary: Summary of what was accomplished
         session_id: Session UUID
         agent_run_id: Agent run UUID for tracking
+        execution_repo: Execution repository
 
     Returns:
         Completion status with summary
@@ -599,6 +522,23 @@ async def done(
         agent_run_id=str(agent_run_id),
         summary=summary[:200] if summary else "",
     )
+
+    # Relay summary to next pending agent
+    next_run = execution_repo.get_next_pending(session_id)
+    if next_run and next_run.planned_prompt:
+        new_prompt = (
+            f"PREVIOUS AGENT SUMMARY:\n{summary}\n\n---\n\n"
+            + next_run.planned_prompt
+        )
+        execution_repo.update_planned_prompt(next_run.id, new_prompt)
+        execution_repo.flush()
+        logger.info(
+            "summary_relayed_to_next_agent",
+            session_id=str(session_id),
+            from_agent_run=str(agent_run_id),
+            to_agent_run=str(next_run.id),
+            to_agent_id=next_run.agent_id,
+        )
 
     return {
         "status": "completed",
@@ -615,7 +555,7 @@ async def execute_builtin(
     args: dict,
     session_id: UUID,
     agent_run_id: UUID,
-    db: "DBSession",
+    execution_repo: "ExecutionRepository",
 ) -> dict:
     """Execute a non-HITL built-in tool.
 
@@ -628,7 +568,7 @@ async def execute_builtin(
         args: Tool arguments
         session_id: Session UUID
         agent_run_id: Agent run UUID for tracking
-        db: Database session (caller commits)
+        execution_repo: Execution repository
 
     Returns:
         Tool result dict
@@ -638,20 +578,21 @@ async def execute_builtin(
             summary=args.get("summary", ""),
             session_id=session_id,
             agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
         )
     elif tool_name == "make_plan":
         return await make_plan(
             steps=args.get("steps", []),
             session_id=session_id,
             agent_run_id=agent_run_id,
-            db=db,
+            execution_repo=execution_repo,
         )
     elif tool_name == "set_intent":
         return await set_intent(
             intent=args.get("intent", "general_chat"),
             session_id=session_id,
             agent_run_id=agent_run_id,
-            db=db,
+            execution_repo=execution_repo,
             project_id=args.get("project_id"),
             project_name=args.get("project_name"),
         )

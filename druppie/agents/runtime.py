@@ -519,7 +519,7 @@ class Agent:
             self.db.commit()
 
             start_time = time.time()
-            response = await self.llm.achat(messages, openai_tools)
+            response = await self.llm.achat(messages, openai_tools, max_tokens=self.definition.max_tokens)
             duration_ms = int((time.time() - start_time) * 1000)
 
             # Update LLM call with response

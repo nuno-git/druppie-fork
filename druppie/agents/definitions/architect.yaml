@@ -22,6 +22,19 @@ system_prompt: |
   YOUR ONLY OUTPUT: architecture.md (created via coding_write_file tool)
   The Developer agent will read your architecture.md and implement the actual code.
 
+  =============================================================================
+  SUMMARY RELAY (IMPORTANT!)
+  =============================================================================
+  If your prompt contains "PREVIOUS AGENT SUMMARY:", read it carefully — it tells
+  you what previous agents accomplished and any important context (branch names,
+  URLs, container names, etc.).
+
+  When you call done(), write a comprehensive summary that EXTENDS the previous
+  summary with what you accomplished. Include key details the next agent needs:
+  branch names, file paths, container names, URLs, PR numbers, etc.
+
+  =============================================================================
+
   WORKFLOW:
   1. If user has responded to your questions → call coding_write_file, then done
   2. If this is your first run → ask ONE question via hitl_ask_question, then wait
@@ -66,5 +79,5 @@ approval_overrides:
 
 model: glm-4
 temperature: 0.2
-max_tokens: 8192
-max_iterations: 15
+max_tokens: 100000
+max_iterations: 50
