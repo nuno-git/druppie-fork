@@ -26,11 +26,11 @@ mcps:
       repo_name:
         from: project.repo_name
         hidden: true
-        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, run_command]
+        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
       repo_owner:
         from: project.repo_owner
         hidden: true
-        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, run_command]
+        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
       # NOTE: commit_and_push does NOT need branch injection.
       # It pushes whatever branch the workspace is currently on (set by create_branch).
       # The workspace tracks its own branch internally via ws["branch"].
@@ -102,33 +102,6 @@ mcps:
               description: "File path to delete"
           required:
             - path
-
-      - name: run_command
-        description: "Execute shell command in workspace"
-        requires_approval: true
-        required_role: developer
-        parameters:
-          type: object
-          properties:
-            command:
-              type: string
-              description: "Shell command to run"
-          required:
-            - command
-
-      - name: run_tests
-        description: "Run tests in workspace with auto-detection of test framework"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            test_command:
-              type: string
-              description: "Test command (auto-detects if not provided)"
-            timeout:
-              type: integer
-              description: "Timeout in seconds (default 120)"
-          required: []
 
       - name: commit_and_push
         description: "Commit and push changes to Gitea"
@@ -392,46 +365,6 @@ mcps:
             - container_name
             - command
 
-  hitl:
-    # HITL tools are BUILT-IN to the backend (druppie/agents/builtin_tools.py)
-    # No external MCP server needed - these tools are implemented directly
-    url: builtin://hitl
-    description: "Human-in-the-loop (built-in) - questions stored directly in database"
-    builtin: true
-    tools:
-      - name: ask_question
-        description: "Ask user a free-form text question"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            question:
-              type: string
-              description: "The question to ask the user"
-            context:
-              type: string
-              description: "Optional context explaining why this question is being asked"
-          required:
-            - question
-
-      - name: ask_choice
-        description: "Ask user a multiple choice question"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            question:
-              type: string
-              description: "The question to ask the user"
-            choices:
-              type: array
-              description: "List of choices for the user to select from"
-            allow_other:
-              type: boolean
-              description: "Whether to allow a custom 'Other' answer (default: true)"
-            context:
-              type: string
-              description: "Optional context explaining why this question is being asked"
-          required:
-            - question
-            - choices
+  # NOTE: HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question) are
+  # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
+  # Configure per-agent via `builtin_tools` in agent YAML files.

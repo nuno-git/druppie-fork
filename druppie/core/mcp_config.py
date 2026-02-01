@@ -29,9 +29,8 @@ Example mcp_config.yaml:
         tools:
           - name: write_file
             requires_approval: false
-          - name: run_command
-            requires_approval: true
-            required_role: developer
+          - name: commit_and_push
+            requires_approval: false
 """
 
 import os
@@ -44,7 +43,7 @@ import structlog
 import yaml
 
 if TYPE_CHECKING:
-    from druppie.agents.models import AgentDefinition
+    from druppie.domain.agent_definition import AgentDefinition
 
 logger = structlog.get_logger()
 
