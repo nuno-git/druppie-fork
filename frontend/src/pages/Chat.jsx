@@ -9,7 +9,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, ExternalLink, Plus, Copy, Check } from 'lucide-react'
+import { Send, ExternalLink, Plus, Copy, Check, CheckCircle, XCircle } from 'lucide-react'
 import {
   getSessions,
   getSession,
@@ -18,7 +18,10 @@ import {
   rejectApproval,
   answerQuestion,
 } from '../services/api'
+import { getUserInfo } from '../services/keycloak'
 import { getAgentConfig, getAgentColorClasses } from '../utils/agentConfig'
+import ApprovalCard from '../components/chat/ApprovalCard'
+import HITLQuestionMessage from '../components/chat/HITLQuestionMessage'
 
 // --- Helpers ---
 
@@ -156,7 +159,7 @@ const buildVisibleJson = (data, containerEl) => {
     if (entry.type === 'agent_run' && entry.agent_run) {
       const run = entry.agent_run
       const runEl = containerEl.querySelector(
-        `details[data-type="agent-run"][data-timeline-idx="${i}"]`
+        `[data-type="agent-run"][data-timeline-idx="${i}"]`
       )
 
       const runEntry = {
@@ -166,8 +169,9 @@ const buildVisibleJson = (data, containerEl) => {
         sequence_number: run.sequence_number,
       }
 
-      // Only include LLM calls if the agent run <details> is open
-      if (runEl?.open && run.llm_calls?.length) {
+      // Only include LLM calls if the details panel is visible
+      const moreDetailsEl = runEl?.querySelector('[data-type="more-details"]')
+      if (moreDetailsEl && run.llm_calls?.length) {
         runEntry.llm_calls = run.llm_calls.map((llm, li) => {
           const llmEl = runEl.querySelector(
             `details[data-type="llm-call"][data-llm-idx="${li}"]`
@@ -229,62 +233,155 @@ const ACTIVE_STATUSES = new Set([
   'waiting_answer',
 ])
 
-// --- Tool Call ---
+// --- Extract approvals and HITL questions from LLM calls ---
 
-const ToolCallItem = ({ tc, tcIndex, sessionId }) => {
+const extractSurfacedItems = (llmCalls) => {
+  const items = []
+  llmCalls?.forEach((llm) => {
+    llm.tool_calls?.forEach((tc) => {
+      if (tc.approval) {
+        items.push({ type: 'approval', tc })
+      } else if (tc.tool_name?.includes('hitl_ask')) {
+        items.push({ type: 'question', tc })
+      }
+    })
+  })
+  return items
+}
+
+// --- Surfaced Approval Card (uses ApprovalCard for pending, simple display for resolved) ---
+
+const SurfacedApproval = ({ tc, sessionId }) => {
   const queryClient = useQueryClient()
-  const [answer, setAnswer] = useState('')
+  const user = getUserInfo()
 
   const approveMut = useMutation({
-    mutationFn: () => approveApproval(tc.approval?.id, ''),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
+    mutationFn: (approvalId) => approveApproval(approvalId, ''),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
   })
 
   const rejectMut = useMutation({
-    mutationFn: () => rejectApproval(tc.approval?.id, ''),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
+    mutationFn: ({ approvalId, reason }) => rejectApproval(approvalId, reason || ''),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
   })
+
+  // Pending approval → use ApprovalCard with role checking
+  if (tc.approval.status === 'pending') {
+    const approvalData = {
+      task_id: tc.approval.id,
+      task_name: tc.tool_name,
+      mcp_tool: tc.tool_name,
+      mcp_arguments: tc.arguments,
+      required_role: tc.approval.required_role,
+      required_roles: tc.approval.required_role ? [tc.approval.required_role] : ['admin'],
+      approval_type: 'single',
+      required_approvals: 1,
+      current_approvals: 0,
+      approved_by_roles: [],
+      approved_by_ids: [],
+    }
+
+    return (
+      <ApprovalCard
+        approval={approvalData}
+        onApprove={(id) => approveMut.mutate(id)}
+        onReject={(id, reason) => rejectMut.mutate({ approvalId: id, reason })}
+        isProcessing={approveMut.isPending || rejectMut.isPending}
+        currentUserId={user?.id}
+        sessionId={sessionId}
+        userRoles={user?.roles || []}
+        chatInline
+      />
+    )
+  }
+
+  // Resolved approval → simple status display
+  const isApproved = tc.approval.status === 'approved'
+  return (
+    <div className={`mt-3 rounded-lg border p-4 ${
+      isApproved ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+    }`}>
+      <div className="flex items-center gap-2">
+        {isApproved ? (
+          <CheckCircle className="w-5 h-5 text-green-600" />
+        ) : (
+          <XCircle className="w-5 h-5 text-red-600" />
+        )}
+        <span className={`text-sm font-medium ${isApproved ? 'text-green-800' : 'text-red-800'}`}>
+          {tc.tool_name} — {isApproved ? 'Approved' : 'Rejected'}
+        </span>
+        <StatusBadge status={tc.approval.status} />
+      </div>
+      {tc.approval.resolved_at && (
+        <div className="text-xs text-gray-500 mt-1 ml-7">
+          {new Date(tc.approval.resolved_at).toLocaleString()}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// --- Surfaced HITL Question (uses HITLQuestionMessage) ---
+
+const SurfacedQuestion = ({ tc, agentId, sessionId }) => {
+  const queryClient = useQueryClient()
 
   const answerMut = useMutation({
-    mutationFn: () => answerQuestion(tc.question_id, answer),
-    onSuccess: () => {
-      setAnswer('')
-      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
-    },
+    mutationFn: ({ questionId, answer }) => answerQuestion(questionId, answer),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
   })
 
-  const isPendingApproval = tc.approval?.status === 'pending'
-  const isWaitingAnswer = tc.status === 'waiting_answer' && tc.question_id
-  const needsAction = isPendingApproval || isWaitingAnswer
+  const isAnswered = tc.status === 'completed'
 
-  const detailsRef = useRef(null)
-  const autoOpenedRef = useRef(false)
+  // Normalize choices - API may return strings or objects
+  const rawChoices = tc.arguments?.choices || tc.arguments?.options || []
+  const choices = rawChoices.map(c =>
+    typeof c === 'string' ? c : c.text || c.label || String(c)
+  )
 
-  useEffect(() => {
-    if (needsAction && !autoOpenedRef.current && detailsRef.current) {
-      detailsRef.current.open = true
-      autoOpenedRef.current = true
+  // Parse the answer - tc.result may be a JSON string with {answer, question, status, ...}
+  let displayAnswer = null
+  if (isAnswered && tc.result) {
+    try {
+      const parsed = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+      displayAnswer = parsed.answer || parsed.text || (typeof parsed === 'string' ? parsed : tc.result)
+    } catch {
+      displayAnswer = tc.result
     }
-  }, [needsAction])
+    // If still an object, stringify it cleanly
+    if (typeof displayAnswer === 'object') {
+      displayAnswer = JSON.stringify(displayAnswer)
+    }
+  }
+
+  const questionData = {
+    id: tc.question_id,
+    agent_id: agentId,
+    question: tc.arguments?.question || 'Agent is asking a question',
+    choices,
+    context: tc.arguments?.context,
+  }
 
   return (
+    <HITLQuestionMessage
+      question={questionData}
+      onAnswer={(qId, answer) => answerMut.mutate({ questionId: qId, answer })}
+      isAnswering={answerMut.isPending}
+      answered={isAnswered}
+      userAnswer={displayAnswer}
+    />
+  )
+}
+
+// --- Tool Call ---
+
+const ToolCallItem = ({ tc, tcIndex }) => {
+  return (
     <div className="ml-4 border-l-2 border-gray-200 pl-3 py-1">
-      <details ref={detailsRef} data-type="tool-call" data-tc-idx={tcIndex}>
+      <details data-type="tool-call" data-tc-idx={tcIndex}>
         <summary className="cursor-pointer text-sm flex items-center gap-2">
           <code className="text-purple-600 font-medium">{tc.tool_name}</code>
           <StatusBadge status={tc.status} />
-          {isPendingApproval && (
-            <span className="text-xs text-yellow-600 font-medium">
-              needs approval
-            </span>
-          )}
-          {isWaitingAnswer && (
-            <span className="text-xs text-yellow-600 font-medium">
-              needs answer
-            </span>
-          )}
         </summary>
         <div className="mt-2 space-y-2 text-sm">
           <JsonBlock label="Arguments" data={tc.arguments} />
@@ -297,81 +394,17 @@ const ToolCallItem = ({ tc, tcIndex, sessionId }) => {
           {tc.approval && <JsonBlock label="Approval details" data={tc.approval} />}
         </div>
       </details>
-
-      {isPendingApproval && (
-        <div className="mt-2 ml-4 p-3 bg-blue-50 border border-blue-200 rounded">
-          <p className="text-sm text-gray-700 mb-2">
-            <strong>{tc.tool_name}</strong> requires approval
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => approveMut.mutate()}
-              disabled={approveMut.isPending}
-              className="px-3 py-1.5 bg-green-600 text-white text-sm rounded hover:bg-green-700 disabled:opacity-50"
-            >
-              {approveMut.isPending ? 'Approving...' : 'Approve'}
-            </button>
-            <button
-              onClick={() => rejectMut.mutate()}
-              disabled={rejectMut.isPending}
-              className="px-3 py-1.5 bg-red-600 text-white text-sm rounded hover:bg-red-700 disabled:opacity-50"
-            >
-              {rejectMut.isPending ? 'Rejecting...' : 'Reject'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {isWaitingAnswer && (
-        <div className="mt-2 ml-4 p-3 bg-yellow-50 border border-yellow-200 rounded">
-          <p className="text-sm font-medium text-yellow-800 mb-2">
-            {tc.arguments?.question || 'Agent is waiting for your answer'}
-          </p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={answer}
-              onChange={(e) => setAnswer(e.target.value)}
-              onKeyDown={(e) =>
-                e.key === 'Enter' && answer.trim() && answerMut.mutate()
-              }
-              placeholder="Type your answer..."
-              className="flex-1 px-3 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-yellow-500"
-            />
-            <button
-              onClick={() => answerMut.mutate()}
-              disabled={!answer.trim() || answerMut.isPending}
-              className="px-3 py-1.5 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700 disabled:opacity-50"
-            >
-              {answerMut.isPending ? 'Sending...' : 'Answer'}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
 
 // --- LLM Call ---
 
-const LLMCallItem = ({ llmCall, index, sessionId }) => {
+const LLMCallItem = ({ llmCall, index }) => {
   const toolCount = llmCall.tool_calls?.length || 0
-  const hasActionableTools = llmCall.tool_calls?.some(
-    (tc) => tc.approval?.status === 'pending' || (tc.status === 'waiting_answer' && tc.question_id)
-  )
-
-  const detailsRef = useRef(null)
-  const autoOpenedRef = useRef(false)
-
-  useEffect(() => {
-    if (hasActionableTools && !autoOpenedRef.current && detailsRef.current) {
-      detailsRef.current.open = true
-      autoOpenedRef.current = true
-    }
-  }, [hasActionableTools])
 
   return (
-    <details ref={detailsRef} data-type="llm-call" data-llm-idx={index} className="ml-4 border-l-2 border-blue-200 pl-3 py-1">
+    <details data-type="llm-call" data-llm-idx={index} className="ml-4 border-l-2 border-blue-200 pl-3 py-1">
       <summary className="cursor-pointer text-sm flex items-center gap-2">
         <span className="text-gray-500">LLM #{index + 1}</span>
         <code className="text-xs text-gray-600">{llmCall.model}</code>
@@ -386,7 +419,7 @@ const LLMCallItem = ({ llmCall, index, sessionId }) => {
       </summary>
       <div className="mt-2 space-y-1">
         {llmCall.tool_calls?.map((tc, i) => (
-          <ToolCallItem key={tc.id || i} tc={tc} tcIndex={i} sessionId={sessionId} />
+          <ToolCallItem key={tc.id || i} tc={tc} tcIndex={i} />
         ))}
         {toolCount === 0 && (
           <p className="text-xs text-gray-400 ml-4">No tool calls</p>
@@ -399,22 +432,17 @@ const LLMCallItem = ({ llmCall, index, sessionId }) => {
 // --- Agent Run ---
 
 const AgentRunItem = ({ run, timelineIndex, sessionId }) => {
-  const detailsRef = useRef(null)
-  const autoOpenedRef = useRef(false)
+  const [showDetails, setShowDetails] = useState(false)
   const isActive = ACTIVE_STATUSES.has(run.status)
   const llmCount = run.llm_calls?.length || 0
 
-  // Auto-open once when run becomes active, then let user control
-  useEffect(() => {
-    if (isActive && !autoOpenedRef.current && detailsRef.current) {
-      detailsRef.current.open = true
-      autoOpenedRef.current = true
-    }
-  }, [isActive])
+  // Extract approvals and HITL questions from LLM calls to surface them
+  const surfacedItems = extractSurfacedItems(run.llm_calls)
 
   return (
-    <details ref={detailsRef} data-type="agent-run" data-timeline-idx={timelineIndex} className="border rounded-lg overflow-hidden">
-      <summary className="cursor-pointer px-4 py-3 bg-gray-50 hover:bg-gray-100 flex items-center gap-2 text-sm">
+    <div className="border rounded-lg overflow-hidden" data-type="agent-run" data-timeline-idx={timelineIndex}>
+      {/* Header - always visible */}
+      <div className="px-4 py-3 bg-gray-50 flex items-center gap-2 text-sm">
         <AgentBadge agentId={run.agent_id} />
         <StatusBadge status={run.status} />
         <span className="text-xs text-gray-500">#{run.sequence_number}</span>
@@ -424,21 +452,55 @@ const AgentRunItem = ({ run, timelineIndex, sessionId }) => {
             ? ` · ${run.token_usage.total_tokens} tokens`
             : ''}
         </span>
-      </summary>
-      <div className="px-4 py-3 space-y-1 border-t">
-        {run.llm_calls?.map((llm, i) => (
-          <LLMCallItem
-            key={llm.id || i}
-            llmCall={llm}
-            index={i}
-            sessionId={sessionId}
-          />
-        ))}
-        {llmCount === 0 && (
-          <p className="text-sm text-gray-400">No LLM calls yet</p>
+        {llmCount > 0 && (
+          <button
+            onClick={() => setShowDetails(!showDetails)}
+            className={`ml-auto px-2 py-0.5 text-xs rounded transition-colors ${
+              showDetails
+                ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+            }`}
+          >
+            {showDetails ? 'Hide' : 'Details'}
+          </button>
         )}
       </div>
-    </details>
+
+      {/* Surfaced approvals and HITL questions - always visible */}
+      {surfacedItems.length > 0 && (
+        <div className="px-4 py-3 space-y-3 border-t">
+          {surfacedItems.map((item, i) => (
+            <div key={i}>
+              {item.type === 'approval' && (
+                <SurfacedApproval tc={item.tc} sessionId={sessionId} />
+              )}
+              {item.type === 'question' && (
+                <SurfacedQuestion tc={item.tc} agentId={run.agent_id} sessionId={sessionId} />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* LLM call details (toggled by header button) */}
+      {showDetails && llmCount > 0 && (
+        <div data-type="more-details" data-open="true" className="px-4 py-3 space-y-1 border-t">
+          {run.llm_calls?.map((llm, i) => (
+            <LLMCallItem
+              key={llm.id || i}
+              llmCall={llm}
+              index={i}
+            />
+          ))}
+        </div>
+      )}
+
+      {llmCount === 0 && isActive && (
+        <div className="px-4 py-3 border-t">
+          <p className="text-sm text-gray-400">No LLM calls yet</p>
+        </div>
+      )}
+    </div>
   )
 }
 

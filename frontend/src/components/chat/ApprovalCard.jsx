@@ -91,7 +91,7 @@ const getToolInfo = (toolName) => {
   return tools[toolName] || { icon: Code, label: toolName, color: 'text-gray-600' }
 }
 
-const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUserId, sessionId, userRoles = [] }) => {
+const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUserId, sessionId, userRoles = [], chatInline = false }) => {
   const [showRejectInput, setShowRejectInput] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [showNewContent, setShowNewContent] = useState(false)
@@ -441,8 +441,8 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
             </div>
           )}
 
-          {/* View full conversation link */}
-          {sessionId && (
+          {/* View full conversation link (hidden when already on chat page) */}
+          {sessionId && !chatInline && (
             <div className="mb-3 pt-2 border-t border-amber-200">
               <Link
                 to={`/chat?session=${sessionId}`}
@@ -478,7 +478,7 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
               </span>
             </div>
           ) : !userCanApprove ? (
-            /* User cannot approve - show waiting state with contact option */
+            /* User cannot approve - show waiting state */
             <div className="space-y-3">
               <div className="flex items-center gap-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
                 <Clock className="w-5 h-5 text-blue-600" />
@@ -491,13 +491,15 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
                   </p>
                 </div>
               </div>
-              <button
-                onClick={handleOpenContactModal}
-                className="flex items-center gap-2 px-4 py-2 text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              >
-                <Users className="w-4 h-4" />
-                <span>Contact {requiredRoles[0] || 'approvers'}</span>
-              </button>
+              {!chatInline && (
+                <button
+                  onClick={handleOpenContactModal}
+                  className="flex items-center gap-2 px-4 py-2 text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                >
+                  <Users className="w-4 h-4" />
+                  <span>Contact {requiredRoles[0] || 'approvers'}</span>
+                </button>
+              )}
             </div>
           ) : (
             <div className="flex items-center gap-2" role="group" aria-label="Approval actions">
