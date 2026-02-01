@@ -146,13 +146,25 @@ mcps:
             - message
 
       - name: create_branch
-        description: "Create a new git branch"
+        description: "Create and switch to a git branch (creates new or switches to existing)"
         requires_approval: false
+        parameters:
+          type: object
+          properties:
+            branch_name:
+              type: string
+              description: "Name of the branch to create or switch to (e.g., feature/add-login)"
+          required:
+            - branch_name
 
       - name: merge_to_main
         description: "Merge feature branch to main (direct git merge, no PR)"
         requires_approval: true
         required_role: architect
+        parameters:
+          type: object
+          properties: {}
+          required: []
 
       - name: create_pull_request
         description: "Create a pull request from current branch to main on Gitea"
@@ -186,8 +198,12 @@ mcps:
             - pr_number
 
       - name: get_git_status
-        description: "Get git status for workspace"
+        description: "Get git status for workspace including current branch, changed files, and unpushed commits"
         requires_approval: false
+        parameters:
+          type: object
+          properties: {}
+          required: []
 
   docker:
     url: ${MCP_DOCKER_URL:-http://mcp-docker:9002}

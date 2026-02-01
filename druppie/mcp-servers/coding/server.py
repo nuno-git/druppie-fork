@@ -1228,13 +1228,13 @@ async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
             text=True,
         )
 
-        if not result.stdout.strip():
-            return {"success": True, "message": "No changes to commit"}
+        has_changes = bool(result.stdout.strip())
 
-        # Commit
-        subprocess.run(["git", "commit", "-m", message], cwd=cwd, check=True)
+        if has_changes:
+            # Commit staged changes
+            subprocess.run(["git", "commit", "-m", message], cwd=cwd, check=True)
 
-        # Push (only if Gitea is configured with credentials)
+        # Always attempt to push (there may be unpushed commits from auto-commits)
         if is_gitea_configured():
             try:
                 # Ensure remote has credentials for push
@@ -1251,18 +1251,27 @@ async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
                         capture_output=True,
                     )
 
-                subprocess.run(
+                push_result = subprocess.run(
                     ["git", "push", "-u", "origin", branch],
                     cwd=cwd,
-                    check=True,
                     capture_output=True,
+                    text=True,
                     timeout=60,
                 )
-                return {"success": True, "message": f"Committed and pushed: {message}", "pushed": True}
+                if push_result.returncode == 0:
+                    msg = f"Committed and pushed: {message}" if has_changes else f"Pushed (no new changes to commit): {message}"
+                    return {"success": True, "message": msg, "pushed": True, "committed": has_changes}
+                else:
+                    logger.warning("Push failed: %s", push_result.stderr)
+                    msg = f"Committed: {message}" if has_changes else "No changes to commit"
+                    return {"success": True, "message": msg, "pushed": False, "committed": has_changes, "push_error": push_result.stderr}
             except subprocess.CalledProcessError as e:
-                return {"success": True, "message": f"Committed: {message}", "pushed": False, "push_error": str(e)}
+                msg = f"Committed: {message}" if has_changes else "No changes to commit"
+                return {"success": True, "message": msg, "pushed": False, "committed": has_changes, "push_error": str(e)}
 
-        return {"success": True, "message": f"Committed: {message}", "pushed": False}
+        if not has_changes:
+            return {"success": True, "message": "No changes to commit", "pushed": False, "committed": False}
+        return {"success": True, "message": f"Committed: {message}", "pushed": False, "committed": True}
 
     except subprocess.CalledProcessError as e:
         return {"success": False, "error": str(e)}
@@ -1421,17 +1430,17 @@ async def create_branch(
     project_id: str | None = None,
     user_id: str | None = None,
 ) -> dict:
-    """Create and checkout a new git branch.
+    """Create and switch to a git branch. If the branch already exists, switches to it.
 
     Args:
-        branch_name: Name of the new branch
+        branch_name: Name of the branch to create or switch to
         session_id: Session ID (auto-creates workspace if needed)
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
 
     Returns:
-        Dict with success, branch name
+        Dict with success, branch name, created (True if new, False if existing)
     """
     try:
         # Resolve workspace
@@ -1450,19 +1459,35 @@ async def create_branch(
         else:
             return {"success": False, "error": "Either session_id or workspace_id is required"}
 
-        subprocess.run(
+        # Try to create a new branch
+        result = subprocess.run(
             ["git", "checkout", "-b", branch_name],
             cwd=cwd,
-            check=True,
+            capture_output=True,
+            text=True,
         )
 
-        # Update workspace record
-        ws["branch"] = branch_name
+        if result.returncode == 0:
+            # New branch created successfully
+            ws["branch"] = branch_name
+            logger.info("Created new branch: %s", branch_name)
+            return {"success": True, "branch": branch_name, "created": True}
 
-        return {"success": True, "branch": branch_name}
+        # Branch already exists — switch to it
+        logger.info("Branch %s already exists, switching to it", branch_name)
+        switch_result = subprocess.run(
+            ["git", "checkout", branch_name],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
 
-    except subprocess.CalledProcessError as e:
-        return {"success": False, "error": str(e)}
+        if switch_result.returncode == 0:
+            ws["branch"] = branch_name
+            return {"success": True, "branch": branch_name, "created": False, "message": "Switched to existing branch"}
+
+        return {"success": False, "error": f"Failed to create or switch to branch: {result.stderr} / {switch_result.stderr}"}
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 
