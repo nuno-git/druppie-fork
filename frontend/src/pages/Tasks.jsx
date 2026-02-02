@@ -5,11 +5,102 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, Loader2, MessageSquare, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, Loader2, MessageSquare, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code, Eye } from 'lucide-react'
 import { getTasks, approveTask, rejectTask, getApprovalHistory } from '../services/api'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
 import { useToast } from '../components/Toast'
+
+// Helper to check if a file path is a markdown file
+const isMarkdownFile = (path) => {
+  if (!path) return false
+  return path.toLowerCase().endsWith('.md') || path.toLowerCase().endsWith('.mdx')
+}
+
+// Fullscreen modal for previewing file content
+const FilePreviewModal = ({ files, onClose }) => {
+  // files: [{ path, content }]
+  const [rawOverrides, setRawOverrides] = useState({})
+
+  const toggleRaw = (path) => {
+    setRawOverrides((prev) => ({ ...prev, [path]: !prev[path] }))
+  }
+
+  const isRaw = (path) => {
+    if (path in rawOverrides) return rawOverrides[path]
+    return !isMarkdownFile(path)
+  }
+
+  // Close on Escape
+  React.useEffect(() => {
+    const handleKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-900/95 backdrop-blur-sm">
+      {/* Top bar */}
+      <div className="flex items-center justify-between px-6 py-3 bg-gray-800 border-b border-gray-700 shrink-0">
+        <div className="flex items-center gap-3">
+          <FileCode className="w-5 h-5 text-blue-400" />
+          <span className="text-sm font-medium text-gray-200">
+            {files.length === 1 ? files[0].path : `${files.length} files to be written`}
+          </span>
+        </div>
+        <button
+          onClick={onClose}
+          className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
+        >
+          <span className="text-xs text-gray-500 mr-1">Esc</span>
+          Close
+        </button>
+      </div>
+
+      {/* Scrollable content area */}
+      <div className="flex-1 overflow-auto p-6">
+        <div className="max-w-6xl mx-auto space-y-6">
+          {files.map(({ path, content }) => (
+            <div key={path} className="bg-gray-900 rounded-xl border border-gray-700 overflow-hidden shadow-2xl">
+              {/* File header */}
+              <div className="flex items-center justify-between px-5 py-3 bg-gray-800 border-b border-gray-700">
+                <div className="flex items-center gap-3">
+                  <FileCode className="w-4 h-4 text-gray-400" />
+                  <span className="text-sm text-gray-200 font-mono">{path}</span>
+                  <span className="text-xs px-2 py-0.5 bg-gray-700 text-gray-400 rounded">{getLanguageFromPath(path)}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  {isMarkdownFile(path) && (
+                    <button
+                      onClick={() => toggleRaw(path)}
+                      className="flex items-center gap-1.5 px-3 py-1 text-xs rounded-md transition-colors text-gray-400 hover:text-gray-200 hover:bg-gray-700 border border-gray-600"
+                    >
+                      {isRaw(path) ? <Eye className="w-3.5 h-3.5" /> : <Code className="w-3.5 h-3.5" />}
+                      {isRaw(path) ? 'Preview' : 'Raw'}
+                    </button>
+                  )}
+                  <span className="text-xs text-gray-500">{content?.split('\n').length || 0} lines</span>
+                </div>
+              </div>
+              {/* Content */}
+              {isMarkdownFile(path) && !isRaw(path) ? (
+                <div className="p-6 markdown-content text-sm bg-white text-gray-900">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+                </div>
+              ) : (
+                <pre className="p-6 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
+                  {content}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // Helper to get human-readable tool description
 const getToolDescription = (toolName) => {
@@ -233,64 +324,23 @@ const TaskCard = ({ task, onApprove, onReject }) => {
           {(newContent || isBatchWrite) && (
             <div className="mt-3">
               <button
-                onClick={() => setShowCodePreview(!showCodePreview)}
+                onClick={() => setShowCodePreview(true)}
                 className="flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-                aria-expanded={showCodePreview}
               >
                 <FileCode className="w-4 h-4" />
-                {showCodePreview ? 'Hide' : 'View'} code to be written
-                {isBatchWrite && ` (${Object.keys(batchFiles).length} files)`}
-                {showCodePreview ? (
-                  <ChevronDown className="w-4 h-4 transform rotate-180" />
-                ) : (
-                  <ChevronDown className="w-4 h-4" />
-                )}
+                View {isBatchWrite ? `${Object.keys(batchFiles).length} files` : 'file'} to be written
+                <ExternalLink className="w-3.5 h-3.5" />
               </button>
 
               {showCodePreview && (
-                <div className="mt-2 space-y-3">
-                  {/* Single file write */}
-                  {newContent && !isBatchWrite && (
-                    <div className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
-                      <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700">
-                        <div className="flex items-center gap-2">
-                          <FileCode className="w-4 h-4 text-gray-400" />
-                          <span className="text-sm text-gray-300 font-mono">{filePath || 'file'}</span>
-                        </div>
-                        <span className="text-xs text-gray-500">{getLanguageFromPath(filePath)}</span>
-                      </div>
-                      <div className="max-h-96 overflow-auto">
-                        <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
-                          {newContent}
-                        </pre>
-                      </div>
-                      <div className="px-3 py-1.5 bg-gray-800 border-t border-gray-700 text-xs text-gray-500">
-                        {newContent?.split('\n').length || 0} lines
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Batch file write */}
-                  {isBatchWrite && Object.entries(batchFiles).map(([path, content]) => (
-                    <div key={path} className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
-                      <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700">
-                        <div className="flex items-center gap-2">
-                          <FileCode className="w-4 h-4 text-gray-400" />
-                          <span className="text-sm text-gray-300 font-mono">{path}</span>
-                        </div>
-                        <span className="text-xs text-gray-500">{getLanguageFromPath(path)}</span>
-                      </div>
-                      <div className="max-h-64 overflow-auto">
-                        <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
-                          {content}
-                        </pre>
-                      </div>
-                      <div className="px-3 py-1.5 bg-gray-800 border-t border-gray-700 text-xs text-gray-500">
-                        {content?.split('\n').length || 0} lines
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <FilePreviewModal
+                  files={
+                    isBatchWrite
+                      ? Object.entries(batchFiles).map(([path, content]) => ({ path, content }))
+                      : [{ path: filePath || 'file', content: newContent }]
+                  }
+                  onClose={() => setShowCodePreview(false)}
+                />
               )}
             </div>
           )}

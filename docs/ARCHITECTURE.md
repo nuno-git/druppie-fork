@@ -44,18 +44,18 @@ This document explains how all the parts of Druppie fit together.
 │  │                         CORE LAYER                                    │  │
 │  │  Agent execution engine - where AI agents run                        │  │
 │  │                                                                       │  │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                  │  │
-│  │  │  Main Loop  │  │ MCP Client  │  │   Agents    │                  │  │
-│  │  │  (loop.py)  │  │  (HTTP)     │  │  (runtime)  │                  │  │
-│  │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘                  │  │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                   │  │
+│  │  │  Main Loop  │  │ MCP Client  │  │   Agents    │                   │  │
+│  │  │  (loop.py)  │  │  (HTTP)     │  │  (runtime)  │                   │  │
+│  │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘                   │  │
 │  │         │                │                │                          │  │
 │  │         └────────────────┴────────────────┘                          │  │
-│  │                          │                                            │  │
+│  │                          │                                           │  │
 │  │  Built-in Tools:                                                     │  │
 │  │  • hitl_ask_question (pause for user input)                          │  │
 │  │  • hitl_ask_multiple_choice_question (choices + other option)        │  │
 │  │  • done (signal task completion)                                     │  │
-│  │  • execute_agent (delegate to another agent)                         │  │
+│  │  • make_plane (execute other agents)                                 │  │
 │  │                                                                       │  │
 │  └──────────────────────────────────────────────────────────────────────┘  │
 │                                                                              │
@@ -110,9 +110,7 @@ These require HTTP calls to separate MCP server containers:
 |--------|------|--------------|
 | coding | `read_file` | Read file content |
 | coding | `write_file` | Write/create a file |
-| coding | `run_command` | Execute shell command |
 | coding | `commit_and_push` | Git commit and push |
-| coding | `run_tests` | Auto-detect and run tests |
 | docker | `build` | Clone git repo, build Docker image |
 | docker | `run` | Run container (adds labels) |
 | docker | `stop` | Stop container |
