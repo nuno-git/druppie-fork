@@ -5,8 +5,8 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code } from 'lucide-react'
-import { getTasks, approveTask, rejectTask, getQuestions, answerQuestion, getApprovalHistory } from '../services/api'
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, Loader2, MessageSquare, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code } from 'lucide-react'
+import { getTasks, approveTask, rejectTask, getApprovalHistory } from '../services/api'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
 import { useToast } from '../components/Toast'
@@ -482,105 +482,6 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   )
 }
 
-// Question Card Component for the Tasks page
-const QuestionCard = ({ question, onAnswer, isAnswering }) => {
-  const [selectedOption, setSelectedOption] = useState(null)
-  const [customAnswer, setCustomAnswer] = useState('')
-  const hasOptions = question.options && question.options.length > 0
-
-  const handleSubmit = () => {
-    const answer = selectedOption || customAnswer
-    if (answer.trim()) {
-      onAnswer(question.id, answer)
-    }
-  }
-
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-purple-200 p-6">
-      <div className="flex items-start justify-between mb-4">
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <HelpCircle className="w-5 h-5 text-purple-600" />
-            <h3 className="font-semibold text-lg text-purple-900">Agent Question</h3>
-          </div>
-          <p className="text-purple-800 font-medium">{question.question}</p>
-          {question.context && (
-            <p className="text-purple-600 text-sm mt-1">{question.context}</p>
-          )}
-        </div>
-        <span className="px-3 py-1 bg-purple-100 text-purple-700 text-sm rounded-full flex items-center">
-          <Clock className="w-4 h-4 mr-1" />
-          Waiting
-        </span>
-      </div>
-
-      {/* Session info */}
-      {question.session_id && (
-        <div className="mb-4 text-sm">
-          <span className="text-gray-500">Session:</span>
-          <span className="ml-2 font-medium font-mono text-xs">{question.session_id.substring(0, 8)}...</span>
-        </div>
-      )}
-
-      {/* Options as clickable buttons */}
-      {hasOptions && (
-        <div className="space-y-2 mb-4">
-          {question.options.map((option, index) => (
-            <button
-              key={index}
-              onClick={() => {
-                setSelectedOption(option)
-                setCustomAnswer('')
-              }}
-              className={`w-full text-left px-4 py-2 rounded-lg border transition-colors ${
-                selectedOption === option
-                  ? 'bg-purple-600 text-white border-purple-600'
-                  : 'bg-white text-purple-800 border-purple-200 hover:border-purple-400'
-              }`}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Custom answer input */}
-      <div className="mb-4">
-        <input
-          type="text"
-          value={customAnswer}
-          onChange={(e) => {
-            setCustomAnswer(e.target.value)
-            setSelectedOption(null)
-          }}
-          placeholder={hasOptions ? "Or type a custom answer..." : "Type your answer..."}
-          className="w-full px-3 py-2 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-        />
-      </div>
-
-      {/* Submit button */}
-      <button
-        onClick={handleSubmit}
-        disabled={isAnswering || (!selectedOption && !customAnswer.trim())}
-        className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
-        aria-label="Submit answer"
-      >
-        {isAnswering ? (
-          <>
-            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-            Submitting...
-          </>
-        ) : (
-          <>
-            <Send className="w-4 h-4" aria-hidden="true" />
-            Submit Answer
-          </>
-        )}
-      </button>
-    </div>
-  )
-}
-
 const Tasks = () => {
   const { user } = useAuth()
   const queryClient = useQueryClient()
@@ -596,19 +497,13 @@ const Tasks = () => {
   // Fetch approval history (completed approvals)
   const { data: historyResponse, isLoading: historyLoading } = useQuery({
     queryKey: ['approvalHistory'],
-    queryFn: () => getApprovalHistory(20),
+    queryFn: () => getApprovalHistory(1, 20),
     enabled: showHistory, // Only fetch when history section is expanded
     staleTime: 30000, // Consider data fresh for 30 seconds
   })
 
   // Extract tasks array from paginated response
   const tasks = tasksResponse?.items || []
-
-  const { data: questions = [], isLoading: questionsLoading, isError: questionsError, error: questionsErrorData, refetch: refetchQuestions } = useQuery({
-    queryKey: ['questions'],
-    queryFn: () => getQuestions(),
-    refetchInterval: 10000,
-  })
 
   const approveMutation = useMutation({
     mutationFn: ({ taskId, comment }) => approveTask(taskId, comment),
@@ -634,28 +529,12 @@ const Tasks = () => {
     },
   })
 
-  const answerMutation = useMutation({
-    mutationFn: ({ questionId, answer }) => answerQuestion(questionId, answer),
-    onSuccess: () => {
-      queryClient.invalidateQueries(['questions'])
-      queryClient.invalidateQueries(['plans'])
-      toast.success('Answer Submitted', 'Your answer has been sent to the agent.')
-    },
-    onError: (err) => {
-      toast.error('Submission Failed', err.message || 'Failed to submit your answer. Please try again.')
-    },
-  })
-
   const handleApprove = (taskId) => {
     approveMutation.mutate({ taskId, comment: '' })
   }
 
   const handleReject = (taskId, reason) => {
     rejectMutation.mutate({ taskId, reason })
-  }
-
-  const handleAnswerQuestion = (questionId, answer) => {
-    answerMutation.mutate({ questionId, answer })
   }
 
   // Group tasks by required role (use first role from required_roles array)
@@ -687,59 +566,6 @@ const Tasks = () => {
             </span>
           ))}
         </div>
-      </div>
-
-      {/* Pending Questions Section */}
-      <div className="space-y-4">
-        <h2 className="text-lg font-semibold flex items-center">
-          <MessageSquare className="w-5 h-5 mr-2 text-purple-500" />
-          Pending Questions
-          {!questionsLoading && !questionsError && (
-            <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-600 text-sm rounded-full">
-              {questions.length}
-            </span>
-          )}
-        </h2>
-
-        {/* Loading State for Questions */}
-        {questionsLoading ? (
-          <div className="flex items-center justify-center h-32 bg-white rounded-xl border border-gray-200">
-            <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
-            <span className="ml-2 text-gray-600">Loading questions...</span>
-          </div>
-        ) : questionsError ? (
-          /* Error State for Questions */
-          <div className="flex flex-col items-center justify-center h-32 text-red-500 bg-white rounded-xl border border-red-200 p-4">
-            <AlertCircle className="w-8 h-8 mb-2" />
-            <p className="font-medium">Failed to load questions</p>
-            <p className="text-sm text-red-400">{questionsErrorData?.message || 'An unexpected error occurred'}</p>
-            <button
-              onClick={() => refetchQuestions()}
-              className="mt-3 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
-              aria-label="Retry loading questions"
-            >
-              Retry
-            </button>
-          </div>
-        ) : questions.length > 0 ? (
-          /* Questions List */
-          <div className="grid gap-4">
-            {questions.map((question) => (
-              <QuestionCard
-                key={question.id}
-                question={question}
-                onAnswer={handleAnswerQuestion}
-                isAnswering={answerMutation.isPending}
-              />
-            ))}
-          </div>
-        ) : (
-          /* Empty State for Questions */
-          <div className="text-center py-8 bg-white rounded-xl border border-gray-200">
-            <HelpCircle className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-            <p className="text-gray-500 text-sm">No pending questions from agents.</p>
-          </div>
-        )}
       </div>
 
       {/* Approval Tasks Section */}

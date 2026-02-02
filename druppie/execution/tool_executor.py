@@ -334,9 +334,23 @@ class ToolExecutor:
             logger.error("approval_not_found", approval_id=str(approval_id))
             return ToolCallStatus.FAILED
 
-        # Verify approval status
+        # Handle rejection: write reason to tool_call so the agent sees it
         if approval.status != "approved":
-            logger.error("approval_not_approved", status=approval.status)
+            tool_call = self.execution_repo.get_tool_call(approval.tool_call_id)
+            if tool_call:
+                rejection_reason = getattr(approval, "rejection_reason", None) or "No reason provided"
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=f"Tool call was rejected by a human reviewer. Reason: {rejection_reason}",
+                )
+                self.db.commit()
+            logger.info(
+                "approval_rejected",
+                approval_id=str(approval_id),
+                status=approval.status,
+                rejection_reason=getattr(approval, "rejection_reason", None),
+            )
             return ToolCallStatus.FAILED
 
         # Get associated tool call

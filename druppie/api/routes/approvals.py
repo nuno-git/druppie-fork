@@ -32,7 +32,7 @@ from druppie.api.deps import (
     get_approval_service,
 )
 from druppie.services import ApprovalService
-from druppie.domain import ApprovalDetail, PendingApprovalList
+from druppie.domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList
 from druppie.domain.common import SessionStatus
 
 logger = structlog.get_logger()
@@ -154,6 +154,22 @@ async def list_approvals(
     """
     user_roles = get_user_roles(user)
     return service.get_pending_for_roles(user_roles)
+
+
+@router.get("/history")
+async def approval_history(
+    page: int = 1,
+    limit: int = 20,
+    service: ApprovalService = Depends(get_approval_service),
+    user: dict = Depends(get_current_user),
+) -> ApprovalHistoryList:
+    """List resolved approvals (approved/rejected) the user can see.
+
+    Returns paginated history of approvals that have been resolved,
+    filtered by the user's roles. Admin users see all history.
+    """
+    user_roles = get_user_roles(user)
+    return service.get_history_for_roles(user_roles, page, limit)
 
 
 @router.post("/{approval_id}/approve")
