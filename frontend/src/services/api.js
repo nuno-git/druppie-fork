@@ -205,6 +205,16 @@ export const getProjectFiles = (projectId, path = '', branch = 'main') =>
 export const getProjectFile = (projectId, path, branch = 'main') =>
   request(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}&branch=${branch}`)
 
+// ============ Deployments ============
+export const getDeployments = (projectId = null) => {
+  const params = new URLSearchParams()
+  if (projectId) params.append('project_id', projectId)
+  const qs = params.toString()
+  return request(`/api/deployments${qs ? `?${qs}` : ''}`)
+}
+export const stopDeployment = (containerName) =>
+  request(`/api/deployments/${containerName}/stop?remove=true`, { method: 'POST' })
+
 // ============ Running Apps ============
 export const getRunningApps = () => request('/api/apps/running')
 
