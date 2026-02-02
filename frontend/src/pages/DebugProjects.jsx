@@ -1,7 +1,7 @@
 /**
- * NewProjects - Test page for Projects & Deployments API
+ * DebugProjects - Debug page for Projects & Deployments API
  *
- * Access at /new-projects
+ * Access at /debug-projects
  *
  * Uses:
  * Projects API:
@@ -588,7 +588,7 @@ const DeploymentsSection = () => {
 // MAIN PAGE
 // =============================================================================
 
-export default function NewProjects() {
+export default function DebugProjects() {
   const [activeTab, setActiveTab] = useState('projects')
 
   return (

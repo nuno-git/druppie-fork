@@ -2,15 +2,14 @@
  * Tasks (Approvals) Page
  */
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Wifi, WifiOff, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code } from 'lucide-react'
 import { getTasks, approveTask, rejectTask, getQuestions, answerQuestion, getApprovalHistory } from '../services/api'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
 import { useToast } from '../components/Toast'
-import { initSocket, onApprovalRequired, onApprovalStatusChanged, isSocketConnected, joinApprovalsRoom } from '../services/socket'
 
 // Helper to get human-readable tool description
 const getToolDescription = (toolName) => {
@@ -586,7 +585,6 @@ const Tasks = () => {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const toast = useToast()
-  const [isConnected, setIsConnected] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
 
   const { data: tasksResponse, isLoading, isError, error, refetch: refetchTasks } = useQuery({
@@ -648,64 +646,6 @@ const Tasks = () => {
     },
   })
 
-  // Refetch callback for WebSocket events
-  const refetchAll = useCallback(() => {
-    refetchTasks()
-    refetchQuestions()
-  }, [refetchTasks, refetchQuestions])
-
-  // WebSocket connection for real-time updates
-  useEffect(() => {
-    // Initialize socket connection
-    const socket = initSocket()
-
-    // Check initial connection status
-    const checkConnection = () => {
-      setIsConnected(isSocketConnected())
-    }
-    checkConnection()
-
-    // Join approvals room for user's roles
-    if (user?.roles) {
-      joinApprovalsRoom(user.roles)
-    }
-
-    // Handle new approval required events
-    const handleApprovalRequired = (data) => {
-      const toolName = data.tool || data.mcp_tool || 'Unknown tool'
-      toast.info('New Approval Required', `Action requested: ${toolName}`)
-      refetchAll()
-    }
-
-    // Handle approval status changed events
-    const handleApprovalStatusChanged = (data) => {
-      const toolName = data.tool || data.mcp_tool || 'Unknown tool'
-      const status = data.status || 'updated'
-      if (status === 'approved') {
-        toast.success('Approval Granted', `${toolName} was approved`)
-      } else if (status === 'rejected') {
-        toast.warning('Approval Rejected', `${toolName} was rejected`)
-      } else {
-        toast.info('Approval Updated', `${toolName}: ${status}`)
-      }
-      refetchAll()
-    }
-
-    // Subscribe to events
-    const unsubApprovalRequired = onApprovalRequired(handleApprovalRequired)
-    const unsubStatusChanged = onApprovalStatusChanged(handleApprovalStatusChanged)
-
-    // Periodically check connection status
-    const connectionInterval = setInterval(checkConnection, 3000)
-
-    // Cleanup on unmount
-    return () => {
-      unsubApprovalRequired()
-      unsubStatusChanged()
-      clearInterval(connectionInterval)
-    }
-  }, [user?.roles, toast, refetchAll])
-
   const handleApprove = (taskId) => {
     approveMutation.mutate({ taskId, comment: '' })
   }
@@ -731,36 +671,7 @@ const Tasks = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">Pending Approvals</h1>
-            {/* Live connection indicator */}
-            <span
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                isConnected
-                  ? 'bg-green-100 text-green-700'
-                  : 'bg-gray-100 text-gray-500'
-              }`}
-              role="status"
-              aria-live="polite"
-              aria-label={isConnected ? 'Connected to real-time updates' : 'Disconnected from real-time updates'}
-            >
-              {isConnected ? (
-                <>
-                  <Wifi className="w-3 h-3" />
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                  </span>
-                  Live
-                </>
-              ) : (
-                <>
-                  <WifiOff className="w-3 h-3" />
-                  Offline
-                </>
-              )}
-            </span>
-          </div>
+          <h1 className="text-2xl font-bold">Pending Approvals</h1>
           <p className="text-gray-500 mt-1">
             Review and approve tasks based on your role permissions.
           </p>

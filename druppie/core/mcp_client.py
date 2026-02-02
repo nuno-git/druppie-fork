@@ -644,9 +644,6 @@ class MCPClient:
             danger_level=danger_level,
         )
 
-        # Emit event to frontend via WebSocket
-        self._emit_approval_request(session_id, approval)
-
         # Return special PAUSED status
         return {
             "status": "paused",
@@ -656,47 +653,6 @@ class MCPClient:
             "required_roles": required_roles,
             "danger_level": danger_level,
         }
-
-    def _emit_approval_request(self, session_id: str, approval) -> None:
-        """Emit approval request via WebSocket broadcast."""
-        try:
-            # Broadcast to WebSocket role rooms for cross-user notifications
-            # This runs in a separate task to not block the current execution
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._broadcast_approval_to_roles(approval))
-            except RuntimeError:
-                # No running event loop - we're in sync context
-                # The context.emit_event callback should handle this
-                pass
-
-        except Exception as e:
-            logger.warning("approval_request_emit_failed", error=str(e))
-
-    async def _broadcast_approval_to_roles(self, approval) -> None:
-        """Broadcast approval request to WebSocket role rooms."""
-        try:
-            from druppie.api.websocket import emit_approval_request
-            await emit_approval_request(
-                approval_id=str(approval.id),  # Convert UUID to string for JSON serialization
-                session_id=str(approval.session_id),  # Convert UUID to string for JSON serialization
-                tool_name=approval.tool_name,
-                required_roles=approval.required_roles or [],
-                details={
-                    "args": approval.arguments,
-                    "danger_level": approval.danger_level,
-                    "description": approval.description,
-                },
-                agent_id=approval.agent_id,  # Pass agent_id for frontend attribution
-            )
-            logger.debug(
-                "approval_broadcast_to_roles",
-                approval_id=approval.id,
-                roles=approval.required_roles,
-                agent_id=approval.agent_id,
-            )
-        except Exception as e:
-            logger.warning("approval_broadcast_to_roles_failed", error=str(e))
 
     async def execute_approved_tool(
         self,

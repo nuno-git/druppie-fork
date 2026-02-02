@@ -6,7 +6,6 @@
 #   - Backend:  8100
 #   - Frontend: 5273
 #   - Postgres: 5533
-#   - Redis:    6480
 
 services:
   # =============================================================================
@@ -48,9 +47,6 @@ services:
       retries: 10
     networks:
       - druppie-new-network
-
-  # NOTE: Redis removed - no longer needed for HITL
-  # HITL questions are now stored directly in the database
 
   # =============================================================================
   # GITEA

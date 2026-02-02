@@ -1,5 +1,5 @@
 /**
- * NewChat - Simple debug page for testing the new backend API
+ * DebugChat - Debug page for testing the backend API
  *
  * Shows raw JSON responses from:
  * - GET /api/sessions (list sessions)
@@ -539,7 +539,7 @@ const apiFetch = async (endpoint, options = {}) => {
   }
 }
 
-export default function NewChat() {
+export default function DebugChat() {
   const [sessions, setSessions] = useState(null)
   const [selectedSession, setSelectedSession] = useState(null)
   const [sessionDetail, setSessionDetail] = useState(null)
@@ -643,7 +643,7 @@ export default function NewChat() {
 
   return (
     <div className="p-4 space-y-6">
-      <h1 className="text-2xl font-bold">New Chat - API Debug Page</h1>
+      <h1 className="text-2xl font-bold">Debug Chat - API Debug Page</h1>
       <p className="text-gray-600">Check browser console for detailed API logs</p>
 
       {/* Send Chat Section */}

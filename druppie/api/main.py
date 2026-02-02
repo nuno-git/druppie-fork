@@ -6,13 +6,12 @@ Main entry point for the API.
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
 from druppie.api.routes import agents, approvals, chat, deployments, mcp_bridge, mcps, projects, questions, sessions, workspace
-from druppie.api.websocket import handle_websocket
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
@@ -195,16 +194,6 @@ def create_app() -> FastAPI:
             "version": "2.0.0",
             "docs": "/docs",
         }
-
-    @app.websocket("/ws")
-    async def websocket_endpoint(websocket: WebSocket):
-        """WebSocket endpoint for real-time updates."""
-        await handle_websocket(websocket)
-
-    @app.websocket("/ws/session/{session_id}")
-    async def websocket_session_endpoint(websocket: WebSocket, session_id: str):
-        """WebSocket endpoint for session-specific updates."""
-        await handle_websocket(websocket, session_id)
 
     return app
 

@@ -529,24 +529,6 @@ Response:
 }
 ```
 
-## WebSocket
-
-### Session Updates
-
-```
-WS /ws/session/{session_id}
-```
-
-Events:
-```json
-{"type": "agent_started", "agent_id": "developer", "timestamp": "..."}
-{"type": "tool_call", "tool": "coding:write_file", "timestamp": "..."}
-{"type": "approval_required", "approval_id": "uuid", "tool": "docker:build"}
-{"type": "question_asked", "question_id": "uuid", "question": "..."}
-{"type": "agent_completed", "agent_id": "developer", "timestamp": "..."}
-{"type": "session_completed", "status": "completed"}
-```
-
 ## Error Responses
 
 All errors follow this format:

@@ -39,17 +39,6 @@ class DatabaseSettings(BaseSettings):
     )
 
 
-class RedisSettings(BaseSettings):
-    """Redis configuration."""
-
-    model_config = SettingsConfigDict(env_prefix="REDIS_")
-
-    url: str = Field(
-        default="redis://redis:6379/0",
-        description="Redis connection URL",
-    )
-
-
 class KeycloakSettings(BaseSettings):
     """Keycloak authentication configuration."""
 
@@ -223,7 +212,6 @@ class Settings(BaseSettings):
 
     # Sub-settings
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
-    redis: RedisSettings = Field(default_factory=RedisSettings)
     keycloak: KeycloakSettings = Field(default_factory=KeycloakSettings)
     gitea: GiteaSettings = Field(default_factory=GiteaSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
@@ -236,7 +224,6 @@ class Settings(BaseSettings):
         logger.info(
             "config_loaded",
             db_url=self.database.url.split("@")[-1] if "@" in self.database.url else "***",
-            redis_url=self.redis.url,
             keycloak_url=self.keycloak.url,
             keycloak_realm=self.keycloak.realm,
             gitea_url=self.gitea.url,
@@ -276,11 +263,6 @@ def get_settings() -> Settings:
 def get_database_url() -> str:
     """Get database URL."""
     return get_settings().database.url
-
-
-def get_redis_url() -> str:
-    """Get Redis URL."""
-    return get_settings().redis.url
 
 
 def is_dev_mode() -> bool:
