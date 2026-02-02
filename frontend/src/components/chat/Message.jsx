@@ -3,6 +3,7 @@
  */
 
 import React, { useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { Bot, User, Info, CheckCircle, XCircle } from 'lucide-react'
 import WorkflowTimeline from './WorkflowTimeline'
 import QuestionCard from './QuestionCard'
@@ -81,9 +82,15 @@ const Message = ({
 
             {/* Main content */}
             {message.content && (
-              <div className={`whitespace-pre-wrap text-sm ${colors ? colors.text : ''}`}>
-                {message.content}
-              </div>
+              agentId === 'summarizer' ? (
+                <div className={`markdown-content text-sm ${colors ? colors.text : ''}`}>
+                  <ReactMarkdown>{message.content}</ReactMarkdown>
+                </div>
+              ) : (
+                <div className={`whitespace-pre-wrap text-sm ${colors ? colors.text : ''}`}>
+                  {message.content}
+                </div>
+              )
             )}
 
             {/* Deployment Card - shows when deployment is complete with URL */}
