@@ -545,6 +545,8 @@ const SessionDetail = ({ sessionId }) => {
   const timelineEndRef = useRef(null)
   const timelineRef = useRef(null)
   const prevLengthRef = useRef(0)
+  const [continueInput, setContinueInput] = useState('')
+  const queryClient = useQueryClient()
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['session', sessionId],
@@ -555,6 +557,15 @@ const SessionDetail = ({ sessionId }) => {
       return 500
     },
     enabled: !!sessionId,
+  })
+
+  const continueMutation = useMutation({
+    mutationFn: (message) => sendChat(message, sessionId),
+    onSuccess: () => {
+      setContinueInput('')
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
   })
 
   // Auto-scroll when timeline grows
@@ -584,6 +595,12 @@ const SessionDetail = ({ sessionId }) => {
   }
 
   if (!data) return null
+
+  const handleContinueSend = () => {
+    const trimmed = continueInput.trim()
+    if (!trimmed) return
+    continueMutation.mutate(trimmed)
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -637,6 +654,41 @@ const SessionDetail = ({ sessionId }) => {
         ))}
         <div ref={timelineEndRef} />
       </div>
+
+      {/* Continue input - shown when session is completed */}
+      {data.status === 'completed' && (
+        <div className="px-4 py-3 border-t bg-white flex-shrink-0">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={continueInput}
+              onChange={(e) => setContinueInput(e.target.value)}
+              onKeyDown={(e) =>
+                e.key === 'Enter' && !continueMutation.isPending && handleContinueSend()
+              }
+              placeholder="Send a follow-up message..."
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              disabled={continueMutation.isPending}
+            />
+            <button
+              onClick={handleContinueSend}
+              disabled={!continueInput.trim() || continueMutation.isPending}
+              className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {continueMutation.isPending ? (
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Send className="w-5 h-5" />
+              )}
+            </button>
+          </div>
+          {continueMutation.isError && (
+            <p className="mt-1 text-xs text-red-600">
+              {continueMutation.error.message}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   )
 }

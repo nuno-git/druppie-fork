@@ -548,6 +548,8 @@ export default function DebugChat() {
   const [loading, setLoading] = useState({})
   const [answerText, setAnswerText] = useState('')
   const [answerResponse, setAnswerResponse] = useState(null)
+  const [continueMessage, setContinueMessage] = useState('')
+  const [continueResponse, setContinueResponse] = useState(null)
 
   // Fetch sessions on mount
   useEffect(() => {
@@ -636,6 +638,33 @@ export default function DebugChat() {
       setAnswerText('')
       // Wait a moment for workflow to progress
       setTimeout(() => fetchSessionDetail(selectedSession), 1000)
+    }
+  }
+
+  const sessionStatus = sessionDetail?.ok ? sessionDetail.data?.status : null
+
+  const sendContinueChat = async () => {
+    if (!continueMessage.trim() || !selectedSession) return
+
+    setLoading(l => ({ ...l, continueChat: true }))
+    setContinueResponse(null)
+
+    const result = await apiFetch('/api/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: continueMessage.trim(),
+        session_id: selectedSession,
+      }),
+    })
+
+    setContinueResponse(result)
+    setLoading(l => ({ ...l, continueChat: false }))
+
+    if (result.ok) {
+      setContinueMessage('')
+      // Refresh session detail — auto-polling will take over
+      fetchSessionDetail(selectedSession)
+      fetchSessions()
     }
   }
 
@@ -879,6 +908,45 @@ export default function DebugChat() {
                   {JSON.stringify(sessionDetail, null, 2)}
                 </pre>
               </Collapsible>
+
+              {/* Continue Chat Section */}
+              {sessionStatus === 'completed' && (
+                <div className="border-2 border-green-400 rounded-lg p-4 bg-green-50">
+                  <h3 className="font-semibold text-green-800 mb-2">Continue Conversation</h3>
+                  <p className="text-sm text-green-700 mb-3">
+                    Session completed. Send a follow-up message to continue.
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={continueMessage}
+                      onChange={(e) => setContinueMessage(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && sendContinueChat()}
+                      placeholder="Type a follow-up message..."
+                      className="flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                    <button
+                      onClick={sendContinueChat}
+                      disabled={loading.continueChat || !continueMessage.trim()}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {loading.continueChat ? 'Sending...' : 'Continue'}
+                    </button>
+                  </div>
+                  {continueResponse && (
+                    <div className="mt-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h4 className="font-medium text-sm">Response:</h4>
+                        <CopyButton text={continueResponse} label="Copy" />
+                      </div>
+                      <pre className="bg-white p-2 rounded-lg text-xs overflow-auto max-h-40 border">
+                        {JSON.stringify(continueResponse, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+
             </div>
           ) : null}
         </div>
