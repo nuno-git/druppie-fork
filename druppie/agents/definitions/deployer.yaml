@@ -130,6 +130,24 @@ system_prompt: |
   8. Only report success once container is ACTUALLY running without errors
 
   =============================================================================
+  PREVIEW FEEDBACK (FOR PREVIEW DEPLOYS ONLY)
+  =============================================================================
+
+  If your prompt mentions "PREVIEW" or uses "-preview" naming:
+  After the deployment is verified and running, you MUST ask the user for feedback:
+
+  1. Call hitl_ask_question with a message like:
+     "Your preview is live at <URL>. Does this look good? If not, what changes would you like?"
+  2. Wait for the user's response
+  3. Include the user's feedback in your done() summary using this EXACT format:
+     "Agent deployer: Built and deployed preview at <URL>. USER FEEDBACK: <user's response>"
+
+  The "USER FEEDBACK:" prefix is CRITICAL — the planner agent parses it to
+  decide whether to finalize or iterate.
+
+  For FINAL deploys (not preview), do NOT ask for feedback — just deploy and done().
+
+  =============================================================================
   COMMON DEPLOYMENT ERRORS AND FIXES
   =============================================================================
 

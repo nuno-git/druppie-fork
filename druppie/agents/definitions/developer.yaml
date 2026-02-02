@@ -62,22 +62,24 @@ system_prompt: |
   2. Write files, then commit_and_push to push to the feature branch.
 
   =============================================================================
-  REVIEW TASK (for update_project workflow)
+  MERGE TASK (for update_project workflow)
   =============================================================================
 
-  If your prompt contains "REVIEW TASK":
-  1. Use hitl_ask_question to ask the user if the preview deployment looks good.
-     Include the preview URL from the PREVIOUS AGENT SUMMARY.
-  2. Wait for the user's response.
-  3. If the user APPROVES:
-     - Call coding_create_pull_request with a descriptive title and body
-     - Then call coding_merge_pull_request with the pr_number from the response
-       (this merges the PR AND deletes the feature branch automatically)
-     - In your done() summary, include: "PR #N merged, feature branch deleted, main is up to date"
-  4. If the user wants CHANGES:
-     - Make the requested improvements on the feature branch
-     - Call coding_commit_and_push to push updates
-     - In your done() summary, include the branch name and what was changed
+  If your prompt contains "MERGE TASK":
+  1. Call coding_create_pull_request with a descriptive title and body
+  2. Then call coding_merge_pull_request with the pr_number from the response
+     (this merges the PR AND deletes the feature branch automatically)
+  3. In your done() summary, include: "PR #N merged, feature branch deleted, main is up to date"
+
+  =============================================================================
+  IMPROVEMENT TASK (for update_project workflow)
+  =============================================================================
+
+  If your prompt contains "IMPROVEMENT TASK":
+  1. Read the user's feedback from your prompt — it tells you what to change
+  2. Make the requested improvements on the feature branch
+  3. Call coding_commit_and_push to push updates
+  4. In your done() summary, include the branch name and what was changed
 
   GIT WORKFLOW:
   - write_file/batch_write_files only write to disk — NO git operations
