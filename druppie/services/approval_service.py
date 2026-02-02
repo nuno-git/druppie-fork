@@ -21,7 +21,7 @@ from uuid import UUID
 import structlog
 
 from ..repositories import ApprovalRepository
-from ..domain import ApprovalDetail, PendingApprovalList, ApprovalStatus
+from ..domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList, ApprovalStatus
 from ..api.errors import NotFoundError, AuthorizationError, ConflictError
 
 logger = structlog.get_logger()
@@ -57,6 +57,24 @@ class ApprovalService:
             roles_to_check = user_roles
 
         return self.approval_repo.get_pending_for_roles(roles_to_check)
+
+    def get_history_for_roles(
+        self,
+        user_roles: list[str],
+        page: int = 1,
+        limit: int = 20,
+    ) -> ApprovalHistoryList:
+        """Get resolved approvals user can see based on their roles.
+
+        Admin users see all resolved approvals.
+        Other users see only approvals matching their roles.
+        """
+        if "admin" in user_roles:
+            roles_to_check = ["admin", "architect", "developer"]
+        else:
+            roles_to_check = user_roles
+
+        return self.approval_repo.get_resolved_for_roles(roles_to_check, page, limit)
 
     def approve(
         self,

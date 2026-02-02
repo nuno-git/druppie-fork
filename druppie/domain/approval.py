@@ -35,3 +35,11 @@ class PendingApprovalList(BaseModel):
     """Approvals the current user can act on."""
     items: list[ApprovalDetail]
     total: int
+
+
+class ApprovalHistoryList(BaseModel):
+    """Paginated list of resolved approvals."""
+    items: list[ApprovalDetail]
+    total: int
+    page: int
+    limit: int

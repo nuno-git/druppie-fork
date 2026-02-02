@@ -4,7 +4,7 @@ from uuid import UUID
 from datetime import datetime, timezone
 
 from .base import BaseRepository
-from ..domain import ApprovalDetail, ApprovalSummary, PendingApprovalList, ApprovalStatus
+from ..domain import ApprovalDetail, ApprovalSummary, ApprovalHistoryList, PendingApprovalList, ApprovalStatus
 from ..db.models import Approval
 
 
@@ -77,6 +77,38 @@ class ApprovalRepository(BaseRepository):
         return PendingApprovalList(
             items=[self._to_detail(a) for a in approvals],
             total=len(approvals),
+        )
+
+    def get_resolved_for_roles(
+        self, roles: list[str], page: int = 1, limit: int = 20
+    ) -> ApprovalHistoryList:
+        """Get resolved approvals (approved/rejected) filtered by roles, paginated."""
+        base_query = (
+            self.db.query(Approval)
+            .filter(
+                Approval.status.in_([
+                    ApprovalStatus.APPROVED.value,
+                    ApprovalStatus.REJECTED.value,
+                ])
+            )
+            .filter(Approval.required_role.in_(roles))
+        )
+
+        total = base_query.count()
+
+        approvals = (
+            base_query
+            .order_by(Approval.resolved_at.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
+
+        return ApprovalHistoryList(
+            items=[self._to_detail(a) for a in approvals],
+            total=total,
+            page=page,
+            limit=limit,
         )
 
     def update_status(
