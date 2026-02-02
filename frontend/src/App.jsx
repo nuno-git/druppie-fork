@@ -17,6 +17,7 @@ import {
   Bug,
   Settings as SettingsIcon,
   Database,
+  ChevronDown,
 } from 'lucide-react'
 
 import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole, isKeycloakAvailable } from './services/keycloak'
@@ -28,10 +29,10 @@ import ErrorBoundary from './components/ErrorBoundary'
 import Dashboard from './pages/Dashboard'
 import Tasks from './pages/Tasks'
 import Chat from './pages/Chat'
-import NewChat from './pages/NewChat'
-import NewApprovals from './pages/NewApprovals'
-import NewMCP from './pages/NewMCP'
-import NewProjects from './pages/NewProjects'
+import DebugChat from './pages/DebugChat'
+import DebugApprovals from './pages/DebugApprovals'
+import DebugMCP from './pages/DebugMCP'
+import DebugProjects from './pages/DebugProjects'
 import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import Debug from './pages/Debug'
@@ -83,6 +84,7 @@ const ProtectedRoute = ({ children, requiredRole }) => {
 const Navigation = () => {
   const { authenticated, user } = useAuth()
   const location = useLocation()
+  const [debugOpen, setDebugOpen] = useState(false)
 
   // Fetch pending approvals count for badge
   const { data: tasksData } = useQuery({
@@ -97,13 +99,16 @@ const Navigation = () => {
   const navItems = [
     { path: '/', icon: Home, label: 'Dashboard' },
     { path: '/chat', icon: MessageSquare, label: 'Chat' },
-    { path: '/new-chat', icon: Bug, label: 'New Chat' },
-    { path: '/new-approvals', icon: Shield, label: 'New Approvals' },
-    { path: '/new-mcp', icon: Database, label: 'New MCP' },
-    { path: '/new-projects', icon: FolderOpen, label: 'New Projects' },
     { path: '/tasks', icon: CheckSquare, label: 'Approvals', badge: pendingApprovalsCount },
     { path: '/projects', icon: FolderOpen, label: 'Projects' },
     { path: '/settings', icon: SettingsIcon, label: 'Settings' },
+  ]
+
+  const debugItems = [
+    { path: '/debug-chat', icon: MessageSquare, label: 'Debug Chat' },
+    { path: '/debug-approvals', icon: Shield, label: 'Debug Approvals' },
+    { path: '/debug-mcp', icon: Database, label: 'Debug MCP' },
+    { path: '/debug-projects', icon: FolderOpen, label: 'Debug Projects' },
   ]
 
   // Add admin-only nav items
@@ -112,6 +117,7 @@ const Navigation = () => {
   ]
 
   const isActive = (path) => location.pathname === path || location.pathname.startsWith(path + '/')
+  const isDebugActive = debugItems.some(item => isActive(item.path))
 
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
@@ -148,6 +154,41 @@ const Navigation = () => {
                 )}
               </Link>
             ))}
+            {/* Debug pages dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setDebugOpen(!debugOpen)}
+                onBlur={() => setTimeout(() => setDebugOpen(false), 150)}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 ${
+                  isDebugActive
+                    ? 'bg-orange-100 text-orange-700'
+                    : 'text-orange-600 hover:bg-orange-50'
+                }`}
+              >
+                <Bug className="w-4 h-4" />
+                Debug
+                <ChevronDown className={`w-3 h-3 transition-transform ${debugOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {debugOpen && (
+                <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[180px] z-50">
+                  {debugItems.map(({ path, icon: Icon, label }) => (
+                    <Link
+                      key={path}
+                      to={path}
+                      onClick={() => setDebugOpen(false)}
+                      className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
+                        isActive(path)
+                          ? 'bg-orange-50 text-orange-700'
+                          : 'text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4" />
+                      {label}
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
             {/* Admin-only navigation items */}
             {user?.roles?.includes('admin') && adminNavItems.map(({ path, icon: Icon, label }) => (
               <Link
@@ -295,34 +336,34 @@ function App() {
                   }
                 />
                 <Route
-                  path="/new-chat"
+                  path="/debug-chat"
                   element={
                     <ProtectedRoute>
-                      <NewChat />
+                      <DebugChat />
                     </ProtectedRoute>
                   }
                 />
                 <Route
-                  path="/new-approvals"
+                  path="/debug-approvals"
                   element={
                     <ProtectedRoute>
-                      <NewApprovals />
+                      <DebugApprovals />
                     </ProtectedRoute>
                   }
                 />
                 <Route
-                  path="/new-mcp"
+                  path="/debug-mcp"
                   element={
                     <ProtectedRoute>
-                      <NewMCP />
+                      <DebugMCP />
                     </ProtectedRoute>
                   }
                 />
                 <Route
-                  path="/new-projects"
+                  path="/debug-projects"
                   element={
                     <ProtectedRoute>
-                      <NewProjects />
+                      <DebugProjects />
                     </ProtectedRoute>
                   }
                 />

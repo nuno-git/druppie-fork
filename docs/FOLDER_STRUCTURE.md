@@ -366,13 +366,18 @@ The React frontend application.
 druppie-frontend/
 ├── src/
 │   ├── pages/               # Page components
-│   │   ├── Chat.jsx         # Main chat interface
 │   │   ├── Dashboard.jsx    # Overview with stats
+│   │   ├── Chat.jsx         # Main chat interface
+│   │   ├── Tasks.jsx        # Approval list
 │   │   ├── Projects.jsx     # Project list
 │   │   ├── ProjectDetail.jsx# Single project view
-│   │   ├── Tasks.jsx        # Approval list
+│   │   ├── Settings.jsx     # System configuration
 │   │   ├── Debug.jsx        # Execution trace viewer
-│   │   └── Settings.jsx     # System configuration
+│   │   ├── AdminDatabase.jsx# Admin-only database browser
+│   │   ├── DebugChat.jsx    # Debug: raw API testing for chat
+│   │   ├── DebugApprovals.jsx # Debug: raw API testing for approvals
+│   │   ├── DebugMCP.jsx     # Debug: raw API testing for MCP
+│   │   └── DebugProjects.jsx# Debug: raw API testing for projects
 │   │
 │   ├── components/          # Reusable components
 │   │   ├── chat/            # Chat-specific (messages, input)
@@ -380,7 +385,6 @@ druppie-frontend/
 │   │
 │   ├── services/            # API clients
 │   │   ├── api.js           # HTTP client for backend
-│   │   ├── websocket.js     # WebSocket for real-time updates
 │   │   └── keycloak.js      # Authentication
 │   │
 │   └── App.jsx              # Main app component

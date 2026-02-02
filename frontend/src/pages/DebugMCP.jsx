@@ -1,7 +1,7 @@
 /**
- * NewMCP - Test page for MCP Bridge API
+ * DebugMCP - Debug page for MCP Bridge API
  *
- * Access at /new-mcp
+ * Access at /debug-mcp
  *
  * Uses:
  * - GET /api/mcp/servers - List MCP servers
@@ -222,7 +222,7 @@ const ServerCard = ({ server }) => {
   )
 }
 
-export default function NewMCP() {
+export default function DebugMCP() {
   const [servers, setServers] = useState(null)
   const [loading, setLoading] = useState(true)
 

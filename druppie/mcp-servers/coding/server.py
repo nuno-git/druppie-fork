@@ -32,7 +32,7 @@ GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
 GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 
-# In-memory workspace registry (in production, use Redis/DB)
+# In-memory workspace registry (in production, use DB)
 workspaces: dict[str, dict] = {}
 
 

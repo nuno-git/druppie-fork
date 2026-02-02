@@ -1,7 +1,7 @@
 /**
- * NewApprovals - Simple standalone page for viewing and managing pending approvals
+ * DebugApprovals - Debug page for viewing and managing pending approvals
  *
- * Access directly at /new-approvals
+ * Access at /debug-approvals
  *
  * Uses:
  * - GET /api/approvals - list pending approvals
@@ -159,7 +159,7 @@ const ApprovalCard = ({ approval, onApprove, onReject, loading }) => {
   )
 }
 
-export default function NewApprovals() {
+export default function DebugApprovals() {
   const [approvals, setApprovals] = useState(null)
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState({})
@@ -212,7 +212,7 @@ export default function NewApprovals() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">New Approvals Page</h1>
+        <h1 className="text-2xl font-bold">Debug Approvals</h1>
         <button
           onClick={fetchApprovals}
           disabled={loading}
