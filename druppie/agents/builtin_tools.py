@@ -445,6 +445,9 @@ PROJECT_ID: {str(project_id) if project_id else 'new'}
 # PLANNING TOOL IMPLEMENTATION
 # =============================================================================
 
+MAX_PLANNER_ITERATIONS = 3
+
+
 async def make_plan(
     steps: list[dict],
     session_id: UUID,
@@ -455,6 +458,10 @@ async def make_plan(
 
     Called by planner agent to create the plan. Creates AgentRun records
     with status='pending' that will be executed in sequence.
+
+    Safety: If the planner has already run MAX_PLANNER_ITERATIONS times,
+    any "planner" step in the plan is replaced with a forced finalization
+    (developer merge + deployer final + summarizer) to prevent infinite loops.
 
     Args:
         steps: List of steps, each with agent_id and prompt
@@ -479,6 +486,28 @@ async def make_plan(
             "success": False,
             "error": "No steps provided",
         }
+
+    # Safety net: count how many times the planner has already completed
+    completed_runs = execution_repo.get_completed_runs(session_id)
+    planner_count = sum(1 for r in completed_runs if r.agent_id == "planner")
+
+    # If we've hit the max, strip any planner steps and force finalization
+    has_planner_step = any(s.get("agent_id") == "planner" for s in steps)
+    if has_planner_step and planner_count >= MAX_PLANNER_ITERATIONS:
+        logger.warning(
+            "max_planner_iterations_reached",
+            session_id=str(session_id),
+            planner_count=planner_count,
+            max_iterations=MAX_PLANNER_ITERATIONS,
+        )
+        # Remove planner steps and ensure summarizer is at the end
+        steps = [s for s in steps if s.get("agent_id") != "planner"]
+        has_summarizer = any(s.get("agent_id") == "summarizer" for s in steps)
+        if not has_summarizer:
+            steps.append({
+                "agent_id": "summarizer",
+                "prompt": "Summarize what was accomplished for the user. Note: the iteration limit was reached, so this is a forced finalization.",
+            })
 
     # Create pending agent runs via repository
     created_runs = []
@@ -512,11 +541,12 @@ async def make_plan(
         "plan_created",
         session_id=str(session_id),
         step_count=len(created_runs),
+        planner_iteration=planner_count + 1,
     )
 
     return {
         "success": True,
-        "message": f"Created plan with {len(created_runs)} steps",
+        "message": f"Created plan with {len(created_runs)} steps (planner iteration {planner_count + 1})",
         "steps": created_runs,
     }
 
