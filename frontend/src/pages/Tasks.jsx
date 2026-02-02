@@ -491,7 +491,7 @@ const Tasks = () => {
   const { data: tasksResponse, isLoading, isError, error, refetch: refetchTasks } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
-    refetchInterval: 10000,
+    refetchInterval: 1000,
   })
 
   // Fetch approval history (completed approvals)
