@@ -10,6 +10,7 @@ This module orchestrates the AI agent workflow:
 NO JSON state storage - everything is in normalized PostgreSQL tables.
 """
 
+import json
 import structlog
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -987,7 +988,7 @@ class MainLoop:
 
             if intent == "use_mcp":
                 # User wants to use bestand-zoeker MCP directly
-                # Run router again with MCP tools to execute the search
+                # Run router again with MCP tools to execute search
                 exec_ctx.emit("mcp_usage_started", {})
                 
                 with db_session() as db:
@@ -1006,7 +1007,20 @@ class MainLoop:
                         mcp_result.get("error", "MCP execution failed"),
                     )
 
-                response = _extract_response(mcp_result.get("result"))
+                logger.info(f"DEBUG mcp_result keys: {mcp_result.keys()}")
+                logger.info(f"DEBUG mcp_result: {mcp_result}")
+                result_data = mcp_result.get("result")
+                logger.info(f"DEBUG result_data: {result_data}")
+                if isinstance(result_data, dict):
+                    if "answer" in result_data:
+                        response = result_data["answer"]
+                    elif "prompt" in result_data:
+                        response = result_data["prompt"]
+                    else:
+                        response = str(result_data)
+                else:
+                    response = result_data if isinstance(result_data, str) else str(result_data)
+
                 return await self._complete_session(
                     session_id,
                     exec_ctx,
