@@ -576,8 +576,10 @@ case "${1:-start}" in
         show_logs "${2:-}"
         ;;
     reset)
+        stop_backend
         reset_database
         reset_iac
+        start_backend
         ;;
     *)
         echo "Druppie Development Setup"

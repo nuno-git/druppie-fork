@@ -4,6 +4,7 @@
 
 import React, { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Bot, User, Info, CheckCircle, XCircle } from 'lucide-react'
 import WorkflowTimeline from './WorkflowTimeline'
 import QuestionCard from './QuestionCard'
@@ -84,7 +85,7 @@ const Message = ({
             {message.content && (
               agentId === 'summarizer' ? (
                 <div className={`markdown-content text-sm ${colors ? colors.text : ''}`}>
-                  <ReactMarkdown>{message.content}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
                 </div>
               ) : (
                 <div className={`whitespace-pre-wrap text-sm ${colors ? colors.text : ''}`}>

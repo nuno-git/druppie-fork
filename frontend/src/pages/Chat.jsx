@@ -19,6 +19,7 @@ import {
   answerQuestion,
 } from '../services/api'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { getUserInfo } from '../services/keycloak'
 import { getAgentConfig, getAgentColorClasses } from '../utils/agentConfig'
 import ApprovalCard from '../components/chat/ApprovalCard'
@@ -266,23 +267,26 @@ const SurfacedApproval = ({ tc, sessionId }) => {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
   })
 
-  // Pending approval → use ApprovalCard with role checking
-  if (tc.approval.status === 'pending') {
-    const approvalData = {
-      task_id: tc.approval.id,
-      task_name: tc.tool_name,
-      mcp_tool: tc.tool_name,
-      mcp_arguments: tc.arguments,
-      required_role: tc.approval.required_role,
-      required_roles: tc.approval.required_role ? [tc.approval.required_role] : ['admin'],
-      approval_type: 'single',
-      required_approvals: 1,
-      current_approvals: 0,
-      approved_by_roles: [],
-      approved_by_ids: [],
-    }
+  const isPending = tc.approval.status === 'pending'
+  const isApproved = tc.approval.status === 'approved'
+  const isRejected = tc.approval.status === 'rejected'
 
-    return (
+  const approvalData = {
+    task_id: tc.approval.id,
+    task_name: tc.tool_name,
+    mcp_tool: tc.tool_name,
+    mcp_arguments: tc.arguments,
+    required_role: tc.approval.required_role,
+    required_roles: tc.approval.required_role ? [tc.approval.required_role] : ['admin'],
+    approval_type: 'single',
+    required_approvals: 1,
+    current_approvals: isPending ? 0 : 1,
+    approved_by_roles: [],
+    approved_by_ids: [],
+  }
+
+  return (
+    <>
       <ApprovalCard
         approval={approvalData}
         onApprove={(id) => approveMut.mutate(id)}
@@ -292,33 +296,28 @@ const SurfacedApproval = ({ tc, sessionId }) => {
         sessionId={sessionId}
         userRoles={user?.roles || []}
         chatInline
+        resolved={!isPending}
       />
-    )
-  }
-
-  // Resolved approval → simple status display
-  const isApproved = tc.approval.status === 'approved'
-  return (
-    <div className={`mt-3 rounded-lg border p-4 ${
-      isApproved ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
-    }`}>
-      <div className="flex items-center gap-2">
-        {isApproved ? (
-          <CheckCircle className="w-5 h-5 text-green-600" />
-        ) : (
-          <XCircle className="w-5 h-5 text-red-600" />
-        )}
-        <span className={`text-sm font-medium ${isApproved ? 'text-green-800' : 'text-red-800'}`}>
-          {tc.tool_name} — {isApproved ? 'Approved' : 'Rejected'}
-        </span>
-        <StatusBadge status={tc.approval.status} />
-      </div>
-      {tc.approval.resolved_at && (
-        <div className="text-xs text-gray-500 mt-1 ml-7">
-          {new Date(tc.approval.resolved_at).toLocaleString()}
+      {(isApproved || isRejected) && (
+        <div className={`mt-2 mx-3 rounded-lg border p-3 flex items-center gap-2 ${
+          isApproved ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+        }`}>
+          {isApproved ? (
+            <CheckCircle className="w-4 h-4 text-green-600" />
+          ) : (
+            <XCircle className="w-4 h-4 text-red-600" />
+          )}
+          <span className={`text-sm font-medium ${isApproved ? 'text-green-800' : 'text-red-800'}`}>
+            {isApproved ? 'Approved' : 'Rejected'}
+          </span>
+          {tc.approval.resolved_at && (
+            <span className="text-xs text-gray-500 ml-auto">
+              {new Date(tc.approval.resolved_at).toLocaleString()}
+            </span>
+          )}
         </div>
       )}
-    </div>
+    </>
   )
 }
 
@@ -523,7 +522,7 @@ const MessageItem = ({ message }) => {
         )}
         {message.agent_id === 'summarizer' ? (
           <div className="markdown-content">
-            <ReactMarkdown>{message.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
           </div>
         ) : (
           <div className="whitespace-pre-wrap">{message.content}</div>

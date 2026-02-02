@@ -178,3 +178,8 @@ pre[class*="language-"] {
 .markdown-content pre { @apply bg-gray-900 text-gray-100 rounded-lg p-3 overflow-x-auto my-2; }
 .markdown-content pre code { @apply bg-transparent p-0 text-inherit; }
 .markdown-content blockquote { @apply border-l-4 border-gray-300 pl-3 italic text-gray-600 my-2; }
+.markdown-content table { @apply w-full border-collapse my-3 text-sm; }
+.markdown-content thead { @apply bg-gray-100; }
+.markdown-content th { @apply border border-gray-300 px-3 py-2 text-left font-semibold text-gray-700; }
+.markdown-content td { @apply border border-gray-300 px-3 py-2 text-gray-700; }
+.markdown-content tbody tr:nth-child(even) { @apply bg-gray-50; }
