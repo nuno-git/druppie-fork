@@ -18,6 +18,7 @@ import {
   rejectApproval,
   answerQuestion,
 } from '../services/api'
+import ReactMarkdown from 'react-markdown'
 import { getUserInfo } from '../services/keycloak'
 import { getAgentConfig, getAgentColorClasses } from '../utils/agentConfig'
 import ApprovalCard from '../components/chat/ApprovalCard'
@@ -520,7 +521,13 @@ const MessageItem = ({ message }) => {
             <AgentBadge agentId={message.agent_id} />
           </div>
         )}
-        <div className="whitespace-pre-wrap">{message.content}</div>
+        {message.agent_id === 'summarizer' ? (
+          <div className="markdown-content">
+            <ReactMarkdown>{message.content}</ReactMarkdown>
+          </div>
+        ) : (
+          <div className="whitespace-pre-wrap">{message.content}</div>
+        )}
         <div
           className={`text-xs mt-1 ${isUser ? 'text-blue-200' : 'text-gray-400'}`}
         >
