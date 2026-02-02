@@ -214,6 +214,8 @@ export const getDeployments = (projectId = null) => {
 }
 export const stopDeployment = (containerName) =>
   request(`/api/deployments/${containerName}/stop?remove=true`, { method: 'POST' })
+export const getDeploymentLogs = (containerName, tail = 100) =>
+  request(`/api/deployments/${containerName}/logs?tail=${tail}`)
 
 // ============ Running Apps ============
 export const getRunningApps = () => request('/api/apps/running')
