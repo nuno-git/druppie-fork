@@ -573,14 +573,9 @@ class Agent:
                 has_tool_calls=bool(response.tool_calls),
             )
 
-            # No tool calls - check if agent is done or needs reminder
+            # No tool calls — all agents MUST use tool calls
             if not response.tool_calls:
-                # Router and planner have special JSON output formats
-                if self.id in ("router", "planner"):
-                    return self._parse_output(response.content)
-
-                # Remind agent to use tools
-                if response.content and iteration < max_iterations - 1:
+                if iteration < max_iterations - 1:
                     logger.warning(
                         "agent_no_tool_calls_retry",
                         agent_id=self.id,
@@ -589,10 +584,22 @@ class Agent:
                     messages.append({"role": "assistant", "content": response.content})
                     messages.append({
                         "role": "user",
-                        "content": "ERROR: You MUST use a tool call. Call `done` when finished.",
+                        "content": (
+                            "ERROR: You did not call any tools. You MUST use tool calls — "
+                            "either OpenAI function calling format or "
+                            "<tool_call>{\"name\": \"tool_name\", \"arguments\": {...}}</tool_call> XML format. "
+                            "Do NOT output raw JSON or plain text. "
+                            "Call `done` when finished."
+                        ),
                     })
                     continue
 
+                # Final iteration exhausted — fail rather than silently accept text
+                logger.error(
+                    "agent_max_iterations_no_tool_calls",
+                    agent_id=self.id,
+                    iteration=iteration,
+                )
                 return self._parse_output(response.content)
 
             # Execute each tool call via ToolExecutor
