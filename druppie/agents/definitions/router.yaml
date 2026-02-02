@@ -59,8 +59,12 @@ system_prompt: |
   For use_mcp:
   IMPORTANT: When using bestand-zoeker tools, ALWAYS use folder_path="/dataset" or specific paths within /dataset
   Examples: folder_path="/dataset", folder_path="/dataset/rijnland_permits", file_path="/dataset/rijnland_permits/file.pdf"
+  
+  CRITICAL: After calling the bestand-zoeker tool, you MUST include the tool's result in the "answer" field.
+  The "answer" field should contain the actual search results, file list, or file information from the tool.
+  Example: {"action":"use_mcp","prompt":"Search for files in my dataset","answer":"Found 5 files in /dataset...","mcp_action":"use_bestand_zoeker","project_context":null}
   {"action":"use_mcp","prompt":"Search for files in my dataset","answer":null,"mcp_action":"use_bestand_zoeker","project_context":null}
-
+ 
   For ask_clarification (IMPORTANT - use this for ambiguous requests):
   {"action":"ask_clarification","prompt":"Help me with something","answer":null,"question":"What would you like help with? For example:\n- Create a new application\n- Update an existing project\n- Deploy to staging/production\n- Search for files\n- General questions","project_context":null}
 
