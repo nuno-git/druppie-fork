@@ -91,11 +91,17 @@ class Orchestrator:
         - set_intent: handles project creation, session updates, planner prompt
         - make_plan: creates the execution plan
 
+        For continuation (session_id provided with completed session):
+        - Resets session to ACTIVE
+        - Queries conversation history from Messages table
+        - Builds prompts that include the full conversation context
+
         Flow:
         1. Create or get session
         2. Save user message to timeline
-        3. Create router + planner (both PENDING)
-        4. Execute all pending runs
+        3. Build conversation history (if continuing)
+        4. Create router + planner (both PENDING)
+        5. Execute all pending runs
 
         Args:
             message: User's message
@@ -107,11 +113,16 @@ class Orchestrator:
             session_id
         """
         # Step 1: Get or create session
+        is_continuation = False
         if session_id:
             existing = self.session_repo.get_by_id(session_id)
             if not existing:
                 raise ValueError(f"Session {session_id} not found")
             current_session_id = session_id
+            is_continuation = True
+            # Reset session status to ACTIVE for the new round
+            self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+            self.session_repo.commit()
         else:
             session = self.session_repo.create(
                 user_id=user_id,
@@ -125,9 +136,15 @@ class Orchestrator:
             "process_message_start",
             session_id=str(current_session_id),
             message_preview=message[:50] if message else "",
+            is_continuation=is_continuation,
         )
 
-        # Step 2: Save user message to the timeline
+        # Step 2: Build conversation history BEFORE saving new message
+        conversation_history = ""
+        if is_continuation:
+            conversation_history = self._build_conversation_history(current_session_id)
+
+        # Step 3: Save user message to the timeline
         self.execution_repo.create_message(
             session_id=current_session_id,
             role="user",
@@ -136,13 +153,16 @@ class Orchestrator:
         )
         self.execution_repo.commit()
 
-        # Step 3: Get user's projects for router injection
+        # Step 4: Get user's projects for router injection
         user_projects = self.project_repo.get_by_user(user_id)
         projects_context = self._format_projects_for_router(user_projects)
 
-        # Step 4: Create router + planner (both PENDING)
+        # Step 5: Create router + planner (both PENDING)
         # Router will call set_intent() which updates planner's prompt
-        router_prompt = f"{projects_context}\n\nUSER REQUEST:\n{message}"
+        if conversation_history:
+            router_prompt = f"{projects_context}\n\n{conversation_history}\n\nNEW USER MESSAGE:\n{message}"
+        else:
+            router_prompt = f"{projects_context}\n\nUSER REQUEST:\n{message}"
         self.execution_repo.create_agent_run(
             session_id=current_session_id,
             agent_id="router",
@@ -152,7 +172,10 @@ class Orchestrator:
         )
 
         # Planner starts with basic prompt - set_intent will update it with context
-        planner_prompt = f"USER REQUEST:\n{message}"
+        if conversation_history:
+            planner_prompt = f"{conversation_history}\n\nNEW USER MESSAGE:\n{message}"
+        else:
+            planner_prompt = f"USER REQUEST:\n{message}"
         self.execution_repo.create_agent_run(
             session_id=current_session_id,
             agent_id="planner",
@@ -162,7 +185,7 @@ class Orchestrator:
         )
         self.execution_repo.commit()
 
-        # Step 5: Execute all pending runs
+        # Step 6: Execute all pending runs
         # Router runs first, calls set_intent() which updates planner prompt
         # Then planner runs with updated prompt
         await self.execute_pending_runs(current_session_id)
@@ -180,6 +203,47 @@ class Orchestrator:
             project_id = str(p.id) if hasattr(p, 'id') else str(p.get('id', ''))
             project_name = p.name if hasattr(p, 'name') else p.get('name', 'unnamed')
             lines.append(f"- {project_name} (id: {project_id})")
+
+        return "\n".join(lines)
+
+    def _build_conversation_history(self, session_id: UUID) -> str:
+        """Build conversation history from previous rounds.
+
+        Queries all user and assistant (summarizer) messages from the session,
+        ordered by created_at. These form the natural conversation:
+        user → assistant → user → assistant → ...
+
+        Args:
+            session_id: Session UUID
+
+        Returns:
+            Formatted conversation history string, or empty string if no history.
+        """
+        from druppie.db.models import Message
+
+        messages = (
+            self.execution_repo.db.query(Message)
+            .filter(
+                Message.session_id == session_id,
+                Message.role.in_(["user", "assistant"]),
+            )
+            .order_by(Message.created_at)
+            .all()
+        )
+
+        if not messages:
+            return ""
+
+        lines = ["CONVERSATION HISTORY:"]
+        for msg in messages:
+            role_label = "User" if msg.role == "user" else "Assistant"
+            lines.append(f"{role_label}: {msg.content}")
+
+        logger.info(
+            "conversation_history_built",
+            session_id=str(session_id),
+            message_count=len(messages),
+        )
 
         return "\n".join(lines)
 

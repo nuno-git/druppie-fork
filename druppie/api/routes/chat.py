@@ -206,6 +206,14 @@ async def chat(
                     status="error",
                     message=f"Session {session_id_param} not found",
                 )
+            # Only allow continuing a completed session
+            if existing.status != SessionStatus.COMPLETED.value:
+                return ChatResponse(
+                    success=False,
+                    session_id=str(session_id_param),
+                    status="error",
+                    message=f"Cannot continue session: status is '{existing.status}', must be 'completed'",
+                )
             current_session_id = session_id_param
         else:
             session = session_repo.create(
