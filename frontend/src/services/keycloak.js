@@ -37,7 +37,7 @@ const clearTokens = () => {
  * @param {number} timeout - Timeout in milliseconds
  * @returns {Promise<boolean>} - True if Keycloak is ready
  */
-const checkKeycloakHealth = async (timeout = 5000) => {
+const checkKeycloakHealth = async (timeout = 10000) => {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), timeout)
 
@@ -65,7 +65,7 @@ const checkKeycloakHealth = async (timeout = 5000) => {
  * @param {number} retryDelay - Delay between retries in milliseconds
  * @returns {Promise<boolean>} - True if Keycloak became available
  */
-const waitForKeycloak = async (maxRetries = 3, retryDelay = 2000) => {
+const waitForKeycloak = async (maxRetries = 5, retryDelay = 3000) => {
   for (let i = 0; i < maxRetries; i++) {
     const isHealthy = await checkKeycloakHealth()
     if (isHealthy) {
@@ -122,8 +122,8 @@ export const initKeycloak = async () => {
     })
 
     const timeoutPromise = new Promise((_, reject) => {
-      // 15 second timeout for init after health check passed
-      setTimeout(() => reject(new Error('Keycloak init timeout')), 15000)
+      // 30 second timeout for init after health check passed (increased for slow VMs)
+      setTimeout(() => reject(new Error('Keycloak init timeout')), 30000)
     })
 
     const authenticated = await Promise.race([initPromise, timeoutPromise])

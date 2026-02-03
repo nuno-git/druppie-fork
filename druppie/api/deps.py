@@ -4,6 +4,19 @@ Provides common dependencies for FastAPI route handlers including:
 - Database sessions
 - Authentication and authorization
 - Main execution loop
+- Repository and Service layer injection (clean architecture)
+
+The clean architecture uses dependency injection to wire up:
+  Route → Service → Repository → Database
+
+Example usage in a route:
+    @router.get("/{session_id}")
+    async def get_session(
+        session_id: UUID,
+        service: SessionService = Depends(get_session_service),
+        user: dict = Depends(get_current_user),
+    ) -> SessionDetail:
+        return service.get_detail(session_id, UUID(user["sub"]), get_user_roles(user))
 """
 
 import os
@@ -17,18 +30,127 @@ import structlog
 logger = structlog.get_logger()
 
 from druppie.core.auth import get_auth_service, AuthService
-from druppie.core.loop import get_main_loop, MainLoop
 from druppie.db.database import get_db, init_db, SessionLocal, engine
-from druppie.db import get_or_create_user
 from uuid import UUID
+
+# Import repositories and services for dependency injection
+from druppie.repositories import (
+    SessionRepository,
+    ApprovalRepository,
+    QuestionRepository,
+    ProjectRepository,
+)
+from druppie.services import (
+    SessionService,
+    ApprovalService,
+    QuestionService,
+    ProjectService,
+    WorkflowService,
+)
 
 # Initialize database tables on import
 init_db()
 
 
-def get_loop() -> MainLoop:
-    """Get the main execution loop."""
-    return get_main_loop()
+# =============================================================================
+# REPOSITORY DEPENDENCIES
+# =============================================================================
+# Repositories handle database access. Each repository gets a DB session.
+
+
+def get_session_repository(db: Session = Depends(get_db)) -> SessionRepository:
+    """Get SessionRepository with DB session injected."""
+    return SessionRepository(db)
+
+
+def get_approval_repository(db: Session = Depends(get_db)) -> ApprovalRepository:
+    """Get ApprovalRepository with DB session injected."""
+    return ApprovalRepository(db)
+
+
+def get_question_repository(db: Session = Depends(get_db)) -> QuestionRepository:
+    """Get QuestionRepository with DB session injected."""
+    return QuestionRepository(db)
+
+
+def get_project_repository(db: Session = Depends(get_db)) -> ProjectRepository:
+    """Get ProjectRepository with DB session injected."""
+    return ProjectRepository(db)
+
+
+# =============================================================================
+# SERVICE DEPENDENCIES
+# =============================================================================
+# Services handle business logic. Each service gets its required repositories.
+
+
+def get_session_service(
+    session_repo: SessionRepository = Depends(get_session_repository),
+) -> SessionService:
+    """Get SessionService with repositories injected."""
+    return SessionService(session_repo)
+
+
+def get_approval_service(
+    approval_repo: ApprovalRepository = Depends(get_approval_repository),
+) -> ApprovalService:
+    """Get ApprovalService with repositories injected."""
+    return ApprovalService(approval_repo)
+
+
+def get_question_service(
+    question_repo: QuestionRepository = Depends(get_question_repository),
+    session_repo: SessionRepository = Depends(get_session_repository),
+) -> QuestionService:
+    """Get QuestionService with repositories injected.
+
+    QuestionService needs SessionRepository to check ownership
+    (questions belong to sessions, sessions belong to users).
+    """
+    return QuestionService(question_repo, session_repo)
+
+
+def get_project_service(
+    project_repo: ProjectRepository = Depends(get_project_repository),
+) -> ProjectService:
+    """Get ProjectService with repositories injected."""
+    return ProjectService(project_repo)
+
+
+def get_execution_repository(db: Session = Depends(get_db)) -> "ExecutionRepository":
+    """Get ExecutionRepository with DB session injected."""
+    from druppie.repositories import ExecutionRepository
+    return ExecutionRepository(db)
+
+
+def get_orchestrator(
+    session_repo: SessionRepository = Depends(get_session_repository),
+    execution_repo: "ExecutionRepository" = Depends(get_execution_repository),
+    project_repo: ProjectRepository = Depends(get_project_repository),
+    question_repo: QuestionRepository = Depends(get_question_repository),
+):
+    """Get the orchestrator for message processing.
+
+    The Orchestrator is the entry point that coordinates:
+    1. Run router with projects injected
+    2. Parse intent from done() result
+    3. Handle project creation/selection
+    4. Create planner with intent context
+    5. Execute pending runs
+    """
+    from druppie.execution import Orchestrator
+    return Orchestrator(session_repo, execution_repo, project_repo, question_repo)
+
+
+def get_workflow_service(
+    orchestrator: "Orchestrator" = Depends(get_orchestrator),
+) -> WorkflowService:
+    """Get WorkflowService with Orchestrator injected.
+
+    WorkflowService wraps the Orchestrator and provides methods for
+    resuming paused workflows (after questions, approvals, etc.).
+    """
+    return WorkflowService(orchestrator)
 
 
 def get_auth() -> AuthService:
@@ -53,22 +175,38 @@ async def get_current_user(
         )
 
     # Sync user to database (creates if doesn't exist)
-    try:
-        user_id = user.get("sub")
-        if user_id:
-            db = SessionLocal()
-            try:
-                get_or_create_user(
-                    db,
-                    user_id=UUID(user_id),
-                    username=user.get("preferred_username"),
-                    email=user.get("email"),
-                    display_name=user.get("name"),
-                )
-            finally:
-                db.close()
-    except Exception as e:
-        logger.warning("user_sync_failed", user_id=user.get("sub"), error=str(e))
+    # This is critical - many operations require user to exist in DB
+    user_id = user.get("sub")
+    if user_id:
+        from druppie.repositories import UserRepository
+        db = SessionLocal()
+        try:
+            user_repo = UserRepository(db)
+            # Use username from token, fall back to user_id if not present
+            username = user.get("preferred_username") or user.get("email") or user_id
+            user_repo.get_or_create(
+                user_id=UUID(user_id),
+                username=username,
+                email=user.get("email"),
+                display_name=user.get("name"),
+            )
+            db.commit()
+            logger.debug("user_synced", user_id=user_id, username=username)
+        except Exception as e:
+            db.rollback()
+            logger.error(
+                "user_sync_failed",
+                user_id=user_id,
+                error=str(e),
+                exc_info=True,
+            )
+            # Re-raise - user must exist in DB for operations to work
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to sync user to database: {str(e)}",
+            )
+        finally:
+            db.close()
 
     return user
 

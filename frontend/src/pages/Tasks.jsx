@@ -2,15 +2,105 @@
  * Tasks (Approvals) Page
  */
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, HelpCircle, Send, Loader2, MessageSquare, Wifi, WifiOff, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code } from 'lucide-react'
-import { getTasks, approveTask, rejectTask, getQuestions, answerQuestion, getApprovalHistory } from '../services/api'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, Loader2, MessageSquare, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code, Eye } from 'lucide-react'
+import { getTasks, approveTask, rejectTask, getApprovalHistory } from '../services/api'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
 import { useToast } from '../components/Toast'
-import { initSocket, onApprovalRequired, onApprovalStatusChanged, isSocketConnected, joinApprovalsRoom } from '../services/socket'
+
+// Helper to check if a file path is a markdown file
+const isMarkdownFile = (path) => {
+  if (!path) return false
+  return path.toLowerCase().endsWith('.md') || path.toLowerCase().endsWith('.mdx')
+}
+
+// Fullscreen modal for previewing file content
+const FilePreviewModal = ({ files, onClose }) => {
+  // files: [{ path, content }]
+  const [rawOverrides, setRawOverrides] = useState({})
+
+  const toggleRaw = (path) => {
+    setRawOverrides((prev) => ({ ...prev, [path]: !prev[path] }))
+  }
+
+  const isRaw = (path) => {
+    if (path in rawOverrides) return rawOverrides[path]
+    return !isMarkdownFile(path)
+  }
+
+  // Close on Escape
+  React.useEffect(() => {
+    const handleKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-gray-900/95 backdrop-blur-sm">
+      {/* Top bar */}
+      <div className="flex items-center justify-between px-6 py-3 bg-gray-800 border-b border-gray-700 shrink-0">
+        <div className="flex items-center gap-3">
+          <FileCode className="w-5 h-5 text-blue-400" />
+          <span className="text-sm font-medium text-gray-200">
+            {files.length === 1 ? files[0].path : `${files.length} files to be written`}
+          </span>
+        </div>
+        <button
+          onClick={onClose}
+          className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
+        >
+          <span className="text-xs text-gray-500 mr-1">Esc</span>
+          Close
+        </button>
+      </div>
+
+      {/* Scrollable content area */}
+      <div className="flex-1 overflow-auto p-6">
+        <div className="max-w-6xl mx-auto space-y-6">
+          {files.map(({ path, content }) => (
+            <div key={path} className="bg-gray-900 rounded-xl border border-gray-700 overflow-hidden shadow-2xl">
+              {/* File header */}
+              <div className="flex items-center justify-between px-5 py-3 bg-gray-800 border-b border-gray-700">
+                <div className="flex items-center gap-3">
+                  <FileCode className="w-4 h-4 text-gray-400" />
+                  <span className="text-sm text-gray-200 font-mono">{path}</span>
+                  <span className="text-xs px-2 py-0.5 bg-gray-700 text-gray-400 rounded">{getLanguageFromPath(path)}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  {isMarkdownFile(path) && (
+                    <button
+                      onClick={() => toggleRaw(path)}
+                      className="flex items-center gap-1.5 px-3 py-1 text-xs rounded-md transition-colors text-gray-400 hover:text-gray-200 hover:bg-gray-700 border border-gray-600"
+                    >
+                      {isRaw(path) ? <Eye className="w-3.5 h-3.5" /> : <Code className="w-3.5 h-3.5" />}
+                      {isRaw(path) ? 'Preview' : 'Raw'}
+                    </button>
+                  )}
+                  <span className="text-xs text-gray-500">{content?.split('\n').length || 0} lines</span>
+                </div>
+              </div>
+              {/* Content */}
+              {isMarkdownFile(path) && !isRaw(path) ? (
+                <div className="p-6 markdown-content text-sm bg-white text-gray-900">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+                </div>
+              ) : (
+                <pre className="p-6 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
+                  {content}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // Helper to get human-readable tool description
 const getToolDescription = (toolName) => {
@@ -234,64 +324,23 @@ const TaskCard = ({ task, onApprove, onReject }) => {
           {(newContent || isBatchWrite) && (
             <div className="mt-3">
               <button
-                onClick={() => setShowCodePreview(!showCodePreview)}
+                onClick={() => setShowCodePreview(true)}
                 className="flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-                aria-expanded={showCodePreview}
               >
                 <FileCode className="w-4 h-4" />
-                {showCodePreview ? 'Hide' : 'View'} code to be written
-                {isBatchWrite && ` (${Object.keys(batchFiles).length} files)`}
-                {showCodePreview ? (
-                  <ChevronDown className="w-4 h-4 transform rotate-180" />
-                ) : (
-                  <ChevronDown className="w-4 h-4" />
-                )}
+                View {isBatchWrite ? `${Object.keys(batchFiles).length} files` : 'file'} to be written
+                <ExternalLink className="w-3.5 h-3.5" />
               </button>
 
               {showCodePreview && (
-                <div className="mt-2 space-y-3">
-                  {/* Single file write */}
-                  {newContent && !isBatchWrite && (
-                    <div className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
-                      <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700">
-                        <div className="flex items-center gap-2">
-                          <FileCode className="w-4 h-4 text-gray-400" />
-                          <span className="text-sm text-gray-300 font-mono">{filePath || 'file'}</span>
-                        </div>
-                        <span className="text-xs text-gray-500">{getLanguageFromPath(filePath)}</span>
-                      </div>
-                      <div className="max-h-96 overflow-auto">
-                        <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
-                          {newContent}
-                        </pre>
-                      </div>
-                      <div className="px-3 py-1.5 bg-gray-800 border-t border-gray-700 text-xs text-gray-500">
-                        {newContent?.split('\n').length || 0} lines
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Batch file write */}
-                  {isBatchWrite && Object.entries(batchFiles).map(([path, content]) => (
-                    <div key={path} className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
-                      <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700">
-                        <div className="flex items-center gap-2">
-                          <FileCode className="w-4 h-4 text-gray-400" />
-                          <span className="text-sm text-gray-300 font-mono">{path}</span>
-                        </div>
-                        <span className="text-xs text-gray-500">{getLanguageFromPath(path)}</span>
-                      </div>
-                      <div className="max-h-64 overflow-auto">
-                        <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
-                          {content}
-                        </pre>
-                      </div>
-                      <div className="px-3 py-1.5 bg-gray-800 border-t border-gray-700 text-xs text-gray-500">
-                        {content?.split('\n').length || 0} lines
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <FilePreviewModal
+                  files={
+                    isBatchWrite
+                      ? Object.entries(batchFiles).map(([path, content]) => ({ path, content }))
+                      : [{ path: filePath || 'file', content: newContent }]
+                  }
+                  onClose={() => setShowCodePreview(false)}
+                />
               )}
             </div>
           )}
@@ -483,134 +532,28 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   )
 }
 
-// Question Card Component for the Tasks page
-const QuestionCard = ({ question, onAnswer, isAnswering }) => {
-  const [selectedOption, setSelectedOption] = useState(null)
-  const [customAnswer, setCustomAnswer] = useState('')
-  const hasOptions = question.options && question.options.length > 0
-
-  const handleSubmit = () => {
-    const answer = selectedOption || customAnswer
-    if (answer.trim()) {
-      onAnswer(question.id, answer)
-    }
-  }
-
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-purple-200 p-6">
-      <div className="flex items-start justify-between mb-4">
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <HelpCircle className="w-5 h-5 text-purple-600" />
-            <h3 className="font-semibold text-lg text-purple-900">Agent Question</h3>
-          </div>
-          <p className="text-purple-800 font-medium">{question.question}</p>
-          {question.context && (
-            <p className="text-purple-600 text-sm mt-1">{question.context}</p>
-          )}
-        </div>
-        <span className="px-3 py-1 bg-purple-100 text-purple-700 text-sm rounded-full flex items-center">
-          <Clock className="w-4 h-4 mr-1" />
-          Waiting
-        </span>
-      </div>
-
-      {/* Session info */}
-      {question.session_id && (
-        <div className="mb-4 text-sm">
-          <span className="text-gray-500">Session:</span>
-          <span className="ml-2 font-medium font-mono text-xs">{question.session_id.substring(0, 8)}...</span>
-        </div>
-      )}
-
-      {/* Options as clickable buttons */}
-      {hasOptions && (
-        <div className="space-y-2 mb-4">
-          {question.options.map((option, index) => (
-            <button
-              key={index}
-              onClick={() => {
-                setSelectedOption(option)
-                setCustomAnswer('')
-              }}
-              className={`w-full text-left px-4 py-2 rounded-lg border transition-colors ${
-                selectedOption === option
-                  ? 'bg-purple-600 text-white border-purple-600'
-                  : 'bg-white text-purple-800 border-purple-200 hover:border-purple-400'
-              }`}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Custom answer input */}
-      <div className="mb-4">
-        <input
-          type="text"
-          value={customAnswer}
-          onChange={(e) => {
-            setCustomAnswer(e.target.value)
-            setSelectedOption(null)
-          }}
-          placeholder={hasOptions ? "Or type a custom answer..." : "Type your answer..."}
-          className="w-full px-3 py-2 border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-        />
-      </div>
-
-      {/* Submit button */}
-      <button
-        onClick={handleSubmit}
-        disabled={isAnswering || (!selectedOption && !customAnswer.trim())}
-        className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
-        aria-label="Submit answer"
-      >
-        {isAnswering ? (
-          <>
-            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-            Submitting...
-          </>
-        ) : (
-          <>
-            <Send className="w-4 h-4" aria-hidden="true" />
-            Submit Answer
-          </>
-        )}
-      </button>
-    </div>
-  )
-}
-
 const Tasks = () => {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const toast = useToast()
-  const [isConnected, setIsConnected] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
 
   const { data: tasksResponse, isLoading, isError, error, refetch: refetchTasks } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
-    refetchInterval: 10000,
+    refetchInterval: 1000,
   })
 
   // Fetch approval history (completed approvals)
   const { data: historyResponse, isLoading: historyLoading } = useQuery({
     queryKey: ['approvalHistory'],
-    queryFn: () => getApprovalHistory(20),
+    queryFn: () => getApprovalHistory(1, 20),
     enabled: showHistory, // Only fetch when history section is expanded
     staleTime: 30000, // Consider data fresh for 30 seconds
   })
 
   // Extract tasks array from paginated response
-  const tasks = tasksResponse?.approvals || []
-
-  const { data: questions = [], isLoading: questionsLoading, isError: questionsError, error: questionsErrorData, refetch: refetchQuestions } = useQuery({
-    queryKey: ['questions'],
-    queryFn: () => getQuestions(),
-    refetchInterval: 10000,
-  })
+  const tasks = tasksResponse?.items || []
 
   const approveMutation = useMutation({
     mutationFn: ({ taskId, comment }) => approveTask(taskId, comment),
@@ -636,86 +579,12 @@ const Tasks = () => {
     },
   })
 
-  const answerMutation = useMutation({
-    mutationFn: ({ questionId, answer }) => answerQuestion(questionId, answer),
-    onSuccess: () => {
-      queryClient.invalidateQueries(['questions'])
-      queryClient.invalidateQueries(['plans'])
-      toast.success('Answer Submitted', 'Your answer has been sent to the agent.')
-    },
-    onError: (err) => {
-      toast.error('Submission Failed', err.message || 'Failed to submit your answer. Please try again.')
-    },
-  })
-
-  // Refetch callback for WebSocket events
-  const refetchAll = useCallback(() => {
-    refetchTasks()
-    refetchQuestions()
-  }, [refetchTasks, refetchQuestions])
-
-  // WebSocket connection for real-time updates
-  useEffect(() => {
-    // Initialize socket connection
-    const socket = initSocket()
-
-    // Check initial connection status
-    const checkConnection = () => {
-      setIsConnected(isSocketConnected())
-    }
-    checkConnection()
-
-    // Join approvals room for user's roles
-    if (user?.roles) {
-      joinApprovalsRoom(user.roles)
-    }
-
-    // Handle new approval required events
-    const handleApprovalRequired = (data) => {
-      const toolName = data.tool || data.mcp_tool || 'Unknown tool'
-      toast.info('New Approval Required', `Action requested: ${toolName}`)
-      refetchAll()
-    }
-
-    // Handle approval status changed events
-    const handleApprovalStatusChanged = (data) => {
-      const toolName = data.tool || data.mcp_tool || 'Unknown tool'
-      const status = data.status || 'updated'
-      if (status === 'approved') {
-        toast.success('Approval Granted', `${toolName} was approved`)
-      } else if (status === 'rejected') {
-        toast.warning('Approval Rejected', `${toolName} was rejected`)
-      } else {
-        toast.info('Approval Updated', `${toolName}: ${status}`)
-      }
-      refetchAll()
-    }
-
-    // Subscribe to events
-    const unsubApprovalRequired = onApprovalRequired(handleApprovalRequired)
-    const unsubStatusChanged = onApprovalStatusChanged(handleApprovalStatusChanged)
-
-    // Periodically check connection status
-    const connectionInterval = setInterval(checkConnection, 3000)
-
-    // Cleanup on unmount
-    return () => {
-      unsubApprovalRequired()
-      unsubStatusChanged()
-      clearInterval(connectionInterval)
-    }
-  }, [user?.roles, toast, refetchAll])
-
   const handleApprove = (taskId) => {
     approveMutation.mutate({ taskId, comment: '' })
   }
 
   const handleReject = (taskId, reason) => {
     rejectMutation.mutate({ taskId, reason })
-  }
-
-  const handleAnswerQuestion = (questionId, answer) => {
-    answerMutation.mutate({ questionId, answer })
   }
 
   // Group tasks by required role (use first role from required_roles array)
@@ -731,36 +600,7 @@ const Tasks = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">Pending Approvals</h1>
-            {/* Live connection indicator */}
-            <span
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                isConnected
-                  ? 'bg-green-100 text-green-700'
-                  : 'bg-gray-100 text-gray-500'
-              }`}
-              role="status"
-              aria-live="polite"
-              aria-label={isConnected ? 'Connected to real-time updates' : 'Disconnected from real-time updates'}
-            >
-              {isConnected ? (
-                <>
-                  <Wifi className="w-3 h-3" />
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                  </span>
-                  Live
-                </>
-              ) : (
-                <>
-                  <WifiOff className="w-3 h-3" />
-                  Offline
-                </>
-              )}
-            </span>
-          </div>
+          <h1 className="text-2xl font-bold">Pending Approvals</h1>
           <p className="text-gray-500 mt-1">
             Review and approve tasks based on your role permissions.
           </p>
@@ -776,59 +616,6 @@ const Tasks = () => {
             </span>
           ))}
         </div>
-      </div>
-
-      {/* Pending Questions Section */}
-      <div className="space-y-4">
-        <h2 className="text-lg font-semibold flex items-center">
-          <MessageSquare className="w-5 h-5 mr-2 text-purple-500" />
-          Pending Questions
-          {!questionsLoading && !questionsError && (
-            <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-600 text-sm rounded-full">
-              {questions.length}
-            </span>
-          )}
-        </h2>
-
-        {/* Loading State for Questions */}
-        {questionsLoading ? (
-          <div className="flex items-center justify-center h-32 bg-white rounded-xl border border-gray-200">
-            <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
-            <span className="ml-2 text-gray-600">Loading questions...</span>
-          </div>
-        ) : questionsError ? (
-          /* Error State for Questions */
-          <div className="flex flex-col items-center justify-center h-32 text-red-500 bg-white rounded-xl border border-red-200 p-4">
-            <AlertCircle className="w-8 h-8 mb-2" />
-            <p className="font-medium">Failed to load questions</p>
-            <p className="text-sm text-red-400">{questionsErrorData?.message || 'An unexpected error occurred'}</p>
-            <button
-              onClick={() => refetchQuestions()}
-              className="mt-3 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
-              aria-label="Retry loading questions"
-            >
-              Retry
-            </button>
-          </div>
-        ) : questions.length > 0 ? (
-          /* Questions List */
-          <div className="grid gap-4">
-            {questions.map((question) => (
-              <QuestionCard
-                key={question.id}
-                question={question}
-                onAnswer={handleAnswerQuestion}
-                isAnswering={answerMutation.isPending}
-              />
-            ))}
-          </div>
-        ) : (
-          /* Empty State for Questions */
-          <div className="text-center py-8 bg-white rounded-xl border border-gray-200">
-            <HelpCircle className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-            <p className="text-gray-500 text-sm">No pending questions from agents.</p>
-          </div>
-        )}
       </div>
 
       {/* Approval Tasks Section */}
@@ -913,9 +700,9 @@ const Tasks = () => {
                 <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
                 <span className="ml-2 text-gray-600">Loading history...</span>
               </div>
-            ) : historyResponse?.approvals?.length > 0 ? (
+            ) : historyResponse?.items?.length > 0 ? (
               <div className="space-y-3">
-                {historyResponse.approvals.map((approval) => (
+                {historyResponse.items.map((approval) => (
                   <div
                     key={approval.id}
                     className="bg-white rounded-lg border border-gray-200 p-4 hover:border-gray-300 transition-colors"

@@ -28,6 +28,9 @@ KEYCLOAK_ADMIN_PASSWORD = os.getenv("KEYCLOAK_ADMIN_PASSWORD", "admin_password")
 
 EXTERNAL_HOST = os.getenv("EXTERNAL_HOST", "localhost")
 
+# .env file path (project root)
+ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+
 
 def wait_for_gitea():
     """Wait for Gitea to be ready."""
@@ -243,6 +246,29 @@ def create_organization():
         return False
 
 
+def update_env_token(token: str):
+    """Update GITEA_TOKEN in the .env file, or append it if missing."""
+    if not os.path.exists(ENV_FILE):
+        with open(ENV_FILE, "a") as f:
+            f.write(f"\n# Gitea Token for MCP services (git push)\nGITEA_TOKEN={token}\n")
+        print(f"  [OK] Added GITEA_TOKEN to {ENV_FILE}")
+        return
+
+    with open(ENV_FILE, "r") as f:
+        content = f.read()
+
+    import re
+    if re.search(r"^GITEA_TOKEN=", content, re.MULTILINE):
+        content = re.sub(r"^GITEA_TOKEN=.*$", f"GITEA_TOKEN={token}", content, flags=re.MULTILINE)
+        print(f"  [OK] Updated GITEA_TOKEN in {ENV_FILE}")
+    else:
+        content = content.rstrip("\n") + f"\n\n# Gitea Token for MCP services (git push)\nGITEA_TOKEN={token}\n"
+        print(f"  [OK] Added GITEA_TOKEN to {ENV_FILE}")
+
+    with open(ENV_FILE, "w") as f:
+        f.write(content)
+
+
 def create_access_token() -> str | None:
     """Create an access token for the admin user and return it."""
     print("\n[STEP 5] Creating access token for MCP services...")
@@ -280,9 +306,7 @@ def create_access_token() -> str | None:
         if response.status_code == 201:
             token = response.json().get("sha1")
             print(f"  [OK] Created access token 'druppie-mcp'")
-            print(f"\n  *** IMPORTANT: Add this to your .env file ***")
-            print(f"  GITEA_TOKEN={token}")
-            print(f"  ********************************************\n")
+            update_env_token(token)
             return token
         elif response.status_code == 422:
             print("  [OK] Token 'druppie-mcp' already exists")
@@ -358,15 +382,13 @@ def main():
     token = create_access_token()
     create_sample_repo()
 
-    gitea_port = GITEA_URL.split(":")[-1] if ":" in GITEA_URL else "3100"
     print("\n" + "=" * 60)
     print("[DONE] Gitea setup complete!")
     print(f"  URL: {GITEA_URL}")
     print(f"  Admin: {GITEA_ADMIN_USER} / {GITEA_ADMIN_PASSWORD}")
     print("")
     if token:
-        print("  IMPORTANT: Add this token to druppie/.env to enable git push:")
-        print(f"    GITEA_TOKEN={token}")
+        print(f"  GITEA_TOKEN written to {ENV_FILE}")
         print("")
     else:
         print("  NOTE: If GITEA_TOKEN is not set in .env, commits won't be pushed.")

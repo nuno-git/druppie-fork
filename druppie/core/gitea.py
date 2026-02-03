@@ -107,6 +107,141 @@ class GiteaClient:
             }
 
     # =========================================================================
+    # User Operations
+    # =========================================================================
+
+    async def create_user(
+        self,
+        username: str,
+        email: str,
+    ) -> dict[str, Any]:
+        """Create a new Gitea user account.
+
+        The user will be able to login via Keycloak OAuth due to Gitea's
+        ACCOUNT_LINKING=auto setting, which auto-links by email.
+
+        Args:
+            username: Username for the new account
+            email: Email address (must match Keycloak email for auto-linking)
+
+        Returns:
+            Dict with success, user data
+        """
+        import secrets
+
+        # Create user with random password - user will login via OAuth
+        # Gitea's ACCOUNT_LINKING=auto will auto-link by email
+        user_data = {
+            "username": username,
+            "email": email,
+            "login_name": username,
+            "must_change_password": False,
+            "password": secrets.token_urlsafe(32),  # Unused - login via OAuth
+        }
+
+        result = await self._request(
+            "POST",
+            "/admin/users",
+            json_data=user_data,
+        )
+
+        if result["success"]:
+            logger.info(
+                "gitea_user_created",
+                username=username,
+                email=email,
+            )
+
+        return result
+
+    async def user_exists(self, username: str) -> bool:
+        """Check if a Gitea user exists."""
+        result = await self._request("GET", f"/users/{username}")
+        return result.get("success", False)
+
+    async def find_user_by_email(self, email: str) -> str | None:
+        """Find a Gitea username by email address."""
+        result = await self._request("GET", f"/admin/users")
+        if result.get("success") and isinstance(result.get("data"), list):
+            for user in result["data"]:
+                if user.get("email") == email:
+                    return user.get("login") or user.get("username")
+        return None
+
+    async def ensure_user_exists(
+        self,
+        username: str,
+        email: str | None = None,
+    ) -> dict[str, Any]:
+        """Ensure a Gitea user exists, creating if necessary.
+
+        Users will be able to login via Keycloak OAuth - Gitea auto-links
+        accounts by email when ACCOUNT_LINKING=auto is configured.
+
+        Handles reserved Gitea usernames (e.g., "admin") by prefixing
+        with "druppie_".
+
+        Args:
+            username: Username to check/create
+            email: Email for new user (must match Keycloak email for auto-linking)
+
+        Returns:
+            Dict with success, created (bool), username (actual Gitea username)
+        """
+        # Check if user already exists
+        if await self.user_exists(username):
+            return {"success": True, "created": False, "username": username}
+
+        # Create the user - Gitea will auto-link to OAuth by email
+        if not email:
+            email = f"{username}@druppie.local"
+
+        result = await self.create_user(
+            username=username,
+            email=email,
+        )
+
+        if result.get("success"):
+            return {"success": True, "created": True, "username": username}
+
+        # Handle reserved usernames — retry with "druppie_" prefix
+        error_str = str(result.get("error") or result.get("data") or "")
+        if "reserved" in error_str.lower():
+            alt_username = f"druppie_{username}"
+            logger.info(
+                "gitea_username_reserved_using_alt",
+                original=username,
+                alt=alt_username,
+            )
+
+            if await self.user_exists(alt_username):
+                return {"success": True, "created": False, "username": alt_username}
+
+            alt_result = await self.create_user(
+                username=alt_username,
+                email=email,
+            )
+            if alt_result.get("success"):
+                return {"success": True, "created": True, "username": alt_username}
+
+        # Last resort: find existing user by email (e.g., gitea_admin shares email)
+        if email:
+            existing = await self.find_user_by_email(email)
+            if existing:
+                logger.info(
+                    "gitea_user_found_by_email",
+                    email=email,
+                    gitea_username=existing,
+                )
+                return {"success": True, "created": False, "username": existing}
+
+        return {
+            "success": False,
+            "error": result.get("error") or result.get("data"),
+            "username": username,
+        }
+
+    # =========================================================================
     # Repository Operations
     # =========================================================================
 
@@ -116,11 +251,31 @@ class GiteaClient:
         description: str = "",
         private: bool = False,
         auto_init: bool = True,
+        owner: str | None = None,
     ) -> dict[str, Any]:
-        """Create a new repository in the organization."""
+        """Create a new repository.
+
+        Args:
+            name: Repository name
+            description: Repository description
+            private: Whether repo is private
+            auto_init: Initialize with README
+            owner: Username to create repo under (uses admin API).
+                   If None, creates in the organization.
+
+        Returns:
+            Dict with success, repo_url, clone_url, repo_name, owner
+        """
+        if owner:
+            # Create repo under user's account using admin API
+            endpoint = f"/admin/users/{owner}/repos"
+        else:
+            # Create repo in organization
+            endpoint = f"/orgs/{self.org}/repos"
+
         result = await self._request(
             "POST",
-            f"/orgs/{self.org}/repos",
+            endpoint,
             json_data={
                 "name": name,
                 "description": description,
@@ -135,7 +290,13 @@ class GiteaClient:
             result["clone_url"] = repo_data.get("clone_url")
             result["ssh_url"] = repo_data.get("ssh_url")
             result["repo_name"] = repo_data.get("name")
-            logger.info("gitea_repo_created", name=name, url=result.get("repo_url"))
+            result["owner"] = repo_data.get("owner", {}).get("login", owner or self.org)
+            logger.info(
+                "gitea_repo_created",
+                name=name,
+                owner=result.get("owner"),
+                url=result.get("repo_url"),
+            )
 
         return result
 
@@ -475,17 +636,29 @@ class GiteaClient:
     # Clone URL Helper
     # =========================================================================
 
-    def get_clone_url(self, repo_name: str) -> str:
-        """Get the clone URL for a repository (with embedded credentials)."""
-        # Use internal URL for cloning within Docker network
-        # URL format: http://user:pass@host:port/org/repo.git
-        base = GITEA_INTERNAL_URL.replace("http://", "").replace("https://", "")
-        return f"http://{self.admin_user}:{self.admin_password}@{base}/{self.org}/{repo_name}.git"
+    def get_clone_url(self, repo_name: str, owner: str | None = None) -> str:
+        """Get the clone URL for a repository (with embedded credentials).
 
-    def get_public_url(self, repo_name: str) -> str:
-        """Get the public repo URL (without credentials)."""
+        Args:
+            repo_name: Repository name
+            owner: Owner username. If None, uses the organization.
+        """
+        # Use internal URL for cloning within Docker network
+        # URL format: http://user:pass@host:port/owner/repo.git
+        base = GITEA_INTERNAL_URL.replace("http://", "").replace("https://", "")
+        repo_owner = owner or self.org
+        return f"http://{self.admin_user}:{self.admin_password}@{base}/{repo_owner}/{repo_name}.git"
+
+    def get_public_url(self, repo_name: str, owner: str | None = None) -> str:
+        """Get the public repo URL (without credentials).
+
+        Args:
+            repo_name: Repository name
+            owner: Owner username. If None, uses the organization.
+        """
         # Use external URL for display
-        return f"{GITEA_URL}/{self.org}/{repo_name}"
+        repo_owner = owner or self.org
+        return f"{GITEA_URL}/{repo_owner}/{repo_name}"
 
 
 # Singleton instance

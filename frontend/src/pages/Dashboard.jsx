@@ -54,7 +54,7 @@ const Dashboard = () => {
 
   const { data: plansResponse, isLoading: plansLoading } = useQuery({
     queryKey: ['plans'],
-    queryFn: getPlans,
+    queryFn: () => getPlans(),
   })
 
   const { data: tasksResponse, isLoading: tasksLoading } = useQuery({
@@ -63,8 +63,8 @@ const Dashboard = () => {
   })
 
   // Extract arrays from paginated responses
-  const plans = plansResponse?.sessions || []
-  const tasks = tasksResponse?.approvals || []
+  const plans = plansResponse?.items || []
+  const tasks = tasksResponse?.items || []
 
   const { data: status } = useQuery({
     queryKey: ['status'],
@@ -72,23 +72,27 @@ const Dashboard = () => {
     refetchInterval: 30000,
   })
 
-  const { data: runningApps = [], isLoading: appsLoading } = useQuery({
+  const { data: runningAppsResponse = [], isLoading: appsLoading } = useQuery({
     queryKey: ['running-apps'],
     queryFn: getRunningApps,
     refetchInterval: 15000, // Refresh every 15 seconds
   })
 
-  const { data: projects = [] } = useQuery({
+  const { data: projectsResponse } = useQuery({
     queryKey: ['projects'],
     queryFn: getProjects,
   })
+
+  // Extract arrays from paginated responses (handle both array and {items:[]} formats)
+  const runningApps = Array.isArray(runningAppsResponse) ? runningAppsResponse : (runningAppsResponse?.items || [])
+  const projects = Array.isArray(projectsResponse) ? projectsResponse : (projectsResponse?.items || [])
 
   const completedPlans = plans.filter((p) => p.status === 'completed').length
   const runningPlans = plans.filter((p) => p.status === 'running').length
   const pendingTasks = tasks.length
 
   // Calculate total token usage across all projects
-  const totalTokens = projects.reduce((sum, p) => sum + (p.token_usage?.total_tokens || 0), 0)
+  const totalTokens = Array.isArray(projects) ? projects.reduce((sum, p) => sum + (p.token_usage?.total_tokens || 0), 0) : 0
   const totalCost = calculateCost(totalTokens)
 
   return (

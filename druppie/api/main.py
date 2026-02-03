@@ -6,19 +6,16 @@ Main entry point for the API.
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import admin, agents, chat, sessions, approvals, mcps, projects, questions, workspace, workflows
-from druppie.api.websocket import handle_websocket
+from druppie.api.routes import agents, approvals, chat, deployments, mcp_bridge, mcps, projects, questions, sessions, workspace
 from druppie.api.errors import register_exception_handlers
-from druppie.core.loop import get_main_loop
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
 from druppie.agents import Agent
-from druppie.workflows import Workflow
 
 logger = structlog.get_logger()
 
@@ -29,15 +26,9 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("druppie_starting")
 
-    # Initialize main loop and list available agents/workflows
-    get_main_loop()
-    agents = Agent.list_agents()
-    workflows = Workflow.list_workflows()
-    logger.info(
-        "main_loop_initialized",
-        agents=len(agents),
-        workflows=len(workflows),
-    )
+    # List available agents
+    agents_list = Agent.list_agents()
+    logger.info("druppie_initialized", agents=len(agents_list))
 
     yield
 
@@ -73,14 +64,14 @@ def create_app() -> FastAPI:
     # Include routers
     app.include_router(chat.router, prefix="/api", tags=["Chat"])
     app.include_router(sessions.router, prefix="/api", tags=["Sessions"])
-    app.include_router(approvals.router, prefix="/api", tags=["Approvals"])
-    app.include_router(mcps.router, prefix="/api", tags=["MCPs"])
-    app.include_router(projects.router, prefix="/api", tags=["Projects"])
+    app.include_router(approvals.router, prefix="/api/approvals", tags=["Approvals"])
     app.include_router(questions.router, prefix="/api/questions", tags=["Questions"])
+    app.include_router(projects.router, prefix="/api", tags=["Projects"])
+    app.include_router(deployments.router, prefix="/api", tags=["Deployments"])
     app.include_router(workspace.router, prefix="/api", tags=["Workspace"])
-    app.include_router(workflows.router, prefix="/api", tags=["Workflows"])
-    app.include_router(admin.router, prefix="/api", tags=["Admin"])
     app.include_router(agents.router, prefix="/api", tags=["Agents"])
+    app.include_router(mcps.router, prefix="/api", tags=["MCPs"])
+    app.include_router(mcp_bridge.router, prefix="/api/mcp", tags=["MCP Bridge"])
 
     @app.get("/health")
     async def health_check():
@@ -180,9 +171,7 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.warning("gitea_health_check_failed", error=str(e))
 
-        # Return status counts instead of internal names to avoid information disclosure
         agents = Agent.list_agents()
-        workflows = Workflow.list_workflows()
 
         return {
             "status": "healthy",
@@ -193,7 +182,6 @@ def create_app() -> FastAPI:
             "llm": llm_healthy,
             "gitea": gitea_healthy,
             "agents_count": len(agents),
-            "workflows_count": len(workflows),
             "llm_provider": llm_provider,
             "llm_model": llm_model,
         }
@@ -206,16 +194,6 @@ def create_app() -> FastAPI:
             "version": "2.0.0",
             "docs": "/docs",
         }
-
-    @app.websocket("/ws")
-    async def websocket_endpoint(websocket: WebSocket):
-        """WebSocket endpoint for real-time updates."""
-        await handle_websocket(websocket)
-
-    @app.websocket("/ws/session/{session_id}")
-    async def websocket_session_endpoint(websocket: WebSocket, session_id: str):
-        """WebSocket endpoint for session-specific updates."""
-        await handle_websocket(websocket, session_id)
 
     return app
 

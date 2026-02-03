@@ -32,8 +32,8 @@ import { getToken } from '../services/keycloak'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
-// Fetch session trace
-const getSessionTrace = async (sessionId) => {
+// Fetch session (returns complete data including trace)
+const getSessionData = async (sessionId) => {
   const token = getToken()
   const headers = {
     'Content-Type': 'application/json',
@@ -42,7 +42,7 @@ const getSessionTrace = async (sessionId) => {
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const response = await fetch(`${API_URL}/api/sessions/${sessionId}/trace`, { headers })
+  const response = await fetch(`${API_URL}/api/sessions/${sessionId}`, { headers })
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
     throw new Error(error.detail || `Request failed: ${response.status}`)
@@ -754,32 +754,60 @@ const Debug = () => {
   const [expandAll, setExpandAll] = useState(false)
 
   useEffect(() => {
-    const fetchTrace = async () => {
+    const fetchSession = async () => {
       if (!sessionId) return
 
       setLoading(true)
       setError(null)
 
       try {
-        const data = await getSessionTrace(sessionId)
-        // API returns {session_id, status, trace: {events, summary, raw_llm_calls}}
-        // Store the full response for access to session_id and status
+        const data = await getSessionData(sessionId)
+        // New API returns SessionDetail directly with all data
+        // Transform to trace format for backwards compatibility with UI
+        const summary = {
+          total_tokens: data.token_usage?.total_tokens || 0,
+          prompt_tokens: data.token_usage?.prompt_tokens || 0,
+          completion_tokens: data.token_usage?.completion_tokens || 0,
+          tokens_by_agent: data.tokens_by_agent || {},
+        }
+
+        // Transform llm_calls to raw_llm_calls format
+        const raw_llm_calls = (data.llm_calls || []).map(call => ({
+          agent_id: call.agent_id,
+          iteration: call.iteration,
+          timestamp: call.created_at,
+          duration_ms: call.duration_ms,
+          model: call.model,
+          provider: call.provider,
+          messages: call.request_messages || [],
+          tools: call.tools_provided || [],
+          response: {
+            content: call.response_content,
+            tool_calls: call.response_tool_calls || [],
+          },
+          usage: {
+            prompt_tokens: call.token_usage?.prompt_tokens || 0,
+            completion_tokens: call.token_usage?.completion_tokens || 0,
+            total_tokens: call.token_usage?.total_tokens || 0,
+          },
+        }))
+
         setTrace({
-          session_id: data.session_id,
+          session_id: data.id,
           session_status: data.status,
-          events: data.trace?.events || [],
-          summary: data.trace?.summary || {},
-          raw_llm_calls: data.trace?.raw_llm_calls || [],
+          events: data.events || [],
+          summary,
+          raw_llm_calls,
         })
       } catch (err) {
-        console.error('Failed to fetch trace:', err)
+        console.error('Failed to fetch session:', err)
         setError(err.message || 'Failed to load execution trace')
       } finally {
         setLoading(false)
       }
     }
 
-    fetchTrace()
+    fetchSession()
   }, [sessionId])
 
   // Loading state

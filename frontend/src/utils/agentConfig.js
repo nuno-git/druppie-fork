@@ -5,6 +5,7 @@
 import {
   Brain,
   Clock,
+  ClipboardList,
   FileCode,
   Hammer,
   GitBranch,
@@ -18,6 +19,8 @@ export const AGENT_CONFIG = {
   router_agent: { name: 'Router', icon: Brain, color: 'purple', description: 'Intent analysis' },
   planner: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning' },
   planner_agent: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning' },
+  business_analyst: { name: 'Business Analyst', icon: ClipboardList, color: 'teal', description: 'Requirements gathering' },
+  business_analyst_agent: { name: 'Business Analyst', icon: ClipboardList, color: 'teal', description: 'Requirements gathering' },
   architect: { name: 'Architect', icon: Brain, color: 'indigo', description: 'System design' },
   architect_agent: { name: 'Architect', icon: Brain, color: 'indigo', description: 'System design' },
   developer: { name: 'Developer', icon: FileCode, color: 'green', description: 'Code generation' },
