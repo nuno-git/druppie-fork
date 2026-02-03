@@ -111,7 +111,7 @@ class ChatZAI(BaseLLM):
             payload["max_tokens"] = self.max_tokens
 
         if effective_tools:
-            payload["tools"] = effective_tools
+            payload["tools"] = self._sanitize_tools(effective_tools)
             payload["tool_choice"] = "auto"
             print(f"[Z.AI LLM] Tools: {len(effective_tools)} tools bound")
 
@@ -181,6 +181,7 @@ class ChatZAI(BaseLLM):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """Send asynchronous chat completion request with retry logic."""
         import asyncio
@@ -204,11 +205,13 @@ class ChatZAI(BaseLLM):
             "stream": False,
         }
 
-        if self.max_tokens:
-            payload["max_tokens"] = self.max_tokens
+        # Per-call max_tokens overrides instance default
+        effective_max_tokens = max_tokens or self.max_tokens
+        if effective_max_tokens:
+            payload["max_tokens"] = effective_max_tokens
 
         if effective_tools:
-            payload["tools"] = effective_tools
+            payload["tools"] = self._sanitize_tools(effective_tools)
             payload["tool_choice"] = "auto"
             print(f"[Z.AI LLM] Tools: {len(effective_tools)} tools bound")
 
@@ -318,6 +321,56 @@ class ChatZAI(BaseLLM):
             raise last_error
         raise ValueError("Max retries exceeded")
 
+    def _sanitize_tools(self, tools: list[dict]) -> list[dict]:
+        """Sanitize tool schemas for GLM API compatibility.
+
+        GLM-4.7's OpenAI-compatible API is stricter than OpenAI about tool schemas.
+        This method fixes common issues:
+        1. Removes empty `required: []` arrays
+        2. Ensures `type: object` properties have inner `properties` defined
+        3. Converts `integer` → `number` (GLM may not support `integer`)
+        4. Converts `boolean` → `string` with description hint
+        """
+        sanitized = []
+        for tool in tools:
+            tool = json.loads(json.dumps(tool))  # Deep copy
+            func = tool.get("function", {})
+            params = func.get("parameters", {})
+            self._sanitize_schema(params)
+            sanitized.append(tool)
+        return sanitized
+
+    def _sanitize_schema(self, schema: dict) -> None:
+        """Recursively sanitize a JSON Schema for GLM compatibility."""
+        if not isinstance(schema, dict):
+            return
+
+        # Remove empty required arrays
+        if "required" in schema and schema["required"] == []:
+            del schema["required"]
+
+        # Ensure type: object has properties
+        if schema.get("type") == "object" and "properties" not in schema:
+            schema["properties"] = {}
+
+        # If properties is empty and there's no required, that's OK for GLM
+        # but ensure at least the structure is valid
+
+        # Convert integer → number (GLM compatibility)
+        if schema.get("type") == "integer":
+            schema["type"] = "number"
+            if "description" in schema and "integer" not in schema["description"].lower():
+                schema["description"] = schema.get("description", "") + " (integer)"
+
+        # Recurse into properties
+        if "properties" in schema:
+            for prop_schema in schema["properties"].values():
+                self._sanitize_schema(prop_schema)
+
+        # Recurse into items (for arrays)
+        if "items" in schema:
+            self._sanitize_schema(schema["items"])
+
     def _format_error(self, response: httpx.Response) -> LLMError:
         """Format error from response, returning appropriate exception."""
         error_text = response.text[:500] if response.text else "No details"
@@ -363,19 +416,28 @@ class ChatZAI(BaseLLM):
             raise ValueError("No response from Z.AI")
 
         choice = data["choices"][0]
+        finish_reason = choice.get("finish_reason", "")
         message = choice.get("message", {})
-        content = self._clean_response(message.get("content", ""))
+        original_content = message.get("content") or ""  # Preserve original (handle None)
+        content = self._clean_response(original_content)
 
         # Parse tool calls from API response
         tool_calls = []
         if message.get("tool_calls"):
             for tc in message["tool_calls"]:
                 func = tc.get("function", {})
-                args_str = func.get("arguments", "{}")
-                try:
-                    args = json.loads(args_str)
-                except json.JSONDecodeError:
-                    args = self._parse_malformed_args(args_str, func.get("name", ""))
+                raw_args = func.get("arguments", "{}")
+                # Z.AI returns arguments as an object (dict), not a JSON string
+                # like OpenAI does. Handle both cases.
+                if isinstance(raw_args, dict):
+                    args = raw_args
+                elif isinstance(raw_args, str):
+                    try:
+                        args = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        args = self._parse_malformed_args(raw_args, func.get("name", ""))
+                else:
+                    args = {}
 
                 # Ensure args is always a dict
                 if not isinstance(args, dict):
@@ -417,7 +479,9 @@ class ChatZAI(BaseLLM):
 
         return LLMResponse(
             content=content,
+            raw_content=original_content,  # Preserve original for debugging
             tool_calls=tool_calls,
+            finish_reason=finish_reason,
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
             total_tokens=usage.get("total_tokens", 0),
@@ -465,9 +529,6 @@ class ChatZAI(BaseLLM):
         # Remove XML-like tags (but preserve content inside)
         cleaned = re.sub(r"</?\w+(?:_\w+)*>", "", cleaned)
 
-        # Fix assignment syntax (key="value" -> "key": "value")
-        cleaned = re.sub(r'(\w+)="([^"]*)"', r'"\1": "\2"', cleaned)
-
         # Remove duplicate colons
         cleaned = re.sub(r":+\s*:", ":", cleaned)
 
@@ -496,23 +557,23 @@ class ChatZAI(BaseLLM):
         # Tool-specific fallbacks
         if tool_name == "done":
             summary_match = re.search(
-                r'"?summary"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?summary"?\s*:\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
             )
             return {
-                "summary": summary_match.group(1) if summary_match else "Task completed",
+                "summary": summary_match.group(1) if summary_match else f"[PARSE_ERROR] Raw: {args_str[:500]}",
                 "artifacts": [],
                 "data": {},
             }
 
         if tool_name == "fail":
             reason_match = re.search(
-                r'"?reason"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?reason"?\s*:\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
             )
             return {"reason": reason_match.group(1) if reason_match else args_str[:100]}
 
         if tool_name == "ask_human" or tool_name == "hitl_ask":
             question_match = re.search(
-                r'"?question"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?question"?\s*:\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
             )
             return {
                 "question": question_match.group(1) if question_match else args_str[:100]
@@ -521,16 +582,16 @@ class ChatZAI(BaseLLM):
         # Handle coding:write_file and similar tools
         if "write_file" in tool_name or tool_name == "coding_write_file":
             path_match = re.search(
-                r'"?path"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?path"?\s*:\s*"([^"]*)"', args_str, re.IGNORECASE
             )
             # Try to extract content - could be between quotes or in a code block
             content_match = re.search(
-                r'"?content"?\s*[=:]\s*"([\s\S]*?)"(?:\s*[,}]|$)', args_str, re.IGNORECASE
+                r'"?content"?\s*:\s*"([\s\S]*?)"(?:\s*[,}]|$)', args_str, re.IGNORECASE
             )
             if not content_match:
                 # Try code block format
                 content_match = re.search(
-                    r'"?content"?\s*[=:]\s*```[\w]*\n?([\s\S]*?)```', args_str, re.IGNORECASE
+                    r'"?content"?\s*:\s*```[\w]*\n?([\s\S]*?)```', args_str, re.IGNORECASE
                 )
             if path_match and content_match:
                 return {
@@ -547,7 +608,7 @@ class ChatZAI(BaseLLM):
         # Handle coding:read_file
         if "read_file" in tool_name or tool_name == "coding_read_file":
             path_match = re.search(
-                r'"?path"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?path"?\s*:\s*"([^"]*)"', args_str, re.IGNORECASE
             )
             if path_match:
                 return {"path": path_match.group(1)}

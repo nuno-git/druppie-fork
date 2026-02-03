@@ -9,12 +9,7 @@ system_prompt: |
   CRITICAL: You can ONLY act through MCP tools.
 
   AVAILABLE TOOLS:
-  - coding:read_file - Read code files to review
-  - coding:list_dir - Find files to review
-  - coding:write_file - Create review report
-  - hitl:progress - Report progress
-  - hitl:ask_question - Ask clarifying questions
-  - hitl:ask_choice - Ask user for choices
+  [TOOL_DESCRIPTIONS_PLACEHOLDER]
 
   REVIEW CHECKLIST:
   1. Code Quality
@@ -54,5 +49,5 @@ mcps:
 
 model: glm-4
 temperature: 0.1
-max_tokens: 4096
-max_iterations: 25
+max_tokens: 100000
+max_iterations: 50

@@ -283,7 +283,7 @@ const Plans = () => {
 
   const { data: plans = [], isLoading, error } = useQuery({
     queryKey: ['plans'],
-    queryFn: getPlans,
+    queryFn: () => getPlans(),
     refetchInterval: 10000,
   })
 

@@ -203,7 +203,6 @@ create_network() {
 
 start_infrastructure() {
     log "Starting infrastructure services..."
-    # NOTE: Redis removed - HITL uses database directly now
     compose up -d keycloak-db gitea-db druppie-db
 
     log "Waiting for databases to be ready..."

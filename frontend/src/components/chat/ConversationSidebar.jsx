@@ -111,9 +111,9 @@ const ConversationSidebar = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all') // all, completed, failed, running
 
-  // Extract sessions array from paginated response or use directly if already an array
-  const sessionList = Array.isArray(sessions) ? sessions : (sessions?.sessions || [])
-  const totalSessions = Array.isArray(sessions) ? sessions.length : (sessions?.total || 0)
+  // Extract sessions from paginated response
+  const sessionList = sessions?.items || []
+  const totalSessions = sessions?.total || 0
 
   // Filter sessions based on search query and status
   const filteredSessions = useMemo(() => {
@@ -155,7 +155,7 @@ const ConversationSidebar = ({
 
   if (isCollapsed) {
     return (
-      <div className="w-12 bg-white border-r border-gray-200 flex flex-col h-full">
+      <div className="w-12 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col h-full">
         {/* Collapsed header with expand button */}
         <div className="p-2 border-b border-gray-200">
           <button
@@ -200,7 +200,7 @@ const ConversationSidebar = ({
   }
 
   return (
-    <div className="w-72 bg-white border-r border-gray-200 flex flex-col h-full">
+    <div className="w-72 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col h-full">
       {/* Header with collapse button */}
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center gap-2 mb-3">

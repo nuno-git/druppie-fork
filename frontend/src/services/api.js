@@ -21,17 +21,38 @@ const request = async (endpoint, options = {}) => {
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const response = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers,
-  })
+  const method = options.method || 'GET'
+  const requestBody = options.body ? JSON.parse(options.body) : null
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
-    throw new Error(error.detail || error.error || `Request failed: ${response.status}`)
+  console.group(`🌐 API ${method} ${endpoint}`)
+  console.log('Request:', { method, endpoint, body: requestBody })
+  console.time('Duration')
+
+  try {
+    const response = await fetch(`${API_URL}${endpoint}`, {
+      ...options,
+      headers,
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+      console.error('❌ Error Response:', { status: response.status, error })
+      console.timeEnd('Duration')
+      console.groupEnd()
+      throw new Error(error.detail || error.error || `Request failed: ${response.status}`)
+    }
+
+    const data = await response.json()
+    console.log('✅ Response:', data)
+    console.timeEnd('Duration')
+    console.groupEnd()
+    return data
+  } catch (err) {
+    console.error('❌ Request Failed:', err.message)
+    console.timeEnd('Duration')
+    console.groupEnd()
+    throw err
   }
-
-  return response.json()
 }
 
 // ============ User ============
@@ -55,69 +76,51 @@ export const cancelChat = (sessionId) =>
   request(`/api/chat/${sessionId}/cancel`, { method: 'POST' })
 
 // ============ Sessions (replaces Plans) ============
-// Paginated sessions for sidebar (new format with preview & project_name)
+// Paginated sessions for sidebar
 export const getSessions = (page = 1, limit = 20) =>
   request(`/api/sessions?page=${page}&limit=${limit}`)
+
+// Get complete session with ALL data (messages, llm_calls, events, approvals, etc.)
 export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
+
+// Resume from chat endpoint (for HITL/approval continuation)
 export const resumeSession = (sessionId, answer = null) =>
-  request(`/api/sessions/${sessionId}/resume`, {
+  request(`/api/chat/${sessionId}/resume`, {
     method: 'POST',
     body: JSON.stringify({ answer }),
   })
 
-// Session trace endpoint for debug panel data
-export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}/trace`)
-
-// Legacy plan endpoints (mapped to sessions/list for backwards compatibility)
-export const getPlans = () => request('/api/sessions/list')
+// Legacy aliases (use getSession instead - it returns everything)
+export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}`)
+export const getPlans = (page = 1, limit = 20) => request(`/api/sessions?page=${page}&limit=${limit}`)
 export const getPlan = (planId) => request(`/api/sessions/${planId}`)
-export const createPlan = (data) =>
-  request('/api/sessions', { method: 'POST', body: JSON.stringify(data) })
 
 // ============ Approvals ============
 export const getApprovals = () => request('/api/approvals')
 export const getApproval = (approvalId) => request(`/api/approvals/${approvalId}`)
-export const approveApproval = (approvalId, comment = '') =>
+export const approveApproval = (approvalId) =>
   request(`/api/approvals/${approvalId}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ approved: true, comment }),
   })
-export const rejectApproval = (approvalId, comment = '') =>
-  request(`/api/approvals/${approvalId}/approve`, {
+export const rejectApproval = (approvalId, reason = '') =>
+  request(`/api/approvals/${approvalId}/reject`, {
     method: 'POST',
-    body: JSON.stringify({ approved: false, comment }),
+    body: JSON.stringify({ reason }),
   })
 
 // Legacy task endpoints (mapped to approvals for backwards compatibility)
 export const getTasks = () => request('/api/approvals')
 export const getTask = (taskId) => request(`/api/approvals/${taskId}`)
-export const getApprovalHistory = async (limit = 20) => {
-  // Fetch both approved and rejected approvals for complete history
-  const [approved, rejected] = await Promise.all([
-    request(`/api/approvals?status=approved&limit=${limit}`),
-    request(`/api/approvals?status=rejected&limit=${limit}`),
-  ])
-  // Combine and sort by created_at descending
-  const allApprovals = [
-    ...(approved?.approvals || []),
-    ...(rejected?.approvals || []),
-  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-  return {
-    approvals: allApprovals.slice(0, limit),
-    total: (approved?.total || 0) + (rejected?.total || 0),
-  }
-}
-export const getRejectedApprovals = (limit = 20) =>
-  request(`/api/approvals?status=rejected&limit=${limit}`)
-export const approveTask = (taskId, comment = '') =>
+export const getApprovalHistory = (page = 1, limit = 20) =>
+  request(`/api/approvals/history?page=${page}&limit=${limit}`)
+export const approveTask = (taskId) =>
   request(`/api/approvals/${taskId}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ approved: true, comment }),
   })
-export const rejectTask = (taskId, comment = '') =>
-  request(`/api/approvals/${taskId}/approve`, {
+export const rejectTask = (taskId, reason = '') =>
+  request(`/api/approvals/${taskId}/reject`, {
     method: 'POST',
-    body: JSON.stringify({ approved: false, comment }),
+    body: JSON.stringify({ reason }),
   })
 export const getUsersByRole = (role) =>
   request(`/api/approvals/users-by-role/${role}`)
@@ -204,6 +207,18 @@ export const getProjectFiles = (projectId, path = '', branch = 'main') =>
   request(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}&branch=${branch}`)
 export const getProjectFile = (projectId, path, branch = 'main') =>
   request(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}&branch=${branch}`)
+
+// ============ Deployments ============
+export const getDeployments = (projectId = null) => {
+  const params = new URLSearchParams()
+  if (projectId) params.append('project_id', projectId)
+  const qs = params.toString()
+  return request(`/api/deployments${qs ? `?${qs}` : ''}`)
+}
+export const stopDeployment = (containerName) =>
+  request(`/api/deployments/${containerName}/stop?remove=true`, { method: 'POST' })
+export const getDeploymentLogs = (containerName, tail = 100) =>
+  request(`/api/deployments/${containerName}/logs?tail=${tail}`)
 
 // ============ Running Apps ============
 export const getRunningApps = () => request('/api/apps/running')
