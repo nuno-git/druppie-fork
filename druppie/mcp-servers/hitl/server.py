@@ -4,7 +4,6 @@ Provides tools for agent-to-human interaction:
 - ask_question: Free-form text input
 - ask_choice: Multiple choice with optional "Other" text input
 
-Uses Redis pub/sub for real-time communication with frontend.
 Uses FastMCP framework for HTTP transport.
 Persists questions to the backend database via internal API.
 """
@@ -16,7 +15,6 @@ import uuid
 from datetime import datetime, timezone
 
 import httpx
-import redis
 from fastmcp import FastMCP
 
 # Configure logging
@@ -28,10 +26,6 @@ logger = logging.getLogger("hitl-mcp")
 
 # Initialize FastMCP server
 mcp = FastMCP("HITL MCP Server")
-
-# Redis connection
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-redis_client = redis.from_url(REDIS_URL)
 
 # Backend API for persisting questions
 BACKEND_URL = os.getenv("BACKEND_URL", "http://druppie-backend:8000")
@@ -56,7 +50,7 @@ def safe_json_parse(data: bytes | str, context: str = "unknown") -> dict | None:
         return None
 
     try:
-        # Handle bytes from Redis
+        # Handle bytes
         if isinstance(data, bytes):
             data = data.decode("utf-8")
 
@@ -202,66 +196,18 @@ async def ask_question(
         agent_id=agent_id,
     )
 
-    # Publish question to frontend via Redis
-    redis_client.publish(
-        f"hitl:{session_id}",
-        json.dumps({
-            "type": "question",
-            "request_id": request_id,
-            "question": question,
-            "input_type": "text",
-            "context": context,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }),
-    )
-
-    logger.debug("Published question %s to Redis channel hitl:%s", request_id, session_id)
-
-    # Wait for response (blocking)
-    response = redis_client.blpop(
-        f"hitl:response:{request_id}",
-        timeout=REQUEST_TIMEOUT,
-    )
-
-    if response:
-        # response is a tuple: (key, value)
-        data = safe_json_parse(
-            response[1],
-            context=f"ask_question response for request_id={request_id}",
-        )
-        if data is None:
-            logger.error(
-                "Failed to parse response for question %s in session %s",
-                request_id,
-                session_id,
-            )
-            return {
-                "success": False,
-                "error": "Invalid response format received",
-                "request_id": request_id,
-            }
-
-        logger.info(
-            "Received answer for question %s in session %s",
-            request_id,
-            session_id,
-        )
-        return {
-            "success": True,
-            "answer": data.get("answer"),
-            "request_id": request_id,
-        }
-
-    logger.warning(
-        "Timeout waiting for answer to question %s in session %s (timeout=%ds)",
+    # Question is persisted to database; frontend polls for pending questions
+    # and submits responses via the backend API
+    logger.info(
+        "Question %s persisted for session %s, awaiting response via backend API",
         request_id,
         session_id,
-        REQUEST_TIMEOUT,
     )
+
     return {
-        "success": False,
-        "error": "Timeout waiting for response",
+        "success": True,
         "request_id": request_id,
+        "status": "pending",
     }
 
 
@@ -315,112 +261,19 @@ async def ask_choice(
         agent_id=agent_id,
     )
 
-    # Publish to frontend
-    redis_client.publish(
-        f"hitl:{session_id}",
-        json.dumps({
-            "type": "question",
-            "request_id": request_id,
-            "question": question,
-            "input_type": "choice",
-            "choices": choices,
-            "allow_other": allow_other,
-            "context": context,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }),
-    )
-
-    logger.debug("Published choice question %s to Redis channel hitl:%s", request_id, session_id)
-
-    # Wait for response
-    response = redis_client.blpop(
-        f"hitl:response:{request_id}",
-        timeout=REQUEST_TIMEOUT,
-    )
-
-    if response:
-        # response is a tuple: (key, value)
-        data = safe_json_parse(
-            response[1],
-            context=f"ask_choice response for request_id={request_id}",
-        )
-        if data is None:
-            logger.error(
-                "Failed to parse response for choice question %s in session %s",
-                request_id,
-                session_id,
-            )
-            return {
-                "success": False,
-                "error": "Invalid response format received",
-                "request_id": request_id,
-            }
-
-        logger.info(
-            "Received choice answer for question %s in session %s: selected=%s",
-            request_id,
-            session_id,
-            data.get("selected"),
-        )
-        return {
-            "success": True,
-            "selected": data.get("selected"),  # The choice or "other"
-            "answer": data.get("answer"),  # Custom text if "other"
-            "request_id": request_id,
-        }
-
-    logger.warning(
-        "Timeout waiting for answer to choice question %s in session %s (timeout=%ds)",
+    # Question is persisted to database; frontend polls for pending questions
+    # and submits responses via the backend API
+    logger.info(
+        "Choice question %s persisted for session %s, awaiting response via backend API",
         request_id,
         session_id,
-        REQUEST_TIMEOUT,
     )
+
     return {
-        "success": False,
-        "error": "Timeout waiting for response",
+        "success": True,
         "request_id": request_id,
+        "status": "pending",
     }
-
-
-@mcp.tool()
-async def progress(
-    session_id: str,
-    message: str,
-    percent: int | None = None,
-    step: str | None = None,
-) -> dict:
-    """Send progress update to user (non-blocking).
-
-    Args:
-        session_id: Session ID
-        message: Progress message
-        percent: Optional percentage (0-100)
-        step: Optional step name
-
-    Returns:
-        Dict with success
-    """
-    logger.debug(
-        "progress: session=%s, percent=%s, step=%s, message=%s",
-        session_id,
-        percent,
-        step,
-        message[:50] + "..." if len(message) > 50 else message,
-    )
-
-    # Publish progress event
-    redis_client.publish(
-        f"hitl:{session_id}",
-        json.dumps({
-            "type": "progress",
-            "message": message,
-            "percent": percent,
-            "step": step,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }),
-    )
-
-    return {"success": True, "acknowledged": True}
 
 
 @mcp.tool()
@@ -432,8 +285,7 @@ async def submit_response(
     """Submit user response (called by backend API when user answers).
 
     This is called by the backend when the user submits their answer
-    in the frontend. It pushes the response to Redis so the blocking
-    ask_question/ask_choice call can complete.
+    in the frontend. Responses are handled via the backend database.
 
     Args:
         request_id: The request ID from the question
@@ -448,56 +300,6 @@ async def submit_response(
         request_id,
         selected,
         len(answer) if answer else 0,
-    )
-
-    redis_client.lpush(
-        f"hitl:response:{request_id}",
-        json.dumps({
-            "answer": answer,
-            "selected": selected,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }),
-    )
-
-    logger.debug("Pushed response to Redis queue hitl:response:%s", request_id)
-
-    return {"success": True}
-
-
-@mcp.tool()
-async def notify(
-    session_id: str,
-    title: str,
-    message: str,
-    level: str = "info",
-) -> dict:
-    """Send notification to user (non-blocking).
-
-    Args:
-        session_id: Session ID
-        title: Notification title
-        message: Notification message
-        level: Notification level (info, success, warning, error)
-
-    Returns:
-        Dict with success
-    """
-    logger.info(
-        "notify: session=%s, level=%s, title=%s",
-        session_id,
-        level,
-        title,
-    )
-
-    redis_client.publish(
-        f"hitl:{session_id}",
-        json.dumps({
-            "type": "notification",
-            "title": title,
-            "message": message,
-            "level": level,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }),
     )
 
     return {"success": True}
@@ -519,21 +321,9 @@ if __name__ == "__main__":
     # Add health endpoint
     async def health(request):
         """Health check endpoint."""
-        try:
-            redis_client.ping()
-            redis_ok = True
-        except Exception as e:
-            logger.warning("Redis health check failed: %s", str(e))
-            redis_ok = False
-
-        status = "healthy" if redis_ok else "degraded"
-        if not redis_ok:
-            logger.warning("HITL MCP health status: %s (Redis disconnected)", status)
-
         return JSONResponse({
-            "status": status,
+            "status": "healthy",
             "service": "hitl-mcp",
-            "redis": "connected" if redis_ok else "disconnected",
         })
 
     app.routes.insert(0, Route("/health", health, methods=["GET"]))

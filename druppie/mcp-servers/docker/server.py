@@ -2,11 +2,18 @@
 
 Docker container operations - build, run, stop, logs.
 Uses FastMCP framework for HTTP transport.
+
+This is a STANDALONE service:
+- build: Clones from git URL and builds (no workspace dependency)
+- run: Adds labels for ownership tracking (druppie.project_id, druppie.session_id)
+- list_containers: Can filter by project_id/session_id via labels
 """
 
 import logging
 import os
+import shutil
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -23,16 +30,18 @@ logger = logging.getLogger("docker-mcp")
 mcp = FastMCP("Docker MCP Server")
 
 # Configuration
-WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/workspaces"))
 DOCKER_NETWORK = os.getenv("DOCKER_NETWORK", "druppie-new-network")
 PORT_RANGE_START = int(os.getenv("PORT_RANGE_START", "9100"))
 PORT_RANGE_END = int(os.getenv("PORT_RANGE_END", "9199"))
+BUILD_DIR = Path(os.getenv("BUILD_DIR", "/tmp/docker-builds"))
+
+# Gitea config for cloning
+GITEA_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
+GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
+GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 
 # Track used ports
 used_ports: set[int] = set()
-
-# In-memory workspace registry (shared with coding MCP or populated on build)
-workspaces: dict[str, dict] = {}
 
 
 def get_used_host_ports() -> set[int]:
@@ -115,70 +124,112 @@ def release_port(port: int) -> None:
     used_ports.discard(port)
 
 
-def resolve_workspace_path(workspace_id: str | None, workspace_path: str | None) -> Path | None:
-    """Resolve workspace path from workspace_id or direct path.
+def get_gitea_clone_url(repo_name: str, repo_owner: str | None = None) -> str:
+    """Get Gitea clone URL with embedded credentials if available.
 
     Args:
-        workspace_id: Workspace ID to look up
-        workspace_path: Direct path (takes precedence if provided)
-
-    Returns:
-        Resolved Path or None if not found
+        repo_name: Repository name
+        repo_owner: Owner username (defaults to GITEA_ORG if not provided)
     """
-    # Direct path takes precedence
-    if workspace_path:
-        p = Path(workspace_path)
-        if p.exists():
-            return p
-        # Try under workspace root
-        p = WORKSPACE_ROOT / workspace_path
-        if p.exists():
-            return p
-
-    # Look up workspace_id
-    if workspace_id:
-        if workspace_id in workspaces:
-            return Path(workspaces[workspace_id]["path"])
-        # Try to find by scanning workspace root
-        # Pattern: /workspaces/user_id/project_id/session_id
-        for user_dir in WORKSPACE_ROOT.iterdir():
-            if user_dir.is_dir():
-                for project_dir in user_dir.iterdir():
-                    if project_dir.is_dir():
-                        for session_dir in project_dir.iterdir():
-                            if session_dir.is_dir():
-                                # Check if this matches workspace_id pattern
-                                if workspace_id in str(session_dir):
-                                    return session_dir
-
-    return None
+    owner = repo_owner or "druppie"
+    if GITEA_USER and GITEA_PASSWORD:
+        # Authenticated URL: http://user:pass@host:port/owner/repo.git
+        host_part = GITEA_URL.replace("http://", "").replace("https://", "")
+        return f"http://{GITEA_USER}:{GITEA_PASSWORD}@{host_part}/{owner}/{repo_name}.git"
+    return f"{GITEA_URL}/{owner}/{repo_name}.git"
 
 
-@mcp.tool()
-async def register_workspace(
-    workspace_id: str,
-    workspace_path: str,
-    project_id: str | None = None,
-    branch: str | None = None,
+def clone_and_build(
+    git_url: str,
+    image_name: str,
+    branch: str = "main",
+    dockerfile: str = "Dockerfile",
+    build_args: dict[str, str] | None = None,
 ) -> dict:
-    """Register a workspace for Docker operations.
+    """Clone from git and build Docker image.
+
+    This is the standalone approach - clones to temp dir, builds, cleans up.
+    No dependency on workspace or coding MCP.
 
     Args:
-        workspace_id: Workspace ID
-        workspace_path: Path to workspace
-        project_id: Optional project ID
-        branch: Optional git branch
+        git_url: Git URL to clone
+        image_name: Docker image name
+        branch: Git branch (default: main)
+        dockerfile: Dockerfile path (default: Dockerfile)
+        build_args: Docker build args
 
     Returns:
-        Dict with success status
+        Dict with success, image_name, build_log
     """
-    workspaces[workspace_id] = {
-        "path": workspace_path,
-        "project_id": project_id,
-        "branch": branch,
-    }
-    logger.info("Registered workspace %s at %s", workspace_id, workspace_path)
-    return {"success": True, "workspace_id": workspace_id}
+    build_id = str(uuid.uuid4())[:8]
+    build_path = BUILD_DIR / build_id
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Clone repository
+        logger.info("Cloning %s (branch: %s) to %s", git_url, branch, build_path)
+        clone_result = subprocess.run(
+            ["git", "clone", "--branch", branch, "--depth", "1", git_url, str(build_path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        if clone_result.returncode != 0:
+            return {
+                "success": False,
+                "error": f"Git clone failed: {clone_result.stderr}",
+            }
+
+        # Build Docker image
+        dockerfile_path = build_path / dockerfile
+        if not dockerfile_path.exists():
+            return {
+                "success": False,
+                "error": f"Dockerfile not found: {dockerfile}",
+            }
+
+        cmd = ["docker", "build", "-t", image_name]
+
+        if build_args:
+            for key, value in build_args.items():
+                cmd.extend(["--build-arg", f"{key}={value}"])
+
+        cmd.extend(["-f", str(dockerfile_path), str(build_path)])
+
+        logger.info("Building Docker image: %s", " ".join(cmd))
+
+        build_result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 min timeout for builds
+        )
+
+        if build_result.returncode != 0:
+            return {
+                "success": False,
+                "error": f"Docker build failed: {build_result.stderr}",
+                "build_log": build_result.stdout + build_result.stderr,
+            }
+
+        logger.info("Successfully built image: %s", image_name)
+
+        return {
+            "success": True,
+            "image_name": image_name,
+            "build_log": build_result.stdout,
+        }
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Build timed out"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        # Always cleanup temp build directory
+        if build_path.exists():
+            shutil.rmtree(build_path, ignore_errors=True)
+            logger.info("Cleaned up build directory: %s", build_path)
 
 
 # =============================================================================
@@ -189,75 +240,61 @@ async def register_workspace(
 @mcp.tool()
 async def build(
     image_name: str,
-    workspace_id: str | None = None,
-    workspace_path: str | None = None,
+    git_url: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+    branch: str = "main",
+    project_id: str | None = None,
+    session_id: str | None = None,
     dockerfile: str = "Dockerfile",
     build_args: dict[str, str] | None = None,
 ) -> dict:
-    """Build Docker image from workspace.
+    """Build Docker image from a git repository.
+
+    Clones from git URL, builds, then cleans up the temp directory.
 
     Args:
         image_name: Name for the built image (e.g., "myapp:latest")
-        workspace_id: Workspace ID (will resolve to path)
-        workspace_path: Direct path to workspace with Dockerfile (takes precedence)
+        git_url: Full git URL to clone
+        repo_name: Gitea repo name (will construct URL using Gitea config)
+        repo_owner: Gitea repo owner/username (defaults to "druppie" org)
+        branch: Git branch (default: main)
+        project_id: Project ID for tracking (added to result)
+        session_id: Session ID for tracking (added to result)
         dockerfile: Dockerfile name (default: "Dockerfile")
-        build_args: Optional build arguments
+        build_args: Optional Docker build arguments
 
     Returns:
-        Dict with success, image_name, logs
+        Dict with success, image_name, build_log, project_id, session_id
     """
     try:
-        # Resolve workspace path
-        workspace = resolve_workspace_path(workspace_id, workspace_path)
-        if workspace is None:
+        if not git_url and not repo_name:
             return {
                 "success": False,
-                "error": f"Workspace not found: workspace_id={workspace_id}, workspace_path={workspace_path}",
+                "error": "Must provide either git_url or repo_name",
             }
 
-        logger.info("Building Docker image %s from %s", image_name, workspace)
-
-        if not workspace.exists():
-            return {"success": False, "error": f"Workspace not found: {workspace}"}
-
-        dockerfile_path = workspace / dockerfile
-        if not dockerfile_path.exists():
-            return {"success": False, "error": f"Dockerfile not found: {dockerfile}"}
-
-        # Build command
-        cmd = ["docker", "build", "-t", image_name, "-f", str(dockerfile_path)]
-
-        # Add build args
-        if build_args:
-            for key, value in build_args.items():
-                cmd.extend(["--build-arg", f"{key}={value}"])
-
-        cmd.append(str(workspace))
-
-        # Run build
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=600,  # 10 minutes for builds
+        url = git_url or get_gitea_clone_url(repo_name, repo_owner)
+        logger.info(
+            "Building Docker image: %s -> %s (branch: %s, project: %s, session: %s)",
+            url, image_name, branch, project_id, session_id
         )
 
-        if result.returncode != 0:
-            return {
-                "success": False,
-                "error": "Build failed",
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
+        result = clone_and_build(
+            git_url=url,
+            image_name=image_name,
+            branch=branch,
+            dockerfile=dockerfile,
+            build_args=build_args,
+        )
 
-        return {
-            "success": True,
-            "image_name": image_name,
-            "logs": result.stdout,
-        }
+        # Add tracking info to result
+        if result.get("success"):
+            result["project_id"] = project_id
+            result["session_id"] = session_id
 
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Build timed out after 10 minutes"}
+        return result
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -326,27 +363,47 @@ def check_and_remove_existing_container(container_name: str) -> dict | None:
 async def run(
     image_name: str,
     container_name: str,
+    container_port: int,
+    project_id: str | None = None,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    git_url: str | None = None,
+    branch: str | None = None,
     port: int | None = None,
-    container_port: int = 3000,
     port_mapping: str | None = None,
     env_vars: dict[str, str] | None = None,
     volumes: list[str] | None = None,
     command: str | None = None,
 ) -> dict:
-    """Run Docker container.
+    """Run Docker container with ownership tracking via labels.
+
+    The agent should read the Dockerfile to find the EXPOSE port and pass it
+    as container_port. The host port is auto-assigned from a free port range.
+
+    Labels added to container for ownership tracking:
+    - druppie.project_id: Project this container belongs to
+    - druppie.session_id: Session that created this container
+    - druppie.user_id: User who owns this container
+    - druppie.git_url: Source git URL (if applicable)
+    - druppie.branch: Git branch used for build
 
     Args:
         image_name: Docker image to run
         container_name: Name for the container
-        port: Host port to expose (auto-assigned if not provided)
-        container_port: Container port to map to (default: 3000)
+        container_port: Container port (from Dockerfile EXPOSE) - REQUIRED
+        project_id: Project ID (added as label for tracking)
+        session_id: Session ID (added as label for tracking)
+        user_id: User ID (added as label for tracking)
+        git_url: Git URL used for build (added as label)
+        branch: Git branch used for build (added as label)
+        port: Host port to expose (auto-assigned from 9100-9199 if not provided)
         port_mapping: Full port mapping string (e.g., "8080:3000") - overrides port/container_port
         env_vars: Environment variables
         volumes: Volume mounts (format: "host:container")
         command: Override command
 
     Returns:
-        Dict with success, container_name, port, url
+        Dict with success, container_name, port, container_port, url, labels
     """
     try:
         # Check for and remove existing container with same name
@@ -356,11 +413,12 @@ async def run(
 
         # Handle port mapping
         requested_port = None
+        actual_container_port = container_port
         if port_mapping:
             # Parse "host:container" format
             parts = port_mapping.split(":")
             requested_port = int(parts[0])
-            container_port = int(parts[1]) if len(parts) > 1 else 3000
+            actual_container_port = int(parts[1]) if len(parts) > 1 else container_port
         else:
             requested_port = port
 
@@ -379,8 +437,8 @@ async def run(
             host_port = get_next_port()
 
         logger.info(
-            "Running container %s from image %s (port %d:%d)",
-            container_name, image_name, host_port, container_port
+            "Running container %s from image %s (port %d:%d, project=%s, session=%s)",
+            container_name, image_name, host_port, actual_container_port, project_id, session_id
         )
 
         # Build run command
@@ -388,8 +446,26 @@ async def run(
             "docker", "run", "-d",
             "--name", container_name,
             "--network", DOCKER_NETWORK,
-            "-p", f"{host_port}:{container_port}",
+            "-p", f"{host_port}:{actual_container_port}",
         ]
+
+        # Add ownership labels for tracking
+        labels = {}
+        if project_id:
+            cmd.extend(["--label", f"druppie.project_id={project_id}"])
+            labels["druppie.project_id"] = project_id
+        if session_id:
+            cmd.extend(["--label", f"druppie.session_id={session_id}"])
+            labels["druppie.session_id"] = session_id
+        if user_id:
+            cmd.extend(["--label", f"druppie.user_id={user_id}"])
+            labels["druppie.user_id"] = user_id
+        if git_url:
+            cmd.extend(["--label", f"druppie.git_url={git_url}"])
+            labels["druppie.git_url"] = git_url
+        if branch:
+            cmd.extend(["--label", f"druppie.branch={branch}"])
+            labels["druppie.branch"] = branch
 
         # Add environment variables
         if env_vars:
@@ -430,6 +506,7 @@ async def run(
             "container_id": container_id[:12],
             "port": host_port,
             "url": f"http://localhost:{host_port}",
+            "labels": labels,
         }
 
         # Add note if port was changed
@@ -561,19 +638,40 @@ async def remove(container_name: str, force: bool = False) -> dict:
 
 
 @mcp.tool()
-async def list_containers(all: bool = False) -> dict:
-    """List Docker containers.
+async def list_containers(
+    all: bool = False,
+    project_id: str | None = None,
+    session_id: str | None = None,
+    user_id: str | None = None,
+) -> dict:
+    """List Docker containers with optional filtering by labels.
+
+    Can filter containers by ownership labels:
+    - project_id: Only containers with druppie.project_id label
+    - session_id: Only containers with druppie.session_id label
+    - user_id: Only containers with druppie.user_id label
 
     Args:
         all: Include stopped containers
+        project_id: Filter by project_id label
+        session_id: Filter by session_id label
+        user_id: Filter by user_id label
 
     Returns:
-        Dict with containers list
+        Dict with containers list (including labels)
     """
     try:
-        cmd = ["docker", "ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"]
+        cmd = ["docker", "ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\t{{.Labels}}"]
         if all:
             cmd.append("-a")
+
+        # Add label filters
+        if project_id:
+            cmd.extend(["--filter", f"label=druppie.project_id={project_id}"])
+        if session_id:
+            cmd.extend(["--filter", f"label=druppie.session_id={session_id}"])
+        if user_id:
+            cmd.extend(["--filter", f"label=druppie.user_id={user_id}"])
 
         result = subprocess.run(
             cmd,
@@ -590,15 +688,27 @@ async def list_containers(all: bool = False) -> dict:
             if line:
                 parts = line.split("\t")
                 if len(parts) >= 4:
+                    # Parse labels into dict
+                    labels_str = parts[5] if len(parts) > 5 else ""
+                    labels = {}
+                    if labels_str:
+                        for label in labels_str.split(","):
+                            if "=" in label:
+                                k, v = label.split("=", 1)
+                                # Only include druppie.* labels
+                                if k.startswith("druppie."):
+                                    labels[k] = v
+
                     containers.append({
                         "id": parts[0],
                         "name": parts[1],
                         "image": parts[2],
                         "status": parts[3],
                         "ports": parts[4] if len(parts) > 4 else "",
+                        "labels": labels,
                     })
 
-        return {"success": True, "containers": containers}
+        return {"success": True, "containers": containers, "count": len(containers)}
 
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -630,6 +740,10 @@ async def inspect(container_name: str) -> dict:
 
         if data:
             container = data[0]
+            # Extract druppie.* labels
+            all_labels = container.get("Config", {}).get("Labels", {}) or {}
+            druppie_labels = {k: v for k, v in all_labels.items() if k.startswith("druppie.")}
+
             return {
                 "success": True,
                 "id": container.get("Id", "")[:12],
@@ -638,6 +752,7 @@ async def inspect(container_name: str) -> dict:
                 "status": container.get("State", {}).get("Status", ""),
                 "created": container.get("Created", ""),
                 "ports": container.get("NetworkSettings", {}).get("Ports", {}),
+                "labels": druppie_labels,
             }
 
         return {"success": False, "error": "Container not found"}

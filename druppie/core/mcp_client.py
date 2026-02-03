@@ -23,7 +23,7 @@ import yaml
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
-from druppie.db.crud import create_tool_call, update_tool_call
+from druppie.repositories import ExecutionRepository, ApprovalRepository
 
 
 # =============================================================================
@@ -143,8 +143,7 @@ def classify_error(error: Exception) -> tuple[str, bool, bool]:
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DBSession
-    from druppie.core.execution_context import ExecutionContext
-    from druppie.core.models import AgentDefinition
+    from druppie.domain.agent_definition import AgentDefinition
 
 logger = structlog.get_logger()
 
@@ -159,6 +158,8 @@ class MCPClient:
             db: Database session
         """
         self.db = db
+        self.execution_repo = ExecutionRepository(db)
+        self.approval_repo = ApprovalRepository(db)
         self._config: dict | None = None
         self._clients: dict[str, Client] = {}
 
@@ -217,6 +218,11 @@ class MCPClient:
                 return t
         return {}
 
+    def is_builtin_server(self, server: str) -> bool:
+        """Check if a server is marked as built-in (no external MCP server)."""
+        mcp = self.config.get("mcps", {}).get(server, {})
+        return mcp.get("builtin", False)
+
     def requires_approval(
         self,
         server: str,
@@ -238,7 +244,7 @@ class MCPClient:
             Tuple of (requires_approval, required_role)
             - required_role is singular string (not array) per goal.md
         """
-        from druppie.core.models import AgentDefinition
+        from druppie.domain.agent_definition import AgentDefinition
 
         # Step 1: Check agent-specific override (if agent_definition provided)
         if agent_definition is not None:
@@ -280,8 +286,9 @@ class MCPClient:
         server: str,
         tool: str,
         args: dict[str, Any],
-        context: "ExecutionContext",
-        agent_id: str | None = None,
+        session_id: str,
+        agent_run_id: str,
+        agent_id: str,
         agent_definition: "AgentDefinition | None" = None,
     ) -> dict[str, Any]:
         """Call MCP tool, checking for approval requirements.
@@ -297,8 +304,9 @@ class MCPClient:
             server: MCP server name (coding, docker, hitl)
             tool: Tool name
             args: Tool arguments
-            context: Execution context with session/user info
-            agent_id: ID of the agent making this call (for approval tracking)
+            session_id: Session ID
+            agent_run_id: Agent run ID for tracking
+            agent_id: ID of the agent making this call
             agent_definition: Optional agent definition for layered approval
 
         Returns:
@@ -307,13 +315,11 @@ class MCPClient:
         tool_name = f"{server}:{tool}"
 
         # Create tool_call record in database for tracing
-        tool_call_record = None
+        tool_call_id = None
         try:
-            agent_run_id = UUID(context.current_agent_run_id) if context.current_agent_run_id else None
-            tool_call_record = create_tool_call(
-                self.db,
-                session_id=UUID(context.session_id),
-                agent_run_id=agent_run_id,
+            tool_call_id = self.execution_repo.create_tool_call(
+                session_id=UUID(session_id),
+                agent_run_id=UUID(agent_run_id),
                 mcp_server=server,
                 tool_name=tool,
                 arguments=args,
@@ -328,91 +334,41 @@ class MCPClient:
         )
 
         if needs_approval:
-            # Check if we have a cached result from a recently approved execution
-            # This happens when resuming after MCP tool approval - the agent re-runs
-            # and tries to call the same tool again
-            if hasattr(context, "completed_tool_results") and context.completed_tool_results:
-                cached_result = context.completed_tool_results.get(tool_name)
-                if cached_result is not None:
-                    logger.info(
-                        "returning_cached_tool_result",
-                        tool=tool_name,
-                        session_id=context.session_id,
-                    )
-                    # Clear the cached result so it's not reused again
-                    del context.completed_tool_results[tool_name]
-                    # Update tool_call record as completed
-                    if tool_call_record:
-                        try:
-                            update_tool_call(
-                                self.db,
-                                tool_call_record.id,
-                                status="completed",
-                                result=json.dumps(cached_result)[:4000] if cached_result else None,
-                            )
-                        except Exception as e:
-                            logger.warning("tool_call_update_failed", error=str(e))
-
-                    # Emit app_running event for docker:run cached results
-                    # This ensures the deployment URL is persisted even when returning cached result
-                    if server == "docker" and tool == "run" and isinstance(cached_result, dict):
-                        app_url = cached_result.get("url") or cached_result.get("app_url")
-                        if app_url and cached_result.get("success", True):
-                            context.app_running(
-                                container_name=cached_result.get("container_name") or "",
-                                url=app_url,
-                                port=cached_result.get("port") or 0,
-                                image_name=cached_result.get("image_name"),
-                            )
-                            # Also broadcast via WebSocket
-                            try:
-                                from druppie.api.websocket import emit_deployment_complete
-                                loop = asyncio.get_running_loop()
-                                loop.create_task(emit_deployment_complete(
-                                    session_id=context.session_id,
-                                    url=app_url,
-                                    container_name=cached_result.get("container_name"),
-                                    port=cached_result.get("port"),
-                                    project_id=context.project_id,
-                                ))
-                            except Exception as e:
-                                logger.debug("deployment_broadcast_from_cache_failed", error=str(e))
-
-                    return cached_result
-
             # ALWAYS request approval - AI is executing, user must confirm
             # Convert required_role to list for backwards compatibility
             required_roles = [required_role] if required_role else []
             # Update tool_call record as pending approval
-            if tool_call_record:
+            if tool_call_id:
                 try:
-                    update_tool_call(self.db, tool_call_record.id, status="pending_approval")
+                    self.execution_repo.update_tool_result(tool_call_id, status="pending_approval")
                 except Exception as e:
                     logger.warning("tool_call_update_failed", error=str(e))
             return await self._request_approval(
-                server, tool, args, required_roles, "low", context, agent_id
+                server, tool, args, required_roles, "low",
+                session_id=session_id,
+                agent_run_id=agent_run_id,
+                agent_id=agent_id,
             )
 
         # No approval needed for this tool - execute with retry for transient errors
         # Update tool_call record as executing
-        if tool_call_record:
+        if tool_call_id:
             try:
-                update_tool_call(self.db, tool_call_record.id, status="executing")
+                self.execution_repo.update_tool_result(tool_call_id, status="executing")
             except Exception as e:
                 logger.warning("tool_call_update_failed", error=str(e))
 
-        result = await self._execute_tool_with_retry(server, tool, args, context)
+        result = await self._execute_tool_with_retry(server, tool, args, session_id)
 
         # Update tool_call record with result
-        if tool_call_record:
+        if tool_call_id:
             try:
                 is_success = result.get("success", False)
-                update_tool_call(
-                    self.db,
-                    tool_call_record.id,
+                self.execution_repo.update_tool_result(
+                    tool_call_id,
                     status="completed" if is_success else "failed",
                     result=json.dumps(result)[:4000] if is_success else None,
-                    error_message=result.get("error")[:4000] if result.get("error") else None,
+                    error=result.get("error")[:4000] if result.get("error") else None,
                 )
             except Exception as e:
                 logger.warning("tool_call_update_failed", error=str(e))
@@ -424,7 +380,7 @@ class MCPClient:
         server: str,
         tool: str,
         args: dict[str, Any],
-        context: "ExecutionContext",
+        session_id: str,
         max_retries: int = 3,
         base_delay: float = 1.0,
     ) -> dict[str, Any]:
@@ -437,7 +393,7 @@ class MCPClient:
             server: MCP server name
             tool: Tool name
             args: Tool arguments
-            context: Execution context
+            session_id: Session ID for logging
             max_retries: Maximum number of retry attempts (default 3)
             base_delay: Base delay in seconds for exponential backoff (default 1.0)
 
@@ -447,7 +403,7 @@ class MCPClient:
         last_result = None
 
         for attempt in range(max_retries + 1):
-            result = await self._execute_tool(server, tool, args, context)
+            result = await self._execute_tool(server, tool, args, session_id)
             last_result = result
 
             # If successful or not retryable, return immediately
@@ -495,21 +451,27 @@ class MCPClient:
         server: str,
         tool: str,
         args: dict[str, Any],
-        context: "ExecutionContext",
+        session_id: str,
     ) -> dict[str, Any]:
-        """Execute tool via FastMCP client to MCP server."""
-        url = self.get_mcp_url(server)
+        """Execute tool via FastMCP client to MCP server.
 
-        # Extract workspace_id from args if present for better log context
-        workspace_id = args.get("workspace_id")
+        Note: Built-in servers (like hitl) are no longer supported through this path.
+        Use builtin_tools.py for HITL functionality.
+
+        Args:
+            server: MCP server name
+            tool: Tool name
+            args: Tool arguments
+            session_id: Session ID for logging
+        """
+        url = self.get_mcp_url(server)
 
         logger.info(
             "mcp_tool_executing",
             server=server,
             tool=tool,
             url=url,
-            session_id=context.session_id if context else None,
-            workspace_id=workspace_id,
+            session_id=session_id,
             args=args,
         )
 
@@ -574,51 +536,16 @@ class MCPClient:
                         "mcp_tool_completed",
                         server=server,
                         tool=tool,
-                        workspace_id=workspace_id,
+                        session_id=session_id,
                         success=True,
                         result_preview=str(result_dict)[:200],
                     )
-
-                    # Emit deployment_complete event when docker:run succeeds
-                    # This notifies the user in real-time about the deployed app URL
-                    if server == "docker" and tool == "run":
-                        app_url = result_dict.get("url") or result_dict.get("app_url")
-                        if app_url:
-                            container_name = result_dict.get("container_name")
-                            port = result_dict.get("port")
-
-                            # Persist app_running event to database for history
-                            # This ensures the deployment URL is shown on page refresh
-                            context.app_running(
-                                container_name=container_name or "",
-                                url=app_url,
-                                port=port or 0,
-                                image_name=result_dict.get("image_name"),
-                            )
-
-                            # Use direct WebSocket broadcast for reliability
-                            # (context.emit_event may not always be configured)
-                            try:
-                                from druppie.api.websocket import emit_deployment_complete
-                                loop = asyncio.get_running_loop()
-                                loop.create_task(emit_deployment_complete(
-                                    session_id=context.session_id,
-                                    url=app_url,
-                                    container_name=container_name,
-                                    port=port,
-                                    project_id=context.project_id,
-                                ))
-                            except RuntimeError:
-                                # No running event loop - can't broadcast
-                                logger.debug("no_event_loop_for_deployment_broadcast")
-                            except Exception as e:
-                                logger.warning("deployment_complete_broadcast_failed", error=str(e))
                 else:
                     logger.warning(
                         "mcp_tool_returned_error",
                         server=server,
                         tool=tool,
-                        workspace_id=workspace_id,
+                        session_id=session_id,
                         success=False,
                         error=result_dict.get("error", "Unknown error"),
                         result_preview=str(result_dict)[:200],
@@ -635,7 +562,7 @@ class MCPClient:
                     "mcp_tool_validation_error",
                     server=server,
                     tool=tool,
-                    workspace_id=workspace_id,
+                    session_id=session_id,
                     error=str(e),
                     recoverable=True,
                 )
@@ -644,7 +571,7 @@ class MCPClient:
                     "mcp_tool_error",
                     server=server,
                     tool=tool,
-                    workspace_id=workspace_id,
+                    session_id=session_id,
                     error=str(e),
                     error_type=error_type,
                     retryable=retryable,
@@ -666,166 +593,71 @@ class MCPClient:
         args: dict[str, Any],
         required_roles: list[str],
         danger_level: str,
-        context: "ExecutionContext",
-        agent_id: str | None = None,
+        session_id: str,
+        agent_run_id: str,
+        agent_id: str,
     ) -> dict[str, Any]:
-        """Request approval and pause execution."""
-        from druppie.db import crud
+        """Request approval and pause execution.
 
+        Args:
+            server: MCP server name
+            tool: Tool name
+            args: Tool arguments
+            required_roles: Roles that can approve
+            danger_level: Danger level for UI
+            session_id: Session ID
+            agent_run_id: Agent run ID for tracking
+            agent_id: ID of the calling agent
+        """
         tool_name = f"{server}:{tool}"
-
-        # Include workspace context from ExecutionContext in the arguments
-        # This ensures workspace_id is available when resuming after approval
-        # IMPORTANT: Only inject for tools that actually accept these parameters!
-        args_with_context = dict(args)
-
-        # Coding tools use workspace_id
-        # Docker:build and docker:register_workspace use workspace_id
-        # Docker:run, docker:stop, docker:logs, docker:list_containers do NOT use workspace_id
-        tools_with_workspace = {
-            "coding": True,  # All coding tools use workspace_id
-            "docker:build": True,
-            "docker:register_workspace": True,
-        }
-        should_inject_workspace = (
-            server == "coding" or
-            tool_name in tools_with_workspace
-        )
-
-        if should_inject_workspace:
-            if context.workspace_id and "workspace_id" not in args_with_context:
-                args_with_context["workspace_id"] = context.workspace_id
-            if context.project_id and "project_id" not in args_with_context:
-                args_with_context["project_id"] = context.project_id
-            if context.workspace_path and "workspace_path" not in args_with_context:
-                args_with_context["workspace_path"] = context.workspace_path
-            if context.branch and "branch" not in args_with_context:
-                args_with_context["branch"] = context.branch
-        else:
-            # Remove workspace_id if LLM incorrectly added it to a tool that doesn't use it
-            for field in ["workspace_id", "project_id", "workspace_path", "branch"]:
-                if field in args_with_context:
-                    del args_with_context[field]
-                    logger.debug(
-                        "removed_invalid_context_field",
-                        tool=tool_name,
-                        field=field,
-                    )
-
-        # Extract workspace_id from args for logging
-        workspace_id = args_with_context.get("workspace_id")
-
-        # Create approval record in DB
-        approval_id = str(uuid.uuid4())
-
-        # Get agent state for resumption
-        agent_state = context.get_state() if hasattr(context, "get_state") else None
 
         logger.info(
             "approval_creating_record",
             tool=tool_name,
-            session_id=context.session_id,
-            workspace_id=workspace_id,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
             danger_level=danger_level,
-            has_agent_state=agent_state is not None,
         )
 
-        approval = crud.create_approval(
-            self.db,
-            {
-                "id": approval_id,
-                "session_id": context.session_id,
-                "tool_name": tool_name,
-                "arguments": args_with_context,
-                "required_roles": required_roles or ["developer", "admin"],
-                "danger_level": danger_level,
-                "description": f"Execute {tool_name} with args: {json.dumps(args_with_context)[:200]}",
-                "status": "pending",
-                "agent_id": agent_id,
-                "agent_state": agent_state,
-            },
+        # Convert roles list to comma-separated string for storage
+        roles_list = required_roles or ["developer", "admin"]
+        required_role_str = ",".join(roles_list)
+
+        approval = self.approval_repo.create(
+            session_id=session_id,
+            tool_name=tool_name,
+            arguments=args,
+            required_role=required_role_str,
+            danger_level=danger_level,
+            description=f"Execute {tool_name} with args: {json.dumps(args)[:200]}",
+            agent_id=agent_id,
+            mcp_server=server,
+            agent_state=None,  # Agent state now managed by orchestrator
         )
 
         logger.info(
             "approval_requested",
-            approval_id=approval_id,
+            approval_id=str(approval.id),
             tool=tool_name,
-            session_id=context.session_id,
-            workspace_id=workspace_id,
+            session_id=session_id,
             required_roles=required_roles,
             danger_level=danger_level,
         )
-
-        # Emit event to frontend via Redis pub/sub
-        self._emit_approval_request(context.session_id, approval)
-
-        # Also emit via context callback if available
-        if context.emit_event:
-            context.emit_event({
-                "type": "approval_required",
-                "approval_id": approval_id,
-                "tool": tool_name,
-                "agent_id": agent_id,
-                "args": args_with_context,
-                "required_roles": required_roles,
-                "danger_level": danger_level,
-            })
 
         # Return special PAUSED status
         return {
             "status": "paused",
             "reason": "approval_required",
-            "approval_id": approval_id,
+            "approval_id": str(approval.id),
             "tool": tool_name,
             "required_roles": required_roles,
             "danger_level": danger_level,
         }
 
-    def _emit_approval_request(self, session_id: str, approval) -> None:
-        """Emit approval request via WebSocket broadcast."""
-        try:
-            # Broadcast to WebSocket role rooms for cross-user notifications
-            # This runs in a separate task to not block the current execution
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._broadcast_approval_to_roles(approval))
-            except RuntimeError:
-                # No running event loop - we're in sync context
-                # The context.emit_event callback should handle this
-                pass
-
-        except Exception as e:
-            logger.warning("approval_request_emit_failed", error=str(e))
-
-    async def _broadcast_approval_to_roles(self, approval) -> None:
-        """Broadcast approval request to WebSocket role rooms."""
-        try:
-            from druppie.api.websocket import emit_approval_request
-            await emit_approval_request(
-                approval_id=str(approval.id),  # Convert UUID to string for JSON serialization
-                session_id=str(approval.session_id),  # Convert UUID to string for JSON serialization
-                tool_name=approval.tool_name,
-                required_roles=approval.required_roles or [],
-                details={
-                    "args": approval.arguments,
-                    "danger_level": approval.danger_level,
-                    "description": approval.description,
-                },
-                agent_id=approval.agent_id,  # Pass agent_id for frontend attribution
-            )
-            logger.debug(
-                "approval_broadcast_to_roles",
-                approval_id=approval.id,
-                roles=approval.required_roles,
-                agent_id=approval.agent_id,
-            )
-        except Exception as e:
-            logger.warning("approval_broadcast_to_roles_failed", error=str(e))
-
     async def execute_approved_tool(
         self,
         approval_id: str,
-        context: "ExecutionContext",
+        session_id: str,
     ) -> dict[str, Any]:
         """Execute a tool that was approved.
 
@@ -833,14 +665,12 @@ class MCPClient:
 
         Args:
             approval_id: ID of the approved request
-            context: Execution context
+            session_id: Session ID for logging
 
         Returns:
             Tool result
         """
-        from druppie.db import crud
-
-        approval = crud.get_approval(self.db, approval_id)
+        approval = self.approval_repo.get_by_id(UUID(approval_id))
         if not approval:
             return {"success": False, "error": "Approval not found"}
 
@@ -850,17 +680,11 @@ class MCPClient:
         # Parse tool name
         server, tool = approval.tool_name.split(":", 1)
 
-        # Filter out context parameters that were stored in approval for context
-        # but shouldn't be passed to the actual tool
-        # These are injected by the approval flow for audit/context purposes
-        context_params = {"project_id", "workspace_path", "branch"}
-        tool_args = {
-            k: v for k, v in (approval.arguments or {}).items()
-            if k not in context_params
-        }
+        # Get arguments from approval
+        tool_args = dict(approval.arguments or {})
 
-        # Execute the tool with filtered arguments
-        return await self._execute_tool(server, tool, tool_args, context)
+        # Execute the tool
+        return await self._execute_tool(server, tool, tool_args, session_id)
 
     def get_tools_for_mcps(self, mcp_ids: list[str]) -> list[dict]:
         """Get tool definitions for specified MCPs.
@@ -1023,3 +847,126 @@ def get_mcp_client(db: "DBSession") -> MCPClient:
         # Update db session
         _mcp_client.db = db
     return _mcp_client
+
+
+# =============================================================================
+# TOOL DESCRIPTION GENERATION
+# =============================================================================
+
+
+def generate_tool_descriptions(agent_mcps: list[str] | dict[str, list[str]]) -> str:
+    """Generate tool descriptions for agent system prompt from MCP config.
+
+    This function dynamically generates tool descriptions based on the agent's
+    mcps configuration. It reads from mcp_config.yaml and formats the tool
+    information for inclusion in the agent's system prompt.
+
+    Hidden parameters (from inject rules with hidden: true) are filtered out
+    so the LLM doesn't see or try to provide values for auto-injected params.
+
+    Args:
+        agent_mcps: Either a list of MCP names (all tools allowed) or a dict
+                    mapping MCP names to lists of specific tool names.
+                    Examples:
+                    - ["coding", "hitl"] - all tools from these MCPs
+                    - {"coding": ["read_file"], "hitl": ["ask_question"]} - specific tools
+
+    Returns:
+        Formatted string with tool descriptions for system prompt
+    """
+    from druppie.core.mcp_config import get_mcp_config
+
+    # Load MCP config via singleton (handles env var substitution)
+    mcp_config = get_mcp_config()
+    config = mcp_config.config
+
+    # Generate tool descriptions
+    sections = []
+
+    # Add MCP tools based on agent's mcps configuration
+    # Handle both list format (all tools) and dict format (specific tools)
+    if isinstance(agent_mcps, list):
+        # Simple list format - include all tools from each MCP
+        for server_name in agent_mcps:
+            mcp = config.get("mcps", {}).get(server_name, {})
+            if not mcp:
+                continue
+
+            server_tools = mcp.get("tools", [])
+            if not server_tools:
+                continue
+
+            # Get hidden params for this server
+            hidden_params = mcp_config.get_hidden_params(server_name)
+
+            sections.append(f"  {server_name.upper()} TOOLS ({server_name}:):")
+            for tool in server_tools:
+                tool_hidden = hidden_params.get(tool["name"], set())
+                _add_tool_to_sections(tool, server_name, sections, tool_hidden)
+            sections.append("")
+    else:
+        # Dict format - include only specified tools
+        for server_name, tool_names in agent_mcps.items():
+            mcp = config.get("mcps", {}).get(server_name, {})
+            if not mcp:
+                continue
+
+            server_tools = mcp.get("tools", [])
+            if not server_tools:
+                continue
+
+            # Get hidden params for this server
+            hidden_params = mcp_config.get_hidden_params(server_name)
+
+            sections.append(f"  {server_name.upper()} TOOLS ({server_name}:):")
+            for tool in server_tools:
+                # Only include tools that the agent has access to
+                if tool_names and tool["name"] not in tool_names:
+                    continue
+                tool_hidden = hidden_params.get(tool["name"], set())
+                _add_tool_to_sections(tool, server_name, sections, tool_hidden)
+            sections.append("")
+
+    return "\n".join(sections)
+
+
+def _add_tool_to_sections(
+    tool: dict,
+    server_name: str,
+    sections: list[str],
+    hidden_params: set[str] | None = None,
+) -> None:
+    """Add a single tool's description to the sections list.
+
+    Helper function for generate_tool_descriptions.
+
+    Args:
+        tool: Tool configuration from mcp_config.yaml
+        server_name: Name of the MCP server
+        sections: List to append formatted tool description to
+        hidden_params: Set of parameter names to hide from LLM
+    """
+    hidden_params = hidden_params or set()
+    tool_name = f"{server_name}:{tool['name']}"
+    sections.append(f"  - {tool_name}: {tool.get('description', '')}")
+
+    # Add approval requirement
+    if tool.get("requires_approval"):
+        required_role = tool.get("required_role", "developer")
+        sections.append(f"    (REQUIRES APPROVAL by {required_role})")
+
+    # Add parameter info if available, filtering out hidden params
+    params = tool.get("parameters", {})
+    if params.get("properties"):
+        # Filter out hidden params
+        visible_props = {
+            k: v for k, v in params["properties"].items()
+            if k not in hidden_params
+        }
+        required = [r for r in params.get("required", []) if r not in hidden_params]
+
+        if required:
+            sections.append(f"    REQUIRED: {', '.join(required)}")
+        optional = [k for k in visible_props.keys() if k not in required]
+        if optional:
+            sections.append(f"    OPTIONAL: {', '.join(optional)}")

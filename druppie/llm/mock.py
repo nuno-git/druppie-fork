@@ -68,6 +68,7 @@ class ChatMock(BaseLLM):
 
         return LLMResponse(
             content=content,
+            raw_content=content,  # Mock: raw == cleaned
             tool_calls=tool_calls,
             prompt_tokens=len(str(messages)) // 4,
             completion_tokens=len(content) // 4,
@@ -80,6 +81,7 @@ class ChatMock(BaseLLM):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """Async version - just calls sync version."""
         return self.chat(messages, tools)

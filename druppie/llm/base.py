@@ -57,8 +57,10 @@ class ServerError(LLMError):
 class LLMResponse(BaseModel):
     """Response from an LLM call."""
 
-    content: str = ""
+    content: str = ""  # Cleaned content (tool call tags removed)
+    raw_content: str = ""  # Original unprocessed response from LLM
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    finish_reason: str = ""  # "stop", "tool_calls", "length" (truncated), etc.
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -97,12 +99,14 @@ class BaseLLM(ABC):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """Send an asynchronous chat completion request.
 
         Args:
             messages: List of message dicts with role and content
             tools: Optional list of tool definitions in OpenAI format
+            max_tokens: Override max tokens for this call (uses instance default if None)
 
         Returns:
             LLMResponse with content and optional tool_calls
@@ -128,3 +132,15 @@ class BaseLLM(ABC):
     def provider_name(self) -> str:
         """Get the provider name."""
         ...
+
+    @property
+    def supports_native_tools(self) -> bool:
+        """Whether this LLM supports native OpenAI-style tool calling.
+
+        If True, tools are passed to the API and the model returns tool_calls natively.
+        If False, we inject XML format instructions into the system prompt and parse
+        <tool_call>...</tool_call> from the response content.
+
+        Override in subclasses based on model capabilities.
+        """
+        return False  # Safe default - use XML format

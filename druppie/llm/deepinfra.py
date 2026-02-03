@@ -69,6 +69,11 @@ class ChatDeepInfra(BaseLLM):
     def provider_name(self) -> str:
         return "deepinfra"
 
+    @property
+    def supports_native_tools(self) -> bool:
+        """DeepInfra models support native OpenAI-style tool calling."""
+        return True
+
     def bind_tools(self, tools: list[dict[str, Any]]) -> "ChatDeepInfra":
         """Create new instance with tools bound."""
         new_instance = ChatDeepInfra(
@@ -154,6 +159,7 @@ class ChatDeepInfra(BaseLLM):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """Send asynchronous chat completion request with retry logic."""
         import asyncio
@@ -170,8 +176,10 @@ class ChatDeepInfra(BaseLLM):
             "stream": False,
         }
 
-        if self.max_tokens:
-            payload["max_tokens"] = self.max_tokens
+        # Per-call max_tokens overrides instance default
+        effective_max_tokens = max_tokens or self.max_tokens
+        if effective_max_tokens:
+            payload["max_tokens"] = effective_max_tokens
 
         if effective_tools:
             payload["tools"] = effective_tools
@@ -315,7 +323,8 @@ class ChatDeepInfra(BaseLLM):
 
         choice = data["choices"][0]
         message = choice.get("message", {})
-        raw_content = message.get("content", "")
+        original_content = message.get("content") or ""  # Preserve original (handle None)
+        raw_content = original_content
 
         # Parse tool calls from OpenAI format first
         tool_calls = []
@@ -369,6 +378,7 @@ class ChatDeepInfra(BaseLLM):
 
         return LLMResponse(
             content=content,
+            raw_content=original_content,  # Preserve original for debugging
             tool_calls=tool_calls,
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
@@ -431,6 +441,22 @@ class ChatDeepInfra(BaseLLM):
             try:
                 # Clean up the match - it should be JSON
                 json_str = match.strip()
+
+                # Handle malformed JSON - missing opening brace
+                # e.g., '"name": "hitl_ask_question", "arguments": {...}'
+                if not json_str.startswith('{') and '"name"' in json_str:
+                    json_str = '{' + json_str
+                    # Find or add closing brace
+                    if not json_str.rstrip().endswith('}'):
+                        # Count braces to see if we need to add one
+                        open_braces = json_str.count('{')
+                        close_braces = json_str.count('}')
+                        if open_braces > close_braces:
+                            json_str = json_str + '}' * (open_braces - close_braces)
+                    logger.debug(
+                        "fixed_malformed_json_tool_call",
+                        fixed_json_preview=json_str[:200] if len(json_str) > 200 else json_str,
+                    )
 
                 # Try to find valid JSON by finding matching braces
                 if json_str.startswith('{'):
@@ -522,9 +548,6 @@ class ChatDeepInfra(BaseLLM):
         # Remove XML-like tags (but preserve content inside)
         cleaned = re.sub(r"</?\w+(?:_\w+)*>", "", cleaned)
 
-        # Fix assignment syntax (key="value" -> "key": "value")
-        cleaned = re.sub(r'(\w+)="([^"]*)"', r'"\1": "\2"', cleaned)
-
         # Remove duplicate colons
         cleaned = re.sub(r":+\s*:", ":", cleaned)
 
@@ -547,17 +570,17 @@ class ChatDeepInfra(BaseLLM):
         # Tool-specific fallbacks
         if tool_name == "done":
             summary_match = re.search(
-                r'"?summary"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?summary"?\s*:\s*"((?:[^"\\]|\\.)*)"', args_str, re.IGNORECASE
             )
             return {
-                "summary": summary_match.group(1) if summary_match else "Task completed",
+                "summary": summary_match.group(1) if summary_match else f"[PARSE_ERROR] Raw: {args_str[:500]}",
                 "artifacts": [],
                 "data": {},
             }
 
         if tool_name == "fail":
             reason_match = re.search(
-                r'"?reason"?\s*[=:]\s*"([^"]*)"', args_str, re.IGNORECASE
+                r'"?reason"?\s*:\s*"([^"]*)"', args_str, re.IGNORECASE
             )
             return {"reason": reason_match.group(1) if reason_match else args_str[:100]}
 

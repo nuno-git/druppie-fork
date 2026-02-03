@@ -6,7 +6,6 @@
 #   - Backend:  8100
 #   - Frontend: 5273
 #   - Postgres: 5533
-#   - Redis:    6480
 
 services:
   # =============================================================================
@@ -49,9 +48,6 @@ services:
     networks:
       - druppie-new-network
 
-  # NOTE: Redis removed - no longer needed for HITL
-  # HITL questions are now stored directly in the database
-
   # =============================================================================
   # GITEA
   # =============================================================================
@@ -89,6 +85,10 @@ services:
       GITEA__server__DOMAIN: localhost
       GITEA__security__INSTALL_LOCK: "true"
       GITEA__service__DISABLE_REGISTRATION: "false"
+      # OAuth2 client settings - enable auto-linking of accounts
+      GITEA__oauth2_client__ACCOUNT_LINKING: auto
+      GITEA__oauth2_client__ENABLE_AUTO_REGISTRATION: "true"
+      GITEA__oauth2_client__USERNAME: email
     volumes:
       - druppie_new_gitea:/data
       - /etc/timezone:/etc/timezone:ro
