@@ -19,7 +19,7 @@ COPY . /app/druppie/
 
 # Copy agent and workflow YAML files
 COPY agents/ /app/druppie/agents/
-COPY workflows/ /app/druppie/workflows/
+# COPY workflows/ /app/druppie/workflows/
 
 # Set environment variables
 ENV PYTHONPATH=/app
