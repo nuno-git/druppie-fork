@@ -385,8 +385,8 @@ mcps:
         description: "Read file content from dataset"
         requires_approval: false
 
-      - name: get_search_stats
-        description: "Get statistics about files in dataset"
+      - name: fetch_url
+        description: "Fetch and return content from a URL"
         requires_approval: false
 
       - name: search_web
