@@ -17,7 +17,7 @@ The primary happy path works end-to-end:
 
 1. User sends a message via `POST /api/chat`.
 2. **Router agent** classifies intent as `create_project`, calls `set_intent()` which creates a Project record and a Gitea repository.
-3. **Planner agent** calls `make_plan()` to create pending agent runs: `business_analyst -> architect -> developer -> deployer -> summarizer`.
+3. **Planner agent** calls `make_plan()` to create pending agent runs depending on system prompt
 4. Agents execute in sequence, each calling `done()` which auto-accumulates summaries and relays them to the next agent.
 5. Session transitions through `ACTIVE -> PAUSED_HITL / PAUSED_TOOL -> ACTIVE -> COMPLETED`.
 
@@ -39,7 +39,7 @@ The following agents are referenced by the planner and execute in production wor
 
 ### A3. LLM Providers
 
-Three providers exist with clean implementations:
+Three providers exist:
 
 | Provider | File | Status | Native Tool Calling |
 |----------|------|--------|---------------------|
@@ -121,8 +121,6 @@ The coding MCP server clones from Gitea, writes files, and pushes back.
 | `/projects` | Projects | Working -- project grid with file browser |
 | `/projects/:projectId` | ProjectDetail | Working -- tabbed project view |
 | `/settings` | Settings | Working -- shows LLM provider, environment info |
-| `/debug/:sessionId` | Debug | Working -- detailed session inspector (LLM calls, tool calls, agent runs) |
-| `/admin/database` | AdminDatabase | Working -- admin-only, shows raw DB tables |
 
 **Debug pages** (accessible via Debug dropdown in nav):
 
@@ -144,6 +142,8 @@ All registered routes in `druppie/api/main.py`:
 | `/api/approvals` | `routes/approvals.py` | Approve/reject tools |
 | `/api/questions` | `routes/questions.py` | Answer HITL questions |
 | `/api/projects` | `routes/projects.py` | Project CRUD |
+
+Working on;
 | `/api/deployments` | `routes/deployments.py` | Deployment status |
 | `/api/workspace` | `routes/workspace.py` | Workspace operations |
 | `/api/agents` | `routes/agents.py` | Agent definitions |
@@ -162,14 +162,12 @@ All registered routes in `druppie/api/main.py`:
 - `adminer` (DB admin, port 8081)
 - `druppie-frontend` (Vite/React)
 
-Redis has been removed -- HITL questions are now stored directly in the database.
-
 ### A12. Summary Relay System
 
 The `done()` builtin tool implements accumulated summaries:
 - Each agent's `done(summary=...)` call auto-collects summaries from all previously completed agents.
 - The accumulated summary is prepended to the next pending agent's `planned_prompt`.
-- This means each agent gets full context of what previous agents accomplished (URLs, branch names, container names).
+- This means each agent gets full context of what previous agents accomplished (URLs, branch names, container names). 
 
 **File:** `druppie/agents/builtin_tools.py`, `done()` function.
 
@@ -209,41 +207,9 @@ The reviewer could be loaded by the runtime if someone manually created an agent
 1. Like `reviewer`, the planner does not know about `tester` -- it is not listed in available agents.
 2. The `run_tests` tool was **removed** from the coding MCP server (commit `c8efb66`). The YAML still references `run_tests` in its `mcps.coding` list, but the tool no longer exists on the MCP server. If the tester agent were to run, it would get a "tool not found" error.
 
-### B4. Debug Pages Navigation (Resolved)
 
-The former "New" pages (`NewChat.jsx`, `NewApprovals.jsx`, `NewMCP.jsx`, `NewProjects.jsx`) have been renamed to debug pages (`DebugChat.jsx`, `DebugApprovals.jsx`, `DebugMCP.jsx`, `DebugProjects.jsx`) and moved under a "Debug" dropdown in the navigation bar. The original pages (`Chat.jsx`, `Tasks.jsx`, `Projects.jsx`) remain as the primary navigation items.
 
-| Route | Page | Purpose |
-|-------|------|---------|
-| `/debug-chat` | `DebugChat.jsx` | Raw API debug interface for chat |
-| `/debug-approvals` | `DebugApprovals.jsx` | Raw API debug interface for approvals |
-| `/debug-mcp` | `DebugMCP.jsx` | Raw API debug interface for MCP |
-| `/debug-projects` | `DebugProjects.jsx` | Raw API debug interface for projects |
-
-### B5. update_project Intent (Partially Implemented)
-
-**What exists:** The planner YAML defines an 8-step update_project workflow:
-1. Developer creates feature branch
-2. Business analyst reads code, asks questions, writes functional_design.md
-3. Architect plans changes, writes architecture.md
-4. Developer implements, commits, pushes
-5. Deployer does preview deployment
-6. Developer reviews with user, creates PR, merges
-7. Deployer does final production deployment
-8. Summarizer creates completion message
-
-**What works:** The `set_intent` function handles `update_project` by linking the session to an existing project. The planner can generate the plan. The developer agent's YAML includes "BRANCH SETUP ONLY" and "REVIEW TASK" instructions.
-
-**What may not work reliably:** This is a complex 8-step workflow that depends on:
-- Multiple agents correctly reading and writing to the same feature branch
-- Preview and production deployments with different container names
-- PR creation and merge via `coding:create_pull_request` and `coding:merge_pull_request`
-- The deployer correctly reading branch names from accumulated summaries
-- Proper cleanup (stopping preview containers before final deploy)
-
-This workflow has many more failure points than `create_project` and likely has not been exercised as thoroughly.
-
-### B6. E2E Tests (Exist but May Be Stale)
+### B4. E2E Tests (Exist but May Be Stale)
 
 Three Playwright E2E test files exist:
 
@@ -255,13 +221,13 @@ Three Playwright E2E test files exist:
 
 These tests were written against earlier versions of the frontend and may reference old page selectors or API patterns. They have not been verified against the current pages.
 
-### B7. general_chat Intent (Minimal Implementation)
+### B5. general_chat Intent (Minimal Implementation)
 
 **What exists:** The router can classify a message as `general_chat`. The planner's instructions say "For general_chat, just call done immediately."
 
 **What actually happens:** When the router sets `intent=general_chat`, it first uses `hitl_ask_question` to answer the user's question (per router.yaml line 39-41), then calls `set_intent` and `done`. The planner then calls `done` immediately with no plan steps.
 
-**Issue:** The system uses a full agent pipeline (router + planner + LLM calls) just to answer a simple question. The answer is delivered via `hitl_ask_question` from the router, which creates a Question record and pauses execution, requiring the user to "answer" their own question before the workflow completes. This is a poor UX for simple Q&A.
+**Issue:** The system has a full agent pipeline (router + planner + other agents) to answer a simple questions but doesnt use it. The answer is delivered via `hitl_ask_question` from the router instead. Could be improved with knowledge about our actual system.
 
 ---
 

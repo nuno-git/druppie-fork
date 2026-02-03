@@ -123,17 +123,22 @@ async def _run_orchestrator_background(
         )
 
     except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
         logger.error(
             "background_orchestrator_error",
             session_id=str(session_id),
-            error=str(e),
+            error=error_msg,
             exc_info=True,
         )
-        # Update session status to failed
+        # Update session status to failed with error details
         try:
             from druppie.repositories import SessionRepository as SR
             sr = SR(db)
-            sr.update_status(session_id, SessionStatus.FAILED)
+            sr.update_status(
+                session_id,
+                SessionStatus.FAILED,
+                error_message=error_msg[:2000],
+            )
             db.commit()
         except Exception as update_error:
             logger.error(

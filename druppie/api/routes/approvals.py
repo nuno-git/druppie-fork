@@ -108,15 +108,20 @@ async def _resume_workflow_after_approval(
         )
 
     except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
         logger.error(
             "background_approval_resume_error",
             session_id=str(session_id),
             approval_id=str(approval_id),
-            error=str(e),
+            error=error_msg,
             exc_info=True,
         )
         try:
-            session_repo.update_status(session_id, SessionStatus.FAILED)
+            session_repo.update_status(
+                session_id,
+                SessionStatus.FAILED,
+                error_message=error_msg[:2000],
+            )
             db.commit()
         except Exception as update_error:
             logger.error(

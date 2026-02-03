@@ -84,11 +84,18 @@ class ExecutionRepository(BaseRepository):
         )
         return self._to_summary(agent_run) if agent_run else None
 
-    def update_status(self, agent_run_id: UUID, status: AgentRunStatus) -> None:
-        """Update agent run status."""
+    def update_status(
+        self,
+        agent_run_id: UUID,
+        status: AgentRunStatus,
+        error_message: str | None = None,
+    ) -> None:
+        """Update agent run status and optional error message."""
         agent_run = self.db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
         if agent_run:
             agent_run.status = status.value
+            if error_message is not None:
+                agent_run.error_message = error_message
             if status == AgentRunStatus.RUNNING and not agent_run.started_at:
                 agent_run.started_at = datetime.now(timezone.utc)
             elif status in (AgentRunStatus.COMPLETED, AgentRunStatus.FAILED):
@@ -173,6 +180,7 @@ class ExecutionRepository(BaseRepository):
             id=agent_run.id,
             agent_id=agent_run.agent_id,
             status=AgentRunStatus(agent_run.status),
+            error_message=agent_run.error_message,
             planned_prompt=agent_run.planned_prompt,
             sequence_number=agent_run.sequence_number,
             token_usage=TokenUsage(
@@ -328,6 +336,20 @@ class ExecutionRepository(BaseRepository):
             llm_call.prompt_tokens = prompt_tokens
             llm_call.completion_tokens = completion_tokens
             llm_call.total_tokens = prompt_tokens + completion_tokens
+            llm_call.duration_ms = duration_ms
+
+    def update_llm_error(
+        self,
+        llm_call_id: UUID,
+        error_message: str,
+        duration_ms: int,
+    ) -> None:
+        """Update LLM call with error info when the API call fails."""
+        import json
+
+        llm_call = self.db.query(LlmCall).filter(LlmCall.id == llm_call_id).first()
+        if llm_call:
+            llm_call.response_content = json.dumps({"error": error_message})
             llm_call.duration_ms = duration_ms
 
     # =========================================================================

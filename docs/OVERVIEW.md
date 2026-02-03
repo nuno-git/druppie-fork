@@ -33,7 +33,7 @@ Protocol) tool servers with configurable approval gates.
 
 Key properties:
 
-- **Agents can only act through MCP tools.** They never produce raw file output.
+- **Agents can only act through MCP and builtin tools.** They never produce raw file output.
   Every file write, git push, and Docker build goes through a tracked tool call.
 - **Approval workflows.** Dangerous operations (Docker build/run, merging PRs)
   require human approval from a user with the right role before execution proceeds.
@@ -68,22 +68,22 @@ Key properties:
         | (business     |  | (coordinates  |  |  (LLM loop,    |
         |  logic)       |  |  agent runs)  |  |   tool calls)  |
         +--------+------+  +-------+-------+  +-------+--------+
-                 |                  |                   |
-        +--------v------+          |           +-------v--------+
-        | Repositories  |          |           | Tool Executor  |
-        | (data access) |          |           | (builtin +     |
-        +--------+------+          |           |  MCP dispatch) |
-                 |                  |           +---+--------+---+
-        +--------v------+          |               |        |
-        |  PostgreSQL   |          |          +----v---+ +--v-------+
-        |  port 5533    |          |          | MCP    | | MCP      |
-        +---------------+          |          | Coding | | Docker   |
-                                   |          | :9001  | | :9002    |
-                           +-------v-------+  +--------+ +----------+
-                           |   Keycloak    |
-                           |   (auth)      |       +----------+
-                           |   port 8180   |       |  Gitea   |
-                           +---------------+       |  (git)   |
+                 |                                    |
+        +--------v------+                      +-------v--------+
+        | Repositories  |                      | Tool Executor  |
+        | (data access) |                      | (builtin +     |
+        +--------+------+                      |  MCP dispatch) |
+                 |                              +---+--------+---+
+        +--------v------+                         |        |
+        |  PostgreSQL   |                     +----v---+ +--v-------+
+        |  port 5533    |                     | MCP    | | MCP      |
+        +---------------+                    | Coding | | Docker   |
+                                              | :9001  | | :9002    |
+                                              +--------+ +----------+
+                        
+                                                   +----------+               
+                                                   |  Gitea   |
+                                                   |  (git)   |
                                                    | port 3100|
                                                    +----------+
 ```
@@ -359,7 +359,6 @@ the Docker socket.
 | `remove`          | Remove a container                               | Yes (developer) |
 | `list_containers` | List containers with label filtering             | No       |
 | `inspect`         | Inspect container details                        | No       |
-| `exec_command`    | Execute command inside a running container        | Yes (developer) |
 
 ### Declarative Argument Injection
 

@@ -5,6 +5,8 @@
 
 import React, { useState } from 'react'
 import { HelpCircle, Loader2, Send, CheckCircle } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
 
 const HITLQuestionMessage = ({ question, onAnswer, isAnswering, answered = false, userAnswer = null }) => {
@@ -48,8 +50,8 @@ const HITLQuestionMessage = ({ question, onAnswer, isAnswering, answered = false
               </div>
 
               {/* Question Text */}
-              <div className={`text-sm mb-2 ${colors.text}`}>
-                {question.question}
+              <div className={`text-sm mb-2 ${colors.text} markdown-content`}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{question.question}</ReactMarkdown>
               </div>
 
               {/* Show the answer that was given */}
@@ -89,14 +91,14 @@ const HITLQuestionMessage = ({ question, onAnswer, isAnswering, answered = false
             </div>
 
             {/* Question Text */}
-            <div className={`text-sm font-medium mb-2 ${colors.text}`}>
-              {question.question}
+            <div className={`text-sm font-medium mb-2 ${colors.text} markdown-content`}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{question.question}</ReactMarkdown>
             </div>
 
             {/* Context if provided */}
             {question.context && (
-              <div className={`text-xs mb-3 ${colors.accent} opacity-80`}>
-                {question.context}
+              <div className={`text-xs mb-3 ${colors.accent} opacity-80 markdown-content`}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{question.context}</ReactMarkdown>
               </div>
             )}
 
