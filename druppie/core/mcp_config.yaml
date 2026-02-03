@@ -368,3 +368,31 @@ mcps:
   # NOTE: HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question) are
   # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
   # Configure per-agent via `builtin_tools` in agent YAML files.
+
+  bestand-zoeker:
+    url: ${MCP_WEB_URL:-http://mcp-web:9005}
+    description: "Local file search and web browsing"
+    tools:
+      - name: search_files
+        description: "Search for text content in local files within dataset"
+        requires_approval: false
+
+      - name: list_directory
+        description: "List files and directories in dataset"
+        requires_approval: false
+
+      - name: read_file
+        description: "Read file content from dataset"
+        requires_approval: false
+
+      - name: fetch_url
+        description: "Fetch and return content from a URL"
+        requires_approval: false
+
+      - name: search_web
+        description: "Search web for information"
+        requires_approval: false
+
+      - name: get_page_info
+        description: "Get basic information about a web page"
+        requires_approval: false

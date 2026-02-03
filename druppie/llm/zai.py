@@ -88,6 +88,12 @@ class ChatZAI(BaseLLM):
         tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         """Send synchronous chat completion request."""
+        print(f"[Z.AI LLM] === SYNC CHAT START ===")
+        print(f"[Z.AI LLM] Model: {self.model}")
+        print(f"[Z.AI LLM] URL: {self.base_url}")
+        print(f"[Z.AI LLM] Messages count: {len(messages)}")
+        print(f"[Z.AI LLM] API key present: {bool(self.api_key)}")
+
         start_time = time.time()
         url = f"{self.base_url.rstrip('/')}/chat/completions"
 
@@ -107,6 +113,7 @@ class ChatZAI(BaseLLM):
         if effective_tools:
             payload["tools"] = self._sanitize_tools(effective_tools)
             payload["tool_choice"] = "auto"
+            print(f"[Z.AI LLM] Tools: {len(effective_tools)} tools bound")
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -119,29 +126,50 @@ class ChatZAI(BaseLLM):
             "status": "pending",
         }
 
+        print(f"[Z.AI LLM] Sending request to {url}")
+        print(f"[Z.AI LLM] Payload size: {len(str(payload))} chars")
+
         try:
+            print(f"[Z.AI LLM] Creating HTTP client with timeout={self.timeout}s")
             with httpx.Client(timeout=self.timeout) as client:
+                print(f"[Z.AI LLM] Sending POST request...")
                 response = client.post(url, json=payload, headers=headers)
 
                 call_record["duration_ms"] = int((time.time() - start_time) * 1000)
+                print(f"[Z.AI LLM] Response status: {response.status_code}")
+                print(f"[Z.AI LLM] Response time: {call_record['duration_ms']}ms")
+                print(f"[Z.AI LLM] Response headers: {dict(response.headers)}")
 
                 if response.status_code != 200:
+                    print(f"[Z.AI LLM] ERROR response body: {response.text[:1000]}")
+                    print(f"[Z.AI LLM] Response length: {len(response.text)} chars")
                     error = self._format_error(response)
                     call_record["status"] = "error"
                     call_record["error"] = str(error)
                     call_record["error_type"] = type(error).__name__
                     call_record["retryable"] = error.retryable
                     self.call_history.append(call_record)
+                    print(f"[Z.AI LLM] Raising error: {type(error).__name__}")
                     raise error
 
-                data = response.json()
+                print(f"[Z.AI LLM] Response looks good, parsing JSON...")
+                try:
+                    data = response.json()
+                    print(f"[Z.AI LLM] Response data keys: {list(data.keys())}")
+                except Exception as e:
+                    print(f"[Z.AI LLM] JSON parse error: {e}")
+                    print(f"[Z.AI LLM] Raw response: {response.text[:500]}")
+                    raise
 
+            print(f"[Z.AI LLM] === PARSING RESPONSE ===")
             return self._parse_response(data, call_record)
 
-        except LLMError:
+        except LLMError as e:
+            print(f"[Z.AI LLM] LLMError: {type(e).__name__}: {e}")
             # Re-raise LLM errors as-is (already recorded)
             raise
         except Exception as e:
+            print(f"[Z.AI LLM] Exception: {type(e).__name__}: {e}")
             call_record["duration_ms"] = int((time.time() - start_time) * 1000)
             if call_record["status"] == "pending":
                 call_record["status"] = "error"
@@ -157,6 +185,13 @@ class ChatZAI(BaseLLM):
     ) -> LLMResponse:
         """Send asynchronous chat completion request with retry logic."""
         import asyncio
+
+        print(f"[Z.AI LLM] === ASYNC CHAT START ===")
+        print(f"[Z.AI LLM] Model: {self.model}")
+        print(f"[Z.AI LLM] URL: {self.base_url}")
+        print(f"[Z.AI LLM] Messages count: {len(messages)}")
+        print(f"[Z.AI LLM] Max retries: {self.max_retries}")
+        print(f"[Z.AI LLM] Timeout: {self.timeout}s")
 
         url = f"{self.base_url.rstrip('/')}/chat/completions"
 
@@ -178,6 +213,7 @@ class ChatZAI(BaseLLM):
         if effective_tools:
             payload["tools"] = self._sanitize_tools(effective_tools)
             payload["tool_choice"] = "auto"
+            print(f"[Z.AI LLM] Tools: {len(effective_tools)} tools bound")
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -186,6 +222,7 @@ class ChatZAI(BaseLLM):
         last_error = None
 
         for attempt in range(self.max_retries):
+            print(f"[Z.AI LLM] Attempt {attempt + 1}/{self.max_retries}")
             start_time = time.time()
             call_record = {
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -196,20 +233,26 @@ class ChatZAI(BaseLLM):
             }
 
             try:
+                print(f"[Z.AI LLM] Creating async HTTP client with timeout={self.timeout}s")
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    print(f"[Z.AI LLM] Sending POST request...")
                     response = await client.post(url, json=payload, headers=headers)
 
                     call_record["duration_ms"] = int((time.time() - start_time) * 1000)
+                    print(f"[Z.AI LLM] Response status: {response.status_code}")
+                    print(f"[Z.AI LLM] Response time: {call_record['duration_ms']}ms")
+                    print(f"[Z.AI LLM] Response headers: {dict(response.headers)}")
 
                     # Retry on 500 errors (server issues)
                     if response.status_code >= 500:
+                        print(f"[Z.AI LLM] Server error {response.status_code}, retrying...")
                         error = self._format_error(response)
                         call_record["status"] = "retry"
                         call_record["error"] = str(error)
                         self.call_history.append(call_record)
                         last_error = error
 
-                        if attempt < self.max_retries - 1:
+                        if attempt < self.max_retries -1:
                             wait_time = (attempt + 1) * 5  # 5s, 10s, 15s backoff
                             logger.warning(
                                 "zai_api_error_retrying",
@@ -218,6 +261,7 @@ class ChatZAI(BaseLLM):
                                 wait_seconds=wait_time,
                                 status_code=response.status_code,
                             )
+                            print(f"[Z.AI LLM] Waiting {wait_time}s before retry...")
                             await asyncio.sleep(wait_time)
                             continue
                         else:
@@ -225,8 +269,9 @@ class ChatZAI(BaseLLM):
                             raise last_error
 
                     # Handle other error status codes (429, 401, etc.)
-                    # These are NOT retried - user should see the error and decide
+                    # These are NOT retried - user should see error and decide
                     if response.status_code != 200:
+                        print(f"[Z.AI LLM] ERROR response: {response.text[:500]}")
                         error = self._format_error(response)
                         call_record["status"] = "error"
                         call_record["error"] = str(error)
@@ -236,12 +281,15 @@ class ChatZAI(BaseLLM):
                         raise error
 
                     data = response.json()
+                    print(f"[Z.AI LLM] Response data keys: {list(data.keys())}")
 
+                print(f"[Z.AI LLM] === PARSING RESPONSE ===")
                 return self._parse_response(data, call_record)
 
             except httpx.TimeoutException as e:
+                print(f"[Z.AI LLM] TimeoutException: {e}")
                 call_record["duration_ms"] = int((time.time() - start_time) * 1000)
-                call_record["status"] = "retry" if attempt < self.max_retries - 1 else "error"
+                call_record["status"] = "retry" if attempt < self.max_retries -1 else "error"
                 call_record["error"] = f"Timeout: {str(e)}"
                 self.call_history.append(call_record)
                 last_error = e
@@ -254,16 +302,18 @@ class ChatZAI(BaseLLM):
                         max_retries=self.max_retries,
                         wait_seconds=wait_time,
                     )
+                    print(f"[Z.AI LLM] Waiting {wait_time}s before retry...")
                     await asyncio.sleep(wait_time)
                     continue
                 raise
 
             except Exception as e:
+                print(f"[Z.AI LLM] Exception: {type(e).__name__}: {e}")
                 call_record["duration_ms"] = int((time.time() - start_time) * 1000)
                 if call_record["status"] == "pending":
                     call_record["status"] = "error"
                     call_record["error"] = str(e)
-                    self.call_history.append(call_record)
+                self.call_history.append(call_record)
                 raise
 
         # Should not reach here, but just in case

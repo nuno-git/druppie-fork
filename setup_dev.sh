@@ -158,14 +158,22 @@ start_infra() {
     # Wait for MCP Docker
     wait_for_service "http://localhost:9002/health" "MCP Docker" 15
 
+    # Wait for MCP File Search
+    wait_for_service "http://localhost:9004/health" "MCP File Search" 15
+
+    # Wait for MCP Bestand Zoeker (Web)
+    wait_for_service "http://localhost:9005/health" "MCP Bestand Zoeker" 15
+
     success "Infrastructure is running!"
     echo ""
-    echo "  PostgreSQL:  localhost:5533"
-    echo "  Keycloak:    http://localhost:8180"
-    echo "  Gitea:       http://localhost:3100"
-    echo "  MCP Coding:  http://localhost:9001"
-    echo "  MCP Docker:  http://localhost:9002"
-    echo "  Adminer:     http://localhost:8081"
+    echo "  PostgreSQL:       localhost:5533"
+    echo "  Keycloak:         http://localhost:8180"
+    echo "  Gitea:            http://localhost:3100"
+    echo "  MCP Coding:       http://localhost:9001"
+    echo "  MCP Docker:       http://localhost:9002"
+    echo "  MCP File Search:  http://localhost:9004"
+    echo "  MCP Bestand Zoeker: http://localhost:9005"
+    echo "  Adminer:          http://localhost:8081"
     echo ""
 }
 
@@ -226,6 +234,8 @@ start_backend() {
     # We need localhost URLs for local development
     export MCP_CODING_URL="http://localhost:9001"
     export MCP_DOCKER_URL="http://localhost:9002"
+    export MCP_FILESEARCH_URL="http://localhost:9004"
+    export MCP_WEB_URL="http://localhost:9005"
 
     log "Starting uvicorn on port 8100 with hot reload..."
 

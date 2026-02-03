@@ -25,13 +25,20 @@ const Message = ({
 }) => {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
-  const [eventsExpanded, setEventsExpanded] = useState(false) // Start collapsed
+  const [eventsExpanded, setEventsExpanded] = useState(false)
 
-  // Get agent config for assistant messages with agent_id
   const agentId = message.agent_id || null
   const agentConfig = agentId ? getAgentConfig(agentId) : null
   const AgentIcon = agentConfig?.icon || Bot
   const colors = agentConfig ? getAgentMessageColors(agentConfig.color) : null
+
+  // Debug: log message structure
+  console.log('[Message] Message structure:', {
+    role: message.role,
+    hasContent: !!message.content,
+    contentPreview: message.content?.substring(0, 200),
+    fullMessage: message
+  })
 
   // System messages (approval notifications) have a distinct style
   if (isSystem) {

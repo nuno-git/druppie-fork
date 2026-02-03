@@ -94,6 +94,12 @@ class ChatDeepInfra(BaseLLM):
         tools: list[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         """Send synchronous chat completion request."""
+        print(f"[DEEPINFRA LLM] === SYNC CHAT START ===")
+        print(f"[DEEPINFRA LLM] Model: {self.model}")
+        print(f"[DEEPINFRA LLM] URL: {self.base_url}")
+        print(f"[DEEPINFRA LLM] Messages count: {len(messages)}")
+        print(f"[DEEPINFRA LLM] API key present: {bool(self.api_key)}")
+
         start_time = time.time()
         url = f"{self.base_url.rstrip('/')}/chat/completions"
 
@@ -113,6 +119,7 @@ class ChatDeepInfra(BaseLLM):
         if effective_tools:
             payload["tools"] = effective_tools
             payload["tool_choice"] = "auto"
+            print(f"[DEEPINFRA LLM] Tools: {len(effective_tools)} tools bound")
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -125,13 +132,19 @@ class ChatDeepInfra(BaseLLM):
             "status": "pending",
         }
 
+        print(f"[DEEPINFRA LLM] Sending request to {url}")
+        print(f"[DEEPINFRA LLM] Payload size: {len(str(payload))} chars")
+
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(url, json=payload, headers=headers)
 
                 call_record["duration_ms"] = int((time.time() - start_time) * 1000)
+                print(f"[DEEPINFRA LLM] Response status: {response.status_code}")
+                print(f"[DEEPINFRA LLM] Response time: {call_record['duration_ms']}ms")
 
                 if response.status_code != 200:
+                    print(f"[DEEPINFRA LLM] ERROR response: {response.text[:500]}")
                     error = self._format_error(response)
                     call_record["status"] = "error"
                     call_record["error"] = str(error)
@@ -141,18 +154,22 @@ class ChatDeepInfra(BaseLLM):
                     raise error
 
                 data = response.json()
+                print(f"[DEEPINFRA LLM] Response data keys: {list(data.keys())}")
 
+            print(f"[DEEPINFRA LLM] === PARSING RESPONSE ===")
             return self._parse_response(data, call_record)
 
-        except LLMError:
+        except LLMError as e:
+            print(f"[DEEPINFRA LLM] LLMError: {type(e).__name__}: {e}")
             # Re-raise LLM errors as-is (already recorded)
             raise
         except Exception as e:
+            print(f"[DEEPINFRA LLM] Exception: {type(e).__name__}: {e}")
             call_record["duration_ms"] = int((time.time() - start_time) * 1000)
             if call_record["status"] == "pending":
                 call_record["status"] = "error"
                 call_record["error"] = str(e)
-                self.call_history.append(call_record)
+            self.call_history.append(call_record)
             raise
 
     async def achat(
@@ -163,6 +180,13 @@ class ChatDeepInfra(BaseLLM):
     ) -> LLMResponse:
         """Send asynchronous chat completion request with retry logic."""
         import asyncio
+
+        print(f"[DEEPINFRA LLM] === ASYNC CHAT START ===")
+        print(f"[DEEPINFRA LLM] Model: {self.model}")
+        print(f"[DEEPINFRA LLM] URL: {self.base_url}")
+        print(f"[DEEPINFRA LLM] Messages count: {len(messages)}")
+        print(f"[DEEPINFRA LLM] Max retries: {self.max_retries}")
+        print(f"[DEEPINFRA LLM] Timeout: {self.timeout}s")
 
         url = f"{self.base_url.rstrip('/')}/chat/completions"
 
@@ -184,6 +208,7 @@ class ChatDeepInfra(BaseLLM):
         if effective_tools:
             payload["tools"] = effective_tools
             payload["tool_choice"] = "auto"
+            print(f"[DEEPINFRA LLM] Tools: {len(effective_tools)} tools bound")
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -192,6 +217,7 @@ class ChatDeepInfra(BaseLLM):
         last_error = None
 
         for attempt in range(self.max_retries):
+            print(f"[DEEPINFRA LLM] Attempt {attempt + 1}/{self.max_retries}")
             start_time = time.time()
             call_record = {
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -202,13 +228,17 @@ class ChatDeepInfra(BaseLLM):
             }
 
             try:
+                print(f"[DEEPINFRA LLM] Sending async request to {url}")
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     response = await client.post(url, json=payload, headers=headers)
 
                     call_record["duration_ms"] = int((time.time() - start_time) * 1000)
+                    print(f"[DEEPINFRA LLM] Response status: {response.status_code}")
+                    print(f"[DEEPINFRA LLM] Response time: {call_record['duration_ms']}ms")
 
                     # Retry on 500 errors (server issues)
                     if response.status_code >= 500:
+                        print(f"[DEEPINFRA LLM] Server error {response.status_code}, retrying...")
                         error = self._format_error(response)
                         call_record["status"] = "retry"
                         call_record["error"] = str(error)
@@ -224,6 +254,7 @@ class ChatDeepInfra(BaseLLM):
                                 wait_seconds=wait_time,
                                 status_code=response.status_code,
                             )
+                            print(f"[DEEPINFRA LLM] Waiting {wait_time}s before retry...")
                             await asyncio.sleep(wait_time)
                             continue
                         else:
@@ -231,8 +262,9 @@ class ChatDeepInfra(BaseLLM):
                             raise last_error
 
                     # Handle other error status codes (429, 401, etc.)
-                    # These are NOT retried - user should see the error and decide
+                    # These are NOT retried - user should see error and decide
                     if response.status_code != 200:
+                        print(f"[DEEPINFRA LLM] ERROR response: {response.text[:500]}")
                         error = self._format_error(response)
                         call_record["status"] = "error"
                         call_record["error"] = str(error)
@@ -242,10 +274,13 @@ class ChatDeepInfra(BaseLLM):
                         raise error
 
                     data = response.json()
+                    print(f"[DEEPINFRA LLM] Response data keys: {list(data.keys())}")
 
+                print(f"[DEEPINFRA LLM] === PARSING RESPONSE ===")
                 return self._parse_response(data, call_record)
 
             except httpx.TimeoutException as e:
+                print(f"[DEEPINFRA LLM] TimeoutException: {e}")
                 call_record["duration_ms"] = int((time.time() - start_time) * 1000)
                 call_record["status"] = "retry" if attempt < self.max_retries - 1 else "error"
                 call_record["error"] = f"Timeout: {str(e)}"
@@ -260,16 +295,18 @@ class ChatDeepInfra(BaseLLM):
                         max_retries=self.max_retries,
                         wait_seconds=wait_time,
                     )
+                    print(f"[DEEPINFRA LLM] Waiting {wait_time}s before retry...")
                     await asyncio.sleep(wait_time)
                     continue
                 raise
 
             except Exception as e:
+                print(f"[DEEPINFRA LLM] Exception: {type(e).__name__}: {e}")
                 call_record["duration_ms"] = int((time.time() - start_time) * 1000)
                 if call_record["status"] == "pending":
                     call_record["status"] = "error"
                     call_record["error"] = str(e)
-                    self.call_history.append(call_record)
+                self.call_history.append(call_record)
                 raise
 
         # Should not reach here, but just in case

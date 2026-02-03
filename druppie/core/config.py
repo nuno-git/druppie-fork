@@ -144,9 +144,9 @@ class MCPSettings(BaseSettings):
         default="http://mcp-docker:9002",
         description="Docker MCP server URL",
     )
-    hitl_url: str = Field(
-        default="http://mcp-hitl:9003",
-        description="HITL MCP server URL",
+    filesearch_url: str = Field(
+        default="http://mcp-filesearch:9004",
+        description="Filesearch MCP server URL",
     )
     timeout: int = Field(
         default=300,
@@ -186,7 +186,7 @@ class APISettings(BaseSettings):
         description="API server port",
     )
     cors_origins: str = Field(
-        default="http://localhost:5173,http://localhost:5273,http://localhost:3000",
+        default="http://localhost:5173,http://localhost:5273,http://localhost:8100,http://localhost:3000",
         description="Comma-separated list of allowed CORS origins",
     )
     dev_mode: bool = Field(

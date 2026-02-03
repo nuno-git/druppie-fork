@@ -110,6 +110,8 @@ DEEPINFRA_MODEL=meta-llama/Llama-3.3-70B-Instruct-Turbo
 USE_MCP_MICROSERVICES=true
 MCP_CODING_URL=http://mcp-coding:9001
 MCP_DOCKER_URL=http://mcp-docker:9002
+MCP_FILESEARCH_URL=http://mcp-filesearch:9004
+MCP_WEB_URL=http://mcp-web:9005
 EOF
 
     echo ""
@@ -185,6 +187,12 @@ check_requirements() {
     fi
 
     success "All requirements met"
+}
+
+remove_network() {
+    log "Remove Docker network..."
+    docker network remove druppie-network 2>/dev/null || true
+    success "Network down"
 }
 
 create_network() {
@@ -275,7 +283,7 @@ configure_gitea() {
 start_mcp_servers() {
     log "Starting MCP microservices..."
     # NOTE: mcp-hitl removed - HITL is now built into the backend
-    compose up -d mcp-coding mcp-docker
+    compose up -d mcp-coding mcp-docker mcp-filesearch mcp-web
 
     log "Waiting for MCP servers to be ready..."
     sleep 5
@@ -291,6 +299,18 @@ start_mcp_servers() {
         success "Docker MCP ready (port 9002)"
     else
         warn "Docker MCP may not be ready yet"
+    fi
+
+    if compose ps mcp-filesearch | grep -q "Up"; then
+        success "File Search MCP ready (port 9004)"
+    else
+        warn "File Search MCP may not be ready yet"
+    fi
+
+    if compose ps mcp-web | grep -q "Up"; then
+        success "Bestand Zoeker MCP ready (port 9005)"
+    else
+        warn "Bestand Zoeker MCP may not be ready yet"
     fi
 
     success "MCP microservices started"
@@ -311,7 +331,7 @@ build_frontend() {
 build_mcp_servers() {
     log "Building MCP servers..."
     # NOTE: mcp-hitl removed - HITL is now built into the backend
-    compose build mcp-coding mcp-docker
+    compose build mcp-coding mcp-docker mcp-filesearch mcp-web
     success "MCP servers built"
 }
 
@@ -341,9 +361,11 @@ print_summary() {
     echo "  - Gitea:            http://${EXTERNAL_HOST}:3100"
     echo ""
     echo "MCP Microservices:"
-    echo "  - Coding MCP:  http://localhost:9001 (internal: mcp-coding:9001)"
-    echo "  - Docker MCP:  http://localhost:9002 (internal: mcp-docker:9002)"
-    echo "  - HITL:        Built into backend (no separate server)"
+    echo "  - Coding MCP:       http://localhost:9001 (internal: mcp-coding:9001)"
+    echo "  - Docker MCP:       http://localhost:9002 (internal: mcp-docker:9002)"
+    echo "  - File Search MCP:  http://localhost:9004 (internal: mcp-filesearch:9004)"
+    echo "  - Bestand Zoeker:   http://localhost:9005 (internal: mcp-web:9005)"
+    echo "  - HITL:             Built into backend (no separate server)"
     echo ""
     echo "Default Users (Keycloak) - per goal.md:"
     echo "  - normal_user / User123!      (user role - makes requests)"
@@ -383,6 +405,7 @@ case "${1:-all}" in
         save_env
         check_api_key
         create_network
+        remove_network        
         start_infrastructure
         start_keycloak
         configure_keycloak
@@ -398,7 +421,7 @@ case "${1:-all}" in
     infra)
         check_requirements
         save_env
-        create_network
+        remove_network
         start_infrastructure
         start_keycloak
         start_gitea

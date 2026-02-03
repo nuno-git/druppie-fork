@@ -2,11 +2,11 @@
  * Dashboard Page
  */
 
-import React, { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import React from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { FileText, CheckSquare, Clock, AlertCircle, TrendingUp, Play, ExternalLink, Zap, Server, Square, Loader2 } from 'lucide-react'
-import { getPlans, getTasks, getStatus, getRunningApps, getProjects, stopProject } from '../services/api'
+import { FileText, CheckSquare, AlertCircle, TrendingUp, Zap } from 'lucide-react'
+import { getPlans, getTasks, getStatus, getProjects } from '../services/api'
 import { useAuth } from '../App'
 import { formatTokens, formatCost, calculateCost } from '../utils/tokenUtils'
 
@@ -30,27 +30,6 @@ const StatCard = ({ title, value, subtitle, icon: Icon, color, link }) => (
 
 const Dashboard = () => {
   const { user } = useAuth()
-  const queryClient = useQueryClient()
-  const [stoppingId, setStoppingId] = useState(null)
-
-  const stopMutation = useMutation({
-    mutationFn: stopProject,
-    onMutate: (projectId) => {
-      setStoppingId(projectId)
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['running-apps'] })
-      queryClient.invalidateQueries({ queryKey: ['projects'] })
-      setStoppingId(null)
-    },
-    onError: () => {
-      setStoppingId(null)
-    },
-  })
-
-  const handleStop = (projectId) => {
-    stopMutation.mutate(projectId)
-  }
 
   const { data: plansResponse, isLoading: plansLoading } = useQuery({
     queryKey: ['plans'],
@@ -72,19 +51,11 @@ const Dashboard = () => {
     refetchInterval: 30000,
   })
 
-  const { data: runningAppsResponse = [], isLoading: appsLoading } = useQuery({
-    queryKey: ['running-apps'],
-    queryFn: getRunningApps,
-    refetchInterval: 15000, // Refresh every 15 seconds
-  })
-
   const { data: projectsResponse } = useQuery({
     queryKey: ['projects'],
     queryFn: getProjects,
   })
 
-  // Extract arrays from paginated responses (handle both array and {items:[]} formats)
-  const runningApps = Array.isArray(runningAppsResponse) ? runningAppsResponse : (runningAppsResponse?.items || [])
   const projects = Array.isArray(projectsResponse) ? projectsResponse : (projectsResponse?.items || [])
 
   const completedPlans = plans.filter((p) => p.status === 'completed').length
@@ -104,7 +75,7 @@ const Dashboard = () => {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           title="Total Sessions"
           value={plansLoading ? '...' : plans.length}
@@ -118,13 +89,6 @@ const Dashboard = () => {
           icon={TrendingUp}
           color="bg-green-500"
           link="/plans"
-        />
-        <StatCard
-          title="Running Apps"
-          value={appsLoading ? '...' : runningApps.length}
-          icon={Play}
-          color="bg-emerald-500"
-          link="/projects"
         />
         <StatCard
           title="Pending Approvals"
@@ -142,73 +106,6 @@ const Dashboard = () => {
           link="/projects"
         />
       </div>
-
-      {/* Running Applications - Quick Access */}
-      {runningApps.length > 0 && (
-        <div className="bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl border border-emerald-200 p-6">
-          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Server className="w-5 h-5 text-emerald-600" />
-            Running Applications
-            <span className="ml-2 px-2 py-0.5 bg-emerald-100 text-emerald-700 text-sm rounded-full">
-              {runningApps.length} active
-            </span>
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {runningApps.map((app) => (
-              <div
-                key={app.build_id}
-                className="bg-white rounded-lg border border-emerald-200 p-4 hover:shadow-md transition-shadow"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-medium text-gray-900">{app.project_name}</h3>
-                  <span className="flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
-                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                    Running
-                  </span>
-                </div>
-                <div className="text-sm text-gray-500 mb-3">
-                  {app.owner_username && (
-                    <span className="mr-3">
-                      By: <span className="font-medium text-gray-700">{app.owner_username}</span>
-                    </span>
-                  )}
-                  Branch: <span className="font-mono">{app.branch}</span>
-                  {app.port && <span className="ml-2">Port: {app.port}</span>}
-                </div>
-                <div className="flex items-center gap-2">
-                  {app.app_url && (
-                    <a
-                      href={app.app_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      Open App
-                    </a>
-                  )}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleStop(app.project_id)
-                    }}
-                    disabled={stoppingId === app.project_id}
-                    className="flex items-center justify-center gap-1 px-3 py-2 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
-                    aria-label={`Stop ${app.project_name}`}
-                  >
-                    {stoppingId === app.project_id ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Square className="w-4 h-4" />
-                    )}
-                    Stop
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Recent Activity */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

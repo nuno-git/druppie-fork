@@ -59,8 +59,10 @@ const request = async (endpoint, options = {}) => {
 export const getUser = () => request('/api/user')
 
 // ============ Chat (Main Entry Point) ============
-export const sendChat = (message, sessionId = null, conversationHistory = null) =>
-  request('/api/chat', {
+export const sendChat = async (message, sessionId = null, conversationHistory = null) => {
+  const mcpServers = await getMCPServers()
+  console.log('MCP Servers:', mcpServers)
+  return request('/api/chat', {
     method: 'POST',
     body: JSON.stringify({
       message,
@@ -68,6 +70,7 @@ export const sendChat = (message, sessionId = null, conversationHistory = null) 
       conversation_history: conversationHistory || [],
     }),
   })
+}
 
 export const cancelChat = (sessionId) =>
   request(`/api/chat/${sessionId}/cancel`, { method: 'POST' })
@@ -216,9 +219,6 @@ export const stopDeployment = (containerName) =>
   request(`/api/deployments/${containerName}/stop?remove=true`, { method: 'POST' })
 export const getDeploymentLogs = (containerName, tail = 100) =>
   request(`/api/deployments/${containerName}/logs?tail=${tail}`)
-
-// ============ Running Apps ============
-export const getRunningApps = () => request('/api/apps/running')
 
 // ============ Agents (Transparency) ============
 export const getAgents = async () => {

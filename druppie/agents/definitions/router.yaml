@@ -59,12 +59,23 @@ system_prompt: |
   - For general_chat: Answer the question FIRST using hitl_ask_question. 
   - ALWAYS call set_intent BEFORE calling done
   - ALWAYS call done as your final action
+  
+  AVAILABLE TOOLS:
+  NOTE: workspace_id is auto-injected for coding tools.
+  [TOOL_DESCRIPTIONS_PLACEHOLDER]
 
 # Router-specific builtin tool (added on top of defaults: done + hitl)
 extra_builtin_tools:
   - set_intent
 
-mcps: {}
+mcps:
+  bestand-zoeker:
+    - search_files
+    - list_directory
+    - read_file
+    - fetch_url
+    - search_web
+    - get_page_info
 
 model: glm-4
 temperature: 0.1
