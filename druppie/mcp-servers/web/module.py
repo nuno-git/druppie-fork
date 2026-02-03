@@ -282,3 +282,4 @@ class WebModule:
                 "path": str(file_path.relative_to(self.search_root)),
                 "size": size,
             }
+

@@ -189,7 +189,7 @@ mcps:
     - search_files
     - list_directory
     - read_file
-    - get_search_stats
+    - fetch_url
     - search_web
     - get_page_info
 

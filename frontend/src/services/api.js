@@ -220,9 +220,6 @@ export const stopDeployment = (containerName) =>
 export const getDeploymentLogs = (containerName, tail = 100) =>
   request(`/api/deployments/${containerName}/logs?tail=${tail}`)
 
-// ============ Running Apps ============
-export const getRunningApps = () => request('/api/apps/running')
-
 // ============ Agents (Transparency) ============
 export const getAgents = async () => {
   const response = await request('/api/agents')
