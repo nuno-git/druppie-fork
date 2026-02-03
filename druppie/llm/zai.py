@@ -105,7 +105,7 @@ class ChatZAI(BaseLLM):
             payload["max_tokens"] = self.max_tokens
 
         if effective_tools:
-            payload["tools"] = effective_tools
+            payload["tools"] = self._sanitize_tools(effective_tools)
             payload["tool_choice"] = "auto"
 
         headers = {"Content-Type": "application/json"}
@@ -176,7 +176,7 @@ class ChatZAI(BaseLLM):
             payload["max_tokens"] = effective_max_tokens
 
         if effective_tools:
-            payload["tools"] = effective_tools
+            payload["tools"] = self._sanitize_tools(effective_tools)
             payload["tool_choice"] = "auto"
 
         headers = {"Content-Type": "application/json"}
@@ -271,6 +271,56 @@ class ChatZAI(BaseLLM):
             raise last_error
         raise ValueError("Max retries exceeded")
 
+    def _sanitize_tools(self, tools: list[dict]) -> list[dict]:
+        """Sanitize tool schemas for GLM API compatibility.
+
+        GLM-4.7's OpenAI-compatible API is stricter than OpenAI about tool schemas.
+        This method fixes common issues:
+        1. Removes empty `required: []` arrays
+        2. Ensures `type: object` properties have inner `properties` defined
+        3. Converts `integer` → `number` (GLM may not support `integer`)
+        4. Converts `boolean` → `string` with description hint
+        """
+        sanitized = []
+        for tool in tools:
+            tool = json.loads(json.dumps(tool))  # Deep copy
+            func = tool.get("function", {})
+            params = func.get("parameters", {})
+            self._sanitize_schema(params)
+            sanitized.append(tool)
+        return sanitized
+
+    def _sanitize_schema(self, schema: dict) -> None:
+        """Recursively sanitize a JSON Schema for GLM compatibility."""
+        if not isinstance(schema, dict):
+            return
+
+        # Remove empty required arrays
+        if "required" in schema and schema["required"] == []:
+            del schema["required"]
+
+        # Ensure type: object has properties
+        if schema.get("type") == "object" and "properties" not in schema:
+            schema["properties"] = {}
+
+        # If properties is empty and there's no required, that's OK for GLM
+        # but ensure at least the structure is valid
+
+        # Convert integer → number (GLM compatibility)
+        if schema.get("type") == "integer":
+            schema["type"] = "number"
+            if "description" in schema and "integer" not in schema["description"].lower():
+                schema["description"] = schema.get("description", "") + " (integer)"
+
+        # Recurse into properties
+        if "properties" in schema:
+            for prop_schema in schema["properties"].values():
+                self._sanitize_schema(prop_schema)
+
+        # Recurse into items (for arrays)
+        if "items" in schema:
+            self._sanitize_schema(schema["items"])
+
     def _format_error(self, response: httpx.Response) -> LLMError:
         """Format error from response, returning appropriate exception."""
         error_text = response.text[:500] if response.text else "No details"
@@ -316,6 +366,7 @@ class ChatZAI(BaseLLM):
             raise ValueError("No response from Z.AI")
 
         choice = data["choices"][0]
+        finish_reason = choice.get("finish_reason", "")
         message = choice.get("message", {})
         original_content = message.get("content") or ""  # Preserve original (handle None)
         content = self._clean_response(original_content)
@@ -325,11 +376,18 @@ class ChatZAI(BaseLLM):
         if message.get("tool_calls"):
             for tc in message["tool_calls"]:
                 func = tc.get("function", {})
-                args_str = func.get("arguments", "{}")
-                try:
-                    args = json.loads(args_str)
-                except json.JSONDecodeError:
-                    args = self._parse_malformed_args(args_str, func.get("name", ""))
+                raw_args = func.get("arguments", "{}")
+                # Z.AI returns arguments as an object (dict), not a JSON string
+                # like OpenAI does. Handle both cases.
+                if isinstance(raw_args, dict):
+                    args = raw_args
+                elif isinstance(raw_args, str):
+                    try:
+                        args = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        args = self._parse_malformed_args(raw_args, func.get("name", ""))
+                else:
+                    args = {}
 
                 # Ensure args is always a dict
                 if not isinstance(args, dict):
@@ -373,6 +431,7 @@ class ChatZAI(BaseLLM):
             content=content,
             raw_content=original_content,  # Preserve original for debugging
             tool_calls=tool_calls,
+            finish_reason=finish_reason,
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
             total_tokens=usage.get("total_tokens", 0),

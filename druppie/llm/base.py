@@ -60,6 +60,7 @@ class LLMResponse(BaseModel):
     content: str = ""  # Cleaned content (tool call tags removed)
     raw_content: str = ""  # Original unprocessed response from LLM
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    finish_reason: str = ""  # "stop", "tool_calls", "length" (truncated), etc.
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0

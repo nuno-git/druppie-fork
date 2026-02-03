@@ -102,6 +102,7 @@ class SessionRepository(BaseRepository):
             id=session.id,
             title=session.title or "Untitled",
             status=SessionStatus(session.status),
+            error_message=session.error_message,
             project_id=session.project_id,
             token_usage=TokenUsage(
                 prompt_tokens=session.prompt_tokens or 0,
@@ -138,9 +139,17 @@ class SessionRepository(BaseRepository):
         self.db.flush()
         return self._to_summary(session)
 
-    def update_status(self, session_id: UUID, status: SessionStatus) -> None:
-        """Update session status."""
-        self.db.query(SessionModel).filter_by(id=session_id).update({"status": status.value})
+    def update_status(
+        self,
+        session_id: UUID,
+        status: SessionStatus,
+        error_message: str | None = None,
+    ) -> None:
+        """Update session status and optional error message."""
+        updates = {"status": status.value}
+        if error_message is not None:
+            updates["error_message"] = error_message
+        self.db.query(SessionModel).filter_by(id=session_id).update(updates)
 
     def update_intent(self, session_id: UUID, intent: str) -> None:
         """Update session intent."""
@@ -160,6 +169,7 @@ class SessionRepository(BaseRepository):
             id=session.id,
             title=session.title or "Untitled",
             status=SessionStatus(session.status),
+            error_message=session.error_message,
             project_id=session.project_id,
             token_usage=TokenUsage(
                 prompt_tokens=session.prompt_tokens or 0,
@@ -230,6 +240,7 @@ class SessionRepository(BaseRepository):
             id=run.id,
             agent_id=run.agent_id,
             status=AgentRunStatus(run.status),
+            error_message=run.error_message,
             planned_prompt=run.planned_prompt,
             sequence_number=run.sequence_number,
             token_usage=TokenUsage(
@@ -249,6 +260,7 @@ class SessionRepository(BaseRepository):
             id=run.id,
             agent_id=run.agent_id,
             status=AgentRunStatus(run.status),
+            error_message=run.error_message,
             planned_prompt=run.planned_prompt,
             sequence_number=run.sequence_number,
             token_usage=TokenUsage(

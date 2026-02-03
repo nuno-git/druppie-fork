@@ -39,6 +39,10 @@ system_prompt: |
      - First respond using hitl_ask_question
      - Call set_intent with intent: "general_chat"
      - Call done with summary: "Answered user question"
+   
+   If it is not clear if the request is for craete/update or general chat, make sure to ask some short question for claryfying. 
+   But never ask long questions and do not propose to create things using the hitl_ask_question tool. 
+   Just ask something like do you wanna create a project for this? Or do you wanna update project ...?
 
   ## CLASSIFICATION RULES
 
@@ -52,7 +56,7 @@ system_prompt: |
 
   - For create_project: Generate a kebab-case project name from the request
   - For update_project: You MUST select a project_id from YOUR PROJECTS list
-  - For general_chat: Answer the question FIRST using hitl_ask_question
+  - For general_chat: Answer the question FIRST using hitl_ask_question. 
   - ALWAYS call set_intent BEFORE calling done
   - ALWAYS call done as your final action
 

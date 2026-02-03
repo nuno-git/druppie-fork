@@ -379,6 +379,9 @@ class Orchestrator:
 
         Returns:
             "completed" or "paused"
+
+        Raises:
+            Exception: Re-raises after storing error on agent_run record
         """
         from druppie.agents.runtime import Agent
 
@@ -392,12 +395,30 @@ class Orchestrator:
 
         # Create and run agent
         agent = Agent(agent_id, db=self.execution_repo.db)
-        result = await agent.run(
-            prompt=prompt,
-            session_id=session_id,
-            agent_run_id=agent_run_id,
-            context=context,
-        )
+        try:
+            result = await agent.run(
+                prompt=prompt,
+                session_id=session_id,
+                agent_run_id=agent_run_id,
+                context=context,
+            )
+        except Exception as e:
+            # Store error on agent_run before re-raising
+            error_msg = f"{type(e).__name__}: {e}"
+            self.execution_repo.update_status(
+                agent_run_id,
+                AgentRunStatus.FAILED,
+                error_message=error_msg[:2000],
+            )
+            self.execution_repo.commit()
+            logger.error(
+                "agent_run_failed",
+                session_id=str(session_id),
+                agent_run_id=str(agent_run_id),
+                agent_id=agent_id,
+                error=error_msg[:500],
+            )
+            raise
 
         # Check if paused
         if result.get("status") == "paused" or result.get("paused"):

@@ -31,6 +31,7 @@ class AgentRun(Base):
 
     # pending = created by planner, not started yet
     status = Column(String(20), default="running")  # pending, running, paused_tool, paused_hitl, completed, failed
+    error_message = Column(Text)  # Error details when status is 'failed'
     iteration_count = Column(Integer, default=0)
 
     # For pending runs created by planner
@@ -56,6 +57,7 @@ class AgentRun(Base):
             "agent_id": self.agent_id,
             "parent_run_id": str(self.parent_run_id) if self.parent_run_id else None,
             "status": self.status,
+            "error_message": self.error_message,
             "iteration_count": self.iteration_count,
             "planned_prompt": self.planned_prompt,
             "sequence_number": self.sequence_number,

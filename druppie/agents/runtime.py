@@ -536,14 +536,43 @@ class Agent:
             self.db.commit()
 
             start_time = time.time()
-            response = await self.llm.achat(messages, openai_tools, max_tokens=self.definition.max_tokens)
+            try:
+                response = await self.llm.achat(messages, openai_tools, max_tokens=self.definition.max_tokens)
+            except Exception as e:
+                duration_ms = int((time.time() - start_time) * 1000)
+                # Record the error on the LLM call so it's visible in the DB
+                error_msg = f"{type(e).__name__}: {e}"
+                execution_repo.update_llm_error(
+                    llm_call_id=llm_call_id,
+                    error_message=error_msg[:2000],
+                    duration_ms=duration_ms,
+                )
+                self.db.commit()
+                logger.error(
+                    "llm_call_failed",
+                    agent_id=self.id,
+                    iteration=iteration,
+                    duration_ms=duration_ms,
+                    error=error_msg[:500],
+                )
+                raise
             duration_ms = int((time.time() - start_time) * 1000)
+
+            # Warn if response was truncated (hit token limit)
+            if response.finish_reason == "length":
+                logger.warning(
+                    "llm_response_truncated",
+                    agent_id=self.id,
+                    iteration=iteration,
+                    completion_tokens=response.completion_tokens,
+                )
 
             # Update LLM call with response
             # Store the full raw response as JSON for debugging
             raw_response_json = json.dumps({
                 "content": response.raw_content if hasattr(response, 'raw_content') else response.content,
                 "tool_calls": response.tool_calls or [],
+                "finish_reason": response.finish_reason or "",
                 "prompt_tokens": response.prompt_tokens or 0,
                 "completion_tokens": response.completion_tokens or 0,
                 "total_tokens": response.total_tokens or 0,
@@ -575,13 +604,20 @@ class Agent:
 
             # No tool calls — all agents MUST use tool calls
             if not response.tool_calls:
+                was_truncated = response.finish_reason == "length"
                 if iteration < max_iterations - 1:
                     logger.warning(
                         "agent_no_tool_calls_retry",
                         agent_id=self.id,
                         iteration=iteration,
+                        truncated=was_truncated,
                     )
                     messages.append({"role": "assistant", "content": response.content})
+                    truncation_hint = (
+                        " Your previous response was TRUNCATED (hit token limit). "
+                        "Keep your response shorter — call a tool immediately."
+                        if was_truncated else ""
+                    )
                     messages.append({
                         "role": "user",
                         "content": (
@@ -589,18 +625,23 @@ class Agent:
                             "either OpenAI function calling format or "
                             "<tool_call>{\"name\": \"tool_name\", \"arguments\": {...}}</tool_call> XML format. "
                             "Do NOT output raw JSON or plain text. "
-                            "Call `done` when finished."
+                            f"Call `done` when finished.{truncation_hint}"
                         ),
                     })
                     continue
 
-                # Final iteration exhausted — fail rather than silently accept text
+                # Final iteration exhausted — raise so error propagates properly
+                truncation_note = " (response was truncated by token limit)" if was_truncated else ""
                 logger.error(
                     "agent_max_iterations_no_tool_calls",
                     agent_id=self.id,
                     iteration=iteration,
+                    truncated=was_truncated,
                 )
-                return self._parse_output(response.content)
+                raise AgentMaxIterationsError(
+                    f"Agent '{self.id}' exhausted {max_iterations} iterations "
+                    f"without producing tool calls{truncation_note}"
+                )
 
             # Execute each tool call via ToolExecutor
             for tool_index, llm_tool_call in enumerate(response.tool_calls):

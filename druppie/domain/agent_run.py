@@ -67,6 +67,7 @@ class AgentRunSummary(BaseModel):
     id: UUID
     agent_id: str
     status: AgentRunStatus
+    error_message: str | None = None
 
     # For pending runs (created by planner)
     planned_prompt: str | None = None
