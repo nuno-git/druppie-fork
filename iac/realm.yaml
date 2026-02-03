@@ -120,11 +120,13 @@ clients:
     directAccessGrantsEnabled: true
     serviceAccountsEnabled: false
     protocol: openid-connect
-    rootUrl: http://localhost:5173
+    rootUrl: http://localhost:5273
     baseUrl: /
     redirectUris:
+      - http://localhost:5273/*
       - http://localhost:5173/*
     webOrigins:
+      - http://localhost:5273
       - http://localhost:5173
     defaultClientScopes:
       - web-origins
