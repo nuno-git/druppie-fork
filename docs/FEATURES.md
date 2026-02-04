@@ -256,6 +256,15 @@ max_tokens: 100000
 max_iterations: 50
 ```
 
+#### System Prompt Placeholders
+
+Agent system prompts can contain two placeholders that are resolved at runtime:
+
+- **`[COMMON_INSTRUCTIONS]`** -- Replaced with the contents of `agents/definitions/_common.md`, a shared prompt fragment that standardizes behavior across agents. It covers the summary relay protocol (how agents read previous summaries and format their own via `done()`), the mandatory `done()` output format, and workspace state rules (e.g., don't create branches unless asked). Currently included by: Planner, Business Analyst, Architect, Developer, Deployer.
+- **`[TOOL_DESCRIPTIONS_PLACEHOLDER]`** -- Replaced at runtime with a formatted list of the MCP tools the agent is allowed to call (based on its `mcps` config). Each tool entry includes its name, description, parameters, and whether it requires approval. This is generated dynamically from `mcp_config.yaml` so the agent's prompt always reflects the current tool definitions.
+
+Both placeholders are optional -- agents that don't include them simply won't get the injected content.
+
 Key sections:
 
 - **`mcps`**: Maps MCP server names to the list of tools the agent is allowed to call. An agent cannot call tools not listed here, even if the MCP server exposes them.
