@@ -2,6 +2,27 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Important: Branch Policy
+
+- **Default branch**: `colab-dev` (NOT `main`)
+- **Always branch from**: `colab-dev`
+- **PRs target**: `colab-dev`
+- **Note**: `main` is deprecated and will be deleted in the future
+
+When creating new branches:
+```bash
+git checkout colab-dev
+git pull origin colab-dev
+git checkout -b feature/your-feature-name
+```
+
+## Documentation Reminder
+
+When making significant changes, remember to update the `/docs` folder:
+- `docs/FEATURES.md` - New features or feature changes
+- `docs/KNOWN_ISSUES.md` - Known bugs or limitations
+- `docs/TECHNICAL.md` - Architecture or technical changes
+
 ## Project Overview
 
 Druppie is a governance platform for AI agents with MCP (Model Context Protocol) tool permissions and approval workflows. Agents can only act through MCP tools - no direct file output.

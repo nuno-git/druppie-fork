@@ -216,7 +216,7 @@ The frontend uses polling for real-time updates:
 
 ### 4.1 Design Principles
 
-- **No migrations**: Models are updated directly. The database is reset with `./setup.sh clean && ./setup.sh all`.
+- **No migrations**: Models are updated directly. The database is reset with `docker compose --profile reset-hard up` (full wipe) or `docker compose --profile reset-db up` (soft reset, keeps users).
 - **No JSON/JSONB columns**: All data is normalized into proper relational tables. (excep raw API requests for debugging for now. Might be other things too, needs to be checked and updated)
 - **No legacy/fallback code**: Clean architecture only.
 
@@ -435,7 +435,7 @@ approval_overrides:
 
 ### 7.1 Services
 
-All services are defined in `druppie/docker-compose.yml`:
+All services are defined in `docker-compose.yml` (at the repository root):
 
 ```
 druppie-db          PostgreSQL 15     :5533   Main database
@@ -481,13 +481,57 @@ druppie-db  <-- keycloak (via keycloak-db)
 
 ### 7.5 Development Setup
 
+The setup uses Docker Compose with profiles:
+
 ```bash
-./setup_dev.sh              # Start everything (infra + backend + frontend)
-./setup_dev.sh infra        # Start only infrastructure (DBs, Keycloak, Gitea, MCPs)
-./setup_dev.sh backend      # Start only backend (port 8100)
-./setup_dev.sh stop         # Stop all services
-./setup_dev.sh status       # Check service status
+# First time setup (initialize Keycloak and Gitea)
+cp .env.example .env          # Copy and edit environment variables
+docker compose --profile init up -d
+
+# Development mode (hot reload enabled)
+docker compose --profile dev up -d
+
+# Production mode
+docker compose --profile prod up -d
+
+# Infrastructure only (DBs, Keycloak, Gitea, MCPs)
+docker compose --profile infra up -d
+
+# Stop all services
+docker compose --profile dev --profile prod --profile infra down
+
+# Check status
+docker compose ps
 ```
+
+### 7.6 Database Reset
+
+Two reset options are available:
+
+```bash
+# Soft reset: drops application tables (projects, sessions, etc.), keeps users
+docker compose --profile reset-db up
+
+# Hard reset: wipes all volumes, restarts everything fresh
+docker compose --profile reset-hard up
+```
+
+The soft reset is useful during development when you want to clear session/project data without re-running Keycloak/Gitea setup. The hard reset is a full wipe that requires re-initialization.
+
+### 7.7 Profiles
+
+| Profile | Purpose |
+|---------|---------|
+| `infra` | Infrastructure only (DBs, Keycloak, Gitea, MCP servers) |
+| `dev` | Development mode with hot reload (backend via uvicorn --reload, frontend via Vite HMR) |
+| `prod` | Production mode (static builds) |
+| `init` | One-time Keycloak and Gitea setup (creates realm, users, OAuth apps) |
+| `reset-db` | Soft reset: drops application tables, keeps users |
+| `reset-hard` | Hard reset: wipes all volumes, reinitializes everything |
+
+### 7.8 Cross-Platform Support
+
+The Docker Compose setup works on Windows, macOS, and Linux. Shell scripts use LF line endings (enforced via `.gitattributes`) and Dockerfiles include `sed` commands to strip any CRLF characters that may be introduced on Windows.
 
 ---
 
@@ -685,6 +729,7 @@ Optional:
 | `druppie/core/mcp_config.yaml` | MCP server URLs, tool schemas, approval rules, parameter injection |
 | `druppie/agents/definitions/*.yaml` | Agent definitions (prompt, tools, model config) |
 | `druppie/agents/definitions/_common.md` | Shared prompt instructions for all agents |
-| `druppie/docker-compose.yml` | Infrastructure service definitions |
+| `docker-compose.yml` | Infrastructure service definitions (at repository root) |
 | `.env` | Environment variable overrides |
+| `.env.example` | Documented template for environment variables |
 

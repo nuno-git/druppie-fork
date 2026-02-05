@@ -2,14 +2,14 @@
 
 Known bugs, implementation gaps, and limitations of the Druppie platform.
 
-Last updated: 2026-02-04
+Last updated: 2026-02-05
 
 ---
 
 ## Summary
 
 - Per-Agent Model Selection Ignored
-- Setup / Core Problems
+- Hardcoded API URLs in Frontend Debug Pages
 - Dead Code in LLMService.get_llm()
 - Duplicate Tool Descriptions Sent to LLM
 - Inconsistent [COMMON_INSTRUCTIONS] Across Agents
@@ -49,19 +49,12 @@ Last updated: 2026-02-04
 - **Impact:** All agents use the same model and temperature regardless of their YAML configuration. Cannot use a cheap/fast model for the router and a capable model for the developer.
 - **Fix needed:** Replace the singleton with a factory that caches LLM instances per `(provider, model, temperature)` tuple, or pass model/temperature overrides into `achat()`.
 
-### Setup / Core Problems
+### Hardcoded API URLs in Frontend Debug Pages
 
-- **Severity:** Medium
-- **Locations:**
-  - `setup_dev.sh` — development setup script
-  - `frontend/src/services/api.js:10`, `frontend/src/pages/Debug.jsx:33`, `DebugMCP.jsx:15`, `DebugProjects.jsx:22`, `DebugChat.jsx:13`, `DebugApprovals.jsx:15` — hardcoded API URLs
-- The development setup is fragile and not system-independent:
-  - `setup_dev.sh` assumes specific system dependencies and OS-level configurations that may not be present on all machines. It does not work reliably across devices.
-  - The default `VITE_API_URL` is `http://localhost:8000` but the backend runs on port 8100. This works when `setup_dev.sh` sets the correct environment variable, but breaks when running the frontend standalone. The wrong default is duplicated across six files.
-- **Fixes needed:**
-  - Make the setup process system-independent: either move to full containerization (with hot-reload support for dev) or use a more robust installation process (e.g., Conda environments) to ensure consistent setup across machines.
-  - Centralize the API base URL so it is defined in one place and all files import from there. Fix the default to match the actual backend port.
-  - Write a clear setup/usage guide (README) so new developers can get the project running without tribal knowledge.
+- **Severity:** Low
+- **Locations:** `frontend/src/pages/Debug.jsx:33`, `DebugMCP.jsx:15`, `DebugProjects.jsx:22`, `DebugChat.jsx:13`, `DebugApprovals.jsx:15`
+- Some debug pages have hardcoded API URLs instead of using the centralized API client.
+- **Fix needed:** Refactor debug pages to use the shared API client from `frontend/src/services/api.js`.
 
 ### Dead Code in LLMService.get_llm()
 
@@ -204,7 +197,7 @@ Last updated: 2026-02-04
 
 ### Keycloak in Development Mode
 
-- **Location:** `druppie/docker-compose.yml:137`
+- **Location:** `docker-compose.yml` (keycloak service)
 - Keycloak runs with the `start-dev` command, which is explicitly not production-ready.
 - No TLS configuration is present.
 - Suitable for development only.
