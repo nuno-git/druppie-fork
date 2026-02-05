@@ -580,7 +580,7 @@ approval_overrides: {}
 
 `druppie/agents/definitions/_common.md` contains instructions shared across all agents (summary relay format, `done()` output format, workspace state context). The `[COMMON_INSTRUCTIONS]` placeholder in an agent's system prompt is replaced with this content at runtime.
 
-**Note:** Currently only 4 agents include the `[COMMON_INSTRUCTIONS]` placeholder (deployer, architect, business_analyst, planner). The developer, reviewer, tester, and router agents do not, which can lead to inconsistent agent communication -- see KNOWN_ISSUES.md.
+**Note:** Currently only 4 agents include the `[COMMON_INSTRUCTIONS]` placeholder (deployer, architect, business_analyst, planner). The developer, reviewer, tester, and router agents do not, which can lead to inconsistent agent communication -- see BACKLOG.md.
 
 ### 8.3 Agent Runtime Loop
 
@@ -603,7 +603,7 @@ The agent runtime (`druppie/agents/runtime.py`) implements a tool-calling loop:
 
 If the LLM responds without tool calls, the runtime sends a correction message and retries. Agents can only interact through tool calls -- they cannot produce raw text output.
 
-**Note:** Tool information is currently sent to the LLM twice per request: as human-readable text in the system prompt (step 1) and as structured OpenAI function schemas in the API `tools` parameter (step 3). The system prompt text carries extra context the schema cannot (e.g., approval requirements), but tool name, description, and parameters are fully duplicated, wasting tokens on every call -- see KNOWN_ISSUES.md.
+**Note:** Tool information is currently sent to the LLM twice per request: as human-readable text in the system prompt (step 1) and as structured OpenAI function schemas in the API `tools` parameter (step 3). The system prompt text carries extra context the schema cannot (e.g., approval requirements), but tool name, description, and parameters are fully duplicated, wasting tokens on every call -- see BACKLOG.md.
 
 ### 8.4 Summary Relay Mechanism
 
