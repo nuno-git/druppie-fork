@@ -1,0 +1,28 @@
+# Druppie Platform - Init Container
+# Runs Keycloak and Gitea setup scripts on first launch.
+# Uses a marker volume to track initialization state.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies (docker CLI for Gitea CLI commands)
+RUN apt-get update && apt-get install -y \
+    curl \
+    docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for setup scripts
+RUN pip install --no-cache-dir requests pyyaml
+
+# Copy setup scripts and IAC configuration
+COPY scripts/setup_keycloak.py /app/scripts/setup_keycloak.py
+COPY scripts/setup_gitea.py /app/scripts/setup_gitea.py
+COPY scripts/init-entrypoint.sh /app/scripts/init-entrypoint.sh
+COPY iac/ /app/iac/
+
+RUN chmod +x /app/scripts/init-entrypoint.sh
+
+# Create marker directory
+RUN mkdir -p /init-marker
+
+ENTRYPOINT ["/app/scripts/init-entrypoint.sh"]

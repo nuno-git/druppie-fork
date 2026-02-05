@@ -1,0 +1,30 @@
+# Druppie Platform - Reset Container
+# Used for hard reset operations that require Docker access.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install docker compose plugin
+RUN mkdir -p /usr/local/lib/docker/cli-plugins && \
+    curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" \
+    -o /usr/local/lib/docker/cli-plugins/docker-compose && \
+    chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+# Install Python dependencies for setup scripts
+RUN pip install --no-cache-dir requests pyyaml
+
+# Copy setup scripts and IAC configuration
+COPY scripts/setup_keycloak.py /app/scripts/setup_keycloak.py
+COPY scripts/setup_gitea.py /app/scripts/setup_gitea.py
+COPY scripts/reset-hard.sh /app/scripts/reset-hard.sh
+COPY iac/ /app/iac/
+
+RUN chmod +x /app/scripts/reset-hard.sh
+
+ENTRYPOINT ["/app/scripts/reset-hard.sh"]

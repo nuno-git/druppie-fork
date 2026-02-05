@@ -28,8 +28,8 @@ KEYCLOAK_ADMIN_PASSWORD = os.getenv("KEYCLOAK_ADMIN_PASSWORD", "admin_password")
 
 EXTERNAL_HOST = os.getenv("EXTERNAL_HOST", "localhost")
 
-# .env file path (project root)
-ENV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+# .env file path (project root, or override via ENV_FILE env var for Docker)
+ENV_FILE = os.getenv("ENV_FILE", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
 
 def wait_for_gitea():
