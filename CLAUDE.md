@@ -20,7 +20,7 @@ git checkout -b feature/your-feature-name
 
 When making significant changes, remember to update the `/docs` folder:
 - `docs/FEATURES.md` - New features or feature changes
-- `docs/KNOWN_ISSUES.md` - Known bugs or limitations
+- `docs/BACKLOG.md` - Bugs, technical debt, and improvement ideas
 - `docs/TECHNICAL.md` - Architecture or technical changes
 
 ## Project Overview
