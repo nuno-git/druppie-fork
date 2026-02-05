@@ -20,7 +20,8 @@ COPY scripts/setup_gitea.py /app/scripts/setup_gitea.py
 COPY scripts/init-entrypoint.sh /app/scripts/init-entrypoint.sh
 COPY iac/ /app/iac/
 
-RUN chmod +x /app/scripts/init-entrypoint.sh
+# Fix line endings (in case files were copied from Windows) and make executable
+RUN sed -i 's/\r$//' /app/scripts/init-entrypoint.sh && chmod +x /app/scripts/init-entrypoint.sh
 
 # Create marker directory
 RUN mkdir -p /init-marker
