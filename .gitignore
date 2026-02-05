@@ -49,6 +49,7 @@ instance/
 # Local config
 .druppie/
 .playwright-mcp/
+settings.local.json
 
 # Docker volumes
 druppie-app/
