@@ -500,7 +500,7 @@ services:
     container_name: druppie-new-frontend
     profiles: [prod]
     ports:
-      - "${FRONTEND_PORT:-5273}:3000"
+      - "${FRONTEND_PORT:-5273}:5173"
     depends_on:
       druppie-backend:
         condition: service_healthy
