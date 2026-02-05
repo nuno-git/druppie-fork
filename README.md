@@ -53,6 +53,20 @@ docker compose --profile prod up -d
 docker compose --profile prod down
 ```
 
+### Switching Between Dev and Prod
+
+Dev and prod use the same ports and container names, so stop one before starting the other:
+
+```bash
+# Switch from dev to prod
+docker compose --profile dev down
+docker compose --profile prod up -d --build
+
+# Switch from prod to dev
+docker compose --profile prod down
+docker compose --profile dev up -d
+```
+
 ### Infrastructure Only
 
 Start only databases, Keycloak, Gitea, and MCP servers (no backend/frontend):
