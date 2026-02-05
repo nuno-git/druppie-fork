@@ -1,4 +1,5 @@
-# Druppie Platform v2 - FastAPI Backend
+# Druppie Platform - FastAPI Backend
+# Build context: project root (.)
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -11,15 +12,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY requirements.txt .
+COPY druppie/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . /app/druppie/
-
-# Copy agent and workflow YAML files
-COPY agents/ /app/druppie/agents/
-COPY workflows/ /app/druppie/workflows/
+COPY druppie/ /app/druppie/
 
 # Set environment variables
 ENV PYTHONPATH=/app
