@@ -2,268 +2,180 @@
 
 AI agent governance platform with MCP tool permissions and approval workflows.
 
-## Prerequisites
-
-- [Docker](https://docs.docker.com/get-docker/) (with Docker Compose v2)
-- An LLM API key (Z.AI, DeepInfra, or local Ollama)
-
 ## Quick Start
 
 ```bash
-# 1. Copy and configure environment
+# 1. Configure environment
 cp .env.example .env
-# Edit .env and set your LLM_PROVIDER and API key
+# Edit .env and add your LLM API key (ZAI_API_KEY or DEEPINFRA_API_KEY)
 
-# 2. Start everything (development mode with hot reload)
+# 2. Start (first time includes --profile init)
 docker compose --profile dev --profile init up -d
 
-# 3. Open the application
-# Frontend:  http://localhost:5273
-# Backend:   http://localhost:8100
-# API Docs:  http://localhost:8100/docs
-# Keycloak:  http://localhost:8180
-# Gitea:     http://localhost:3100
-# Adminer:   http://localhost:8081
+# 3. Open the app
+open http://localhost:5273
 ```
 
-## Docker Compose Profiles
+First startup takes a few minutes to build images and initialize services.
 
-| Profile | What it starts |
-|---------|---------------|
-| `infra` | Databases, Keycloak, Gitea, MCP servers, Adminer |
-| `dev` | Everything in `infra` + backend (hot reload) + frontend (Vite HMR) |
-| `prod` | Everything in `infra` + backend + frontend (production builds) |
-| `init` | Initialization container (Keycloak & Gitea first-time setup) |
-| `reset-db` | Database reset service |
-| `reset-hard` | Full reset service |
+## Daily Usage
 
-## Common Commands
-
-### Start Services
+After first-time setup, skip `--profile init`:
 
 ```bash
-# Development mode (hot reload on backend + frontend)
+docker compose --profile dev up -d    # Start
+docker compose --profile dev down     # Stop
+```
+
+## Commands
+
+### Development Mode (hot reload)
+
+```bash
+# First time (or after reset)
 docker compose --profile dev --profile init up -d
 
-# Infrastructure only (databases, Keycloak, Gitea, MCP servers)
-docker compose --profile infra --profile init up -d
-
-# Production mode
-docker compose --profile prod --profile init up -d
-```
-
-> **Note:** Include `--profile init` on first run to configure Keycloak and Gitea.
-> On subsequent runs you can omit it - the init container checks a marker volume
-> and skips if already initialized.
-
-### Stop Services
-
-```bash
-# Stop all running services
+# Daily usage
+docker compose --profile dev up -d
 docker compose --profile dev down
-
-# Stop and remove volumes (destroys all data)
-docker compose --profile dev down -v
-```
-
-### View Logs
-
-```bash
-# All services
-docker compose logs -f
-
-# Specific service
-docker compose logs -f druppie-backend-dev
-docker compose logs -f druppie-frontend-dev
-docker compose logs -f keycloak
-docker compose logs -f gitea
-```
-
-### Restart Services
-
-```bash
-# Restart everything
 docker compose --profile dev restart
-
-# Restart specific service
-docker compose restart druppie-backend-dev
+docker compose --profile dev up -d --build   # Rebuild after Dockerfile changes
 ```
 
-### Check Status
+### Production Mode
 
 ```bash
-docker compose --profile dev ps
+# First time (or after reset)
+docker compose --profile prod --profile init up -d
+
+# Daily usage
+docker compose --profile prod up -d
+docker compose --profile prod down
 ```
 
-## Reset Operations
+### Infrastructure Only
 
-### Reset Application Database Only
-
-Clears the Druppie application database while preserving Keycloak users, Gitea repos, and all other data.
+Start only databases, Keycloak, Gitea, and MCP servers (no backend/frontend):
 
 ```bash
-docker compose --profile reset-db run --rm reset-db
-```
-
-### Hard Reset (Full Wipe + Re-Initialize)
-
-Destroys ALL data (databases, Keycloak config, Gitea repos, workspace) and re-initializes from scratch. Keycloak and Gitea will be reconfigured automatically.
-
-```bash
-# Stop application services first
-docker compose --profile dev down
-
-# Run hard reset
-docker compose --profile infra --profile reset-hard run --rm reset-hard
-```
-
-After hard reset, start the application again:
-```bash
-docker compose --profile dev up -d
-```
-
-### Re-Run Initialization Only
-
-If you need to re-run the Keycloak/Gitea setup scripts without losing data:
-
-```bash
-# Remove the init marker
-docker volume rm druppie_init_marker
-
-# Run init again
+# First time (or after reset)
 docker compose --profile infra --profile init up -d
+
+# Daily usage
+docker compose --profile infra up -d
+docker compose --profile infra down
 ```
 
-## Development
-
-### Hot Reload
-
-In `dev` profile:
-- **Backend**: Source code is mounted from `./druppie/`. Changes to Python files trigger automatic reload via uvicorn `--reload`.
-- **Frontend**: Source code is mounted from `./frontend/`. Vite HMR provides instant updates in the browser.
-
-### Building Images
+### Logs
 
 ```bash
-# Rebuild all images
-docker compose --profile dev build
-
-# Rebuild specific service
-docker compose build druppie-backend-dev
+docker compose logs -f                       # All services
+docker compose logs -f druppie-backend-dev   # Backend only
+docker compose logs -f druppie-frontend-dev  # Frontend only
+docker compose logs -f keycloak              # Keycloak only
 ```
 
-### Changing Environment Variables
-
-Docker Compose reads `.env` only at startup. If you edit `.env` while containers are running (e.g. changing `LLM_PROVIDER` or API keys), re-run:
+### Reset
 
 ```bash
-docker compose --profile dev up -d
+# Soft reset - clears projects, sessions, chats (keeps user accounts, make sure to logout in the browser because tokens are kept there in cache.)
+docker compose --profile reset-db run --rm reset-db
+
+# Hard reset - wipes EVERYTHING and re-initializes Keycloak & Gitea
+docker compose --profile reset-hard run --rm reset-hard
+docker compose --profile dev up -d   # Then start the app
 ```
 
-Compose will detect the config change and recreate only the affected containers. Source code changes are picked up automatically via hot reload, but environment variable changes always require this step.
+**Soft reset keeps:** User accounts, Keycloak config, Gitea repos
+**Soft reset clears:** Projects, sessions, agent runs, messages, approvals, questions
 
-## Service URLs
+**Hard reset clears:** Everything (all databases, Keycloak, Gitea, workspace files)
 
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| Frontend | http://localhost:5273 | Keycloak login |
-| Backend API | http://localhost:8100 | - |
+## What is `--profile init`?
+
+The init container configures Keycloak and Gitea on first run:
+- Creates the `druppie` realm in Keycloak
+- Creates test users (admin, architect, developer, etc.)
+- Sets up Gitea admin account and OAuth integration
+- Creates the sample repository
+
+**It only runs once.** A marker volume tracks completion. On subsequent runs, it exits immediately doing nothing.
+
+**When to include `--profile init`:**
+- First-time setup
+- After changing `iac/users.yaml` or `iac/realm.yaml`
+- After running `reset-hard`
+
+**To force re-initialization:**
+```bash
+docker volume rm druppie_init_marker
+docker compose --profile dev --profile init up -d
+```
+
+## URLs
+
+| Service | URL | Login |
+|---------|-----|-------|
+| Frontend | http://localhost:5273 | Test users below |
 | API Docs | http://localhost:8100/docs | - |
 | Keycloak Admin | http://localhost:8180 | admin / admin |
 | Gitea | http://localhost:3100 | gitea_admin / GiteaAdmin123 |
-| Adminer | http://localhost:8081 | druppie / druppie_secret |
-| MCP Coding | http://localhost:9001 | - |
-| MCP Docker | http://localhost:9002 | - |
-| MCP File Search | http://localhost:9004 | - |
-| MCP Web | http://localhost:9005 | - |
+| Adminer (DB) | http://localhost:8081 | druppie / druppie_secret |
 
-## Test Users (Keycloak)
+## Test Users
 
 | User | Password | Role |
 |------|----------|------|
-| admin | Admin123! | admin |
+| admin | Admin123! | admin (full access) |
 | architect | Architect123! | architect |
 | developer | Developer123! | developer |
 | analyst | Analyst123! | business_analyst |
 | normal_user | User123! | user |
 
-## Project Structure
+## Environment Variables
 
-```
-.
-├── docker-compose.yml     # Main compose file with all profiles
-├── Dockerfile             # Backend container image
-├── Dockerfile.init        # Init container (Keycloak + Gitea setup)
-├── Dockerfile.reset       # Reset container (hard reset operations)
-├── .env                   # Environment variables (create from .env.example)
-├── .env.example           # Environment template with documentation
-├── druppie/               # Backend source code (FastAPI)
-│   ├── api/               # API routes
-│   ├── services/          # Business logic
-│   ├── repositories/      # Data access
-│   ├── domain/            # Domain models
-│   ├── db/                # SQLAlchemy models
-│   ├── execution/         # Agent orchestrator
-│   ├── agents/            # YAML agent definitions
-│   ├── core/              # MCP client, config
-│   ├── mcp-servers/       # MCP microservices
-│   └── requirements.txt
-├── frontend/              # Frontend source code (React/Vite)
-│   ├── src/
-│   ├── Dockerfile         # Production frontend image
-│   └── Dockerfile.dev     # Development frontend image
-├── scripts/               # Setup & utility scripts
-│   ├── setup_keycloak.py  # Keycloak configuration
-│   ├── setup_gitea.py     # Gitea configuration
-│   ├── init-entrypoint.sh # Init container entrypoint
-│   └── reset-hard.sh      # Hard reset script
-└── iac/                   # Infrastructure as Code
-    ├── realm.yaml         # Keycloak realm config
-    └── users.yaml         # Users & roles config
-```
-
-## Migration from setup_dev.sh
-
-| Old command | New command |
-|-------------|-------------|
-| `./setup_dev.sh` | `docker compose --profile dev --profile init up -d` |
-| `./setup_dev.sh start` | `docker compose --profile dev --profile init up -d` |
-| `./setup_dev.sh infra` | `docker compose --profile infra --profile init up -d` |
-| `./setup_dev.sh stop` | `docker compose --profile dev down` |
-| `./setup_dev.sh restart` | `docker compose --profile dev restart` |
-| `./setup_dev.sh status` | `docker compose --profile dev ps` |
-| `./setup_dev.sh logs` | `docker compose logs -f` |
-| `./setup_dev.sh logs backend` | `docker compose logs -f druppie-backend-dev` |
-| `./setup_dev.sh logs frontend` | `docker compose logs -f druppie-frontend-dev` |
-| `./setup_dev.sh reset` | `docker compose --profile reset-db run --rm reset-db` |
-| `./setup.sh clean && ./setup.sh all` | `docker compose --profile reset-hard run --rm reset-hard` |
-
-## Troubleshooting
-
-### First run: GITEA_TOKEN not set
-
-On the very first run, the init container generates a Gitea access token and writes it to `.env`. However, services that were already started may not have picked it up. Fix:
+Copy `.env.example` to `.env`. Required: an LLM API key.
 
 ```bash
-docker compose --profile dev restart mcp-coding
+# Option 1: Z.AI
+LLM_PROVIDER=zai
+ZAI_API_KEY=your_key_here
+
+# Option 2: DeepInfra
+LLM_PROVIDER=deepinfra
+DEEPINFRA_API_KEY=your_key_here
 ```
 
-### Keycloak not ready
+After editing `.env`, apply changes:
+```bash
+docker compose --profile dev up -d
+```
 
-Keycloak can take 30-60 seconds to start. If you see connection errors, wait and retry. The init container has built-in retry logic.
+## Custom Ports
 
-### Port conflicts
+Edit `.env` if default ports conflict:
 
-If ports are already in use, configure alternative ports in `.env`:
-
-```env
+```bash
 BACKEND_PORT=8200
 FRONTEND_PORT=5274
 KEYCLOAK_PORT=8181
+GITEA_PORT=3101
 ```
 
-### Rebuild after code changes to Dockerfiles
+## Troubleshooting
 
+**Check logs:**
 ```bash
-docker compose --profile dev up -d --build
+docker compose logs -f
+```
+
+**Fresh start:**
+```bash
+docker compose --profile reset-hard run --rm reset-hard
+docker compose --profile dev up -d
+```
+
+**Container won't start:**
+```bash
+docker compose --profile dev up -d --build  # Force rebuild
 ```
