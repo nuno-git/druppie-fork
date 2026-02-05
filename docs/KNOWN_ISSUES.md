@@ -9,7 +9,6 @@ Last updated: 2026-02-05
 ## Summary
 
 - Per-Agent Model Selection Ignored
-- Hardcoded API URLs in Frontend Debug Pages
 - Dead Code in LLMService.get_llm()
 - Duplicate Tool Descriptions Sent to LLM
 - Inconsistent [COMMON_INSTRUCTIONS] Across Agents
@@ -48,13 +47,6 @@ Last updated: 2026-02-05
 - In `runtime.py:540`, only `max_tokens` from the agent definition is passed to `achat()`. The agent's `model` field is only used for logging (`runtime.py:532`), and `temperature` is never referenced.
 - **Impact:** All agents use the same model and temperature regardless of their YAML configuration. Cannot use a cheap/fast model for the router and a capable model for the developer.
 - **Fix needed:** Replace the singleton with a factory that caches LLM instances per `(provider, model, temperature)` tuple, or pass model/temperature overrides into `achat()`.
-
-### Hardcoded API URLs in Frontend Debug Pages
-
-- **Severity:** Low
-- **Locations:** `frontend/src/pages/Debug.jsx:33`, `DebugMCP.jsx:15`, `DebugProjects.jsx:22`, `DebugChat.jsx:13`, `DebugApprovals.jsx:15`
-- Some debug pages have hardcoded API URLs instead of using the centralized API client.
-- **Fix needed:** Refactor debug pages to use the shared API client from `frontend/src/services/api.js`.
 
 ### Dead Code in LLMService.get_llm()
 
