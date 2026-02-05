@@ -16,35 +16,26 @@ echo "  - Gitea repositories and configuration"
 echo "  - Workspace files"
 echo ""
 
-# Step 1: Stop all druppie service containers (except this one)
-echo "--- Step 1: Stopping service containers ---"
-CONTAINERS=$(docker ps -q --filter "network=druppie-new-network" --filter "label=com.docker.compose.project" 2>/dev/null || true)
-SELF_ID=$(cat /proc/self/cgroup 2>/dev/null | grep -o '[a-f0-9]\{64\}' | head -1 || hostname)
+cd /project
 
-for container in $CONTAINERS; do
-    CONTAINER_ID=$(docker inspect --format '{{.Id}}' "$container" 2>/dev/null || echo "")
-    if [ -n "$CONTAINER_ID" ] && [ "${CONTAINER_ID#*$SELF_ID}" = "$CONTAINER_ID" ]; then
-        CONTAINER_NAME=$(docker inspect --format '{{.Name}}' "$container" 2>/dev/null | sed 's/^\///')
-        echo "  Stopping: $CONTAINER_NAME"
-        docker stop "$container" 2>/dev/null || true
-        docker rm "$container" 2>/dev/null || true
-    fi
-done
+# Step 1: Stop all services and remove volumes
+echo "--- Step 1: Stopping all services and removing volumes ---"
+docker compose --profile dev --profile prod --profile infra down -v 2>/dev/null || true
+echo "  Done"
 echo ""
 
-# Step 2: Remove all druppie volumes
-echo "--- Step 2: Removing data volumes ---"
+# Step 2: Remove any remaining druppie volumes (in case they were external)
+echo "--- Step 2: Cleaning up any remaining volumes ---"
 for vol in druppie_new_postgres druppie_new_keycloak_postgres druppie_new_gitea_postgres druppie_new_gitea druppie_new_workspace druppie_new_dataset druppie_init_marker; do
     if docker volume inspect "$vol" >/dev/null 2>&1; then
         echo "  Removing volume: $vol"
-        docker volume rm "$vol" 2>/dev/null || echo "  Warning: Could not remove $vol (may be in use)"
+        docker volume rm "$vol" 2>/dev/null || echo "  Warning: Could not remove $vol"
     fi
 done
 echo ""
 
-# Step 3: Restart infrastructure using docker compose
-echo "--- Step 3: Restarting infrastructure ---"
-cd /project
+# Step 3: Start infrastructure
+echo "--- Step 3: Starting infrastructure ---"
 docker compose --profile infra up -d
 echo ""
 
@@ -61,7 +52,7 @@ for i in $(seq 1 30); do
 done
 
 echo "  Waiting for Keycloak..."
-for i in $(seq 1 60); do
+for i in $(seq 1 30); do
     if docker exec druppie-new-keycloak curl -sf http://localhost:8080/health/ready >/dev/null 2>&1; then
         echo "  Keycloak is ready"
         break
