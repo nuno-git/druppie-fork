@@ -142,7 +142,7 @@ class Orchestrator:
         # Step 2: Build conversation history BEFORE saving new message
         conversation_history = ""
         if is_continuation:
-            conversation_history = self._build_conversation_history(current_session_id)
+            conversation_history = await self._build_conversation_history(current_session_id)
 
         # Step 3: Save user message to the timeline
         self.execution_repo.create_message(
@@ -206,8 +206,10 @@ class Orchestrator:
 
         return "\n".join(lines)
 
-    def _build_conversation_history(self, session_id: UUID) -> str:
+    async def _build_conversation_history(self, session_id: UUID) -> str:
         """Build conversation history from previous rounds.
+
+        NOW ALSO: Detects language of last user message using LLM and injects instruction.
 
         Queries all user and assistant (summarizer) messages from the session,
         ordered by created_at. These form the natural conversation:
@@ -217,9 +219,11 @@ class Orchestrator:
             session_id: Session UUID
 
         Returns:
-            Formatted conversation history string, or empty string if no history.
+            Formatted conversation history string with language instruction at top,
+            or empty string if no history.
         """
         from druppie.db.models import Message
+        from druppie.llm.language_detection import detect_language
 
         messages = (
             self.execution_repo.db.query(Message)
@@ -234,7 +238,47 @@ class Orchestrator:
         if not messages:
             return ""
 
+        # Check if there's already a language instruction system message from HITL
+        # This takes priority over re-detecting from last user message
+        system_messages = (
+            self.execution_repo.db.query(Message)
+            .filter(
+                Message.session_id == session_id,
+                Message.role == "system",
+                Message.content.like("LANGUAGE INSTRUCTION:%"),
+            )
+            .order_by(Message.created_at.desc())
+            .first()
+        )
+
+        language_instruction = ""
+        if system_messages:
+            # Use the most recent language instruction from HITL
+            language_instruction = system_messages.content
+            logger.info(
+                "using_existing_language_instruction",
+                instruction=language_instruction[:50],
+            )
+        else:
+            # No HITL instruction, detect from last user message
+            last_user_message = None
+            for msg in reversed(messages):
+                if msg.role == "user":
+                    last_user_message = msg.content
+                    break
+
+            # Build language instruction (async LLM call)
+            if last_user_message:
+                lang_code, lang_name, instruction = await detect_language(last_user_message)
+                language_instruction = instruction
+
         lines = ["CONVERSATION HISTORY:"]
+
+        # Add language instruction at TOP (most prominent)
+        if language_instruction:
+            lines.append(language_instruction)
+            lines.append("")  # Blank line for readability
+
         for msg in messages:
             role_label = "User" if msg.role == "user" else "Assistant"
             lines.append(f"{role_label}: {msg.content}")
@@ -243,6 +287,9 @@ class Orchestrator:
             "conversation_history_built",
             session_id=str(session_id),
             message_count=len(messages),
+            has_language_instruction=bool(language_instruction),
+            language_instruction_source="HITL" if system_messages else "LLM_detection",
+            language_instruction_preview=language_instruction[:80] if language_instruction else "",
         )
 
         return "\n".join(lines)

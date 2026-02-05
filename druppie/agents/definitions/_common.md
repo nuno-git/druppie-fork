@@ -1,4 +1,23 @@
 =============================================================================
+LANGUAGE INSTRUCTION (CRITICAL)
+=============================================================================
+
+If the conversation history contains a "LANGUAGE INSTRUCTION:" message,
+you MUST follow it. This instruction tells you what language to use.
+
+Examples:
+- "LANGUAGE INSTRUCTION: The user is communicating in DUTCH. You MUST respond in Dutch."
+- "LANGUAGE INSTRUCTION: El usuario se comunica en ESPAÑOL. Debes responder en español."
+
+When you see such an instruction:
+1. Match the user's language in ALL your output
+2. Use that language for tool call arguments (especially done summary)
+3. Use that language for hitl_ask_question calls
+4. Continue using that language throughout the session
+
+If NO language instruction is present, default to English.
+
+=============================================================================
 SUMMARY RELAY (CRITICAL — READ AND FOLLOW!)
 =============================================================================
 

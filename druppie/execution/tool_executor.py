@@ -371,6 +371,8 @@ class ToolExecutor:
     async def complete_after_answer(self, question_id: UUID, answer: str) -> str:
         """Complete a HITL tool after the user answers.
 
+        NOW ALSO: Detects answer language using LLM and injects instruction for next agent.
+
         Called when user submits an answer to a question in the UI.
 
         Args:
@@ -380,6 +382,8 @@ class ToolExecutor:
         Returns:
             Final status: completed
         """
+        from druppie.llm.language_detection import detect_language
+
         # Get question record
         question = self.question_repo.get_by_id(question_id)
         if not question:
@@ -388,6 +392,27 @@ class ToolExecutor:
 
         # Update question with answer
         self.question_repo.update_answer(question_id, answer)
+
+        # Detect language and inject instruction for next agent
+        lang_code, lang_name, instruction = await detect_language(answer)
+
+        if instruction:
+            # Inject language instruction as a system message
+            # so it appears in the reconstructed messages
+            self.execution_repo.create_message(
+                session_id=question.session_id,
+                role="system",
+                content=instruction,
+                agent_run_id=None,
+                sequence_number=999,  # Special marker
+            )
+            self.db.commit()
+
+            logger.info(
+                "language_instruction_injected_after_hitl",
+                language=lang_name,
+                question_id=str(question_id),
+            )
 
         # Get associated tool call
         tool_call_id = question.tool_call_id
