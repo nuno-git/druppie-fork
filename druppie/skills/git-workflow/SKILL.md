@@ -1,6 +1,13 @@
 ---
 name: git-workflow
 description: Guides proper git workflow and branching strategies
+allowed-tools:
+  coding:
+    - create_branch
+    - commit_and_push
+    - create_pull_request
+    - merge_pull_request
+    - get_git_status
 ---
 # Git Workflow Instructions
 

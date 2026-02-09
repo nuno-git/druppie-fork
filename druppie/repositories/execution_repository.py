@@ -234,6 +234,41 @@ class ExecutionRepository(BaseRepository):
             .all()
         )
 
+    def get_invoked_skills(self, agent_run_id: UUID) -> list[str]:
+        """Get skill names from invoke_skill tool calls in this agent run.
+
+        Used to check if a tool is allowed via a previously invoked skill.
+
+        Args:
+            agent_run_id: Agent run ID to check
+
+        Returns:
+            List of skill names that were invoked
+        """
+        import json
+
+        tool_calls = (
+            self.db.query(ToolCall)
+            .filter(
+                ToolCall.agent_run_id == agent_run_id,
+                ToolCall.tool_name == "invoke_skill",
+                ToolCall.status == "completed",
+            )
+            .all()
+        )
+
+        skill_names = []
+        for tc in tool_calls:
+            # Extract skill_name from arguments
+            if tc.arguments:
+                try:
+                    args = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+                    if isinstance(args, dict) and "skill_name" in args:
+                        skill_names.append(args["skill_name"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        return skill_names
+
     def get_llm_calls_for_run(self, agent_run_id: UUID) -> list[LlmCall]:
         """Get all LLM calls for an agent run, ordered by creation time."""
         return (

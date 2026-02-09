@@ -83,10 +83,22 @@ class SkillService:
 
         try:
             frontmatter, content = self._parse_skill_file(skill_file)
+            # Parse allowed-tools from frontmatter
+            allowed_tools = frontmatter.get("allowed-tools", {})
+            # Normalize: ensure values are lists
+            if isinstance(allowed_tools, dict):
+                allowed_tools = {
+                    mcp: tools if isinstance(tools, list) else [tools]
+                    for mcp, tools in allowed_tools.items()
+                }
+            else:
+                allowed_tools = {}
+
             return SkillDetail(
                 name=frontmatter.get("name", name),
                 description=frontmatter.get("description", ""),
                 prompt_content=content,
+                allowed_tools=allowed_tools,
             )
         except Exception as e:
             logger.error("skill_load_error", name=name, error=str(e))
