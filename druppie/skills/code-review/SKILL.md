@@ -1,6 +1,14 @@
 ---
 name: code-review
 description: Reviews code for quality, security, and best practices
+allowed-tools:
+  coding:
+    - read_file
+    - list_dir
+  bestand-zoeker:
+    - read_file
+    - search_files
+    - list_directory
 ---
 # Code Review Instructions
 

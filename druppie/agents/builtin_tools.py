@@ -721,6 +721,7 @@ async def invoke_skill(
 
     Skills are markdown files that provide reusable instructions for common tasks.
     The skill content is returned and should be injected into the conversation.
+    If the skill has allowed-tools, tool descriptions are also included.
 
     Args:
         skill_name: The skill name (e.g., 'code-review', 'git-workflow')
@@ -729,9 +730,10 @@ async def invoke_skill(
         execution_repo: Execution repository
 
     Returns:
-        Skill content or error message
+        Skill content with optional tool descriptions, or error message
     """
     from druppie.services import SkillService
+    from druppie.core.mcp_client import generate_tool_descriptions
 
     skill_service = SkillService()
     skill = skill_service.get_skill(skill_name)
@@ -753,14 +755,24 @@ async def invoke_skill(
         skill_name=skill_name,
         session_id=str(session_id),
         agent_run_id=str(agent_run_id),
+        allowed_tools=skill.allowed_tools,
     )
 
-    return {
+    result = {
         "success": True,
         "skill_name": skill.name,
         "skill_description": skill.description,
         "instructions": skill.prompt_content,
     }
+
+    # If skill has allowed-tools, include tool descriptions
+    if skill.allowed_tools:
+        tool_descriptions = generate_tool_descriptions(skill.allowed_tools)
+        if tool_descriptions:
+            result["available_tools"] = tool_descriptions
+            result["allowed_tools"] = skill.allowed_tools
+
+    return result
 
 
 # =============================================================================

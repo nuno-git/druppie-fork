@@ -53,6 +53,7 @@ BUILTIN_TOOLS = {
     "hitl_ask_question",
     "hitl_ask_multiple_choice_question",
     "create_message",
+    "invoke_skill",
 }
 
 # HITL tools require user answer (create Question record)
@@ -295,6 +296,54 @@ class ToolExecutor:
             )
             return None
 
+    def _is_tool_allowed_via_skill(
+        self,
+        mcp_server: str,
+        tool_name: str,
+        agent_run_id: UUID,
+    ) -> bool:
+        """Check if a tool is allowed via a previously invoked skill.
+
+        Queries the tool_calls table for invoke_skill calls in this agent_run,
+        loads those skills, and checks if the requested mcp:tool is in any
+        of their allowed_tools.
+
+        Args:
+            mcp_server: MCP server name (e.g., "coding", "docker")
+            tool_name: Tool name (e.g., "read_file", "build")
+            agent_run_id: Agent run ID to check
+
+        Returns:
+            True if tool is allowed via a skill, False otherwise
+        """
+        from druppie.services import SkillService
+
+        # Query all invoke_skill calls in this agent run
+        invoked_skills = self.execution_repo.get_invoked_skills(agent_run_id)
+        if not invoked_skills:
+            return False
+
+        skill_service = SkillService()
+
+        for skill_name in invoked_skills:
+            skill = skill_service.get_skill(skill_name)
+            if not skill or not skill.allowed_tools:
+                continue
+
+            # Check if mcp_server:tool_name is in this skill's allowed_tools
+            if mcp_server in skill.allowed_tools:
+                if tool_name in skill.allowed_tools[mcp_server]:
+                    logger.info(
+                        "tool_allowed_via_skill",
+                        mcp_server=mcp_server,
+                        tool_name=tool_name,
+                        skill=skill_name,
+                        agent_run_id=str(agent_run_id),
+                    )
+                    return True
+
+        return False
+
     async def execute(self, tool_call_id: UUID) -> str:
         """Execute a tool call.
 
@@ -352,13 +401,27 @@ class ToolExecutor:
             agent_definition = self._get_agent_definition(tool_call.agent_run_id)
 
             # Validate agent is allowed to use this tool
+            # Priority: 1) Direct access via agent.yaml, 2) Access via invoked skill
             if agent_definition is not None:
                 allowed_tools = agent_definition.get_allowed_tools(tool_call.mcp_server)
-                if allowed_tools is not None and tool_call.tool_name not in allowed_tools:
+                tool_allowed = (
+                    allowed_tools is None  # No restriction (all tools allowed)
+                    or tool_call.tool_name in allowed_tools  # Explicitly allowed
+                )
+
+                # If not directly allowed, check skill-based access
+                if not tool_allowed and tool_call.agent_run_id:
+                    tool_allowed = self._is_tool_allowed_via_skill(
+                        tool_call.mcp_server,
+                        tool_call.tool_name,
+                        tool_call.agent_run_id,
+                    )
+
+                if not tool_allowed:
                     error_msg = (
                         f"Agent '{agent_definition.id}' is not allowed to use "
                         f"'{tool_call.mcp_server}:{tool_call.tool_name}'. "
-                        f"Allowed: {allowed_tools}"
+                        f"Not in agent.yaml mcps and no invoked skill grants access."
                     )
                     logger.warning("tool_access_denied", error=error_msg)
                     self.execution_repo.update_tool_call(
