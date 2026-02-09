@@ -69,6 +69,9 @@ from .session import (
     TimelineEntryType,
 )
 
+# Skill models
+from .skill import SkillSummary, SkillDetail
+
 # Tool definition (unified tool metadata with Pydantic params models)
 from .tool import EmptyParams, ToolDefinition, ToolDefinitionSummary, ToolType
 
@@ -122,6 +125,9 @@ __all__ = [
     # Agent definition
     "AgentDefinition",
     "ApprovalOverride",
+    # Skill
+    "SkillSummary",
+    "SkillDetail",
     # Tool definition
     "ToolDefinition",
     "ToolDefinitionSummary",

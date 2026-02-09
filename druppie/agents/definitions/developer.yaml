@@ -198,6 +198,11 @@ mcps:
 # - docker:build and docker:run use global config (developer approval required)
 # This is the LAYERED APPROVAL SYSTEM working as designed.
 
+# Skills this agent can invoke
+skills:
+  - code-review
+  - git-workflow
+
 model: glm-4
 temperature: 0.1
 max_tokens: 4096

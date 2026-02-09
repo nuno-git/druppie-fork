@@ -506,6 +506,9 @@ class Agent:
         # Get all tools for this agent from the unified ToolRegistry
         registry = get_tool_registry()
         builtin_tool_names = DEFAULT_BUILTIN_TOOLS + self.definition.extra_builtin_tools
+        # Add invoke_skill tool if agent has skills defined
+        if self.definition.skills:
+            builtin_tool_names = builtin_tool_names + ["invoke_skill"]
         tools = registry.get_tools_for_agent(
             agent_mcps=self.definition.mcps,
             builtin_tool_names=builtin_tool_names,
@@ -842,7 +845,11 @@ class Agent:
 
         # For other agents, add full tool usage instructions
         shared_tool_instructions = self._get_shared_tool_instructions()
-        return base_prompt + shared_tool_instructions
+
+        # Add skills information if agent has skills defined
+        skills_section = self._get_skills_section()
+
+        return base_prompt + shared_tool_instructions + skills_section
 
     def _get_xml_format_instructions(self) -> str:
         """Get XML format instructions for LLMs that don't support native tool calling."""
@@ -962,6 +969,88 @@ RIGHT (tool call):
 <tool_call>{"name": "done", "arguments": {"summary": "Agent developer: Created index.html and styles.css on branch main, pushed to remote."}}</tool_call>
 ```
 """
+
+    def _get_skills_section(self) -> str:
+        """Generate skills documentation for agents with skills defined.
+
+        Returns:
+            Skills section string, or empty string if no skills defined
+        """
+        if not self.definition.skills:
+            return ""
+
+        from druppie.services import SkillService
+
+        skill_service = SkillService()
+        available_skills = skill_service.get_skills_for_agent(self.definition.skills)
+
+        if not available_skills:
+            return ""
+
+        skills_list = "\n".join(
+            f"- **{skill.name}**: {skill.description}"
+            for skill in available_skills
+        )
+
+        return f"""
+
+## AVAILABLE SKILLS
+
+You have access to the following skills via the `invoke_skill` tool:
+
+{skills_list}
+
+To use a skill, call: invoke_skill(skill_name="<skill-name>")
+
+The skill's instructions will be returned and you should follow them to complete the task.
+"""
+
+    def _inject_tool_descriptions(self, prompt: str, tool_descriptions: str) -> str:
+        """Inject dynamic tool descriptions into the system prompt.
+
+        Looks for AVAILABLE TOOLS or TOOLS section and replaces/injects
+        tool descriptions from mcp_config.yaml.
+
+        Args:
+            prompt: The base system prompt
+            tool_descriptions: Generated tool descriptions from mcp_config
+
+        Returns:
+            Prompt with tool descriptions injected
+        """
+        # Check for placeholder pattern
+        if "[TOOL_DESCRIPTIONS_PLACEHOLDER]" in prompt:
+            return prompt.replace("[TOOL_DESCRIPTIONS_PLACEHOLDER]", tool_descriptions)
+
+        # Check for AVAILABLE TOOLS or TOOLS section
+        for marker in ["AVAILABLE TOOLS:", "TOOLS:"]:
+            if marker in prompt:
+                lines = prompt.split("\n")
+                new_lines = []
+                skip_until_next_section = False
+
+                for line in lines:
+                    if marker in line:
+                        # Add the marker and then our dynamic descriptions
+                        new_lines.append(line)
+                        new_lines.append(tool_descriptions)
+                        skip_until_next_section = True
+                    elif skip_until_next_section:
+                        # Skip lines until we hit another major section
+                        # (starts with === or is a new section header ending with :)
+                        stripped = line.strip()
+                        if stripped.startswith("===") or (
+                            stripped.endswith(":") and stripped.isupper()
+                        ):
+                            skip_until_next_section = False
+                            new_lines.append(line)
+                    else:
+                        new_lines.append(line)
+
+                return "\n".join(new_lines)
+
+        # No marker found - return prompt unchanged
+        return prompt
 
     def _build_prompt(self, prompt: str, context: dict = None) -> str:
         """Build the full prompt with context."""
