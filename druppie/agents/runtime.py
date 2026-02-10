@@ -23,7 +23,6 @@ import structlog
 import yaml
 
 from druppie.agents.builtin_tools import DEFAULT_BUILTIN_TOOLS, is_builtin_tool
-from druppie.core.mcp_client import generate_tool_descriptions
 from druppie.core.mcp_config import MCPConfig
 from druppie.domain.agent_definition import AgentDefinition
 from druppie.execution.mcp_http import MCPHttp
@@ -801,9 +800,12 @@ class Agent:
 
         This method:
         1. Injects common instructions from _common.md (if placeholder present)
-        2. Injects dynamic tool descriptions from mcp_config.yaml
-        3. Adds shared tool usage instructions for non-router/planner agents
-        4. Conditionally adds XML format instructions based on LLM capabilities
+        2. Adds shared tool usage instructions for non-router/planner agents
+        3. Conditionally adds XML format instructions based on LLM capabilities
+
+        Tool descriptions are now provided via the structured `tools` parameter
+        to the LLM, not duplicated in the system prompt. Approval requirements
+        are included in each tool's description field.
 
         Router and planner agents have special JSON output formats and don't
         need the built-in tools documentation.
@@ -814,12 +816,6 @@ class Agent:
         common_prompt = self._load_common_prompt()
         if common_prompt and "[COMMON_INSTRUCTIONS]" in base_prompt:
             base_prompt = base_prompt.replace("[COMMON_INSTRUCTIONS]", common_prompt)
-
-        # Generate dynamic tool descriptions from MCP config
-        if self.definition.mcps:
-            tool_descriptions = generate_tool_descriptions(self.definition.mcps)
-            # Inject tool descriptions into the prompt
-            base_prompt = self._inject_tool_descriptions(base_prompt, tool_descriptions)
 
         # Router and planner output JSON directly - no built-in tools needed
         if self.id in ("router", "planner"):
@@ -950,53 +946,6 @@ RIGHT (tool call):
 <tool_call>{"name": "done", "arguments": {"summary": "Agent developer: Created index.html and styles.css on branch main, pushed to remote."}}</tool_call>
 ```
 """
-
-    def _inject_tool_descriptions(self, prompt: str, tool_descriptions: str) -> str:
-        """Inject dynamic tool descriptions into the system prompt.
-
-        Looks for AVAILABLE TOOLS or TOOLS section and replaces/injects
-        tool descriptions from mcp_config.yaml.
-
-        Args:
-            prompt: The base system prompt
-            tool_descriptions: Generated tool descriptions from mcp_config
-
-        Returns:
-            Prompt with tool descriptions injected
-        """
-        # Check for placeholder pattern
-        if "[TOOL_DESCRIPTIONS_PLACEHOLDER]" in prompt:
-            return prompt.replace("[TOOL_DESCRIPTIONS_PLACEHOLDER]", tool_descriptions)
-
-        # Check for AVAILABLE TOOLS or TOOLS section
-        for marker in ["AVAILABLE TOOLS:", "TOOLS:"]:
-            if marker in prompt:
-                lines = prompt.split("\n")
-                new_lines = []
-                skip_until_next_section = False
-
-                for line in lines:
-                    if marker in line:
-                        # Add the marker and then our dynamic descriptions
-                        new_lines.append(line)
-                        new_lines.append(tool_descriptions)
-                        skip_until_next_section = True
-                    elif skip_until_next_section:
-                        # Skip lines until we hit another major section
-                        # (starts with === or is a new section header ending with :)
-                        stripped = line.strip()
-                        if stripped.startswith("===") or (
-                            stripped.endswith(":") and stripped.isupper()
-                        ):
-                            skip_until_next_section = False
-                            new_lines.append(line)
-                    else:
-                        new_lines.append(line)
-
-                return "\n".join(new_lines)
-
-        # No marker found - return prompt unchanged
-        return prompt
 
     def _build_prompt(self, prompt: str, context: dict = None) -> str:
         """Build the full prompt with context."""
