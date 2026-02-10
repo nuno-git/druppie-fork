@@ -188,14 +188,25 @@ class SessionRepository(BaseRepository):
         - An AgentRunSummary (pending, running, completed agent runs)
 
         Items are sorted by timestamp for chronological display.
+
+        NOTE: System messages containing LANGUAGE INSTRUCTION are excluded from timeline
+        as they are internal meta-instructions for agents, not user-facing content.
         """
         entries = []
 
         # Get messages (user, system, assistant)
+        # Exclude system messages with language instructions (internal use only)
         messages = (
             self.db.query(MessageModel)
             .filter_by(session_id=session_id)
-            .filter(MessageModel.role.in_(["user", "system", "assistant"]))
+            .filter(
+                (MessageModel.role == "user") |
+                (MessageModel.role == "assistant") |
+                (
+                    (MessageModel.role == "system") &
+                    ~MessageModel.content.like("LANGUAGE INSTRUCTION:%")
+                )
+            )
             .order_by(MessageModel.created_at)
             .all()
         )

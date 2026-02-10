@@ -45,9 +45,15 @@ async def detect_language(text: str, fallback_language: str | None = None) -> tu
         return (fallback_language, lang_name, instruction)
 
     # Simple prompt for language detection
+    # Common words/phrases to help detection
     prompt = f"""Detect the language of this text and respond with ONLY the ISO 639-1 language code (two-letter code).
 
 Text: "{text[:500]}"
+
+IMPORTANT:
+- If text contains English words like "make", "app", "calculator", "website", "for", "the", "a" -> respond with "en"
+- If text contains Dutch words like "maak", "app", "rekenmachine", "website", "voor", "de", "een" -> respond with "nl"
+- English and Dutch can look similar - pay attention to spelling!
 
 Respond with only the two-letter code (e.g., "en", "nl", "es", "fr", "de", "pt", "it", "ru", "ja", "zh", "ko")."""
 
