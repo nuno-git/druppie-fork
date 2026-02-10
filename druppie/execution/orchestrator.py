@@ -311,7 +311,7 @@ class Orchestrator:
         """
         from druppie.db.models import Message
         from druppie.llm.language_detection import detect_language, LANGUAGE_INSTRUCTIONS
-        from druppie.core.config import get_fallback_language, is_language_locked
+        from druppie.core.config import get_fallback_language, should_lock_to_first_message
 
         # Step 1: Check for existing language instruction (from HITL)
         system_messages = (
@@ -334,7 +334,7 @@ class Orchestrator:
 
         # Step 2: If lock_to_first_message is enabled, no instruction means first message
         # We need to detect from the first user message
-        lock_to_first = is_language_locked()
+        lock_to_first = should_lock_to_first_message()
 
         if lock_to_first:
             # Get all user messages
