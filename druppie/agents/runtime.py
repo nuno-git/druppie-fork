@@ -572,10 +572,10 @@ class Agent:
                 )
 
             # Update LLM call with response
-            # Store the full raw response as JSON for debugging
+            # Store the full raw response as JSON for debugging (use raw_tool_calls for unmodified args)
             raw_response_json = json.dumps({
                 "content": response.raw_content if hasattr(response, 'raw_content') else response.content,
-                "tool_calls": response.tool_calls or [],
+                "tool_calls": response.raw_tool_calls if hasattr(response, 'raw_tool_calls') else response.tool_calls or [],
                 "finish_reason": response.finish_reason or "",
                 "prompt_tokens": response.prompt_tokens or 0,
                 "completion_tokens": response.completion_tokens or 0,
