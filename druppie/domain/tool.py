@@ -301,48 +301,11 @@ class ToolDefinition(BaseModel):
 
         return result
 
-    def _normalize_llm_arguments(self, arguments: dict) -> dict:
-        """Normalize common LLM mistakes in argument values.
-
-        Some LLMs send string representations instead of proper JSON types:
-        - "null" string instead of null
-        - "{}" string instead of empty object {}
-        - "[]" string instead of empty array []
-        - "true"/"false" strings instead of booleans
-
-        This normalizes these before Pydantic validation.
-        """
-        import json
-
-        normalized = {}
-        for key, value in arguments.items():
-            if isinstance(value, str):
-                # Handle string "null" -> None
-                if value.lower() == "null":
-                    normalized[key] = None
-                # Handle string booleans -> bool
-                elif value.lower() == "true":
-                    normalized[key] = True
-                elif value.lower() == "false":
-                    normalized[key] = False
-                # Handle string JSON objects/arrays -> parsed
-                elif value.startswith(("{", "[")):
-                    try:
-                        parsed = json.loads(value)
-                        normalized[key] = parsed
-                    except json.JSONDecodeError:
-                        normalized[key] = value  # Keep original if not valid JSON
-                else:
-                    normalized[key] = value
-            else:
-                normalized[key] = value
-        return normalized
-
     def validate_arguments(self, arguments: dict | None) -> tuple[bool, str | None, BaseModel | None]:
         """Validate arguments and return typed params model.
 
         Args:
-            arguments: Raw arguments dict from LLM
+            arguments: Raw arguments dict from LLM (should be pre-normalized by provider)
 
         Returns:
             Tuple of (is_valid, error_message, validated_params)
@@ -351,9 +314,6 @@ class ToolDefinition(BaseModel):
         """
         if arguments is None:
             arguments = {}
-
-        # Normalize common LLM mistakes before validation
-        arguments = self._normalize_llm_arguments(arguments)
 
         try:
             validated = self.params_model.model_validate(arguments)
