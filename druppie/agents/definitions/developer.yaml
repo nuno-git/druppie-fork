@@ -184,13 +184,7 @@ mcps:
     - get_git_status
     - list_dir
     - delete_file
-  bestand-zoeker:
-    - search_files
-    - list_directory
-    - read_file
-    - fetch_url
-    - search_web
-    - get_page_info
+
 
 # NO approval_overrides needed!
 # Per goal.md:
