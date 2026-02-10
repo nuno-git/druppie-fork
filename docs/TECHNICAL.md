@@ -115,6 +115,7 @@ druppie/
   domain/
     __init__.py          # Central exports for all domain models
     common.py            # Shared enums, base types
+    tool.py              # ToolDefinition with Pydantic schema generation
     session.py
     agent_run.py
     approval.py
@@ -122,6 +123,11 @@ druppie/
     question.py
     user.py
     agent_definition.py
+  tools/
+    params/
+      builtin.py         # Pydantic models for builtin tool params
+      coding.py          # Pydantic models for coding MCP tool params
+      docker.py          # Pydantic models for docker MCP tool params
   db/models/
     base.py              # SQLAlchemy base, mixins
     user.py
@@ -150,8 +156,9 @@ druppie/
     config.py            # Settings from env vars
     auth.py              # Keycloak JWT validation
     gitea.py             # Gitea API client
-    mcp_client.py        # MCP tool description generator
+    mcp_client.py        # MCP tool fetching
     mcp_config.yaml      # MCP server + tool + approval definitions
+    tool_registry.py     # Unified tool registry with Pydantic models
   mcp-servers/
     coding/              # Port 9001
     docker/              # Port 9002
@@ -590,22 +597,64 @@ execution_repo.update_planned_prompt(next_run.id, new_prompt)
 
 **Scope:** Accumulation is per-session and never resets. Every completed agent run in the session contributes to the chain, regardless of planner re-evaluations or workflow phase transitions. A new session starts with no accumulated summaries.
 
-### 8.5 Tool Executor
+### 8.5 Tool Registry
+
+`druppie/core/tool_registry.py` is the single source of truth for all tool definitions. It combines:
+- **MCP tools** fetched from MCP servers with Pydantic parameter models
+- **Builtin tools** (done, make_plan, hitl_ask_question, etc.)
+
+Each tool is represented by a `ToolDefinition` (`druppie/domain/tool.py`) which contains:
+- Tool metadata (name, description, server)
+- A Pydantic model class for type-safe parameters
+- Approval requirements
+
+**Pydantic Parameter Models** (`druppie/tools/params/`):
+```
+params/
+  builtin.py   # DoneParams, MakePlanParams, HitlAskQuestionParams, ...
+  coding.py    # ReadFileParams, WriteFileParams, CommitAndPushParams, ...
+  docker.py    # BuildImageParams, StartContainerParams, ...
+```
+
+**OpenAI Strict Mode**: Tool schemas follow OpenAI strict mode requirements:
+- `strict: true` on all function definitions
+- `additionalProperties: false` on all object schemas
+- All properties in `required` array
+- Optional fields use `anyOf: [{type}, {type: null}]` pattern with `default: null`
+
+**Usage in Agent Runtime**:
+```python
+registry = get_tool_registry()
+
+# Get tools for an agent based on its MCP permissions
+tools = registry.get_tools_for_agent(
+    agent_mcps=["coding", "docker"],
+    builtin_tool_names=["done", "hitl_ask_question"],
+)
+
+# Convert to OpenAI format for LLM
+openai_tools = registry.to_openai_format(tools)
+```
+
+### 8.6 Tool Executor
 
 `druppie/execution/tool_executor.py` is the single entry point for all tool execution:
 
 ```
 ToolExecutor.execute(tool_call_id)
   |
+  |-- Validate arguments against Tool Registry schema
   |-- Builtin HITL tool? --> Create Question record, status = waiting_answer
   |-- Builtin other?     --> Execute directly, status = completed
   |-- MCP tool needs approval? --> Create Approval record, status = waiting_approval
   |-- MCP tool?           --> Call MCP server via HTTP, status = completed/failed
 ```
 
+**Argument Validation**: Before executing any tool, the executor validates arguments against the Pydantic schema from the Tool Registry. Invalid arguments result in a clear error message returned to the LLM, allowing it to retry with correct arguments.
+
 The `ToolCall` database record is the source of truth. `Question` and `Approval` records link back to it via `tool_call_id`.
 
-### 8.6 Orchestrator
+### 8.7 Orchestrator
 
 `druppie/execution/orchestrator.py` is the main entry point for processing user messages. The flow:
 
@@ -635,7 +684,7 @@ Key resume methods:
 
 Both methods reconstruct agent state from the database (LLM call history, tool call results) so the agent can continue where it left off.
 
-### 8.7 Pause and Resume
+### 8.8 Pause and Resume
 
 When an agent encounters a tool that requires approval or a HITL question:
 
