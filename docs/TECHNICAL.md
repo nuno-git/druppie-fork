@@ -145,9 +145,7 @@ druppie/
   llm/
     service.py           # LLMService singleton, provider factory
     base.py              # BaseLLM interface, LLMResponse model
-    zai.py               # Z.AI/GLM provider
-    deepinfra.py         # DeepInfra/Qwen provider
-    mock.py              # Mock for testing
+    litellm_provider.py  # Unified LiteLLM implementation (all providers)
   core/
     config.py            # Settings from env vars
     auth.py              # Keycloak JWT validation
@@ -291,16 +289,16 @@ PostgreSQL 15 on port 5533 (mapped from container port 5432). Connection string:
 
 ### 5.1 Architecture
 
-The LLM layer (`druppie/llm/`) uses a provider abstraction:
+The LLM layer (`druppie/llm/`) uses LiteLLM as a unified interface to all providers:
 
 ```
 BaseLLM (abstract)
-  |-- ChatZAI       (Z.AI / GLM)
-  |-- ChatDeepInfra (DeepInfra / Qwen)
-  |-- ChatMock      (testing)
+  |-- ChatLiteLLM  (unified provider via LiteLLM SDK)
 ```
 
 `LLMService` is a global singleton (in `druppie/llm/service.py`) that manages provider selection and lazy initialization. All agents share the same LLM instance.
+
+LiteLLM provides standardized tool calling across 100+ providers, eliminating the need for custom parsing code.
 
 ### 5.2 Provider Selection
 
@@ -310,26 +308,24 @@ Controlled by the `LLM_PROVIDER` environment variable:
 |-------|----------|
 | `zai` | Use Z.AI with `ZAI_API_KEY` |
 | `deepinfra` | Use DeepInfra with `DEEPINFRA_API_KEY` |
-| `mock` | Use mock provider (no API key needed) |
-| `auto` (default) | Try DeepInfra first, then Z.AI |
 
 ### 5.3 Provider Details
 
+Both providers are OpenAI-compatible and use the same unified code path via LiteLLM. They use the `openai/` prefix internally with custom `api_base` URLs.
+
 **Z.AI (GLM)**
-- Model: `GLM-4.7` (default, configurable via `ZAI_MODEL`)
+- Model: `glm-4.7` (default, configurable via `ZAI_MODEL`)
 - Base URL: `https://api.z.ai/api/coding/paas/v4`
-- Tool calling: XML format (`supports_native_tools = False`)
-- Tools are described in the system prompt and the LLM responds with `<tool_call>` XML tags.
+- Display name: `zai/glm-4.7`
 
 **DeepInfra (Qwen)**
-- Model: `Qwen/Qwen3-Next-80B-A3B-Instruct` (default, configurable via `DEEPINFRA_MODEL`)
+- Model: `Qwen/Qwen3-32B` (default, configurable via `DEEPINFRA_MODEL`)
 - Base URL: `https://api.deepinfra.com/v1/openai`
-- Tool calling: Native OpenAI-compatible format (`supports_native_tools = True`)
-- Tools are passed as the `tools` parameter in the API call.
+- Display name: `deepinfra/Qwen/Qwen3-32B`
 
 ### 5.4 Response Parsing
 
-The `LLMResponse` model normalizes responses across providers. For providers that do not support native tool calling, the runtime parses tool calls from the response content using multiple fallback strategies: native format, Python-style dict, XML tags, and malformed JSON recovery.
+LiteLLM handles all response parsing and tool call extraction automatically. The `LLMResponse` model normalizes responses into a consistent format with content, tool calls, and token usage.
 
 ---
 
@@ -661,18 +657,18 @@ Required in `.env`:
 
 | Variable | Purpose |
 |----------|---------|
-| `LLM_PROVIDER` | LLM provider selection (`zai`, `deepinfra`, `mock`, `auto`) |
-| `ZAI_API_KEY` | Z.AI API key |
-| `DEEPINFRA_API_KEY` | DeepInfra API key |
+| `LLM_PROVIDER` | LLM provider selection (`zai`, `deepinfra`) |
+| `ZAI_API_KEY` | Z.AI API key (if using zai) |
+| `DEEPINFRA_API_KEY` | DeepInfra API key (if using deepinfra) |
 | `GITEA_TOKEN` | Gitea API token |
 
 Optional:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ZAI_MODEL` | `GLM-4.7` | Z.AI model name |
+| `ZAI_MODEL` | `glm-4.7` | Z.AI model name |
 | `ZAI_BASE_URL` | `https://api.z.ai/api/coding/paas/v4` | Z.AI API base URL |
-| `DEEPINFRA_MODEL` | `Qwen/Qwen3-Next-80B-A3B-Instruct` | DeepInfra model name |
+| `DEEPINFRA_MODEL` | `Qwen/Qwen3-32B` | DeepInfra model name |
 | `DEEPINFRA_BASE_URL` | `https://api.deepinfra.com/v1/openai` | DeepInfra API base URL |
 | `CORS_ORIGINS` | `http://localhost:5273,http://localhost:5173` | Allowed CORS origins |
 | `VITE_API_URL` | `http://localhost:8100` | Frontend API base URL |
