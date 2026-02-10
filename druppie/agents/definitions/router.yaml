@@ -60,10 +60,6 @@ system_prompt: |
   - ALWAYS call set_intent BEFORE calling done
   - ALWAYS call done as your final action
   
-  AVAILABLE TOOLS:
-  NOTE: workspace_id is auto-injected for coding tools.
-  [TOOL_DESCRIPTIONS_PLACEHOLDER]
-
 # Router-specific builtin tool (added on top of defaults: done + hitl)
 extra_builtin_tools:
   - set_intent

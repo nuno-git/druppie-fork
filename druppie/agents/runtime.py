@@ -22,13 +22,12 @@ from uuid import UUID
 import structlog
 import yaml
 
-from druppie.domain.agent_definition import AgentDefinition
-from druppie.agents.builtin_tools import DEFAULT_BUILTIN_TOOLS, get_builtin_tools, is_builtin_tool, is_hitl_tool
-from druppie.llm import get_llm_service
-from druppie.core.mcp_client import generate_tool_descriptions
+from druppie.agents.builtin_tools import DEFAULT_BUILTIN_TOOLS, is_builtin_tool
 from druppie.core.mcp_config import MCPConfig
-from druppie.execution.tool_executor import ToolExecutor, ToolCallStatus
+from druppie.domain.agent_definition import AgentDefinition
 from druppie.execution.mcp_http import MCPHttp
+from druppie.execution.tool_executor import ToolCallStatus, ToolExecutor
+from druppie.llm import get_llm_service
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DBSession
@@ -499,17 +498,19 @@ class Agent:
 
         Agent only completes when calling the `done` tool.
         """
+        from druppie.core.tool_registry import get_tool_registry
         from druppie.repositories import ExecutionRepository
 
         execution_repo = ExecutionRepository(self.db)
 
-        # Get MCP tools from config (per agent YAML)
-        tools = self.mcp_config.get_all_tools_for_agent(self.definition.mcps)
-
-        # Convert to OpenAI format and add builtin tools (per agent YAML config)
-        openai_tools = self._to_openai_tools(tools)
+        # Get all tools for this agent from the unified ToolRegistry
+        registry = get_tool_registry()
         builtin_tool_names = DEFAULT_BUILTIN_TOOLS + self.definition.extra_builtin_tools
-        openai_tools.extend(get_builtin_tools(builtin_tool_names))
+        tools = registry.get_tools_for_agent(
+            agent_mcps=self.definition.mcps,
+            builtin_tool_names=builtin_tool_names,
+        )
+        openai_tools = registry.to_openai_format(tools)
 
         max_iterations = self.definition.max_iterations or 10
 
@@ -685,7 +686,23 @@ class Agent:
 
                 # Get updated tool call for result
                 tool_call_record = execution_repo.get_tool_call(tool_call_id)
-                result_str = tool_call_record.result if tool_call_record else "{}"
+
+                # Handle failed tool calls - include error in result so LLM can retry
+                if status == ToolCallStatus.FAILED:
+                    error_msg = tool_call_record.error_message if tool_call_record else "Unknown error"
+                    result_str = json.dumps({
+                        "success": False,
+                        "error": error_msg,
+                        "message": f"Tool call failed: {error_msg}. Please check your arguments and try again.",
+                    })
+                    logger.warning(
+                        "tool_call_failed",
+                        agent_id=self.id,
+                        tool=f"{server}:{tool}",
+                        error=error_msg,
+                    )
+                else:
+                    result_str = tool_call_record.result if tool_call_record else "{}"
 
                 # Handle status
                 if status == ToolCallStatus.WAITING_ANSWER:
@@ -794,28 +811,17 @@ class Agent:
             f"Agent '{self.id}' exceeded {max_iterations} iterations"
         )
 
-    def _to_openai_tools(self, tools: list[dict]) -> list[dict]:
-        """Convert MCP tool config to OpenAI function format."""
-        openai_tools = []
-        for tool in tools:
-            openai_tools.append({
-                "type": "function",
-                "function": {
-                    "name": f"{tool['server']}_{tool['name']}",
-                    "description": tool.get("description", f"Execute {tool['name']}"),
-                    "parameters": tool.get("parameters", {"type": "object", "properties": {}}),
-                },
-            })
-        return openai_tools
-
     def _build_system_prompt(self) -> str:
         """Build the system prompt with shared tool usage instructions.
 
         This method:
         1. Injects common instructions from _common.md (if placeholder present)
-        2. Injects dynamic tool descriptions from mcp_config.yaml
-        3. Adds shared tool usage instructions for non-router/planner agents
-        4. Conditionally adds XML format instructions based on LLM capabilities
+        2. Adds shared tool usage instructions for non-router/planner agents
+        3. Conditionally adds XML format instructions based on LLM capabilities
+
+        Tool descriptions are now provided via the structured `tools` parameter
+        to the LLM, not duplicated in the system prompt. Approval requirements
+        are included in each tool's description field.
 
         Router and planner agents have special JSON output formats and don't
         need the built-in tools documentation.
@@ -826,12 +832,6 @@ class Agent:
         common_prompt = self._load_common_prompt()
         if common_prompt and "[COMMON_INSTRUCTIONS]" in base_prompt:
             base_prompt = base_prompt.replace("[COMMON_INSTRUCTIONS]", common_prompt)
-
-        # Generate dynamic tool descriptions from MCP config
-        if self.definition.mcps:
-            tool_descriptions = generate_tool_descriptions(self.definition.mcps)
-            # Inject tool descriptions into the prompt
-            base_prompt = self._inject_tool_descriptions(base_prompt, tool_descriptions)
 
         # Router and planner output JSON directly - no built-in tools needed
         if self.id in ("router", "planner"):
@@ -962,53 +962,6 @@ RIGHT (tool call):
 <tool_call>{"name": "done", "arguments": {"summary": "Agent developer: Created index.html and styles.css on branch main, pushed to remote."}}</tool_call>
 ```
 """
-
-    def _inject_tool_descriptions(self, prompt: str, tool_descriptions: str) -> str:
-        """Inject dynamic tool descriptions into the system prompt.
-
-        Looks for AVAILABLE TOOLS or TOOLS section and replaces/injects
-        tool descriptions from mcp_config.yaml.
-
-        Args:
-            prompt: The base system prompt
-            tool_descriptions: Generated tool descriptions from mcp_config
-
-        Returns:
-            Prompt with tool descriptions injected
-        """
-        # Check for placeholder pattern
-        if "[TOOL_DESCRIPTIONS_PLACEHOLDER]" in prompt:
-            return prompt.replace("[TOOL_DESCRIPTIONS_PLACEHOLDER]", tool_descriptions)
-
-        # Check for AVAILABLE TOOLS or TOOLS section
-        for marker in ["AVAILABLE TOOLS:", "TOOLS:"]:
-            if marker in prompt:
-                lines = prompt.split("\n")
-                new_lines = []
-                skip_until_next_section = False
-
-                for line in lines:
-                    if marker in line:
-                        # Add the marker and then our dynamic descriptions
-                        new_lines.append(line)
-                        new_lines.append(tool_descriptions)
-                        skip_until_next_section = True
-                    elif skip_until_next_section:
-                        # Skip lines until we hit another major section
-                        # (starts with === or is a new section header ending with :)
-                        stripped = line.strip()
-                        if stripped.startswith("===") or (
-                            stripped.endswith(":") and stripped.isupper()
-                        ):
-                            skip_until_next_section = False
-                            new_lines.append(line)
-                    else:
-                        new_lines.append(line)
-
-                return "\n".join(new_lines)
-
-        # No marker found - return prompt unchanged
-        return prompt
 
     def _build_prompt(self, prompt: str, context: dict = None) -> str:
         """Build the full prompt with context."""

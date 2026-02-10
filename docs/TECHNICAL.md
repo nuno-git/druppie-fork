@@ -115,6 +115,7 @@ druppie/
   domain/
     __init__.py          # Central exports for all domain models
     common.py            # Shared enums, base types
+    tool.py              # ToolDefinition with Pydantic schema generation
     session.py
     agent_run.py
     approval.py
@@ -122,6 +123,11 @@ druppie/
     question.py
     user.py
     agent_definition.py
+  tools/
+    params/
+      builtin.py         # Pydantic models for builtin tool params
+      coding.py          # Pydantic models for coding MCP tool params
+      docker.py          # Pydantic models for docker MCP tool params
   db/models/
     base.py              # SQLAlchemy base, mixins
     user.py
@@ -145,15 +151,14 @@ druppie/
   llm/
     service.py           # LLMService singleton, provider factory
     base.py              # BaseLLM interface, LLMResponse model
-    zai.py               # Z.AI/GLM provider
-    deepinfra.py         # DeepInfra/Qwen provider
-    mock.py              # Mock for testing
+    litellm_provider.py  # Unified LiteLLM implementation (all providers)
   core/
     config.py            # Settings from env vars
     auth.py              # Keycloak JWT validation
     gitea.py             # Gitea API client
-    mcp_client.py        # MCP tool description generator
+    mcp_client.py        # MCP tool fetching
     mcp_config.yaml      # MCP server + tool + approval definitions
+    tool_registry.py     # Unified tool registry with Pydantic models
   mcp-servers/
     coding/              # Port 9001
     docker/              # Port 9002
@@ -291,16 +296,16 @@ PostgreSQL 15 on port 5533 (mapped from container port 5432). Connection string:
 
 ### 5.1 Architecture
 
-The LLM layer (`druppie/llm/`) uses a provider abstraction:
+The LLM layer (`druppie/llm/`) uses LiteLLM as a unified interface to all providers:
 
 ```
 BaseLLM (abstract)
-  |-- ChatZAI       (Z.AI / GLM)
-  |-- ChatDeepInfra (DeepInfra / Qwen)
-  |-- ChatMock      (testing)
+  |-- ChatLiteLLM  (unified provider via LiteLLM SDK)
 ```
 
 `LLMService` is a global singleton (in `druppie/llm/service.py`) that manages provider selection and lazy initialization. All agents share the same LLM instance.
+
+LiteLLM provides standardized tool calling across 100+ providers, eliminating the need for custom parsing code.
 
 ### 5.2 Provider Selection
 
@@ -310,26 +315,24 @@ Controlled by the `LLM_PROVIDER` environment variable:
 |-------|----------|
 | `zai` | Use Z.AI with `ZAI_API_KEY` |
 | `deepinfra` | Use DeepInfra with `DEEPINFRA_API_KEY` |
-| `mock` | Use mock provider (no API key needed) |
-| `auto` (default) | Try DeepInfra first, then Z.AI |
 
 ### 5.3 Provider Details
 
+Both providers are OpenAI-compatible and use the same unified code path via LiteLLM. They use the `openai/` prefix internally with custom `api_base` URLs.
+
 **Z.AI (GLM)**
-- Model: `GLM-4.7` (default, configurable via `ZAI_MODEL`)
+- Model: `glm-4.7` (default, configurable via `ZAI_MODEL`)
 - Base URL: `https://api.z.ai/api/coding/paas/v4`
-- Tool calling: XML format (`supports_native_tools = False`)
-- Tools are described in the system prompt and the LLM responds with `<tool_call>` XML tags.
+- Display name: `zai/glm-4.7`
 
 **DeepInfra (Qwen)**
-- Model: `Qwen/Qwen3-Next-80B-A3B-Instruct` (default, configurable via `DEEPINFRA_MODEL`)
+- Model: `Qwen/Qwen3-32B` (default, configurable via `DEEPINFRA_MODEL`)
 - Base URL: `https://api.deepinfra.com/v1/openai`
-- Tool calling: Native OpenAI-compatible format (`supports_native_tools = True`)
-- Tools are passed as the `tools` parameter in the API call.
+- Display name: `deepinfra/Qwen/Qwen3-32B`
 
 ### 5.4 Response Parsing
 
-The `LLMResponse` model normalizes responses across providers. For providers that do not support native tool calling, the runtime parses tool calls from the response content using multiple fallback strategies: native format, Python-style dict, XML tags, and malformed JSON recovery.
+LiteLLM handles all response parsing and tool call extraction automatically. The `LLMResponse` model normalizes responses into a consistent format with content, tool calls, and token usage.
 
 ---
 
@@ -638,22 +641,64 @@ execution_repo.update_planned_prompt(next_run.id, new_prompt)
 
 **Scope:** Accumulation is per-session and never resets. Every completed agent run in the session contributes to the chain, regardless of planner re-evaluations or workflow phase transitions. A new session starts with no accumulated summaries.
 
-### 8.5 Tool Executor
+### 8.5 Tool Registry
+
+`druppie/core/tool_registry.py` is the single source of truth for all tool definitions. It combines:
+- **MCP tools** fetched from MCP servers with Pydantic parameter models
+- **Builtin tools** (done, make_plan, hitl_ask_question, etc.)
+
+Each tool is represented by a `ToolDefinition` (`druppie/domain/tool.py`) which contains:
+- Tool metadata (name, description, server)
+- A Pydantic model class for type-safe parameters
+- Approval requirements
+
+**Pydantic Parameter Models** (`druppie/tools/params/`):
+```
+params/
+  builtin.py   # DoneParams, MakePlanParams, HitlAskQuestionParams, ...
+  coding.py    # ReadFileParams, WriteFileParams, CommitAndPushParams, ...
+  docker.py    # BuildImageParams, StartContainerParams, ...
+```
+
+**OpenAI Strict Mode**: Tool schemas follow OpenAI strict mode requirements:
+- `strict: true` on all function definitions
+- `additionalProperties: false` on all object schemas
+- All properties in `required` array
+- Optional fields use `anyOf: [{type}, {type: null}]` pattern with `default: null`
+
+**Usage in Agent Runtime**:
+```python
+registry = get_tool_registry()
+
+# Get tools for an agent based on its MCP permissions
+tools = registry.get_tools_for_agent(
+    agent_mcps=["coding", "docker"],
+    builtin_tool_names=["done", "hitl_ask_question"],
+)
+
+# Convert to OpenAI format for LLM
+openai_tools = registry.to_openai_format(tools)
+```
+
+### 8.6 Tool Executor
 
 `druppie/execution/tool_executor.py` is the single entry point for all tool execution:
 
 ```
 ToolExecutor.execute(tool_call_id)
   |
+  |-- Validate arguments against Tool Registry schema
   |-- Builtin HITL tool? --> Create Question record, status = waiting_answer
   |-- Builtin other?     --> Execute directly, status = completed
   |-- MCP tool needs approval? --> Create Approval record, status = waiting_approval
   |-- MCP tool?           --> Call MCP server via HTTP, status = completed/failed
 ```
 
+**Argument Validation**: Before executing any tool, the executor validates arguments against the Pydantic schema from the Tool Registry. Invalid arguments result in a clear error message returned to the LLM, allowing it to retry with correct arguments.
+
 The `ToolCall` database record is the source of truth. `Question` and `Approval` records link back to it via `tool_call_id`.
 
-### 8.6 Orchestrator
+### 8.7 Orchestrator
 
 `druppie/execution/orchestrator.py` is the main entry point for processing user messages. The flow:
 
@@ -683,7 +728,7 @@ Key resume methods:
 
 Both methods reconstruct agent state from the database (LLM call history, tool call results) so the agent can continue where it left off.
 
-### 8.7 Pause and Resume
+### 8.8 Pause and Resume
 
 When an agent encounters a tool that requires approval or a HITL question:
 
@@ -705,18 +750,18 @@ Required in `.env`:
 
 | Variable | Purpose |
 |----------|---------|
-| `LLM_PROVIDER` | LLM provider selection (`zai`, `deepinfra`, `mock`, `auto`) |
-| `ZAI_API_KEY` | Z.AI API key |
-| `DEEPINFRA_API_KEY` | DeepInfra API key |
+| `LLM_PROVIDER` | LLM provider selection (`zai`, `deepinfra`) |
+| `ZAI_API_KEY` | Z.AI API key (if using zai) |
+| `DEEPINFRA_API_KEY` | DeepInfra API key (if using deepinfra) |
 | `GITEA_TOKEN` | Gitea API token |
 
 Optional:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `ZAI_MODEL` | `GLM-4.7` | Z.AI model name |
+| `ZAI_MODEL` | `glm-4.7` | Z.AI model name |
 | `ZAI_BASE_URL` | `https://api.z.ai/api/coding/paas/v4` | Z.AI API base URL |
-| `DEEPINFRA_MODEL` | `Qwen/Qwen3-Next-80B-A3B-Instruct` | DeepInfra model name |
+| `DEEPINFRA_MODEL` | `Qwen/Qwen3-32B` | DeepInfra model name |
 | `DEEPINFRA_BASE_URL` | `https://api.deepinfra.com/v1/openai` | DeepInfra API base URL |
 | `CORS_ORIGINS` | `http://localhost:5273,http://localhost:5173` | Allowed CORS origins |
 | `VITE_API_URL` | `http://localhost:8100` | Frontend API base URL |

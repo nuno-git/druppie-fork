@@ -22,49 +22,58 @@ Naming convention:
 """
 
 # Enums
-from .common import (
-    SessionStatus,
-    AgentRunStatus,
-    ToolCallStatus,
-    ApprovalStatus,
-    QuestionStatus,
-    DeploymentStatus,
-)
-
-# Common models
-from .common import TokenUsage, TimestampMixin, LLMMessage
-
-# Session models
-from .session import (
-    SessionSummary,
-    SessionDetail,
-    Message,
-    TimelineEntry,
-    TimelineEntryType,
-    # Backward compat aliases
-    ChatItem,
-    ChatItemType,
-    MessageSummary,
-)
-
-# Agent run models
-from .agent_run import AgentRunSummary, AgentRunDetail, LLMCallDetail, LLMRawResponse, ToolCallDetail
-
-# Approval models
-from .approval import ApprovalSummary, ApprovalDetail, PendingApprovalList, ApprovalHistoryList
-
-# Question models
-from .question import QuestionDetail, QuestionChoice, PendingQuestionList
-
-# Project models
-from .project import ProjectSummary, ProjectDetail, DeploymentInfo, DeploymentSummary
-
-# User models
-from .user import UserInfo
-
 # Agent definition (YAML config)
 from .agent_definition import AgentDefinition, ApprovalOverride
 
+# Agent run models
+from .agent_run import (
+    AgentRunDetail,
+    AgentRunSummary,
+    LLMCallDetail,
+    LLMRawResponse,
+    ToolCallDetail,
+)
+
+# Approval models
+from .approval import ApprovalDetail, ApprovalHistoryList, ApprovalSummary, PendingApprovalList
+
+# Common models
+from .common import (
+    AgentRunStatus,
+    ApprovalStatus,
+    DeploymentStatus,
+    LLMMessage,
+    QuestionStatus,
+    SessionStatus,
+    TimestampMixin,
+    TokenUsage,
+    ToolCallStatus,
+)
+
+# Project models
+from .project import DeploymentInfo, DeploymentSummary, ProjectDetail, ProjectSummary
+
+# Question models
+from .question import PendingQuestionList, QuestionChoice, QuestionDetail
+
+# Session models
+from .session import (
+    # Backward compat aliases
+    ChatItem,
+    ChatItemType,
+    Message,
+    MessageSummary,
+    SessionDetail,
+    SessionSummary,
+    TimelineEntry,
+    TimelineEntryType,
+)
+
+# Tool definition (unified tool metadata with Pydantic params models)
+from .tool import EmptyParams, ToolDefinition, ToolDefinitionSummary, ToolType
+
+# User models
+from .user import UserInfo
 
 __all__ = [
     # Enums
@@ -113,6 +122,11 @@ __all__ = [
     # Agent definition
     "AgentDefinition",
     "ApprovalOverride",
+    # Tool definition
+    "ToolDefinition",
+    "ToolDefinitionSummary",
+    "ToolType",
+    "EmptyParams",
 ]
 
 # Rebuild models to resolve forward references (circular imports between session/project)
