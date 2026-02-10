@@ -363,9 +363,20 @@ class ChatLiteLLM(BaseLLM):
         content = message.content or ""
 
         tool_calls = []
+        raw_tool_calls = []  # Keep original for debugging
         if message.tool_calls:
             for tc in message.tool_calls:
-                args = tc.function.arguments
+                raw_args = tc.function.arguments  # Keep raw for debugging
+
+                # Store raw tool call (original string) for debugging
+                raw_tool_calls.append({
+                    "id": tc.id,
+                    "name": tc.function.name,
+                    "args": raw_args,  # Original string from LLM
+                })
+
+                # Parse args for use
+                args = raw_args
                 if isinstance(args, str):
                     try:
                         args = json.loads(args)
@@ -376,10 +387,6 @@ class ChatLiteLLM(BaseLLM):
                             args_preview=args[:100] if args else "",
                         )
                         args = {}
-
-                # Normalize common LLM mistakes in argument values
-                if isinstance(args, dict):
-                    args = self._normalize_tool_args(args)
 
                 tool_calls.append({
                     "id": tc.id,
@@ -393,6 +400,7 @@ class ChatLiteLLM(BaseLLM):
             content=content,
             raw_content=content,
             tool_calls=tool_calls,
+            raw_tool_calls=raw_tool_calls,  # Store raw for debugging
             finish_reason=choice.finish_reason or "",
             prompt_tokens=usage.prompt_tokens if usage else 0,
             completion_tokens=usage.completion_tokens if usage else 0,
@@ -400,42 +408,6 @@ class ChatLiteLLM(BaseLLM):
             model=self.model,  # User-friendly: "zai/glm-4.7"
             provider=self.provider,
         )
-
-    def _normalize_tool_args(self, args: dict) -> dict:
-        """Normalize common LLM mistakes in tool call argument values.
-
-        Some LLMs (like glm-4.7) send string representations instead of proper
-        JSON types in tool calls:
-        - "null" string instead of JSON null
-        - "{}" string instead of empty object {}
-        - "[]" string instead of empty array []
-        - "true"/"false" strings instead of booleans
-
-        This normalizes these at the provider level before validation.
-        """
-        normalized = {}
-        for key, value in args.items():
-            if isinstance(value, str):
-                # Handle string "null" -> None
-                if value.lower() == "null":
-                    normalized[key] = None
-                # Handle string booleans -> bool
-                elif value.lower() == "true":
-                    normalized[key] = True
-                elif value.lower() == "false":
-                    normalized[key] = False
-                # Handle string JSON objects/arrays -> parsed
-                elif value.startswith(("{", "[")):
-                    try:
-                        parsed = json.loads(value)
-                        normalized[key] = parsed
-                    except json.JSONDecodeError:
-                        normalized[key] = value  # Keep original if not valid JSON
-                else:
-                    normalized[key] = value
-            else:
-                normalized[key] = value
-        return normalized
 
     def _convert_exception(self, e: Exception) -> LLMError:
         """Convert LiteLLM exceptions to our exception types."""

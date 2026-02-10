@@ -301,11 +301,52 @@ class ToolDefinition(BaseModel):
 
         return result
 
+    def _normalize_llm_arguments(self, arguments: dict) -> dict:
+        """Normalize common LLM mistakes in argument values.
+
+        Some LLMs send string representations instead of proper JSON types:
+        - "null" string instead of null
+        - "{}" string instead of empty object {}
+        - "[]" string instead of empty array []
+        - "true"/"false" strings instead of booleans
+
+        This is used as a fallback when initial validation fails.
+        """
+        import json
+
+        normalized = {}
+        for key, value in arguments.items():
+            if isinstance(value, str):
+                # Handle string "null" -> None
+                if value.lower() == "null":
+                    normalized[key] = None
+                # Handle string booleans -> bool
+                elif value.lower() == "true":
+                    normalized[key] = True
+                elif value.lower() == "false":
+                    normalized[key] = False
+                # Handle string JSON objects/arrays -> parsed
+                elif value.startswith(("{", "[")):
+                    try:
+                        parsed = json.loads(value)
+                        normalized[key] = parsed
+                    except json.JSONDecodeError:
+                        normalized[key] = value  # Keep original if not valid JSON
+                else:
+                    normalized[key] = value
+            else:
+                normalized[key] = value
+        return normalized
+
     def validate_arguments(self, arguments: dict | None) -> tuple[bool, str | None, BaseModel | None]:
         """Validate arguments and return typed params model.
 
+        First attempts validation with original arguments. If that fails,
+        retries with normalized arguments (handling common LLM mistakes like
+        "null" strings). This preserves the original values when they're correct.
+
         Args:
-            arguments: Raw arguments dict from LLM (should be pre-normalized by provider)
+            arguments: Raw arguments dict from LLM
 
         Returns:
             Tuple of (is_valid, error_message, validated_params)
@@ -315,13 +356,22 @@ class ToolDefinition(BaseModel):
         if arguments is None:
             arguments = {}
 
+        # First try with original arguments
         try:
             validated = self.params_model.model_validate(arguments)
             return True, None, validated
+        except ValidationError as first_error:
+            pass  # Try normalization fallback
+
+        # Retry with normalized arguments (handles "null" strings, etc.)
+        normalized = self._normalize_llm_arguments(arguments)
+        try:
+            validated = self.params_model.model_validate(normalized)
+            return True, None, validated
         except ValidationError as e:
-            # Format error message nicely
+            # Format error message nicely (use original error for clarity)
             errors = []
-            for error in e.errors():
+            for error in first_error.errors():
                 loc = ".".join(str(x) for x in error["loc"])
                 msg = error["msg"]
                 errors.append(f"{loc}: {msg}")
