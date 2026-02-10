@@ -3,19 +3,27 @@
 Provides factory methods and singleton access to LLM providers.
 
 Supported providers:
-- zai: Z.AI GLM models (default)
-- deepinfra: DeepInfra OpenAI-compatible API (Qwen, Llama, etc.)
+- litellm: LiteLLM unified interface (recommended) - supports 100+ providers
+- zai: Z.AI GLM models (legacy)
+- deepinfra: DeepInfra OpenAI-compatible API (legacy)
+
+LiteLLM provider configuration:
+    LLM_PROVIDER=litellm
+    LITELLM_PROVIDER: Which backend (deepinfra, zai, openai, anthropic)
+    LITELLM_MODEL: Model name
+    LITELLM_API_KEY: API key
+    LITELLM_API_BASE: Custom API base URL (optional)
 """
 
 import os
 from typing import Any
 
-import httpx
 import structlog
 
 from .base import BaseLLM
 from .zai import ChatZAI
 from .deepinfra import ChatDeepInfra
+from .litellm_provider import ChatLiteLLM, LITELLM_AVAILABLE
 
 logger = structlog.get_logger()
 
@@ -52,50 +60,68 @@ class LLMService:
             LLMConfigurationError: If no API key is configured and provider is not 'mock'
         """
         if self._provider is not None:
-            print(f"[LLM SERVICE] Cached provider: {self._provider}")
             return self._provider
 
         provider = os.getenv("LLM_PROVIDER", "auto").lower()
+        litellm_key = os.getenv("LITELLM_API_KEY", "")
         zai_key = os.getenv("ZAI_API_KEY", "")
         deepinfra_key = os.getenv("DEEPINFRA_API_KEY", "")
 
-        print(f"[LLM SERVICE] Environment LLM_PROVIDER: {provider}")
-        print(f"[LLM SERVICE] ZAI_API_KEY present: {bool(zai_key)}")
-        print(f"[LLM SERVICE] DEEPINFRA_API_KEY present: {bool(deepinfra_key)}")
+        logger.debug(
+            "llm_provider_detection",
+            provider_env=provider,
+            litellm_key_present=bool(litellm_key),
+            zai_key_present=bool(zai_key),
+            deepinfra_key_present=bool(deepinfra_key),
+        )
 
-        if provider == "zai" and zai_key:
+        # Explicit provider selection
+        if provider == "litellm":
+            if not LITELLM_AVAILABLE:
+                raise LLMConfigurationError(
+                    "LLM_PROVIDER=litellm but litellm is not installed. "
+                    "Install it with: pip install litellm"
+                )
+            if not litellm_key:
+                raise LLMConfigurationError(
+                    "LITELLM_API_KEY environment variable is required when LLM_PROVIDER=litellm. "
+                    "Please set LITELLM_API_KEY in your .env file."
+                )
+            self._provider = "litellm"
+
+        elif provider == "zai":
+            if not zai_key:
+                raise LLMConfigurationError(
+                    "ZAI_API_KEY environment variable is required when LLM_PROVIDER=zai."
+                )
             self._provider = "zai"
+
         elif provider == "deepinfra":
             if not deepinfra_key:
                 raise LLMConfigurationError(
-                    "DEEPINFRA_API_KEY environment variable is required when LLM_PROVIDER=deepinfra. "
-                    "Please set DEEPINFRA_API_KEY in your .env file or environment."
+                    "DEEPINFRA_API_KEY environment variable is required when LLM_PROVIDER=deepinfra."
                 )
             self._provider = "deepinfra"
+
         elif provider == "auto":
-            # Auto-detect: prefer DeepInfra, then Z.AI
-            if deepinfra_key:
+            # Auto-detect: prefer LiteLLM, then DeepInfra, then Z.AI
+            if litellm_key and LITELLM_AVAILABLE:
+                self._provider = "litellm"
+            elif deepinfra_key:
                 self._provider = "deepinfra"
             elif zai_key:
                 self._provider = "zai"
             else:
-                logger.error("no_llm_provider_configured")
-                raise ValueError(
-                    "No LLM provider configured. Please set either ZAI_API_KEY or DEEPINFRA_API_KEY environment variable."
+                raise LLMConfigurationError(
+                    "No LLM provider configured. Set one of: "
+                    "LITELLM_API_KEY, DEEPINFRA_API_KEY, or ZAI_API_KEY"
                 )
         else:
-            # Fallback logic
-            if deepinfra_key:
-                self._provider = "deepinfra"
-            elif zai_key:
-                self._provider = "zai"
-            else:
-                logger.error("no_llm_provider_configured")
-                raise ValueError(
-                    "No LLM provider configured. Please set either ZAI_API_KEY or DEEPINFRA_API_KEY environment variable."
-                )
+            raise LLMConfigurationError(
+                f"Unknown LLM_PROVIDER: {provider}. "
+                "Valid options: litellm, zai, deepinfra, auto"
+            )
 
-        print(f"[LLM SERVICE] Selected provider: {self._provider}")
         logger.info("llm_provider_selected", provider=self._provider)
         return self._provider
 
@@ -106,47 +132,26 @@ class LLMService:
 
         provider = self.get_provider()
 
-        if provider == "deepinfra":
-            self._llm = ChatDeepInfra(
-                api_key=os.getenv("DEEPINFRA_API_KEY"),
-                model=os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct"),
-                base_url=os.getenv(
-                    "DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"
-                ),
+        if provider == "litellm":
+            self._llm = ChatLiteLLM(
+                provider=os.getenv("LITELLM_PROVIDER", "deepinfra"),
+                model=os.getenv("LITELLM_MODEL"),
+                api_key=os.getenv("LITELLM_API_KEY"),
+                api_base=os.getenv("LITELLM_API_BASE"),
+                temperature=float(os.getenv("LITELLM_TEMPERATURE", "0.7")),
+                max_tokens=int(os.getenv("LITELLM_MAX_TOKENS", "16384")),
+                timeout=float(os.getenv("LITELLM_TIMEOUT", "300")),
+                max_retries=int(os.getenv("LITELLM_MAX_RETRIES", "3")),
             )
             logger.info(
-                "using_deepinfra_llm",
+                "using_litellm",
+                provider=self._llm.provider,
                 model=self._llm.model,
-                base_url=self._llm.base_url,
-            )
-        else:
-            # Default to Z.AI
-            self._llm = ChatZAI(
-                api_key=os.getenv("ZAI_API_KEY"),
-                model=os.getenv("ZAI_MODEL", "GLM-4.7"),
-                base_url=os.getenv(
-                    "ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4"
-                ),
-            )
-            logger.info(
-                "using_zai_llm",
-                model=self._llm.model,
-                base_url=self._llm.base_url,
+                api_base=self._llm.api_base or "default",
             )
 
-        return self._llm
-
-        provider = self.get_provider()
-
-        if provider == "mock":
-            self._llm = ChatMock()
-            logger.info("using_mock_llm")
         elif provider == "deepinfra":
-            # Get max_tokens from env, default to 16384 for code generation
-            # 8192 was still causing truncated output for multi-file React apps
-            max_tokens_str = os.getenv("DEEPINFRA_MAX_TOKENS", "16384")
-            max_tokens = int(max_tokens_str) if max_tokens_str else 16384
-
+            max_tokens = int(os.getenv("DEEPINFRA_MAX_TOKENS", "16384"))
             self._llm = ChatDeepInfra(
                 api_key=os.getenv("DEEPINFRA_API_KEY"),
                 model=os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct"),
@@ -161,6 +166,7 @@ class LLMService:
                 base_url=self._llm.base_url,
                 max_tokens=max_tokens,
             )
+
         else:
             # Default to Z.AI
             self._llm = ChatZAI(
