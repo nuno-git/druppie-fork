@@ -1,6 +1,6 @@
-# Known Issues
+# Backlog
 
-Known bugs, implementation gaps, and limitations of the Druppie platform.
+Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
 Last updated: 2026-02-10
 
@@ -9,8 +9,8 @@ Last updated: 2026-02-10
 ## Summary
 
 - Per-Agent Model Selection Ignored
-- Setup / Core Problems
 - Inconsistent [COMMON_INSTRUCTIONS] Across Agents
+- Reusable System Prompt Library
 - Cancel/Resume Endpoint Missing on Backend
 - Token/Cost Tracking Half Implemented and Buggy
 - Database Schema Does Not Match Domain Models
@@ -34,6 +34,7 @@ Last updated: 2026-02-10
 - Skill: MCP Server Integration for Generated Applications
 - Language Matching
 - Prompt Injection Protection
+- Compliance Agent for Input Validation
 
 ---
 
@@ -46,20 +47,6 @@ Last updated: 2026-02-10
 - **Impact:** All agents use the same model and temperature regardless of their YAML configuration. Cannot use a cheap/fast model for the router and a capable model for the developer.
 - **Fix needed:** Replace the singleton with a factory that caches LLM instances per `(provider, model, temperature)` tuple, or pass model/temperature overrides into `achat()`.
 
-### Setup / Core Problems
-
-- **Severity:** Medium
-- **Locations:**
-  - `setup_dev.sh` — development setup script
-  - `frontend/src/services/api.js:10`, `frontend/src/pages/Debug.jsx:33`, `DebugMCP.jsx:15`, `DebugProjects.jsx:22`, `DebugChat.jsx:13`, `DebugApprovals.jsx:15` — hardcoded API URLs
-- The development setup is fragile and not system-independent:
-  - `setup_dev.sh` assumes specific system dependencies and OS-level configurations that may not be present on all machines. It does not work reliably across devices.
-  - The default `VITE_API_URL` is `http://localhost:8000` but the backend runs on port 8100. This works when `setup_dev.sh` sets the correct environment variable, but breaks when running the frontend standalone. The wrong default is duplicated across six files.
-- **Fixes needed:**
-  - Make the setup process system-independent: either move to full containerization (with hot-reload support for dev) or use a more robust installation process (e.g., Conda environments) to ensure consistent setup across machines.
-  - Centralize the API base URL so it is defined in one place and all files import from there. Fix the default to match the actual backend port.
-  - Write a clear setup/usage guide (README) so new developers can get the project running without tribal knowledge.
-
 ### Inconsistent [COMMON_INSTRUCTIONS] Across Agents
 
 - **Location:** `druppie/agents/definitions/*.yaml`, `druppie/agents/definitions/_common.md`
@@ -68,6 +55,22 @@ Last updated: 2026-02-10
 - `_common.md` contains shared rules for agent communication: summary relay format, `done()` tool output format, and workspace state context.
 - **Impact:** Agents without common instructions may not follow the same communication protocol (e.g., inconsistent `done()` summaries), which could affect downstream agents that depend on structured output from previous agents.
 - **Fix needed:** Add `[COMMON_INSTRUCTIONS]` to all agents that participate in the execution workflow (developer, reviewer, tester). Router may be excluded intentionally.
+
+### Reusable System Prompt Library
+
+- **Current state:** Agent system prompts are defined inline in each agent's YAML file, with only `_common.md` as a shared component injected via the `[COMMON_INSTRUCTIONS]` placeholder.
+- **Desired improvement:** Create a library of reusable system prompt fragments in a dedicated folder (e.g., `druppie/agents/prompts/`). Each fragment would be a separate file focusing on a specific capability or behavior (e.g., `code_quality.md`, `security_awareness.md`, `user_communication.md`, `git_workflow.md`). Agent YAML definitions would then specify which prompt files to include:
+  ```yaml
+  system_prompt_includes:
+    - _common.md
+    - code_quality.md
+    - security_awareness.md
+  ```
+- **Benefits:**
+  - Easier to maintain consistent behavior across agents
+  - Can compose agent personalities from building blocks
+  - Reduces duplication of instructions across agent definitions
+  - Makes it easier to update a behavior across all agents that use it
 
 ### Cancel/Resume Endpoint Missing on Backend
 
@@ -177,7 +180,7 @@ Last updated: 2026-02-10
 
 ### Keycloak in Development Mode
 
-- **Location:** `druppie/docker-compose.yml:137`
+- **Location:** `docker-compose.yml` (keycloak service)
 - Keycloak runs with the `start-dev` command, which is explicitly not production-ready.
 - No TLS configuration is present.
 - Suitable for development only.
@@ -239,3 +242,17 @@ Last updated: 2026-02-10
   - Validate and sanitize user inputs before they are injected into prompts
   - Consider input classification: run a lightweight check on user messages to flag potential injection attempts before they reach the agent pipeline
 - **Research needed:** Evaluate existing prompt injection defense techniques (input/output guardrails, instruction hierarchy, canary tokens) and their applicability to a multi-agent pipeline where user input flows through multiple agents.
+
+### Compliance Agent for Input Validation
+
+- **Current state:** User input flows directly to agents without pre-processing or validation. There is no systematic check for malicious content, prompt injection attempts, or policy violations.
+- **Desired improvement:** Implement a lightweight compliance agent that runs on every user input before it reaches the main agent pipeline. This agent would:
+  - **Validate user messages:** Check new chat messages for prompt injection attempts, policy violations, or malicious content before they reach the Router
+  - **Validate HITL responses:** Check user answers to HITL questions before they are passed back to the waiting agent
+  - **Optionally validate tool results:** Check results from MCP tool calls for unexpected content that could be used as an indirect prompt injection vector (e.g., malicious content in a file read from disk)
+- **Implementation considerations:**
+  - Should be fast and cheap (small model, simple prompt) to avoid adding significant latency
+  - Should return a pass/fail decision with optional sanitized content
+  - Could use a classification approach (is this input safe?) rather than generation
+  - Failed validations should block the input and notify the user with a clear explanation
+- **Related to:** Prompt Injection Protection (this is the runtime enforcement mechanism for those defenses)
