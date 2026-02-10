@@ -18,6 +18,7 @@ import {
   formatEventTitle,
   getEventDescription,
 } from '../../utils/eventUtils'
+import TestResultCard from './TestResultCard'
 
 const WorkflowEvent = ({ event, defaultExpanded = false }) => {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
@@ -40,6 +41,28 @@ const WorkflowEvent = ({ event, defaultExpanded = false }) => {
     } catch {
       return String(args)
     }
+  }
+
+  // Check if this is a test result event
+  const isTestResultEvent = category === 'test' && 
+    (eventType === 'test_result' || eventType === 'test_completed' || eventType === 'tdd_validation')
+
+  // If it's a test result event, render the TestResultCard
+  if (isTestResultEvent) {
+    const testResultData = {
+      ...event.data,
+      verdict: event.data?.verdict || event.data?.status,
+      summary: event.data?.summary,
+      coverage: event.data?.coverage,
+      retry_count: event.data?.retry_count,
+      max_retries: event.data?.max_retries,
+      feedback: event.data?.feedback,
+      framework: event.data?.framework,
+      duration_ms: event.data?.duration_ms,
+      should_retry: event.data?.should_retry,
+      next_action: event.data?.next_action,
+    }
+    return <TestResultCard testResult={testResultData} defaultExpanded={defaultExpanded} />
   }
 
   return (
