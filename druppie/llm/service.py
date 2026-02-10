@@ -3,7 +3,7 @@
 All providers use LiteLLM internally for standardized tool calling.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra, openai, anthropic (default: zai)
+    LLM_PROVIDER: zai, deepinfra (default: zai)
 
     For ZAI:
         ZAI_API_KEY (required)
@@ -43,8 +43,6 @@ class LLMService:
     PROVIDERS = {
         "zai": "ZAI_API_KEY",
         "deepinfra": "DEEPINFRA_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
     }
 
     def __init__(self):

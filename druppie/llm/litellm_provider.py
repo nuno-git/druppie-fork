@@ -3,20 +3,14 @@
 Uses LiteLLM for standardized tool calling across all providers.
 This is the only LLM implementation - all providers go through LiteLLM.
 
-Environment variables (same as legacy providers):
-    LLM_PROVIDER: zai, deepinfra, openai, anthropic
+Environment variables:
+    LLM_PROVIDER: zai, deepinfra
 
     For ZAI:
         ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
 
     For DeepInfra:
         DEEPINFRA_API_KEY, DEEPINFRA_MODEL, DEEPINFRA_BASE_URL
-
-    For OpenAI:
-        OPENAI_API_KEY, OPENAI_MODEL
-
-    For Anthropic:
-        ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 """
 
 import json
@@ -71,7 +65,11 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
 
     def log_success_event(self, kwargs, response_obj, start_time, end_time):
         """Capture successful response."""
-        duration_ms = int((end_time - start_time) * 1000)
+        # Handle both datetime.timedelta and float types for duration
+        if hasattr(end_time - start_time, 'total_seconds'):
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+        else:
+            duration_ms = int((end_time - start_time) * 1000)
 
         call_record = {
             "timestamp": self.last_request.get("timestamp") if self.last_request else None,
@@ -121,7 +119,11 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
 
     def log_failure_event(self, kwargs, exception, start_time, end_time):
         """Capture failed request."""
-        duration_ms = int((end_time - start_time) * 1000)
+        # Handle both datetime.timedelta and float types for duration
+        if hasattr(end_time - start_time, 'total_seconds'):
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+        else:
+            duration_ms = int((end_time - start_time) * 1000)
 
         call_record = {
             "timestamp": self.last_request.get("timestamp") if self.last_request else None,
@@ -155,9 +157,11 @@ def get_druppie_logger() -> DruppieLogger:
 
 
 # Provider configurations
+# Both zai and deepinfra are OpenAI-compatible, so they use the same "openai/" prefix
+# with different api_base URLs. This is how LiteLLM handles custom OpenAI-compatible endpoints.
 PROVIDER_CONFIGS = {
     "zai": {
-        "prefix": "openai",  # LiteLLM uses openai client for OpenAI-compatible APIs
+        "prefix": "openai",  # OpenAI-compatible API
         "default_model": "glm-4.7",
         "api_key_env": "ZAI_API_KEY",
         "model_env": "ZAI_MODEL",
@@ -165,28 +169,12 @@ PROVIDER_CONFIGS = {
         "default_base_url": "https://api.z.ai/api/coding/paas/v4",
     },
     "deepinfra": {
-        "prefix": "deepinfra",
+        "prefix": "openai",  # OpenAI-compatible API (same as zai)
         "default_model": "Qwen/Qwen3-32B",
         "api_key_env": "DEEPINFRA_API_KEY",
         "model_env": "DEEPINFRA_MODEL",
         "base_url_env": "DEEPINFRA_BASE_URL",
         "default_base_url": "https://api.deepinfra.com/v1/openai",
-    },
-    "openai": {
-        "prefix": None,  # No prefix needed
-        "default_model": "gpt-4",
-        "api_key_env": "OPENAI_API_KEY",
-        "model_env": "OPENAI_MODEL",
-        "base_url_env": "OPENAI_BASE_URL",
-        "default_base_url": None,
-    },
-    "anthropic": {
-        "prefix": None,  # No prefix needed
-        "default_model": "claude-3-opus-20240229",
-        "api_key_env": "ANTHROPIC_API_KEY",
-        "model_env": "ANTHROPIC_MODEL",
-        "base_url_env": "ANTHROPIC_BASE_URL",
-        "default_base_url": None,
     },
 }
 
@@ -265,19 +253,10 @@ class ChatLiteLLM(BaseLLM):
 
     def _configure_litellm(self):
         """Set environment variables for LiteLLM."""
-        config = PROVIDER_CONFIGS.get(self.provider, {})
-
-        # LiteLLM reads API keys from environment
+        # Both zai and deepinfra are OpenAI-compatible, so we set OPENAI_API_KEY
+        # for LiteLLM to use with the "openai/" prefix
         if self.api_key:
-            if self.provider == "zai":
-                # ZAI uses OpenAI-compatible API
-                os.environ["OPENAI_API_KEY"] = self.api_key
-            elif self.provider == "deepinfra":
-                os.environ["DEEPINFRA_API_KEY"] = self.api_key
-            elif self.provider == "openai":
-                os.environ["OPENAI_API_KEY"] = self.api_key
-            elif self.provider == "anthropic":
-                os.environ["ANTHROPIC_API_KEY"] = self.api_key
+            os.environ["OPENAI_API_KEY"] = self.api_key
 
     @property
     def model(self) -> str:

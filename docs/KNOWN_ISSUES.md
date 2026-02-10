@@ -2,7 +2,7 @@
 
 Known bugs, implementation gaps, and limitations of the Druppie platform.
 
-Last updated: 2026-02-04
+Last updated: 2026-02-10
 
 ---
 
@@ -10,12 +10,10 @@ Last updated: 2026-02-04
 
 - Per-Agent Model Selection Ignored
 - Setup / Core Problems
-- Dead Code in LLMService.get_llm()
 - Duplicate Tool Descriptions Sent to LLM
 - Inconsistent [COMMON_INSTRUCTIONS] Across Agents
 - Cancel/Resume Endpoint Missing on Backend
 - Token/Cost Tracking Half Implemented and Buggy
-- Custom LLM Provider Parsing Sometimes Unreliable
 - Database Schema Does Not Match Domain Models
 - JSON/JSONB Columns Still Present
 - Tester Agent Not Invoked
@@ -63,12 +61,6 @@ Last updated: 2026-02-04
   - Centralize the API base URL so it is defined in one place and all files import from there. Fix the default to match the actual backend port.
   - Write a clear setup/usage guide (README) so new developers can get the project running without tribal knowledge.
 
-### Dead Code in LLMService.get_llm()
-
-- **Location:** `druppie/llm/service.py:139-179`
-- The `get_llm()` method has a `return self._llm` statement at line 137, followed by unreachable code (lines 139-179) that contains a second, different implementation including mock provider support and `max_tokens` configuration.
-- The unreachable code block was likely from a previous version and was not cleaned up after a refactor.
-
 ### Duplicate Tool Descriptions Sent to LLM
 
 - **Location:** `druppie/agents/runtime.py:831-834`, `druppie/agents/runtime.py:507-512`, `druppie/core/mcp_client.py:857-930`, `druppie/core/mcp_config.py:225-269`
@@ -98,8 +90,8 @@ Last updated: 2026-02-04
 
 ### Token/Cost Tracking Half Implemented and Buggy
 
-- **Location:** `druppie/db/models/llm_call.py`, `druppie/llm/deepinfra.py`, `druppie/llm/zai.py`, `druppie/domain/session.py`
-- Token tracking is partially implemented in the database model (`LLMCall` has `prompt_tokens`, `completion_tokens`, `total_tokens` fields) but the actual population of these values is inconsistent across LLM providers. Also it is not nicely displayed per session and per project.
+- **Location:** `druppie/db/models/llm_call.py`, `druppie/llm/litellm_provider.py`, `druppie/domain/session.py`
+- Token tracking is partially implemented in the database model (`LLMCall` has `prompt_tokens`, `completion_tokens`, `total_tokens` fields). LiteLLM provides consistent token counts, but display per session and per project is not well implemented.
 - Cost tracking is essentially non-existent — there's no calculation of costs based on token usage and provider pricing models.
 - **Impact:** No visibility into actual token consumption or costs per session, per agent, or per project. Cannot budget or estimate costs for users.
 - **Desired improvement:**
@@ -108,13 +100,6 @@ Last updated: 2026-02-04
   - Add aggregate token/cost metrics at session, agent, and project levels
   - Provide cost warnings or limits in the UI
   - Store historical cost data for reporting and analysis
-
-### Custom LLM Provider Parsing Sometimes Unreliable
-
-- **Location:** `druppie/llm/deepinfra.py`, `druppie/llm/zai.py`
-- The custom LLM provider implementations handle tool call parsing, retry logic, and response formatting manually. This parsing is not 100% reliable across all model outputs.
-- Z.AI uses XML-based tool calling with custom regex parsing; DeepInfra uses native function calling but still has custom fallback parsing.
-- **Possible improvement:** Replace the custom provider implementations with [LiteLLM](https://github.com/BerriAI/litellm), which provides a unified interface to 100+ LLM providers with standardized tool calling support, eliminating the need for custom parsing code.
 
 ### Database Schema Does Not Match Domain Models
 
