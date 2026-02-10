@@ -37,7 +37,7 @@ class ToolCall(Base):
     llm_call_id = Column(UUID(as_uuid=True), ForeignKey("llm_calls.id"))
 
     mcp_server = Column(String(100), nullable=False)
-    tool_name = Column(String(200), nullable=False)
+    tool_name = Column(Text, nullable=False)
     tool_call_index = Column(Integer, default=0)  # Order in the LLM response (0, 1, 2...)
 
     # Tool arguments as JSONB
