@@ -1,34 +1,40 @@
 """LLM module for Druppie platform.
 
-Providers:
-- ChatLiteLLM: Unified LLM interface (recommended) - supports 100+ providers
-- ChatZAI: Z.AI GLM models (legacy)
-- ChatDeepInfra: DeepInfra API (legacy)
+All providers use LiteLLM internally for standardized tool calling.
 
 Usage:
     from druppie.llm import get_llm_service
 
-    # Get configured LLM
+    # Get configured LLM (reads LLM_PROVIDER from env)
     llm = get_llm_service().get_llm()
 
     # Use it
     response = await llm.achat(messages=[...], tools=[...])
+
+Environment variables:
+    LLM_PROVIDER: zai, deepinfra, openai, anthropic
+
+    Provider-specific (e.g., for ZAI):
+        ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
 """
 
-from .base import BaseLLM, LLMResponse, LLMError, RateLimitError, AuthenticationError, ServerError
-from .zai import ChatZAI
-from .deepinfra import ChatDeepInfra
+from .base import (
+    AuthenticationError,
+    BaseLLM,
+    LLMError,
+    LLMResponse,
+    RateLimitError,
+    ServerError,
+)
 from .litellm_provider import ChatLiteLLM, LITELLM_AVAILABLE
-from .service import LLMService, get_llm_service, LLMConfigurationError
+from .service import LLMConfigurationError, LLMService, get_llm_service
 
 __all__ = [
     # Base classes
     "BaseLLM",
     "LLMResponse",
-    # Providers
-    "ChatLiteLLM",  # Recommended
-    "ChatZAI",      # Legacy
-    "ChatDeepInfra",  # Legacy
+    # Provider (LiteLLM-based)
+    "ChatLiteLLM",
     "LITELLM_AVAILABLE",
     # Service
     "LLMService",
