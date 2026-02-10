@@ -1,22 +1,22 @@
-"""LiteLLM provider implementation.
+"""LiteLLM provider - unified LLM interface.
 
-Unified LLM interface using LiteLLM for standardized tool calling across providers.
+Uses LiteLLM for standardized tool calling across all providers.
+This is the only LLM implementation - all providers go through LiteLLM.
 
-Supported providers (via LiteLLM):
-- deepinfra: DeepInfra API (Qwen, Llama, etc.)
-- zai: Z.AI GLM models (via OpenAI-compatible API)
-- openai: OpenAI API (GPT-4, etc.)
-- anthropic: Anthropic API (Claude, etc.)
+Environment variables (same as legacy providers):
+    LLM_PROVIDER: zai, deepinfra, openai, anthropic
 
-Environment variables:
-    LITELLM_PROVIDER: Which provider to use (deepinfra, zai, openai, anthropic)
-    LITELLM_MODEL: Model name (provider-specific)
-    LITELLM_API_KEY: API key for the provider
-    LITELLM_API_BASE: Custom API base URL (optional)
-    LITELLM_MAX_TOKENS: Max tokens for generation (default: 16384)
-    LITELLM_TEMPERATURE: Temperature (default: 0.7)
-    LITELLM_TIMEOUT: Request timeout in seconds (default: 300)
-    LITELLM_MAX_RETRIES: Max retries for transient errors (default: 3)
+    For ZAI:
+        ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
+
+    For DeepInfra:
+        DEEPINFRA_API_KEY, DEEPINFRA_MODEL, DEEPINFRA_BASE_URL
+
+    For OpenAI:
+        OPENAI_API_KEY, OPENAI_MODEL
+
+    For Anthropic:
+        ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 """
 
 import json
@@ -37,7 +37,7 @@ from .base import (
 
 logger = structlog.get_logger()
 
-# Import litellm - will be installed as dependency
+# Import litellm
 try:
     import litellm
     from litellm import acompletion, completion
@@ -46,7 +46,7 @@ try:
     LITELLM_AVAILABLE = True
 except ImportError:
     LITELLM_AVAILABLE = False
-    CustomLogger = object  # Fallback for type hints
+    CustomLogger = object
 
 
 class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
@@ -140,7 +140,7 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
         self.log_failure_event(kwargs, exception, start_time, end_time)
 
 
-# Global logger instance for capturing requests
+# Global logger instance
 _druppie_logger: DruppieLogger | None = None
 
 
@@ -154,50 +154,68 @@ def get_druppie_logger() -> DruppieLogger:
     return _druppie_logger
 
 
+# Provider configurations
+PROVIDER_CONFIGS = {
+    "zai": {
+        "prefix": "openai",  # LiteLLM uses openai client for OpenAI-compatible APIs
+        "default_model": "glm-4.7",
+        "api_key_env": "ZAI_API_KEY",
+        "model_env": "ZAI_MODEL",
+        "base_url_env": "ZAI_BASE_URL",
+        "default_base_url": "https://api.z.ai/api/coding/paas/v4",
+    },
+    "deepinfra": {
+        "prefix": "deepinfra",
+        "default_model": "Qwen/Qwen3-32B",
+        "api_key_env": "DEEPINFRA_API_KEY",
+        "model_env": "DEEPINFRA_MODEL",
+        "base_url_env": "DEEPINFRA_BASE_URL",
+        "default_base_url": "https://api.deepinfra.com/v1/openai",
+    },
+    "openai": {
+        "prefix": None,  # No prefix needed
+        "default_model": "gpt-4",
+        "api_key_env": "OPENAI_API_KEY",
+        "model_env": "OPENAI_MODEL",
+        "base_url_env": "OPENAI_BASE_URL",
+        "default_base_url": None,
+    },
+    "anthropic": {
+        "prefix": None,  # No prefix needed
+        "default_model": "claude-3-opus-20240229",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "model_env": "ANTHROPIC_MODEL",
+        "base_url_env": "ANTHROPIC_BASE_URL",
+        "default_base_url": None,
+    },
+}
+
+
 class ChatLiteLLM(BaseLLM):
     """Unified LLM provider using LiteLLM.
 
-    Supports multiple providers through LiteLLM's unified interface:
-    - deepinfra: "deepinfra/model-name"
-    - zai: Uses openai/* with custom base URL
-    - openai: "gpt-4", "gpt-3.5-turbo", etc.
-    - anthropic: "claude-3-opus-20240229", etc.
+    This is the only LLM implementation. All providers (zai, deepinfra, openai,
+    anthropic) go through LiteLLM for standardized tool calling.
     """
-
-    # Provider-specific model prefixes for LiteLLM
-    PROVIDER_PREFIXES = {
-        "deepinfra": "deepinfra/",
-        "openai": "",  # OpenAI models don't need prefix
-        "anthropic": "",  # Anthropic models don't need prefix
-        "zai": "openai/",  # ZAI uses OpenAI-compatible API
-    }
-
-    # Default models per provider
-    DEFAULT_MODELS = {
-        "deepinfra": "Qwen/Qwen3-32B",
-        "openai": "gpt-4",
-        "anthropic": "claude-3-opus-20240229",
-        "zai": "GLM-4.7",
-    }
 
     def __init__(
         self,
-        provider: str | None = None,
+        provider: str = "zai",
         model: str | None = None,
         api_key: str | None = None,
         api_base: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        timeout: float | None = None,
-        max_retries: int | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 16384,
+        timeout: float = 300.0,
+        max_retries: int = 3,
     ):
         """Initialize LiteLLM provider.
 
         Args:
-            provider: Provider name (deepinfra, zai, openai, anthropic)
+            provider: Provider name (zai, deepinfra, openai, anthropic)
             model: Model name (uses provider default if not specified)
-            api_key: API key for the provider
-            api_base: Custom API base URL
+            api_key: API key (reads from env if not specified)
+            api_base: Custom API base URL (reads from env if not specified)
             temperature: Temperature for generation
             max_tokens: Maximum tokens to generate
             timeout: Request timeout in seconds
@@ -208,32 +226,29 @@ class ChatLiteLLM(BaseLLM):
                 "litellm is not installed. Install it with: pip install litellm"
             )
 
-        # Load from environment with fallbacks
-        self.provider = provider or os.getenv("LITELLM_PROVIDER", "deepinfra")
-        self.api_key = api_key or os.getenv("LITELLM_API_KEY", "")
-        self.api_base = api_base or os.getenv("LITELLM_API_BASE", "")
-        self.temperature = temperature or float(os.getenv("LITELLM_TEMPERATURE", "0.7"))
-        self.max_tokens = max_tokens or int(os.getenv("LITELLM_MAX_TOKENS", "16384"))
-        self.timeout = timeout or float(os.getenv("LITELLM_TIMEOUT", "300"))
-        self.max_retries = max_retries or int(os.getenv("LITELLM_MAX_RETRIES", "3"))
+        self.provider = provider
+        config = PROVIDER_CONFIGS.get(provider, PROVIDER_CONFIGS["zai"])
 
-        # Determine model names
-        # display_model: User-friendly name (e.g., "glm-4.7")
-        # _litellm_model: LiteLLM format with prefix (e.g., "openai/glm-4.7")
-        raw_model = model or os.getenv("LITELLM_MODEL", self.DEFAULT_MODELS.get(self.provider, ""))
-        prefix = self.PROVIDER_PREFIXES.get(self.provider, "")
+        # Load configuration from environment
+        self.api_key = api_key or os.getenv(config["api_key_env"], "")
+        self.api_base = api_base or os.getenv(config["base_url_env"], "") or config["default_base_url"]
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.timeout = timeout
+        self.max_retries = max_retries
 
-        # Store display model (without litellm prefix)
-        self.display_model = raw_model
+        # Model name (user-friendly, e.g., "glm-4.7")
+        self._model = model or os.getenv(config["model_env"], "") or config["default_model"]
 
-        # Build LiteLLM model format (with prefix if needed)
-        if raw_model.startswith(prefix) or "/" in raw_model:
-            self._litellm_model = raw_model
+        # LiteLLM model format (e.g., "openai/glm-4.7" for custom endpoints)
+        prefix = config["prefix"]
+        if prefix and not self._model.startswith(f"{prefix}/"):
+            self._litellm_model = f"{prefix}/{self._model}"
         else:
-            self._litellm_model = f"{prefix}{raw_model}"
+            self._litellm_model = self._model
 
-        # Configure LiteLLM based on provider
-        self._configure_provider()
+        # Configure LiteLLM environment
+        self._configure_litellm()
 
         # Initialize logger
         self._logger = get_druppie_logger()
@@ -242,50 +257,42 @@ class ChatLiteLLM(BaseLLM):
         self._bound_tools: list[dict] = []
 
         logger.info(
-            "litellm_provider_initialized",
+            "llm_initialized",
             provider=self.provider,
-            model=self.display_model,
-            litellm_model=self._litellm_model,
+            model=self.model,
             api_base=self.api_base or "default",
         )
 
-    def _configure_provider(self):
-        """Configure LiteLLM for the selected provider."""
-        # Set provider-specific environment variables that LiteLLM reads
-        if self.provider == "deepinfra":
-            if self.api_key:
+    def _configure_litellm(self):
+        """Set environment variables for LiteLLM."""
+        config = PROVIDER_CONFIGS.get(self.provider, {})
+
+        # LiteLLM reads API keys from environment
+        if self.api_key:
+            if self.provider == "zai":
+                # ZAI uses OpenAI-compatible API
+                os.environ["OPENAI_API_KEY"] = self.api_key
+            elif self.provider == "deepinfra":
                 os.environ["DEEPINFRA_API_KEY"] = self.api_key
-            if not self.api_base:
-                self.api_base = "https://api.deepinfra.com/v1/openai"
-
-        elif self.provider == "zai":
-            # ZAI uses OpenAI-compatible API
-            if self.api_key:
+            elif self.provider == "openai":
                 os.environ["OPENAI_API_KEY"] = self.api_key
-            if not self.api_base:
-                self.api_base = "https://api.z.ai/api/coding/paas/v4"
-
-        elif self.provider == "openai":
-            if self.api_key:
-                os.environ["OPENAI_API_KEY"] = self.api_key
-
-        elif self.provider == "anthropic":
-            if self.api_key:
+            elif self.provider == "anthropic":
                 os.environ["ANTHROPIC_API_KEY"] = self.api_key
 
     @property
-    def model_name(self) -> str:
-        """Return user-friendly model name (e.g., 'glm-4.7' not 'openai/glm-4.7')."""
-        return self.display_model
+    def model(self) -> str:
+        """User-friendly model name (e.g., 'zai/glm-4.7')."""
+        return f"{self.provider}/{self._model}"
 
     @property
-    def model(self) -> str:
-        """Alias for display_model for backward compatibility with service.py logging."""
-        return self.display_model
+    def model_name(self) -> str:
+        """Alias for model property."""
+        return self.model
 
     @property
     def provider_name(self) -> str:
-        return f"litellm/{self.provider}"
+        """Provider name."""
+        return self.provider
 
     @property
     def supports_native_tools(self) -> bool:
@@ -296,7 +303,7 @@ class ChatLiteLLM(BaseLLM):
         """Create new instance with tools bound."""
         new_instance = ChatLiteLLM(
             provider=self.provider,
-            model=self.display_model,  # Use display model, not litellm format
+            model=self._model,
             api_key=self.api_key,
             api_base=self.api_base,
             temperature=self.temperature,
@@ -324,7 +331,6 @@ class ChatLiteLLM(BaseLLM):
             "num_retries": self.max_retries,
         }
 
-        # Add API base for custom endpoints
         if self.api_base:
             kwargs["api_base"] = self.api_base
 
@@ -335,7 +341,6 @@ class ChatLiteLLM(BaseLLM):
         try:
             response = completion(**kwargs)
             return self._parse_response(response)
-
         except Exception as e:
             raise self._convert_exception(e)
 
@@ -358,7 +363,6 @@ class ChatLiteLLM(BaseLLM):
             "num_retries": self.max_retries,
         }
 
-        # Add API base for custom endpoints
         if self.api_base:
             kwargs["api_base"] = self.api_base
 
@@ -369,7 +373,6 @@ class ChatLiteLLM(BaseLLM):
         try:
             response = await acompletion(**kwargs)
             return self._parse_response(response)
-
         except Exception as e:
             raise self._convert_exception(e)
 
@@ -378,15 +381,12 @@ class ChatLiteLLM(BaseLLM):
         choice = response.choices[0]
         message = choice.message
 
-        # Extract content
         content = message.content or ""
 
-        # Extract tool calls
         tool_calls = []
         if message.tool_calls:
             for tc in message.tool_calls:
                 args = tc.function.arguments
-                # Parse arguments if string
                 if isinstance(args, str):
                     try:
                         args = json.loads(args)
@@ -404,7 +404,6 @@ class ChatLiteLLM(BaseLLM):
                     "args": args if isinstance(args, dict) else {},
                 })
 
-        # Extract usage
         usage = response.usage
 
         return LLMResponse(
@@ -415,8 +414,8 @@ class ChatLiteLLM(BaseLLM):
             prompt_tokens=usage.prompt_tokens if usage else 0,
             completion_tokens=usage.completion_tokens if usage else 0,
             total_tokens=usage.total_tokens if usage else 0,
-            model=self.display_model,  # User-friendly model name
-            provider=self.provider_name,
+            model=self.model,  # User-friendly: "zai/glm-4.7"
+            provider=self.provider,
         )
 
     def _convert_exception(self, e: Exception) -> LLMError:
@@ -426,22 +425,22 @@ class ChatLiteLLM(BaseLLM):
         if "rate limit" in error_str or "429" in error_str:
             return RateLimitError(
                 f"Rate limit exceeded: {e}",
-                provider=self.provider_name,
+                provider=self.provider,
             )
         elif "authentication" in error_str or "401" in error_str or "403" in error_str:
             return AuthenticationError(
                 f"Authentication failed: {e}",
-                provider=self.provider_name,
+                provider=self.provider,
             )
         elif "500" in error_str or "502" in error_str or "503" in error_str:
             return ServerError(
                 f"Server error: {e}",
-                provider=self.provider_name,
+                provider=self.provider,
             )
         else:
             return LLMError(
                 f"LLM error: {e}",
-                provider=self.provider_name,
+                provider=self.provider,
             )
 
     def get_call_history(self) -> list[dict]:
