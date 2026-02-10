@@ -426,7 +426,30 @@ class ChatZAI(BaseLLM):
         if message.get("tool_calls"):
             for tc in message["tool_calls"]:
                 func = tc.get("function", {})
+                raw_name = func.get("name", "")
                 raw_args = func.get("arguments", "{}")
+
+                # Handle malformed tool calls where the name field contains the full JSON
+                # E.g., name = '{"name": "make_plan", "arguments": {...}}'
+                if raw_name.startswith("{") and ("name" in raw_name or "arguments" in raw_name):
+                    try:
+                        # Try to parse the name as JSON
+                        parsed_name = json.loads(raw_name)
+                        if isinstance(parsed_name, dict):
+                            # Extract actual name and arguments from the parsed structure
+                            raw_name = parsed_name.get("name", raw_name)
+                            nested_args = parsed_name.get("arguments", parsed_name.get("args", {}))
+                            # Merge nested args into raw_args if raw_args is empty
+                            if not raw_args or raw_args == "{}" or raw_args == {}:
+                                raw_args = nested_args if isinstance(nested_args, dict) else json.dumps(nested_args) if isinstance(nested_args, str) else {}
+                            logger.debug(
+                                "fixed_malformed_tool_call",
+                                original_name=func.get("name", "")[:100],
+                                extracted_name=raw_name,
+                            )
+                    except json.JSONDecodeError:
+                        pass
+
                 # Z.AI returns arguments as an object (dict), not a JSON string
                 # like OpenAI does. Handle both cases.
                 if isinstance(raw_args, dict):
@@ -435,7 +458,7 @@ class ChatZAI(BaseLLM):
                     try:
                         args = json.loads(raw_args)
                     except json.JSONDecodeError:
-                        args = self._parse_malformed_args(raw_args, func.get("name", ""))
+                        args = self._parse_malformed_args(raw_args, raw_name)
                 else:
                     args = {}
 
@@ -443,7 +466,7 @@ class ChatZAI(BaseLLM):
                 if not isinstance(args, dict):
                     logger.warning(
                         "tool_args_not_dict",
-                        tool_name=func.get("name", ""),
+                        tool_name=raw_name,
                         args_type=type(args).__name__,
                         args_value=str(args)[:100] if args else None,
                     )
@@ -451,7 +474,7 @@ class ChatZAI(BaseLLM):
 
                 tool_calls.append({
                     "id": tc.get("id", ""),
-                    "name": func.get("name", ""),
+                    "name": raw_name,
                     "args": args,
                 })
 

@@ -201,8 +201,13 @@ class Agent:
         if isinstance(agent_run_id, str):
             agent_run_id = UUID(agent_run_id)
 
+        # Get conversational language from context (default to nl)
+        language = "nl"
+        if context and "conversational_language" in context:
+            language = context["conversational_language"]
+
         messages = [
-            {"role": "system", "content": self._build_system_prompt()},
+            {"role": "system", "content": self._build_system_prompt(language=language)},
             {"role": "user", "content": self._build_prompt(prompt, context)},
         ]
 
@@ -376,14 +381,18 @@ class Agent:
                 "continue_run_no_llm_calls",
                 agent_run_id=str(agent_run_id),
             )
+            # Build context to get language
+            context = self._build_project_context(session_id, agent_run.session_id, execution_repo)
+            language = context.get("conversational_language", "nl") if context else "nl"
+
             messages = [
-                {"role": "system", "content": self._build_system_prompt()},
+                {"role": "system", "content": self._build_system_prompt(language=language)},
                 {"role": "user", "content": prompt},
             ]
             return await self._run_loop(
                 messages=messages,
                 prompt=prompt,
-                context=None,
+                context=context,
                 session_id=session_id,
                 agent_run_id=agent_run_id,
                 start_iteration=0,
@@ -393,6 +402,19 @@ class Agent:
         messages = self._reconstruct_messages_from_db(llm_calls, execution_repo)
         iteration = len(llm_calls)
 
+        # Rebuild project context to pick up updated session language
+        # This ensures agents get the fresh conversational_language after HITL answers
+        context = self._build_project_context(session_id, agent_run.session_id, execution_repo)
+
+        # Get conversational language from context (default to nl)
+        language = "nl"
+        if context and "conversational_language" in context:
+            language = context["conversational_language"]
+
+        # Update the system prompt with the current language
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = self._build_system_prompt(language=language)
+
         logger.info(
             "agent_continue_run",
             agent_id=self.id,
@@ -400,12 +422,14 @@ class Agent:
             llm_calls_count=len(llm_calls),
             messages_count=len(messages),
             continuing_from_iteration=iteration,
+            has_context=bool(context),
+            conversational_language=language,
         )
 
         return await self._run_loop(
             messages=messages,
             prompt=prompt,
-            context=None,
+            context=context,
             session_id=session_id,
             agent_run_id=agent_run_id,
             start_iteration=iteration,
@@ -808,24 +832,139 @@ class Agent:
             })
         return openai_tools
 
-    def _build_system_prompt(self) -> str:
+    def _get_markdown_language_instruction(self) -> str:
+        """Generate instruction for markdown file language.
+
+        Business Analyst and Architect agents must always create markdown in Dutch.
+        Other agents use the conversational language.
+        """
+        if self.id in ["business_analyst", "architect"]:
+            return """
+
+## MARKDOWN FILES LANGUAGE
+IMPORTANT: When you create markdown files (functional_design.md, architecture.md), they MUST be in Dutch (language code: nl).
+
+This rule applies ONLY to markdown files. Your questions and responses to the user must still follow the CONVERSATION_LANGUAGE setting above.
+"""
+        return ""
+
+    def _build_project_context(
+        self,
+        session_id: UUID,
+        original_session_id: UUID,
+        execution_repo,
+    ) -> dict | None:
+        """Build project context for agents.
+
+        Retrieves project info (repo_name, repo_owner, etc.) from the session
+        and returns it as a context dict that will be injected into agent prompts.
+
+        This is called when resuming an agent run to pick up fresh context from
+        the session (e.g., updated language after HITL answer).
+
+        Args:
+            session_id: Current session UUID (for project lookup)
+            original_session_id: Original session UUID (for session lookup)
+            execution_repo: Execution repository for DB queries
+
+        Returns:
+            Context dict with project info, or None if no project associated
+        """
+        from druppie.db.models import Session as DBSession, Project
+
+        # Expire cached objects to ensure we read fresh data from DB
+        execution_repo.db.expire_all()
+
+        session = execution_repo.db.query(DBSession).filter(DBSession.id == original_session_id).first()
+        if not session or not session.project_id:
+            return None
+
+        project = execution_repo.db.query(Project).filter(Project.id == session.project_id).first()
+        if not project:
+            return None
+
+        context = {
+            "project_id": str(project.id),
+            "project_name": project.name,
+            "session_id": str(original_session_id),
+            "conversational_language": session.language or "nl",
+        }
+
+        # Add intent so agents know what workflow to follow
+        if session.intent:
+            context["intent"] = session.intent
+
+        # Add git repo info if available
+        if project.repo_name:
+            context["repo_name"] = project.repo_name
+        if project.repo_url:
+            context["repo_url"] = project.repo_url
+        if hasattr(project, 'repo_owner') and project.repo_owner:
+            context["repo_owner"] = project.repo_owner
+
+        logger.debug(
+            "project_context_built_for_continue",
+            agent_id=self.id,
+            session_id=str(original_session_id),
+            project_id=str(project.id),
+            conversational_language=context.get("conversational_language"),
+        )
+
+        return context
+
+    def _build_system_prompt(self, language: str = "nl") -> str:
         """Build the system prompt with shared tool usage instructions.
 
         This method:
-        1. Injects common instructions from _common.md (if placeholder present)
-        2. Injects dynamic tool descriptions from mcp_config.yaml
-        3. Adds shared tool usage instructions for non-router/planner agents
-        4. Conditionally adds XML format instructions based on LLM capabilities
+        1. Adds VERY PROMINENT language instruction at the top
+        2. Injects common instructions from _common.md (if placeholder present)
+        3. Injects dynamic tool descriptions from mcp_config.yaml
+        4. Adds shared tool usage instructions for non-router/planner agents
+        5. Conditionally adds XML format instructions based on LLM capabilities
+        6. Adds markdown language instruction for specific agents
 
         Router and planner agents have special JSON output formats and don't
         need the built-in tools documentation.
+
+        Args:
+            language: Conversational language code (nl, en, etc.)
         """
         base_prompt = self.definition.system_prompt
+
+        # Add VERY PROMINENT language instruction at the VERY TOP (before everything else)
+        border_line = "!" * 80
+        language_header = f"""
+
+{border_line}
+!!! LANGUAGE ALERT !!! LANGUAGE ALERT !!! LANGUAGE ALERT !!!
+{border_line}
+!!! YOU MUST ONLY RESPOND IN: {language.upper()} !!!
+!!! LANGUAGE CODE: {language} !!!
+{border_line}
+!!! CRITICAL RULES !!!
+!!! - EVERY question you ask MUST be in {language.upper()} !!!
+!!! - EVERY response you give MUST be in {language.upper()} !!!
+!!! - NO EXCEPTIONS - NO OTHER LANGUAGE ALLOWED !!!
+{border_line}
+!!! VIOLATION OF THIS RULE IS UNACCEPTABLE !!!
+{border_line}
+!!! REMINDER: LANGUAGE = {language.upper()} !!!
+!!! REMINDER: LANGUAGE CODE = {language} !!!
+{border_line}
+!!! REPEAT: YOU MUST ONLY USE {language.upper()} !!!
+{border_line}
+"""
+        base_prompt = language_header + base_prompt
 
         # Inject common instructions (shared across agents)
         common_prompt = self._load_common_prompt()
         if common_prompt and "[COMMON_INSTRUCTIONS]" in base_prompt:
             base_prompt = base_prompt.replace("[COMMON_INSTRUCTIONS]", common_prompt)
+
+        # Inject markdown language instruction for specific agents
+        markdown_instruction = self._get_markdown_language_instruction()
+        if markdown_instruction:
+            base_prompt += markdown_instruction
 
         # Generate dynamic tool descriptions from MCP config
         if self.definition.mcps:
@@ -838,11 +977,16 @@ class Agent:
             # For LLMs that don't support native tools, add XML format instructions
             if not self.llm.supports_native_tools:
                 base_prompt += self._get_xml_format_instructions()
+            # Add language footer reminder
+            base_prompt += f"\n\n!!! FINAL REMINDER: RESPOND IN {language.upper()} ONLY !!!\n"
             return base_prompt
 
         # For other agents, add full tool usage instructions
         shared_tool_instructions = self._get_shared_tool_instructions()
-        return base_prompt + shared_tool_instructions
+        base_prompt = base_prompt + shared_tool_instructions
+        # Add language footer reminder
+        base_prompt += f"\n\n!!! FINAL REMINDER: RESPOND IN {language.upper()} ONLY !!!\n"
+        return base_prompt
 
     def _get_xml_format_instructions(self) -> str:
         """Get XML format instructions for LLMs that don't support native tool calling."""
@@ -1018,8 +1162,8 @@ RIGHT (tool call):
         # Extract clarifications for natural inclusion
         clarifications = context.get("clarifications", [])
 
-        # Build context string WITHOUT clarifications
-        context_items = {k: v for k, v in context.items() if k != "clarifications"}
+        # Build context string (excluding clarifications and conversational_language)
+        context_items = {k: v for k, v in context.items() if k not in ["clarifications", "conversational_language"]}
         context_str = "\n".join(
             f"- {key}: {value}" for key, value in context_items.items()
         )

@@ -44,6 +44,7 @@ from uuid import UUID
 import structlog
 
 from druppie.domain.common import AgentRunStatus, SessionStatus
+from druppie.core.language_detection import LanguageDetector
 
 if TYPE_CHECKING:
     from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository
@@ -76,6 +77,7 @@ class Orchestrator:
         self.execution_repo = execution_repo
         self.project_repo = project_repo
         self.question_repo = question_repo
+        self.language_detector = LanguageDetector()
 
     async def process_message(
         self,
@@ -152,6 +154,18 @@ class Orchestrator:
             sequence_number=0,
         )
         self.execution_repo.commit()
+
+        # Step 3.5: Detect and update language (only if detection succeeds)
+        detected_language = self.language_detector.detect_language(message)
+        if detected_language:  # None means text too short - preserve existing language
+            self.session_repo.update_language(current_session_id, detected_language)
+            logger.info(
+                "language_detected",
+                session_id=str(current_session_id),
+                language=detected_language,
+            )
+            self.session_repo.commit()
+        # If None, keep existing session language unchanged
 
         # Step 4: Get user's projects for router injection
         user_projects = self.project_repo.get_by_user(user_id)
@@ -337,6 +351,7 @@ class Orchestrator:
             "project_id": str(project.id),
             "project_name": project.name,
             "session_id": str(session_id),
+            "conversational_language": session.language or "nl",
         }
 
         # Add intent so agents know what workflow to follow
@@ -579,6 +594,19 @@ class Orchestrator:
 
         # Step 2: Complete the HITL tool call (saves answer to DB)
         status = await tool_executor.complete_after_answer(question_id, answer)
+
+        # Step 2.5: Detect and update language from HITL answer (only if detection succeeds)
+        detected_language = self.language_detector.detect_language(answer)
+        if detected_language:  # None means answer too short - preserve existing language
+            self.session_repo.update_language(session_id, detected_language)
+            logger.info(
+                "language_detected_from_hitl_answer",
+                session_id=str(session_id),
+                question_id=str(question_id),
+                language=detected_language,
+            )
+            self.session_repo.commit()
+        # If None, keep existing session language unchanged
 
         if status != ToolCallStatus.COMPLETED:
             logger.error("complete_after_answer_failed", status=status)

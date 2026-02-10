@@ -104,6 +104,7 @@ class SessionRepository(BaseRepository):
             status=SessionStatus(session.status),
             error_message=session.error_message,
             project_id=session.project_id,
+            language=session.language or "nl",
             token_usage=TokenUsage(
                 prompt_tokens=session.prompt_tokens or 0,
                 completion_tokens=session.completion_tokens or 0,
@@ -159,6 +160,12 @@ class SessionRepository(BaseRepository):
         """Update session's project."""
         self.db.query(SessionModel).filter_by(id=session_id).update({"project_id": project_id})
 
+    def update_language(self, session_id: UUID, language: str) -> None:
+        """Update the language for a session."""
+        session = self.db.query(SessionModel).filter_by(id=session_id).first()
+        if session:
+            session.language = language
+
     def delete(self, session_id: UUID) -> None:
         """Delete session (cascades to related data)."""
         self.db.query(SessionModel).filter_by(id=session_id).delete()
@@ -171,6 +178,7 @@ class SessionRepository(BaseRepository):
             status=SessionStatus(session.status),
             error_message=session.error_message,
             project_id=session.project_id,
+            language=session.language or "nl",
             token_usage=TokenUsage(
                 prompt_tokens=session.prompt_tokens or 0,
                 completion_tokens=session.completion_tokens or 0,
@@ -238,6 +246,7 @@ class SessionRepository(BaseRepository):
         """Convert AgentRun model to AgentRunSummary domain model."""
         return AgentRunSummary(
             id=run.id,
+            session_id=run.session_id,
             agent_id=run.agent_id,
             status=AgentRunStatus(run.status),
             error_message=run.error_message,
@@ -258,6 +267,7 @@ class SessionRepository(BaseRepository):
 
         return AgentRunDetail(
             id=run.id,
+            session_id=run.session_id,
             agent_id=run.agent_id,
             status=AgentRunStatus(run.status),
             error_message=run.error_message,
