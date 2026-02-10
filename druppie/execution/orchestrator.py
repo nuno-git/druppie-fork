@@ -294,6 +294,105 @@ class Orchestrator:
 
         return "\n".join(lines)
 
+    async def _get_language_instruction(self, session_id: UUID) -> str:
+        """Get language instruction for the session.
+
+        Implements the language detection and lock logic:
+        1. Check if there's already a language instruction (from HITL or locked)
+        2. If locked_to_first_message, check for existing instruction
+        3. If no instruction and not locked, detect from last user message
+        4. Fallback to configured default language
+
+        Args:
+            session_id: Session UUID
+
+        Returns:
+            Language instruction string or empty string
+        """
+        from druppie.db.models import Message
+        from druppie.llm.language_detection import detect_language, LANGUAGE_INSTRUCTIONS
+        from druppie.core.config import get_fallback_language, is_language_locked
+
+        # Step 1: Check for existing language instruction (from HITL)
+        system_messages = (
+            self.execution_repo.db.query(Message)
+            .filter(
+                Message.session_id == session_id,
+                Message.role == "system",
+                Message.content.like("LANGUAGE INSTRUCTION:%"),
+            )
+            .order_by(Message.created_at.desc())
+            .first()
+        )
+
+        if system_messages:
+            logger.info(
+                "language_instruction_using_existing",
+                instruction=system_messages.content[:80],
+            )
+            return system_messages.content
+
+        # Step 2: If lock_to_first_message is enabled, no instruction means first message
+        # We need to detect from the first user message
+        lock_to_first = is_language_locked()
+
+        if lock_to_first:
+            # Get all user messages
+            user_messages = (
+                self.execution_repo.db.query(Message)
+                .filter(
+                    Message.session_id == session_id,
+                    Message.role == "user",
+                )
+                .order_by(Message.created_at)
+                .all()
+            )
+
+            if user_messages:
+                # Detect from FIRST user message (not last)
+                first_message = user_messages[0].content
+                lang_code, lang_name, instruction = await detect_language(first_message)
+
+                if instruction:
+                    logger.info(
+                        "language_instruction_locked_to_first",
+                        language=lang_name,
+                        message_preview=first_message[:80],
+                    )
+                    return instruction
+
+        # Step 3: Not locked or lock disabled - detect from last user message
+        last_user_message = (
+            self.execution_repo.db.query(Message)
+            .filter(
+                Message.session_id == session_id,
+                Message.role == "user",
+            )
+            .order_by(Message.created_at.desc())
+            .first()
+        )
+
+        if last_user_message:
+            lang_code, lang_name, instruction = await detect_language(last_user_message.content)
+            if instruction:
+                logger.info(
+                    "language_instruction_detected_from_last",
+                    language=lang_name,
+                )
+                return instruction
+
+        # Step 4: Fallback to configured default
+        fallback_lang = get_fallback_language()
+        instruction = LANGUAGE_INSTRUCTIONS.get(fallback_lang, "")
+
+        logger.info(
+            "language_instruction_fallback",
+            language=fallback_lang,
+            has_instruction=bool(instruction),
+        )
+
+        return instruction
+
     async def execute_pending_runs(self, session_id: UUID) -> None:
         """Execute all pending agent runs in sequence.
 
@@ -431,6 +530,23 @@ class Orchestrator:
             Exception: Re-raises after storing error on agent_run record
         """
         from druppie.agents.runtime import Agent
+
+        # Get language instruction for this session
+        language_instruction = await self._get_language_instruction(session_id)
+
+        if language_instruction:
+            # Add language instruction to context
+            if context is None:
+                context = {}
+            context["language_instruction"] = language_instruction
+
+            logger.info(
+                "agent_run_language_instruction_added",
+                session_id=str(session_id),
+                agent_run_id=str(agent_run_id),
+                agent_id=agent_id,
+                language_instruction=language_instruction[:80],
+            )
 
         logger.info(
             "agent_run_start",

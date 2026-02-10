@@ -1015,11 +1015,12 @@ RIGHT (tool call):
         if not context:
             return prompt
 
-        # Extract clarifications for natural inclusion
+        # Extract language instruction and clarifications for special handling
+        language_instruction = context.get("language_instruction", "")
         clarifications = context.get("clarifications", [])
 
-        # Build context string WITHOUT clarifications
-        context_items = {k: v for k, v in context.items() if k != "clarifications"}
+        # Build context string WITHOUT language_instruction and clarifications
+        context_items = {k: v for k, v in context.items() if k not in ("language_instruction", "clarifications")}
         context_str = "\n".join(
             f"- {key}: {value}" for key, value in context_items.items()
         )
@@ -1038,11 +1039,20 @@ You previously asked: {question[:200]}{'...' if len(question) > 200 else ''}
 User's answer: {answer}
 """
 
-        return f"""CONTEXT:
-{context_str}
+        # Build prompt with language instruction at TOP (most prominent)
+        prompt_parts = []
 
-TASK:
-{prompt}{user_response_str}"""
+        if language_instruction:
+            prompt_parts.append(language_instruction)
+            prompt_parts.append("")  # Blank line for readability
+
+        if context_str:
+            prompt_parts.append(f"CONTEXT:\n{context_str}")
+            prompt_parts.append("")
+
+        prompt_parts.append(f"TASK:\n{prompt}{user_response_str}")
+
+        return "\n".join(prompt_parts)
 
     def _parse_output(self, content: str) -> Any:
         """Parse agent's final output.

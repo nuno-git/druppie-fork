@@ -383,6 +383,7 @@ class ToolExecutor:
             Final status: completed
         """
         from druppie.llm.language_detection import detect_language
+        from druppie.core.config import allow_language_switch
 
         # Get question record
         question = self.question_repo.get_by_id(question_id)
@@ -394,23 +395,30 @@ class ToolExecutor:
         self.question_repo.update_answer(question_id, answer)
 
         # Detect language and inject instruction for next agent
-        lang_code, lang_name, instruction = await detect_language(answer)
+        # Only if language switching is allowed
+        if allow_language_switch():
+            lang_code, lang_name, instruction = await detect_language(answer)
 
-        if instruction:
-            # Inject language instruction as a system message
-            # so it appears in the reconstructed messages
-            self.execution_repo.create_message(
-                session_id=question.session_id,
-                role="system",
-                content=instruction,
-                agent_run_id=None,
-                sequence_number=999,  # Special marker
-            )
-            self.db.commit()
+            if instruction:
+                # Inject language instruction as a system message
+                # so it appears in the reconstructed messages
+                self.execution_repo.create_message(
+                    session_id=question.session_id,
+                    role="system",
+                    content=instruction,
+                    agent_run_id=None,
+                    sequence_number=999,  # Special marker
+                )
+                self.db.commit()
 
+                logger.info(
+                    "language_instruction_injected_after_hitl",
+                    language=lang_name,
+                    question_id=str(question_id),
+                )
+        else:
             logger.info(
-                "language_instruction_injected_after_hitl",
-                language=lang_name,
+                "language_switch_disabled_skip_detection",
                 question_id=str(question_id),
             )
 

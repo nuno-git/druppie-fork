@@ -154,6 +154,33 @@ class MCPSettings(BaseSettings):
     )
 
 
+class LanguageSettings(BaseSettings):
+    """Language persistence and detection configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="LANGUAGE_")
+
+    fallback_language: str = Field(
+        default="nl",
+        alias="LANGUAGE_FALLBACK",
+        description="Fallback language when detection fails (e.g., 'nl', 'en')",
+    )
+    lock_to_first_message: bool = Field(
+        default=False,
+        alias="LANGUAGE_LOCK_TO_FIRST_MESSAGE",
+        description="Lock session to language detected in first user message",
+    )
+    allow_language_switch: bool = Field(
+        default=True,
+        alias="LANGUAGE_ALLOW_SWITCH",
+        description="Allow users to explicitly switch languages during session",
+    )
+    markdown_language: str = Field(
+        default="nl",
+        alias="LANGUAGE_MARKDOWN",
+        description="Language used for agent-generated Markdown content",
+    )
+
+
 class WorkspaceSettings(BaseSettings):
     """Workspace configuration."""
 
@@ -216,6 +243,7 @@ class Settings(BaseSettings):
     gitea: GiteaSettings = Field(default_factory=GiteaSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
+    language: LanguageSettings = Field(default_factory=LanguageSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
     api: APISettings = Field(default_factory=APISettings)
 
@@ -232,6 +260,10 @@ class Settings(BaseSettings):
             llm_model=self.llm.zai_model,
             dev_mode=self.api.dev_mode,
             workspace_root=str(self.workspace.root),
+            language_fallback=self.language.fallback_language,
+            language_lock=self.language.lock_to_first_message,
+            language_allow_switch=self.language.allow_language_switch,
+            language_markdown=self.language.markdown_language,
         )
 
         # Security warnings for missing credentials
@@ -273,3 +305,18 @@ def is_dev_mode() -> bool:
 def get_workspace_root() -> Path:
     """Get workspace root directory."""
     return get_settings().workspace.root
+
+
+def get_fallback_language() -> str:
+    """Get configured fallback language."""
+    return get_settings().language.fallback_language
+
+
+def should_lock_to_first_message() -> bool:
+    """Check if language should be locked to first message."""
+    return get_settings().language.lock_to_first_message
+
+
+def allow_language_switch() -> bool:
+    """Check if language switching is allowed."""
+    return get_settings().language.allow_language_switch
