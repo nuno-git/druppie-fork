@@ -733,7 +733,7 @@ async def invoke_skill(
         Skill content with optional tool descriptions, or error message
     """
     from druppie.services import SkillService
-    from druppie.core.mcp_client import generate_tool_descriptions
+    from druppie.core.tool_registry import get_tool_registry
 
     skill_service = SkillService()
     skill = skill_service.get_skill(skill_name)
@@ -765,11 +765,17 @@ async def invoke_skill(
         "instructions": skill.prompt_content,
     }
 
-    # If skill has allowed-tools, include tool descriptions
+    # If skill has allowed-tools, include tool descriptions from registry
     if skill.allowed_tools:
-        tool_descriptions = generate_tool_descriptions(skill.allowed_tools)
+        registry = get_tool_registry()
+        tool_descriptions = []
+        for server, tool_names in skill.allowed_tools.items():
+            for tool_name in tool_names:
+                tool_def = registry.get_by_server_and_name(server, tool_name)
+                if tool_def:
+                    tool_descriptions.append(f"- **{server}:{tool_name}**: {tool_def.description}")
         if tool_descriptions:
-            result["available_tools"] = tool_descriptions
+            result["available_tools"] = "\n".join(tool_descriptions)
             result["allowed_tools"] = skill.allowed_tools
 
     return result
