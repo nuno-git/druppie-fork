@@ -242,6 +242,59 @@ class ToolExecutor:
             )
             return None
 
+    def _validate_tool_arguments(self, tool_call) -> str | None:
+        """Validate tool arguments against the tool's schema.
+
+        Uses the unified ToolRegistry to get the tool definition and validate
+        the LLM-provided arguments. This catches type errors, missing required
+        fields, and invalid values before execution.
+
+        Args:
+            tool_call: The ToolCall model with tool_name, mcp_server, arguments
+
+        Returns:
+            Error message string if validation fails, None if valid
+        """
+        try:
+            from druppie.core.tool_registry import get_tool_registry
+
+            registry = get_tool_registry()
+
+            # Build full tool name (e.g., "coding_read_file" or "done")
+            if tool_call.mcp_server and tool_call.mcp_server != "builtin":
+                full_name = f"{tool_call.mcp_server}_{tool_call.tool_name}"
+            else:
+                full_name = tool_call.tool_name
+
+            # Get tool definition
+            tool_def = registry.get(full_name)
+            if not tool_def:
+                # Tool not in registry - skip validation (MCP server will validate)
+                logger.debug(
+                    "tool_not_in_registry_skipping_validation",
+                    tool_name=full_name,
+                )
+                return None
+
+            # Validate arguments
+            is_valid, error_msg, _ = tool_def.validate_arguments(tool_call.arguments)
+            if not is_valid:
+                return (
+                    f"Invalid arguments for tool '{full_name}': {error_msg}. "
+                    f"Please check the tool schema and provide valid arguments."
+                )
+
+            return None
+
+        except Exception as e:
+            # Log but don't fail - let the tool execution handle it
+            logger.warning(
+                "tool_validation_exception",
+                tool_name=tool_call.tool_name,
+                error=str(e),
+            )
+            return None
+
     async def execute(self, tool_call_id: UUID) -> str:
         """Execute a tool call.
 
@@ -274,6 +327,24 @@ class ToolExecutor:
         # Builtin tools have mcp_server="builtin" (set by runtime.py)
         is_builtin = tool_call.mcp_server == "builtin" or tool_call.tool_name in BUILTIN_TOOLS
         is_hitl = tool_call.tool_name in HITL_TOOLS
+
+        # Step 2.5: Validate arguments against tool schema
+        validation_error = self._validate_tool_arguments(tool_call)
+        if validation_error:
+            logger.warning(
+                "tool_argument_validation_failed",
+                tool_call_id=str(tool_call_id),
+                tool_name=tool_call.tool_name,
+                mcp_server=tool_call.mcp_server,
+                error=validation_error,
+            )
+            self.execution_repo.update_tool_call(
+                tool_call.id,
+                status=ToolCallStatus.FAILED,
+                error=validation_error,
+            )
+            self.db.commit()
+            return ToolCallStatus.FAILED
 
         # Step 3: Check tool access and approval for MCP tools (not builtin)
         if not is_builtin and tool_call.mcp_server:
