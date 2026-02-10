@@ -45,32 +45,41 @@ async def detect_language(text: str, fallback_language: str | None = None) -> tu
         return (fallback_language, lang_name, instruction)
 
     # Simple prompt for language detection
-    # Common words/phrases to help detection
-    prompt = f"""Detect the language of this text and respond with ONLY the ISO 639-1 language code (two-letter code).
+    # Use straightforward examples to help the LLM distinguish similar languages
+    prompt = f"""Detect the language of the following text. Respond ONLY with the two-letter ISO 639-1 language code.
 
-Text: "{text[:500]}"
+Text: "{text[:400]}"
 
-IMPORTANT:
-- If text contains English words like "make", "app", "calculator", "website", "for", "the", "a" -> respond with "en"
-- If text contains Dutch words like "maak", "app", "rekenmachine", "website", "voor", "de", "een" -> respond with "nl"
-- English and Dutch can look similar - pay attention to spelling!
+Common language markers:
+- English: "make", "the", "for", "please", "yes", "no" -> en
+- Dutch: "maak", "de", "voor", "alsjeblieft", "ja", "nee" -> nl
+- Spanish: "hacer", "el", "por favor", "sí", "no" -> es
+- French: "faire", "le", "s'il vous plaît", "oui", "non" -> fr
 
-Respond with only the two-letter code (e.g., "en", "nl", "es", "fr", "de", "pt", "it", "ru", "ja", "zh", "ko")."""
+Respond with only the two-letter code (e.g., en, nl, es, fr, de, pt, it, ru, ja, zh, ko)."""
 
     try:
         llm_service = get_llm_service()
         llm = llm_service.get_llm()
 
-        # Call LLM
+        # Call LLM with higher token limit for reliable response
+        # Even though we only need 2 chars, LLMs may need more tokens to process
         response = await llm.achat(
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=10,  # We only need the language code
+            max_tokens=50,  # Increased from 10 for more reliable detection
         )
 
         # Extract language code from response
         # Handle empty or malformed responses
-        if not response.content or not hasattr(response.content, 'strip'):
-            logger.warning("empty_llm_response", defaulting_to=fallback_language)
+        logger.debug(
+            "llm_response_received",
+            content=response.content,
+            raw_content=response.raw_content,
+            content_length=len(response.content) if response.content else 0,
+        )
+
+        if not response.content:
+            logger.warning("empty_llm_response", defaulting_to=fallback_language, raw=response.raw_content)
             lang_name = _get_language_name(fallback_language)
             instruction = LANGUAGE_INSTRUCTIONS.get(fallback_language, "")
             return (fallback_language, lang_name, instruction)
