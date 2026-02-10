@@ -704,6 +704,27 @@ class Agent:
                         tool=f"{server}:{tool}",
                         error=error_msg,
                     )
+                    # Add the failed tool call to messages so LLM sees the error
+                    messages.append({
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": llm_tool_call_str_id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(tool_args),
+                            },
+                        }],
+                    })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": llm_tool_call_str_id,
+                        "content": result_str,
+                    })
+                    # Break out of the tool loop - don't execute remaining tools
+                    # Let the LLM see the error and retry in the next iteration
+                    break
                 else:
                     result_str = tool_call_record.result if tool_call_record else "{}"
 
