@@ -1,6 +1,8 @@
 """Parameter models for docker MCP tools.
 
-These models define the parameters for Docker container operations.
+These define the parameter types for validation. Descriptions come from
+mcp_config.yaml - these models are purely for type-safe validation.
+
 Hidden parameters (session_id, repo_name, repo_owner, user_id, project_id)
 are injected at runtime and not included here.
 """
@@ -9,8 +11,6 @@ from pydantic import BaseModel, Field
 
 
 class DockerBuildParams(BaseModel):
-    """Build a Docker image by cloning from git repository."""
-
     image_name: str = Field(description="Name for the built image (e.g., myapp:latest)")
     git_url: str | None = Field(default=None, description="Full git URL to clone (alternative to repo_name)")
     branch: str | None = Field(default=None, description="Git branch (default: main)")
@@ -19,8 +19,6 @@ class DockerBuildParams(BaseModel):
 
 
 class DockerRunParams(BaseModel):
-    """Run a Docker container - host port auto-assigned."""
-
     image_name: str = Field(description="Docker image to run")
     container_name: str = Field(description="Name for the container")
     container_port: int = Field(description="Container port from Dockerfile EXPOSE (e.g., 80 for nginx, 3000 for node)")
@@ -31,29 +29,21 @@ class DockerRunParams(BaseModel):
 
 
 class DockerStopParams(BaseModel):
-    """Stop a running container."""
-
     container_name: str = Field(description="Name of container to stop")
     remove: bool = Field(default=True, description="Whether to remove container after stopping")
 
 
 class DockerLogsParams(BaseModel):
-    """Get container logs."""
-
     container_name: str = Field(description="Name of container to get logs from")
     tail: int | None = Field(default=100, description="Number of lines to show")
 
 
 class DockerRemoveParams(BaseModel):
-    """Remove a container."""
-
     container_name: str = Field(description="Name of container to remove")
     force: bool = Field(default=False, description="Force remove running container")
 
 
 class DockerListContainersParams(BaseModel):
-    """List Docker containers with optional filtering."""
-
     all: bool = Field(default=False, description="Include stopped containers")
     project_id: str | None = Field(default=None, description="Filter by druppie.project_id label")
     session_id: str | None = Field(default=None, description="Filter by druppie.session_id label")
@@ -61,14 +51,10 @@ class DockerListContainersParams(BaseModel):
 
 
 class DockerInspectParams(BaseModel):
-    """Inspect container details."""
-
     container_name: str = Field(description="Name of container to inspect")
 
 
 class DockerExecCommandParams(BaseModel):
-    """Execute command in running container."""
-
     container_name: str = Field(description="Name of container")
     command: str = Field(description="Command to execute")
     workdir: str | None = Field(default=None, description="Working directory inside container")
