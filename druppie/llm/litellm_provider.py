@@ -217,15 +217,20 @@ class ChatLiteLLM(BaseLLM):
         self.timeout = timeout or float(os.getenv("LITELLM_TIMEOUT", "300"))
         self.max_retries = max_retries or int(os.getenv("LITELLM_MAX_RETRIES", "3"))
 
-        # Determine model with provider prefix
+        # Determine model names
+        # display_model: User-friendly name (e.g., "glm-4.7")
+        # _litellm_model: LiteLLM format with prefix (e.g., "openai/glm-4.7")
         raw_model = model or os.getenv("LITELLM_MODEL", self.DEFAULT_MODELS.get(self.provider, ""))
         prefix = self.PROVIDER_PREFIXES.get(self.provider, "")
 
-        # Don't double-prefix
+        # Store display model (without litellm prefix)
+        self.display_model = raw_model
+
+        # Build LiteLLM model format (with prefix if needed)
         if raw_model.startswith(prefix) or "/" in raw_model:
-            self.model = raw_model
+            self._litellm_model = raw_model
         else:
-            self.model = f"{prefix}{raw_model}"
+            self._litellm_model = f"{prefix}{raw_model}"
 
         # Configure LiteLLM based on provider
         self._configure_provider()
@@ -239,7 +244,8 @@ class ChatLiteLLM(BaseLLM):
         logger.info(
             "litellm_provider_initialized",
             provider=self.provider,
-            model=self.model,
+            model=self.display_model,
+            litellm_model=self._litellm_model,
             api_base=self.api_base or "default",
         )
 
@@ -269,7 +275,13 @@ class ChatLiteLLM(BaseLLM):
 
     @property
     def model_name(self) -> str:
-        return self.model
+        """Return user-friendly model name (e.g., 'glm-4.7' not 'openai/glm-4.7')."""
+        return self.display_model
+
+    @property
+    def model(self) -> str:
+        """Alias for display_model for backward compatibility with service.py logging."""
+        return self.display_model
 
     @property
     def provider_name(self) -> str:
@@ -284,7 +296,7 @@ class ChatLiteLLM(BaseLLM):
         """Create new instance with tools bound."""
         new_instance = ChatLiteLLM(
             provider=self.provider,
-            model=self.model,
+            model=self.display_model,  # Use display model, not litellm format
             api_key=self.api_key,
             api_base=self.api_base,
             temperature=self.temperature,
@@ -304,7 +316,7 @@ class ChatLiteLLM(BaseLLM):
         effective_tools = tools or self._bound_tools
 
         kwargs = {
-            "model": self.model,
+            "model": self._litellm_model,
             "messages": messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
@@ -338,7 +350,7 @@ class ChatLiteLLM(BaseLLM):
         effective_max_tokens = max_tokens or self.max_tokens
 
         kwargs = {
-            "model": self.model,
+            "model": self._litellm_model,
             "messages": messages,
             "temperature": self.temperature,
             "max_tokens": effective_max_tokens,
@@ -403,7 +415,7 @@ class ChatLiteLLM(BaseLLM):
             prompt_tokens=usage.prompt_tokens if usage else 0,
             completion_tokens=usage.completion_tokens if usage else 0,
             total_tokens=usage.total_tokens if usage else 0,
-            model=self.model,
+            model=self.display_model,  # User-friendly model name
             provider=self.provider_name,
         )
 
