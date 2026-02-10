@@ -269,7 +269,7 @@ Key sections:
 
 - **`mcps`**: Maps MCP server names to the list of tools the agent is allowed to call. An agent cannot call tools not listed here, even if the MCP server exposes them.
 - **`approval_overrides`**: Overrides the global approval configuration for specific tools. For example, `write_file` requires no approval globally, but the Business Analyst definition adds an override requiring `business_analyst` role approval. The Architect similarly overrides it to require `architect` role approval.
-- **`model` / `temperature` / `max_tokens`**: LLM parameters for this agent (note: this section is currently a known issue -- see KNOWN_ISSUES.md).
+- **`model` / `temperature` / `max_tokens`**: LLM parameters for this agent (note: this section is currently a known issue -- see BACKLOG.md).
 - **`max_iterations`**: Safety limit on the agent's tool-calling loop.
 
 ### Hidden Parameter Injection

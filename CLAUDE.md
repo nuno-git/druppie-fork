@@ -2,21 +2,60 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Important: Branch Policy
+
+- **Default branch**: `colab-dev` (NOT `main`)
+- **Always branch from**: `colab-dev`
+- **PRs target**: `colab-dev`
+- **Note**: `main` is deprecated and will be deleted in the future
+
+When creating new branches:
+```bash
+git checkout colab-dev
+git pull origin colab-dev
+git checkout -b feature/your-feature-name
+```
+
+## Documentation Reminder
+
+When making significant changes, remember to update the `/docs` folder:
+- `docs/FEATURES.md` - New features or feature changes
+- `docs/BACKLOG.md` - Bugs, technical debt, and improvement ideas
+- `docs/TECHNICAL.md` - Architecture or technical changes
+
 ## Project Overview
 
 Druppie is a governance platform for AI agents with MCP (Model Context Protocol) tool permissions and approval workflows. Agents can only act through MCP tools - no direct file output.
 
 ## Development Commands
 
+### Docker Compose (primary workflow)
+```bash
+# Start full dev environment (hot reload)
+docker compose --profile dev --profile init up -d
+
+# Start infrastructure only
+docker compose --profile infra --profile init up -d
+
+# Stop everything
+docker compose --profile dev down
+
+# View logs
+docker compose logs -f druppie-backend-dev
+
+# Reset application database
+docker compose --profile reset-db run --rm reset-db
+
+# Hard reset (wipe all data + re-initialize)
+docker compose --profile dev down
+docker compose --profile infra --profile reset-hard run --rm reset-hard
+
+# Rebuild after Dockerfile changes
+docker compose --profile dev up -d --build
+```
+
 ### Backend (Python/FastAPI)
 ```bash
-# Dev mode with hot reload (recommended)
-./setup_dev.sh              # Start infra + backend + frontend
-./setup_dev.sh backend      # Backend only (port 8100)
-
-# Manual backend
-cd druppie && uvicorn api.main:app --reload --port 8100
-
 # Tests & linting
 cd druppie && pytest
 cd druppie && ruff check .
@@ -31,13 +70,6 @@ npm run dev      # Dev server (port 5273)
 npm run lint
 npm test
 npm run test:e2e # Playwright
-```
-
-### Infrastructure
-```bash
-./setup_dev.sh infra    # Start DBs, Keycloak, Gitea, MCP servers
-./setup_dev.sh stop     # Stop all
-./setup_dev.sh status   # Check status
 ```
 
 ## Architecture
@@ -69,7 +101,7 @@ Domain models use Summary/Detail naming:
 
 ## Critical Rules
 
-1. **NO database migrations** - Update SQLAlchemy models directly, reset DB with `./setup.sh clean && ./setup.sh all`
+1. **NO database migrations** - Update SQLAlchemy models directly, reset DB with `docker compose --profile reset-db run --rm reset-db`
 2. **NO JSON/JSONB columns** - Normalize everything into proper relational tables
 3. **NO legacy/fallback code** - Clean architecture only, no backwards compatibility hacks
 4. **Config in YAML files** - Agent definitions in `agents/definitions/*.yaml`, not database
@@ -80,12 +112,14 @@ Domain models use Summary/Detail naming:
 | User | Password | Roles |
 |------|----------|-------|
 | admin | Admin123! | admin |
-| architect | Architect123! | architect, developer |
-| seniordev | Developer123! | developer |
+| architect | Architect123! | architect |
+| developer | Developer123! | developer |
+| analyst | Analyst123! | business_analyst |
+| normal_user | User123! | user |
 
 ## Environment
 
-Required in `.env`:
+Copy `.env.example` to `.env` and set:
 ```
 LLM_PROVIDER=zai
 ZAI_API_KEY=your_key
