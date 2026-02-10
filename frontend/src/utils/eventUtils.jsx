@@ -16,6 +16,9 @@ import {
   AlertTriangle,
   CheckCircle,
   Loader2,
+  TestTube,
+  TestTube2,
+  BarChart3,
 } from 'lucide-react'
 
 // Icon mapping for workflow events
@@ -73,6 +76,16 @@ export const getEventIcon = (eventType, status) => {
     case 'workflow_failed':
     case 'task_failed':
       return <XCircle {...iconProps} />
+    case 'test_started':
+    case 'test_completed':
+    case 'tdd_validation':
+      return <TestTube {...iconProps} />
+    case 'test_result':
+      return <BarChart3 {...iconProps} />
+    case 'test_passed':
+      return <CheckCircle {...iconProps} />
+    case 'test_failed':
+      return <XCircle {...iconProps} />
     default:
       return <Zap {...iconProps} />
   }
@@ -117,6 +130,7 @@ export const EVENT_CATEGORIES = {
   workflow: ['workflow_started', 'workflow_completed', 'workflow_failed', 'step_started', 'step_completed'],
   approval: ['approval_required', 'approval_pending', 'question_pending'],
   result: ['files_created', 'git_pushed', 'build_complete', 'app_running', 'workspace_initialized'],
+  test: ['test_started', 'test_completed', 'test_result', 'tdd_validation', 'test_failed', 'test_passed'],
 }
 
 export const getEventCategory = (eventType) => {
@@ -187,6 +201,14 @@ export const getCategoryStyles = (category, status) => {
       iconBg: 'bg-green-100',
       iconText: 'text-green-600',
       badge: 'bg-green-100 text-green-700',
+    },
+    test: {
+      bg: 'bg-teal-50',
+      border: 'border-teal-200',
+      text: 'text-teal-800',
+      iconBg: 'bg-teal-100',
+      iconText: 'text-teal-600',
+      badge: 'bg-teal-100 text-teal-700',
     },
     info: {
       bg: 'bg-gray-50',
@@ -275,6 +297,24 @@ export const formatEventTitle = (event) => {
   if (type === 'step_completed') {
     return 'Step completed'
   }
+  if (type === 'test_started') {
+    return 'Starting tests'
+  }
+  if (type === 'test_completed' || type === 'test_result') {
+    const verdict = data.verdict || data.status || 'completed'
+    return verdict === 'PASS' ? 'Tests passed' : 
+           verdict === 'FAIL' ? 'Tests failed' : 
+           'Test results'
+  }
+  if (type === 'tdd_validation') {
+    return 'TDD validation'
+  }
+  if (type === 'test_passed') {
+    return 'Tests passed ✓'
+  }
+  if (type === 'test_failed') {
+    return 'Tests failed ✗'
+  }
 
   if (title) return title
   if (type) {
@@ -333,6 +373,34 @@ export const getEventDescription = (event) => {
       return `URL: ${data.url}`
     }
     return data.container_name ? `Container: ${data.container_name}` : 'Application is running'
+  }
+  if (type === 'test_completed' || type === 'test_result' || type === 'tdd_validation') {
+    const parts = []
+    if (data.summary) {
+      const total = data.summary.total || 0
+      const passed = data.summary.passed || 0
+      const failed = data.summary.failed || 0
+      if (total > 0) {
+        parts.push(`${passed}/${total} passed`)
+        if (failed > 0) parts.push(`${failed} failed`)
+      }
+    }
+    if (data.coverage !== undefined) {
+      parts.push(`Coverage: ${data.coverage.toFixed(1)}%`)
+    }
+    if (data.framework && data.framework !== 'unknown') {
+      parts.push(`Framework: ${data.framework}`)
+    }
+    if (data.retry_count !== undefined) {
+      parts.push(`Attempt: ${data.retry_count + 1}`)
+    }
+    return parts.join(' • ') || 'Test results available'
+  }
+  if (type === 'test_passed') {
+    return 'All tests passed successfully'
+  }
+  if (type === 'test_failed') {
+    return 'Some tests failed. Check feedback for details.'
   }
 
   return event.description || ''
