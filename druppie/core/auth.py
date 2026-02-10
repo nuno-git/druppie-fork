@@ -16,7 +16,7 @@ logger = structlog.get_logger()
 
 # Development mode user for bypassing Keycloak
 DEV_USER = {
-    "sub": "dev-user-001",
+    "sub": "00000000-0000-0000-0000-000000000001",  # Valid UUID for dev mode
     "preferred_username": "developer",
     "email": "developer@localhost",
     "given_name": "Dev",
