@@ -22,13 +22,13 @@ from uuid import UUID
 import structlog
 import yaml
 
-from druppie.domain.agent_definition import AgentDefinition
-from druppie.agents.builtin_tools import DEFAULT_BUILTIN_TOOLS, get_builtin_tools, is_builtin_tool, is_hitl_tool
-from druppie.llm import get_llm_service
+from druppie.agents.builtin_tools import DEFAULT_BUILTIN_TOOLS, is_builtin_tool
 from druppie.core.mcp_client import generate_tool_descriptions
 from druppie.core.mcp_config import MCPConfig
-from druppie.execution.tool_executor import ToolExecutor, ToolCallStatus
+from druppie.domain.agent_definition import AgentDefinition
 from druppie.execution.mcp_http import MCPHttp
+from druppie.execution.tool_executor import ToolCallStatus, ToolExecutor
+from druppie.llm import get_llm_service
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DBSession
@@ -499,17 +499,19 @@ class Agent:
 
         Agent only completes when calling the `done` tool.
         """
+        from druppie.core.tool_registry import get_tool_registry
         from druppie.repositories import ExecutionRepository
 
         execution_repo = ExecutionRepository(self.db)
 
-        # Get MCP tools from config (per agent YAML)
-        tools = self.mcp_config.get_all_tools_for_agent(self.definition.mcps)
-
-        # Convert to OpenAI format and add builtin tools (per agent YAML config)
-        openai_tools = self._to_openai_tools(tools)
+        # Get all tools for this agent from the unified ToolRegistry
+        registry = get_tool_registry()
         builtin_tool_names = DEFAULT_BUILTIN_TOOLS + self.definition.extra_builtin_tools
-        openai_tools.extend(get_builtin_tools(builtin_tool_names))
+        tools = registry.get_tools_for_agent(
+            agent_mcps=self.definition.mcps,
+            builtin_tool_names=builtin_tool_names,
+        )
+        openai_tools = registry.to_openai_format(tools)
 
         max_iterations = self.definition.max_iterations or 10
 
@@ -793,20 +795,6 @@ class Agent:
         raise AgentMaxIterationsError(
             f"Agent '{self.id}' exceeded {max_iterations} iterations"
         )
-
-    def _to_openai_tools(self, tools: list[dict]) -> list[dict]:
-        """Convert MCP tool config to OpenAI function format."""
-        openai_tools = []
-        for tool in tools:
-            openai_tools.append({
-                "type": "function",
-                "function": {
-                    "name": f"{tool['server']}_{tool['name']}",
-                    "description": tool.get("description", f"Execute {tool['name']}"),
-                    "parameters": tool.get("parameters", {"type": "object", "properties": {}}),
-                },
-            })
-        return openai_tools
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt with shared tool usage instructions.

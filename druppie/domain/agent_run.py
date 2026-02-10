@@ -2,21 +2,35 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
-from uuid import UUID
 from datetime import datetime
+from uuid import UUID
 
-from .common import TokenUsage, LLMMessage, AgentRunStatus, ToolCallStatus
+from pydantic import BaseModel
+
 from .approval import ApprovalSummary
+from .common import AgentRunStatus, LLMMessage, TokenUsage, ToolCallStatus
+from .tool import ToolType
 
 
 class ToolCallDetail(BaseModel):
-    """A tool the LLM decided to call and its execution result."""
+    """A tool the LLM decided to call and its execution result.
+
+    This represents a specific invocation of a tool, not the tool definition.
+    Tool metadata (description, parameter schema) can be looked up via the
+    ToolRegistry using the full_name field.
+    """
+
     id: UUID
     index: int  # Order in the LLM response (0, 1, 2...)
-    tool_type: str  # "builtin" or "mcp"
+    tool_type: ToolType  # ToolType.BUILTIN or ToolType.MCP
     mcp_server: str | None  # "coding", "docker" (None for builtin)
-    tool_name: str  # "write_file", "done", "hitl_ask_question", "execute_agent"
+    tool_name: str  # "write_file", "done", "hitl_ask_question"
+    full_name: str  # "coding_write_file" or "done" (for registry lookup)
+
+    # Tool description (from ToolRegistry, for display convenience)
+    description: str = ""
+
+    # The actual arguments passed to this tool call
     arguments: dict
 
     # Execution result
