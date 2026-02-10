@@ -496,11 +496,6 @@ system_prompt: |
   Be detailed enough that a developer can implement without asking questions.
 
   =============================================================================
-  TOOLS
-  =============================================================================
-  [TOOL_DESCRIPTIONS_PLACEHOLDER]
-
-  =============================================================================
   RULES
   =============================================================================
   - You may ONLY write ONE file: architecture.md

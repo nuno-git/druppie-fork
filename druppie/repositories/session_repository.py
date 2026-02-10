@@ -1,39 +1,42 @@
 """Session repository for database access."""
 
 from uuid import UUID
-from sqlalchemy.orm import Session as DbSession
 
-from .base import BaseRepository
-from ..domain import (
-    SessionSummary,
-    SessionDetail,
-    SessionStatus,
-    TimelineEntry,
-    TimelineEntryType,
-    Message,
-    TokenUsage,
-    LLMMessage,
-    AgentRunSummary,
-    AgentRunDetail,
-    AgentRunStatus,
-    LLMCallDetail,
-    LLMRawResponse,
-    ToolCallDetail,
-    ToolCallStatus,
-    ApprovalSummary,
-    ApprovalStatus,
-    ProjectSummary,
+from ..db.models import (
+    AgentRun,
+    Approval,
+    LlmCall,
+    Project,
+    Question,
+    ToolCall,
+)
+from ..db.models import (
+    Message as MessageModel,
 )
 from ..db.models import (
     Session as SessionModel,
-    AgentRun,
-    Message as MessageModel,
-    ToolCall,
-    LlmCall,
-    Approval,
-    Project,
-    Question,
 )
+from ..domain import (
+    AgentRunDetail,
+    AgentRunStatus,
+    AgentRunSummary,
+    ApprovalStatus,
+    ApprovalSummary,
+    LLMCallDetail,
+    LLMMessage,
+    LLMRawResponse,
+    Message,
+    ProjectSummary,
+    SessionDetail,
+    SessionStatus,
+    SessionSummary,
+    TimelineEntry,
+    TimelineEntryType,
+    TokenUsage,
+    ToolCallDetail,
+    ToolCallStatus,
+)
+from .base import BaseRepository
 
 
 class SessionRepository(BaseRepository):
@@ -367,13 +370,32 @@ class SessionRepository(BaseRepository):
         ]
 
     def _build_tool_call_detail(self, tc: ToolCall, index: int) -> ToolCallDetail:
-        """Build a single tool call detail."""
+        """Build a single tool call detail.
+
+        Uses ToolRegistry to get tool description. Parameter schema is not
+        included here - it's part of the ToolDefinition and can be looked
+        up via the registry using full_name if needed.
+        """
+        from druppie.core.tool_registry import get_tool_registry
+        from druppie.domain.tool import ToolType
+
         # Determine tool type
-        tool_type = "mcp"
+        tool_type = ToolType.MCP
         mcp_server = tc.mcp_server
         if tc.mcp_server in ["builtin", "hitl"]:
-            tool_type = "builtin"
+            tool_type = ToolType.BUILTIN
             mcp_server = None
+
+        # Get tool definition from registry for description
+        registry = get_tool_registry()
+        tool_def = registry.get_by_server_and_name(tc.mcp_server, tc.tool_name)
+        description = tool_def.description if tool_def else ""
+
+        # Build full name (for registry lookup)
+        if mcp_server:
+            full_name = f"{mcp_server}_{tc.tool_name}"
+        else:
+            full_name = tc.tool_name
 
         # Get approval if any
         approval = (
@@ -425,6 +447,8 @@ class SessionRepository(BaseRepository):
             tool_type=tool_type,
             mcp_server=mcp_server,
             tool_name=tc.tool_name,
+            full_name=full_name,
+            description=description,
             arguments=arguments,
             status=ToolCallStatus(tc.status),
             result=tc.result,

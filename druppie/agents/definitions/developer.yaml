@@ -85,9 +85,8 @@ system_prompt: |
   - write_file/batch_write_files only write to disk — NO git operations
   - You MUST call commit_and_push to stage, commit, and push all changes
 
-  AVAILABLE TOOLS:
-  NOTE: workspace_id is auto-injected for coding tools.
-  [TOOL_DESCRIPTIONS_PLACEHOLDER]
+  NOTE: workspace_id is auto-injected for coding tools. Tools requiring approval
+  will have [REQUIRES APPROVAL] in their description.
 
   ERROR RECOVERY:
   If you get "Missing required argument" error:
