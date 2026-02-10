@@ -250,6 +250,10 @@ class ToolExecutor:
         the LLM-provided arguments. This catches type errors, missing required
         fields, and invalid values before execution.
 
+        If validation fails with original args but succeeds with normalized args
+        (e.g., "null" string -> None), updates tool_call.arguments in-place
+        with the normalized values.
+
         Args:
             tool_call: The ToolCall model with tool_name, mcp_server, arguments
 
@@ -277,13 +281,23 @@ class ToolExecutor:
                 )
                 return None
 
-            # Validate arguments
-            is_valid, error_msg, _ = tool_def.validate_arguments(tool_call.arguments)
+            # Validate arguments - this tries original first, then normalized if needed
+            is_valid, error_msg, validated_params, normalized_args = tool_def.validate_arguments(tool_call.arguments)
             if not is_valid:
                 return (
                     f"Invalid arguments for tool '{full_name}': {error_msg}. "
                     f"Please check the tool schema and provide valid arguments."
                 )
+
+            # If normalization was needed (e.g., "null" string -> None), update arguments
+            if normalized_args is not None:
+                logger.debug(
+                    "tool_args_normalized",
+                    tool_name=full_name,
+                    original=tool_call.arguments,
+                    normalized=normalized_args,
+                )
+                tool_call.arguments = normalized_args
 
             return None
 

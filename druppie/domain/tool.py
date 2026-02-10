@@ -338,7 +338,7 @@ class ToolDefinition(BaseModel):
                 normalized[key] = value
         return normalized
 
-    def validate_arguments(self, arguments: dict | None) -> tuple[bool, str | None, BaseModel | None]:
+    def validate_arguments(self, arguments: dict | None) -> tuple[bool, str | None, BaseModel | None, dict | None]:
         """Validate arguments and return typed params model.
 
         First attempts validation with original arguments. If that fails,
@@ -349,9 +349,10 @@ class ToolDefinition(BaseModel):
             arguments: Raw arguments dict from LLM
 
         Returns:
-            Tuple of (is_valid, error_message, validated_params)
-            - If valid: (True, None, ParamsModel instance)
-            - If invalid: (False, error_message, None)
+            Tuple of (is_valid, error_message, validated_params, normalized_args)
+            - If valid with original: (True, None, ParamsModel, None)
+            - If valid with normalized: (True, None, ParamsModel, normalized_dict)
+            - If invalid: (False, error_message, None, None)
         """
         if arguments is None:
             arguments = {}
@@ -359,7 +360,7 @@ class ToolDefinition(BaseModel):
         # First try with original arguments
         try:
             validated = self.params_model.model_validate(arguments)
-            return True, None, validated
+            return True, None, validated, None  # No normalization needed
         except ValidationError as first_error:
             pass  # Try normalization fallback
 
@@ -367,7 +368,7 @@ class ToolDefinition(BaseModel):
         normalized = self._normalize_llm_arguments(arguments)
         try:
             validated = self.params_model.model_validate(normalized)
-            return True, None, validated
+            return True, None, validated, normalized  # Return normalized dict
         except ValidationError as e:
             # Format error message nicely (use original error for clarity)
             errors = []
@@ -375,7 +376,7 @@ class ToolDefinition(BaseModel):
                 loc = ".".join(str(x) for x in error["loc"])
                 msg = error["msg"]
                 errors.append(f"{loc}: {msg}")
-            return False, "; ".join(errors), None
+            return False, "; ".join(errors), None, None
 
     def get_param_descriptions(self) -> dict[str, str]:
         """Get parameter descriptions from the model's field info.
