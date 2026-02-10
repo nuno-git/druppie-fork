@@ -76,14 +76,23 @@ class ToolDefinition(BaseModel):
             return f"{self.server}_{self.name}"
         return self.name
 
-    def get_json_schema(self) -> dict:
+    def get_json_schema(self, strict: bool = True) -> dict:
         """Generate JSON Schema from the params model.
 
         This is what gets sent to the LLM for function calling.
         Pydantic generates this automatically from the model definition.
+
+        Args:
+            strict: If True, generate OpenAI strict mode compliant schema:
+                    - additionalProperties: false on all objects
+                    - All properties in required array
+                    - Optional fields use type union with null
         """
         if self.params_model is EmptyParams:
-            return {"type": "object", "properties": {}}
+            schema = {"type": "object", "properties": {}}
+            if strict:
+                schema["additionalProperties"] = False
+            return schema
 
         schema = self.params_model.model_json_schema()
 
@@ -107,7 +116,96 @@ class ToolDefinition(BaseModel):
         if "properties" not in schema:
             schema["properties"] = {}
 
+        # Apply strict mode requirements
+        if strict:
+            schema = self._apply_strict_mode(schema)
+
         return schema
+
+    def _apply_strict_mode(self, schema: dict) -> dict:
+        """Apply OpenAI strict mode requirements to schema.
+
+        Strict mode requires:
+        - additionalProperties: false on all objects
+        - All properties listed in required array
+        - Optional fields must have null in type union and default: null
+
+        This is applied recursively to nested objects.
+        """
+        if not isinstance(schema, dict):
+            return schema
+
+        # Add additionalProperties: false to object types
+        if schema.get("type") == "object" or "properties" in schema:
+            schema["additionalProperties"] = False
+
+            # Ensure all properties are in required array
+            if "properties" in schema:
+                all_props = list(schema["properties"].keys())
+                existing_required = set(schema.get("required", []))
+
+                # For properties not in required, add null to their type
+                for prop_name, prop_schema in schema["properties"].items():
+                    if prop_name not in existing_required:
+                        # Make optional by adding null to type union
+                        self._make_nullable(prop_schema)
+
+                # All properties must be in required for strict mode
+                schema["required"] = all_props
+
+                # Recursively apply to nested objects
+                for prop_schema in schema["properties"].values():
+                    if isinstance(prop_schema, dict):
+                        self._apply_strict_mode(prop_schema)
+
+        # Handle array items
+        if "items" in schema and isinstance(schema["items"], dict):
+            self._apply_strict_mode(schema["items"])
+
+        return schema
+
+    def _make_nullable(self, prop_schema: dict) -> None:
+        """Make a property nullable by adding null to its type.
+
+        For strict mode, optional fields need:
+        - Type as array: ["string", "null"] or {"anyOf": [..., {"type": "null"}]}
+        - default: null
+        """
+        if not isinstance(prop_schema, dict):
+            return
+
+        # Already nullable
+        if prop_schema.get("type") == "null":
+            return
+
+        # Handle anyOf/oneOf patterns
+        if "anyOf" in prop_schema or "oneOf" in prop_schema:
+            key = "anyOf" if "anyOf" in prop_schema else "oneOf"
+            types = prop_schema[key]
+            # Check if null is already in the union
+            has_null = any(
+                t.get("type") == "null" if isinstance(t, dict) else False
+                for t in types
+            )
+            if not has_null:
+                types.append({"type": "null"})
+            prop_schema.setdefault("default", None)
+            return
+
+        # Handle simple type
+        if "type" in prop_schema:
+            current_type = prop_schema["type"]
+            if isinstance(current_type, list):
+                if "null" not in current_type:
+                    current_type.append("null")
+            else:
+                # Convert to anyOf pattern for clarity
+                prop_schema["anyOf"] = [
+                    {"type": current_type},
+                    {"type": "null"},
+                ]
+                del prop_schema["type"]
+            prop_schema.setdefault("default", None)
 
     def _inline_refs(self, obj: dict | list, defs: dict) -> dict | list:
         """Recursively inline $ref references and clean up Pydantic artifacts.
@@ -172,26 +270,36 @@ class ToolDefinition(BaseModel):
 
         return schema
 
-    def to_openai_format(self) -> dict:
+    def to_openai_format(self, strict: bool = True) -> dict:
         """Convert to OpenAI function calling format.
 
         This is the format expected by OpenAI/Anthropic for tool definitions.
         Includes approval requirements in the description so the LLM knows
         which tools will pause for human approval.
+
+        Args:
+            strict: If True, use OpenAI strict mode for structured outputs.
+                    This enables JSON Schema validation on the LLM side.
         """
         description = self.description
         if self.requires_approval:
             role = self.required_role or "developer"
             description = f"{description} [REQUIRES APPROVAL by {role}]"
 
-        return {
+        result = {
             "type": "function",
             "function": {
                 "name": self.full_name,
                 "description": description,
-                "parameters": self.get_json_schema(),
+                "parameters": self.get_json_schema(strict=strict),
             },
         }
+
+        # Add strict mode flag for OpenAI structured outputs
+        if strict:
+            result["function"]["strict"] = True
+
+        return result
 
     def validate_arguments(self, arguments: dict | None) -> tuple[bool, str | None, BaseModel | None]:
         """Validate arguments and return typed params model.

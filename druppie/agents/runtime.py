@@ -686,7 +686,23 @@ class Agent:
 
                 # Get updated tool call for result
                 tool_call_record = execution_repo.get_tool_call(tool_call_id)
-                result_str = tool_call_record.result if tool_call_record else "{}"
+
+                # Handle failed tool calls - include error in result so LLM can retry
+                if status == ToolCallStatus.FAILED:
+                    error_msg = tool_call_record.error_message if tool_call_record else "Unknown error"
+                    result_str = json.dumps({
+                        "success": False,
+                        "error": error_msg,
+                        "message": f"Tool call failed: {error_msg}. Please check your arguments and try again.",
+                    })
+                    logger.warning(
+                        "tool_call_failed",
+                        agent_id=self.id,
+                        tool=f"{server}:{tool}",
+                        error=error_msg,
+                    )
+                else:
+                    result_str = tool_call_record.result if tool_call_record else "{}"
 
                 # Handle status
                 if status == ToolCallStatus.WAITING_ANSWER:
