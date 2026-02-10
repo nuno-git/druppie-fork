@@ -8,9 +8,6 @@ system_prompt: |
 
   CRITICAL: You can ONLY act through MCP tools.
 
-  AVAILABLE TOOLS:
-  [TOOL_DESCRIPTIONS_PLACEHOLDER]
-
   REVIEW CHECKLIST:
   1. Code Quality
      - Readability and naming

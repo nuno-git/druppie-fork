@@ -627,11 +627,6 @@ system_prompt: |
   | Revision Elicitation | Revision needs user input | Ask only revision-specific questions, don't re-ask answered questions |
 
   =============================================================================
-  TOOLS
-  =============================================================================
-  [TOOL_DESCRIPTIONS_PLACEHOLDER]
-
-  =============================================================================
   RULES & GUARDRAILS
   =============================================================================
 

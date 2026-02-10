@@ -87,10 +87,19 @@ class ToolDefinition(BaseModel):
 
         schema = self.params_model.model_json_schema()
 
+        # Inline $defs references before removing $defs
+        # This handles nested models like PlanStep in MakePlanParams
+        defs = schema.pop("$defs", {})
+        if defs:
+            schema = self._inline_refs(schema, defs)
+
         # Clean up schema for LLM consumption
-        # Remove Pydantic-specific fields that confuse some LLMs
+        # Remove Pydantic-specific fields that confuse some LLMs or cause duplication
         schema.pop("title", None)
-        schema.pop("$defs", None)
+        schema.pop("description", None)  # Remove - already in function.description
+
+        # Recursively clean nested title fields
+        schema = self._clean_schema(schema)
 
         # Ensure we have the basic structure
         if "type" not in schema:
@@ -100,16 +109,86 @@ class ToolDefinition(BaseModel):
 
         return schema
 
+    def _inline_refs(self, obj: dict | list, defs: dict) -> dict | list:
+        """Recursively inline $ref references and clean up Pydantic artifacts.
+
+        Args:
+            obj: The schema object to process
+            defs: The $defs dictionary containing definitions
+
+        Returns:
+            Schema with $refs replaced and cleaned up
+        """
+        if isinstance(obj, dict):
+            if "$ref" in obj:
+                # Extract definition name from "#/$defs/PlanStep" format
+                ref_path = obj["$ref"]
+                if ref_path.startswith("#/$defs/"):
+                    def_name = ref_path.split("/")[-1]
+                    if def_name in defs:
+                        # Return the inlined definition (recursively process it too)
+                        inlined = defs[def_name].copy()
+                        inlined.pop("title", None)  # Clean up nested titles
+                        return self._inline_refs(inlined, defs)
+                return obj
+            else:
+                # Recursively process and clean up title fields in properties
+                result = {}
+                for k, v in obj.items():
+                    processed = self._inline_refs(v, defs)
+                    result[k] = processed
+                return result
+        elif isinstance(obj, list):
+            return [self._inline_refs(item, defs) for item in obj]
+        else:
+            return obj
+
+    def _clean_schema(self, schema: dict) -> dict:
+        """Remove Pydantic-specific fields from schema recursively.
+
+        Removes 'title' fields from all nested properties.
+        """
+        if not isinstance(schema, dict):
+            return schema
+
+        # Remove title from current level
+        schema.pop("title", None)
+
+        # Process properties
+        if "properties" in schema:
+            for prop_name, prop_schema in schema["properties"].items():
+                if isinstance(prop_schema, dict):
+                    prop_schema.pop("title", None)
+                    # Recurse into nested objects
+                    if "properties" in prop_schema:
+                        self._clean_schema(prop_schema)
+                    # Handle array items
+                    if "items" in prop_schema and isinstance(prop_schema["items"], dict):
+                        self._clean_schema(prop_schema["items"])
+
+        # Handle array items at current level
+        if "items" in schema and isinstance(schema["items"], dict):
+            self._clean_schema(schema["items"])
+
+        return schema
+
     def to_openai_format(self) -> dict:
         """Convert to OpenAI function calling format.
 
         This is the format expected by OpenAI/Anthropic for tool definitions.
+        Includes approval requirements in the description so the LLM knows
+        which tools will pause for human approval.
         """
+        description = self.description
+        if self.requires_approval:
+            role = self.required_role or "developer"
+            description = f"{description} [REQUIRES APPROVAL by {role}]"
+
         return {
             "type": "function",
             "function": {
                 "name": self.full_name,
-                "description": self.description,
+                "description": description,
                 "parameters": self.get_json_schema(),
             },
         }
