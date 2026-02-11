@@ -290,12 +290,31 @@ class ToolExecutor:
                 )
 
             # If normalization was needed (e.g., "null" string -> None), update arguments
+            # and persist an audit trail of what changed
             if normalized_args is not None:
+                import json
+
+                original_args = tool_call.arguments or {}
+                norm_records = []
+                for key in normalized_args:
+                    orig = original_args.get(key)
+                    normed = normalized_args[key]
+                    if orig != normed:
+                        norm_records.append({
+                            "field_name": key,
+                            "original_value": json.dumps(orig) if orig is not None else None,
+                            "normalized_value": json.dumps(normed) if normed is not None else None,
+                        })
+
+                if norm_records:
+                    self.execution_repo.create_tool_call_normalizations(
+                        tool_call.id, norm_records,
+                    )
+
                 logger.debug(
                     "tool_args_normalized",
                     tool_name=full_name,
-                    original=tool_call.arguments,
-                    normalized=normalized_args,
+                    normalized_fields=[r["field_name"] for r in norm_records],
                 )
                 tool_call.arguments = normalized_args
 

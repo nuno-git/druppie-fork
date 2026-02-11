@@ -53,6 +53,7 @@ class ToolCall(Base):
     # Relationships
     agent_run = relationship("AgentRun", back_populates="tool_calls")
     llm_call = relationship("LlmCall", back_populates="tool_calls")
+    normalizations = relationship("ToolCallNormalization", back_populates="tool_call")
 
     # -------------------------------------------------------------------------
     # Tool Definition Access (from ToolRegistry)
