@@ -1,21 +1,22 @@
 /**
- * DebugChat - Debug page for testing the backend API
+ * DebugChat - Terminal-style session inspector
  *
- * Shows raw JSON responses from:
- * - GET /api/sessions (list sessions)
- * - GET /api/sessions/{id} (session details)
- * - POST /api/chat (send message)
+ * Two-panel layout: session list (left) + session detail (right)
+ * Detail shows: header, pending HITL banner, flat event log, floating detail overlay
  */
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { getToken } from '../services/keycloak'
+import { getAgentConfig, getAgentMessageColors, formatToolName } from '../utils/agentConfig'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
-// Generate a summary of timeline (includes tool args/results, excludes raw LLM request/response)
+const WAITING_STATUSES = new Set(['paused_hitl', 'paused_tool', 'waiting_approval', 'waiting_answer'])
+
+// ─── Utilities ───────────────────────────────────────────────────────────────
+
 const generateTimelineSummary = (timeline) => {
   if (!timeline) return null
-
   return timeline.map(entry => {
     if (entry.type === 'message' && entry.message) {
       return {
@@ -40,7 +41,6 @@ const generateTimelineSummary = (timeline) => {
           provider: llm.provider,
           duration_ms: llm.duration_ms,
           token_usage: llm.token_usage,
-          // Include tool calls with full arguments and results
           tool_calls: llm.tool_calls?.map(tc => ({
             tool_name: tc.tool_name,
             status: tc.status,
@@ -48,7 +48,6 @@ const generateTimelineSummary = (timeline) => {
             result: tc.result,
             error: tc.error || undefined,
           }))
-          // Exclude: raw_request, raw_response, messages (the big LLM payloads)
         }))
       }
     }
@@ -56,7 +55,6 @@ const generateTimelineSummary = (timeline) => {
   })
 }
 
-// Fallback copy using textarea and execCommand
 const fallbackCopy = (textToCopy) => {
   const textarea = document.createElement('textarea')
   textarea.value = textToCopy
@@ -66,7 +64,6 @@ const fallbackCopy = (textToCopy) => {
   document.body.appendChild(textarea)
   textarea.focus()
   textarea.select()
-
   try {
     const success = document.execCommand('copy')
     document.body.removeChild(textarea)
@@ -77,12 +74,9 @@ const fallbackCopy = (textToCopy) => {
   }
 }
 
-// Download data as file
 const downloadAsFile = (data, filename = 'data') => {
   const textToDownload = typeof data === 'string' ? data : JSON.stringify(data, null, 2)
-  const sizeKB = (textToDownload.length / 1024).toFixed(2)
   try {
-    console.log(`Downloading ${sizeKB}KB as ${filename}.json...`)
     const blob = new Blob([textToDownload], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -91,10 +85,7 @@ const downloadAsFile = (data, filename = 'data') => {
     a.style.display = 'none'
     document.body.appendChild(a)
     a.click()
-    setTimeout(() => {
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    }, 100)
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url) }, 100)
     return true
   } catch (err) {
     console.error('Download failed:', err)
@@ -102,7 +93,37 @@ const downloadAsFile = (data, filename = 'data') => {
   }
 }
 
-// Simple copy button (no auto-download fallback)
+const formatDuration = (ms) => {
+  if (!ms) return null
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  const mins = Math.floor(ms / 60000)
+  const secs = Math.round((ms % 60000) / 1000)
+  return `${mins}m ${secs}s`
+}
+
+const formatTokens = (n) => {
+  if (!n) return '0'
+  return n.toLocaleString()
+}
+
+const apiFetch = async (endpoint, options = {}) => {
+  const token = getToken()
+  const headers = { 'Content-Type': 'application/json', ...options.headers }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const url = `${API_URL}${endpoint}`
+  try {
+    const response = await fetch(url, { ...options, headers })
+    const data = await response.json()
+    return { ok: response.ok, status: response.status, data }
+  } catch (err) {
+    console.error('API Error:', err)
+    return { ok: false, error: err.message }
+  }
+}
+
+// ─── Shared small components ─────────────────────────────────────────────────
+
 const CopyButton = ({ text, label = 'Copy', className = '' }) => {
   const [copied, setCopied] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -110,40 +131,17 @@ const CopyButton = ({ text, label = 'Copy', className = '' }) => {
   const handleCopy = async (e) => {
     e.stopPropagation()
     e.preventDefault()
-
     if (text === undefined || text === null) {
-      setFailed(true)
-      setTimeout(() => setFailed(false), 1500)
-      return
+      setFailed(true); setTimeout(() => setFailed(false), 1500); return
     }
-
     const textToCopy = typeof text === 'string' ? text : JSON.stringify(text, null, 2)
-    const sizeKB = (textToCopy.length / 1024).toFixed(2)
-    console.log(`Copying ${sizeKB}KB`)
-
     let success = false
-
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      try {
-        await navigator.clipboard.writeText(textToCopy)
-        success = true
-      } catch (err) {
-        console.warn('Clipboard API failed:', err.message)
-      }
+    if (navigator.clipboard?.writeText) {
+      try { await navigator.clipboard.writeText(textToCopy); success = true } catch {}
     }
-
-    if (!success) {
-      success = fallbackCopy(textToCopy)
-    }
-
-    if (success) {
-      setCopied(true)
-      setFailed(false)
-      setTimeout(() => setCopied(false), 1500)
-    } else {
-      setFailed(true)
-      setTimeout(() => setFailed(false), 1500)
-    }
+    if (!success) success = fallbackCopy(textToCopy)
+    if (success) { setCopied(true); setFailed(false); setTimeout(() => setCopied(false), 1500) }
+    else { setFailed(true); setTimeout(() => setFailed(false), 1500) }
   }
 
   return (
@@ -159,63 +157,15 @@ const CopyButton = ({ text, label = 'Copy', className = '' }) => {
   )
 }
 
-// Download button component
-const DownloadButton = ({ data, filename = 'data', label = 'Download', className = '' }) => {
-  const [done, setDone] = useState(false)
-
-  const handleDownload = (e) => {
-    e.stopPropagation()
-    e.preventDefault()
-    if (downloadAsFile(data, filename)) {
-      setDone(true)
-      setTimeout(() => setDone(false), 1500)
-    }
-  }
-
-  return (
-    <button
-      onClick={handleDownload}
-      className={`px-2 py-0.5 text-xs rounded hover:bg-blue-300 transition-colors ${
-        done ? 'bg-blue-200 text-blue-800' : 'bg-blue-100 text-blue-600'
-      } ${className}`}
-      title={`Download ${label}`}
-    >
-      {done ? 'Done!' : `↓ ${label}`}
-    </button>
-  )
-}
-
-// Collapsible section component
-const Collapsible = ({ title, children, defaultOpen = false, className = '', headerClass = '', copyData = null }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen)
-
-  return (
-    <div className={`border rounded-lg overflow-hidden ${className}`}>
-      <div
-        className={`w-full text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 flex items-center gap-2 font-medium cursor-pointer ${headerClass}`}
-      >
-        <div onClick={() => setIsOpen(!isOpen)} className="flex items-center gap-2 flex-1 min-w-0">
-          <span className="text-gray-500">{isOpen ? '▼' : '▶'}</span>
-          <span className="flex-1 truncate">{title}</span>
-        </div>
-        {copyData && <CopyButton text={copyData} label="Copy" />}
-      </div>
-      {isOpen && (
-        <div className="p-3 border-t bg-white">
-          {children}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Status badge component
 const StatusBadge = ({ status }) => {
   const colors = {
     completed: 'bg-green-100 text-green-800',
     running: 'bg-blue-100 text-blue-800',
     pending: 'bg-gray-100 text-gray-800',
     waiting_answer: 'bg-yellow-100 text-yellow-800',
+    paused_hitl: 'bg-yellow-100 text-yellow-800',
+    paused_tool: 'bg-yellow-100 text-yellow-800',
+    waiting_approval: 'bg-yellow-100 text-yellow-800',
     failed: 'bg-red-100 text-red-800',
     active: 'bg-blue-100 text-blue-800',
   }
@@ -226,332 +176,599 @@ const StatusBadge = ({ status }) => {
   )
 }
 
-// Tool call display component
-const ToolCallView = ({ toolCall, index }) => {
+// ─── Overflow menu ───────────────────────────────────────────────────────────
+
+const OverflowMenu = ({ items }) => {
+  const [open, setOpen] = useState(false)
+
   return (
-    <Collapsible
-      title={
-        <span className="flex items-center gap-2">
-          <span className="text-gray-500">#{index}</span>
-          <code className="text-purple-600">{toolCall.tool_name}</code>
-          <StatusBadge status={toolCall.status} />
-          {toolCall.question_id && <span className="text-xs text-yellow-600">(HITL)</span>}
-        </span>
-      }
-      className="bg-gray-50"
-      copyData={toolCall}
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="px-2 py-0.5 text-xs bg-gray-100 rounded hover:bg-gray-200 text-gray-600"
+      >
+        &middot;&middot;&middot;
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 bg-white border rounded shadow-lg z-20 py-1 min-w-[140px]">
+            {items.map((item, i) => (
+              <button
+                key={i}
+                onClick={(e) => { item.onClick(e); setOpen(false) }}
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 text-gray-700"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── Left panel: Session list ────────────────────────────────────────────────
+
+const DebugSessionList = ({ sessions, selectedSession, loading, onSelect, onRefresh }) => {
+  const [search, setSearch] = useState('')
+
+  const items = sessions?.ok ? sessions.data?.items || [] : []
+  const filtered = search
+    ? items.filter(s =>
+        (s.title || '').toLowerCase().includes(search.toLowerCase()) ||
+        s.id.includes(search)
+      )
+    : items
+
+  return (
+    <div className="w-72 flex-shrink-0 border-r bg-white flex flex-col h-full">
+      {/* Header */}
+      <div className="px-3 py-2 border-b flex items-center justify-between">
+        <span className="text-sm font-semibold text-gray-700">Sessions</span>
+        <button
+          onClick={onRefresh}
+          disabled={loading}
+          className="px-2 py-0.5 text-xs bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50"
+        >
+          {loading ? '...' : 'Refresh'}
+        </button>
+      </div>
+
+      {/* Search */}
+      <div className="px-3 py-2 border-b">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search sessions..."
+          className="w-full px-2 py-1 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+        />
+      </div>
+
+      {/* Session items */}
+      <div className="flex-1 overflow-y-auto">
+        {!sessions && <p className="p-3 text-sm text-gray-400">Loading...</p>}
+        {sessions && !sessions.ok && <p className="p-3 text-sm text-red-500">Error loading sessions</p>}
+        {filtered.length === 0 && sessions?.ok && (
+          <p className="p-3 text-sm text-gray-400">No sessions found</p>
+        )}
+        {filtered.map((session) => {
+          const isSelected = selectedSession === session.id
+          return (
+            <button
+              key={session.id}
+              onClick={() => onSelect(session.id)}
+              className={`w-full text-left px-3 py-2 border-b text-sm transition-colors ${
+                isSelected
+                  ? 'bg-blue-50 border-l-2 border-l-blue-500'
+                  : 'hover:bg-gray-50 border-l-2 border-l-transparent'
+              }`}
+            >
+              <div className="font-medium truncate text-gray-800">
+                {session.title || 'Untitled'}
+              </div>
+              <div className="flex items-center gap-2 mt-0.5">
+                <StatusBadge status={session.status} />
+                {session.token_usage?.total_tokens > 0 && (
+                  <span className="text-xs text-gray-400">
+                    {formatTokens(session.token_usage.total_tokens)} tok
+                  </span>
+                )}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── Event log lines (flat, no expand/collapse) ─────────────────────────────
+
+const agentStatusBorder = (status) => {
+  if (status === 'completed') return 'border-l-green-500'
+  if (status === 'failed') return 'border-l-red-500'
+  if (status === 'running') return 'border-l-blue-500'
+  if (WAITING_STATUSES.has(status)) return 'border-l-yellow-500'
+  return 'border-l-gray-300'
+}
+
+const toolArrowColor = (status) => {
+  if (status === 'completed') return 'text-green-500'
+  if (status === 'failed') return 'text-red-500'
+  if (status === 'running') return 'text-blue-500'
+  if (WAITING_STATUSES.has(status)) return 'text-yellow-500'
+  return 'text-gray-400'
+}
+
+const AgentHeaderLine = ({ agentRun, selected, onSelect }) => {
+  const config = getAgentConfig(agentRun.agent_id)
+  const colors = getAgentMessageColors(config.color)
+  const tokens = agentRun.token_usage?.total_tokens || 0
+
+  const duration = useMemo(() => {
+    if (agentRun.started_at && agentRun.completed_at) {
+      return formatDuration(new Date(agentRun.completed_at) - new Date(agentRun.started_at))
+    }
+    const total = agentRun.llm_calls?.reduce((sum, llm) => sum + (llm.duration_ms || 0), 0) || 0
+    return total > 0 ? formatDuration(total) : null
+  }, [agentRun])
+
+  return (
+    <button
+      onClick={onSelect}
+      className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-sm border-l-2 transition-colors ${
+        agentStatusBorder(agentRun.status)
+      } ${selected ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
     >
-      <div className="space-y-2 text-sm">
-        <div className="flex items-center gap-2 text-xs text-gray-500">
-          <span>ID:</span>
-          <code>{toolCall.id}</code>
-          <CopyButton text={toolCall.id} label="ID" />
-          {toolCall.question_id && (
-            <>
-              <span className="ml-2">Question ID:</span>
-              <code>{toolCall.question_id}</code>
-              <CopyButton text={toolCall.question_id} label="Q-ID" />
-            </>
-          )}
-        </div>
+      <span className={`font-semibold uppercase text-xs tracking-wide ${colors.accent}`}>
+        {config.name}
+      </span>
+      {tokens > 0 && (
+        <span className="text-xs text-gray-400">{formatTokens(tokens)} tok</span>
+      )}
+      {duration && (
+        <span className="text-xs text-gray-400">&middot; {duration}</span>
+      )}
+      {agentRun.status === 'running' && (
+        <span className="ml-auto inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+      )}
+    </button>
+  )
+}
+
+const ToolLine = ({ tc, selected, onSelect }) => {
+  return (
+    <button
+      onClick={onSelect}
+      className={`w-full text-left pl-8 pr-3 py-1 flex items-center gap-2 text-xs transition-colors ${
+        selected ? 'bg-blue-50' : 'hover:bg-gray-50'
+      }`}
+    >
+      <span className={`font-bold ${toolArrowColor(tc.status)}`}>&rarr;</span>
+      <span className={`font-medium ${toolArrowColor(tc.status)}`}>{formatToolName(tc.tool_name)}</span>
+      {tc.question_id && <span className="bg-orange-100 text-orange-700 text-[10px] font-semibold px-1.5 py-0.5 rounded">HITL</span>}
+    </button>
+  )
+}
+
+// ─── Detail pane (bottom of right panel) ─────────────────────────────────────
+
+const ToolDetail = ({ tc, agentRun }) => {
+  const config = getAgentConfig(agentRun.agent_id)
+
+  return (
+    <div className="space-y-3 text-xs">
+      <div className="flex items-center gap-2">
+        <span className="text-purple-600 font-semibold">{formatToolName(tc.tool_name)}</span>
+        <StatusBadge status={tc.status} />
+        <span className="text-gray-400">({config.name})</span>
+      </div>
+
+      {/* Arguments */}
+      {tc.arguments && (
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-gray-600">Arguments:</span>
-            <CopyButton text={toolCall.arguments} label="Copy" />
+            <span className="font-medium text-gray-500">Arguments</span>
+            <CopyButton text={tc.arguments} label="Copy" />
           </div>
-          <pre className="bg-gray-100 p-2 rounded text-xs overflow-auto max-h-40">
-            {JSON.stringify(toolCall.arguments, null, 2)}
+          <pre className="bg-gray-50 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-700">
+            {typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments, null, 2)}
           </pre>
         </div>
-        {toolCall.result && (
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="font-medium text-gray-600">Result:</span>
-              <CopyButton text={toolCall.result} label="Copy" />
-            </div>
-            <pre className="bg-green-50 p-2 rounded text-xs overflow-auto max-h-40">
-              {typeof toolCall.result === 'string' ? toolCall.result : JSON.stringify(toolCall.result, null, 2)}
-            </pre>
+      )}
+
+      {/* Result */}
+      {tc.result && (
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-medium text-green-600">Result</span>
+            <CopyButton text={tc.result} label="Copy" />
           </div>
-        )}
-        {toolCall.error && (
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="font-medium text-red-600">Error:</span>
-              <CopyButton text={toolCall.error} label="Copy" />
-            </div>
-            <pre className="bg-red-50 p-2 rounded text-xs">{toolCall.error}</pre>
+          <pre className="bg-green-50 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-700">
+            {typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      {/* Error */}
+      {tc.error && (
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-medium text-red-600">Error</span>
+            <CopyButton text={tc.error} label="Copy" />
           </div>
-        )}
-        {toolCall.approval && (
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="font-medium text-gray-600">Approval:</span>
-              <CopyButton text={toolCall.approval} label="Copy" />
-            </div>
-            <pre className="bg-blue-50 p-2 rounded text-xs">
-              {JSON.stringify(toolCall.approval, null, 2)}
-            </pre>
+          <pre className="bg-red-50 p-2 rounded overflow-auto max-h-32 text-red-700">
+            {tc.error}
+          </pre>
+        </div>
+      )}
+
+      {/* Approval */}
+      {tc.approval && (
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-medium text-gray-500">Approval</span>
+            <CopyButton text={tc.approval} label="Copy" />
           </div>
-        )}
-        {toolCall.child_run && (
-          <div>
-            <span className="font-medium text-gray-600">Child Agent Run:</span>
-            <AgentRunView agentRun={toolCall.child_run} />
-          </div>
-        )}
-      </div>
-    </Collapsible>
+          <pre className="bg-blue-50 p-2 rounded overflow-auto max-h-32 mt-1">
+            {JSON.stringify(tc.approval, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
   )
 }
 
-// LLM call display component
-const LLMCallView = ({ llmCall, index }) => {
+const AgentDetail = ({ agentRun }) => {
+  const config = getAgentConfig(agentRun.agent_id)
+  const colors = getAgentMessageColors(config.color)
+  const tokens = agentRun.token_usage?.total_tokens || 0
+  const llmCalls = agentRun.llm_calls || []
+
+  const duration = useMemo(() => {
+    if (agentRun.started_at && agentRun.completed_at) {
+      return formatDuration(new Date(agentRun.completed_at) - new Date(agentRun.started_at))
+    }
+    const total = llmCalls.reduce((sum, llm) => sum + (llm.duration_ms || 0), 0)
+    return total > 0 ? formatDuration(total) : null
+  }, [agentRun, llmCalls])
+
   return (
-    <Collapsible
-      title={
-        <span className="flex items-center gap-2">
-          <span className="text-gray-500">LLM Call #{index}</span>
-          <code className="text-sm text-gray-600">{llmCall.model}</code>
-          <span className="text-xs text-gray-500">
-            ({llmCall.token_usage?.total_tokens || 0} tokens)
-          </span>
-        </span>
-      }
-      className="bg-blue-50"
-      copyData={llmCall}
-    >
-      <div className="space-y-3">
-        {/* ID and metadata */}
-        <div className="flex items-center gap-2 text-xs text-gray-500">
-          <span>ID:</span>
-          <code>{llmCall.id}</code>
-          <CopyButton text={llmCall.id} label="ID" />
-          <span className="ml-2">Provider:</span>
-          <code>{llmCall.provider}</code>
-          {llmCall.duration_ms && (
-            <>
-              <span className="ml-2">Duration:</span>
-              <code>{llmCall.duration_ms}ms</code>
-            </>
-          )}
-        </div>
+    <div className="space-y-3 text-xs">
+      <div className="flex items-center gap-2">
+        <span className={`font-semibold ${colors.accent}`}>{config.name}</span>
+        <StatusBadge status={agentRun.status} />
+        {tokens > 0 && <span className="text-gray-400">{formatTokens(tokens)} tok</span>}
+        {duration && <span className="text-gray-400">&middot; {duration}</span>}
+      </div>
 
-        {/* Messages sent to LLM */}
-        <Collapsible
-          title={`Messages (${llmCall.messages?.length || 0})`}
-          className="text-sm"
-          copyData={llmCall.messages}
-        >
-          <div className="space-y-2">
-            {llmCall.messages?.map((msg, i) => (
-              <div key={i} className="border-l-2 border-gray-300 pl-2">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-600">{msg.role}:</span>
-                  <CopyButton text={msg.content || msg} label="Copy" />
-                </div>
-                <pre className="text-xs bg-gray-50 p-2 mt-1 rounded overflow-auto max-h-32">
-                  {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
-                </pre>
-              </div>
-            ))}
+      {/* Planned prompt */}
+      {agentRun.planned_prompt && (
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-medium text-gray-500">Planned Prompt</span>
+            <CopyButton text={agentRun.planned_prompt} label="Copy" />
           </div>
-        </Collapsible>
+          <pre className="bg-yellow-50 p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap break-all text-gray-600">
+            {agentRun.planned_prompt}
+          </pre>
+        </div>
+      )}
 
-        {/* Raw request to LLM */}
-        {llmCall.raw_request && (
-          <Collapsible
-            title="Raw Request (messages sent to LLM)"
-            className="text-sm"
-            copyData={llmCall.raw_request}
-          >
-            <pre className="text-xs bg-yellow-50 p-2 rounded overflow-auto max-h-96">
-              {JSON.stringify(llmCall.raw_request, null, 2)}
-            </pre>
-          </Collapsible>
-        )}
-
-        {/* Raw response from LLM */}
-        {llmCall.raw_response && (
-          <Collapsible
-            title="Raw LLM Response"
-            className="text-sm"
-            copyData={llmCall.raw_response}
-          >
-            <pre className="text-xs bg-gray-100 p-2 rounded overflow-auto max-h-60">
-              {JSON.stringify(llmCall.raw_response, null, 2)}
-            </pre>
-          </Collapsible>
-        )}
-
-        {/* Tool calls */}
-        {llmCall.tool_calls?.length > 0 && (
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <h4 className="font-medium text-gray-600">Tool Calls ({llmCall.tool_calls.length})</h4>
-              <CopyButton text={llmCall.tool_calls} label="Copy All" />
-            </div>
-            <div className="space-y-2">
-              {llmCall.tool_calls.map((tc, i) => (
-                <ToolCallView key={tc.id || i} toolCall={tc} index={i} />
+      {/* LLM calls table */}
+      {llmCalls.length > 0 ? (
+        <div>
+          <span className="font-medium text-gray-500 mb-1 block">LLM Calls</span>
+          <table className="w-full text-left">
+            <thead>
+              <tr className="text-gray-400 border-b">
+                <th className="py-1 pr-3 font-medium">#</th>
+                <th className="py-1 pr-3 font-medium">Model</th>
+                <th className="py-1 pr-3 font-medium text-right">Tokens</th>
+                <th className="py-1 pr-3 font-medium text-right">Duration</th>
+                <th className="py-1 font-medium text-right">Tools</th>
+              </tr>
+            </thead>
+            <tbody>
+              {llmCalls.map((llm, i) => (
+                <tr key={llm.id || i} className="border-b border-gray-50">
+                  <td className="py-1 pr-3 text-gray-400 font-mono">{i + 1}</td>
+                  <td className="py-1 pr-3 text-gray-600"><code>{llm.model}</code></td>
+                  <td className="py-1 pr-3 text-right text-gray-500">
+                    {formatTokens(llm.token_usage?.total_tokens)}
+                  </td>
+                  <td className="py-1 pr-3 text-right text-gray-500">
+                    {formatDuration(llm.duration_ms) || '-'}
+                  </td>
+                  <td className="py-1 text-right text-purple-500">
+                    {llm.tool_calls?.length || 0}
+                  </td>
+                </tr>
               ))}
-            </div>
-          </div>
-        )}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="text-gray-400 italic">No LLM calls yet</p>
+      )}
+
+      {/* Copy raw button */}
+      <div>
+        <CopyButton text={agentRun} label="Copy Raw JSON" />
       </div>
-    </Collapsible>
+    </div>
   )
 }
 
-// Agent run display component
-const AgentRunView = ({ agentRun }) => {
+const DetailPane = ({ selection, onClose }) => {
+  if (!selection) return null
+
   return (
-    <Collapsible
-      title={
-        <span className="flex items-center gap-2">
-          <span className="font-semibold text-indigo-600">{agentRun.agent_id}</span>
-          <StatusBadge status={agentRun.status} />
-          <span className="text-xs text-gray-500">
-            ({agentRun.llm_calls?.length || 0} LLM calls, {agentRun.token_usage?.total_tokens || 0} tokens)
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/20 z-30" onClick={onClose} />
+      {/* Floating panel */}
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-white rounded-lg shadow-2xl border flex flex-col"
+        style={{ width: 'min(640px, 90vw)', maxHeight: '70vh' }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-2.5 border-b bg-gray-50 rounded-t-lg flex-shrink-0">
+          <span className="text-sm font-medium text-gray-700">
+            {selection.type === 'tool' ? formatToolName(selection.toolCall.tool_name) : getAgentConfig(selection.agentRun.agent_id).name}
           </span>
-        </span>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 text-lg leading-none px-1"
+            title="Close (Esc)"
+          >
+            &times;
+          </button>
+        </div>
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-4 py-3">
+          {selection.type === 'tool' && (
+            <ToolDetail tc={selection.toolCall} agentRun={selection.agentRun} />
+          )}
+          {selection.type === 'agent' && (
+            <AgentDetail agentRun={selection.agentRun} />
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ─── Right panel: Session detail ─────────────────────────────────────────────
+
+const DebugSessionDetail = ({ sessionDetail, loading, onRefresh, selectedSession, answerText, setAnswerText, onSubmitAnswer, answerLoading }) => {
+  const [selection, setSelection] = useState(null)
+
+  // Close detail pane on Esc
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setSelection(null)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  // Clear selection when session changes
+  useEffect(() => {
+    setSelection(null)
+  }, [selectedSession])
+
+  const closeDetail = useCallback(() => setSelection(null), [])
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-gray-400">
+        Loading session...
+      </div>
+    )
+  }
+
+  if (!sessionDetail || !sessionDetail.ok || !sessionDetail.data) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-gray-400">
+        {sessionDetail?.error ? `Error: ${sessionDetail.error}` : 'Select a session to inspect'}
+      </div>
+    )
+  }
+
+  const data = sessionDetail.data
+  const timeline = data.timeline || []
+  const totalTokens = data.token_usage?.total_tokens || 0
+
+  // Extract agent runs from timeline
+  const agentRuns = timeline
+    .filter(e => e.type === 'agent_run' && e.agent_run)
+    .map(e => e.agent_run)
+
+  // Find pending HITL question
+  const pendingQuestion = (() => {
+    for (const entry of timeline) {
+      if (entry.type === 'agent_run' && entry.agent_run?.llm_calls) {
+        for (const llmCall of entry.agent_run.llm_calls) {
+          for (const toolCall of llmCall.tool_calls || []) {
+            if (toolCall.status === 'waiting_answer' && toolCall.question_id) {
+              return {
+                questionId: toolCall.question_id,
+                question: toolCall.arguments?.question || 'No question text',
+                toolName: toolCall.tool_name,
+                agentId: entry.agent_run.agent_id,
+              }
+            }
+          }
+        }
       }
-      defaultOpen={true}
-      className="border-indigo-200"
-      copyData={agentRun}
-    >
-      <div className="space-y-3">
-        {/* Summary info */}
-        <div className="text-sm text-gray-600 grid grid-cols-2 gap-2">
-          <div className="flex items-center gap-1">
-            <span>ID:</span>
-            <code className="text-xs">{agentRun.id}</code>
-            <CopyButton text={agentRun.id} label="ID" />
-          </div>
-          <div>Sequence: {agentRun.sequence_number ?? 'N/A'}</div>
-          {agentRun.started_at && <div>Started: {new Date(agentRun.started_at).toLocaleTimeString()}</div>}
-          {agentRun.completed_at && <div>Completed: {new Date(agentRun.completed_at).toLocaleTimeString()}</div>}
-        </div>
+    }
+    return null
+  })()
 
-        {/* Planned prompt (for pending runs) */}
-        {agentRun.planned_prompt && (
-          <Collapsible title="Planned Prompt" className="text-sm" copyData={agentRun.planned_prompt}>
-            <pre className="text-xs bg-yellow-50 p-2 rounded overflow-auto max-h-40">
-              {agentRun.planned_prompt}
-            </pre>
-          </Collapsible>
-        )}
+  // Compute session duration
+  const sessionDuration = (() => {
+    if (data.created_at && data.updated_at) {
+      const ms = new Date(data.updated_at) - new Date(data.created_at)
+      return formatDuration(ms)
+    }
+    return null
+  })()
 
-        {/* LLM calls */}
-        {agentRun.llm_calls?.length > 0 && (
-          <div className="space-y-2">
-            {agentRun.llm_calls.map((llm, i) => (
-              <LLMCallView key={llm.id || i} llmCall={llm} index={i} />
-            ))}
-          </div>
-        )}
-      </div>
-    </Collapsible>
-  )
-}
-
-// Message display component
-const MessageView = ({ message }) => {
-  const roleColors = {
-    user: 'border-blue-300 bg-blue-50',
-    assistant: 'border-green-300 bg-green-50',
-    system: 'border-gray-300 bg-gray-50',
+  // Build flat event list: agent headers + tool call lines
+  const eventItems = []
+  for (const run of agentRuns) {
+    eventItems.push({ type: 'agent', agentRun: run })
+    for (const llm of run.llm_calls || []) {
+      for (const tc of llm.tool_calls || []) {
+        eventItems.push({ type: 'tool', toolCall: tc, agentRun: run })
+      }
+    }
   }
+
+  // Check if a given item matches the current selection
+  const isSelected = (item) => {
+    if (!selection) return false
+    if (item.type === 'agent' && selection.type === 'agent') {
+      return item.agentRun === selection.agentRun
+    }
+    if (item.type === 'tool' && selection.type === 'tool') {
+      return item.toolCall === selection.toolCall
+    }
+    return false
+  }
+
+  // Overflow menu items
+  const overflowItems = [
+    {
+      label: 'Copy Summary',
+      onClick: async (e) => {
+        e.stopPropagation()
+        const text = JSON.stringify(generateTimelineSummary(timeline), null, 2)
+        try { await navigator.clipboard.writeText(text) } catch { fallbackCopy(text) }
+      }
+    },
+    {
+      label: 'Copy JSON',
+      onClick: async (e) => {
+        e.stopPropagation()
+        const text = JSON.stringify(sessionDetail, null, 2)
+        try { await navigator.clipboard.writeText(text) } catch { fallbackCopy(text) }
+      }
+    },
+    {
+      label: 'Download JSON',
+      onClick: (e) => {
+        e.stopPropagation()
+        downloadAsFile(sessionDetail, 'session')
+      }
+    },
+  ]
+
   return (
-    <div className={`border-l-4 p-3 rounded-r ${roleColors[message.role] || 'border-gray-300'}`}>
-      <div className="flex items-center gap-2 mb-1">
-        <span className="font-medium capitalize">{message.role}</span>
-        {message.agent_id && <code className="text-xs text-gray-500">({message.agent_id})</code>}
-        <span className="text-xs text-gray-400">{new Date(message.created_at).toLocaleTimeString()}</span>
-        <CopyButton text={message.content} label="Copy" />
-        <CopyButton text={message.id} label="ID" />
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
+      {/* Header bar — simplified */}
+      <div className="px-4 py-3 border-b bg-white flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            <h2 className="text-base font-semibold text-gray-800 truncate">
+              {data.title || 'Untitled'}
+            </h2>
+            <StatusBadge status={data.status} />
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {totalTokens > 0 && (
+              <span className="text-xs text-gray-400">{formatTokens(totalTokens)} tok</span>
+            )}
+            {sessionDuration && (
+              <span className="text-xs text-gray-400">{sessionDuration}</span>
+            )}
+            <OverflowMenu items={overflowItems} />
+            <button
+              onClick={onRefresh}
+              className="px-2 py-0.5 text-xs bg-gray-100 rounded hover:bg-gray-200"
+            >
+              &#8635;
+            </button>
+          </div>
+        </div>
       </div>
-      <div className="text-sm whitespace-pre-wrap">{message.content}</div>
+
+      {/* Pending HITL question banner */}
+      {pendingQuestion && (
+        <div className="px-4 py-3 bg-yellow-50 border-b border-yellow-200 flex-shrink-0">
+          <div className="flex items-center gap-2 text-sm mb-2">
+            <span className="font-medium text-yellow-800">
+              {getAgentConfig(pendingQuestion.agentId).name} is waiting for your answer
+            </span>
+          </div>
+          <div className="p-2 bg-white rounded border border-yellow-200 mb-2 text-sm text-gray-800">
+            {pendingQuestion.question}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={answerText}
+              onChange={(e) => setAnswerText(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && onSubmitAnswer(pendingQuestion.questionId)}
+              placeholder="Type your answer..."
+              className="flex-1 px-2 py-1 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-yellow-400"
+            />
+            <button
+              onClick={() => onSubmitAnswer(pendingQuestion.questionId)}
+              disabled={answerLoading || !answerText.trim()}
+              className="px-3 py-1 text-sm bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:opacity-50"
+            >
+              {answerLoading ? 'Sending...' : 'Answer'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Event log — flat, scrollable */}
+      <div className={`flex-1 overflow-y-auto bg-white ${selection ? '' : ''}`}>
+        {eventItems.length === 0 && (
+          <p className="p-4 text-sm text-gray-400 italic">No agent runs in this session</p>
+        )}
+        {eventItems.map((item, i) => {
+          if (item.type === 'agent') {
+            return (
+              <AgentHeaderLine
+                key={`agent-${item.agentRun.id || i}`}
+                agentRun={item.agentRun}
+                selected={isSelected(item)}
+                onSelect={() => setSelection({ type: 'agent', agentRun: item.agentRun })}
+              />
+            )
+          }
+          return (
+            <ToolLine
+              key={`tool-${item.toolCall.id || i}`}
+              tc={item.toolCall}
+              selected={isSelected(item)}
+              onSelect={() => setSelection({ type: 'tool', toolCall: item.toolCall, agentRun: item.agentRun })}
+            />
+          )
+        })}
+      </div>
+
+      {/* Detail pane — appears when something is selected */}
+      <DetailPane selection={selection} onClose={closeDetail} />
     </div>
   )
 }
 
-// Timeline display component
-const TimelineView = ({ timeline }) => {
-  if (!timeline || timeline.length === 0) {
-    return <p className="text-gray-500 italic">No timeline entries</p>
-  }
-
-  return (
-    <div className="space-y-3">
-      {timeline.map((entry, i) => (
-        <div key={i}>
-          {entry.type === 'message' && entry.message && (
-            <MessageView message={entry.message} />
-          )}
-          {entry.type === 'agent_run' && entry.agent_run && (
-            <AgentRunView agentRun={entry.agent_run} />
-          )}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// Simple fetch wrapper that logs everything
-const apiFetch = async (endpoint, options = {}) => {
-  const token = getToken()
-
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  }
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-
-  const url = `${API_URL}${endpoint}`
-  const method = options.method || 'GET'
-
-  console.log('========================================')
-  console.log(`API ${method} ${endpoint}`)
-  console.log('URL:', url)
-  console.log('Headers:', headers)
-  if (options.body) {
-    console.log('Body:', JSON.parse(options.body))
-  }
-  console.log('----------------------------------------')
-
-  try {
-    const response = await fetch(url, { ...options, headers })
-    const data = await response.json()
-
-    console.log('Status:', response.status)
-    console.log('Response:', data)
-    console.log('========================================')
-
-    return { ok: response.ok, status: response.status, data }
-  } catch (err) {
-    console.error('Error:', err)
-    console.log('========================================')
-    return { ok: false, error: err.message }
-  }
-}
+// ─── Main component ──────────────────────────────────────────────────────────
 
 export default function DebugChat() {
   const [sessions, setSessions] = useState(null)
   const [selectedSession, setSelectedSession] = useState(null)
   const [sessionDetail, setSessionDetail] = useState(null)
-  const [message, setMessage] = useState('')
-  const [chatResponse, setChatResponse] = useState(null)
   const [loading, setLoading] = useState({})
   const [answerText, setAnswerText] = useState('')
-  const [answerResponse, setAnswerResponse] = useState(null)
-  const [continueMessage, setContinueMessage] = useState('')
-  const [continueResponse, setContinueResponse] = useState(null)
 
-  // Fetch sessions on mount
   useEffect(() => {
     fetchSessions()
   }, [])
@@ -572,385 +789,39 @@ export default function DebugChat() {
     setLoading(l => ({ ...l, detail: false }))
   }
 
-  const sendChat = async () => {
-    if (!message.trim()) return
-
-    setLoading(l => ({ ...l, chat: true }))
-    setChatResponse(null)
-
-    const result = await apiFetch('/api/chat', {
-      method: 'POST',
-      body: JSON.stringify({ message: message.trim() }),
-    })
-
-    setChatResponse(result)
-    setLoading(l => ({ ...l, chat: false }))
-
-    // Refresh sessions list after sending
-    if (result.ok) {
-      fetchSessions()
-      // If we got a session_id, fetch its details
-      if (result.data?.session_id) {
-        fetchSessionDetail(result.data.session_id)
-      }
-    }
-  }
-
-  // Find pending HITL questions from session detail
-  const findPendingQuestion = () => {
-    if (!sessionDetail?.ok || !sessionDetail?.data?.timeline) return null
-
-    for (const entry of sessionDetail.data.timeline) {
-      if (entry.type === 'agent_run' && entry.agent_run?.llm_calls) {
-        for (const llmCall of entry.agent_run.llm_calls) {
-          for (const toolCall of llmCall.tool_calls || []) {
-            if (toolCall.status === 'waiting_answer' && toolCall.question_id) {
-              return {
-                questionId: toolCall.question_id,
-                question: toolCall.arguments?.question || 'No question text',
-                toolName: toolCall.tool_name,
-                agentId: entry.agent_run.agent_id,
-              }
-            }
-          }
-        }
-      }
-    }
-    return null
-  }
-
   const submitAnswer = async (questionId) => {
     if (!answerText.trim()) return
-
     setLoading(l => ({ ...l, answer: true }))
-    setAnswerResponse(null)
-
     const result = await apiFetch(`/api/questions/${questionId}/answer`, {
       method: 'POST',
       body: JSON.stringify({ answer: answerText.trim() }),
     })
-
-    setAnswerResponse(result)
     setLoading(l => ({ ...l, answer: false }))
-
-    // Refresh session detail after answering
     if (result.ok && selectedSession) {
       setAnswerText('')
-      // Wait a moment for workflow to progress
       setTimeout(() => fetchSessionDetail(selectedSession), 1000)
     }
   }
 
-  const sessionStatus = sessionDetail?.ok ? sessionDetail.data?.status : null
-
-  const sendContinueChat = async () => {
-    if (!continueMessage.trim() || !selectedSession) return
-
-    setLoading(l => ({ ...l, continueChat: true }))
-    setContinueResponse(null)
-
-    const result = await apiFetch('/api/chat', {
-      method: 'POST',
-      body: JSON.stringify({
-        message: continueMessage.trim(),
-        session_id: selectedSession,
-      }),
-    })
-
-    setContinueResponse(result)
-    setLoading(l => ({ ...l, continueChat: false }))
-
-    if (result.ok) {
-      setContinueMessage('')
-      // Refresh session detail — auto-polling will take over
-      fetchSessionDetail(selectedSession)
-      fetchSessions()
-    }
-  }
-
-  const pendingQuestion = findPendingQuestion()
-
   return (
-    <div className="p-4 space-y-6">
-      <h1 className="text-2xl font-bold">Debug Chat - API Debug Page</h1>
-      <p className="text-gray-600">Check browser console for detailed API logs</p>
-
-      {/* Send Chat Section */}
-      <div className="border rounded-lg p-4 bg-white">
-        <h2 className="text-lg font-semibold mb-3">POST /api/chat</h2>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && sendChat()}
-            placeholder="Type a message..."
-            className="flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            onClick={sendChat}
-            disabled={loading.chat || !message.trim()}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {loading.chat ? 'Sending...' : 'Send'}
-          </button>
-        </div>
-
-        {chatResponse && (
-          <div className="mt-4">
-            <div className="flex items-center gap-2 mb-2">
-              <h3 className="font-medium">Response:</h3>
-              <CopyButton text={chatResponse} label="Copy" />
-              {chatResponse.data?.session_id && (
-                <CopyButton text={chatResponse.data.session_id} label="Session ID" />
-              )}
-            </div>
-            <pre className="bg-gray-100 p-3 rounded-lg text-sm overflow-auto max-h-60">
-              {JSON.stringify(chatResponse, null, 2)}
-            </pre>
-          </div>
-        )}
-      </div>
-
-      {/* Sessions List Section */}
-      <div className="border rounded-lg p-4 bg-white">
-        <div className="flex justify-between items-center mb-3">
-          <h2 className="text-lg font-semibold">GET /api/sessions</h2>
-          <button
-            onClick={fetchSessions}
-            disabled={loading.sessions}
-            className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 text-sm"
-          >
-            {loading.sessions ? 'Loading...' : 'Refresh'}
-          </button>
-        </div>
-
-        {sessions && (
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <h3 className="font-medium">Raw Response:</h3>
-              <CopyButton text={sessions} label="Copy" />
-            </div>
-            <pre className="bg-gray-100 p-3 rounded-lg text-sm overflow-auto max-h-40 mb-4">
-              {JSON.stringify(sessions, null, 2)}
-            </pre>
-
-            {/* Clickable session list */}
-            {sessions.ok && sessions.data?.items && (
-              <div>
-                <h3 className="font-medium mb-2">Click a session to view details:</h3>
-                <div className="space-y-2">
-                  {sessions.data.items.map((session) => (
-                    <div
-                      key={session.id}
-                      className={`p-3 rounded-lg border transition-colors ${
-                        selectedSession === session.id
-                          ? 'bg-blue-50 border-blue-300'
-                          : 'hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <button
-                          onClick={() => fetchSessionDetail(session.id)}
-                          className="flex-1 text-left"
-                        >
-                          <div className="font-medium truncate">{session.title || 'Untitled'}</div>
-                          <div className="text-sm text-gray-500 flex items-center gap-2">
-                            <span>ID: {session.id}</span>
-                            <StatusBadge status={session.status} />
-                          </div>
-                        </button>
-                        <CopyButton text={session.id} label="ID" className="ml-2" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Pending Question Section */}
-      {pendingQuestion && (
-        <div className="border-2 border-yellow-400 rounded-lg p-4 bg-yellow-50">
-          <h2 className="text-lg font-semibold mb-3 text-yellow-800">
-            Agent Waiting for Your Answer
-          </h2>
-          <div className="mb-3 flex items-center gap-2 text-sm">
-            <span className="text-gray-600">Agent:</span>
-            <span className="font-medium">{pendingQuestion.agentId}</span>
-            <span className="text-gray-600 ml-2">Question ID:</span>
-            <code className="text-xs">{pendingQuestion.questionId}</code>
-            <CopyButton text={pendingQuestion.questionId} label="ID" />
-          </div>
-          <div className="mb-4 p-3 bg-white rounded-lg border">
-            <div className="flex items-start justify-between gap-2">
-              <p className="font-medium text-gray-800">{pendingQuestion.question}</p>
-              <CopyButton text={pendingQuestion.question} label="Copy" />
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={answerText}
-              onChange={(e) => setAnswerText(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submitAnswer(pendingQuestion.questionId)}
-              placeholder="Type your answer..."
-              className="flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500"
-            />
-            <button
-              onClick={() => submitAnswer(pendingQuestion.questionId)}
-              disabled={loading.answer || !answerText.trim()}
-              className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
-            >
-              {loading.answer ? 'Submitting...' : 'Submit Answer'}
-            </button>
-          </div>
-          {answerResponse && (
-            <div className="mt-4">
-              <div className="flex items-center gap-2 mb-2">
-                <h3 className="font-medium">Response:</h3>
-                <CopyButton text={answerResponse} label="Copy" />
-              </div>
-              <pre className="bg-white p-3 rounded-lg text-sm overflow-auto max-h-40 border">
-                {JSON.stringify(answerResponse, null, 2)}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Session Detail Section */}
-      {selectedSession && (
-        <div className="border rounded-lg p-4 bg-white">
-          <div className="flex justify-between items-center mb-3">
-            <h2 className="text-lg font-semibold">
-              GET /api/sessions/{selectedSession}
-            </h2>
-            <div className="flex gap-2">
-              <button
-                onClick={() => fetchSessionDetail(selectedSession)}
-                disabled={loading.detail}
-                className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 text-sm"
-              >
-                {loading.detail ? 'Loading...' : 'Refresh'}
-              </button>
-            </div>
-          </div>
-
-          {loading.detail ? (
-            <p className="text-gray-500">Loading...</p>
-          ) : sessionDetail ? (
-            <div className="space-y-4">
-              {/* Session Summary */}
-              {sessionDetail.ok && sessionDetail.data && (
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <div className="flex items-center gap-2 mb-2 text-xs text-gray-500">
-                    <span>Session ID:</span>
-                    <code>{sessionDetail.data.id}</code>
-                    <CopyButton text={sessionDetail.data.id} label="ID" />
-                    {sessionDetail.data.user_id && (
-                      <>
-                        <span className="ml-2">User ID:</span>
-                        <code>{sessionDetail.data.user_id}</code>
-                        <CopyButton text={sessionDetail.data.user_id} label="User ID" />
-                      </>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                    <div>
-                      <span className="text-gray-500">Title:</span>{' '}
-                      <span className="font-medium">{sessionDetail.data.title}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Status:</span>{' '}
-                      <StatusBadge status={sessionDetail.data.status} />
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Tokens:</span>{' '}
-                      <span className="font-medium">{sessionDetail.data.token_usage?.total_tokens || 0}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Timeline:</span>{' '}
-                      <span className="font-medium">{sessionDetail.data.timeline?.length || 0} entries</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Timeline View */}
-              {sessionDetail.ok && sessionDetail.data?.timeline && (
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <h3 className="font-medium">Timeline</h3>
-                    <CopyButton
-                      text={generateTimelineSummary(sessionDetail.data.timeline)}
-                      label="Copy Summary"
-                    />
-                    <DownloadButton
-                      data={sessionDetail.data.timeline}
-                      filename="timeline-full"
-                      label="Full"
-                    />
-                  </div>
-                  <TimelineView timeline={sessionDetail.data.timeline} />
-                </div>
-              )}
-
-              {/* Raw JSON (collapsed) */}
-              <Collapsible title="Raw JSON Response" className="text-sm">
-                <div className="flex items-center gap-2 mb-2">
-                  <CopyButton text={sessionDetail} label="Copy" />
-                  <DownloadButton data={sessionDetail} filename="session-response" label="Download" />
-                </div>
-                <pre className="bg-gray-100 p-3 rounded-lg text-xs overflow-auto max-h-96">
-                  {JSON.stringify(sessionDetail, null, 2)}
-                </pre>
-              </Collapsible>
-
-              {/* Continue Chat Section */}
-              {sessionStatus === 'completed' && (
-                <div className="border-2 border-green-400 rounded-lg p-4 bg-green-50">
-                  <h3 className="font-semibold text-green-800 mb-2">Continue Conversation</h3>
-                  <p className="text-sm text-green-700 mb-3">
-                    Session completed. Send a follow-up message to continue.
-                  </p>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={continueMessage}
-                      onChange={(e) => setContinueMessage(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && sendContinueChat()}
-                      placeholder="Type a follow-up message..."
-                      className="flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                    <button
-                      onClick={sendContinueChat}
-                      disabled={loading.continueChat || !continueMessage.trim()}
-                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-                    >
-                      {loading.continueChat ? 'Sending...' : 'Continue'}
-                    </button>
-                  </div>
-                  {continueResponse && (
-                    <div className="mt-3">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h4 className="font-medium text-sm">Response:</h4>
-                        <CopyButton text={continueResponse} label="Copy" />
-                      </div>
-                      <pre className="bg-white p-2 rounded-lg text-xs overflow-auto max-h-40 border">
-                        {JSON.stringify(continueResponse, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              )}
-
-            </div>
-          ) : null}
-        </div>
-      )}
+    <div className="flex h-[calc(100vh-4rem)] bg-gray-50">
+      <DebugSessionList
+        sessions={sessions}
+        selectedSession={selectedSession}
+        loading={loading.sessions}
+        onSelect={fetchSessionDetail}
+        onRefresh={fetchSessions}
+      />
+      <DebugSessionDetail
+        sessionDetail={sessionDetail}
+        loading={loading.detail}
+        onRefresh={() => selectedSession && fetchSessionDetail(selectedSession)}
+        selectedSession={selectedSession}
+        answerText={answerText}
+        setAnswerText={setAnswerText}
+        onSubmitAnswer={submitAnswer}
+        answerLoading={loading.answer}
+      />
     </div>
   )
 }
