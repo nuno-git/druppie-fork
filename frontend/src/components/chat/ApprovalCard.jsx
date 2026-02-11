@@ -284,7 +284,7 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
             )}
           </div>
           <div className="text-amber-800 font-medium mb-2">
-            {approval.task_name}
+            {toolInfo.label}
           </div>
 
           {/* MULTI approval progress */}
@@ -337,7 +337,6 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
             <div className="flex items-center gap-2 text-sm text-amber-700 mb-3">
               <ToolIcon className={`w-4 h-4 ${toolInfo.color}`} />
               <span className="font-medium">{toolInfo.label}</span>
-              <code className="bg-amber-100 px-1 rounded text-xs">{toolName}</code>
             </div>
           )}
 

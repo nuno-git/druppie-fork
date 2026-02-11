@@ -9,7 +9,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, ExternalLink, Plus, Copy, Check, CheckCircle, XCircle } from 'lucide-react'
+import { Send, ExternalLink, Plus, Copy, Check, CheckCircle, XCircle, Loader2 } from 'lucide-react'
 import {
   getSessions,
   getSession,
@@ -21,15 +21,16 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { getUserInfo } from '../services/keycloak'
-import { getAgentConfig, getAgentColorClasses } from '../utils/agentConfig'
+import { getAgentConfig, getAgentMessageColors } from '../utils/agentConfig'
 import ApprovalCard from '../components/chat/ApprovalCard'
 import HITLQuestionMessage from '../components/chat/HITLQuestionMessage'
+import WorkflowPipeline from '../components/chat/WorkflowPipeline'
 
 // --- Helpers ---
 
 const STATUS_STYLES = {
   completed: 'bg-green-100 text-green-700',
-  running: 'bg-blue-100 text-blue-700 animate-pulse',
+  running: 'bg-blue-100 text-blue-700',
   pending: 'bg-gray-100 text-gray-600',
   failed: 'bg-red-100 text-red-700',
   paused_hitl: 'bg-yellow-100 text-yellow-700',
@@ -40,41 +41,23 @@ const STATUS_STYLES = {
   rejected: 'bg-red-100 text-red-700',
 }
 
+const STATUS_LABELS = {
+  paused_hitl: 'Awaiting Input',
+  paused_tool: 'Awaiting Approval',
+  waiting_approval: 'Awaiting Approval',
+  waiting_answer: 'Awaiting Input',
+}
+
 const StatusBadge = ({ status }) => (
   <span
-    className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
       STATUS_STYLES[status] || 'bg-gray-100 text-gray-600'
     }`}
   >
-    {status?.replace(/_/g, ' ')}
+    {status === 'running' && <Loader2 className="w-3 h-3 animate-spin" />}
+    {STATUS_LABELS[status] || status?.replace(/_/g, ' ')}
   </span>
 )
-
-const JsonBlock = ({ label, data }) => {
-  if (data === null || data === undefined) return null
-  return (
-    <details className="mt-1" data-label={label}>
-      <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
-        {label}
-      </summary>
-      <pre className="mt-1 p-2 bg-gray-50 rounded text-xs overflow-auto max-h-60 whitespace-pre-wrap break-all">
-        {typeof data === 'string' ? data : JSON.stringify(data, null, 2)}
-      </pre>
-    </details>
-  )
-}
-
-const AgentBadge = ({ agentId }) => {
-  const config = getAgentConfig(agentId)
-  const colorClasses = getAgentColorClasses(config.color)
-  return (
-    <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${colorClasses}`}
-    >
-      {config.name}
-    </span>
-  )
-}
 
 const timeAgo = (dateStr) => {
   if (!dateStr) return ''
@@ -160,9 +143,6 @@ const buildVisibleJson = (data, containerEl) => {
 
     if (entry.type === 'agent_run' && entry.agent_run) {
       const run = entry.agent_run
-      const runEl = containerEl.querySelector(
-        `[data-type="agent-run"][data-timeline-idx="${i}"]`
-      )
 
       const runEntry = {
         type: 'agent_run',
@@ -171,53 +151,16 @@ const buildVisibleJson = (data, containerEl) => {
         sequence_number: run.sequence_number,
       }
 
-      // Only include LLM calls if the details panel is visible
-      const moreDetailsEl = runEl?.querySelector('[data-type="more-details"]')
-      if (moreDetailsEl && run.llm_calls?.length) {
-        runEntry.llm_calls = run.llm_calls.map((llm, li) => {
-          const llmEl = runEl.querySelector(
-            `details[data-type="llm-call"][data-llm-idx="${li}"]`
-          )
-          const llmEntry = {
-            model: llm.model,
-            total_tokens: llm.token_usage?.total_tokens || 0,
-          }
-
-          // Only include tool calls if the LLM call <details> is open
-          if (llmEl?.open && llm.tool_calls?.length) {
-            llmEntry.tool_calls = llm.tool_calls.map((tc, ti) => {
-              const tcEl = llmEl.querySelector(
-                `details[data-type="tool-call"][data-tc-idx="${ti}"]`
-              )
-              const tcEntry = {
-                tool_name: tc.tool_name,
-                status: tc.status,
-              }
-
-              // Only include args/result/approval if the tool call <details> is open
-              if (tcEl?.open) {
-                const argsOpen = tcEl.querySelector(
-                  'details[data-label="Arguments"]'
-                )?.open
-                const resultOpen = tcEl.querySelector(
-                  'details[data-label="Result"]'
-                )?.open
-                const approvalOpen = tcEl.querySelector(
-                  'details[data-label="Approval details"]'
-                )?.open
-
-                if (argsOpen && tc.arguments) tcEntry.arguments = tc.arguments
-                if (resultOpen && tc.result) tcEntry.result = tc.result
-                if (tc.error) tcEntry.error = tc.error
-                if (approvalOpen && tc.approval) tcEntry.approval = tc.approval
-              }
-
-              return tcEntry
-            })
-          }
-
-          return llmEntry
-        })
+      // LLM call summaries (details are in the workflow pipeline bar)
+      if (run.llm_calls?.length) {
+        runEntry.llm_calls = run.llm_calls.map((llm) => ({
+          model: llm.model,
+          total_tokens: llm.token_usage?.total_tokens || 0,
+          tool_calls: llm.tool_calls?.map((tc) => ({
+            tool_name: tc.tool_name,
+            status: tc.status,
+          })),
+        }))
       }
 
       result.timeline.push(runEntry)
@@ -227,28 +170,49 @@ const buildVisibleJson = (data, containerEl) => {
   return result
 }
 
-const ACTIVE_STATUSES = new Set([
-  'running',
-  'paused_hitl',
-  'paused_tool',
-  'waiting_approval',
-  'waiting_answer',
-])
+// --- Extract approvals from LLM calls (questions are now rendered as timeline bubbles) ---
 
-// --- Extract approvals and HITL questions from LLM calls ---
-
-const extractSurfacedItems = (llmCalls) => {
+const extractSurfacedApprovals = (llmCalls) => {
   const items = []
   llmCalls?.forEach((llm) => {
     llm.tool_calls?.forEach((tc) => {
       if (tc.approval) {
         items.push({ type: 'approval', tc })
-      } else if (tc.tool_name?.includes('hitl_ask')) {
-        items.push({ type: 'question', tc })
       }
     })
   })
   return items
+}
+
+// --- Extract HITL questions from an agent run's LLM calls ---
+
+const extractQuestions = (agentRun) => {
+  const questions = []
+  agentRun.llm_calls?.forEach((llm) => {
+    llm.tool_calls?.forEach((tc) => {
+      if (tc.tool_name?.includes('hitl_ask')) {
+        questions.push({ tc, agentId: agentRun.agent_id })
+      }
+    })
+  })
+  return questions
+}
+
+// --- Find the pending question across the entire timeline ---
+
+const findPendingQuestion = (timeline) => {
+  if (!timeline) return null
+  for (const entry of timeline) {
+    if (entry.type !== 'agent_run' || !entry.agent_run) continue
+    for (const llm of entry.agent_run.llm_calls || []) {
+      for (const tc of llm.tool_calls || []) {
+        if (tc.tool_name?.includes('hitl_ask') && tc.status === 'waiting_answer') {
+          return { tc, agentId: entry.agent_run.agent_id }
+        }
+      }
+    }
+  }
+  return null
 }
 
 // --- Surfaced Approval Card (uses ApprovalCard for pending, simple display for resolved) ---
@@ -321,9 +285,9 @@ const SurfacedApproval = ({ tc, sessionId }) => {
   )
 }
 
-// --- Surfaced HITL Question (uses HITLQuestionMessage) ---
+// --- Timeline HITL Question (rendered as a chat bubble via HITLQuestionMessage) ---
 
-const SurfacedQuestion = ({ tc, agentId, sessionId }) => {
+const TimelineQuestion = ({ tc, agentId, sessionId }) => {
   const queryClient = useQueryClient()
 
   const answerMut = useMutation({
@@ -363,141 +327,41 @@ const SurfacedQuestion = ({ tc, agentId, sessionId }) => {
   }
 
   return (
-    <HITLQuestionMessage
-      question={questionData}
-      onAnswer={(qId, answer) => answerMut.mutate({ questionId: qId, answer })}
-      isAnswering={answerMut.isPending}
-      answered={isAnswered}
-      userAnswer={displayAnswer}
-    />
-  )
-}
-
-// --- Tool Call ---
-
-const ToolCallItem = ({ tc, tcIndex }) => {
-  return (
-    <div className="ml-4 border-l-2 border-gray-200 pl-3 py-1">
-      <details data-type="tool-call" data-tc-idx={tcIndex}>
-        <summary className="cursor-pointer text-sm flex items-center gap-2">
-          <code className="text-purple-600 font-medium">{tc.tool_name}</code>
-          <StatusBadge status={tc.status} />
-        </summary>
-        <div className="mt-2 space-y-2 text-sm">
-          <JsonBlock label="Arguments" data={tc.arguments} />
-          <JsonBlock label="Result" data={tc.result} />
-          {tc.error && (
-            <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-              <strong>Error:</strong> {tc.error}
-            </div>
-          )}
-          {tc.approval && <JsonBlock label="Approval details" data={tc.approval} />}
+    <>
+      <HITLQuestionMessage
+        question={questionData}
+        onChoiceSelect={(answer) => answerMut.mutate({ questionId: tc.question_id, answer })}
+        isAnswering={answerMut.isPending}
+        answered={isAnswered}
+      />
+      {/* User's answer rendered as a regular right-aligned chat bubble */}
+      {isAnswered && displayAnswer && (
+        <div className="flex justify-end">
+          <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-blue-600 text-white">
+            <div className="whitespace-pre-wrap">{displayAnswer}</div>
+          </div>
         </div>
-      </details>
-    </div>
-  )
-}
-
-// --- LLM Call ---
-
-const LLMCallItem = ({ llmCall, index }) => {
-  const toolCount = llmCall.tool_calls?.length || 0
-
-  return (
-    <details data-type="llm-call" data-llm-idx={index} className="ml-4 border-l-2 border-blue-200 pl-3 py-1">
-      <summary className="cursor-pointer text-sm flex items-center gap-2">
-        <span className="text-gray-500">LLM #{index + 1}</span>
-        <code className="text-xs text-gray-600">{llmCall.model}</code>
-        <span className="text-xs text-gray-400">
-          {llmCall.token_usage?.total_tokens || 0} tokens
-        </span>
-        {toolCount > 0 && (
-          <span className="text-xs text-purple-600">
-            {toolCount} tool call{toolCount !== 1 ? 's' : ''}
-          </span>
-        )}
-      </summary>
-      <div className="mt-2 space-y-1">
-        {llmCall.tool_calls?.map((tc, i) => (
-          <ToolCallItem key={tc.id || i} tc={tc} tcIndex={i} />
-        ))}
-        {toolCount === 0 && (
-          <p className="text-xs text-gray-400 ml-4">No tool calls</p>
-        )}
-      </div>
-    </details>
+      )}
+    </>
   )
 }
 
 // --- Agent Run ---
 
-const AgentRunItem = ({ run, timelineIndex, sessionId }) => {
-  const [showDetails, setShowDetails] = useState(false)
-  const isActive = ACTIVE_STATUSES.has(run.status)
-  const llmCount = run.llm_calls?.length || 0
-
-  // Extract approvals and HITL questions from LLM calls to surface them
-  const surfacedItems = extractSurfacedItems(run.llm_calls)
+const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) => {
+  // Only show resolved approvals inline; pending ones render at the bottom of the timeline
+  const resolvedItems = hasFollowingMessage ? [] : extractSurfacedApprovals(run.llm_calls)
+    .filter((item) => item.tc.approval.status !== 'pending')
 
   return (
-    <div className="border rounded-lg overflow-hidden" data-type="agent-run" data-timeline-idx={timelineIndex}>
-      {/* Header - always visible */}
-      <div className="px-4 py-3 bg-gray-50 flex items-center gap-2 text-sm">
-        <AgentBadge agentId={run.agent_id} />
-        <StatusBadge status={run.status} />
-        <span className="text-xs text-gray-500">#{run.sequence_number}</span>
-        <span className="text-xs text-gray-400">
-          {llmCount} LLM call{llmCount !== 1 ? 's' : ''}
-          {run.token_usage?.total_tokens
-            ? ` · ${run.token_usage.total_tokens} tokens`
-            : ''}
-        </span>
-        {llmCount > 0 && (
-          <button
-            onClick={() => setShowDetails(!showDetails)}
-            className={`ml-auto px-2 py-0.5 text-xs rounded transition-colors ${
-              showDetails
-                ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-            }`}
-          >
-            {showDetails ? 'Hide' : 'Details'}
-          </button>
-        )}
-      </div>
-
-      {/* Surfaced approvals and HITL questions - always visible */}
-      {surfacedItems.length > 0 && (
-        <div className="px-4 py-3 space-y-3 border-t">
-          {surfacedItems.map((item, i) => (
+    <div data-type="agent-run" data-timeline-idx={timelineIndex}>
+      {resolvedItems.length > 0 && (
+        <div className="ml-11 mt-2 space-y-3">
+          {resolvedItems.map((item, i) => (
             <div key={i}>
-              {item.type === 'approval' && (
-                <SurfacedApproval tc={item.tc} sessionId={sessionId} />
-              )}
-              {item.type === 'question' && (
-                <SurfacedQuestion tc={item.tc} agentId={run.agent_id} sessionId={sessionId} />
-              )}
+              <SurfacedApproval tc={item.tc} sessionId={sessionId} />
             </div>
           ))}
-        </div>
-      )}
-
-      {/* LLM call details (toggled by header button) */}
-      {showDetails && llmCount > 0 && (
-        <div data-type="more-details" data-open="true" className="px-4 py-3 space-y-1 border-t">
-          {run.llm_calls?.map((llm, i) => (
-            <LLMCallItem
-              key={llm.id || i}
-              llmCall={llm}
-              index={i}
-            />
-          ))}
-        </div>
-      )}
-
-      {llmCount === 0 && isActive && (
-        <div className="px-4 py-3 border-t">
-          <p className="text-sm text-gray-400">No LLM calls yet</p>
         </div>
       )}
     </div>
@@ -506,32 +370,77 @@ const AgentRunItem = ({ run, timelineIndex, sessionId }) => {
 
 // --- Message ---
 
-const MessageItem = ({ message }) => {
+const MessageItem = ({ message, agentRun, sessionId }) => {
   const isUser = message.role === 'user'
-  return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div
-        className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
-          isUser ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'
-        }`}
-      >
-        {message.agent_id && !isUser && (
-          <div className="mb-1">
-            <AgentBadge agentId={message.agent_id} />
-          </div>
-        )}
-        {message.agent_id === 'summarizer' ? (
-          <div className="markdown-content">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-          </div>
-        ) : (
+  const hasAgent = message.agent_id && !isUser
+  // Only show resolved approvals inline; pending ones render at the bottom of the timeline
+  const surfacedApprovals = agentRun
+    ? extractSurfacedApprovals(agentRun.llm_calls).filter((item) => item.tc.approval.status !== 'pending')
+    : []
+
+  // User messages: right-aligned blue
+  if (isUser) {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-blue-600 text-white">
           <div className="whitespace-pre-wrap">{message.content}</div>
+          <div className="text-xs mt-1 text-blue-200">
+            {message.created_at && new Date(message.created_at).toLocaleTimeString()}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Agent messages: icon circle + agent-colored bubble
+  if (hasAgent) {
+    const config = getAgentConfig(message.agent_id)
+    const AgentIcon = config.icon
+    const colors = getAgentMessageColors(config.color)
+
+    return (
+      <>
+        <div className="flex justify-start">
+          <div className="flex items-start gap-3 max-w-[85%]">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${colors.bg} border ${colors.border}`}>
+              <AgentIcon className={`w-5 h-5 ${colors.accent}`} />
+            </div>
+            <div className={`rounded-2xl rounded-tl-none shadow-sm border px-4 py-3 ${colors.bg} ${colors.border}`}>
+              <div className={`text-xs font-semibold ${colors.accent}`}>{config.name}</div>
+              {message.agent_id === 'summarizer' ? (
+                <div className="markdown-content text-sm mt-1">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                </div>
+              ) : (
+                <div className="whitespace-pre-wrap text-sm mt-1">{message.content}</div>
+              )}
+              <div className="text-xs mt-1 text-gray-400">
+                {message.created_at && new Date(message.created_at).toLocaleTimeString()}
+              </div>
+            </div>
+          </div>
+        </div>
+        {/* Resolved approvals — rendered below the message bubble, aligned with content */}
+        {surfacedApprovals.length > 0 && (
+          <div className="ml-11 mt-2 space-y-3">
+            {surfacedApprovals.map((item, i) => (
+              <div key={i}>
+                <SurfacedApproval tc={item.tc} sessionId={sessionId} />
+              </div>
+            ))}
+          </div>
         )}
-        <div
-          className={`text-xs mt-1 ${isUser ? 'text-blue-200' : 'text-gray-400'}`}
-        >
-          {message.created_at &&
-            new Date(message.created_at).toLocaleTimeString()}
+      </>
+    )
+  }
+
+  // Non-agent, non-user messages (system, etc.)
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm bg-gray-100 text-gray-900">
+        <div className="whitespace-pre-wrap">{message.content}</div>
+        <div className="text-xs mt-1 text-gray-400">
+          {message.created_at && new Date(message.created_at).toLocaleTimeString()}
         </div>
       </div>
     </div>
@@ -595,9 +504,20 @@ const SessionDetail = ({ sessionId }) => {
 
   if (!data) return null
 
+  // Derive pending HITL question for input bar routing
+  const pendingQuestion = findPendingQuestion(data.timeline)
+
   const handleContinueSend = () => {
     const trimmed = continueInput.trim()
     if (!trimmed) return
+    if (pendingQuestion) {
+      // Route to answerQuestion instead of sendChat
+      answerQuestion(pendingQuestion.tc.question_id, trimmed).then(() => {
+        setContinueInput('')
+        queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      })
+      return
+    }
     continueMutation.mutate(trimmed)
   }
 
@@ -634,6 +554,9 @@ const SessionDetail = ({ sessionId }) => {
         </div>
       </div>
 
+      {/* Workflow Pipeline */}
+      <WorkflowPipeline timeline={data.timeline} />
+
       {/* Timeline */}
       <div ref={timelineRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {(!data.timeline || data.timeline.length === 0) && (
@@ -641,21 +564,133 @@ const SessionDetail = ({ sessionId }) => {
             No timeline entries yet
           </p>
         )}
-        {data.timeline?.map((entry, i) => (
-          <div key={i}>
-            {entry.type === 'message' && entry.message && (
-              <MessageItem message={entry.message} />
-            )}
-            {entry.type === 'agent_run' && entry.agent_run && (
-              <AgentRunItem run={entry.agent_run} timelineIndex={i} sessionId={sessionId} />
-            )}
-          </div>
-        ))}
+        {(() => {
+          // Map each agent's LAST non-user message to its preceding agent_run (for approval positioning)
+          const messageRunMap = new Map()
+          const runsWithMessages = new Set()
+          if (data.timeline) {
+            let lastRun = null
+            let lastRunIdx = null
+            let lastMsgIdx = null
+            for (let idx = 0; idx < data.timeline.length; idx++) {
+              const e = data.timeline[idx]
+              if (e.type === 'agent_run' && e.agent_run) {
+                if (lastRun && lastMsgIdx !== null) {
+                  messageRunMap.set(lastMsgIdx, lastRun)
+                  runsWithMessages.add(lastRunIdx)
+                }
+                lastRun = e.agent_run
+                lastRunIdx = idx
+                lastMsgIdx = null
+              } else if (
+                e.type === 'message' &&
+                e.message?.role !== 'user' &&
+                lastRun
+              ) {
+                lastMsgIdx = idx
+              }
+            }
+            if (lastRun && lastMsgIdx !== null) {
+              messageRunMap.set(lastMsgIdx, lastRun)
+              runsWithMessages.add(lastRunIdx)
+            }
+          }
+
+          return data.timeline?.map((entry, i) => {
+            // Skip pending agent runs — they only appear in the pipeline
+            if (
+              entry.type === 'agent_run' &&
+              entry.agent_run?.status === 'pending' &&
+              (entry.agent_run?.llm_calls?.length || 0) === 0
+            ) {
+              return null
+            }
+            const questions = entry.type === 'agent_run' && entry.agent_run
+              ? extractQuestions(entry.agent_run)
+              : []
+            return (
+              <div key={i}>
+                {entry.type === 'message' && entry.message && (
+                  <MessageItem
+                    message={entry.message}
+                    agentRun={messageRunMap.get(i)}
+                    sessionId={sessionId}
+                  />
+                )}
+                {entry.type === 'agent_run' && entry.agent_run && (
+                  <>
+                    <AgentRunItem
+                      run={entry.agent_run}
+                      timelineIndex={i}
+                      sessionId={sessionId}
+                      hasFollowingMessage={runsWithMessages.has(i)}
+                    />
+                    {/* HITL questions rendered as chat bubbles below the agent run */}
+                    {questions.map((q, qi) => (
+                      <div key={qi} className="mt-3">
+                        <TimelineQuestion tc={q.tc} agentId={q.agentId} sessionId={sessionId} />
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )
+          })
+        })()}
+        {/* Trailing thinking bubble for running agents */}
+        {(() => {
+          const runningEntry = data.timeline?.findLast(
+            (e) => e.type === 'agent_run' && e.agent_run?.status === 'running'
+          )
+          if (!runningEntry) return null
+          const run = runningEntry.agent_run
+          const config = getAgentConfig(run.agent_id)
+          const AgentIcon = config.icon
+          const colors = getAgentMessageColors(config.color)
+          return (
+            <div className="flex justify-start">
+              <div className="flex items-start gap-3 max-w-[85%]">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${colors.bg} border ${colors.border}`}>
+                  <AgentIcon className={`w-5 h-5 ${colors.accent}`} />
+                </div>
+                <div className={`rounded-2xl rounded-tl-none shadow-sm border px-4 py-3 ${colors.bg} ${colors.border}`}>
+                  <div className={`text-xs font-semibold ${colors.accent}`}>{config.name}</div>
+                  <div className="flex items-center gap-2 mt-1 text-sm text-gray-500">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>{config.thinkingLabel || 'Thinking...'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
+        {/* Pending approvals — always at the bottom, just above the input bar */}
+        {(() => {
+          const pending = []
+          data.timeline?.forEach((entry) => {
+            if (entry.type !== 'agent_run' || !entry.agent_run) return
+            entry.agent_run.llm_calls?.forEach((llm) => {
+              llm.tool_calls?.forEach((tc) => {
+                if (tc.approval?.status === 'pending') {
+                  pending.push(tc)
+                }
+              })
+            })
+          })
+          if (pending.length === 0) return null
+          return (
+            <div className="space-y-3">
+              {pending.map((tc, i) => (
+                <SurfacedApproval key={tc.approval.id || i} tc={tc} sessionId={sessionId} />
+              ))}
+            </div>
+          )
+        })()}
         <div ref={timelineEndRef} />
       </div>
 
-      {/* Continue input - shown when session is completed */}
-      {data.status === 'completed' && (
+      {/* Input bar - always visible except when failed */}
+      {data.status !== 'failed' && (
         <div className="px-4 py-3 border-t bg-white flex-shrink-0">
           <div className="flex gap-2">
             <input
@@ -665,7 +700,13 @@ const SessionDetail = ({ sessionId }) => {
               onKeyDown={(e) =>
                 e.key === 'Enter' && !continueMutation.isPending && handleContinueSend()
               }
-              placeholder="Send a follow-up message..."
+              placeholder={
+                pendingQuestion
+                  ? 'Type your answer...'
+                  : data.status === 'completed'
+                    ? 'Send a follow-up message...'
+                    : 'Type a message...'
+              }
               className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
               disabled={continueMutation.isPending}
             />

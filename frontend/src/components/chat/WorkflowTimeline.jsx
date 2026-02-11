@@ -41,7 +41,6 @@ const WorkflowTimeline = ({ events, isExpanded, onToggle, isWorking = false }) =
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
               <Loader2 className="w-5 h-5 text-white animate-spin" />
             </div>
-            <span className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-white animate-pulse" />
           </div>
           <div>
             <div className="text-sm font-semibold text-blue-900 flex items-center gap-2">
