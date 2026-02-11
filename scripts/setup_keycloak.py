@@ -194,8 +194,19 @@ class KeycloakAdmin:
         else:
             print(f"    [WARN] Could not assign roles: {response.text}")
 
+    def _get_client_uuid(self, realm: str, client_id: str) -> str:
+        """Get internal UUID for a client by clientId."""
+        url = f"{self.base_url}/admin/realms/{realm}/clients"
+        response = requests.get(url, params={"clientId": client_id}, headers=self._headers())
+        if response.status_code == 200:
+            clients = response.json()
+            for client in clients:
+                if client.get("clientId") == client_id:
+                    return client["id"]
+        return None
+
     def create_client(self, realm: str, client_config: dict):
-        """Create an OAuth2 client."""
+        """Create or update an OAuth2 client."""
         url = f"{self.base_url}/admin/realms/{realm}/clients"
 
         response = requests.post(url, json=client_config, headers=self._headers())
@@ -203,7 +214,17 @@ class KeycloakAdmin:
         client_id = client_config.get("clientId", "unknown")
 
         if response.status_code == 409:
-            print(f"  [OK] Client '{client_id}' already exists")
+            print(f"  [UPDATE] Client '{client_id}' already exists, updating...")
+            uuid = self._get_client_uuid(realm, client_id)
+            if uuid:
+                update_url = f"{self.base_url}/admin/realms/{realm}/clients/{uuid}"
+                update_resp = requests.put(update_url, json=client_config, headers=self._headers())
+                if update_resp.status_code in [200, 204]:
+                    print(f"  [OK] Updated client '{client_id}'")
+                else:
+                    print(f"  [ERROR] Failed to update client '{client_id}': {update_resp.text}")
+            else:
+                print(f"  [ERROR] Could not find UUID for client '{client_id}'")
         elif response.status_code == 201:
             print(f"  [OK] Created client '{client_id}'")
         else:
