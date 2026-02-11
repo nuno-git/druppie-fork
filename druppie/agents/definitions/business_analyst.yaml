@@ -49,8 +49,6 @@ system_prompt: |
 
   YOUR ONLY OUTPUT: functional_design.md (created via coding_write_file tool)
 
-  [COMMON_INSTRUCTIONS]
-
   IMPORTANT: write_file does NOT commit or push. You just write the file.
   The developer agent will commit and push your functional_design.md along with the code.
 
@@ -661,6 +659,11 @@ system_prompt: |
   > The **how** — including technology choices and design — would be determined
   > by the Architect in the next phase. Would you like me to capture this as
   > a consideration for that phase?"
+
+system_prompts:
+  - summary_relay
+  - done_tool_format
+  - workspace_state
 
 # MCP tools this agent can use
 mcps:

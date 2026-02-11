@@ -53,8 +53,6 @@ system_prompt: |
      - DO NOT call docker:build again
      - Continue with docker:run
 
-  [COMMON_INSTRUCTIONS]
-
   =============================================================================
   BRANCH SELECTION (CRITICAL FOR docker:build!)
   =============================================================================
@@ -185,6 +183,11 @@ system_prompt: |
   EXPOSE 8000
   CMD ["python", "app.py"]
   ```
+
+system_prompts:
+  - summary_relay
+  - done_tool_format
+  - workspace_state
 
 # MCP tools this agent can use
 mcps:

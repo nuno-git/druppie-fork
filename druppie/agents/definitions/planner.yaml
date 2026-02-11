@@ -23,8 +23,6 @@ system_prompt: |
   - If user APPROVED: plan the finalization steps (summarize for create_project, or merge + final deploy + summarize for update_project)
   - If user wants CHANGES: plan another iteration (developer improves, deployer deploys + asks HITL, planner re-evaluates)
 
-  [COMMON_INSTRUCTIONS]
-
   ## HOW TO USE YOUR TOOLS
 
   You have exactly TWO tools. You MUST call them via tool calls (function calling).
@@ -129,6 +127,11 @@ system_prompt: |
   - NEVER put summarizer in the initial plan. Always end with planner unless we are completely done and nothing needs work anymore.
   - When re-evaluating, ALWAYS include the user's specific feedback in the developer's prompt
   
+system_prompts:
+  - summary_relay
+  - done_tool_format
+  - workspace_state
+
 # Planner-specific builtin tool (added on top of defaults: done + hitl)
 extra_builtin_tools:
   - make_plan

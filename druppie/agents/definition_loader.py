@@ -18,14 +18,14 @@ class AgentDefinitionLoader:
 
     _definitions_path: str = None
     _cache: dict[str, AgentDefinition] = {}
-    _common_prompt: str | None = None
+    _system_prompt_cache: dict[str, str] = {}
 
     @classmethod
     def set_definitions_path(cls, path: str) -> None:
         """Set the path to agent definitions directory."""
         cls._definitions_path = path
         cls._cache.clear()
-        cls._common_prompt = None
+        cls._system_prompt_cache.clear()
 
     @classmethod
     def _get_definitions_path(cls) -> str:
@@ -68,19 +68,34 @@ class AgentDefinitionLoader:
         return definition
 
     @classmethod
-    def load_common_prompt(cls) -> str:
-        """Load shared prompt instructions from _common.md, with cache."""
-        if cls._common_prompt is not None:
-            return cls._common_prompt
+    def load_system_prompt(cls, prompt_id: str) -> str:
+        """Load a system prompt from system_prompts/{prompt_id}.yaml, with cache.
 
-        path = os.path.join(cls._get_definitions_path(), "_common.md")
-        if os.path.exists(path):
-            with open(path, "r") as f:
-                cls._common_prompt = f.read().strip()
-        else:
-            cls._common_prompt = ""
+        Raises:
+            AgentNotFoundError: If the system prompt file doesn't exist.
+        """
+        from druppie.agents.runtime import AgentError
 
-        return cls._common_prompt
+        if prompt_id in cls._system_prompt_cache:
+            return cls._system_prompt_cache[prompt_id]
+
+        path = os.path.join(
+            cls._get_definitions_path(), "system_prompts", f"{prompt_id}.yaml"
+        )
+
+        if not os.path.exists(path):
+            raise AgentError(
+                f"System prompt '{prompt_id}' not found at {path}"
+            )
+
+        with open(path, "r") as f:
+            data = yaml.safe_load(f)
+
+        prompt = data.get("prompt", "").strip()
+        cls._system_prompt_cache[prompt_id] = prompt
+
+        logger.debug("system_prompt_loaded", prompt_id=prompt_id)
+        return prompt
 
     @classmethod
     def list_agents(cls) -> list[str]:
