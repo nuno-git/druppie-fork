@@ -172,8 +172,8 @@ const getToolInfo = (toolName) => {
     'coding:write_file': { icon: FilePlus, label: 'Write File', color: 'text-blue-600' },
     'batch_write_files': { icon: FileCode, label: 'Write Files', color: 'text-blue-600' },
     'coding:batch_write_files': { icon: FileCode, label: 'Write Files', color: 'text-blue-600' },
-    'run_command': { icon: Terminal, label: 'Run Command', color: 'text-orange-600' },
-    'coding:run_command': { icon: Terminal, label: 'Run Command', color: 'text-orange-600' },
+    'run_command': { icon: Terminal, label: 'Run Command', color: 'text-gray-600' },
+    'coding:run_command': { icon: Terminal, label: 'Run Command', color: 'text-gray-600' },
     'commit_and_push': { icon: GitBranch, label: 'Git Commit', color: 'text-green-600' },
     'coding:commit_and_push': { icon: GitBranch, label: 'Git Commit', color: 'text-green-600' },
   }
@@ -267,23 +267,23 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
   }
 
   return (
-    <div className="mt-3 bg-amber-50 rounded-lg border border-amber-200 p-4">
+    <div className="mt-3 bg-gray-50 rounded-lg border border-gray-200 p-4">
       <div className="flex items-start gap-3">
-        <div className="p-2 bg-amber-100 rounded-full">
-          <AlertTriangle className="w-5 h-5 text-amber-600" />
+        <div className="p-2 bg-gray-100 rounded-full">
+          <AlertTriangle className="w-5 h-5 text-gray-500" />
         </div>
         <div className="flex-1">
           <div className="flex items-center justify-between mb-1">
-            <div className="text-sm font-medium text-amber-900">
+            <div className="text-sm font-medium text-gray-900">
               {isMultiApproval ? 'Multi-Approval Required' : 'Approval Required'}
             </div>
             {isMultiApproval && (
-              <span className="text-xs bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full">
+              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
                 {currentApprovals} of {requiredApprovals} approvals
               </span>
             )}
           </div>
-          <div className="text-amber-800 font-medium mb-2">
+          <div className="text-gray-800 font-medium mb-2">
             {toolInfo.label}
           </div>
 
@@ -291,9 +291,9 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
           {isMultiApproval && (
             <div className="mb-3">
               {/* Progress bar */}
-              <div className="w-full bg-amber-200 rounded-full h-2 mb-2">
+              <div className="w-full bg-gray-200 rounded-full h-1.5 mb-2">
                 <div
-                  className="bg-green-500 h-2 rounded-full transition-all duration-300"
+                  className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
                   style={{ width: `${progressPercent}%` }}
                 />
               </div>
@@ -301,7 +301,7 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
               {/* Approved roles */}
               {approvedByRoles.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-2">
-                  <span className="text-xs text-amber-700">Approved by:</span>
+                  <span className="text-xs text-gray-500">Approved by:</span>
                   {approvedByRoles.map(role => (
                     <span key={role} className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">
                       <CheckCircle className="w-3 h-3" />
@@ -314,9 +314,9 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
               {/* Remaining roles */}
               {remainingRoles.length > 0 && (
                 <div className="flex flex-wrap gap-1">
-                  <span className="text-xs text-amber-700">Still needed:</span>
+                  <span className="text-xs text-gray-500">Still needed:</span>
                   {remainingRoles.map(role => (
-                    <span key={role} className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full">
+                    <span key={role} className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">
                       {role}
                     </span>
                   ))}
@@ -327,14 +327,14 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
 
           {/* Single approval role display */}
           {!isMultiApproval && (
-            <div className="text-sm text-amber-700 mb-3">
-              This action requires approval from <span className="font-semibold">{requiredRoles.join(' or ')}</span> role.
+            <div className="text-sm text-gray-500 mb-3">
+              This action requires approval from <span className="font-semibold text-gray-700">{requiredRoles.join(' or ')}</span> role.
             </div>
           )}
 
           {/* Tool info badge */}
           {toolName && (
-            <div className="flex items-center gap-2 text-sm text-amber-700 mb-3">
+            <div className="flex items-center gap-2 text-sm text-gray-600 mb-3">
               <ToolIcon className={`w-4 h-4 ${toolInfo.color}`} />
               <span className="font-medium">{toolInfo.label}</span>
             </div>
@@ -344,7 +344,7 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
           {command && (
             <div className="mb-3">
               <div className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
-                <Terminal className="w-4 h-4 text-orange-600" />
+                <Terminal className="w-4 h-4 text-gray-500" />
                 Command to execute:
               </div>
               <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
@@ -412,14 +412,14 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
 
           {/* Context description */}
           {contextDescription && (
-            <div className="text-sm text-amber-700 mb-3 italic">
+            <div className="text-sm text-gray-500 mb-3 italic">
               {contextDescription}
             </div>
           )}
 
           {/* View full conversation link (hidden when already on chat page) */}
           {sessionId && !chatInline && (
-            <div className="mb-3 pt-2 border-t border-amber-200">
+            <div className="mb-3 pt-2 border-t border-gray-200">
               <Link
                 to={`/chat?session=${sessionId}`}
                 className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 transition-colors"
@@ -442,7 +442,7 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
                     placeholder="Enter reason for rejection..."
-                    className="w-full px-3 py-2 border border-amber-200 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
                     autoFocus
                   />
                 </div>
@@ -481,48 +481,51 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
                 </div>
               ) : (
                 <div className="flex items-center gap-2" role="group" aria-label="Approval actions">
-                  <button
-                    onClick={() => onApprove(approval.task_id)}
-                    disabled={isProcessing || showRejectInput}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
-                    aria-label={isMultiApproval ? `Add approval ${currentApprovals + 1} of ${requiredApprovals}` : 'Approve task'}
-                  >
-                    {isProcessing ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                        Processing...
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle className="w-4 h-4" aria-hidden="true" />
-                        {isMultiApproval ? `Add Approval (${currentApprovals + 1}/${requiredApprovals})` : 'Approve'}
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={handleReject}
-                    disabled={isProcessing}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 ${
-                      showRejectInput
-                        ? 'bg-red-600 text-white hover:bg-red-700'
-                        : 'bg-white text-red-600 border border-red-200 hover:bg-red-50'
-                    } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    aria-label={showRejectInput ? 'Confirm task rejection' : 'Reject task'}
-                  >
-                    <XCircle className="w-4 h-4" aria-hidden="true" />
-                    {showRejectInput ? 'Confirm Reject' : 'Reject'}
-                  </button>
-                  {showRejectInput && (
-                    <button
-                      onClick={() => {
-                        setShowRejectInput(false)
-                        setRejectReason('')
-                      }}
-                      className="px-3 py-2 text-gray-600 hover:text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-gray-500 rounded"
-                      aria-label="Cancel rejection"
-                    >
-                      Cancel
-                    </button>
+                  {!showRejectInput ? (
+                    <>
+                      <button
+                        onClick={() => onApprove(approval.task_id)}
+                        disabled={isProcessing}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                        aria-label={isMultiApproval ? `Add approval ${currentApprovals + 1} of ${requiredApprovals}` : 'Approve task'}
+                      >
+                        {isProcessing ? (
+                          <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                        ) : (
+                          <CheckCircle className="w-4 h-4" aria-hidden="true" />
+                        )}
+                        {isMultiApproval ? `Approve (${currentApprovals + 1}/${requiredApprovals})` : 'Approve'}
+                      </button>
+                      <button
+                        onClick={() => setShowRejectInput(true)}
+                        disabled={isProcessing}
+                        className="px-3 py-1.5 text-sm text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors focus:outline-none disabled:opacity-50"
+                        aria-label="Reject task"
+                      >
+                        Reject
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={handleReject}
+                        disabled={isProcessing || !rejectReason.trim()}
+                        className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors focus:outline-none"
+                        aria-label="Confirm task rejection"
+                      >
+                        Confirm Reject
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowRejectInput(false)
+                          setRejectReason('')
+                        }}
+                        className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 rounded-lg focus:outline-none"
+                        aria-label="Cancel rejection"
+                      >
+                        Cancel
+                      </button>
+                    </>
                   )}
                 </div>
               )}

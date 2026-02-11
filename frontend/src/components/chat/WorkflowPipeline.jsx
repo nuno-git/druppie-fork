@@ -34,9 +34,9 @@ const WorkflowPipeline = ({ timeline }) => {
   const expandedRun = agentRuns.find((r) => r.id === expandedRunId)
 
   return (
-    <div className="border-b bg-gray-50 flex-shrink-0">
+    <div className="border-b bg-gray-50 flex-shrink-0 min-w-0 overflow-hidden">
       {/* Pipeline bar */}
-      <div className="px-4 py-2 flex items-center gap-1 overflow-x-auto">
+      <div className="px-4 py-2 flex items-center gap-1 overflow-x-auto scrollbar-thin">
         {agentRuns.map((run, i) => {
           const config = getAgentConfig(run.agent_id)
           const colorClasses = getAgentColorClasses(config.color)

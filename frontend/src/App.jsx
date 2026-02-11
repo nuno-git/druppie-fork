@@ -3,27 +3,13 @@
  */
 
 import React, { useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import {
-  Home,
-  CheckSquare,
-  LogOut,
-  LogIn,
-  User,
-  Shield,
-  MessageSquare,
-  FolderOpen,
-  Bug,
-  Settings as SettingsIcon,
-  Database,
-  ChevronDown,
-} from 'lucide-react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { Shield, LogIn } from 'lucide-react'
 
-import { initKeycloak, login, logout, isAuthenticated, getUserInfo, hasRole, isKeycloakAvailable } from './services/keycloak'
-import { getTasks } from './services/api'
+import { initKeycloak, login, getUserInfo, hasRole } from './services/keycloak'
 import { ToastProvider } from './components/Toast'
 import ErrorBoundary from './components/ErrorBoundary'
+import NavRail from './components/NavRail'
 
 // Pages
 import Dashboard from './pages/Dashboard'
@@ -78,169 +64,6 @@ const ProtectedRoute = ({ children, requiredRole }) => {
   }
 
   return children
-}
-
-// Navigation
-const Navigation = () => {
-  const { authenticated, user } = useAuth()
-  const location = useLocation()
-  const [debugOpen, setDebugOpen] = useState(false)
-
-  // Fetch pending approvals count for badge
-  const { data: tasksData } = useQuery({
-    queryKey: ['pending-approvals-count'],
-    queryFn: getTasks,
-    enabled: authenticated,
-    refetchInterval: 30000, // Refresh every 30 seconds
-  })
-
-  const pendingApprovalsCount = tasksData?.items?.length || 0
-
-  const navItems = [
-    { path: '/', icon: Home, label: 'Dashboard' },
-    { path: '/chat', icon: MessageSquare, label: 'Chat' },
-    { path: '/tasks', icon: CheckSquare, label: 'Approvals', badge: pendingApprovalsCount },
-    { path: '/projects', icon: FolderOpen, label: 'Projects' },
-    { path: '/settings', icon: SettingsIcon, label: 'Settings' },
-  ]
-
-  const debugItems = [
-    { path: '/debug-chat', icon: MessageSquare, label: 'Debug Chat' },
-    { path: '/debug-approvals', icon: Shield, label: 'Debug Approvals' },
-    { path: '/debug-mcp', icon: Database, label: 'Debug MCP' },
-    { path: '/debug-projects', icon: FolderOpen, label: 'Debug Projects' },
-  ]
-
-  // Add admin-only nav items
-  const adminNavItems = [
-    { path: '/admin/database', icon: Database, label: 'Database' },
-  ]
-
-  const isActive = (path) => location.pathname === path || location.pathname.startsWith(path + '/')
-  const isDebugActive = debugItems.some(item => isActive(item.path))
-
-  return (
-    <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16">
-          {/* Logo */}
-          <div className="flex items-center">
-            <Link to="/" className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                <Shield className="w-5 h-5 text-white" />
-              </div>
-              <span className="text-xl font-bold text-gray-900">Druppie</span>
-            </Link>
-          </div>
-
-          {/* Navigation */}
-          <nav className="hidden md:flex items-center space-x-1">
-            {navItems.map(({ path, icon: Icon, label, badge }) => (
-              <Link
-                key={path}
-                to={path}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors relative ${
-                  isActive(path)
-                    ? 'bg-blue-100 text-blue-700'
-                    : 'text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                <Icon className="w-4 h-4 inline mr-1" />
-                {label}
-                {badge > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                    {badge > 9 ? '9+' : badge}
-                  </span>
-                )}
-              </Link>
-            ))}
-            {/* Debug pages dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setDebugOpen(!debugOpen)}
-                onBlur={() => setTimeout(() => setDebugOpen(false), 150)}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 ${
-                  isDebugActive
-                    ? 'bg-orange-100 text-orange-700'
-                    : 'text-orange-600 hover:bg-orange-50'
-                }`}
-              >
-                <Bug className="w-4 h-4" />
-                Debug
-                <ChevronDown className={`w-3 h-3 transition-transform ${debugOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {debugOpen && (
-                <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[180px] z-50">
-                  {debugItems.map(({ path, icon: Icon, label }) => (
-                    <Link
-                      key={path}
-                      to={path}
-                      onClick={() => setDebugOpen(false)}
-                      className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
-                        isActive(path)
-                          ? 'bg-orange-50 text-orange-700'
-                          : 'text-gray-700 hover:bg-gray-50'
-                      }`}
-                    >
-                      <Icon className="w-4 h-4" />
-                      {label}
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
-            {/* Admin-only navigation items */}
-            {user?.roles?.includes('admin') && adminNavItems.map(({ path, icon: Icon, label }) => (
-              <Link
-                key={path}
-                to={path}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  isActive(path)
-                    ? 'bg-purple-100 text-purple-700'
-                    : 'text-purple-600 hover:bg-purple-50'
-                }`}
-              >
-                <Icon className="w-4 h-4 inline mr-1" />
-                {label}
-              </Link>
-            ))}
-          </nav>
-
-          {/* User Menu */}
-          <div className="flex items-center space-x-4">
-            {authenticated ? (
-              <>
-                <div className="hidden sm:flex items-center space-x-2">
-                  <User className="w-4 h-4 text-gray-500" />
-                  <span className="text-sm text-gray-700">{user?.username}</span>
-                  {user?.roles?.includes('admin') && (
-                    <span className="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded">
-                      Admin
-                    </span>
-                  )}
-                </div>
-                <button
-                  onClick={logout}
-                  className="px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
-                >
-                  <LogOut className="w-4 h-4 inline mr-1" />
-                  Logout
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={login}
-                className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
-              >
-                <LogIn className="w-4 h-4 inline mr-1" />
-                Login
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </header>
-  )
 }
 
 // Main App
@@ -315,23 +138,17 @@ function App() {
       <AuthContext.Provider value={{ authenticated, user }}>
         <ToastProvider>
           <BrowserRouter>
-            <div className="min-h-screen bg-gray-50">
-              <Navigation />
-              <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                <Routes>
-                <Route
-                  path="/"
-                  element={
-                    <ProtectedRoute>
-                      <Dashboard />
-                    </ProtectedRoute>
-                  }
-                />
+            <div className="flex h-screen bg-gray-50 overflow-hidden">
+              <NavRail />
+              <Routes>
+                {/* Full-bleed routes: Chat and DebugChat manage their own sidebars */}
                 <Route
                   path="/chat"
                   element={
                     <ProtectedRoute>
-                      <Chat />
+                      <ErrorBoundary>
+                        <Chat />
+                      </ErrorBoundary>
                     </ProtectedRoute>
                   }
                 />
@@ -339,85 +156,108 @@ function App() {
                   path="/debug-chat"
                   element={
                     <ProtectedRoute>
-                      <DebugChat />
+                      <ErrorBoundary>
+                        <DebugChat />
+                      </ErrorBoundary>
                     </ProtectedRoute>
                   }
                 />
+                {/* Padded routes: standard content pages */}
                 <Route
-                  path="/debug-approvals"
+                  path="*"
                   element={
-                    <ProtectedRoute>
-                      <DebugApprovals />
-                    </ProtectedRoute>
+                    <main className="flex-1 overflow-y-auto">
+                      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+                        <ErrorBoundary>
+                        <Routes>
+                          <Route
+                            path="/"
+                            element={
+                              <ProtectedRoute>
+                                <Dashboard />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/debug-approvals"
+                            element={
+                              <ProtectedRoute>
+                                <DebugApprovals />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/debug-mcp"
+                            element={
+                              <ProtectedRoute>
+                                <DebugMCP />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/debug-projects"
+                            element={
+                              <ProtectedRoute>
+                                <DebugProjects />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/tasks"
+                            element={
+                              <ProtectedRoute>
+                                <Tasks />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/projects"
+                            element={
+                              <ProtectedRoute>
+                                <Projects />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/projects/:projectId"
+                            element={
+                              <ProtectedRoute>
+                                <ProjectDetail />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/debug/:sessionId"
+                            element={
+                              <ProtectedRoute>
+                                <Debug />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/settings"
+                            element={
+                              <ProtectedRoute>
+                                <Settings />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/admin/database"
+                            element={
+                              <ProtectedRoute requiredRole="admin">
+                                <AdminDatabase />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route path="*" element={<Navigate to="/" replace />} />
+                        </Routes>
+                        </ErrorBoundary>
+                      </div>
+                    </main>
                   }
                 />
-                <Route
-                  path="/debug-mcp"
-                  element={
-                    <ProtectedRoute>
-                      <DebugMCP />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/debug-projects"
-                  element={
-                    <ProtectedRoute>
-                      <DebugProjects />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/tasks"
-                  element={
-                    <ProtectedRoute>
-                      <Tasks />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/projects"
-                  element={
-                    <ProtectedRoute>
-                      <Projects />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/projects/:projectId"
-                  element={
-                    <ProtectedRoute>
-                      <ProjectDetail />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/debug/:sessionId"
-                  element={
-                    <ProtectedRoute>
-                      <Debug />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/settings"
-                  element={
-                    <ProtectedRoute>
-                      <Settings />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/admin/database"
-                  element={
-                    <ProtectedRoute requiredRole="admin">
-                      <AdminDatabase />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
-              </main>
+              </Routes>
             </div>
           </BrowserRouter>
         </ToastProvider>

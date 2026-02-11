@@ -6,8 +6,24 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import {
+  Search,
+  X,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Copy,
+  Download,
+  MoreHorizontal,
+  MessageSquare,
+  Send,
+  Loader2,
+  PauseCircle,
+  RefreshCw,
+} from 'lucide-react'
 import { getToken } from '../services/keycloak'
-import { getAgentConfig, getAgentMessageColors, formatToolName } from '../utils/agentConfig'
+import { getAgentConfig, formatToolName } from '../utils/agentConfig'
+import { formatDuration, formatTokens } from '../utils/tokenUtils'
+import CopyButton from '../components/shared/CopyButton'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -55,25 +71,6 @@ const generateTimelineSummary = (timeline) => {
   })
 }
 
-const fallbackCopy = (textToCopy) => {
-  const textarea = document.createElement('textarea')
-  textarea.value = textToCopy
-  textarea.style.position = 'fixed'
-  textarea.style.left = '-9999px'
-  textarea.style.top = '-9999px'
-  document.body.appendChild(textarea)
-  textarea.focus()
-  textarea.select()
-  try {
-    const success = document.execCommand('copy')
-    document.body.removeChild(textarea)
-    return success
-  } catch (err) {
-    document.body.removeChild(textarea)
-    return false
-  }
-}
-
 const downloadAsFile = (data, filename = 'data') => {
   const textToDownload = typeof data === 'string' ? data : JSON.stringify(data, null, 2)
   try {
@@ -93,20 +90,6 @@ const downloadAsFile = (data, filename = 'data') => {
   }
 }
 
-const formatDuration = (ms) => {
-  if (!ms) return null
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
-  const mins = Math.floor(ms / 60000)
-  const secs = Math.round((ms % 60000) / 1000)
-  return `${mins}m ${secs}s`
-}
-
-const formatTokens = (n) => {
-  if (!n) return '0'
-  return n.toLocaleString()
-}
-
 const apiFetch = async (endpoint, options = {}) => {
   const token = getToken()
   const headers = { 'Content-Type': 'application/json', ...options.headers }
@@ -124,53 +107,13 @@ const apiFetch = async (endpoint, options = {}) => {
 
 // ─── Shared small components ─────────────────────────────────────────────────
 
-const CopyButton = ({ text, label = 'Copy', className = '' }) => {
-  const [copied, setCopied] = useState(false)
-  const [failed, setFailed] = useState(false)
-
-  const handleCopy = async (e) => {
-    e.stopPropagation()
-    e.preventDefault()
-    if (text === undefined || text === null) {
-      setFailed(true); setTimeout(() => setFailed(false), 1500); return
-    }
-    const textToCopy = typeof text === 'string' ? text : JSON.stringify(text, null, 2)
-    let success = false
-    if (navigator.clipboard?.writeText) {
-      try { await navigator.clipboard.writeText(textToCopy); success = true } catch {}
-    }
-    if (!success) success = fallbackCopy(textToCopy)
-    if (success) { setCopied(true); setFailed(false); setTimeout(() => setCopied(false), 1500) }
-    else { setFailed(true); setTimeout(() => setFailed(false), 1500) }
-  }
-
-  return (
-    <button
-      onClick={handleCopy}
-      className={`px-2 py-0.5 text-xs rounded hover:bg-gray-300 transition-colors ${
-        copied ? 'bg-green-200 text-green-800' : failed ? 'bg-red-200 text-red-800' : 'bg-gray-200 text-gray-600'
-      } ${className}`}
-      title={copied ? 'Copied!' : failed ? 'Failed!' : `Copy ${label}`}
-    >
-      {copied ? 'Copied!' : failed ? 'Failed!' : label}
-    </button>
-  )
-}
-
 const StatusBadge = ({ status }) => {
-  const colors = {
-    completed: 'bg-green-100 text-green-800',
-    running: 'bg-blue-100 text-blue-800',
-    pending: 'bg-gray-100 text-gray-800',
-    waiting_answer: 'bg-yellow-100 text-yellow-800',
-    paused_hitl: 'bg-yellow-100 text-yellow-800',
-    paused_tool: 'bg-yellow-100 text-yellow-800',
-    waiting_approval: 'bg-yellow-100 text-yellow-800',
-    failed: 'bg-red-100 text-red-800',
-    active: 'bg-blue-100 text-blue-800',
-  }
+  let color = 'bg-gray-100 text-gray-600'
+  if (status === 'failed') color = 'bg-red-50 text-red-700'
+  else if (status === 'running' || status === 'active') color = 'bg-gray-100 text-gray-700'
+
   return (
-    <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors[status] || 'bg-gray-100'}`}>
+    <span className={`px-1.5 py-0.5 rounded text-xs ${color}`}>
       {status}
     </span>
   )
@@ -185,23 +128,28 @@ const OverflowMenu = ({ items }) => {
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="px-2 py-0.5 text-xs bg-gray-100 rounded hover:bg-gray-200 text-gray-600"
+        className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+        title="More actions"
       >
-        &middot;&middot;&middot;
+        <MoreHorizontal className="w-4 h-4" />
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full mt-1 bg-white border rounded shadow-lg z-20 py-1 min-w-[140px]">
-            {items.map((item, i) => (
-              <button
-                key={i}
-                onClick={(e) => { item.onClick(e); setOpen(false) }}
-                className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 text-gray-700"
-              >
-                {item.label}
-              </button>
-            ))}
+            {items.map((item, i) => {
+              const ItemIcon = item.icon
+              return (
+                <button
+                  key={i}
+                  onClick={(e) => { item.onClick(e); setOpen(false) }}
+                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 text-gray-700 flex items-center gap-2"
+                >
+                  {ItemIcon && <ItemIcon className="w-3.5 h-3.5 text-gray-400" />}
+                  {item.label}
+                </button>
+              )
+            })}
           </div>
         </>
       )}
@@ -209,73 +157,154 @@ const OverflowMenu = ({ items }) => {
   )
 }
 
+// ─── Date grouping helper ────────────────────────────────────────────────────
+
+const groupByDate = (sessions) => {
+  const groups = []
+  const today = new Date()
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+
+  const isToday = (d) => d.toDateString() === today.toDateString()
+  const isYesterday = (d) => d.toDateString() === yesterday.toDateString()
+
+  let currentLabel = null
+  for (const session of sessions) {
+    const date = new Date(session.updated_at || session.created_at)
+    let label
+    if (isToday(date)) label = 'Today'
+    else if (isYesterday(date)) label = 'Yesterday'
+    else label = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined })
+
+    if (label !== currentLabel) {
+      groups.push({ type: 'label', label })
+      currentLabel = label
+    }
+    groups.push({ type: 'session', session })
+  }
+  return groups
+}
+
+const formatRelativeTime = (dateStr) => {
+  if (!dateStr) return ''
+  const now = new Date()
+  const date = new Date(dateStr)
+  const diffMs = now - date
+  const diffMins = Math.floor(diffMs / 60000)
+  if (diffMins < 1) return 'just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours}h ago`
+  return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
 // ─── Left panel: Session list ────────────────────────────────────────────────
 
-const DebugSessionList = ({ sessions, selectedSession, loading, onSelect, onRefresh }) => {
+const DebugSessionList = ({ sessions, selectedSession, loading, onSelect, onRefresh, onCollapse }) => {
   const [search, setSearch] = useState('')
 
   const items = sessions?.ok ? sessions.data?.items || [] : []
-  const filtered = search
-    ? items.filter(s =>
-        (s.title || '').toLowerCase().includes(search.toLowerCase()) ||
-        s.id.includes(search)
-      )
-    : items
+  const filtered = useMemo(() => {
+    let result = search
+      ? items.filter(s =>
+          (s.title || '').toLowerCase().includes(search.toLowerCase()) ||
+          s.id.includes(search)
+        )
+      : [...items]
+
+    // Sort by most recent interaction first
+    result.sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at))
+    return result
+  }, [items, search])
+
+  const grouped = useMemo(() => groupByDate(filtered), [filtered])
 
   return (
-    <div className="w-72 flex-shrink-0 border-r bg-white flex flex-col h-full">
+    <div className="bg-white overflow-hidden flex flex-col h-full">
       {/* Header */}
-      <div className="px-3 py-2 border-b flex items-center justify-between">
-        <span className="text-sm font-semibold text-gray-700">Sessions</span>
+      <div className="px-3 py-3 border-b flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">Sessions</h2>
         <button
-          onClick={onRefresh}
-          disabled={loading}
-          className="px-2 py-0.5 text-xs bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50"
+          onClick={onCollapse}
+          className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+          title="Collapse sidebar"
         >
-          {loading ? '...' : 'Refresh'}
+          <PanelLeftClose className="w-3.5 h-3.5" />
         </button>
       </div>
 
       {/* Search */}
       <div className="px-3 py-2 border-b">
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search sessions..."
-          className="w-full px-2 py-1 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
-        />
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search sessions..."
+            className="w-full pl-8 pr-7 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 hover:bg-gray-100 rounded"
+            >
+              <X className="w-3 h-3 text-gray-400" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Session items */}
       <div className="flex-1 overflow-y-auto">
-        {!sessions && <p className="p-3 text-sm text-gray-400">Loading...</p>}
-        {sessions && !sessions.ok && <p className="p-3 text-sm text-red-500">Error loading sessions</p>}
-        {filtered.length === 0 && sessions?.ok && (
-          <p className="p-3 text-sm text-gray-400">No sessions found</p>
+        {!sessions && (
+          <div className="flex items-center justify-center p-8 text-gray-400">
+            <Loader2 className="w-5 h-5 animate-spin" />
+          </div>
         )}
-        {filtered.map((session) => {
+        {sessions && !sessions.ok && <p className="p-4 text-sm text-red-500">Error loading sessions</p>}
+        {filtered.length === 0 && sessions?.ok && (
+          <div className="text-center py-8 text-gray-400">
+            <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">No sessions found</p>
+          </div>
+        )}
+        {grouped.map((item, i) => {
+          if (item.type === 'label') {
+            return (
+              <div key={`label-${item.label}`} className="px-4 pt-3 pb-1.5">
+                <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">{item.label}</span>
+              </div>
+            )
+          }
+          const session = item.session
           const isSelected = selectedSession === session.id
           return (
             <button
               key={session.id}
               onClick={() => onSelect(session.id)}
-              className={`w-full text-left px-3 py-2 border-b text-sm transition-colors ${
+              className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
                 isSelected
-                  ? 'bg-blue-50 border-l-2 border-l-blue-500'
+                  ? 'bg-gray-100 border-l-2 border-l-gray-800'
                   : 'hover:bg-gray-50 border-l-2 border-l-transparent'
               }`}
             >
-              <div className="font-medium truncate text-gray-800">
-                {session.title || 'Untitled'}
-              </div>
-              <div className="flex items-center gap-2 mt-0.5">
-                <StatusBadge status={session.status} />
-                {session.token_usage?.total_tokens > 0 && (
-                  <span className="text-xs text-gray-400">
-                    {formatTokens(session.token_usage.total_tokens)} tok
-                  </span>
-                )}
+              <div className="flex items-start gap-2">
+                <MessageSquare className={`w-3.5 h-3.5 mt-0.5 flex-shrink-0 ${isSelected ? 'text-gray-700' : 'text-gray-400'}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate text-gray-800">
+                    {session.title || 'Untitled'}
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <StatusBadge status={session.status} />
+                    <span className="text-xs text-gray-400">{formatRelativeTime(session.updated_at || session.created_at)}</span>
+                    {session.token_usage?.total_tokens > 0 && (
+                      <span className="text-xs text-gray-400">
+                        {formatTokens(session.token_usage.total_tokens) || '0'} tok
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             </button>
           )
@@ -288,24 +317,18 @@ const DebugSessionList = ({ sessions, selectedSession, loading, onSelect, onRefr
 // ─── Event log lines (flat, no expand/collapse) ─────────────────────────────
 
 const agentStatusBorder = (status) => {
-  if (status === 'completed') return 'border-l-green-500'
-  if (status === 'failed') return 'border-l-red-500'
-  if (status === 'running') return 'border-l-blue-500'
-  if (WAITING_STATUSES.has(status)) return 'border-l-yellow-500'
-  return 'border-l-gray-300'
+  if (status === 'failed') return 'border-l-red-400'
+  if (status === 'running') return 'border-l-gray-400'
+  return 'border-l-gray-200'
 }
 
-const toolArrowColor = (status) => {
-  if (status === 'completed') return 'text-green-500'
-  if (status === 'failed') return 'text-red-500'
-  if (status === 'running') return 'text-blue-500'
-  if (WAITING_STATUSES.has(status)) return 'text-yellow-500'
-  return 'text-gray-400'
+const toolStatusColor = (status) => {
+  if (status === 'failed') return 'text-red-600'
+  return 'text-gray-500'
 }
 
 const AgentHeaderLine = ({ agentRun, selected, onSelect }) => {
   const config = getAgentConfig(agentRun.agent_id)
-  const colors = getAgentMessageColors(config.color)
   const tokens = agentRun.token_usage?.total_tokens || 0
 
   const duration = useMemo(() => {
@@ -321,9 +344,9 @@ const AgentHeaderLine = ({ agentRun, selected, onSelect }) => {
       onClick={onSelect}
       className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-sm border-l-2 transition-colors ${
         agentStatusBorder(agentRun.status)
-      } ${selected ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+      } ${selected ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
     >
-      <span className={`font-semibold uppercase text-xs tracking-wide ${colors.accent}`}>
+      <span className="font-semibold uppercase text-xs tracking-wide text-gray-700">
         {config.name}
       </span>
       {tokens > 0 && (
@@ -333,7 +356,7 @@ const AgentHeaderLine = ({ agentRun, selected, onSelect }) => {
         <span className="text-xs text-gray-400">&middot; {duration}</span>
       )}
       {agentRun.status === 'running' && (
-        <span className="ml-auto inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+        <span className="ml-auto inline-block w-2 h-2 bg-gray-400 rounded-full animate-pulse" />
       )}
     </button>
   )
@@ -344,12 +367,12 @@ const ToolLine = ({ tc, selected, onSelect }) => {
     <button
       onClick={onSelect}
       className={`w-full text-left pl-8 pr-3 py-1 flex items-center gap-2 text-xs transition-colors ${
-        selected ? 'bg-blue-50' : 'hover:bg-gray-50'
+        selected ? 'bg-gray-100' : 'hover:bg-gray-50'
       }`}
     >
-      <span className={`font-bold ${toolArrowColor(tc.status)}`}>&rarr;</span>
-      <span className={`font-medium ${toolArrowColor(tc.status)}`}>{formatToolName(tc.tool_name)}</span>
-      {tc.question_id && <span className="bg-orange-100 text-orange-700 text-[10px] font-semibold px-1.5 py-0.5 rounded">HITL</span>}
+      <span className={`${toolStatusColor(tc.status)}`}>&rarr;</span>
+      <span className={`font-medium ${toolStatusColor(tc.status)}`}>{formatToolName(tc.tool_name)}</span>
+      {tc.question_id && <span className="bg-gray-100 text-gray-600 text-[10px] font-medium px-1.5 py-0.5 rounded">HITL</span>}
     </button>
   )
 }
@@ -362,7 +385,7 @@ const ToolDetail = ({ tc, agentRun }) => {
   return (
     <div className="space-y-3 text-xs">
       <div className="flex items-center gap-2">
-        <span className="text-purple-600 font-semibold">{formatToolName(tc.tool_name)}</span>
+        <span className="font-semibold text-gray-800">{formatToolName(tc.tool_name)}</span>
         <StatusBadge status={tc.status} />
         <span className="text-gray-400">({config.name})</span>
       </div>
@@ -372,7 +395,7 @@ const ToolDetail = ({ tc, agentRun }) => {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="font-medium text-gray-500">Arguments</span>
-            <CopyButton text={tc.arguments} label="Copy" />
+            <CopyButton text={tc.arguments} label="Copy" showLabel />
           </div>
           <pre className="bg-gray-50 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-700">
             {typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments, null, 2)}
@@ -384,10 +407,10 @@ const ToolDetail = ({ tc, agentRun }) => {
       {tc.result && (
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-green-600">Result</span>
-            <CopyButton text={tc.result} label="Copy" />
+            <span className="font-medium text-gray-500">Result</span>
+            <CopyButton text={tc.result} label="Copy" showLabel />
           </div>
-          <pre className="bg-green-50 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-700">
+          <pre className="bg-gray-50 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-700">
             {typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2)}
           </pre>
         </div>
@@ -398,7 +421,7 @@ const ToolDetail = ({ tc, agentRun }) => {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="font-medium text-red-600">Error</span>
-            <CopyButton text={tc.error} label="Copy" />
+            <CopyButton text={tc.error} label="Copy" showLabel />
           </div>
           <pre className="bg-red-50 p-2 rounded overflow-auto max-h-32 text-red-700">
             {tc.error}
@@ -411,9 +434,9 @@ const ToolDetail = ({ tc, agentRun }) => {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="font-medium text-gray-500">Approval</span>
-            <CopyButton text={tc.approval} label="Copy" />
+            <CopyButton text={tc.approval} label="Copy" showLabel />
           </div>
-          <pre className="bg-blue-50 p-2 rounded overflow-auto max-h-32 mt-1">
+          <pre className="bg-gray-50 p-2 rounded overflow-auto max-h-32 mt-1">
             {JSON.stringify(tc.approval, null, 2)}
           </pre>
         </div>
@@ -424,7 +447,6 @@ const ToolDetail = ({ tc, agentRun }) => {
 
 const AgentDetail = ({ agentRun }) => {
   const config = getAgentConfig(agentRun.agent_id)
-  const colors = getAgentMessageColors(config.color)
   const tokens = agentRun.token_usage?.total_tokens || 0
   const llmCalls = agentRun.llm_calls || []
 
@@ -439,7 +461,7 @@ const AgentDetail = ({ agentRun }) => {
   return (
     <div className="space-y-3 text-xs">
       <div className="flex items-center gap-2">
-        <span className={`font-semibold ${colors.accent}`}>{config.name}</span>
+        <span className="font-semibold text-gray-800">{config.name}</span>
         <StatusBadge status={agentRun.status} />
         {tokens > 0 && <span className="text-gray-400">{formatTokens(tokens)} tok</span>}
         {duration && <span className="text-gray-400">&middot; {duration}</span>}
@@ -450,9 +472,9 @@ const AgentDetail = ({ agentRun }) => {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="font-medium text-gray-500">Planned Prompt</span>
-            <CopyButton text={agentRun.planned_prompt} label="Copy" />
+            <CopyButton text={agentRun.planned_prompt} label="Copy" showLabel />
           </div>
-          <pre className="bg-yellow-50 p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap break-all text-gray-600">
+          <pre className="bg-gray-50 p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap break-all text-gray-600">
             {agentRun.planned_prompt}
           </pre>
         </div>
@@ -483,7 +505,7 @@ const AgentDetail = ({ agentRun }) => {
                   <td className="py-1 pr-3 text-right text-gray-500">
                     {formatDuration(llm.duration_ms) || '-'}
                   </td>
-                  <td className="py-1 text-right text-purple-500">
+                  <td className="py-1 text-right text-gray-500">
                     {llm.tool_calls?.length || 0}
                   </td>
                 </tr>
@@ -497,7 +519,7 @@ const AgentDetail = ({ agentRun }) => {
 
       {/* Copy raw button */}
       <div>
-        <CopyButton text={agentRun} label="Copy Raw JSON" />
+        <CopyButton text={agentRun} label="Copy Raw JSON" showLabel />
       </div>
     </div>
   )
@@ -521,10 +543,10 @@ const DetailPane = ({ selection, onClose }) => {
           </span>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 text-lg leading-none px-1"
+            className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
             title="Close (Esc)"
           >
-            &times;
+            <X className="w-4 h-4" />
           </button>
         </div>
         {/* Content */}
@@ -564,16 +586,18 @@ const DebugSessionDetail = ({ sessionDetail, loading, onRefresh, selectedSession
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-400">
-        Loading session...
+      <div className="flex-1 flex flex-col items-center justify-center text-gray-400 gap-3">
+        <Loader2 className="w-6 h-6 animate-spin" />
+        <span className="text-sm">Loading session...</span>
       </div>
     )
   }
 
   if (!sessionDetail || !sessionDetail.ok || !sessionDetail.data) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-400">
-        {sessionDetail?.error ? `Error: ${sessionDetail.error}` : 'Select a session to inspect'}
+      <div className="flex-1 flex flex-col items-center justify-center text-gray-400 gap-2">
+        <MessageSquare className="w-10 h-10 opacity-30" />
+        <span className="text-sm">{sessionDetail?.error ? `Error: ${sessionDetail.error}` : 'Select a session to inspect'}</span>
       </div>
     )
   }
@@ -643,23 +667,31 @@ const DebugSessionDetail = ({ sessionDetail, loading, onRefresh, selectedSession
   // Overflow menu items
   const overflowItems = [
     {
+      label: 'Refresh',
+      icon: RefreshCw,
+      onClick: (e) => { e.stopPropagation(); onRefresh() }
+    },
+    {
       label: 'Copy Summary',
+      icon: Copy,
       onClick: async (e) => {
         e.stopPropagation()
         const text = JSON.stringify(generateTimelineSummary(timeline), null, 2)
-        try { await navigator.clipboard.writeText(text) } catch { fallbackCopy(text) }
+        try { await navigator.clipboard.writeText(text) } catch {}
       }
     },
     {
       label: 'Copy JSON',
+      icon: Copy,
       onClick: async (e) => {
         e.stopPropagation()
         const text = JSON.stringify(sessionDetail, null, 2)
-        try { await navigator.clipboard.writeText(text) } catch { fallbackCopy(text) }
+        try { await navigator.clipboard.writeText(text) } catch {}
       }
     },
     {
       label: 'Download JSON',
+      icon: Download,
       onClick: (e) => {
         e.stopPropagation()
         downloadAsFile(sessionDetail, 'session')
@@ -668,7 +700,7 @@ const DebugSessionDetail = ({ sessionDetail, loading, onRefresh, selectedSession
   ]
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden">
+    <div className="flex-1 bg-white overflow-hidden flex flex-col h-full">
       {/* Header bar — simplified */}
       <div className="px-4 py-3 border-b bg-white flex-shrink-0">
         <div className="flex items-center justify-between">
@@ -686,25 +718,20 @@ const DebugSessionDetail = ({ sessionDetail, loading, onRefresh, selectedSession
               <span className="text-xs text-gray-400">{sessionDuration}</span>
             )}
             <OverflowMenu items={overflowItems} />
-            <button
-              onClick={onRefresh}
-              className="px-2 py-0.5 text-xs bg-gray-100 rounded hover:bg-gray-200"
-            >
-              &#8635;
-            </button>
           </div>
         </div>
       </div>
 
       {/* Pending HITL question banner */}
       {pendingQuestion && (
-        <div className="px-4 py-3 bg-yellow-50 border-b border-yellow-200 flex-shrink-0">
+        <div className="px-4 py-3 bg-amber-50/50 border-b border-amber-100 flex-shrink-0">
           <div className="flex items-center gap-2 text-sm mb-2">
-            <span className="font-medium text-yellow-800">
+            <PauseCircle className="w-3.5 h-3.5 text-amber-500" />
+            <span className="font-medium text-gray-700">
               {getAgentConfig(pendingQuestion.agentId).name} is waiting for your answer
             </span>
           </div>
-          <div className="p-2 bg-white rounded border border-yellow-200 mb-2 text-sm text-gray-800">
+          <div className="p-2.5 bg-white rounded-lg border border-gray-200 mb-2.5 text-sm text-gray-800">
             {pendingQuestion.question}
           </div>
           <div className="flex gap-2">
@@ -714,13 +741,18 @@ const DebugSessionDetail = ({ sessionDetail, loading, onRefresh, selectedSession
               onChange={(e) => setAnswerText(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && onSubmitAnswer(pendingQuestion.questionId)}
               placeholder="Type your answer..."
-              className="flex-1 px-2 py-1 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-yellow-400"
+              className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent"
             />
             <button
               onClick={() => onSubmitAnswer(pendingQuestion.questionId)}
               disabled={answerLoading || !answerText.trim()}
-              className="px-3 py-1 text-sm bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-30 transition-colors"
             >
+              {answerLoading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
               {answerLoading ? 'Sending...' : 'Answer'}
             </button>
           </div>
@@ -730,7 +762,10 @@ const DebugSessionDetail = ({ sessionDetail, loading, onRefresh, selectedSession
       {/* Event log — flat, scrollable */}
       <div className={`flex-1 overflow-y-auto bg-white ${selection ? '' : ''}`}>
         {eventItems.length === 0 && (
-          <p className="p-4 text-sm text-gray-400 italic">No agent runs in this session</p>
+          <div className="flex flex-col items-center justify-center py-12 text-gray-400 gap-2">
+            <MessageSquare className="w-8 h-8 opacity-30" />
+            <p className="text-sm">No agent runs in this session</p>
+          </div>
         )}
         {eventItems.map((item, i) => {
           if (item.type === 'agent') {
@@ -769,25 +804,51 @@ export default function DebugChat() {
   const [loading, setLoading] = useState({})
   const [answerText, setAnswerText] = useState('')
 
-  useEffect(() => {
-    fetchSessions()
-  }, [])
-
-  const fetchSessions = async () => {
+  const fetchSessions = useCallback(async () => {
     setLoading(l => ({ ...l, sessions: true }))
     const result = await apiFetch('/api/sessions')
     setSessions(result)
     setLoading(l => ({ ...l, sessions: false }))
-  }
+  }, [])
 
-  const fetchSessionDetail = async (sessionId) => {
+  const fetchSessionDetail = useCallback(async (sessionId) => {
     setSelectedSession(sessionId)
     setSessionDetail(null)
     setLoading(l => ({ ...l, detail: true }))
     const result = await apiFetch(`/api/sessions/${sessionId}`)
     setSessionDetail(result)
     setLoading(l => ({ ...l, detail: false }))
-  }
+  }, [])
+
+  // Silent refresh (no loading state) for polling
+  const silentRefreshDetail = useCallback(async () => {
+    if (!selectedSession) return
+    const result = await apiFetch(`/api/sessions/${selectedSession}`)
+    setSessionDetail(result)
+  }, [selectedSession])
+
+  // Initial load
+  useEffect(() => {
+    fetchSessions()
+  }, [fetchSessions])
+
+  // Auto-poll session list every 15s
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const result = await apiFetch('/api/sessions')
+      setSessions(result)
+    }, 15000)
+    return () => clearInterval(interval)
+  }, [])
+
+  // Auto-poll active session detail every 5s
+  useEffect(() => {
+    const status = sessionDetail?.data?.status
+    const isActive = status && ['running', 'active', 'paused_hitl', 'paused_tool', 'waiting_approval', 'waiting_answer'].includes(status)
+    if (!isActive) return
+    const interval = setInterval(silentRefreshDetail, 5000)
+    return () => clearInterval(interval)
+  }, [sessionDetail?.data?.status, silentRefreshDetail])
 
   const submitAnswer = async (questionId) => {
     if (!answerText.trim()) return
@@ -803,25 +864,59 @@ export default function DebugChat() {
     }
   }
 
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    localStorage.getItem('druppie-debug-sidebar') !== 'false'
+  )
+
+  const toggleSidebar = () => {
+    setSidebarOpen((prev) => {
+      localStorage.setItem('druppie-debug-sidebar', String(!prev))
+      return !prev
+    })
+  }
+
   return (
-    <div className="flex h-[calc(100vh-4rem)] bg-gray-50">
-      <DebugSessionList
-        sessions={sessions}
-        selectedSession={selectedSession}
-        loading={loading.sessions}
-        onSelect={fetchSessionDetail}
-        onRefresh={fetchSessions}
-      />
-      <DebugSessionDetail
-        sessionDetail={sessionDetail}
-        loading={loading.detail}
-        onRefresh={() => selectedSession && fetchSessionDetail(selectedSession)}
-        selectedSession={selectedSession}
-        answerText={answerText}
-        setAnswerText={setAnswerText}
-        onSubmitAnswer={submitAnswer}
-        answerLoading={loading.answer}
-      />
+    <div className="flex h-full flex-1">
+      {/* Collapsible left sidebar */}
+      <div
+        className={`flex-shrink-0 bg-white border-r overflow-hidden transition-all duration-200 ${
+          sidebarOpen ? 'w-72' : 'w-0'
+        }`}
+      >
+        <div className="w-72 h-full">
+          <DebugSessionList
+            sessions={sessions}
+            selectedSession={selectedSession}
+            loading={loading.sessions}
+            onSelect={fetchSessionDetail}
+            onRefresh={fetchSessions}
+            onCollapse={toggleSidebar}
+          />
+        </div>
+      </div>
+
+      {/* Right panel */}
+      <div className="flex-1 overflow-hidden relative">
+        {!sidebarOpen && (
+          <button
+            onClick={toggleSidebar}
+            className="absolute top-3 left-3 z-10 p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            title="Expand sidebar"
+          >
+            <PanelLeftOpen className="w-4 h-4" />
+          </button>
+        )}
+        <DebugSessionDetail
+          sessionDetail={sessionDetail}
+          loading={loading.detail}
+          onRefresh={() => selectedSession && fetchSessionDetail(selectedSession)}
+          selectedSession={selectedSession}
+          answerText={answerText}
+          setAnswerText={setAnswerText}
+          onSubmitAnswer={submitAnswer}
+          answerLoading={loading.answer}
+        />
+      </div>
     </div>
   )
 }

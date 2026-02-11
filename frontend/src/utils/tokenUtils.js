@@ -44,6 +44,20 @@ export const formatCost = (cost) => {
 }
 
 /**
+ * Format duration in ms to human-readable string
+ * @param {number} ms - Duration in milliseconds
+ * @returns {string|null} Formatted string like "1.5s" or "2m 30s"
+ */
+export const formatDuration = (ms) => {
+  if (!ms) return null
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  const mins = Math.floor(ms / 60000)
+  const secs = Math.round((ms % 60000) / 1000)
+  return `${mins}m ${secs}s`
+}
+
+/**
  * Format tokens with cost estimate
  * @param {number} tokens - Token count
  * @returns {object} Object with formatted tokens and cost
