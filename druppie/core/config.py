@@ -175,7 +175,7 @@ class WorkspaceSettings(BaseSettings):
 class APISettings(BaseSettings):
     """API server configuration."""
 
-    model_config = SettingsConfigDict(env_prefix="API_")
+    model_config = SettingsConfigDict(env_prefix="API_", populate_by_name=True)
 
     host: str = Field(
         default="0.0.0.0",
@@ -187,6 +187,7 @@ class APISettings(BaseSettings):
     )
     cors_origins: str = Field(
         default="http://localhost:5173,http://localhost:5273,http://localhost:8100,http://localhost:3000",
+        alias="CORS_ORIGINS",
         description="Comma-separated list of allowed CORS origins",
     )
     dev_mode: bool = Field(

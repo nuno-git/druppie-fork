@@ -120,12 +120,14 @@ clients:
     directAccessGrantsEnabled: true
     serviceAccountsEnabled: false
     protocol: openid-connect
-    rootUrl: http://localhost:5173
+    rootUrl: http://${EXTERNAL_HOST}:${FRONTEND_PORT}
     baseUrl: /
     redirectUris:
-      - http://localhost:5173/*
+      - http://localhost:${FRONTEND_PORT}/*
+      - http://${EXTERNAL_HOST}:${FRONTEND_PORT}/*
     webOrigins:
-      - http://localhost:5173
+      - http://localhost:${FRONTEND_PORT}
+      - http://${EXTERNAL_HOST}:${FRONTEND_PORT}
     defaultClientScopes:
       - web-origins
       - profile
@@ -162,9 +164,11 @@ clients:
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: false
     protocol: openid-connect
-    rootUrl: http://localhost:3000
+    rootUrl: http://${EXTERNAL_HOST}:${GITEA_PORT}
     redirectUris:
-      - http://localhost:3000/user/oauth2/keycloak/callback
+      - http://localhost:${GITEA_PORT}/*
+      - http://${EXTERNAL_HOST}:${GITEA_PORT}/*
     webOrigins:
-      - http://localhost:3000
+      - http://localhost:${GITEA_PORT}
+      - http://${EXTERNAL_HOST}:${GITEA_PORT}
     secret: ${GITEA_CLIENT_SECRET}
