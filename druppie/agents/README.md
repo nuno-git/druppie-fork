@@ -6,15 +6,19 @@ This folder contains the agent system for Druppie. Agents are LLM-powered worker
 
 ```
 agents/
-├── runtime.py          # Main Agent class and execution loop
-├── builtin_tools.py    # Built-in tool handlers (done, hitl_*, make_plan, invoke_skill)
-├── definitions/        # YAML agent definitions
-│   ├── _common.md      # Shared instructions injected into all prompts
-│   ├── router.yaml     # Routes tasks to appropriate agents
-│   ├── planner.yaml    # Creates multi-step plans
-│   ├── developer.yaml  # Code development agent
+├── runtime.py           # Agent facade (public API: Agent class)
+├── loop.py              # Core execution loop (LLM ↔ tool calling)
+├── definition_loader.py # Loads YAML definitions and resolves placeholders
+├── message_history.py   # Reconstructs agent state from DB for resume
+├── prompt_builder.py    # Builds system/user prompts with injected context
+├── builtin_tools.py     # Built-in tool handlers (done, hitl_*, make_plan, invoke_skill)
+├── definitions/         # YAML agent definitions
+│   ├── _common.md       # Shared instructions injected into all prompts
+│   ├── router.yaml      # Routes tasks to appropriate agents
+│   ├── planner.yaml     # Creates multi-step plans
+│   ├── developer.yaml   # Code development agent
 │   └── ...
-└── README.md           # This file
+└── README.md            # This file
 ```
 
 ## How It Works
@@ -39,22 +43,30 @@ extra_builtin_tools:
   - make_plan
 ```
 
-### 2. Runtime Loop (`runtime.py`)
+### 2. Runtime Architecture
 
-The `Agent` class handles the core execution:
+The agent runtime is split into focused modules:
+
+- **`runtime.py`** — Public `Agent` class (facade). Coordinates loader, prompt builder, and loop.
+- **`loop.py`** — Core `AgentLoop` class. Handles the LLM ↔ tool-calling loop, skill tool enrichment, and break-on-failure logic.
+- **`definition_loader.py`** — Loads YAML definitions and resolves `[COMMON_INSTRUCTIONS]` placeholders.
+- **`message_history.py`** — Reconstructs agent message history from DB records for pause/resume.
+- **`prompt_builder.py`** — Builds system and user prompts with context injection (tool descriptions, project info).
 
 ```python
 agent = Agent("developer", db=session)
 result = await agent.run(prompt="Build a login page", session_id=uuid, agent_run_id=uuid)
 ```
 
-**The loop:**
+**The loop (`AgentLoop.run()`):**
 1. Build system prompt with tool instructions
 2. Call LLM with available tools (OpenAI function calling format)
 3. For each tool call in response:
-   - Create tool call record in DB
+   - Normalize arguments (e.g., `"null"` → `None`)
+   - Create tool call record in DB (with normalization audit trail)
    - Execute via `ToolExecutor`
    - Handle status (completed, waiting_approval, waiting_answer, failed)
+   - On failure with `break_on_failure`: stop processing remaining tool calls, let LLM retry
 4. If `done` tool called → return result
 5. If waiting for user → pause and return state
 6. If failed → add error to messages, let LLM retry
@@ -114,7 +126,10 @@ Some MCP tools require approval:
 
 | Class | Location | Purpose |
 |-------|----------|---------|
-| `Agent` | `runtime.py` | Main agent, handles loop and state |
+| `Agent` | `runtime.py` | Public facade, coordinates modules |
+| `AgentLoop` | `loop.py` | Core LLM ↔ tool-calling loop |
+| `AgentDefinitionLoader` | `definition_loader.py` | Loads YAML definitions |
+| `PromptBuilder` | `prompt_builder.py` | Builds prompts with context |
 | `ToolExecutor` | `execution/tool_executor.py` | Executes tools, handles HITL/approval |
 | `ToolRegistry` | `core/tool_registry.py` | Unified tool definitions |
 | `MCPHttp` | `execution/mcp_http.py` | HTTP client for MCP servers |
