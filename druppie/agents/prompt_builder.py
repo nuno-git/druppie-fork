@@ -18,16 +18,16 @@ class PromptBuilder:
     def build_system_prompt(self) -> str:
         """Build the full system prompt.
 
-        Injects common instructions from _common.md (if placeholder present).
+        Appends declared system prompts from system_prompts/*.yaml.
         Skills are NOT listed here — they're expressed via the invoke_skill
         tool definition (enum + descriptions) in AgentLoop._prepare_tools().
         """
         base_prompt = self.definition.system_prompt
 
-        # Inject common instructions (shared across agents)
-        common_prompt = AgentDefinitionLoader.load_common_prompt()
-        if common_prompt and "[COMMON_INSTRUCTIONS]" in base_prompt:
-            base_prompt = base_prompt.replace("[COMMON_INSTRUCTIONS]", common_prompt)
+        # Append system prompts declared in agent definition
+        for prompt_id in self.definition.system_prompts:
+            prompt = AgentDefinitionLoader.load_system_prompt(prompt_id)
+            base_prompt += "\n\n" + prompt
 
         return base_prompt
 

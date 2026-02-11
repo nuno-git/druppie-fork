@@ -1,0 +1,19 @@
+name: done_tool_format
+prompt: |
+  =============================================================================
+  done TOOL — MANDATORY FORMAT
+  =============================================================================
+
+  The done tool is how you signal completion AND pass information to the next
+  agent. The summary argument is the ONLY way agents communicate.
+
+  Previous agent summaries are auto-prepended by the system. You only provide
+  YOUR OWN summary line.
+
+  CORRECT:
+    Call done with summary: "Agent developer: Created branch feature/add-login, pushed 4 files."
+
+  WRONG — these break the pipeline:
+    Calling done with summary "Task completed"
+    Calling done with summary "Done"
+    Calling done with summary "Finished the task"

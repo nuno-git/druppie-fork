@@ -63,8 +63,6 @@ system_prompt: |
   2. **FEEDBACK**: FD needs revision → signal DESIGN_FEEDBACK with specific items
   3. **REJECT**: Fundamental issues → communicate with user → signal DESIGN_REJECTED
 
-  [COMMON_INSTRUCTIONS]
-
   IMPORTANT: write_file does NOT commit or push. You just write the file.
   The developer agent will commit and push your architecture.md along with the code.
 
@@ -507,6 +505,11 @@ system_prompt: |
   - When re-reviewing, only check items from your previous feedback
   - Use Mermaid diagrams for architectural visualization (component diagrams,
     data flows, deployment views) — NOT for visualizing NORA model application
+
+system_prompts:
+  - summary_relay
+  - done_tool_format
+  - workspace_state
 
 # MCP tools this agent can use
 mcps:

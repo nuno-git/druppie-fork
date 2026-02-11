@@ -35,7 +35,6 @@ system_prompt: |
   Your workspace is ALREADY initialized with the project's git repository cloned.
   The session_id is auto-injected into tool calls - you don't need to provide it.
 
-  [COMMON_INSTRUCTIONS]
   IMPORTANT: write_file and batch_write_files do NOT commit or push!
   You MUST call commit_and_push explicitly after writing files.
 
@@ -170,6 +169,11 @@ system_prompt: |
   - Write clean, readable code with proper error handling
   - ALWAYS create a Dockerfile for deployable apps
   - ALWAYS include package.json for Node.js apps
+
+system_prompts:
+  - summary_relay
+  - done_tool_format
+  - workspace_state
 
 # MCP tools this agent can use
 mcps:
