@@ -269,18 +269,29 @@ def main():
 
     external_host = os.getenv("EXTERNAL_HOST", "localhost")
 
+    # Environment variable substitutions for dynamic port configuration
+    env_substitutions = {
+        "${EXTERNAL_HOST}": external_host,
+        "${FRONTEND_PORT}": os.getenv("FRONTEND_PORT", "5273"),
+        "${KEYCLOAK_PORT}": os.getenv("KEYCLOAK_PORT", "8180"),
+        "${GITEA_PORT}": os.getenv("GITEA_PORT", "3100"),
+        "${GITEA_SSH_PORT}": os.getenv("GITEA_SSH_PORT", "2223"),
+        "${BACKEND_PORT}": os.getenv("BACKEND_PORT", "8100"),
+    }
+
+    def substitute_env(value: str) -> str:
+        for placeholder, replacement in env_substitutions.items():
+            value = value.replace(placeholder, replacement)
+        return value
+
     for client in clients:
         # Replace environment variables in URIs
         if "redirectUris" in client:
-            client["redirectUris"] = [
-                uri.replace("${EXTERNAL_HOST}", external_host) for uri in client["redirectUris"]
-            ]
+            client["redirectUris"] = [substitute_env(uri) for uri in client["redirectUris"]]
         if "webOrigins" in client:
-            client["webOrigins"] = [
-                uri.replace("${EXTERNAL_HOST}", external_host) for uri in client["webOrigins"]
-            ]
+            client["webOrigins"] = [substitute_env(uri) for uri in client["webOrigins"]]
         if "rootUrl" in client:
-            client["rootUrl"] = client["rootUrl"].replace("${EXTERNAL_HOST}", external_host)
+            client["rootUrl"] = substitute_env(client["rootUrl"])
 
         kc.create_client(REALM_NAME, client)
 
