@@ -12,6 +12,8 @@ import { getTasks, approveTask, rejectTask, getApprovalHistory } from '../servic
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
 import { useToast } from '../components/Toast'
+import PageHeader from '../components/shared/PageHeader'
+import { SkeletonTaskCard } from '../components/shared/Skeleton'
 
 // Helper to check if a file path is a markdown file
 const isMarkdownFile = (path) => {
@@ -162,8 +164,8 @@ const getToolInfo = (toolName) => {
     'coding:write_file': { icon: FilePlus, label: 'Write File', color: 'text-blue-600' },
     'batch_write_files': { icon: FileCode, label: 'Write Files', color: 'text-blue-600' },
     'coding:batch_write_files': { icon: FileCode, label: 'Write Files', color: 'text-blue-600' },
-    'run_command': { icon: Terminal, label: 'Run Command', color: 'text-orange-600' },
-    'coding:run_command': { icon: Terminal, label: 'Run Command', color: 'text-orange-600' },
+    'run_command': { icon: Terminal, label: 'Run Command', color: 'text-gray-600' },
+    'coding:run_command': { icon: Terminal, label: 'Run Command', color: 'text-gray-600' },
     'commit_and_push': { icon: GitBranch, label: 'Git Commit', color: 'text-green-600' },
     'coding:commit_and_push': { icon: GitBranch, label: 'Git Commit', color: 'text-green-600' },
   }
@@ -218,313 +220,193 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   const dangerBadge = getDangerLevelBadge(dangerLevel)
 
   return (
-    <div className={`bg-white rounded-xl shadow-sm border p-6 ${isMultiApproval ? 'border-orange-200' : 'border-gray-200'}`}>
-      {/* Header with approval type and status */}
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex-1">
+    <div className={`bg-white rounded-xl border p-4 ${isMultiApproval ? 'border-blue-200' : 'border-gray-100'}`}>
+      {/* Header — compact summary line with inline actions */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
           {isMultiApproval && (
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-orange-600 font-semibold text-sm">Multi-Approval Required</span>
-              <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full">
-                {currentApprovals} of {requiredApprovals} approvals
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-blue-600 text-xs font-medium">Multi-Approval</span>
+              <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
+                {currentApprovals}/{requiredApprovals}
               </span>
             </div>
           )}
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-semibold text-lg">
-              {task.name || (isWorkflowStep ? 'Workflow Checkpoint Approval' : `Approve ${toolName || 'action'}`)}
+            {(() => {
+              const info = toolName ? getToolInfo(toolName) : null
+              const Icon = info?.icon || Shield
+              return <Icon className={`w-4 h-4 flex-shrink-0 ${info?.color || 'text-gray-400'}`} />
+            })()}
+            <h3 className="font-medium text-gray-900">
+              {task.name || (isWorkflowStep ? 'Workflow Checkpoint' : toolName?.split(':').pop() || 'Approval')}
             </h3>
             {task.agent_id && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-600 text-xs rounded-full">
-                <Bot className="w-3 h-3" />
-                {formatAgentName(task.agent_id)}
+              <span className="text-xs text-gray-400">
+                from {formatAgentName(task.agent_id)}
               </span>
             )}
           </div>
-          <p className="text-gray-500 text-sm mt-1">{task.description || toolDescription}</p>
+          <p className="text-gray-400 text-sm mt-0.5 truncate">{task.description || toolDescription}</p>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          <span className="px-3 py-1 bg-yellow-100 text-yellow-700 text-sm rounded-full flex items-center">
-            <Clock className="w-4 h-4 mr-1" />
-            Pending
+
+        {/* Actions — compact, right-aligned */}
+        {canApprove ? (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {!showReject ? (
+              <>
+                <button
+                  onClick={() => onApprove(task.id)}
+                  className={`px-3 py-1.5 text-sm text-white rounded-lg flex items-center focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                    isMultiApproval ? 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500' : 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
+                  }`}
+                  aria-label={isMultiApproval ? `Add approval ${currentApprovals + 1} of ${requiredApprovals}` : 'Approve task'}
+                >
+                  <CheckCircle className="w-4 h-4 mr-1.5" aria-hidden="true" />
+                  {isMultiApproval ? `Approve (${currentApprovals + 1}/${requiredApprovals})` : 'Approve'}
+                </button>
+                <button
+                  onClick={() => setShowReject(true)}
+                  className="px-3 py-1.5 text-sm text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors focus:outline-none"
+                  aria-label="Reject task"
+                >
+                  Reject
+                </button>
+              </>
+            ) : null}
+          </div>
+        ) : (
+          <span className="flex items-center gap-1.5 text-xs text-gray-400 flex-shrink-0">
+            <Clock className="w-3.5 h-3.5 animate-pulse" />
+            Needs {requiredRoles.join(' or ')}
           </span>
-          <span className={`px-2 py-0.5 ${dangerBadge.bg} ${dangerBadge.text} text-xs rounded-full`}>
-            {dangerBadge.label}
-          </span>
-        </div>
+        )}
       </div>
 
-      {/* What needs approval - clear explanation */}
-      <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-        <h4 className="font-medium text-blue-900 mb-2 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4" />
-          What needs your approval:
-        </h4>
-        <div className="space-y-2">
-          {/* Tool info - only show for MCP tool approvals, not workflow steps */}
-          {toolName && !isWorkflowStep && (
-            <div className="flex items-start gap-2">
-              <span className="text-blue-700 font-medium">Tool:</span>
-              {(() => {
-                const info = getToolInfo(toolName)
-                const Icon = info.icon
-                return (
-                  <span className="flex items-center gap-2">
-                    <Icon className={`w-4 h-4 ${info.color}`} />
-                    <span className="font-medium">{info.label}</span>
-                    <code className="bg-blue-100 px-2 py-0.5 rounded text-blue-800 font-mono text-sm">{toolName}</code>
-                  </span>
-                )
-              })()}
-            </div>
-          )}
-          {/* Workflow step approval - show phase context */}
-          {isWorkflowStep && (
-            <div className="flex items-start gap-2">
-              <span className="text-blue-700 font-medium">Type:</span>
-              <span className="flex items-center gap-2">
-                <Shield className="w-4 h-4 text-blue-600" />
-                <span className="font-medium">Workflow Checkpoint</span>
-              </span>
-            </div>
-          )}
-          <div className="text-blue-700">
-            <span className="font-medium">Action:</span> {toolDescription}
+      {/* Reject form — appears below header when active */}
+      {canApprove && showReject && (
+        <div className="mt-3 space-y-2">
+          <textarea
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="Reason for rejection..."
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
+            rows={2}
+            autoFocus
+          />
+          <div className="flex items-center gap-2 justify-end">
+            <button
+              onClick={() => setShowReject(false)}
+              className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 rounded-lg"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                if (rejectReason.trim()) {
+                  onReject(task.id, rejectReason)
+                }
+              }}
+              disabled={!rejectReason.trim()}
+              className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+            >
+              Confirm Reject
+            </button>
           </div>
+        </div>
+      )}
 
-          {/* Command preview for run_command */}
-          {command && (
-            <div className="mt-3">
-              <div className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
-                <Terminal className="w-4 h-4 text-orange-600" />
-                Command to execute:
-              </div>
-              <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
-                <code className="text-green-400 text-sm font-mono whitespace-pre-wrap">
-                  $ {command}
-                </code>
-              </div>
-            </div>
-          )}
+      {/* Expandable details — collapsed by default */}
+      {(command || commitMessage || newContent || isBatchWrite || (task.mcp_arguments && Object.keys(task.mcp_arguments).length > 0)) && (
+        <div className="mt-3 pt-3 border-t border-gray-50">
+          <button
+            onClick={() => setShowDetails(!showDetails)}
+            className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+          >
+            {showDetails ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            Details
+          </button>
 
-          {/* Commit message preview for commit_and_push */}
-          {commitMessage && (
-            <div className="mt-3">
-              <div className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
-                <GitBranch className="w-4 h-4 text-green-600" />
-                Commit message:
-              </div>
-              <div className="bg-white rounded-lg p-3 border border-gray-200">
-                <p className="text-sm text-gray-700 whitespace-pre-wrap">{commitMessage}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Code preview for write_file operations */}
-          {(newContent || isBatchWrite) && (
-            <div className="mt-3">
-              <button
-                onClick={() => setShowCodePreview(true)}
-                className="flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-              >
-                <FileCode className="w-4 h-4" />
-                View {isBatchWrite ? `${Object.keys(batchFiles).length} files` : 'file'} to be written
-                <ExternalLink className="w-3.5 h-3.5" />
-              </button>
-
-              {showCodePreview && (
-                <FilePreviewModal
-                  files={
-                    isBatchWrite
-                      ? Object.entries(batchFiles).map(([path, content]) => ({ path, content }))
-                      : [{ path: filePath || 'file', content: newContent }]
-                  }
-                  onClose={() => setShowCodePreview(false)}
-                />
+          {showDetails && (
+            <div className="mt-2 space-y-2">
+              {/* Command preview */}
+              {command && (
+                <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
+                  <code className="text-green-400 text-sm font-mono whitespace-pre-wrap">$ {command}</code>
+                </div>
               )}
-            </div>
-          )}
 
-          {/* Raw arguments fallback for other tools */}
-          {!command && !commitMessage && !newContent && !isBatchWrite && task.mcp_arguments && Object.keys(task.mcp_arguments).length > 0 && (
-            <div className="mt-2">
-              <button
-                onClick={() => setShowDetails(!showDetails)}
-                className="text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-                aria-expanded={showDetails}
-                aria-label={showDetails ? 'Hide tool arguments' : 'Show tool arguments'}
-              >
-                <span aria-hidden="true">{showDetails ? '▼' : '▶'}</span> View arguments
-              </button>
-              {showDetails && (
-                <pre className="mt-2 bg-blue-100 p-3 rounded text-sm overflow-x-auto text-blue-900 font-mono">
+              {/* Commit message */}
+              {commitMessage && (
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{commitMessage}</p>
+                </div>
+              )}
+
+              {/* File preview */}
+              {(newContent || isBatchWrite) && (
+                <div>
+                  <button
+                    onClick={() => setShowCodePreview(true)}
+                    className="flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm focus:outline-none rounded"
+                  >
+                    <FileCode className="w-4 h-4" />
+                    View {isBatchWrite ? `${Object.keys(batchFiles).length} files` : 'file'}
+                  </button>
+                  {showCodePreview && (
+                    <FilePreviewModal
+                      files={
+                        isBatchWrite
+                          ? Object.entries(batchFiles).map(([path, content]) => ({ path, content }))
+                          : [{ path: filePath || 'file', content: newContent }]
+                      }
+                      onClose={() => setShowCodePreview(false)}
+                    />
+                  )}
+                </div>
+              )}
+
+              {/* Raw arguments */}
+              {!command && !commitMessage && !newContent && !isBatchWrite && task.mcp_arguments && (
+                <pre className="bg-gray-50 p-3 rounded text-xs overflow-x-auto text-gray-600 font-mono">
                   {JSON.stringify(task.mcp_arguments, null, 2)}
                 </pre>
               )}
-            </div>
-          )}
-        </div>
-      </div>
 
-      {/* MULTI approval progress */}
-      {isMultiApproval && (
-        <div className="mb-4 p-3 bg-orange-50 rounded-lg">
-          {/* Progress bar */}
-          <div className="w-full bg-gray-200 rounded-full h-2 mb-3">
-            <div
-              className="bg-orange-500 h-2 rounded-full transition-all"
-              style={{ width: `${(currentApprovals / requiredApprovals) * 100}%` }}
-            />
-          </div>
-
-          {/* Approved by */}
-          {approvedByRoles.length > 0 && (
-            <div className="mb-2">
-              <span className="text-sm text-gray-600">Approved by: </span>
-              {approvedByRoles.map(role => (
-                <span key={role} className="inline-flex items-center px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full mr-1">
-                  <CheckCircle className="w-3 h-3 mr-1" />
-                  {role}
+              {/* Context info — single line */}
+              <div className="flex items-center gap-4 text-xs text-gray-400 flex-wrap">
+                <span>{new Date(task.created_at).toLocaleString()}</span>
+                {task.session_id && (
+                  <Link to={`/chat?session=${task.session_id}`} className="text-blue-500 hover:text-blue-700 hover:underline flex items-center gap-1">
+                    <MessageSquare className="w-3 h-3" />
+                    Conversation
+                  </Link>
+                )}
+                <span className={canApprove ? 'text-green-500' : ''}>
+                  {requiredRoles.join(', ')}
                 </span>
-              ))}
-            </div>
-          )}
-
-          {/* Still needed */}
-          {remainingRoles.length > 0 && (
-            <div>
-              <span className="text-sm text-gray-600">Still needed: </span>
-              {remainingRoles.map(role => (
-                <span key={role} className="inline-flex items-center px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full mr-1">
-                  {role}
-                </span>
-              ))}
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Context info - simplified */}
-      <div className="grid grid-cols-2 gap-4 mb-4 text-sm bg-gray-50 rounded-lg p-3">
-        <div>
-          <span className="text-gray-500">Session:</span>
-          <span className="ml-2 font-medium font-mono text-xs">{task.session_id ? task.session_id.substring(0, 8) + '...' : 'N/A'}</span>
-          {task.session_id && (
-            <Link
-              to={`/chat?session=${task.session_id}`}
-              className="ml-2 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline"
-              aria-label="View conversation for this approval"
-            >
-              <ExternalLink className="w-3 h-3" />
-              View Conversation
-            </Link>
-          )}
-        </div>
-        <div>
-          <span className="text-gray-500">Created:</span>
-          <span className="ml-2">{new Date(task.created_at).toLocaleString()}</span>
-        </div>
-        {task.agent_id && (
-          <div>
-            <span className="text-gray-500">Requested by:</span>
-            <span className="ml-2 inline-flex items-center gap-1">
-              <Bot className="w-3.5 h-3.5 text-purple-500" />
-              <span className="font-medium text-purple-700">{formatAgentName(task.agent_id)}</span>
-            </span>
+      {/* Multi-approval progress bar — only when relevant */}
+      {isMultiApproval && (
+        <div className="mt-3 pt-3 border-t border-gray-50">
+          <div className="w-full bg-gray-100 rounded-full h-1.5">
+            <div
+              className="bg-blue-600 h-1.5 rounded-full transition-all"
+              style={{ width: `${(currentApprovals / requiredApprovals) * 100}%` }}
+            />
           </div>
-        )}
-        <div>
-          <span className="text-gray-500">Required Role:</span>
-          <span className="ml-2">
-            <span
-              className={`px-2 py-0.5 rounded text-xs ${
-                canApprove ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
-              }`}
-            >
-              {requiredRoles.join(', ')}
-            </span>
-            {canApprove && <span className="ml-1 text-green-600">(you can approve)</span>}
-          </span>
-        </div>
-      </div>
-
-      {/* Actions */}
-      {canApprove ? (
-        <div className="flex flex-col space-y-3">
-          {!showReject ? (
-            <div className="flex space-x-3" role="group" aria-label="Task approval actions">
-              <button
-                onClick={() => onApprove(task.id)}
-                className={`flex-1 px-4 py-2 text-white rounded-lg flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-offset-2 ${
-                  isMultiApproval ? 'bg-orange-500 hover:bg-orange-600 focus:ring-orange-500' : 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
-                }`}
-                aria-label={isMultiApproval ? `Add approval ${currentApprovals + 1} of ${requiredApprovals}` : 'Approve task'}
-              >
-                <CheckCircle className="w-5 h-5 mr-2" aria-hidden="true" />
-                {isMultiApproval ? `Add Approval (${currentApprovals + 1}/${requiredApprovals})` : 'Approve'}
-              </button>
-              <button
-                onClick={() => setShowReject(true)}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
-                aria-label="Reject task"
-              >
-                <XCircle className="w-5 h-5 mr-2" aria-hidden="true" />
-                Reject
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <textarea
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-                placeholder="Enter rejection reason..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                rows={3}
-              />
-              <div className="flex space-x-3" role="group" aria-label="Rejection actions">
-                <button
-                  onClick={() => setShowReject(false)}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
-                  aria-label="Cancel rejection"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    if (rejectReason.trim()) {
-                      onReject(task.id, rejectReason)
-                    }
-                  }}
-                  disabled={!rejectReason.trim()}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
-                  aria-label="Confirm task rejection"
-                >
-                  Confirm Rejection
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {/* Prominent waiting state */}
-          <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg border border-blue-200">
-            <div className="p-2 bg-blue-100 rounded-full">
-              <Clock className="w-5 h-5 text-blue-600 animate-pulse" />
-            </div>
-            <div className="flex-1">
-              <div className="font-medium text-blue-800">Waiting for Approval</div>
-              <p className="text-sm text-blue-600 mt-0.5">
-                This task requires approval from: <span className="font-semibold">{requiredRoles.join(' or ')}</span>
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center p-3 bg-gray-50 rounded-lg text-gray-600">
-            <Shield className="w-5 h-5 mr-2" />
-            {requiredRoles.length > 1
-              ? `You need one of these roles to approve: ${requiredRoles.join(', ')}`
-              : `You need the "${requiredRole}" role to approve this task.`
-            }
+          <div className="flex items-center gap-2 mt-1.5 text-xs text-gray-400">
+            {approvedByRoles.map(role => (
+              <span key={role} className="text-green-600">{role}</span>
+            ))}
+            {remainingRoles.map(role => (
+              <span key={role}>{role}</span>
+            ))}
           </div>
         </div>
       )}
@@ -598,14 +480,8 @@ const Tasks = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold">Pending Approvals</h1>
-          <p className="text-gray-500 mt-1">
-            Review and approve tasks based on your role permissions.
-          </p>
-        </div>
-        <div className="flex items-center space-x-2">
+      <PageHeader title="Pending Approvals" subtitle="Review and approve tasks based on your role permissions.">
+        <div className="flex items-center gap-2">
           <span className="text-sm text-gray-500">Your roles:</span>
           {user?.roles?.slice(0, 3).map((role) => (
             <span
@@ -616,13 +492,12 @@ const Tasks = () => {
             </span>
           ))}
         </div>
-      </div>
+      </PageHeader>
 
       {/* Approval Tasks Section */}
       {isLoading ? (
-        <div className="flex items-center justify-center h-64">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          <span className="ml-2 text-gray-600">Loading tasks...</span>
+        <div className="space-y-4">
+          {Array.from({ length: 3 }).map((_, i) => <SkeletonTaskCard key={i} />)}
         </div>
       ) : isError ? (
         <div className="flex flex-col items-center justify-center h-64 text-red-500">
@@ -638,10 +513,10 @@ const Tasks = () => {
           </button>
         </div>
       ) : tasks.length === 0 ? (
-        <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
-          <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-          <h3 className="text-lg font-medium">No pending approvals</h3>
-          <p className="text-gray-500">All approval requests have been handled.</p>
+        <div className="text-center py-16 bg-white rounded-xl border border-gray-100">
+          <CheckCircle className="w-10 h-10 text-green-400 mx-auto mb-3" />
+          <h3 className="text-base font-medium text-gray-700">All clear</h3>
+          <p className="text-gray-400 text-sm mt-1">No pending approvals right now.</p>
         </div>
       ) : (
         <div className="space-y-8">
@@ -696,7 +571,7 @@ const Tasks = () => {
         {showHistory && (
           <div id="approval-history" className="mt-4">
             {historyLoading ? (
-              <div className="flex items-center justify-center h-32 bg-white rounded-xl border border-gray-200">
+              <div className="flex items-center justify-center h-32 bg-white rounded-xl border border-gray-100">
                 <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
                 <span className="ml-2 text-gray-600">Loading history...</span>
               </div>
@@ -705,7 +580,7 @@ const Tasks = () => {
                 {historyResponse.items.map((approval) => (
                   <div
                     key={approval.id}
-                    className="bg-white rounded-lg border border-gray-200 p-4 hover:border-gray-300 transition-colors"
+                    className="bg-white rounded-lg border border-gray-100 p-4 hover:border-gray-200 transition-colors"
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -779,7 +654,7 @@ const Tasks = () => {
                 ))}
               </div>
             ) : (
-              <div className="text-center py-8 bg-white rounded-xl border border-gray-200">
+              <div className="text-center py-8 bg-white rounded-xl border border-gray-100">
                 <History className="w-8 h-8 text-gray-400 mx-auto mb-2" />
                 <p className="text-gray-500 text-sm">No approval history found.</p>
               </div>

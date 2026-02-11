@@ -10,7 +10,9 @@
  */
 
 import React, { useState, useEffect } from 'react'
+import { Server, RefreshCw, ChevronDown, ChevronRight, Wrench, Play, AlertCircle } from 'lucide-react'
 import { getToken } from '../services/keycloak'
+import PageHeader from '../components/shared/PageHeader'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -42,15 +44,15 @@ const apiFetch = async (endpoint, options = {}) => {
 const Collapsible = ({ title, children, defaultOpen = false }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen)
   return (
-    <div className="border rounded-lg overflow-hidden mb-2">
+    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden mb-3">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 flex items-center gap-2 font-medium"
+        className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 font-medium transition-colors"
       >
-        <span className="text-gray-500">{isOpen ? '▼' : '▶'}</span>
-        <span className="flex-1">{title}</span>
+        {isOpen ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+        <span className="flex-1 text-sm">{title}</span>
       </button>
-      {isOpen && <div className="p-3 border-t bg-white">{children}</div>}
+      {isOpen && <div className="px-4 pb-4 border-t border-gray-50">{children}</div>}
     </div>
   )
 }
@@ -95,7 +97,7 @@ const ToolCard = ({ server, tool, onCall }) => {
         <div>
           <code className="text-purple-600 font-semibold">{tool.name}</code>
           {tool.requires_approval && (
-            <span className="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs rounded">
+            <span className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded">
               Needs: {tool.required_role}
             </span>
           )}
@@ -175,19 +177,21 @@ const ServerCard = ({ server }) => {
   }
 
   return (
-    <div className="border rounded-lg overflow-hidden mb-4">
+    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden mb-4">
       <button
         onClick={loadTools}
-        className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-gray-100 flex items-center gap-3"
+        className="w-full text-left px-4 py-4 hover:bg-gray-50 flex items-center gap-3 transition-colors"
       >
-        <span className="text-2xl">{server.builtin ? '🔧' : '🌐'}</span>
+        <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+          <Server className="w-5 h-5 text-gray-500" />
+        </div>
         <div className="flex-1">
-          <div className="font-semibold text-lg">{server.name}</div>
+          <div className="font-semibold text-gray-900">{server.name}</div>
           <div className="text-sm text-gray-500">{server.description}</div>
-          <div className="text-xs text-gray-400">{server.url}</div>
+          <div className="text-xs text-gray-400 font-mono mt-0.5">{server.url}</div>
         </div>
         {server.builtin && (
-          <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded">
+          <span className="px-2.5 py-1 bg-purple-100 text-purple-700 text-xs rounded-full font-medium">
             Built-in
           </span>
         )}
@@ -238,36 +242,21 @@ export default function DebugMCP() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">MCP Bridge Test Page</h1>
-          <p className="text-gray-600">
-            Test MCP server tools directly via REST API
-          </p>
-        </div>
+    <div className="space-y-6">
+      <PageHeader title="MCP Bridge Test" subtitle="Test MCP server tools directly via REST API.">
         <button
           onClick={loadServers}
           disabled={loading}
-          className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 text-sm"
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
         >
-          {loading ? 'Loading...' : 'Refresh'}
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
         </button>
-      </div>
+      </PageHeader>
 
-      <div className="mb-4 p-3 bg-blue-50 text-blue-800 rounded text-sm">
+      <div className="p-3 bg-amber-50 text-amber-800 rounded-lg text-sm border border-amber-100">
         <strong>Note:</strong> This page calls MCP tools directly, bypassing the agent workflow
         and approval system. Use for testing MCP connectivity only.
-      </div>
-
-      {/* API Info */}
-      <div className="mb-6 text-sm text-gray-500">
-        <strong>Endpoints:</strong>
-        <ul className="list-disc ml-5 mt-1">
-          <li>GET /api/mcp/servers - List servers</li>
-          <li>GET /api/mcp/servers/{'{server}'}/tools - List tools</li>
-          <li>POST /api/mcp/call - Call a tool</li>
-        </ul>
       </div>
 
       {/* Error state */}

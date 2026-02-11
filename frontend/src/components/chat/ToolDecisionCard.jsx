@@ -138,7 +138,7 @@ const ToolDecisionCard = ({
 
     return (
       <div className="flex justify-start mb-3">
-        <div className={`max-w-[95%] rounded-xl px-4 py-3 border-2 ${isAnswered ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-300'}`}>
+        <div className={`max-w-[95%] rounded-xl px-4 py-3 border ${isAnswered ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
           {/* Header */}
           <div className="flex items-center gap-2 mb-2">
             {agentConfig && (
@@ -146,11 +146,11 @@ const ToolDecisionCard = ({
                 <AgentIcon className={`w-4 h-4 ${colors?.accent || 'text-gray-600'}`} />
               </div>
             )}
-            <MessageCircle className={`w-5 h-5 ${isAnswered ? 'text-green-500' : 'text-amber-500'}`} />
+            <MessageCircle className={`w-5 h-5 ${isAnswered ? 'text-green-500' : 'text-gray-500'}`} />
             <span className="text-sm font-semibold text-gray-800">
               {agentConfig?.name || agent_id || 'Agent'} asked:
             </span>
-            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isAnswered ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800'}`}>
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${isAnswered ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
               {isAnswered ? 'ANSWERED' : 'WAITING'}
             </span>
             {timestamp && (
@@ -176,7 +176,7 @@ const ToolDecisionCard = ({
                   key={idx}
                   onClick={() => handleChoiceSelect(choice.text)}
                   disabled={isAnswering}
-                  className="w-full text-left px-3 py-2 bg-white border border-gray-200 rounded-lg hover:bg-amber-50 hover:border-amber-300 transition-colors disabled:opacity-50"
+                  className="w-full text-left px-3 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors disabled:opacity-50"
                 >
                   {choice.text}
                 </button>
@@ -188,14 +188,14 @@ const ToolDecisionCard = ({
                 value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
                 placeholder="Type your answer..."
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none focus:ring-2 focus:ring-gray-400 focus:border-transparent"
                 rows={2}
                 disabled={isAnswering}
               />
               <button
                 onClick={handleSubmitAnswer}
                 disabled={!answer.trim() || isAnswering}
-                className="mt-2 px-4 py-1.5 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="mt-2 px-4 py-1.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               >
                 {isAnswering ? 'Submitting...' : 'Submit Answer'}
               </button>
@@ -233,10 +233,10 @@ const ToolDecisionCard = ({
 
   if (approval_required) {
     if (isPending) {
-      bgColor = 'bg-amber-50'
-      borderColor = 'border-amber-300'
+      bgColor = 'bg-blue-50'
+      borderColor = 'border-blue-200'
       badge = 'AWAITING APPROVAL'
-      badgeColor = 'bg-amber-100 text-amber-800 animate-pulse'
+      badgeColor = 'bg-blue-100 text-blue-700 animate-pulse'
     } else if (isApproved) {
       bgColor = 'bg-green-50'
       borderColor = 'border-green-200'
@@ -278,7 +278,7 @@ const ToolDecisionCard = ({
 
   return (
     <div className="flex justify-start mb-3">
-      <div className={`max-w-[95%] rounded-xl px-4 py-3 border-2 ${bgColor} ${borderColor} shadow-sm`}>
+      <div className={`max-w-[95%] rounded-xl px-4 py-3 border ${bgColor} ${borderColor}`}>
         {/* Header */}
         <div className="flex items-center gap-2 flex-wrap">
           {agentConfig && (
@@ -287,7 +287,7 @@ const ToolDecisionCard = ({
             </div>
           )}
           <ToolIcon className={`w-5 h-5 ${colors?.accent || 'text-purple-600'}`} />
-          {isPending && <Loader2 className="w-4 h-4 text-amber-500 animate-spin" />}
+          {isPending && <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />}
           <span className="text-sm font-semibold text-gray-800">Tool: {toolName}</span>
           <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${badgeColor}`}>
             {badge}
@@ -395,13 +395,13 @@ const ToolDecisionCard = ({
 
         {/* Approval buttons */}
         {approval_required && isPending && canApprove && (
-          <div className="mt-4 pt-3 border-t border-amber-200">
+          <div className="mt-4 pt-3 border-t border-gray-200">
             {!showRejectInput ? (
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
                 <button
                   onClick={handleApprove}
                   disabled={isProcessing}
-                  className="flex items-center gap-1 px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
                 >
                   <Check className="w-4 h-4" />
                   Approve
@@ -409,9 +409,8 @@ const ToolDecisionCard = ({
                 <button
                   onClick={() => setShowRejectInput(true)}
                   disabled={isProcessing}
-                  className="flex items-center gap-1 px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 disabled:opacity-50"
+                  className="px-3 py-1.5 text-sm text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
                 >
-                  <X className="w-4 h-4" />
                   Reject
                 </button>
               </div>
@@ -422,19 +421,19 @@ const ToolDecisionCard = ({
                   value={rejectReason}
                   onChange={(e) => setRejectReason(e.target.value)}
                   placeholder="Rejection reason (optional)"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
                 />
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
                   <button
                     onClick={handleReject}
                     disabled={isProcessing}
-                    className="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 disabled:opacity-50"
+                    className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
                   >
                     Confirm Reject
                   </button>
                   <button
                     onClick={() => setShowRejectInput(false)}
-                    className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300"
+                    className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 rounded-lg transition-colors"
                   >
                     Cancel
                   </button>
@@ -446,11 +445,11 @@ const ToolDecisionCard = ({
 
         {/* No permission message */}
         {approval_required && isPending && !canApprove && (
-          <div className="mt-3 pt-3 border-t border-amber-200">
-            <div className="text-xs text-amber-700 bg-amber-100 rounded-lg px-3 py-2">
+          <div className="mt-3 pt-3 border-t border-gray-200">
+            <div className="text-xs text-gray-600 bg-gray-100 rounded-lg px-3 py-2">
               Waiting for approval from: {(approval.required_roles || ['admin']).join(' or ')}
               <br />
-              <span className="text-amber-600">You don't have the required role to approve this action.</span>
+              <span className="text-gray-500">You don't have the required role to approve this action.</span>
             </div>
           </div>
         )}
