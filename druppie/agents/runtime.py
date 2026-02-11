@@ -863,14 +863,10 @@ class Agent:
         This method:
         1. Injects common instructions from _common.md (if placeholder present)
         2. Adds shared tool usage instructions for non-router/planner agents
-        3. Conditionally adds XML format instructions based on LLM capabilities
+        3. Adds skills section if agent has skills defined
 
-        Tool descriptions are now provided via the structured `tools` parameter
-        to the LLM, not duplicated in the system prompt. Approval requirements
-        are included in each tool's description field.
-
-        Router and planner agents have special JSON output formats and don't
-        need the built-in tools documentation.
+        Tool descriptions are provided via the structured `tools` parameter
+        to the LLM, not duplicated in the system prompt.
         """
         base_prompt = self.definition.system_prompt
 
@@ -879,43 +875,20 @@ class Agent:
         if common_prompt and "[COMMON_INSTRUCTIONS]" in base_prompt:
             base_prompt = base_prompt.replace("[COMMON_INSTRUCTIONS]", common_prompt)
 
-        # Router and planner output JSON directly - no built-in tools needed
+        # Router and planner output JSON directly - no built-in tools section needed
         if self.id in ("router", "planner"):
-            # For LLMs that don't support native tools, add XML format instructions
-            if not self.llm.supports_native_tools:
-                base_prompt += self._get_xml_format_instructions()
             return base_prompt
 
-        # For other agents, add full tool usage instructions
+        # For other agents, add tool usage instructions and skills
         shared_tool_instructions = self._get_shared_tool_instructions()
-
-        # Add skills information if agent has skills defined
         skills_section = self._get_skills_section()
 
         return base_prompt + shared_tool_instructions + skills_section
 
-    def _get_xml_format_instructions(self) -> str:
-        """Get XML format instructions for LLMs that don't support native tool calling."""
+    def _get_shared_tool_instructions(self) -> str:
+        """Get shared tool instructions for native tool calling LLMs."""
         return """
 
-## TOOL CALL FORMAT
-
-You MUST output tool calls using this XML format:
-<tool_call>{"name": "tool_name", "arguments": {"arg1": "value1"}}</tool_call>
-
-Example:
-<tool_call>{"name": "done", "arguments": {"summary": "Agent deployer: Deployed at http://localhost:9101 (container: app-preview, port 9101:80)."}}</tool_call>
-"""
-
-    def _get_shared_tool_instructions(self) -> str:
-        """Get shared tool instructions, with XML format only for non-native LLMs."""
-        # Check if LLM supports native tools
-        uses_native_tools = self.llm.supports_native_tools
-
-        if uses_native_tools:
-            # Minimal instructions for native tool calling
-            return """
-
 ###############################################################################
 #                    CRITICAL: TOOL USAGE INSTRUCTIONS                        #
 ###############################################################################
@@ -942,75 +915,6 @@ You MUST NOT output plain text - always use a tool.
 2. NEVER announce what you will do - just call the tool directly
 3. ALWAYS call done() when you have finished your task
 4. Tool names use UNDERSCORES not colons (e.g., hitl_ask_question not hitl:ask_question)
-"""
-        else:
-            # Full instructions with XML format for non-native LLMs
-            return """
-
-###############################################################################
-#                    CRITICAL: TOOL USAGE INSTRUCTIONS                        #
-###############################################################################
-
-You are an AI agent that can ONLY interact through TOOL CALLS.
-You MUST NOT output plain text - always use a tool.
-
-## TOOL CALL FORMAT
-
-You MUST output tool calls using this XML format:
-<tool_call>{"name": "tool_name", "arguments": {"arg1": "value1", "arg2": "value2"}}</tool_call>
-
-## EXAMPLES OF CORRECT TOOL CALLS
-
-### Asking the user a question:
-<tool_call>{"name": "hitl_ask_question", "arguments": {"question": "What database would you like me to use?"}}</tool_call>
-
-### Asking a yes/no question:
-<tool_call>{"name": "hitl_ask_multiple_choice_question", "arguments": {"question": "Should I proceed with this plan?", "choices": ["Yes", "No"]}}</tool_call>
-
-### Signaling task completion:
-<tool_call>{"name": "done", "arguments": {"summary": "Agent developer: Implemented counter app on branch feature/add-counter, pushed index.html, styles.css, Dockerfile."}}</tool_call>
-
-## BUILT-IN TOOLS (always available)
-
-1. **hitl_ask_question** - Ask the user a free-form question
-   Required: question (string)
-   Optional: context (string)
-
-2. **hitl_ask_multiple_choice_question** - Ask user to select from options
-   Required: question (string), choices (array of strings)
-   Optional: allow_other (boolean)
-
-3. **done** - Signal that your task is complete
-   Required: summary (string) - DETAILED summary of what you accomplished including URLs, branch names, container names, file paths. NEVER just "Task completed".
-
-## CRITICAL RULES
-
-1. NEVER output plain text to communicate - use hitl_ask_question instead
-2. NEVER announce what you will do - just call the tool directly
-3. ALWAYS call done() when you have finished your task
-4. Tool names use UNDERSCORES not colons (e.g., hitl_ask_question not hitl:ask_question)
-
-## WRONG vs RIGHT
-
-WRONG (plain text output):
-```
-I'll now create a file for you. What name would you like?
-```
-
-RIGHT (tool call):
-```
-<tool_call>{"name": "hitl_ask_question", "arguments": {"question": "What name would you like for the file?"}}</tool_call>
-```
-
-WRONG (announcing completion):
-```
-Done! I have completed the task.
-```
-
-RIGHT (tool call):
-```
-<tool_call>{"name": "done", "arguments": {"summary": "Agent developer: Created index.html and styles.css on branch main, pushed to remote."}}</tool_call>
-```
 """
 
     def _get_skills_section(self) -> str:
@@ -1048,53 +952,6 @@ To use a skill, call: invoke_skill(skill_name="<skill-name>")
 The skill's instructions will be returned and you should follow them to complete the task.
 """
 
-    def _inject_tool_descriptions(self, prompt: str, tool_descriptions: str) -> str:
-        """Inject dynamic tool descriptions into the system prompt.
-
-        Looks for AVAILABLE TOOLS or TOOLS section and replaces/injects
-        tool descriptions from mcp_config.yaml.
-
-        Args:
-            prompt: The base system prompt
-            tool_descriptions: Generated tool descriptions from mcp_config
-
-        Returns:
-            Prompt with tool descriptions injected
-        """
-        # Check for placeholder pattern
-        if "[TOOL_DESCRIPTIONS_PLACEHOLDER]" in prompt:
-            return prompt.replace("[TOOL_DESCRIPTIONS_PLACEHOLDER]", tool_descriptions)
-
-        # Check for AVAILABLE TOOLS or TOOLS section
-        for marker in ["AVAILABLE TOOLS:", "TOOLS:"]:
-            if marker in prompt:
-                lines = prompt.split("\n")
-                new_lines = []
-                skip_until_next_section = False
-
-                for line in lines:
-                    if marker in line:
-                        # Add the marker and then our dynamic descriptions
-                        new_lines.append(line)
-                        new_lines.append(tool_descriptions)
-                        skip_until_next_section = True
-                    elif skip_until_next_section:
-                        # Skip lines until we hit another major section
-                        # (starts with === or is a new section header ending with :)
-                        stripped = line.strip()
-                        if stripped.startswith("===") or (
-                            stripped.endswith(":") and stripped.isupper()
-                        ):
-                            skip_until_next_section = False
-                            new_lines.append(line)
-                    else:
-                        new_lines.append(line)
-
-                return "\n".join(new_lines)
-
-        # No marker found - return prompt unchanged
-        return prompt
-
     def _build_prompt(self, prompt: str, context: dict = None) -> str:
         """Build the full prompt with context."""
         if not context:
@@ -1128,88 +985,6 @@ User's answer: {answer}
 
 TASK:
 {prompt}{user_response_str}"""
-
-    def _parse_output(self, content: str) -> Any:
-        """Parse agent's final output.
-
-        Tries to parse as JSON using multiple extraction strategies,
-        falls back to raw content.
-        """
-        import json
-        import re
-
-        if not content:
-            return {}
-
-        content = content.strip()
-
-        # Strategy 1: Try direct JSON parse first (ideal case)
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            pass
-
-        # Strategy 2: Extract JSON from markdown code blocks
-        # Handles ```json ... ``` or ``` ... ```
-        code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", content)
-        if code_block_match:
-            try:
-                return json.loads(code_block_match.group(1).strip())
-            except json.JSONDecodeError:
-                pass
-
-        # Strategy 3: Find the LAST valid JSON object in text (look for {...})
-        # This handles cases where LLM adds thinking text before the actual JSON
-        # We search backwards to find the last complete JSON object
-        json_objects = list(re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", content))
-        for match in reversed(json_objects):
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                continue
-
-        # Strategy 3b: Try to find a JSON object with nested braces (more complex)
-        # Look for JSON starting near the end of content
-        last_brace = content.rfind("{")
-        if last_brace >= 0:
-            # Try to extract JSON from the last { to the matching }
-            try:
-                # Count braces to find the matching }
-                brace_count = 0
-                for i, char in enumerate(content[last_brace:]):
-                    if char == "{":
-                        brace_count += 1
-                    elif char == "}":
-                        brace_count -= 1
-                        if brace_count == 0:
-                            json_str = content[last_brace:last_brace + i + 1]
-                            return json.loads(json_str)
-            except (json.JSONDecodeError, IndexError):
-                pass
-
-        # Strategy 4: Find JSON array in text (look for [...])
-        array_match = re.search(r"\[[\s\S]*\]", content)
-        if array_match:
-            try:
-                return json.loads(array_match.group(0))
-            except json.JSONDecodeError:
-                pass
-
-        # Strategy 5: Try to fix common JSON issues
-        # Remove trailing commas before } or ]
-        fixed_content = re.sub(r",\s*([}\]])", r"\1", content)
-        try:
-            return json.loads(fixed_content)
-        except json.JSONDecodeError:
-            pass
-
-        # Fallback: Return as string content
-        logger.debug(
-            "json_parse_failed",
-            agent_id=self.id,
-            content_preview=content[:200] if len(content) > 200 else content,
-        )
-        return {"content": content}
 
     def __repr__(self) -> str:
         return f"Agent({self.id!r})"
