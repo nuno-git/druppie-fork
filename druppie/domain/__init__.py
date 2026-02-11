@@ -31,6 +31,8 @@ from .agent_run import (
     AgentRunSummary,
     LLMCallDetail,
     LLMRawResponse,
+    LLMRetryDetail,
+    NormalizationDetail,
     ToolCallDetail,
 )
 
@@ -70,7 +72,7 @@ from .session import (
 )
 
 # Skill models
-from .skill import SkillSummary, SkillDetail
+from .skill import SkillDetail, SkillSummary
 
 # Tool definition (unified tool metadata with Pydantic params models)
 from .tool import EmptyParams, ToolDefinition, ToolDefinitionSummary, ToolType
@@ -105,6 +107,8 @@ __all__ = [
     "AgentRunDetail",
     "LLMCallDetail",
     "LLMRawResponse",
+    "LLMRetryDetail",
+    "NormalizationDetail",
     "ToolCallDetail",
     # Approval
     "ApprovalSummary",

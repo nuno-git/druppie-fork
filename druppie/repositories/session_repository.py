@@ -25,7 +25,9 @@ from ..domain import (
     LLMCallDetail,
     LLMMessage,
     LLMRawResponse,
+    LLMRetryDetail,
     Message,
+    NormalizationDetail,
     ProjectSummary,
     SessionDetail,
     SessionStatus,
@@ -327,6 +329,15 @@ class SessionRepository(BaseRepository):
                     "tools": llm.tools_provided,
                 },
                 raw_response=raw_response,
+                retries=[
+                    LLMRetryDetail(
+                        attempt=r.attempt,
+                        error_type=r.error_type,
+                        error_message=r.error_message,
+                        delay_seconds=r.delay_seconds,
+                    )
+                    for r in llm.retries
+                ],
                 tool_calls=tool_calls,
             ))
 
@@ -453,6 +464,14 @@ class SessionRepository(BaseRepository):
             status=ToolCallStatus(tc.status),
             result=tc.result,
             error=tc.error_message,
+            normalizations=[
+                NormalizationDetail(
+                    field_name=n.field_name,
+                    original_value=n.original_value,
+                    normalized_value=n.normalized_value,
+                )
+                for n in tc.normalizations
+            ],
             approval=approval_summary,
             question_id=question_id,
             child_run=child_run,

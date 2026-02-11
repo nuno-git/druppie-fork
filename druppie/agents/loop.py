@@ -195,6 +195,7 @@ class AgentLoop:
         self.db.commit()
 
         start_time = time.time()
+        retry_events = []
 
         for attempt in range(LLM_MAX_RETRIES + 1):
             try:
@@ -204,8 +205,19 @@ class AgentLoop:
                 retryable = isinstance(e, LLMError) and e.retryable
                 is_last_attempt = attempt >= LLM_MAX_RETRIES
 
+                delay = LLM_RETRY_BASE_DELAY * (2 ** attempt)
+                if hasattr(e, 'retry_after') and e.retry_after:
+                    delay = max(delay, e.retry_after)
+
+                retry_events.append({
+                    "attempt": attempt + 1,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)[:500],
+                    "delay_seconds": delay,
+                })
+
                 if not retryable or is_last_attempt:
-                    # Non-retryable or exhausted retries — record and raise
+                    # Non-retryable or exhausted retries — persist retries and raise
                     duration_ms = int((time.time() - start_time) * 1000)
                     error_msg = f"{type(e).__name__}: {e}"
                     execution_repo.update_llm_error(
@@ -213,22 +225,21 @@ class AgentLoop:
                         error_message=error_msg[:2000],
                         duration_ms=duration_ms,
                     )
+                    if retry_events:
+                        execution_repo.create_llm_retries(llm_call_id, retry_events)
                     self.db.commit()
                     logger.error(
                         "llm_call_failed",
                         agent_id=self.agent_id,
                         iteration=iteration,
                         attempt=attempt + 1,
+                        retries=len(retry_events),
                         duration_ms=duration_ms,
                         error=error_msg[:500],
                     )
                     raise
 
                 # Retryable — wait with exponential backoff
-                delay = LLM_RETRY_BASE_DELAY * (2 ** attempt)
-                # Use retry_after hint from RateLimitError if available
-                if hasattr(e, 'retry_after') and e.retry_after:
-                    delay = max(delay, e.retry_after)
                 logger.warning(
                     "llm_call_retrying",
                     agent_id=self.agent_id,
@@ -240,6 +251,10 @@ class AgentLoop:
                 await asyncio.sleep(delay)
 
         duration_ms = int((time.time() - start_time) * 1000)
+
+        # Persist retry events if any occurred (even on eventual success)
+        if retry_events:
+            execution_repo.create_llm_retries(llm_call_id, retry_events)
 
         # Warn if response was truncated (hit token limit)
         if response.finish_reason == "length":
