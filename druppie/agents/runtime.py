@@ -799,6 +799,28 @@ class Agent:
                 except json.JSONDecodeError:
                     result = {"content": result_str}
 
+                # Check if invoke_skill returned allowed_tools - add them dynamically
+                if tool == "invoke_skill" and result.get("success") and result.get("allowed_tools"):
+                    skill_allowed_tools = result["allowed_tools"]
+                    # Get tool definitions for the skill's allowed tools
+                    skill_tools = registry.get_tools_for_agent(
+                        agent_mcps=skill_allowed_tools,
+                        builtin_tool_names=[],
+                    )
+                    # Add to openai_tools if not already present
+                    existing_tool_names = {t["function"]["name"] for t in openai_tools}
+                    new_tools = registry.to_openai_format(skill_tools)
+                    for new_tool in new_tools:
+                        if new_tool["function"]["name"] not in existing_tool_names:
+                            openai_tools.append(new_tool)
+                            existing_tool_names.add(new_tool["function"]["name"])
+                    logger.info(
+                        "skill_tools_added",
+                        skill_name=result.get("skill_name"),
+                        added_tools=[t["function"]["name"] for t in new_tools],
+                        total_tools=len(openai_tools),
+                    )
+
                 # Check if agent called `done`
                 if tool == "done" and result.get("status") == "completed":
                     logger.info(
