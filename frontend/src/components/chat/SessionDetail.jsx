@@ -4,13 +4,14 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { getSession, sendChat, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
+import { FilePreviewModal } from './ApprovalCard'
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
 import {
@@ -46,6 +47,7 @@ const InlineApproval = ({ tc, sessionId }) => {
   const user = getUserInfo()
   const [rejectMode, setRejectMode] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
+  const [showFilePreview, setShowFilePreview] = useState(false)
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
@@ -114,6 +116,33 @@ const InlineApproval = ({ tc, sessionId }) => {
               {contextLine}
             </div>
           )}
+
+          {/* File preview for write operations */}
+          {(() => {
+            const filePath = args.path || args.file_path
+            const content = args.content
+            const batchFiles = args.files
+            const isBatchWrite = !!batchFiles && Object.keys(batchFiles).length > 0
+            const hasFile = !!(content || isBatchWrite)
+            if (!hasFile) return null
+            const files = isBatchWrite
+              ? Object.entries(batchFiles).map(([p, c]) => ({ path: p, content: c }))
+              : [{ path: filePath || 'file', content }]
+            return (
+              <div className="mt-1.5">
+                <button
+                  onClick={() => setShowFilePreview(true)}
+                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 transition-colors"
+                >
+                  {isBatchWrite ? <FileCode className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
+                  View {isBatchWrite ? `${files.length} files` : filePath || 'file'}
+                </button>
+                {showFilePreview && (
+                  <FilePreviewModal files={files} onClose={() => setShowFilePreview(false)} />
+                )}
+              </div>
+            )
+          })()}
 
           {isPending && (
             <div className="mt-2">
