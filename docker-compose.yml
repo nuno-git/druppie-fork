@@ -217,7 +217,7 @@ services:
       DOCKER_NETWORK: druppie-new-network
     volumes:
       - druppie_new_workspace:/workspaces
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     ports:
       - "${MCP_DOCKER_PORT:-9002}:9002"
     networks:
@@ -327,7 +327,7 @@ services:
       ENV_FILE: /project/.env
     volumes:
       - druppie_init_marker:/init-marker
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - .:/project
     depends_on:
       keycloak:
@@ -380,7 +380,7 @@ services:
     volumes:
       - ./druppie:/app/druppie
       - druppie_new_workspace:/app/workspace
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     ports:
       - "${BACKEND_PORT:-8100}:8000"
     depends_on:
@@ -441,7 +441,7 @@ services:
       MCP_WEB_URL: http://mcp-web:9005
     volumes:
       - druppie_new_workspace:/app/workspace
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     ports:
       - "${BACKEND_PORT:-8100}:8000"
     depends_on:
@@ -526,7 +526,7 @@ services:
     environment:
       PGPASSWORD: ${DRUPPIE_DB_PASSWORD:-druppie_secret}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     entrypoint: ["sh", "-c"]
     command:
       - |
@@ -585,7 +585,7 @@ services:
       KEYCLOAK_REALM: druppie
       ENV_FILE: /project/.env
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - .:/project
 
 # =============================================================================
