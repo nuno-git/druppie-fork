@@ -14,6 +14,7 @@ import {
   Zap,
   Search,
   X,
+  Loader2,
 } from 'lucide-react'
 import { formatTokens, formatCost, calculateCost } from '../../utils/tokenUtils'
 
@@ -60,7 +61,11 @@ const ConversationItem = ({ session, isActive, onClick, onDebug }) => {
               {preview.length > 40 ? `${preview.slice(0, 40)}...` : preview}
             </div>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
-              <span className={`w-2 h-2 rounded-full ${getStatusColor(session.status)}`} />
+              {['active', 'running'].includes(session.status) ? (
+                <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />
+              ) : (
+                <span className={`w-2 h-2 rounded-full ${getStatusColor(session.status)}`} />
+              )}
               <span className="text-xs text-gray-500">{date}</span>
               {formatTokens(session.total_tokens) && (
                 <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded flex items-center gap-0.5" title={`${session.total_tokens?.toLocaleString() || 0} tokens (${formatCost(calculateCost(session.total_tokens)) || '<$0.01'})`}>
@@ -292,7 +297,7 @@ const ConversationSidebar = ({
                   : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
               }`}
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+              <Loader2 className="w-2.5 h-2.5 animate-spin" />
               {statusCounts.running}
             </button>
           )}
