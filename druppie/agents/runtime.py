@@ -875,47 +875,14 @@ class Agent:
         if common_prompt and "[COMMON_INSTRUCTIONS]" in base_prompt:
             base_prompt = base_prompt.replace("[COMMON_INSTRUCTIONS]", common_prompt)
 
-        # Router and planner output JSON directly - no built-in tools section needed
+        # Router and planner output JSON directly - no skills section needed
         if self.id in ("router", "planner"):
             return base_prompt
 
-        # For other agents, add tool usage instructions and skills
-        shared_tool_instructions = self._get_shared_tool_instructions()
+        # For other agents, add skills section if they have skills
         skills_section = self._get_skills_section()
 
-        return base_prompt + shared_tool_instructions + skills_section
-
-    def _get_shared_tool_instructions(self) -> str:
-        """Get shared tool instructions for native tool calling LLMs."""
-        return """
-
-###############################################################################
-#                    CRITICAL: TOOL USAGE INSTRUCTIONS                        #
-###############################################################################
-
-You are an AI agent that can ONLY interact through TOOL CALLS.
-You MUST NOT output plain text - always use a tool.
-
-## BUILT-IN TOOLS (always available)
-
-1. **hitl_ask_question** - Ask the user a free-form question
-   Required: question (string)
-   Optional: context (string)
-
-2. **hitl_ask_multiple_choice_question** - Ask user to select from options
-   Required: question (string), choices (array of strings)
-   Optional: allow_other (boolean)
-
-3. **done** - Signal that your task is complete
-   Required: summary (string) - DETAILED summary of what you accomplished including URLs, branch names, container names, file paths. NEVER just "Task completed".
-
-## CRITICAL RULES
-
-1. NEVER output plain text to communicate - use hitl_ask_question instead
-2. NEVER announce what you will do - just call the tool directly
-3. ALWAYS call done() when you have finished your task
-4. Tool names use UNDERSCORES not colons (e.g., hitl_ask_question not hitl:ask_question)
-"""
+        return base_prompt + skills_section
 
     def _get_skills_section(self) -> str:
         """Generate skills documentation for agents with skills defined.
