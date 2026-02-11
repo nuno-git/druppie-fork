@@ -609,4 +609,5 @@ const ApprovalCard = ({ approval, onApprove, onReject, isProcessing, currentUser
   )
 }
 
+export { FilePreviewModal, isMarkdownFile }
 export default ApprovalCard

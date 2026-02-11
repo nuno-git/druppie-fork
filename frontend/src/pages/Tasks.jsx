@@ -317,7 +317,7 @@ const TaskCard = ({ task, onApprove, onReject }) => {
       )}
 
       {/* Expandable details — collapsed by default */}
-      {(command || commitMessage || newContent || isBatchWrite || (task.mcp_arguments && Object.keys(task.mcp_arguments).length > 0)) && (
+      {(command || commitMessage || newContent || isBatchWrite || Object.keys(args).length > 0) && (
         <div className="mt-3 pt-3 border-t border-gray-50">
           <button
             onClick={() => setShowDetails(!showDetails)}
@@ -367,9 +367,9 @@ const TaskCard = ({ task, onApprove, onReject }) => {
               )}
 
               {/* Raw arguments */}
-              {!command && !commitMessage && !newContent && !isBatchWrite && task.mcp_arguments && (
+              {!command && !commitMessage && !newContent && !isBatchWrite && Object.keys(args).length > 0 && (
                 <pre className="bg-gray-50 p-3 rounded text-xs overflow-x-auto text-gray-600 font-mono">
-                  {JSON.stringify(task.mcp_arguments, null, 2)}
+                  {JSON.stringify(args, null, 2)}
                 </pre>
               )}
 
