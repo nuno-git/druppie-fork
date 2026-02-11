@@ -65,7 +65,7 @@ export default function DebugPanel({
         agentMap.get(agentId).llmCalls.push(call)
 
         // Extract tool calls from LLM response
-        const toolCalls = call.response?.tool_calls || call.tool_calls || []
+        const toolCalls = call.response_tool_calls || call.response?.tool_calls || call.tool_calls || []
         toolCalls.forEach(tc => {
           agentMap.get(agentId).toolCalls.push({
             name: tc.function?.name || tc.name,
@@ -119,8 +119,9 @@ export default function DebugPanel({
       text += `[${idx + 1}] ${agent.id.toUpperCase()} - ${agent.status}\n`
       agent.llmCalls.forEach((call, i) => {
         text += `  LLM Call ${i + 1}: ${call.model} (${call.usage?.total_tokens || call.total_tokens || 0} tokens, ${call.duration_ms}ms)\n`
-        if (call.response?.content) {
-          text += `  Response: ${call.response.content.substring(0, 200)}...\n`
+        const content = call.response_content || call.response?.content
+        if (content) {
+          text += `  Response: ${content.substring(0, 200)}...\n`
         }
       })
       if (agent.toolCalls.length > 0) {
@@ -291,20 +292,20 @@ export default function DebugPanel({
                             {isExpanded && (
                               <div className="border-t border-gray-100 p-3 space-y-3">
                                 {/* Response Content */}
-                                {(call.response?.content || call.content) && (
+                                {(call.response_content || call.response?.content || call.content) && (
                                   <div>
                                     <div className="text-xs font-medium text-gray-500 uppercase mb-1">Response</div>
                                     <pre className="text-xs bg-gray-100 p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap">
-                                      {call.response?.content || call.content}
+                                      {call.response_content || call.response?.content || call.content}
                                     </pre>
                                   </div>
                                 )}
 
                                 {/* Tool Calls from this LLM call */}
-                                {(call.response?.tool_calls?.length > 0 || call.tool_calls?.length > 0) && (
+                                {(call.response_tool_calls?.length > 0 || call.response?.tool_calls?.length > 0 || call.tool_calls?.length > 0) && (
                                   <div>
                                     <div className="text-xs font-medium text-gray-500 uppercase mb-1">Tool Calls</div>
-                                    {(call.response?.tool_calls || call.tool_calls || []).map((tc, i) => (
+                                    {(call.response_tool_calls || call.response?.tool_calls || call.tool_calls || []).map((tc, i) => (
                                       <div key={i} className="bg-orange-50 p-2 rounded mb-1 text-xs">
                                         <span className="font-mono font-medium text-orange-800">
                                           {tc.function?.name || tc.name}

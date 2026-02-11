@@ -68,15 +68,6 @@ class ToolCallDetail(BaseModel):
     child_run: "AgentRunDetail | None" = None
 
 
-class LLMRawResponse(BaseModel):
-    """Raw response from the LLM API - for debugging."""
-    content: str | None = None  # Text content (may include XML tool calls)
-    tool_calls: list[dict] | None = None  # Tool calls as returned by LLM (before execution)
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-
-
 class LLMCallDetail(BaseModel):
     """One round-trip to the LLM."""
     id: UUID
@@ -88,9 +79,12 @@ class LLMCallDetail(BaseModel):
     # The full prompt sent to the LLM (structured messages)
     messages: list[LLMMessage]
 
-    # Raw request/response for debugging - full JSON as sent/received
-    raw_request: dict | None = None  # The exact request sent to LLM API (messages + tools)
-    raw_response: LLMRawResponse | None = None  # What the LLM returned
+    # Tools that were available to the LLM for this call
+    tools_provided: list[dict] | None = None
+
+    # What the LLM returned (text + raw tool call requests)
+    response_content: str | None = None
+    response_tool_calls: list[dict] | None = None
 
     # Retry audit trail
     retries: list[LLMRetryDetail] = []
