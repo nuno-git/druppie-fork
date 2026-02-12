@@ -123,9 +123,39 @@ mcps:
           properties:
             branch_name:
               type: string
-              description: "Name of the branch to create or switch to (e.g., feature/add-login)"
-          required:
-            - branch_name
+              description: "Name of branch to create or switch to (e.g., feature/add-login)"
+            required:
+              - branch_name
+      - name: run_tests
+        description: "Run tests in workspace (auto-detects framework)"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            test_command:
+              type: string
+              description: "Optional custom test command (default: auto-detected)"
+            timeout:
+              type: integer
+              description: "Timeout in seconds (default: 300)"
+          required: []
+      - name: get_test_framework
+        description: "Auto-detect test framework in workspace"
+        requires_approval: false
+        parameters:
+          type: object
+          properties: {}
+          required: []
+      - name: get_coverage_report
+        description: "Get detailed test coverage report"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            framework:
+              type: string
+              description: "Optional framework name (default: auto-detected)"
+          required: []
 
       - name: merge_to_main
         description: "Merge feature branch to main (direct git merge, no PR)"
@@ -372,6 +402,97 @@ mcps:
   bestand-zoeker:
     url: ${MCP_WEB_URL:-http://mcp-web:9005}
     description: "Local file search and web browsing"
+  testing:
+    url: ${MCP_TESTING_URL:-http://mcp-testing:9006}
+    description: "Test execution and coverage analysis"
+    # Inject workspace context for test operations
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+      project_id:
+        from: project.id
+        hidden: true
+      repo_name:
+        from: project.repo_name
+        hidden: true
+      repo_owner:
+        from: project.repo_owner
+        hidden: true
+    tools:
+      - name: get_test_framework
+        description: "Auto-detect test framework in workspace (pytest, vitest, jest, playwright)"
+        requires_approval: false
+        parameters:
+          type: object
+          properties: {}
+          required: []
+      - name: run_tests
+        description: "Run tests and get results with coverage"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            test_command:
+              type: string
+              description: "Optional custom test command (default: auto-detected)"
+            timeout:
+              type: integer
+              description: "Timeout in seconds (default: 300)"
+          required: []
+      - name: get_coverage_report
+        description: "Get test coverage report"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            framework:
+              type: string
+              description: "Optional framework name (default: auto-detected)"
+          required: []
+      - name: install_test_dependencies
+        description: "Install missing test dependencies for project"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            framework:
+              type: string
+              description: "Optional framework name (default: auto-detected)"
+          required: []
+      - name: run_tests
+        description: "Run tests and get results with coverage"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            test_command:
+              type: string
+              description: "Optional custom test command (default: auto-detected)"
+            timeout:
+              type: integer
+              description: "Timeout in seconds (default: 300)"
+          required: []
+      - name: get_coverage
+        description: "Get test coverage report"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            framework:
+              type: string
+              description: "Optional framework name (default: auto-detected)"
+          required: []
+      - name: install_test_dependencies
+        description: "Install missing test dependencies for the project"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            framework:
+              type: string
+              description: "Optional framework name (default: auto-detected)"
+          required: []
     tools:
       - name: search_files
         description: "Search for text content in local files within dataset"

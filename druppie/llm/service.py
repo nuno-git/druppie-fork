@@ -5,6 +5,7 @@ Provides factory methods and singleton access to LLM providers.
 Supported providers:
 - zai: Z.AI GLM models (default)
 - deepinfra: DeepInfra OpenAI-compatible API (Qwen, Llama, etc.)
+- deepseek: DeepSeek V3/Coder models (deepseek-chat, deepseek-coder)
 """
 
 import os
@@ -16,6 +17,7 @@ import structlog
 from .base import BaseLLM
 from .zai import ChatZAI
 from .deepinfra import ChatDeepInfra
+from .deepseek import ChatDeepSeek
 
 logger = structlog.get_logger()
 
@@ -31,13 +33,16 @@ class LLMService:
     Handles provider selection and lazy initialization.
 
     Environment variables:
-        LLM_PROVIDER: Provider to use (zai, deepinfra, mock, auto)
+        LLM_PROVIDER: Provider to use (zai, deepinfra, deepseek, mock, auto)
         ZAI_API_KEY: API key for Z.AI (REQUIRED unless using mock)
         ZAI_MODEL: Model name for Z.AI (default: GLM-4.7)
         ZAI_BASE_URL: Base URL for Z.AI API
         DEEPINFRA_API_KEY: API key for DeepInfra
         DEEPINFRA_MODEL: Model name for DeepInfra (default: Qwen/Qwen3-Next-80B-A3B-Instruct)
         DEEPINFRA_BASE_URL: Base URL for DeepInfra
+        DEEPSEEK_API_KEY: API key for DeepSeek
+        DEEPSEEK_MODEL: Model name for DeepSeek (default: deepseek-chat)
+        DEEPSEEK_BASE_URL: Base URL for DeepSeek
     """
 
     def __init__(self):
@@ -58,10 +63,12 @@ class LLMService:
         provider = os.getenv("LLM_PROVIDER", "auto").lower()
         zai_key = os.getenv("ZAI_API_KEY", "")
         deepinfra_key = os.getenv("DEEPINFRA_API_KEY", "")
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
 
         print(f"[LLM SERVICE] Environment LLM_PROVIDER: {provider}")
         print(f"[LLM SERVICE] ZAI_API_KEY present: {bool(zai_key)}")
         print(f"[LLM SERVICE] DEEPINFRA_API_KEY present: {bool(deepinfra_key)}")
+        print(f"[LLM SERVICE] DEEPSEEK_API_KEY present: {bool(deepseek_key)}")
 
         if provider == "zai" and zai_key:
             self._provider = "zai"
@@ -72,27 +79,38 @@ class LLMService:
                     "Please set DEEPINFRA_API_KEY in your .env file or environment."
                 )
             self._provider = "deepinfra"
+        elif provider == "deepseek":
+            if not deepseek_key:
+                raise LLMConfigurationError(
+                    "DEEPSEEK_API_KEY environment variable is required when LLM_PROVIDER=deepseek. "
+                    "Please set DEEPSEEK_API_KEY in your .env file or environment."
+                )
+            self._provider = "deepseek"
         elif provider == "auto":
-            # Auto-detect: prefer DeepInfra, then Z.AI
-            if deepinfra_key:
+            # Auto-detect: prefer DeepSeek, then DeepInfra, then Z.AI
+            if deepseek_key:
+                self._provider = "deepseek"
+            elif deepinfra_key:
                 self._provider = "deepinfra"
             elif zai_key:
                 self._provider = "zai"
             else:
                 logger.error("no_llm_provider_configured")
                 raise ValueError(
-                    "No LLM provider configured. Please set either ZAI_API_KEY or DEEPINFRA_API_KEY environment variable."
+                    "No LLM provider configured. Please set either DEEPSEEK_API_KEY, DEEPINFRA_API_KEY, or ZAI_API_KEY environment variable."
                 )
         else:
             # Fallback logic
-            if deepinfra_key:
+            if deepseek_key:
+                self._provider = "deepseek"
+            elif deepinfra_key:
                 self._provider = "deepinfra"
             elif zai_key:
                 self._provider = "zai"
             else:
                 logger.error("no_llm_provider_configured")
                 raise ValueError(
-                    "No LLM provider configured. Please set either ZAI_API_KEY or DEEPINFRA_API_KEY environment variable."
+                    "No LLM provider configured. Please set either DEEPSEEK_API_KEY, DEEPINFRA_API_KEY, or ZAI_API_KEY environment variable."
                 )
 
         print(f"[LLM SERVICE] Selected provider: {self._provider}")
@@ -106,60 +124,31 @@ class LLMService:
 
         provider = self.get_provider()
 
-        if provider == "deepinfra":
-            self._llm = ChatDeepInfra(
-                api_key=os.getenv("DEEPINFRA_API_KEY"),
-                model=os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct"),
+        if provider == "deepseek":
+            self._llm = ChatDeepSeek(
+                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
                 base_url=os.getenv(
-                    "DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"
+                    "DEEPSEEK_BASE_URL", "https://api.deepseek.com"
                 ),
             )
             logger.info(
-                "using_deepinfra_llm",
+                "using_deepseek_llm",
                 model=self._llm.model,
                 base_url=self._llm.base_url,
             )
-        else:
-            # Default to Z.AI
-            self._llm = ChatZAI(
-                api_key=os.getenv("ZAI_API_KEY"),
-                model=os.getenv("ZAI_MODEL", "GLM-4.7"),
-                base_url=os.getenv(
-                    "ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4"
-                ),
-            )
-            logger.info(
-                "using_zai_llm",
-                model=self._llm.model,
-                base_url=self._llm.base_url,
-            )
-
-        return self._llm
-
-        provider = self.get_provider()
-
-        if provider == "mock":
-            self._llm = ChatMock()
-            logger.info("using_mock_llm")
         elif provider == "deepinfra":
-            # Get max_tokens from env, default to 16384 for code generation
-            # 8192 was still causing truncated output for multi-file React apps
-            max_tokens_str = os.getenv("DEEPINFRA_MAX_TOKENS", "16384")
-            max_tokens = int(max_tokens_str) if max_tokens_str else 16384
-
             self._llm = ChatDeepInfra(
                 api_key=os.getenv("DEEPINFRA_API_KEY"),
                 model=os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct"),
                 base_url=os.getenv(
                     "DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"
                 ),
-                max_tokens=max_tokens,
             )
             logger.info(
                 "using_deepinfra_llm",
                 model=self._llm.model,
                 base_url=self._llm.base_url,
-                max_tokens=max_tokens,
             )
         else:
             # Default to Z.AI

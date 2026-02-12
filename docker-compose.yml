@@ -24,6 +24,7 @@
 #   MCP Coding:     9001
 #   MCP Docker:     9002
 #   MCP File Search:9004
+#   MCP Testing:    9006
 #   MCP Web:        9005
 #   Adminer:        8081
 
@@ -273,6 +274,28 @@ services:
       retries: 5
       start_period: 10s
 
+  mcp-testing:
+    build:
+      context: ./druppie/mcp-servers/testing
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-testing
+    profiles: [infra, dev, prod]
+    environment:
+      WORKSPACE_ROOT: /workspaces
+      MCP_PORT: "9006"
+    volumes:
+      - druppie_new_workspace:/workspaces
+    ports:
+      - "${MCP_TESTING_PORT:-9006}:9006"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # ===========================================================================
   # DATABASE ADMIN
   # ===========================================================================
@@ -355,6 +378,9 @@ services:
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZAI_MODEL: ${ZAI_MODEL:-GLM-4.7}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-Next-80B-A3B-Instruct}
       DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
@@ -372,6 +398,7 @@ services:
       MCP_DOCKER_URL: http://mcp-docker:9002
       MCP_FILESEARCH_URL: http://mcp-filesearch:9004
       MCP_WEB_URL: http://mcp-web:9005
+      MCP_TESTING_URL: http://mcp-testing:9006
     volumes:
       - ./druppie:/app/druppie
       - druppie_new_workspace:/app/workspace
@@ -384,6 +411,8 @@ services:
       keycloak:
         condition: service_healthy
       gitea:
+        condition: service_healthy
+      mcp-testing:
         condition: service_healthy
     networks:
       - druppie-new-network
@@ -414,10 +443,13 @@ services:
       KEYCLOAK_REALM: druppie
       KEYCLOAK_CLIENT_ID: druppie-backend
       LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZAI_MODEL: ${ZAI_MODEL:-GLM-4.7}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
-      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-Next-80B-A3B-Instruct}
       DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
       CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
@@ -430,10 +462,11 @@ services:
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
       USE_MCP_MICROSERVICES: "true"
-      MCP_CODING_URL: http://mcp-coding:9001
-      MCP_DOCKER_URL: http://mcp-docker:9002
-      MCP_FILESEARCH_URL: http://mcp-filesearch:9004
-      MCP_WEB_URL: http://mcp-web:9005
+      MCP_CODING_URL: ${MCP_CODING_URL:-http://mcp-coding:9001}
+      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
+      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
+      MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
+      MCP_TESTING_URL: ${MCP_TESTING_URL:-http://mcp-testing:9006}
     volumes:
       - druppie_new_workspace:/app/workspace
       - /var/run/docker.sock:/var/run/docker.sock
