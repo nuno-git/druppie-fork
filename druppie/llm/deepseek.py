@@ -114,7 +114,7 @@ class ChatDeepSeek(BaseLLM):
         }
 
         if self.max_tokens:
-            payload["max_tokens"] = self.max_tokens
+            payload["max_tokens"] = min(self.max_tokens, 8192)
 
         if effective_tools:
             payload["tools"] = effective_tools
@@ -199,10 +199,10 @@ class ChatDeepSeek(BaseLLM):
             "stream": False,
         }
 
-        # Per-call max_tokens overrides instance default
+        # Per-call max_tokens overrides instance default, clamped to DeepSeek's limit
         effective_max_tokens = max_tokens or self.max_tokens
         if effective_max_tokens:
-            payload["max_tokens"] = effective_max_tokens
+            payload["max_tokens"] = min(effective_max_tokens, 8192)
 
         if effective_tools:
             payload["tools"] = effective_tools

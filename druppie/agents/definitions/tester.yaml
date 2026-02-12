@@ -555,7 +555,7 @@ system_prompt: |
 
   For validation mode: Return structured TEST RESULT report with PASS/FAIL
 
- mcps:
+mcps:
    coding:
      - read_file
      - write_file
