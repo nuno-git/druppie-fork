@@ -24,8 +24,9 @@ from ..domain import (
     ApprovalSummary,
     LLMCallDetail,
     LLMMessage,
-    LLMRawResponse,
+    LLMRetryDetail,
     Message,
+    NormalizationDetail,
     ProjectSummary,
     SessionDetail,
     SessionStatus,
@@ -295,21 +296,18 @@ class SessionRepository(BaseRepository):
             # Get tool calls that were executed after this LLM call
             tool_calls = self._build_tool_calls_for_llm(llm)
 
-            # Parse raw_response from JSON (stored in response_content)
-            raw_response = None
+            # Parse response_content and response_tool_calls from the
+            # JSON blob stored in llm_calls.response_content
+            response_content = None
+            response_tool_calls = None
             if llm.response_content:
                 try:
                     raw_data = json.loads(llm.response_content)
-                    raw_response = LLMRawResponse(
-                        content=raw_data.get("content"),
-                        tool_calls=raw_data.get("tool_calls"),
-                        prompt_tokens=raw_data.get("prompt_tokens", 0),
-                        completion_tokens=raw_data.get("completion_tokens", 0),
-                        total_tokens=raw_data.get("total_tokens", 0),
-                    )
+                    response_content = raw_data.get("content")
+                    response_tool_calls = raw_data.get("tool_calls")
                 except json.JSONDecodeError:
                     # Fallback for old format (plain text)
-                    raw_response = LLMRawResponse(content=llm.response_content)
+                    response_content = llm.response_content
 
             result.append(LLMCallDetail(
                 id=llm.id,
@@ -322,11 +320,18 @@ class SessionRepository(BaseRepository):
                 ),
                 duration_ms=llm.duration_ms,
                 messages=messages,
-                raw_request={
-                    "messages": llm.request_messages,
-                    "tools": llm.tools_provided,
-                },
-                raw_response=raw_response,
+                tools_provided=llm.tools_provided,
+                response_content=response_content,
+                response_tool_calls=response_tool_calls,
+                retries=[
+                    LLMRetryDetail(
+                        attempt=r.attempt,
+                        error_type=r.error_type,
+                        error_message=r.error_message,
+                        delay_seconds=r.delay_seconds,
+                    )
+                    for r in llm.retries
+                ],
                 tool_calls=tool_calls,
             ))
 
@@ -453,6 +458,14 @@ class SessionRepository(BaseRepository):
             status=ToolCallStatus(tc.status),
             result=tc.result,
             error=tc.error_message,
+            normalizations=[
+                NormalizationDetail(
+                    field_name=n.field_name,
+                    original_value=n.original_value,
+                    normalized_value=n.normalized_value,
+                )
+                for n in tc.normalizations
+            ],
             approval=approval_summary,
             question_id=question_id,
             child_run=child_run,

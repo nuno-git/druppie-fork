@@ -66,6 +66,7 @@ const generateTimelineSummary = (timeline) => {
             result: tc.result,
             error: tc.error || undefined,
           }))
+          // Exclude: tools_provided, response_content, response_tool_calls, messages (the big LLM payloads)
         }))
       }
     }
@@ -484,7 +485,7 @@ const AgentDetail = ({ agentRun }) => {
         </div>
       )}
 
-      {/* LLM calls table */}
+      {/* LLM calls table with expandable details */}
       {llmCalls.length > 0 ? (
         <div>
           <span className="font-medium text-gray-400 mb-1 block">LLM Calls</span>
@@ -500,19 +501,208 @@ const AgentDetail = ({ agentRun }) => {
             </thead>
             <tbody>
               {llmCalls.map((llm, i) => (
-                <tr key={llm.id || i} className="border-b border-gray-800">
-                  <td className="py-1 pr-3 text-gray-500 font-mono">{i + 1}</td>
-                  <td className="py-1 pr-3 text-gray-300"><code>{llm.model}</code></td>
-                  <td className="py-1 pr-3 text-right text-gray-400">
-                    {formatTokens(llm.token_usage?.total_tokens)}
-                  </td>
-                  <td className="py-1 pr-3 text-right text-gray-400">
-                    {formatDuration(llm.duration_ms) || '-'}
-                  </td>
-                  <td className="py-1 text-right text-gray-400">
-                    {llm.tool_calls?.length || 0}
-                  </td>
-                </tr>
+                <React.Fragment key={llm.id || i}>
+                  <tr className="border-b border-gray-800">
+                    <td className="py-1 pr-3 text-gray-500 font-mono">{i + 1}</td>
+                    <td className="py-1 pr-3 text-gray-300"><code>{llm.model}</code></td>
+                    <td className="py-1 pr-3 text-right text-gray-400">
+                      {formatTokens(llm.token_usage?.total_tokens)}
+                    </td>
+                    <td className="py-1 pr-3 text-right text-gray-400">
+                      {formatDuration(llm.duration_ms) || '-'}
+                    </td>
+                    <td className="py-1 text-right text-gray-400">
+                      {llm.tool_calls?.length || 0}
+                    </td>
+                  </tr>
+                  {/* Expandable details row */}
+                  <tr>
+                    <td colSpan="5" className="p-0">
+                      <details className="group">
+                        <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-300 py-1 px-2 select-none">
+                          Show details ▾
+                        </summary>
+                        <div className="px-2 pb-3 space-y-3 text-xs">
+                          {/* ID and metadata */}
+                          <div className="flex items-center gap-2 text-gray-500 flex-wrap">
+                            <span>ID:</span>
+                            <code>{llm.id}</code>
+                            <CopyButton text={llm.id} label="Copy" />
+                            {llm.provider && (
+                              <>
+                                <span className="ml-2">Provider:</span>
+                                <code>{llm.provider}</code>
+                              </>
+                            )}
+                          </div>
+
+                          {/* Messages sent to LLM */}
+                          {llm.messages && llm.messages.length > 0 && (
+                            <details className="border border-gray-700 rounded">
+                              <summary className="cursor-pointer text-gray-400 hover:text-gray-300 py-1.5 px-2 select-none">
+                                Messages ({llm.messages.length}) ▾
+                              </summary>
+                              <div className="px-2 pb-2 space-y-2">
+                                {llm.messages.map((msg, idx) => (
+                                  <div key={idx} className="border-l-2 border-gray-600 pl-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium text-gray-400">{msg.role}:</span>
+                                      <CopyButton text={msg.content || msg} label="Copy" />
+                                    </div>
+                                    <pre className="bg-gray-800 p-2 mt-1 rounded overflow-auto max-h-32 whitespace-pre-wrap text-gray-300">
+                                      {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
+                                    </pre>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+
+                          {/* Tools provided to LLM */}
+                          {llm.tools_provided && llm.tools_provided.length > 0 && (
+                            <details className="border border-gray-700 rounded">
+                              <summary className="cursor-pointer text-gray-400 hover:text-gray-300 py-1.5 px-2 select-none">
+                                Tools Provided ({llm.tools_provided.length}) ▾
+                              </summary>
+                              <div className="px-2 pb-2">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <CopyButton text={llm.tools_provided} label="Copy All" />
+                                </div>
+                                <pre className="bg-gray-800 p-2 rounded overflow-auto max-h-40 text-gray-300">
+                                  {JSON.stringify(llm.tools_provided, null, 2)}
+                                </pre>
+                              </div>
+                            </details>
+                          )}
+
+                          {/* LLM Response Content */}
+                          {llm.response_content && (
+                            <details className="border border-gray-700 rounded" open>
+                              <summary className="cursor-pointer text-gray-400 hover:text-gray-300 py-1.5 px-2 select-none">
+                                Response Content ▾
+                              </summary>
+                              <div className="px-2 pb-2">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <CopyButton text={llm.response_content} label="Copy" />
+                                </div>
+                                <pre className="bg-gray-800 p-2 rounded overflow-auto max-h-60 whitespace-pre-wrap text-gray-300">
+                                  {llm.response_content}
+                                </pre>
+                              </div>
+                            </details>
+                          )}
+
+                          {/* Raw tool calls from LLM response */}
+                          {llm.response_tool_calls && llm.response_tool_calls.length > 0 && (
+                            <details className="border border-gray-700 rounded">
+                              <summary className="cursor-pointer text-gray-400 hover:text-gray-300 py-1.5 px-2 select-none">
+                                Response Tool Calls ({llm.response_tool_calls.length}) ▾
+                              </summary>
+                              <div className="px-2 pb-2">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <CopyButton text={llm.response_tool_calls} label="Copy All" />
+                                </div>
+                                <pre className="bg-gray-800 p-2 rounded overflow-auto max-h-40 text-gray-300">
+                                  {JSON.stringify(llm.response_tool_calls, null, 2)}
+                                </pre>
+                              </div>
+                            </details>
+                          )}
+
+                          {/* Detailed tool calls */}
+                          {llm.tool_calls && llm.tool_calls.length > 0 && (
+                            <details className="border border-gray-700 rounded">
+                              <summary className="cursor-pointer text-gray-400 hover:text-gray-300 py-1.5 px-2 select-none">
+                                Tool Calls ({llm.tool_calls.length}) ▾
+                              </summary>
+                              <div className="px-2 pb-2 space-y-3">
+                                {llm.tool_calls.map((tc, idx) => (
+                                  <div key={idx} className="border border-gray-700 rounded">
+                                    <details className="group">
+                                      <summary className="cursor-pointer text-gray-400 hover:text-gray-300 py-1.5 px-2 select-none">
+                                        <span className="font-mono">{formatToolName(tc.tool_name)}</span>
+                                        {tc.status && <span className="ml-2 text-gray-600">({tc.status})</span>}
+                                        ▾
+                                      </summary>
+                                      <div className="px-2 pb-2 space-y-2">
+                                        {/* Arguments */}
+                                        {tc.arguments && (
+                                          <div>
+                                            <div className="flex items-center gap-2 mb-1">
+                                              <span className="font-medium text-gray-400">Arguments</span>
+                                              <CopyButton text={tc.arguments} label="Copy" />
+                                            </div>
+                                            <pre className="bg-gray-800 p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap text-gray-300">
+                                              {typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments, null, 2)}
+                                            </pre>
+                                          </div>
+                                        )}
+
+                                        {/* Result */}
+                                        {tc.result && (
+                                          <div>
+                                            <div className="flex items-center gap-2 mb-1">
+                                              <span className="font-medium text-gray-400">Result</span>
+                                              <CopyButton text={tc.result} label="Copy" />
+                                            </div>
+                                            <pre className="bg-gray-800 p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap text-gray-300">
+                                              {typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2)}
+                                            </pre>
+                                          </div>
+                                        )}
+
+                                        {/* Error */}
+                                        {tc.error && (
+                                          <div>
+                                            <div className="flex items-center gap-2 mb-1">
+                                              <span className="font-medium text-red-400">Error</span>
+                                              <CopyButton text={tc.error} label="Copy" />
+                                            </div>
+                                            <pre className="bg-red-900/30 p-2 rounded overflow-auto max-h-32 text-red-300">
+                                              {tc.error}
+                                            </pre>
+                                          </div>
+                                        )}
+
+                                        {/* Normalizations */}
+                                        {tc.normalizations && tc.normalizations.length > 0 && (
+                                          <div>
+                                            <div className="flex items-center gap-2 mb-1">
+                                              <span className="font-medium text-yellow-400">Normalizations ({tc.normalizations.length})</span>
+                                              <CopyButton text={tc.normalizations} label="Copy All" />
+                                            </div>
+                                            <div className="space-y-1">
+                                              {tc.normalizations.map((norm, nIdx) => (
+                                                <div key={nIdx} className="bg-yellow-900/20 p-2 rounded border border-yellow-800/30">
+                                                  <div className="flex items-center gap-2 mb-1">
+                                                    <span className="font-mono text-yellow-300">{norm.field_name}</span>
+                                                    <CopyButton text={norm} label="Copy" />
+                                                  </div>
+                                                  <div className="text-gray-400">
+                                                    <span>Original: </span>
+                                                    <code className="text-red-300">{norm.original_value}</code>
+                                                  </div>
+                                                  <div className="text-gray-400">
+                                                    <span>Normalized: </span>
+                                                    <code className="text-green-300">{norm.normalized_value}</code>
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </details>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      </details>
+                    </td>
+                  </tr>
+                </React.Fragment>
               ))}
             </tbody>
           </table>

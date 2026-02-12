@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-02-10
+Last updated: 2026-02-11
 
 ---
 
@@ -30,7 +30,7 @@ Last updated: 2026-02-10
 - Sandboxed Execution Environment for Agents
 - Test-Driven Development (TDD) Workflow
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
-- Skills System
+- ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
 - Language Matching
 - Prompt Injection Protection
@@ -141,6 +141,7 @@ Last updated: 2026-02-10
 - The LLM providers themselves have retry logic (max 3 retries with exponential backoff for transient errors like 500s and timeouts).
 - However, if all retries are exhausted, the agent loop raises an exception and the entire session fails. There is no higher-level retry or recovery mechanism.
 - A rate limit error or extended provider outage will fail the session permanently.
+- **Partial progress:** LLM retries now have an audit trail via the `llm_retries` database table, recording each attempt, error type, and delay. This supports debugging but does not change recovery behavior.
 
 ### No Context Window Management
 
@@ -177,6 +178,7 @@ Last updated: 2026-02-10
 - No Prometheus metrics, OpenTelemetry tracing, or structured log aggregation.
 - Debugging relies on database records (LLM calls, tool calls) and the debug pages in the frontend.
 - `print()` statements are used alongside `structlog` throughout the LLM providers.
+- **Partial progress:** Added `llm_retries` and `tool_call_normalizations` audit trail tables. LLM retry attempts and tool argument normalizations are now recorded in the database for debugging. The `LLMCallDetail` domain model has been consolidated to remove duplicate fields (`raw_request`/`raw_response` wrappers eliminated).
 
 ### Keycloak in Development Mode
 
@@ -213,10 +215,9 @@ Last updated: 2026-02-10
   - An agent breaks a complex task into subtasks and delegates them to specialized sub-agents
 - **Research needed:** How to handle sequence numbering when injecting into an existing run list, conflict resolution when multiple agents try to inject, and preventing infinite loops (agent A spawns B which spawns A).
 
-### Skills System
+### ~~Skills System~~ ✅ DONE
 
-- **Current state:** Agents operate with static system prompts and tool definitions. There is no mechanism for agents to use reusable prompt templates, workflows, or domain-specific knowledge packs.
-- **Desired improvement:** Implement a skills system where agents can invoke predefined skills — reusable prompt/template combinations that encode best practices for specific tasks. Skills would provide structured guidance without requiring changes to agent definitions.
+- **Implemented:** Skills system is live. Skills are Markdown files (`SKILL.md`) with YAML frontmatter defining `name`, `description`, and `allowed-tools`. Agents invoke skills via the `invoke_skill` builtin tool. When invoked, the skill's `allowed_tools` are dynamically added to the agent's available tools, and the skill's markdown body is returned as instructions. Skills are configured per-agent in YAML definitions via the `skills:` field. Skill loading is handled by `SkillService` from the `druppie/skills/` directory.
 
 ### Skill: MCP Server Integration for Generated Applications
 

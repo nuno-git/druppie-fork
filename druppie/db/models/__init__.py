@@ -11,6 +11,8 @@ messages          Message             Message
 agent_runs        AgentRun            AgentRunSummary, AgentRunDetail
 llm_calls         LlmCall             LlmCallSummary
 tool_calls        ToolCall            ToolCallSummary, ToolCallDetail
+llm_retries       LlmRetry            LLMRetryDetail
+tool_call_normalizations ToolCallNormalization NormalizationDetail
 approvals         Approval            ApprovalSummary, ApprovalDetail
 questions         Question            QuestionSummary, QuestionDetail
 
@@ -21,27 +23,28 @@ Removed tables (handled by MCPs):
 - session_events: Derived from other tables, not stored
 """
 
-from .base import Base, utcnow, new_uuid
+# Agent execution models
+from .agent_run import AgentRun, Message
 
-# User models
-from .user import User, UserRole, UserToken
+# Approval model
+from .approval import Approval
+from .base import Base, new_uuid, utcnow
+from .llm_call import LlmCall
+from .llm_retry import LlmRetry
 
 # Project model
 from .project import Project
 
-# Session model
-from .session import Session
-
-# Agent execution models
-from .agent_run import AgentRun, Message
-from .tool_call import ToolCall
-from .llm_call import LlmCall
-
-# Approval model
-from .approval import Approval
-
 # Question model (HITL questions from agents)
 from .question import Question
+
+# Session model
+from .session import Session
+from .tool_call import ToolCall
+from .tool_call_normalization import ToolCallNormalization
+
+# User models
+from .user import User, UserRole, UserToken
 
 __all__ = [
     # Base
@@ -61,6 +64,8 @@ __all__ = [
     "Message",
     "ToolCall",
     "LlmCall",
+    "LlmRetry",
+    "ToolCallNormalization",
     # Approval
     "Approval",
     # Question

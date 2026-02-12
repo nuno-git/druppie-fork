@@ -21,6 +21,7 @@ from .builtin import (
     DoneParams,
     HitlAskMultipleChoiceQuestionParams,
     HitlAskQuestionParams,
+    InvokeSkillParams,
     MakePlanParams,
     SetIntentParams,
 )
@@ -77,4 +78,5 @@ __all__ = [
     "SetIntentParams",
     "MakePlanParams",
     "CreateMessageParams",
+    "InvokeSkillParams",
 ]

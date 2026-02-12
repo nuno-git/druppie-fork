@@ -45,6 +45,7 @@ from druppie.tools.params.builtin import (
     DoneParams,
     HitlAskMultipleChoiceQuestionParams,
     HitlAskQuestionParams,
+    InvokeSkillParams,
     MakePlanParams,
     SetIntentParams,
 )
@@ -105,6 +106,7 @@ PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
     ("builtin", "set_intent"): SetIntentParams,
     ("builtin", "make_plan"): MakePlanParams,
     ("builtin", "create_message"): CreateMessageParams,
+    ("builtin", "invoke_skill"): InvokeSkillParams,
 }
 
 
