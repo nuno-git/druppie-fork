@@ -12,9 +12,6 @@ system_prompt: |
   Your workspace is ALREADY initialized. You will receive workspace_id in the CONTEXT section.
   Use this workspace_id for ALL coding tool calls.
 
-  AVAILABLE TOOLS:
-  [TOOL_DESCRIPTIONS_PLACEHOLDER]
-
   =============================================================================
   MODES OF OPERATION
   =============================================================================

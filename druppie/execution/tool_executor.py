@@ -53,6 +53,7 @@ BUILTIN_TOOLS = {
     "hitl_ask_question",
     "hitl_ask_multiple_choice_question",
     "create_message",
+    "invoke_skill",
 }
 
 # HITL tools require user answer (create Question record)
@@ -242,6 +243,140 @@ class ToolExecutor:
             )
             return None
 
+    def _validate_tool_arguments(self, tool_call) -> str | None:
+        """Validate tool arguments against the tool's schema.
+
+        Uses the unified ToolRegistry to get the tool definition and validate
+        the LLM-provided arguments. This catches type errors, missing required
+        fields, and invalid values before execution.
+
+        If validation fails with original args but succeeds with normalized args
+        (e.g., "null" string -> None), updates tool_call.arguments in-place
+        with the normalized values.
+
+        Args:
+            tool_call: The ToolCall model with tool_name, mcp_server, arguments
+
+        Returns:
+            Error message string if validation fails, None if valid
+        """
+        try:
+            from druppie.core.tool_registry import get_tool_registry
+
+            registry = get_tool_registry()
+
+            # Build full tool name (e.g., "coding_read_file" or "done")
+            if tool_call.mcp_server and tool_call.mcp_server != "builtin":
+                full_name = f"{tool_call.mcp_server}_{tool_call.tool_name}"
+            else:
+                full_name = tool_call.tool_name
+
+            # Get tool definition
+            tool_def = registry.get(full_name)
+            if not tool_def:
+                # Tool not in registry - skip validation (MCP server will validate)
+                logger.debug(
+                    "tool_not_in_registry_skipping_validation",
+                    tool_name=full_name,
+                )
+                return None
+
+            # Validate arguments - this tries original first, then normalized if needed
+            is_valid, error_msg, validated_params, normalized_args = tool_def.validate_arguments(tool_call.arguments)
+            if not is_valid:
+                return (
+                    f"Invalid arguments for tool '{full_name}': {error_msg}. "
+                    f"Please check the tool schema and provide valid arguments."
+                )
+
+            # If normalization was needed (e.g., "null" string -> None), update arguments
+            # and persist an audit trail of what changed
+            if normalized_args is not None:
+                import json
+
+                original_args = tool_call.arguments or {}
+                norm_records = []
+                for key in normalized_args:
+                    orig = original_args.get(key)
+                    normed = normalized_args[key]
+                    if orig != normed:
+                        norm_records.append({
+                            "field_name": key,
+                            "original_value": json.dumps(orig) if orig is not None else None,
+                            "normalized_value": json.dumps(normed) if normed is not None else None,
+                        })
+
+                if norm_records:
+                    self.execution_repo.create_tool_call_normalizations(
+                        tool_call.id, norm_records,
+                    )
+
+                logger.debug(
+                    "tool_args_normalized",
+                    tool_name=full_name,
+                    normalized_fields=[r["field_name"] for r in norm_records],
+                )
+                tool_call.arguments = normalized_args
+
+            return None
+
+        except Exception as e:
+            # Log but don't fail - let the tool execution handle it
+            logger.warning(
+                "tool_validation_exception",
+                tool_name=tool_call.tool_name,
+                error=str(e),
+            )
+            return None
+
+    def _is_tool_allowed_via_skill(
+        self,
+        mcp_server: str,
+        tool_name: str,
+        agent_run_id: UUID,
+    ) -> bool:
+        """Check if a tool is allowed via a previously invoked skill.
+
+        Queries the tool_calls table for invoke_skill calls in this agent_run,
+        loads those skills, and checks if the requested mcp:tool is in any
+        of their allowed_tools.
+
+        Args:
+            mcp_server: MCP server name (e.g., "coding", "docker")
+            tool_name: Tool name (e.g., "read_file", "build")
+            agent_run_id: Agent run ID to check
+
+        Returns:
+            True if tool is allowed via a skill, False otherwise
+        """
+        from druppie.services import SkillService
+
+        # Query all invoke_skill calls in this agent run
+        invoked_skills = self.execution_repo.get_invoked_skills(agent_run_id)
+        if not invoked_skills:
+            return False
+
+        skill_service = SkillService()
+
+        for skill_name in invoked_skills:
+            skill = skill_service.get_skill(skill_name)
+            if not skill or not skill.allowed_tools:
+                continue
+
+            # Check if mcp_server:tool_name is in this skill's allowed_tools
+            if mcp_server in skill.allowed_tools:
+                if tool_name in skill.allowed_tools[mcp_server]:
+                    logger.info(
+                        "tool_allowed_via_skill",
+                        mcp_server=mcp_server,
+                        tool_name=tool_name,
+                        skill=skill_name,
+                        agent_run_id=str(agent_run_id),
+                    )
+                    return True
+
+        return False
+
     async def execute(self, tool_call_id: UUID) -> str:
         """Execute a tool call.
 
@@ -275,19 +410,51 @@ class ToolExecutor:
         is_builtin = tool_call.mcp_server == "builtin" or tool_call.tool_name in BUILTIN_TOOLS
         is_hitl = tool_call.tool_name in HITL_TOOLS
 
+        # Step 2.5: Validate arguments against tool schema
+        validation_error = self._validate_tool_arguments(tool_call)
+        if validation_error:
+            logger.warning(
+                "tool_argument_validation_failed",
+                tool_call_id=str(tool_call_id),
+                tool_name=tool_call.tool_name,
+                mcp_server=tool_call.mcp_server,
+                error=validation_error,
+            )
+            self.execution_repo.update_tool_call(
+                tool_call.id,
+                status=ToolCallStatus.FAILED,
+                error=validation_error,
+            )
+            self.db.commit()
+            return ToolCallStatus.FAILED
+
         # Step 3: Check tool access and approval for MCP tools (not builtin)
         if not is_builtin and tool_call.mcp_server:
             # Load agent definition for approval overrides and access control
             agent_definition = self._get_agent_definition(tool_call.agent_run_id)
 
             # Validate agent is allowed to use this tool
+            # Priority: 1) Direct access via agent.yaml, 2) Access via invoked skill
             if agent_definition is not None:
                 allowed_tools = agent_definition.get_allowed_tools(tool_call.mcp_server)
-                if allowed_tools is not None and tool_call.tool_name not in allowed_tools:
+                tool_allowed = (
+                    allowed_tools is None  # No restriction (all tools allowed)
+                    or tool_call.tool_name in allowed_tools  # Explicitly allowed
+                )
+
+                # If not directly allowed, check skill-based access
+                if not tool_allowed and tool_call.agent_run_id:
+                    tool_allowed = self._is_tool_allowed_via_skill(
+                        tool_call.mcp_server,
+                        tool_call.tool_name,
+                        tool_call.agent_run_id,
+                    )
+
+                if not tool_allowed:
                     error_msg = (
                         f"Agent '{agent_definition.id}' is not allowed to use "
                         f"'{tool_call.mcp_server}:{tool_call.tool_name}'. "
-                        f"Allowed: {allowed_tools}"
+                        f"Not in agent.yaml mcps and no invoked skill grants access."
                     )
                     logger.warning("tool_access_denied", error=error_msg)
                     self.execution_repo.update_tool_call(

@@ -3,9 +3,9 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from druppie.db.models import AgentRun, ToolCall, LlmCall, Message
-from druppie.domain.common import AgentRunStatus, TokenUsage
+from druppie.db.models import AgentRun, LlmCall, LlmRetry, Message, ToolCall, ToolCallNormalization
 from druppie.domain.agent_run import AgentRunSummary
+from druppie.domain.common import AgentRunStatus, TokenUsage
 from druppie.repositories.base import BaseRepository
 
 
@@ -234,6 +234,41 @@ class ExecutionRepository(BaseRepository):
             .all()
         )
 
+    def get_invoked_skills(self, agent_run_id: UUID) -> list[str]:
+        """Get skill names from invoke_skill tool calls in this agent run.
+
+        Used to check if a tool is allowed via a previously invoked skill.
+
+        Args:
+            agent_run_id: Agent run ID to check
+
+        Returns:
+            List of skill names that were invoked
+        """
+        import json
+
+        tool_calls = (
+            self.db.query(ToolCall)
+            .filter(
+                ToolCall.agent_run_id == agent_run_id,
+                ToolCall.tool_name == "invoke_skill",
+                ToolCall.status == "completed",
+            )
+            .all()
+        )
+
+        skill_names = []
+        for tc in tool_calls:
+            # Extract skill_name from arguments
+            if tc.arguments:
+                try:
+                    args = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+                    if isinstance(args, dict) and "skill_name" in args:
+                        skill_names.append(args["skill_name"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        return skill_names
+
     def get_llm_calls_for_run(self, agent_run_id: UUID) -> list[LlmCall]:
         """Get all LLM calls for an agent run, ordered by creation time."""
         return (
@@ -289,6 +324,30 @@ class ExecutionRepository(BaseRepository):
             tool_call.result = result
             tool_call.error_message = error
             tool_call.executed_at = datetime.now(timezone.utc)
+
+    # =========================================================================
+    # TOOL CALL NORMALIZATION METHODS
+    # =========================================================================
+
+    def create_tool_call_normalizations(
+        self,
+        tool_call_id: UUID,
+        normalizations: list[dict],
+    ) -> None:
+        """Persist normalization events for a tool call.
+
+        Args:
+            tool_call_id: ID of the tool call that was normalized
+            normalizations: List of dicts with field_name, original_value, normalized_value
+        """
+        for norm in normalizations:
+            self.db.add(ToolCallNormalization(
+                tool_call_id=tool_call_id,
+                field_name=norm["field_name"],
+                original_value=norm.get("original_value"),
+                normalized_value=norm.get("normalized_value"),
+            ))
+        self.db.flush()
 
     # =========================================================================
     # LLM CALL METHODS
@@ -351,6 +410,31 @@ class ExecutionRepository(BaseRepository):
         if llm_call:
             llm_call.response_content = json.dumps({"error": error_message})
             llm_call.duration_ms = duration_ms
+
+    # =========================================================================
+    # LLM RETRY METHODS
+    # =========================================================================
+
+    def create_llm_retries(
+        self,
+        llm_call_id: UUID,
+        retries: list[dict],
+    ) -> None:
+        """Persist retry events for an LLM call.
+
+        Args:
+            llm_call_id: ID of the LLM call that was retried
+            retries: List of dicts with attempt, error_type, error_message, delay_seconds
+        """
+        for retry in retries:
+            self.db.add(LlmRetry(
+                llm_call_id=llm_call_id,
+                attempt=retry["attempt"],
+                error_type=retry["error_type"],
+                error_message=retry.get("error_message"),
+                delay_seconds=retry.get("delay_seconds"),
+            ))
+        self.db.flush()
 
     # =========================================================================
     # MESSAGE METHODS

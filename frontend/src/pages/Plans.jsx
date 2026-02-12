@@ -7,11 +7,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { FileText, Clock, CheckCircle, XCircle, Play, AlertCircle, ExternalLink, GitBranch, Box, StopCircle } from 'lucide-react'
 import { getPlans, getPlan, buildProject, runProject, stopProject, getProjectStatus } from '../services/api'
+import PageHeader from '../components/shared/PageHeader'
+import { SkeletonListItem, SkeletonCard } from '../components/shared/Skeleton'
+import EmptyState from '../components/shared/EmptyState'
 
 const StatusBadge = ({ status }) => {
   const config = {
     pending: { icon: Clock, bg: 'bg-gray-100', text: 'text-gray-700' },
-    pending_approval: { icon: AlertCircle, bg: 'bg-yellow-100', text: 'text-yellow-700' },
+    pending_approval: { icon: AlertCircle, bg: 'bg-blue-100', text: 'text-blue-700' },
     running: { icon: Play, bg: 'bg-blue-100', text: 'text-blue-700' },
     completed: { icon: CheckCircle, bg: 'bg-green-100', text: 'text-green-700' },
     failed: { icon: XCircle, bg: 'bg-red-100', text: 'text-red-700' },
@@ -87,7 +90,7 @@ const PlanDetail = ({ planId }) => {
   const isBuilt = projectStatus?.status === 'built' || projectStatus?.status === 'running'
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+    <div className="bg-white rounded-xl border border-gray-100 p-6">
       <div className="flex items-start justify-between mb-6">
         <div>
           <h2 className="text-xl font-bold">{plan.name}</h2>
@@ -98,9 +101,9 @@ const PlanDetail = ({ planId }) => {
 
       {/* Project Links */}
       {(repoUrl || appUrl) && (
-        <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg mb-6">
-          <h3 className="font-semibold mb-3 flex items-center">
-            <Box className="w-4 h-4 mr-2" />
+        <div className="bg-gray-50 p-4 rounded-lg mb-6">
+          <h3 className="text-sm font-medium text-gray-500 mb-3 flex items-center">
+            <Box className="w-4 h-4 mr-2 text-gray-400" />
             Project Links
           </h3>
           <div className="flex flex-wrap gap-3">
@@ -109,7 +112,7 @@ const PlanDetail = ({ planId }) => {
                 href={repoUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center px-4 py-2 bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow"
+                className="flex items-center px-4 py-2 bg-white rounded-lg border border-gray-100 hover:border-gray-200 transition-colors"
               >
                 <GitBranch className="w-4 h-4 mr-2 text-gray-600" />
                 <span className="font-medium">View Repository</span>
@@ -121,7 +124,7 @@ const PlanDetail = ({ planId }) => {
                 href={appUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center px-4 py-2 bg-green-500 text-white rounded-lg shadow-sm hover:shadow-md transition-shadow"
+                className="flex items-center px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
               >
                 <Play className="w-4 h-4 mr-2" />
                 <span className="font-medium">Open App</span>
@@ -281,7 +284,7 @@ const Plans = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedPlanId = searchParams.get('id')
 
-  const { data: plans = [], isLoading, error } = useQuery({
+  const { data: plans = [], isLoading, error, refetch } = useQuery({
     queryKey: ['plans'],
     queryFn: () => getPlans(),
     refetchInterval: 10000,
@@ -289,41 +292,44 @@ const Plans = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Execution Plans</h1>
-        <p className="text-gray-500 mt-1">View and manage your governance execution plans.</p>
-      </div>
+      <PageHeader title="Execution Plans" subtitle="View and manage your governance execution plans." />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Plan List */}
         <div className="lg:col-span-1">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-            <h2 className="font-semibold mb-4">All Plans</h2>
+          <div className="bg-white rounded-xl border border-gray-100 p-4">
+            <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-4">All Plans</h2>
 
             {isLoading ? (
-              <div className="text-center py-8">
-                <div className="w-6 h-6 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+              <div className="space-y-3">
+                {Array.from({ length: 4 }).map((_, i) => <SkeletonListItem key={i} />)}
               </div>
             ) : error ? (
-              <div className="text-red-500 text-center py-8">Error loading plans</div>
-            ) : plans.length === 0 ? (
-              <div className="text-gray-500 text-center py-8">
-                <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                <p>No plans yet</p>
-                <Link to="/chat" className="text-blue-600 hover:underline text-sm">
-                  Start a chat to create one
-                </Link>
+              <div className="text-center py-8">
+                <AlertCircle className="w-8 h-8 text-red-400 mx-auto mb-2" />
+                <p className="text-sm text-red-600 mb-3">{error.message || 'Failed to load plans'}</p>
+                <button onClick={() => refetch()} className="text-sm text-blue-600 hover:text-blue-700 font-medium">
+                  Try again
+                </button>
               </div>
+            ) : plans.length === 0 ? (
+              <EmptyState
+                icon={FileText}
+                title="No plans yet"
+                description="Start a conversation in Chat to create your first execution plan."
+                actionLabel="Go to Chat"
+                actionTo="/chat"
+              />
             ) : (
               <div className="space-y-2 max-h-[600px] overflow-y-auto">
                 {plans.map((plan) => (
                   <button
                     key={plan.id}
                     onClick={() => setSearchParams({ id: plan.id })}
-                    className={`w-full text-left p-3 rounded-lg transition-colors ${
+                    className={`w-full text-left p-3 rounded-lg transition-all ${
                       selectedPlanId === plan.id
                         ? 'bg-blue-50 border border-blue-200'
-                        : 'hover:bg-gray-50 border border-transparent'
+                        : 'hover:bg-gray-50 border border-transparent hover:border-gray-100'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
@@ -345,9 +351,12 @@ const Plans = () => {
           {selectedPlanId ? (
             <PlanDetail planId={selectedPlanId} />
           ) : (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
-              <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500">Select a plan to view details</p>
+            <div className="bg-white rounded-xl border border-gray-100">
+              <EmptyState
+                icon={FileText}
+                title="No plan selected"
+                description="Select a plan from the list to view its details."
+              />
             </div>
           )}
         </div>

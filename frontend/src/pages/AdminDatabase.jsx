@@ -53,12 +53,12 @@ const StatusBadge = ({ value }) => {
   const colors = {
     active: 'bg-green-100 text-green-700',
     completed: 'bg-blue-100 text-blue-700',
-    paused: 'bg-yellow-100 text-yellow-700',
-    paused_approval: 'bg-yellow-100 text-yellow-700',
-    paused_hitl: 'bg-yellow-100 text-yellow-700',
-    paused_tool: 'bg-yellow-100 text-yellow-700',
+    paused: 'bg-blue-100 text-blue-700',
+    paused_approval: 'bg-blue-100 text-blue-700',
+    paused_hitl: 'bg-blue-100 text-blue-700',
+    paused_tool: 'bg-blue-100 text-blue-700',
     failed: 'bg-red-100 text-red-700',
-    pending: 'bg-orange-100 text-orange-700',
+    pending: 'bg-blue-100 text-blue-700',
     approved: 'bg-green-100 text-green-700',
     rejected: 'bg-red-100 text-red-700',
     answered: 'bg-green-100 text-green-700',
@@ -127,7 +127,7 @@ const Pagination = ({ page, totalPages, total, onPageChange }) => {
   if (totalPages <= 1) return null
 
   return (
-    <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-t">
+    <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100">
       <span className="text-sm text-gray-600">
         Page {page} of {totalPages} ({total} records)
       </span>
@@ -304,7 +304,7 @@ const TableBrowser = ({ table, filterField, filterValue, onNavigate, onSelectRec
   return (
     <div className="bg-white rounded-lg border overflow-hidden">
       {/* Header */}
-      <div className="px-4 py-3 bg-gray-50 border-b flex items-center justify-between">
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Table className="w-5 h-5 text-blue-600" />
           <span className="font-semibold">{table}</span>
@@ -329,11 +329,11 @@ const TableBrowser = ({ table, filterField, filterValue, onNavigate, onSelectRec
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-gray-100 border-b">
+            <thead className="border-b border-gray-100">
               <tr>
-                <th className="px-2 py-2 w-8"></th>
+                <th className="px-2 py-2.5 w-8"></th>
                 {columns.map(col => (
-                  <th key={col} className="px-3 py-2 text-left text-xs font-medium text-gray-600 uppercase">
+                  <th key={col} className="px-3 py-2.5 text-left text-xs font-medium text-gray-400">
                     {col.replace(/_/g, ' ')}
                   </th>
                 ))}
@@ -346,7 +346,7 @@ const TableBrowser = ({ table, filterField, filterValue, onNavigate, onSelectRec
                 return (
                   <React.Fragment key={rowId}>
                     <tr
-                      className={`border-b hover:bg-blue-50 cursor-pointer ${isExpanded ? 'bg-blue-50' : ''}`}
+                      className={`border-b border-gray-50 hover:bg-blue-50/50 cursor-pointer ${isExpanded ? 'bg-blue-50/50' : idx % 2 === 1 ? 'bg-gray-50/50' : ''}`}
                       onClick={() => row.id && onSelectRecord(table, row.id)}
                     >
                       <td className="px-2 py-2" onClick={(e) => { e.stopPropagation(); toggleRow(rowId) }}>
@@ -466,7 +466,7 @@ const AdminDatabase = () => {
           Loading tables...
         </div>
       ) : (
-        <div className="flex flex-wrap gap-1 p-2 bg-gray-100 rounded-lg">
+        <div className="flex flex-wrap gap-1 p-1.5 bg-gray-50 rounded-lg border border-gray-100">
           {tablesData?.tables.map(t => (
             <button
               key={t.name}

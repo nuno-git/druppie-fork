@@ -1,49 +1,49 @@
 """LLM Service for managing LLM instances.
 
-Provides factory methods and singleton access to LLM providers.
+All providers use LiteLLM internally for standardized tool calling.
 
-Supported providers:
-- zai: Z.AI GLM models (default)
-- deepinfra: DeepInfra OpenAI-compatible API (Qwen, Llama, etc.)
-- deepseek: DeepSeek V3/Coder models (deepseek-chat, deepseek-coder)
+Environment variables:
+    LLM_PROVIDER: zai, deepinfra (default: zai)
+
+    For ZAI:
+        ZAI_API_KEY (required)
+        ZAI_MODEL (default: glm-4.7)
+        ZAI_BASE_URL (default: https://api.z.ai/api/coding/paas/v4)
+
+    For DeepInfra:
+        DEEPINFRA_API_KEY (required)
+        DEEPINFRA_MODEL (default: Qwen/Qwen3-32B)
+        DEEPINFRA_BASE_URL (default: https://api.deepinfra.com/v1/openai)
 """
 
 import os
 from typing import Any
 
-import httpx
 import structlog
 
 from .base import BaseLLM
-from .zai import ChatZAI
-from .deepinfra import ChatDeepInfra
-from .deepseek import ChatDeepSeek
+from .litellm_provider import ChatLiteLLM, LITELLM_AVAILABLE
 
 logger = structlog.get_logger()
 
 
 class LLMConfigurationError(Exception):
     """Raised when LLM is not properly configured."""
+
     pass
 
 
 class LLMService:
     """Service for managing LLM instances.
 
-    Handles provider selection and lazy initialization.
-
-    Environment variables:
-        LLM_PROVIDER: Provider to use (zai, deepinfra, deepseek, mock, auto)
-        ZAI_API_KEY: API key for Z.AI (REQUIRED unless using mock)
-        ZAI_MODEL: Model name for Z.AI (default: GLM-4.7)
-        ZAI_BASE_URL: Base URL for Z.AI API
-        DEEPINFRA_API_KEY: API key for DeepInfra
-        DEEPINFRA_MODEL: Model name for DeepInfra (default: Qwen/Qwen3-Next-80B-A3B-Instruct)
-        DEEPINFRA_BASE_URL: Base URL for DeepInfra
-        DEEPSEEK_API_KEY: API key for DeepSeek
-        DEEPSEEK_MODEL: Model name for DeepSeek (default: deepseek-chat)
-        DEEPSEEK_BASE_URL: Base URL for DeepSeek
+    All providers go through LiteLLM for standardized tool calling.
     """
+
+    # Supported providers and their required API key env vars
+    PROVIDERS = {
+        "zai": "ZAI_API_KEY",
+        "deepinfra": "DEEPINFRA_API_KEY",
+    }
 
     def __init__(self):
         """Initialize LLM service."""
@@ -51,69 +51,32 @@ class LLMService:
         self._provider: str | None = None
 
     def get_provider(self) -> str:
-        """Get the configured LLM provider name.
-
-        Raises:
-            LLMConfigurationError: If no API key is configured and provider is not 'mock'
-        """
+        """Get the configured LLM provider name."""
         if self._provider is not None:
-            print(f"[LLM SERVICE] Cached provider: {self._provider}")
             return self._provider
 
-        provider = os.getenv("LLM_PROVIDER", "auto").lower()
-        zai_key = os.getenv("ZAI_API_KEY", "")
-        deepinfra_key = os.getenv("DEEPINFRA_API_KEY", "")
-        deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
+        if not LITELLM_AVAILABLE:
+            raise LLMConfigurationError(
+                "litellm is not installed. Install it with: pip install litellm"
+            )
 
-        print(f"[LLM SERVICE] Environment LLM_PROVIDER: {provider}")
-        print(f"[LLM SERVICE] ZAI_API_KEY present: {bool(zai_key)}")
-        print(f"[LLM SERVICE] DEEPINFRA_API_KEY present: {bool(deepinfra_key)}")
-        print(f"[LLM SERVICE] DEEPSEEK_API_KEY present: {bool(deepseek_key)}")
+        provider = os.getenv("LLM_PROVIDER", "zai").lower()
 
-        if provider == "zai" and zai_key:
-            self._provider = "zai"
-        elif provider == "deepinfra":
-            if not deepinfra_key:
-                raise LLMConfigurationError(
-                    "DEEPINFRA_API_KEY environment variable is required when LLM_PROVIDER=deepinfra. "
-                    "Please set DEEPINFRA_API_KEY in your .env file or environment."
-                )
-            self._provider = "deepinfra"
-        elif provider == "deepseek":
-            if not deepseek_key:
-                raise LLMConfigurationError(
-                    "DEEPSEEK_API_KEY environment variable is required when LLM_PROVIDER=deepseek. "
-                    "Please set DEEPSEEK_API_KEY in your .env file or environment."
-                )
-            self._provider = "deepseek"
-        elif provider == "auto":
-            # Auto-detect: prefer DeepSeek, then DeepInfra, then Z.AI
-            if deepseek_key:
-                self._provider = "deepseek"
-            elif deepinfra_key:
-                self._provider = "deepinfra"
-            elif zai_key:
-                self._provider = "zai"
-            else:
-                logger.error("no_llm_provider_configured")
-                raise ValueError(
-                    "No LLM provider configured. Please set either DEEPSEEK_API_KEY, DEEPINFRA_API_KEY, or ZAI_API_KEY environment variable."
-                )
-        else:
-            # Fallback logic
-            if deepseek_key:
-                self._provider = "deepseek"
-            elif deepinfra_key:
-                self._provider = "deepinfra"
-            elif zai_key:
-                self._provider = "zai"
-            else:
-                logger.error("no_llm_provider_configured")
-                raise ValueError(
-                    "No LLM provider configured. Please set either DEEPSEEK_API_KEY, DEEPINFRA_API_KEY, or ZAI_API_KEY environment variable."
-                )
+        # Validate provider
+        if provider not in self.PROVIDERS:
+            raise LLMConfigurationError(
+                f"Unknown LLM_PROVIDER: {provider}. "
+                f"Valid options: {', '.join(self.PROVIDERS.keys())}"
+            )
 
-        print(f"[LLM SERVICE] Selected provider: {self._provider}")
+        # Check API key
+        api_key_env = self.PROVIDERS[provider]
+        if not os.getenv(api_key_env):
+            raise LLMConfigurationError(
+                f"{api_key_env} environment variable is required for LLM_PROVIDER={provider}"
+            )
+
+        self._provider = provider
         logger.info("llm_provider_selected", provider=self._provider)
         return self._provider
 
@@ -124,46 +87,15 @@ class LLMService:
 
         provider = self.get_provider()
 
-        if provider == "deepseek":
-            self._llm = ChatDeepSeek(
-                api_key=os.getenv("DEEPSEEK_API_KEY"),
-                model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
-                base_url=os.getenv(
-                    "DEEPSEEK_BASE_URL", "https://api.deepseek.com"
-                ),
-            )
-            logger.info(
-                "using_deepseek_llm",
-                model=self._llm.model,
-                base_url=self._llm.base_url,
-            )
-        elif provider == "deepinfra":
-            self._llm = ChatDeepInfra(
-                api_key=os.getenv("DEEPINFRA_API_KEY"),
-                model=os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct"),
-                base_url=os.getenv(
-                    "DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"
-                ),
-            )
-            logger.info(
-                "using_deepinfra_llm",
-                model=self._llm.model,
-                base_url=self._llm.base_url,
-            )
-        else:
-            # Default to Z.AI
-            self._llm = ChatZAI(
-                api_key=os.getenv("ZAI_API_KEY"),
-                model=os.getenv("ZAI_MODEL", "GLM-4.7"),
-                base_url=os.getenv(
-                    "ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4"
-                ),
-            )
-            logger.info(
-                "using_zai_llm",
-                model=self._llm.model,
-                base_url=self._llm.base_url,
-            )
+        # All providers use LiteLLM
+        self._llm = ChatLiteLLM(provider=provider)
+
+        logger.info(
+            "llm_initialized",
+            provider=provider,
+            model=self._llm.model,
+            api_base=self._llm.api_base or "default",
+        )
 
         return self._llm
 
