@@ -363,9 +363,20 @@ class ChatLiteLLM(BaseLLM):
         content = message.content or ""
 
         tool_calls = []
+        raw_tool_calls = []  # Keep original for debugging
         if message.tool_calls:
             for tc in message.tool_calls:
-                args = tc.function.arguments
+                raw_args = tc.function.arguments  # Keep raw for debugging
+
+                # Store raw tool call (original string) for debugging
+                raw_tool_calls.append({
+                    "id": tc.id,
+                    "name": tc.function.name,
+                    "args": raw_args,  # Original string from LLM
+                })
+
+                # Parse args for use
+                args = raw_args
                 if isinstance(args, str):
                     try:
                         args = json.loads(args)
@@ -389,6 +400,7 @@ class ChatLiteLLM(BaseLLM):
             content=content,
             raw_content=content,
             tool_calls=tool_calls,
+            raw_tool_calls=raw_tool_calls,  # Store raw for debugging
             finish_reason=choice.finish_reason or "",
             prompt_tokens=usage.prompt_tokens if usage else 0,
             completion_tokens=usage.completion_tokens if usage else 0,
