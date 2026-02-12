@@ -4,6 +4,7 @@ realm: druppie
 displayName: Druppie Governance Platform
 displayNameHtml: "<b>Druppie</b> Governance Platform"
 enabled: true
+sslRequired: none  # Disable HTTPS requirement for development environments
 
 # Login settings
 registrationAllowed: false

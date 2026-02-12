@@ -68,6 +68,35 @@ class KeycloakAdmin:
             "Content-Type": "application/json",
         }
 
+    def update_realm(self, realm_name: str, config: dict = None):
+        """Update an existing realm's SSL settings."""
+        url = f"{self.base_url}/admin/realms/{realm_name}"
+        
+        # Get current realm settings
+        get_response = requests.get(url, headers=self._headers())
+        if get_response.status_code != 200:
+            print(f"[WARN] Could not fetch realm '{realm_name}' settings")
+            return False
+        
+        realm_data = get_response.json()
+        
+        # Update SSL requirement
+        realm_data["sslRequired"] = "none"
+        
+        # Apply config settings if provided
+        if config:
+            realm_data.update({k: v for k, v in config.items() if k not in ["roles", "clients", "clientScopes", "realm"]})
+        
+        # Update the realm
+        response = requests.put(url, json=realm_data, headers=self._headers())
+        
+        if response.status_code in [200, 204]:
+            print(f"[OK] Updated realm '{realm_name}' with sslRequired=none")
+            return True
+        else:
+            print(f"[WARN] Failed to update realm '{realm_name}': {response.text}")
+            return False
+
     def create_realm(self, realm_name: str, config: dict = None):
         """Create a new realm."""
         url = f"{self.base_url}/admin/realms"
@@ -75,6 +104,7 @@ class KeycloakAdmin:
         realm_data = {
             "realm": realm_name,
             "enabled": True,
+            "sslRequired": "none",  # Disable HTTPS requirement for development environments
             "displayName": config.get("displayName", realm_name) if config else realm_name,
             "registrationAllowed": False,
             "resetPasswordAllowed": True,
@@ -89,6 +119,8 @@ class KeycloakAdmin:
 
         if response.status_code == 409:
             print(f"[OK] Realm '{realm_name}' already exists")
+            # Update existing realm's SSL settings
+            self.update_realm(realm_name, config)
             return True
         elif response.status_code == 201:
             print(f"[OK] Created realm '{realm_name}'")
@@ -256,6 +288,10 @@ def main():
     except Exception as e:
         print(f"[ERROR] {e}")
         sys.exit(1)
+
+    # Fix master realm SSL requirement (required for Windows/Docker Desktop)
+    print("\n[STEP 0] Fixing master realm SSL requirement...")
+    kc.update_realm("master", {"sslRequired": "none"})
 
     # Create realm
     print("\n[STEP 1] Creating realm...")
