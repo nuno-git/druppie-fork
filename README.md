@@ -53,6 +53,20 @@ docker compose --profile prod up -d
 docker compose --profile prod down
 ```
 
+### Switching Between Dev and Prod
+
+Dev and prod use the same ports and container names, so stop one before starting the other:
+
+```bash
+# Switch from dev to prod
+docker compose --profile dev down
+docker compose --profile prod up -d --build
+
+# Switch from prod to dev
+docker compose --profile prod down
+docker compose --profile dev up -d
+```
+
 ### Infrastructure Only
 
 Start only databases, Keycloak, Gitea, and MCP servers (no backend/frontend):
@@ -137,7 +151,7 @@ docker compose --profile dev --profile init up -d
 Copy `.env.example` to `.env`. Required: an LLM API key.
 
 ```bash
-# Option 1: Z.AI
+# Option 1: Z.AI (default)
 LLM_PROVIDER=zai
 ZAI_API_KEY=your_key_here
 
@@ -145,6 +159,8 @@ ZAI_API_KEY=your_key_here
 LLM_PROVIDER=deepinfra
 DEEPINFRA_API_KEY=your_key_here
 ```
+
+Both providers use LiteLLM internally for standardized tool calling.
 
 After editing `.env`, apply changes:
 ```bash

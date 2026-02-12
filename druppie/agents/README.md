@@ -1,221 +1,164 @@
-# Agent System
+# Agents
 
-This document describes how the Druppie agent system works, including agent definitions, the runtime loop, builtin tools, and tool routing.
+This folder contains the agent system for Druppie. Agents are LLM-powered workers that execute tasks through tool calls.
 
 ## Overview
 
-Druppie agents are LLM-powered autonomous actors that execute tasks through tool calls. Each agent is defined by a YAML file in `druppie/agents/definitions/` and executed by the runtime in `druppie/agents/runtime.py`. Agents interact with the outside world exclusively through tools -- they cannot produce direct file output or side effects. All tool calls are routed through a `ToolExecutor` which handles builtin tools locally, HITL (human-in-the-loop) tools by pausing for user input, and MCP tools by dispatching HTTP requests to MCP server containers.
+```
+agents/
+├── runtime.py           # Agent facade (public API: Agent class)
+├── loop.py              # Core execution loop (LLM ↔ tool calling)
+├── definition_loader.py # Loads YAML definitions and resolves placeholders
+├── message_history.py   # Reconstructs agent state from DB for resume
+├── prompt_builder.py    # Builds system/user prompts with injected context
+├── builtin_tools.py     # Built-in tool handlers (done, hitl_*, make_plan, invoke_skill)
+├── definitions/         # YAML agent definitions
+│   ├── _common.md       # Shared instructions injected into all prompts
+│   ├── router.yaml      # Routes tasks to appropriate agents
+│   ├── planner.yaml     # Creates multi-step plans
+│   ├── developer.yaml   # Code development agent
+│   └── ...
+└── README.md            # This file
+```
 
-## Agent Definitions (YAML Format)
+## How It Works
 
-Each agent is defined in a YAML file at `druppie/agents/definitions/<agent_id>.yaml`. The YAML is loaded into an `AgentDefinition` Pydantic model (`druppie/domain/agent_definition.py`).
+### 1. Agent Definitions (YAML)
 
-### Fields
+Each agent is defined in a YAML file in `definitions/`. Example:
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | string | yes | Unique identifier (e.g., `router`, `developer`) |
-| `name` | string | yes | Human-readable name |
-| `description` | string | no | Brief description of agent's purpose |
-| `system_prompt` | string | yes | The system prompt sent to the LLM |
-| `mcps` | list or dict | no | MCP servers/tools this agent can use |
-| `extra_builtin_tools` | list[str] | no | Additional builtin tools beyond the defaults |
-| `approval_overrides` | dict | no | Per-tool approval rule overrides |
-| `model` | string | no | LLM model identifier |
-| `temperature` | float | no | LLM temperature (default: 0.1) |
-| `max_tokens` | int | no | Max tokens for LLM response (default: 4096) |
-| `max_iterations` | int | no | Max tool-calling loop iterations (default: 10) |
-
-### MCP Configuration Formats
-
-The `mcps` field supports two formats:
-
-**List format** -- all tools from each server are available:
 ```yaml
+name: developer
+description: Software development agent
+system_prompt: |
+  You are a developer agent...
 mcps:
-  - coding
+  - coding    # MCP servers this agent can access
   - docker
-```
-
-**Dict format** -- only specific tools from each server are available:
-```yaml
-mcps:
-  coding:
-    - read_file
-    - write_file
-    - list_dir
-  docker:
-    - build
-    - run
-```
-
-### Approval Overrides
-
-Agents can override the global approval rules from `mcp_config.yaml`. The key format is `"server:tool_name"`:
-
-```yaml
-approval_overrides:
-  "coding:write_file":
-    requires_approval: true
-    required_role: architect
-```
-
-This layered system means:
-1. Agent-specific overrides are checked first.
-2. Global defaults from `mcp_config.yaml` are the fallback.
-
-## Common Instructions (`_common.md`)
-
-The file `druppie/agents/definitions/_common.md` contains shared instructions that are injected into every agent's system prompt that includes the `[COMMON_INSTRUCTIONS]` placeholder.
-
-### How Injection Works
-
-1. The runtime calls `_load_common_prompt()` to read `_common.md` from the definitions directory.
-2. During `_build_system_prompt()`, if the agent's `system_prompt` contains the literal string `[COMMON_INSTRUCTIONS]`, it is replaced with the contents of `_common.md`.
-3. If the placeholder is absent, the common instructions are not injected.
-
-### What `_common.md` Contains
-
-The shared instructions cover three critical topics:
-
-- **Summary Relay**: How the accumulated summary pipeline works. Each agent writes a one-line summary starting with `Agent <role>:`, and the system auto-prepends previous agent summaries when relaying to the next agent.
-- **done Tool Format**: The mandatory format for calling `done()` with a detailed, specific summary. Vague summaries like "Task completed" are explicitly forbidden.
-- **Workspace State**: Informs agents that the workspace is shared across all agents in a session. If a prior agent created a feature branch, the current agent is already on that branch.
-
-## Runtime (`runtime.py`)
-
-The `Agent` class in `runtime.py` is the core execution engine.
-
-### Loading Definitions
-
-1. `Agent.__init__(agent_id)` calls `_load_definition(agent_id)` which reads `definitions/{agent_id}.yaml`.
-2. Definitions are cached in `Agent._cache` (class-level dict) to avoid re-reading YAML on every instantiation.
-3. `Agent._load_common_prompt()` reads `_common.md` once and caches it.
-4. `Agent.list_agents()` scans the definitions directory for all `.yaml`/`.yml` files.
-
-### The LLM Loop (`_run_loop`)
-
-The core execution logic runs in `_run_loop()`:
-
-```
-1. Build tool list:
-   - Get MCP tools from mcp_config.yaml (filtered to agent's allowed set)
-   - Convert to OpenAI function-calling format
-   - Add builtin tools (DEFAULT_BUILTIN_TOOLS + extra_builtin_tools)
-
-2. For each iteration (up to max_iterations):
-   a. Record LLM call in database
-   b. Call LLM with messages + tools
-   c. Record response in database
-   d. If no tool calls:
-      - Router/planner: parse output as JSON, return
-      - Others: remind agent to use tools, retry
-   e. For each tool call in response:
-      - Classify tool: builtin, HITL, or MCP
-      - Create ToolCall record in database
-      - Execute via ToolExecutor
-      - Handle status:
-        - WAITING_ANSWER: pause, return agent state
-        - WAITING_APPROVAL: pause, return agent state
-        - COMPLETED (done tool): return success result
-        - Other: append result to messages, continue loop
-
-3. If max_iterations exceeded, raise AgentMaxIterationsError
-```
-
-### Resume Capabilities
-
-The runtime supports three resume mechanisms:
-
-- **`resume()`**: Resumes after a HITL question is answered. Adds the user's answer as a tool response message and continues the loop.
-- **`resume_from_approval()`**: Resumes after an MCP tool is approved. Adds the tool execution result and continues.
-- **`continue_run()`**: Reconstructs full message history from the database (all stored LLM calls and tool results) and continues from where it left off.
-
-### System Prompt Construction (`_build_system_prompt`)
-
-1. Start with the agent's `system_prompt` from YAML.
-2. Replace `[COMMON_INSTRUCTIONS]` with `_common.md` contents (if placeholder present).
-3. Generate dynamic tool descriptions from `mcp_config.yaml` and inject them (replaces `[TOOL_DESCRIPTIONS_PLACEHOLDER]` or the `AVAILABLE TOOLS:` / `TOOLS:` sections).
-4. For router/planner agents: optionally add XML format instructions if the LLM does not support native tool calling.
-5. For all other agents: append shared tool usage instructions documenting the builtin tools (`hitl_ask_question`, `hitl_ask_multiple_choice_question`, `done`) and critical usage rules.
-
-## Builtin Tools (`builtin_tools.py`)
-
-Builtin tools are executed directly in the agent runtime process -- no HTTP call to an MCP server is needed.
-
-### Default Builtin Tools (every agent gets these)
-
-| Tool | Description |
-|---|---|
-| `done` | Signal task completion with a detailed summary. The summary is the sole mechanism for passing information to the next agent in the pipeline. Auto-collects and prepends previous agent summaries. |
-| `hitl_ask_question` | Ask the user a free-form text question. Pauses the agent until the user responds. |
-| `hitl_ask_multiple_choice_question` | Ask the user a multiple-choice question with predefined options. |
-
-### Extra Builtin Tools (agent-specific)
-
-| Tool | Used By | Description |
-|---|---|---|
-| `set_intent` | router | Declares the user's intent (`create_project`, `update_project`, `general_chat`). Creates projects and Gitea repos for `create_project`. |
-| `make_plan` | planner | Creates an execution plan as a sequence of pending `AgentRun` records in the database. |
-| `create_message` | summarizer | Posts a user-visible message in the chat timeline. |
-
-### How Agents Declare Builtin Tools
-
-Every agent automatically receives `DEFAULT_BUILTIN_TOOLS`:
-```python
-DEFAULT_BUILTIN_TOOLS = ["done", "hitl_ask_question", "hitl_ask_multiple_choice_question"]
-```
-
-Agents that need additional builtin tools declare them via `extra_builtin_tools` in their YAML:
-```yaml
+skills:
+  - deploy    # Skills this agent can invoke
+max_iterations: 15
+max_tokens: 8192
 extra_builtin_tools:
   - make_plan
 ```
 
-The runtime combines them: `builtin_tool_names = DEFAULT_BUILTIN_TOOLS + definition.extra_builtin_tools`.
+### 2. Runtime Architecture
 
-## Tool Routing
+The agent runtime is split into focused modules:
 
-When the LLM emits a tool call, the runtime classifies it and routes accordingly:
+- **`runtime.py`** — Public `Agent` class (facade). Coordinates loader, prompt builder, and loop.
+- **`loop.py`** — Core `AgentLoop` class. Handles the LLM ↔ tool-calling loop, skill tool enrichment, and break-on-failure logic.
+- **`definition_loader.py`** — Loads YAML definitions and resolves `[COMMON_INSTRUCTIONS]` placeholders.
+- **`message_history.py`** — Reconstructs agent message history from DB records for pause/resume.
+- **`prompt_builder.py`** — Builds system and user prompts with context injection (tool descriptions, project info).
 
-| Classification | `mcp_server` field | Execution path |
-|---|---|---|
-| Builtin tool | `"builtin"` | Executed via `builtin_tools.execute_builtin()` or HITL handler |
-| HITL tool | `"builtin"` | Creates a `Question` record and pauses the agent |
-| MCP tool | Server name (e.g., `"coding"`) | Dispatched via `MCPHttp` to the MCP server container |
+```python
+agent = Agent("developer", db=session)
+result = await agent.run(prompt="Build a login page", session_id=uuid, agent_run_id=uuid)
+```
 
-### Tool Name Resolution
+**The loop (`AgentLoop.run()`):**
+1. Build system prompt with tool instructions
+2. Call LLM with available tools (OpenAI function calling format)
+3. For each tool call in response:
+   - Normalize arguments (e.g., `"null"` → `None`)
+   - Create tool call record in DB (with normalization audit trail)
+   - Execute via `ToolExecutor`
+   - Handle status (completed, waiting_approval, waiting_answer, failed)
+   - On failure with `break_on_failure`: stop processing remaining tool calls, let LLM retry
+4. If `done` tool called → return result
+5. If waiting for user → pause and return state
+6. If failed → add error to messages, let LLM retry
+7. Continue until done or max iterations
 
-The LLM may emit tool names in different formats. The runtime resolves them:
+### 3. Tool System
 
-1. **Builtin tools**: Recognized by name (e.g., `done`, `hitl_ask_question`). Server is set to `"builtin"`.
-2. **Colon-separated**: `coding:read_file` is split into server=`coding`, tool=`read_file`.
-3. **Underscore-separated**: `coding_read_file` is split at the first underscore: server=`coding`, tool=`read_file`.
+**Tool sources:**
+- **Built-in tools**: `done`, `hitl_ask_question`, `hitl_ask_multiple_choice_question`, `make_plan`, `invoke_skill`
+- **MCP tools**: From MCP servers (coding, docker, etc.) defined in `mcp_config.yaml`
 
-## Agent Definitions Index
+**Tool flow:**
+```
+LLM Response → Tool Call → ToolExecutor → MCP Server (or builtin handler) → Result → LLM
+```
 
-| Agent ID | Name | Purpose |
-|---|---|---|
-| `router` | Router Agent | Classifies user intent into `create_project`, `update_project`, or `general_chat` |
-| `planner` | Planner Agent | Creates execution plans (sequences of agent steps) based on intent |
-| `business_analyst` | Business Analyst Agent | Gathers functional requirements from the user, writes `functional_design.md` |
-| `architect` | Architect Agent | Designs system architecture, writes `architecture.md` |
-| `developer` | Developer Agent | Writes code, creates branches, commits, creates/merges PRs |
-| `deployer` | Deployer Agent | Builds Docker images and deploys containers |
-| `reviewer` | Reviewer Agent | Reviews code for quality, security, and best practices |
-| `tester` | Tester Agent | Runs tests and validates implementations |
-| `summarizer` | Summarizer Agent | Creates a user-friendly completion message in the chat timeline |
+All tools are registered in `ToolRegistry` with Pydantic models for type-safe validation.
 
-## File Reference
+### 4. Skills System
 
-| File | Purpose |
-|---|---|
-| `druppie/agents/runtime.py` | Agent class and LLM loop execution |
-| `druppie/agents/builtin_tools.py` | Builtin tool definitions and implementations |
-| `druppie/agents/definitions/*.yaml` | Individual agent YAML definitions |
-| `druppie/agents/definitions/_common.md` | Shared instructions injected via `[COMMON_INSTRUCTIONS]` |
-| `druppie/domain/agent_definition.py` | `AgentDefinition` Pydantic model |
-| `druppie/core/mcp_config.py` | MCP configuration loader (approval rules, injection rules) |
-| `druppie/core/mcp_config.yaml` | MCP server and tool configuration |
-| `druppie/execution/tool_executor.py` | Tool execution dispatcher |
-| `druppie/execution/mcp_http.py` | HTTP client for MCP server communication |
+Skills are predefined workflows that grant temporary access to additional tools.
+
+```yaml
+# Agent definition
+skills:
+  - deploy
+  - analyze
+```
+
+When an agent calls `invoke_skill(skill_name="deploy")`:
+1. Skill definition is loaded
+2. Skill's `allowed_tools` are dynamically added to the agent's tools
+3. Skill instructions are returned to guide the LLM
+4. Agent can now use the skill's tools until task completion
+
+### 5. HITL (Human-in-the-Loop)
+
+When an agent needs user input:
+
+1. Agent calls `hitl_ask_question` or `hitl_ask_multiple_choice_question`
+2. `ToolExecutor` creates a Question record
+3. Agent pauses, returns `{ "status": "paused", "reason": "waiting_answer" }`
+4. User answers via API
+5. Agent resumes with `agent.resume(state, answer, ...)`
+
+### 6. Tool Approval
+
+Some MCP tools require approval:
+
+1. Agent calls tool marked `requires_approval: true`
+2. Creates Approval record
+3. Agent pauses with `{ "reason": "waiting_approval" }`
+4. User approves/denies via API
+5. If approved, agent resumes with `resume_from_approval()`
+
+## Key Classes
+
+| Class | Location | Purpose |
+|-------|----------|---------|
+| `Agent` | `runtime.py` | Public facade, coordinates modules |
+| `AgentLoop` | `loop.py` | Core LLM ↔ tool-calling loop |
+| `AgentDefinitionLoader` | `definition_loader.py` | Loads YAML definitions |
+| `PromptBuilder` | `prompt_builder.py` | Builds prompts with context |
+| `ToolExecutor` | `execution/tool_executor.py` | Executes tools, handles HITL/approval |
+| `ToolRegistry` | `core/tool_registry.py` | Unified tool definitions |
+| `MCPHttp` | `execution/mcp_http.py` | HTTP client for MCP servers |
+
+## Adding a New Agent
+
+1. Create `definitions/my_agent.yaml`:
+   ```yaml
+   name: my_agent
+   description: Does something useful
+   system_prompt: |
+     [COMMON_INSTRUCTIONS]
+     You are an agent that...
+   mcps:
+     - coding
+   max_iterations: 10
+   ```
+
+2. Use it:
+   ```python
+   agent = Agent("my_agent", db=session)
+   result = await agent.run(prompt="Do the thing", session_id=sid, agent_run_id=rid)
+   ```
+
+## Design Principles
+
+1. **Tool-only output**: Agents communicate ONLY through tool calls, never plain text
+2. **Native tool calling**: Uses LiteLLM's native OpenAI function calling (no XML parsing)
+3. **Unified registry**: All tools (builtin + MCP) go through `ToolRegistry`
+4. **Type-safe**: Tool arguments validated with Pydantic models
+5. **Pausable**: Agents can pause for HITL/approval and resume later
+6. **Database tracking**: All LLM calls and tool calls recorded for debugging

@@ -2,17 +2,19 @@
  * Settings Page - Admin Configuration
  */
 
-import React from 'react'
+import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { User, Server, Bot, Info, Shield, CheckCircle, XCircle, RefreshCw, Cpu, Thermometer, Zap } from 'lucide-react'
+import { User, Server, Bot, Info, Shield, CheckCircle, XCircle, RefreshCw, Cpu, Thermometer, Zap, ChevronDown, ChevronRight } from 'lucide-react'
 import { getMCPServers, getMCPTools, getStatus, getAgents } from '../services/api'
 import { useAuth } from '../App'
+import PageHeader from '../components/shared/PageHeader'
+import { SkeletonSettingsSection } from '../components/shared/Skeleton'
 
 const SectionCard = ({ title, icon: Icon, children }) => (
-  <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+  <div className="bg-white rounded-xl border border-gray-100 p-6">
     <div className="flex items-center space-x-2 mb-4">
-      <Icon className="w-5 h-5 text-gray-600" />
-      <h2 className="text-lg font-semibold">{title}</h2>
+      <Icon className="w-4 h-4 text-gray-400" />
+      <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">{title}</h2>
     </div>
     {children}
   </div>
@@ -36,12 +38,90 @@ const StatusBadge = ({ status }) => {
   )
 }
 
+// Compact server row — expand to show tools
+const ServerRow = ({ server, tools }) => {
+  const [expanded, setExpanded] = useState(false)
+  const isHealthy = server.status === true || server.status === 'healthy' || !server.status
+  const toolCount = tools?.length || 0
+
+  return (
+    <div className="rounded-lg hover:bg-gray-50/50 transition-colors">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-3 px-3 py-2.5 text-left"
+      >
+        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isHealthy ? 'bg-green-500' : 'bg-red-500'}`} />
+        <span className="font-medium text-sm text-gray-900 flex-1">{server.name}</span>
+        {toolCount > 0 && (
+          <span className="text-xs text-gray-400">{toolCount} tools</span>
+        )}
+        {toolCount > 0 && (expanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-400" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-400" />)}
+      </button>
+      {expanded && tools && tools.length > 0 && (
+        <div className="px-3 pb-2.5 pl-8">
+          <div className="flex flex-wrap gap-1">
+            {tools.map((tool) => (
+              <span key={tool.name} className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs" title={tool.description}>
+                {tool.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Compact agent row — expand to show model info + MCPs
+const AgentRow = ({ agent }) => {
+  const [expanded, setExpanded] = useState(false)
+  const categoryColors = {
+    system: 'text-blue-600', execution: 'text-green-600',
+    quality: 'text-orange-600', deployment: 'text-purple-600',
+  }
+  const color = categoryColors[agent.category] || 'text-gray-600'
+
+  return (
+    <div className="rounded-lg hover:bg-gray-50/50 transition-colors">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-3 px-3 py-2.5 text-left"
+      >
+        <Bot className={`w-4 h-4 flex-shrink-0 ${color}`} />
+        <span className="font-medium text-sm text-gray-900 flex-1">{agent.name}</span>
+        <span className="text-xs text-gray-400 capitalize">{agent.category}</span>
+        {expanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-400" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-400" />}
+      </button>
+      {expanded && (
+        <div className="px-3 pb-2.5 pl-11 space-y-2">
+          <p className="text-xs text-gray-500">{agent.description}</p>
+          {agent.model && (
+            <div className="flex flex-wrap gap-3 text-xs text-gray-400">
+              <span className="flex items-center"><Cpu className="w-3 h-3 mr-1" />{agent.model}</span>
+              {agent.temperature !== null && <span>temp: {agent.temperature}</span>}
+              {agent.max_tokens && <span>max: {agent.max_tokens}</span>}
+            </div>
+          )}
+          {agent.mcps?.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {agent.mcps.map((mcp) => (
+                <span key={mcp} className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs">{mcp}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const Settings = () => {
   const { user } = useAuth()
 
   const {
     data: mcpServers = [],
     isLoading: mcpLoading,
+    isError: mcpError,
     refetch: refetchMCPs,
   } = useQuery({
     queryKey: ['mcp-servers'],
@@ -66,6 +146,7 @@ const Settings = () => {
   const {
     data: agentsList = [],
     isLoading: agentsLoading,
+    isError: agentsError,
     refetch: refetchAgents,
   } = useQuery({
     queryKey: ['agents'],
@@ -82,11 +163,7 @@ const Settings = () => {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold">Settings</h1>
-        <p className="text-gray-500 mt-1">System configuration and status information.</p>
-      </div>
+      <PageHeader title="Settings" subtitle="System configuration and status information." />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* User Profile */}
@@ -197,151 +274,47 @@ const Settings = () => {
         </SectionCard>
       </div>
 
-      {/* MCP Servers */}
-      <SectionCard title="MCP Servers" icon={Server}>
-        <div className="flex items-center justify-between mb-4">
-          <p className="text-gray-500 text-sm">
-            Model Context Protocol servers provide tools for agents to interact with the system.
-          </p>
-          <button
-            onClick={() => refetchMCPs()}
-            className="text-blue-600 hover:text-blue-700 text-sm flex items-center"
-          >
-            <RefreshCw className={`w-4 h-4 mr-1 ${mcpLoading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* MCP Servers */}
+        <SectionCard title={`MCP Servers (${mcpServers.length})`} icon={Server}>
+          {mcpLoading ? (
+            <SkeletonSettingsSection />
+          ) : mcpError ? (
+            <div className="text-center py-4">
+              <p className="text-sm text-red-500 mb-2">Failed to load MCP servers</p>
+              <button onClick={() => refetchMCPs()} className="text-sm text-blue-600 hover:text-blue-700 font-medium">Retry</button>
+            </div>
+          ) : mcpServers.length === 0 ? (
+            <div className="text-gray-400 text-sm">No MCP servers configured.</div>
+          ) : (
+            <div className="space-y-1">
+              {mcpServers.map((server) => (
+                <ServerRow key={server.name} server={server} tools={toolsByServer[server.name]} />
+              ))}
+            </div>
+          )}
+        </SectionCard>
 
-        {mcpLoading ? (
-          <div className="text-gray-500">Loading MCP servers...</div>
-        ) : mcpServers.length === 0 ? (
-          <div className="text-gray-500">No MCP servers configured.</div>
-        ) : (
-          <div className="space-y-4">
-            {mcpServers.map((server) => (
-              <div
-                key={server.name}
-                className="border rounded-lg p-4 hover:bg-gray-50 transition-colors"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center space-x-2">
-                    <Server className="w-4 h-4 text-gray-600" />
-                    <span className="font-medium">{server.name}</span>
-                  </div>
-                  <StatusBadge status={server.status || true} />
-                </div>
-                <p className="text-sm text-gray-500 mb-3">{server.description}</p>
-
-                {/* Tools for this server */}
-                {toolsByServer[server.name] && toolsByServer[server.name].length > 0 && (
-                  <div className="mt-3 pt-3 border-t">
-                    <p className="text-xs text-gray-400 mb-2">Available Tools</p>
-                    <div className="flex flex-wrap gap-1">
-                      {toolsByServer[server.name].map((tool) => (
-                        <span
-                          key={tool.name}
-                          className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs"
-                          title={tool.description}
-                        >
-                          {tool.name}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </SectionCard>
-
-      {/* Agents */}
-      <SectionCard title="Configured Agents" icon={Bot}>
-        <div className="flex items-center justify-between mb-4">
-          <p className="text-gray-500 text-sm">
-            Agents are AI assistants with specific capabilities. Model info shown for transparency.
-          </p>
-          <button
-            onClick={() => refetchAgents()}
-            className="text-blue-600 hover:text-blue-700 text-sm flex items-center"
-          >
-            <RefreshCw className={`w-4 h-4 mr-1 ${agentsLoading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-        </div>
-
-        {agentsLoading ? (
-          <div className="text-gray-500">Loading agents...</div>
-        ) : agentsList.length === 0 ? (
-          <div className="text-gray-500">No agents configured.</div>
-        ) : (
-          <div className="space-y-4">
-            {agentsList.map((agent) => {
-              const categoryColors = {
-                system: { bg: 'bg-blue-100', text: 'text-blue-700', icon: 'text-blue-600' },
-                execution: { bg: 'bg-green-100', text: 'text-green-700', icon: 'text-green-600' },
-                quality: { bg: 'bg-orange-100', text: 'text-orange-700', icon: 'text-orange-600' },
-                deployment: { bg: 'bg-purple-100', text: 'text-purple-700', icon: 'text-purple-600' },
-              }
-              const colors = categoryColors[agent.category] || categoryColors.execution
-
-              return (
-                <div key={agent.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center space-x-2">
-                      <Bot className={`w-4 h-4 ${colors.icon}`} />
-                      <span className="font-medium">{agent.name}</span>
-                    </div>
-                    <span className={`px-2 py-0.5 ${colors.bg} ${colors.text} rounded text-xs capitalize`}>
-                      {agent.category}
-                    </span>
-                  </div>
-                  <p className="text-sm text-gray-500 mb-3">{agent.description}</p>
-
-                  {/* Model Info (Transparency) */}
-                  {agent.model && (
-                    <div className="flex flex-wrap gap-2 mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded">
-                      <span className="flex items-center text-xs text-yellow-800" title="LLM Model">
-                        <Cpu className="w-3 h-3 mr-1" />
-                        {agent.model}
-                      </span>
-                      {agent.temperature !== null && (
-                        <span className="flex items-center text-xs text-yellow-700" title="Temperature">
-                          <Thermometer className="w-3 h-3 mr-1" />
-                          temp: {agent.temperature}
-                        </span>
-                      )}
-                      {agent.max_tokens && (
-                        <span className="flex items-center text-xs text-yellow-700" title="Max Tokens">
-                          <Zap className="w-3 h-3 mr-1" />
-                          max: {agent.max_tokens}
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* MCP Tools */}
-                  {agent.mcps && agent.mcps.length > 0 && (
-                    <div className="mt-2">
-                      <p className="text-xs text-gray-400 mb-1">MCP Access</p>
-                      <div className="flex flex-wrap gap-1">
-                        {agent.mcps.map((mcp) => (
-                          <span
-                            key={mcp}
-                            className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs"
-                          >
-                            {mcp}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </SectionCard>
+        {/* Agents */}
+        <SectionCard title={`Agents (${agentsList.length})`} icon={Bot}>
+          {agentsLoading ? (
+            <SkeletonSettingsSection />
+          ) : agentsError ? (
+            <div className="text-center py-4">
+              <p className="text-sm text-red-500 mb-2">Failed to load agents</p>
+              <button onClick={() => refetchAgents()} className="text-sm text-blue-600 hover:text-blue-700 font-medium">Retry</button>
+            </div>
+          ) : agentsList.length === 0 ? (
+            <div className="text-gray-400 text-sm">No agents configured.</div>
+          ) : (
+            <div className="space-y-1">
+              {agentsList.map((agent) => (
+                <AgentRow key={agent.id} agent={agent} />
+              ))}
+            </div>
+          )}
+        </SectionCard>
+      </div>
     </div>
   )
 }

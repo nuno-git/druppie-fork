@@ -217,7 +217,7 @@ services:
       DOCKER_NETWORK: druppie-new-network
     volumes:
       - druppie_new_workspace:/workspaces
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     ports:
       - "${MCP_DOCKER_PORT:-9002}:9002"
     networks:
@@ -311,6 +311,11 @@ services:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       EXTERNAL_HOST: ${EXTERNAL_HOST:-localhost}
+      # Port configuration (passed to setup scripts for Keycloak client URIs)
+      FRONTEND_PORT: ${FRONTEND_PORT:-5273}
+      KEYCLOAK_PORT: ${KEYCLOAK_PORT:-8180}
+      GITEA_PORT: ${GITEA_PORT:-3100}
+      BACKEND_PORT: ${BACKEND_PORT:-8100}
       # Gitea config (internal Docker URLs)
       GITEA_URL: http://gitea:3000
       GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-gitea_admin}
@@ -322,7 +327,7 @@ services:
       ENV_FILE: /project/.env
     volumes:
       - druppie_init_marker:/init-marker
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - .:/project
     depends_on:
       keycloak:
@@ -351,12 +356,12 @@ services:
       KEYCLOAK_ISSUER_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}
       KEYCLOAK_REALM: druppie
       KEYCLOAK_CLIENT_ID: druppie-backend
-      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_PROVIDER: ${LLM_PROVIDER:-zai}
       ZAI_API_KEY: ${ZAI_API_KEY:-}
-      ZAI_MODEL: ${ZAI_MODEL:-GLM-4.7}
+      ZAI_MODEL: ${ZAI_MODEL:-glm-4.7}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
-      DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-Next-80B-A3B-Instruct}
+      DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
       DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
       CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
       GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
@@ -375,7 +380,7 @@ services:
     volumes:
       - ./druppie:/app/druppie
       - druppie_new_workspace:/app/workspace
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     ports:
       - "${BACKEND_PORT:-8100}:8000"
     depends_on:
@@ -413,12 +418,12 @@ services:
       KEYCLOAK_ISSUER_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}
       KEYCLOAK_REALM: druppie
       KEYCLOAK_CLIENT_ID: druppie-backend
-      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_PROVIDER: ${LLM_PROVIDER:-zai}
       ZAI_API_KEY: ${ZAI_API_KEY:-}
-      ZAI_MODEL: ${ZAI_MODEL:-GLM-4.7}
+      ZAI_MODEL: ${ZAI_MODEL:-glm-4.7}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
-      DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-Next-80B-A3B-Instruct}
+      DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
       DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
       CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
       GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
@@ -436,7 +441,7 @@ services:
       MCP_WEB_URL: http://mcp-web:9005
     volumes:
       - druppie_new_workspace:/app/workspace
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     ports:
       - "${BACKEND_PORT:-8100}:8000"
     depends_on:
@@ -500,7 +505,7 @@ services:
     container_name: druppie-new-frontend
     profiles: [prod]
     ports:
-      - "${FRONTEND_PORT:-5273}:3000"
+      - "${FRONTEND_PORT:-5273}:5173"
     depends_on:
       druppie-backend:
         condition: service_healthy
@@ -521,7 +526,7 @@ services:
     environment:
       PGPASSWORD: ${DRUPPIE_DB_PASSWORD:-druppie_secret}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     entrypoint: ["sh", "-c"]
     command:
       - |
@@ -563,19 +568,24 @@ services:
     environment:
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-cleaner-druppie-docker-compose}
       # Init container env vars for re-initialization (use localhost since we're on host network)
-      KEYCLOAK_URL: http://localhost:8180
+      KEYCLOAK_URL: http://localhost:${KEYCLOAK_PORT:-8180}
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       EXTERNAL_HOST: ${EXTERNAL_HOST:-localhost}
-      GITEA_URL: http://localhost:3100
+      # Port configuration
+      FRONTEND_PORT: ${FRONTEND_PORT:-5273}
+      KEYCLOAK_PORT: ${KEYCLOAK_PORT:-8180}
+      GITEA_PORT: ${GITEA_PORT:-3100}
+      BACKEND_PORT: ${BACKEND_PORT:-8100}
+      GITEA_URL: http://localhost:${GITEA_PORT:-3100}
       GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-gitea_admin}
       GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-GiteaAdmin123}
       GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL:-admin@druppie.local}
-      KEYCLOAK_INTERNAL_URL: http://localhost:8180
+      KEYCLOAK_INTERNAL_URL: http://localhost:${KEYCLOAK_PORT:-8180}
       KEYCLOAK_REALM: druppie
       ENV_FILE: /project/.env
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - .:/project
 
 # =============================================================================

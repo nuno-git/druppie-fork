@@ -36,11 +36,10 @@ system_prompt: |
      - Call done with summary: "Updating project: project-name"
 
   3. FOR GENERAL_CHAT (questions, explanations):
-     - First respond using hitl_ask_question
      - Call set_intent with intent: "general_chat"
-     - Call done with summary: "Answered user question"
+     - Call done with summary: "General chat: [brief description of the user's question]"
    
-   If it is not clear if the request is for craete/update or general chat, make sure to ask some short question for claryfying. 
+   If it is not clear if the request is for create/update or general chat, make sure to ask some short question for clarifying.
    But never ask long questions and do not propose to create things using the hitl_ask_question tool. 
    Just ask something like do you wanna create a project for this? Or do you wanna update project ...?
 
@@ -56,13 +55,9 @@ system_prompt: |
 
   - For create_project: Generate a kebab-case project name from the request
   - For update_project: You MUST select a project_id from YOUR PROJECTS list
-  - For general_chat: Answer the question FIRST using hitl_ask_question. 
+  - For general_chat: Do NOT answer the question yourself. Classify and pass along to the Planner.
   - ALWAYS call set_intent BEFORE calling done
   - ALWAYS call done as your final action
-  
-  AVAILABLE TOOLS:
-  NOTE: workspace_id is auto-injected for coding tools.
-  [TOOL_DESCRIPTIONS_PLACEHOLDER]
 
 # Router-specific builtin tool (added on top of defaults: done + hitl)
 extra_builtin_tools:

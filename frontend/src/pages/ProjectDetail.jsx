@@ -37,6 +37,8 @@ import {
   getDeploymentLogs,
 } from '../services/api'
 import { useToast } from '../components/Toast'
+import SharedCopyButton from '../components/shared/CopyButton'
+import { SkeletonCard } from '../components/shared/Skeleton'
 
 const formatTokens = (count) => {
   if (!count) return '0'
@@ -50,40 +52,14 @@ const TABS = {
   CONVERSATIONS: 'conversations',
 }
 
-const CopyButton = ({ text, label }) => {
-  const [copied, setCopied] = useState(false)
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch (err) {
-      console.error('Failed to copy to clipboard:', err)
-    }
-  }
-
-  return (
-    <button
-      onClick={handleCopy}
-      className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
-      aria-label={copied ? `${label} copied` : `Copy ${label}`}
-    >
-      {copied ? (
-        <CheckCircle className="w-4 h-4 text-green-500" />
-      ) : (
-        <Copy className="w-4 h-4" />
-      )}
-    </button>
-  )
-}
+const CopyButton = SharedCopyButton
 
 // Deployment card with status, app URL, logs, stop
 const DeploymentCard = ({ deployment, onStop, isStopping, onViewLogs }) => {
   const isUp = deployment.status?.includes('Up')
 
   return (
-    <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+    <div className="bg-gray-50/70 rounded-lg p-4 border border-gray-100">
       <div className="flex items-start justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex items-center">
@@ -153,7 +129,7 @@ const LogsPanel = ({ containerName, onClose }) => {
   })
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
         <h4 className="text-sm font-medium text-gray-900 flex items-center">
           <FileText className="w-4 h-4 mr-2 text-gray-500" />
@@ -201,7 +177,7 @@ const OverviewTab = ({ project, deployments, onStop, stoppingName, onViewLogs, l
   return (
     <div className="space-y-6">
       {/* Project Info */}
-      <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+      <div className="bg-white rounded-xl p-6 border border-gray-100">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
             <span className="text-xs text-gray-500 uppercase tracking-wide">Created</span>
@@ -251,9 +227,9 @@ const OverviewTab = ({ project, deployments, onStop, stoppingName, onViewLogs, l
       </div>
 
       {/* Deployments */}
-      <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-          <Container className="w-5 h-5 mr-2 text-blue-500" />
+      <div className="bg-white rounded-xl p-6 border border-gray-100">
+        <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-4 flex items-center">
+          <Container className="w-4 h-4 mr-2 text-gray-400" />
           Deployments
           {hasDeployments && (
             <span className="ml-2 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-medium">
@@ -304,12 +280,12 @@ const ConversationsTab = ({ sessions }) => {
   }
 
   return (
-    <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-        <MessageSquare className="w-5 h-5 mr-2 text-purple-500" />
+    <div className="bg-white rounded-xl p-6 border border-gray-100">
+      <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide mb-4 flex items-center">
+        <MessageSquare className="w-4 h-4 mr-2 text-gray-400" />
         Linked Conversations
         {sessions?.length > 0 && (
-          <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full font-medium">
+          <span className="ml-2 px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded-full font-medium normal-case tracking-normal">
             {sessions.length}
           </span>
         )}
@@ -321,7 +297,7 @@ const ConversationsTab = ({ sessions }) => {
             <Link
               key={session.id}
               to={`/chat?session=${session.id}`}
-              className="block bg-gray-50 rounded-lg p-4 border border-gray-200 hover:border-purple-300 hover:bg-purple-50/30 transition-colors"
+              className="block bg-gray-50/50 rounded-lg p-4 border border-gray-100 hover:border-gray-200 hover:bg-gray-50 transition-colors"
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1 min-w-0">
@@ -406,9 +382,13 @@ const ProjectDetail = () => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-        <span className="ml-2 text-gray-600">Loading project...</span>
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <div className="animate-pulse bg-gray-200 w-9 h-9 rounded-lg" />
+          <div className="animate-pulse bg-gray-200 h-7 w-48 rounded" />
+        </div>
+        <SkeletonCard lines={4} />
+        <SkeletonCard lines={3} />
       </div>
     )
   }
@@ -452,7 +432,7 @@ const ProjectDetail = () => {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200">
+      <div className="border-b border-gray-100">
         <nav className="flex space-x-1" aria-label="Tabs">
           {tabs.map((tab) => {
             const Icon = tab.icon
@@ -460,10 +440,10 @@ const ProjectDetail = () => {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-3 text-sm font-medium rounded-t-lg transition-colors flex items-center ${
+                className={`px-4 py-2.5 text-sm font-medium rounded-t-lg transition-colors flex items-center ${
                   activeTab === tab.id
-                    ? 'bg-white text-blue-600 border-b-2 border-blue-500'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                    ? 'text-gray-900 border-b-2 border-gray-900'
+                    : 'text-gray-400 hover:text-gray-600'
                 }`}
               >
                 <Icon className="w-4 h-4 mr-2" />
