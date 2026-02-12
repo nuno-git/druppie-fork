@@ -5,7 +5,7 @@
  * Detail shows: header, pending HITL banner, flat event log, floating detail overlay
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import {
   Search,
   X,
@@ -19,6 +19,8 @@ import {
   Loader2,
   PauseCircle,
   RefreshCw,
+  Braces,
+  Check,
 } from 'lucide-react'
 import { getToken } from '../services/keycloak'
 import { getAgentConfig, formatToolName } from '../utils/agentConfig'
@@ -379,25 +381,27 @@ const ToolLine = ({ tc, selected, onSelect }) => {
 
 // ─── Detail pane (bottom of right panel) ─────────────────────────────────────
 
+const darkCopyBtnClass = 'inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded hover:bg-gray-700 transition-colors text-gray-400'
+
 const ToolDetail = ({ tc, agentRun }) => {
   const config = getAgentConfig(agentRun.agent_id)
 
   return (
     <div className="space-y-3 text-xs">
       <div className="flex items-center gap-2">
-        <span className="font-semibold text-gray-800">{formatToolName(tc.tool_name)}</span>
+        <span className="font-semibold text-gray-200">{formatToolName(tc.tool_name)}</span>
         <StatusBadge status={tc.status} />
-        <span className="text-gray-400">({config.name})</span>
+        <span className="text-gray-500">({config.name})</span>
       </div>
 
       {/* Arguments */}
       {tc.arguments && (
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-gray-500">Arguments</span>
-            <CopyButton text={tc.arguments} label="Copy" showLabel />
+            <span className="font-medium text-gray-400">Arguments</span>
+            <CopyButton text={tc.arguments} label="Copy" showLabel className={darkCopyBtnClass} />
           </div>
-          <pre className="bg-gray-50 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-700">
+          <pre className="bg-gray-800 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-300">
             {typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments, null, 2)}
           </pre>
         </div>
@@ -407,10 +411,10 @@ const ToolDetail = ({ tc, agentRun }) => {
       {tc.result && (
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-gray-500">Result</span>
-            <CopyButton text={tc.result} label="Copy" showLabel />
+            <span className="font-medium text-gray-400">Result</span>
+            <CopyButton text={tc.result} label="Copy" showLabel className={darkCopyBtnClass} />
           </div>
-          <pre className="bg-gray-50 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-700">
+          <pre className="bg-gray-800 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-300">
             {typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2)}
           </pre>
         </div>
@@ -420,10 +424,10 @@ const ToolDetail = ({ tc, agentRun }) => {
       {tc.error && (
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-red-600">Error</span>
-            <CopyButton text={tc.error} label="Copy" showLabel />
+            <span className="font-medium text-red-400">Error</span>
+            <CopyButton text={tc.error} label="Copy" showLabel className={darkCopyBtnClass} />
           </div>
-          <pre className="bg-red-50 p-2 rounded overflow-auto max-h-32 text-red-700">
+          <pre className="bg-red-900/30 p-2 rounded overflow-auto max-h-32 text-red-300">
             {tc.error}
           </pre>
         </div>
@@ -433,10 +437,10 @@ const ToolDetail = ({ tc, agentRun }) => {
       {tc.approval && (
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-gray-500">Approval</span>
-            <CopyButton text={tc.approval} label="Copy" showLabel />
+            <span className="font-medium text-gray-400">Approval</span>
+            <CopyButton text={tc.approval} label="Copy" showLabel className={darkCopyBtnClass} />
           </div>
-          <pre className="bg-gray-50 p-2 rounded overflow-auto max-h-32 mt-1">
+          <pre className="bg-gray-800 p-2 rounded overflow-auto max-h-32 mt-1 text-gray-300">
             {JSON.stringify(tc.approval, null, 2)}
           </pre>
         </div>
@@ -461,20 +465,20 @@ const AgentDetail = ({ agentRun }) => {
   return (
     <div className="space-y-3 text-xs">
       <div className="flex items-center gap-2">
-        <span className="font-semibold text-gray-800">{config.name}</span>
+        <span className="font-semibold text-gray-200">{config.name}</span>
         <StatusBadge status={agentRun.status} />
-        {tokens > 0 && <span className="text-gray-400">{formatTokens(tokens)} tok</span>}
-        {duration && <span className="text-gray-400">&middot; {duration}</span>}
+        {tokens > 0 && <span className="text-gray-500">{formatTokens(tokens)} tok</span>}
+        {duration && <span className="text-gray-500">&middot; {duration}</span>}
       </div>
 
       {/* Planned prompt */}
       {agentRun.planned_prompt && (
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-gray-500">Planned Prompt</span>
-            <CopyButton text={agentRun.planned_prompt} label="Copy" showLabel />
+            <span className="font-medium text-gray-400">Planned Prompt</span>
+            <CopyButton text={agentRun.planned_prompt} label="Copy" showLabel className={darkCopyBtnClass} />
           </div>
-          <pre className="bg-gray-50 p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap break-all text-gray-600">
+          <pre className="bg-gray-800 p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap break-all text-gray-300">
             {agentRun.planned_prompt}
           </pre>
         </div>
@@ -483,10 +487,10 @@ const AgentDetail = ({ agentRun }) => {
       {/* LLM calls table */}
       {llmCalls.length > 0 ? (
         <div>
-          <span className="font-medium text-gray-500 mb-1 block">LLM Calls</span>
+          <span className="font-medium text-gray-400 mb-1 block">LLM Calls</span>
           <table className="w-full text-left">
             <thead>
-              <tr className="text-gray-400 border-b">
+              <tr className="text-gray-500 border-b border-gray-700">
                 <th className="py-1 pr-3 font-medium">#</th>
                 <th className="py-1 pr-3 font-medium">Model</th>
                 <th className="py-1 pr-3 font-medium text-right">Tokens</th>
@@ -496,16 +500,16 @@ const AgentDetail = ({ agentRun }) => {
             </thead>
             <tbody>
               {llmCalls.map((llm, i) => (
-                <tr key={llm.id || i} className="border-b border-gray-50">
-                  <td className="py-1 pr-3 text-gray-400 font-mono">{i + 1}</td>
-                  <td className="py-1 pr-3 text-gray-600"><code>{llm.model}</code></td>
-                  <td className="py-1 pr-3 text-right text-gray-500">
+                <tr key={llm.id || i} className="border-b border-gray-800">
+                  <td className="py-1 pr-3 text-gray-500 font-mono">{i + 1}</td>
+                  <td className="py-1 pr-3 text-gray-300"><code>{llm.model}</code></td>
+                  <td className="py-1 pr-3 text-right text-gray-400">
                     {formatTokens(llm.token_usage?.total_tokens)}
                   </td>
-                  <td className="py-1 pr-3 text-right text-gray-500">
+                  <td className="py-1 pr-3 text-right text-gray-400">
                     {formatDuration(llm.duration_ms) || '-'}
                   </td>
-                  <td className="py-1 text-right text-gray-500">
+                  <td className="py-1 text-right text-gray-400">
                     {llm.tool_calls?.length || 0}
                   </td>
                 </tr>
@@ -514,12 +518,12 @@ const AgentDetail = ({ agentRun }) => {
           </table>
         </div>
       ) : (
-        <p className="text-gray-400 italic">No LLM calls yet</p>
+        <p className="text-gray-500 italic">No LLM calls yet</p>
       )}
 
       {/* Copy raw button */}
       <div>
-        <CopyButton text={agentRun} label="Copy Raw JSON" showLabel />
+        <CopyButton text={agentRun} label="Copy Raw JSON" showLabel className={darkCopyBtnClass} />
       </div>
     </div>
   )
@@ -531,19 +535,19 @@ const DetailPane = ({ selection, onClose }) => {
   return (
     <>
       {/* Backdrop */}
-      <div className="fixed inset-0 bg-black/20 z-30" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/40 z-30" onClick={onClose} />
       {/* Floating panel */}
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-white rounded-lg shadow-2xl border flex flex-col"
-        style={{ width: 'min(640px, 90vw)', maxHeight: '70vh' }}
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-gray-900 rounded-lg shadow-2xl border border-gray-700 flex flex-col"
+        style={{ width: 'min(800px, 92vw)', maxHeight: '80vh' }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b bg-gray-50 rounded-t-lg flex-shrink-0">
-          <span className="text-sm font-medium text-gray-700">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700 bg-gray-800 rounded-t-lg flex-shrink-0">
+          <span className="text-sm font-medium text-gray-200">
             {selection.type === 'tool' ? formatToolName(selection.toolCall.tool_name) : getAgentConfig(selection.agentRun.agent_id).name}
           </span>
           <button
             onClick={onClose}
-            className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            className="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors"
             title="Close (Esc)"
           >
             <X className="w-4 h-4" />
@@ -563,23 +567,102 @@ const DetailPane = ({ selection, onClose }) => {
   )
 }
 
+// ─── Full JSON viewer modal ─────────────────────────────────────────────────
+
+const JsonViewerModal = ({ data, title, onClose }) => {
+  const [copied, setCopied] = useState(false)
+  const jsonString = useMemo(() => JSON.stringify(data, null, 2), [data])
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(jsonString)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {}
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-30" onClick={onClose} />
+      <div
+        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-gray-900 rounded-lg shadow-2xl border border-gray-700 flex flex-col"
+        style={{ width: 'min(1100px, 95vw)', height: 'min(90vh, 860px)' }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700 bg-gray-800 rounded-t-lg flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <Braces className="w-4 h-4 text-gray-400" />
+            <span className="text-sm font-medium text-gray-200">{title || 'Session JSON'}</span>
+            <span className="px-2 py-0.5 text-xs font-medium rounded bg-gray-700 text-gray-400">JSON</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded hover:bg-gray-700 transition-colors"
+              title={copied ? 'Copied!' : 'Copy to clipboard'}
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-green-400" />
+                  <span className="text-green-400">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-gray-400" />
+                  <span className="text-gray-400">Copy</span>
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => downloadAsFile(data, title || 'session')}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-gray-400 rounded hover:bg-gray-700 transition-colors"
+              title="Download JSON"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download</span>
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 ml-1 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors"
+              title="Close (Esc)"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        {/* JSON content */}
+        <div className="flex-1 overflow-auto p-4">
+          <pre className="text-xs font-mono leading-5 text-gray-300 whitespace-pre">
+            {jsonString}
+          </pre>
+        </div>
+      </div>
+    </>
+  )
+}
+
 // ─── Right panel: Session detail ─────────────────────────────────────────────
 
 const DebugSessionDetail = ({ sessionDetail, loading, onRefresh, selectedSession, answerText, setAnswerText, onSubmitAnswer, answerLoading }) => {
   const [selection, setSelection] = useState(null)
+  const [showJson, setShowJson] = useState(false)
 
-  // Close detail pane on Esc
+  // Close detail pane / JSON viewer on Esc
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape') setSelection(null)
+      if (e.key === 'Escape') {
+        if (showJson) setShowJson(false)
+        else setSelection(null)
+      }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [showJson])
 
-  // Clear selection when session changes
+  // Clear selection and close JSON viewer when session changes
   useEffect(() => {
     setSelection(null)
+    setShowJson(false)
   }, [selectedSession])
 
   const closeDetail = useCallback(() => setSelection(null), [])
@@ -699,98 +782,123 @@ const DebugSessionDetail = ({ sessionDetail, loading, onRefresh, selectedSession
     },
   ]
 
+  const hasModalOpen = !!selection || showJson
+
   return (
     <div className="flex-1 bg-white overflow-hidden flex flex-col h-full">
-      {/* Header bar — simplified */}
-      <div className="px-4 py-3 border-b bg-white flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3 min-w-0">
-            <h2 className="text-base font-semibold text-gray-800 truncate">
-              {data.title || 'Untitled'}
-            </h2>
-            <StatusBadge status={data.status} />
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {totalTokens > 0 && (
-              <span className="text-xs text-gray-400">{formatTokens(totalTokens)} tok</span>
-            )}
-            {sessionDuration && (
-              <span className="text-xs text-gray-400">{sessionDuration}</span>
-            )}
-            <OverflowMenu items={overflowItems} />
-          </div>
-        </div>
-      </div>
-
-      {/* Pending HITL question banner */}
-      {pendingQuestion && (
-        <div className="px-4 py-3 bg-amber-50/50 border-b border-amber-100 flex-shrink-0">
-          <div className="flex items-center gap-2 text-sm mb-2">
-            <PauseCircle className="w-3.5 h-3.5 text-amber-500" />
-            <span className="font-medium text-gray-700">
-              {getAgentConfig(pendingQuestion.agentId).name} is waiting for your answer
-            </span>
-          </div>
-          <div className="p-2.5 bg-white rounded-lg border border-gray-200 mb-2.5 text-sm text-gray-800">
-            {pendingQuestion.question}
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={answerText}
-              onChange={(e) => setAnswerText(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && onSubmitAnswer(pendingQuestion.questionId)}
-              placeholder="Type your answer..."
-              className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent"
-            />
-            <button
-              onClick={() => onSubmitAnswer(pendingQuestion.questionId)}
-              disabled={answerLoading || !answerText.trim()}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-30 transition-colors"
-            >
-              {answerLoading ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Send className="w-3.5 h-3.5" />
+      {/* Background content — hidden from Ctrl+F when a modal is open */}
+      <div
+        className="flex-1 flex flex-col overflow-hidden"
+        style={hasModalOpen ? { visibility: 'hidden' } : undefined}
+        inert={hasModalOpen ? '' : undefined}
+      >
+        {/* Header bar — simplified */}
+        <div className="px-4 py-3 border-b bg-white flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 min-w-0">
+              <h2 className="text-base font-semibold text-gray-800 truncate">
+                {data.title || 'Untitled'}
+              </h2>
+              <StatusBadge status={data.status} />
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {totalTokens > 0 && (
+                <span className="text-xs text-gray-400">{formatTokens(totalTokens)} tok</span>
               )}
-              {answerLoading ? 'Sending...' : 'Answer'}
-            </button>
+              {sessionDuration && (
+                <span className="text-xs text-gray-400">{sessionDuration}</span>
+              )}
+              <button
+                onClick={() => setShowJson(true)}
+                className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                title="View full JSON"
+              >
+                <Braces className="w-4 h-4" />
+              </button>
+              <OverflowMenu items={overflowItems} />
+            </div>
           </div>
         </div>
-      )}
 
-      {/* Event log — flat, scrollable */}
-      <div className={`flex-1 overflow-y-auto bg-white ${selection ? '' : ''}`}>
-        {eventItems.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-12 text-gray-400 gap-2">
-            <MessageSquare className="w-8 h-8 opacity-30" />
-            <p className="text-sm">No agent runs in this session</p>
+        {/* Pending HITL question banner */}
+        {pendingQuestion && (
+          <div className="px-4 py-3 bg-amber-50/50 border-b border-amber-100 flex-shrink-0">
+            <div className="flex items-center gap-2 text-sm mb-2">
+              <PauseCircle className="w-3.5 h-3.5 text-amber-500" />
+              <span className="font-medium text-gray-700">
+                {getAgentConfig(pendingQuestion.agentId).name} is waiting for your answer
+              </span>
+            </div>
+            <div className="p-2.5 bg-white rounded-lg border border-gray-200 mb-2.5 text-sm text-gray-800">
+              {pendingQuestion.question}
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={answerText}
+                onChange={(e) => setAnswerText(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && onSubmitAnswer(pendingQuestion.questionId)}
+                placeholder="Type your answer..."
+                className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent"
+              />
+              <button
+                onClick={() => onSubmitAnswer(pendingQuestion.questionId)}
+                disabled={answerLoading || !answerText.trim()}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-30 transition-colors"
+              >
+                {answerLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Send className="w-3.5 h-3.5" />
+                )}
+                {answerLoading ? 'Sending...' : 'Answer'}
+              </button>
+            </div>
           </div>
         )}
-        {eventItems.map((item, i) => {
-          if (item.type === 'agent') {
+
+        {/* Event log — flat, scrollable */}
+        <div className="flex-1 overflow-y-auto bg-white">
+          {eventItems.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-12 text-gray-400 gap-2">
+              <MessageSquare className="w-8 h-8 opacity-30" />
+              <p className="text-sm">No agent runs in this session</p>
+            </div>
+          )}
+          {eventItems.map((item, i) => {
+            if (item.type === 'agent') {
+              return (
+                <AgentHeaderLine
+                  key={`agent-${item.agentRun.id || i}`}
+                  agentRun={item.agentRun}
+                  selected={isSelected(item)}
+                  onSelect={() => setSelection({ type: 'agent', agentRun: item.agentRun })}
+                />
+              )
+            }
             return (
-              <AgentHeaderLine
-                key={`agent-${item.agentRun.id || i}`}
-                agentRun={item.agentRun}
+              <ToolLine
+                key={`tool-${item.toolCall.id || i}`}
+                tc={item.toolCall}
                 selected={isSelected(item)}
-                onSelect={() => setSelection({ type: 'agent', agentRun: item.agentRun })}
+                onSelect={() => setSelection({ type: 'tool', toolCall: item.toolCall, agentRun: item.agentRun })}
               />
             )
-          }
-          return (
-            <ToolLine
-              key={`tool-${item.toolCall.id || i}`}
-              tc={item.toolCall}
-              selected={isSelected(item)}
-              onSelect={() => setSelection({ type: 'tool', toolCall: item.toolCall, agentRun: item.agentRun })}
-            />
-          )
-        })}
+          })}
+        </div>
       </div>
 
       {/* Detail pane — appears when something is selected */}
       <DetailPane selection={selection} onClose={closeDetail} />
+
+      {/* Full JSON viewer */}
+      {showJson && (
+        <JsonViewerModal
+          data={sessionDetail.data}
+          title={data.title || 'Session'}
+          onClose={() => setShowJson(false)}
+        />
+      )}
     </div>
   )
 }
@@ -831,6 +939,21 @@ export default function DebugChat() {
   useEffect(() => {
     fetchSessions()
   }, [fetchSessions])
+
+  // Auto-select most recent session on initial load
+  const autoSelectedRef = useRef(false)
+  useEffect(() => {
+    if (!autoSelectedRef.current && sessions?.ok) {
+      const items = sessions.data?.items || []
+      if (items.length > 0) {
+        const sorted = [...items].sort((a, b) =>
+          new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at)
+        )
+        autoSelectedRef.current = true
+        fetchSessionDetail(sorted[0].id)
+      }
+    }
+  }, [sessions, fetchSessionDetail])
 
   // Auto-poll session list every 15s
   useEffect(() => {

@@ -7,7 +7,7 @@
  * Only rendered when there are 2+ agent runs.
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Check, Loader2, Circle, Pause, ChevronDown, ChevronUp } from 'lucide-react'
 import { getAgentConfig, getAgentColorClasses, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 
@@ -20,6 +20,14 @@ const WAITING_STATUSES = new Set([
 
 const WorkflowPipeline = ({ timeline }) => {
   const [expandedRunId, setExpandedRunId] = useState(null)
+  const pillRefs = useRef({})
+  const scrollContainerRef = useRef(null)
+
+  // Assign a ref callback for each agent pill
+  const setPillRef = useCallback((id, el) => {
+    if (el) pillRefs.current[id] = el
+    else delete pillRefs.current[id]
+  }, [])
 
   if (!timeline) return null
 
@@ -31,12 +39,21 @@ const WorkflowPipeline = ({ timeline }) => {
   // Only show when 2+ agent runs
   if (agentRuns.length < 2) return null
 
+  // Find the active agent (running or waiting) — last one wins
+  const activeRunId = (() => {
+    for (let i = agentRuns.length - 1; i >= 0; i--) {
+      const s = agentRuns[i].status
+      if (s === 'running' || WAITING_STATUSES.has(s)) return agentRuns[i].id
+    }
+    return null
+  })()
+
   const expandedRun = agentRuns.find((r) => r.id === expandedRunId)
 
   return (
     <div className="border-b bg-gray-50 flex-shrink-0 min-w-0 overflow-hidden">
       {/* Pipeline bar */}
-      <div className="px-4 py-2 flex items-center gap-1 overflow-x-auto scrollbar-thin">
+      <div ref={scrollContainerRef} className="px-4 py-2 flex items-center gap-1 overflow-x-auto scrollbar-thin">
         {agentRuns.map((run, i) => {
           const config = getAgentConfig(run.agent_id)
           const colorClasses = getAgentColorClasses(config.color)
@@ -54,6 +71,7 @@ const WorkflowPipeline = ({ timeline }) => {
                 <span className="text-gray-300 text-xs flex-shrink-0 mx-0.5">&rarr;</span>
               )}
               <button
+                ref={(el) => setPillRef(run.id, el)}
                 onClick={() => llmCount > 0 && setExpandedRunId(isExpanded ? null : run.id)}
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border flex-shrink-0 transition-colors ${colorClasses} ${
                   isPending ? 'opacity-50' : ''
@@ -77,6 +95,8 @@ const WorkflowPipeline = ({ timeline }) => {
           )
         })}
       </div>
+      {/* Auto-scroll active agent into view */}
+      <ActivePillScroller activeRunId={activeRunId} pillRefs={pillRefs} />
 
       {/* Expanded LLM call details for selected agent */}
       {expandedRun && expandedRun.llm_calls?.length > 0 && (
@@ -84,6 +104,20 @@ const WorkflowPipeline = ({ timeline }) => {
       )}
     </div>
   )
+}
+
+// --- Auto-scroll the active pill into view (effect-only component) ---
+
+const ActivePillScroller = ({ activeRunId, pillRefs }) => {
+  useEffect(() => {
+    if (!activeRunId) return
+    const el = pillRefs.current[activeRunId]
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+    }
+  }, [activeRunId, pillRefs])
+
+  return null
 }
 
 // --- Expanded detail section for a single agent run ---

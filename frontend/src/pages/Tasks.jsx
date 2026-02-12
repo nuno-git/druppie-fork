@@ -7,8 +7,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, Loader2, MessageSquare, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code, Eye } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, Shield, AlertTriangle, AlertCircle, Loader2, MessageSquare, Bot, ExternalLink, ChevronDown, ChevronRight, History, User, FileCode, FilePlus, Terminal, GitBranch, Code, Eye, X } from 'lucide-react'
 import { getTasks, approveTask, rejectTask, getApprovalHistory } from '../services/api'
+import { chatMarkdownComponents } from '../components/chat/ChatHelpers'
 import { useAuth } from '../App'
 import { hasRole } from '../services/keycloak'
 import { useToast } from '../components/Toast'
@@ -43,64 +44,72 @@ const FilePreviewModal = ({ files, onClose }) => {
   }, [onClose])
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-gray-900/95 backdrop-blur-sm">
-      {/* Top bar */}
-      <div className="flex items-center justify-between px-6 py-3 bg-gray-800 border-b border-gray-700 shrink-0">
-        <div className="flex items-center gap-3">
-          <FileCode className="w-5 h-5 text-blue-400" />
-          <span className="text-sm font-medium text-gray-200">
-            {files.length === 1 ? files[0].path : `${files.length} files to be written`}
-          </span>
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/40 z-30" onClick={onClose} />
+      {/* Centered modal */}
+      <div
+        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-gray-900 rounded-lg shadow-2xl border border-gray-700 flex flex-col"
+        style={{ width: 'min(1100px, 95vw)', height: 'min(90vh, 860px)' }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700 bg-gray-800 rounded-t-lg flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <FileCode className="w-4 h-4 text-gray-400" />
+            <span className="text-sm font-medium text-gray-200">
+              {files.length === 1 ? files[0].path : `${files.length} files to be written`}
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 transition-colors"
+            title="Close (Esc)"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
-        <button
-          onClick={onClose}
-          className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
-        >
-          <span className="text-xs text-gray-500 mr-1">Esc</span>
-          Close
-        </button>
-      </div>
 
-      {/* Scrollable content area */}
-      <div className="flex-1 overflow-auto p-6">
-        <div className="max-w-6xl mx-auto space-y-6">
-          {files.map(({ path, content }) => (
-            <div key={path} className="bg-gray-900 rounded-xl border border-gray-700 overflow-hidden shadow-2xl">
-              {/* File header */}
-              <div className="flex items-center justify-between px-5 py-3 bg-gray-800 border-b border-gray-700">
-                <div className="flex items-center gap-3">
-                  <FileCode className="w-4 h-4 text-gray-400" />
-                  <span className="text-sm text-gray-200 font-mono">{path}</span>
-                  <span className="text-xs px-2 py-0.5 bg-gray-700 text-gray-400 rounded">{getLanguageFromPath(path)}</span>
+        {/* Scrollable content area */}
+        <div className="flex-1 overflow-auto p-4">
+          <div className="space-y-4">
+            {files.map(({ path, content }) => (
+              <div key={path} className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+                {/* File header */}
+                <div className="flex items-center justify-between px-4 py-2.5 bg-gray-800 border-b border-gray-700">
+                  <div className="flex items-center gap-3">
+                    <FileCode className="w-4 h-4 text-gray-400" />
+                    <span className="text-sm text-gray-200 font-mono">{path}</span>
+                    <span className="text-xs px-2 py-0.5 bg-gray-700 text-gray-400 rounded">{getLanguageFromPath(path)}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {isMarkdownFile(path) && (
+                      <button
+                        onClick={() => toggleRaw(path)}
+                        className="flex items-center gap-1.5 px-3 py-1 text-xs rounded-md transition-colors text-gray-400 hover:text-gray-200 hover:bg-gray-700 border border-gray-600"
+                      >
+                        {isRaw(path) ? <Eye className="w-3.5 h-3.5" /> : <Code className="w-3.5 h-3.5" />}
+                        {isRaw(path) ? 'Preview' : 'Raw'}
+                      </button>
+                    )}
+                    <span className="text-xs text-gray-500">{content?.split('\n').length || 0} lines</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  {isMarkdownFile(path) && (
-                    <button
-                      onClick={() => toggleRaw(path)}
-                      className="flex items-center gap-1.5 px-3 py-1 text-xs rounded-md transition-colors text-gray-400 hover:text-gray-200 hover:bg-gray-700 border border-gray-600"
-                    >
-                      {isRaw(path) ? <Eye className="w-3.5 h-3.5" /> : <Code className="w-3.5 h-3.5" />}
-                      {isRaw(path) ? 'Preview' : 'Raw'}
-                    </button>
-                  )}
-                  <span className="text-xs text-gray-500">{content?.split('\n').length || 0} lines</span>
-                </div>
+                {/* Content */}
+                {isMarkdownFile(path) && !isRaw(path) ? (
+                  <div className="p-6 markdown-content text-sm bg-white text-gray-900 rounded-b-lg">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{content}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <pre className="p-4 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
+                    {content}
+                  </pre>
+                )}
               </div>
-              {/* Content */}
-              {isMarkdownFile(path) && !isRaw(path) ? (
-                <div className="p-6 markdown-content text-sm bg-white text-gray-900">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-                </div>
-              ) : (
-                <pre className="p-6 text-sm text-gray-100 whitespace-pre-wrap font-mono leading-relaxed">
-                  {content}
-                </pre>
-              )}
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }
 
