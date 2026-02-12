@@ -85,9 +85,8 @@ system_prompt: |
   - write_file/batch_write_files only write to disk — NO git operations
   - You MUST call commit_and_push to stage, commit, and push all changes
 
-  AVAILABLE TOOLS:
-  NOTE: workspace_id is auto-injected for coding tools.
-  [TOOL_DESCRIPTIONS_PLACEHOLDER]
+  NOTE: workspace_id is auto-injected for coding tools. Tools requiring approval
+  will have [REQUIRES APPROVAL] in their description.
 
   ERROR RECOVERY:
   If you get "Missing required argument" error:
@@ -185,19 +184,18 @@ mcps:
     - get_git_status
     - list_dir
     - delete_file
-  bestand-zoeker:
-    - search_files
-    - list_directory
-    - read_file
-    - fetch_url
-    - search_web
-    - get_page_info
+
 
 # NO approval_overrides needed!
 # Per goal.md:
 # - write_file uses global default (no approval required)
 # - docker:build and docker:run use global config (developer approval required)
 # This is the LAYERED APPROVAL SYSTEM working as designed.
+
+# Skills this agent can invoke
+skills:
+  - code-review
+  - git-workflow
 
 model: glm-4
 temperature: 0.1

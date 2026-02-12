@@ -17,7 +17,9 @@
  */
 
 import React, { useState, useEffect } from 'react'
+import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
 import { getToken } from '../services/keycloak'
+import PageHeader from '../components/shared/PageHeader'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -56,15 +58,15 @@ const apiFetch = async (endpoint, options = {}) => {
 const Collapsible = ({ title, children, defaultOpen = false }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen)
   return (
-    <div className="border rounded-lg overflow-hidden mb-2">
+    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden mb-3">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 flex items-center gap-2 font-medium"
+        className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 font-medium transition-colors"
       >
-        <span className="text-gray-500">{isOpen ? '▼' : '▶'}</span>
-        <span className="flex-1">{title}</span>
+        {isOpen ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+        <span className="flex-1 text-sm">{title}</span>
       </button>
-      {isOpen && <div className="p-3 border-t bg-white">{children}</div>}
+      {isOpen && <div className="px-4 pb-4 border-t border-gray-50">{children}</div>}
     </div>
   )
 }
@@ -74,11 +76,11 @@ const ResultBox = ({ result, title = 'Response' }) => {
   if (!result) return null
 
   return (
-    <div className={`mt-3 p-2 rounded text-sm ${result.ok ? 'bg-green-50' : 'bg-red-50'}`}>
-      <div className="font-medium mb-1">
-        {result.ok ? `✓ ${title}` : `✗ Error (${result.status || 'network'})`}
+    <div className={`mt-3 p-3 rounded-lg text-sm ${result.ok ? 'bg-green-50 border border-green-100' : 'bg-red-50 border border-red-100'}`}>
+      <div className={`font-medium mb-2 text-xs uppercase tracking-wide ${result.ok ? 'text-green-700' : 'text-red-700'}`}>
+        {result.ok ? `${title}` : `Error (${result.status || 'network'})`}
       </div>
-      <pre className="text-xs overflow-auto max-h-60 bg-white p-2 rounded border">
+      <pre className="text-xs overflow-auto max-h-60 bg-white p-3 rounded-lg border border-gray-100 text-gray-700">
         {JSON.stringify(result.data || result.error, null, 2)}
       </pre>
     </div>
@@ -592,60 +594,36 @@ export default function DebugProjects() {
   const [activeTab, setActiveTab] = useState('projects')
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Projects & Deployments API Test</h1>
-        <p className="text-gray-600">
-          Test Projects and Deployments (Docker MCP Bridge) APIs
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader title="Projects & Deployments" subtitle="Test Projects and Deployments (Docker MCP Bridge) APIs." />
 
-      <div className="mb-4 p-3 bg-blue-50 text-blue-800 rounded text-sm">
+      <div className="p-3 bg-blue-50 text-blue-800 rounded-lg text-sm border border-blue-100">
         <strong>Note:</strong> This page directly calls the Projects and Deployments APIs with your
         authenticated user. Admin users see all data; regular users see only their own.
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex gap-2 mb-6 border-b">
+      <div className="flex gap-1 border-b border-gray-100">
         <button
           onClick={() => setActiveTab('projects')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
             activeTab === 'projects'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
+              ? 'border-gray-900 text-gray-900'
+              : 'border-transparent text-gray-400 hover:text-gray-600'
           }`}
         >
           Projects API
         </button>
         <button
           onClick={() => setActiveTab('deployments')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
             activeTab === 'deployments'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
+              ? 'border-gray-900 text-gray-900'
+              : 'border-transparent text-gray-400 hover:text-gray-600'
           }`}
         >
           Deployments API (Docker)
         </button>
-      </div>
-
-      {/* API Info */}
-      <div className="mb-6 text-sm text-gray-500">
-        <strong>Endpoints:</strong>
-        {activeTab === 'projects' ? (
-          <ul className="list-disc ml-5 mt-1">
-            <li>GET /api/projects - List projects (paginated)</li>
-            <li>GET /api/projects/{'{project_id}'} - Get project detail</li>
-            <li>DELETE /api/projects/{'{project_id}'} - Delete/archive project</li>
-          </ul>
-        ) : (
-          <ul className="list-disc ml-5 mt-1">
-            <li>GET /api/deployments - List running deployments</li>
-            <li>POST /api/deployments/{'{container_name}'}/stop - Stop deployment</li>
-            <li>GET /api/deployments/{'{container_name}'}/logs - Get container logs</li>
-            <li>GET /api/deployments/{'{container_name}'} - Inspect container</li>
-          </ul>
-        )}
       </div>
 
       {/* Tab Content */}
