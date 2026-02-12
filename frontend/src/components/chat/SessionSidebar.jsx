@@ -3,9 +3,9 @@
  */
 
 import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Plus, Search, PanelLeftClose } from 'lucide-react'
-import { getSessions } from '../../services/api'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Plus, Search, PanelLeftClose, Trash2 } from 'lucide-react'
+import { getSessions, deleteSession } from '../../services/api'
 import { timeAgo, ACTIVE_STATUSES } from './ChatHelpers'
 import { SkeletonSidebarItem } from '../shared/Skeleton'
 
@@ -39,11 +39,31 @@ const groupSessionsByDate = (sessions) => {
 
 const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollapse }) => {
   const [search, setSearch] = useState('')
+  const [deletingId, setDeletingId] = useState(null)
+  const queryClient = useQueryClient()
   const { data, isLoading } = useQuery({
     queryKey: ['sessions'],
     queryFn: () => getSessions(1, 50),
     refetchInterval: 5000,
   })
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteSession,
+    onMutate: (id) => setDeletingId(id),
+    onSuccess: (_, deletedId) => {
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      if (activeSessionId === deletedId) onNewChat()
+      setDeletingId(null)
+    },
+    onError: () => setDeletingId(null),
+  })
+
+  const handleDelete = (e, session) => {
+    e.stopPropagation()
+    if (window.confirm(`Delete session "${session.title || 'Untitled'}"?\n\nThis will permanently delete the session and all its data.`)) {
+      deleteMutation.mutate(session.id)
+    }
+  }
 
   const sessions = data?.items || []
   const filtered = search
@@ -111,14 +131,14 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
               const isRunning = s.status === 'running'
               const isFailed = s.status === 'failed'
               return (
-                <button
+                <div
                   key={s.id}
-                  onClick={() => onSelectSession(s.id)}
-                  className={`w-full text-left px-4 py-2.5 hover:bg-gray-50 transition-colors ${
+                  className={`group relative w-full text-left px-4 py-2.5 hover:bg-gray-50 transition-colors cursor-pointer ${
                     activeSessionId === s.id
                       ? 'bg-blue-50 border-l-2 border-l-blue-600'
                       : 'border-l-2 border-l-transparent'
                   }`}
+                  onClick={() => onSelectSession(s.id)}
                 >
                   <div className="flex items-center gap-2">
                     {isActive && (
@@ -129,7 +149,7 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
                     {isFailed && (
                       <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
                     )}
-                    <span className="text-sm font-medium truncate text-gray-900">
+                    <span className="text-sm font-medium truncate text-gray-900 pr-6">
                       {s.title || 'Untitled'}
                     </span>
                   </div>
@@ -143,7 +163,19 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
                       {timeAgo(s.updated_at || s.created_at)}
                     </span>
                   </div>
-                </button>
+                  <button
+                    onClick={(e) => handleDelete(e, s)}
+                    disabled={deletingId === s.id}
+                    className="absolute top-2 right-2 p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all focus:opacity-100 focus:outline-none"
+                    aria-label={`Delete session ${s.title || 'Untitled'}`}
+                  >
+                    {deletingId === s.id ? (
+                      <div className="w-3.5 h-3.5 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
               )
             })}
           </div>
