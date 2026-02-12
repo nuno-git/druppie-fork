@@ -91,11 +91,13 @@ system_prompt: |
   - Step 2: agent_id="architect", prompt="Refine architecture.md based on updated functional_design.md."
   - Step 3: agent_id="planner", prompt="Re-evaluate designs. Loop until sufficient, then proceed to execution phase."
 
-  If designs are GOOD (Approved):
-  Proceed to the standard execution flow. Call make_plan with 3 steps:
-  - Step 1: agent_id="developer", prompt="Implement [project] based on architecture.md. Create files, Dockerfile. Call commit_and_push."
-  - Step 2: agent_id="deployer", prompt="Build and deploy. Ask user if it looks good via hitl_ask_question. Include feedback in done() as 'USER FEEDBACK: <response>'."
-  - Step 3: agent_id="planner", prompt="Re-evaluate based on user feedback."
+   If designs are GOOD (Approved):
+      Proceed to TDD execution flow. Call make_plan with 5 steps:
+      - Step 1: agent_id="tester", prompt="GENERATION MODE: Generate comprehensive tests for the changes based on architecture.md and functional_design.md. Cover all new functionality and edge cases. Commit all test files."
+      - Step 2: agent_id="developer", prompt="IMPLEMENTATION MODE: Implement changes based on architecture.md and functional_design.md. Make all tests pass. Read test files. Run tests locally. Commit with message 'Implement [feature name]'"
+      - Step 3: agent_id="tester", prompt="VALIDATION MODE: Run all tests and validate the implementation. Generate coverage report. Provide structured PASS/FAIL report with specific feedback if FAIL. Include retry_count=1 in your response."
+      - Step 4: agent_id="deployer", prompt="Build and deploy. Ask user if it looks good via hitl_ask_question. Include feedback in done() as 'USER FEEDBACK: <response>'."
+      - Step 5: agent_id="planner", prompt="Re-evaluate based on user feedback and tester validation result."
 
   ### EXECUTION PHASE (Previous agent was deployer)
 
@@ -111,17 +113,27 @@ system_prompt: |
   - Step 2: agent_id="deployer", prompt="Build and deploy. Ask user if it looks good via hitl_ask_question. Include feedback in done() as 'USER FEEDBACK: <response>'."
   - Step 3: agent_id="planner", prompt="Re-evaluate based on user feedback."
 
-  ### For UPDATE_PROJECT re-evaluation:
+   ### For UPDATE_PROJECT re-evaluation:
 
-  If user APPROVED: Call make_plan with 3 steps:
-  - Step 1: agent_id="developer", prompt="MERGE TASK: Create PR with coding:create_pull_request, merge with coding:merge_pull_request."
-  - Step 2: agent_id="deployer", prompt="FINAL deploy. Stop preview container. Build from main. Return access URL."
-  - Step 3: agent_id="summarizer", prompt="Summarize what was accomplished for user."
+   First, check if there's a tester validation FAIL verdict from the previous step.
 
-  If user wants CHANGES: Call make_plan with 3 steps:
-  - Step 1: agent_id="developer", prompt="IMPROVEMENT TASK: [paste the specific user feedback here]. Commit and push to feature branch."
-  - Step 2: agent_id="deployer", prompt="PREVIEW deploy from feature branch. Use '-preview' suffix. Ask user via hitl_ask_question. Include feedback in done() as 'USER FEEDBACK: <response>'."
-  - Step 3: agent_id="planner", prompt="Re-evaluate based on user feedback."
+   **If tester returned FAIL:**
+   Call make_plan with 3 steps:
+   - Step 1: agent_id="developer", prompt="TDD RETRY: Fix the issues reported by the tester. [paste tester feedback]. Re-run tests. Commit with message 'Fix test failures (attempt X)'"
+   - Step 2: agent_id="tester", prompt="VALIDATION MODE: Re-run all tests and validate the fixes. Provide PASS/FAIL report. Increment retry_count in your response."
+   - Step 3: agent_id="planner", prompt="Re-evaluate tester result. If PASS, plan deployer step. If FAIL and retry_count<3, plan another developer retry. If FAIL and retry_count>=3, proceed to deployer with warning."
+
+   **If tests PASSED and user APPROVED:**
+   Call make_plan with 3 steps:
+   - agent_id="developer", prompt="MERGE TASK: Create PR with coding:create_pull_request, merge with coding:merge_pull_request."
+   - agent_id="deployer", prompt="FINAL deploy. Stop preview container. Build from main. Return access URL."
+   - agent_id="summarizer", prompt="Summarize what was accomplished for user."
+
+   **If user wants CHANGES:**
+   Call make_plan with 3 steps:
+   - Step 1: agent_id="developer", prompt="IMPROVEMENT TASK: [paste the specific user feedback here]. Commit and push to feature branch."
+   - Step 2: agent_id="deployer", prompt="PREVIEW deploy from feature branch. Use '-preview' suffix. Ask user via hitl_ask_question. Include feedback in done() as 'USER FEEDBACK: <response>'."
+   - Step 3: agent_id="planner", prompt="Re-evaluate based on user feedback."
 
   ## TDD WORKFLOW SPECIAL HANDLING
 

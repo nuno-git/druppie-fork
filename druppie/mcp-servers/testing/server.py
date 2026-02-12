@@ -85,6 +85,21 @@ def get_or_create_workspace(
 
 
 @mcp.tool()
+async def get_test_framework(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+) -> dict:
+    """Detect test framework in workspace (alias for detect_test_framework)."""
+    return await detect_test_framework(
+        session_id=session_id,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        user_id=user_id,
+    )
+
+@mcp.tool()
 async def detect_test_framework(
     session_id: str | None = None,
     workspace_id: str | None = None,
@@ -257,6 +272,23 @@ async def run_tests(
         logger.error("Error running tests: %s", str(e))
         return {"success": False, "error": str(e)}
 
+
+@mcp.tool()
+async def get_coverage_report(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    framework: str | None = None,
+) -> dict:
+    """Get test coverage report for workspace (alias for get_coverage)."""
+    return await get_coverage(
+        session_id=session_id,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        user_id=user_id,
+        framework=framework,
+    )
 
 @mcp.tool()
 async def get_coverage(
@@ -555,7 +587,7 @@ if __name__ == "__main__":
     
     app.routes.insert(0, Route("/health", health, methods=["GET"]))
     
-    port = int(os.getenv("MCP_PORT", "9005"))
+    port = int(os.getenv("MCP_PORT", "9006"))
     
     uvicorn.run(
         app,
