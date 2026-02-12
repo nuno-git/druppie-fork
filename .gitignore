@@ -49,6 +49,7 @@ instance/
 # Local config
 .druppie/
 .playwright-mcp/
+.claude
 
 # Docker volumes
 druppie-app/
