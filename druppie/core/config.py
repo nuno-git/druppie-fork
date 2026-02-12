@@ -172,6 +172,29 @@ class WorkspaceSettings(BaseSettings):
         return v
 
 
+class LanguageSettings(BaseSettings):
+    """Language detection and configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="LANGUAGE_")
+
+    default_language: str = Field(
+        default="nl",
+        description="Default language (ISO 639-1)",
+    )
+    enable_detection: bool = Field(
+        default=True,
+        description="Enable automatic detection",
+    )
+    detection_confidence_threshold: float = Field(
+        default=0.5,
+        description="Min confidence (0.0-1.0)",
+    )
+    supported_languages: list[str] = Field(
+        default=["nl", "en"],
+        description="List of supported language codes",
+    )
+
+
 class APISettings(BaseSettings):
     """API server configuration."""
 
@@ -218,6 +241,7 @@ class Settings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
+    language: LanguageSettings = Field(default_factory=LanguageSettings)
     api: APISettings = Field(default_factory=APISettings)
 
     def log_config(self):

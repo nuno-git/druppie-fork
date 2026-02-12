@@ -9,7 +9,7 @@ The TimelineEntry model provides a unified view for the frontend.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from uuid import UUID
 from datetime import datetime
 from enum import Enum
@@ -64,6 +64,7 @@ class SessionSummary(BaseModel):
     status: SessionStatus
     error_message: str | None = None
     project_id: UUID | None
+    language: str = Field(default="nl", description="Current conversation language (ISO 639-1)")
     token_usage: TokenUsage
     created_at: datetime
     updated_at: datetime | None

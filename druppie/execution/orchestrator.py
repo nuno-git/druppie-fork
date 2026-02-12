@@ -44,6 +44,7 @@ from uuid import UUID
 import structlog
 
 from druppie.domain.common import AgentRunStatus, SessionStatus
+from druppie.core.language_detection import LanguageDetector
 
 if TYPE_CHECKING:
     from druppie.repositories import SessionRepository, ExecutionRepository, ProjectRepository, QuestionRepository
@@ -76,6 +77,7 @@ class Orchestrator:
         self.execution_repo = execution_repo
         self.project_repo = project_repo
         self.question_repo = question_repo
+        self.language_detector = LanguageDetector()
 
     async def process_message(
         self,
@@ -152,6 +154,18 @@ class Orchestrator:
             sequence_number=0,
         )
         self.execution_repo.commit()
+
+        # Step 3.5: Detect and update language (only if detection succeeds)
+        detected_language = self.language_detector.detect_language(message)
+        if detected_language:  # None means text too short - preserve existing language
+            self.session_repo.update_language(current_session_id, detected_language)
+            logger.info(
+                "language_detected",
+                session_id=str(current_session_id),
+                language=detected_language,
+            )
+            self.session_repo.commit()
+        # If None, keep existing session language unchanged
 
         # Step 4: Get user's projects for router injection
         user_projects = self.project_repo.get_by_user(user_id)
@@ -316,7 +330,8 @@ class Orchestrator:
             session_id: Session UUID
 
         Returns:
-            Context dict with project info, or None if no project associated
+            Context dict with project info and always conversational_language,
+            or None if session not found
         """
         from druppie.db.models import Session as DBSession, Project
 
@@ -326,36 +341,45 @@ class Orchestrator:
         self.session_repo.db.expire_all()
 
         session = self.session_repo.db.query(DBSession).filter(DBSession.id == session_id).first()
-        if not session or not session.project_id:
+        if not session:
             return None
 
-        project = self.session_repo.db.query(Project).filter(Project.id == session.project_id).first()
-        if not project:
-            return None
-
+        # Always include conversational_language, even without a project
         context = {
-            "project_id": str(project.id),
-            "project_name": project.name,
             "session_id": str(session_id),
+            "conversational_language": session.language or "nl",
         }
 
         # Add intent so agents know what workflow to follow
         if session.intent:
             context["intent"] = session.intent
 
-        # Add git repo info if available
-        if project.repo_name:
-            context["repo_name"] = project.repo_name
-        if project.repo_url:
-            context["repo_url"] = project.repo_url
-        if hasattr(project, 'repo_owner') and project.repo_owner:
-            context["repo_owner"] = project.repo_owner
+        # If there's a project, add project-specific context
+        if session.project_id:
+            project = self.session_repo.db.query(Project).filter(Project.id == session.project_id).first()
+            if project:
+                context["project_id"] = str(project.id)
+                context["project_name"] = project.name
+                # Add git repo info if available
+                if project.repo_name:
+                    context["repo_name"] = project.repo_name
+                if project.repo_url:
+                    context["repo_url"] = project.repo_url
+                if hasattr(project, 'repo_owner') and project.repo_owner:
+                    context["repo_owner"] = project.repo_owner
+
+                logger.debug(
+                    "project_context_built",
+                    session_id=str(session_id),
+                    project_id=str(project.id),
+                    has_repo=bool(project.repo_name),
+                )
 
         logger.debug(
-            "project_context_built",
+            "context_built",
             session_id=str(session_id),
-            project_id=str(project.id),
-            has_repo=bool(project.repo_name),
+            has_project=bool(session.project_id),
+            conversational_language=context.get("conversational_language"),
         )
 
         return context
@@ -579,6 +603,19 @@ class Orchestrator:
 
         # Step 2: Complete the HITL tool call (saves answer to DB)
         status = await tool_executor.complete_after_answer(question_id, answer)
+
+        # Step 2.5: Detect and update language from HITL answer (only if detection succeeds)
+        detected_language = self.language_detector.detect_language(answer)
+        if detected_language:  # None means answer too short - preserve existing language
+            self.session_repo.update_language(session_id, detected_language)
+            logger.info(
+                "language_detected_from_hitl_answer",
+                session_id=str(session_id),
+                question_id=str(question_id),
+                language=detected_language,
+            )
+            self.session_repo.commit()
+        # If None, keep existing session language unchanged
 
         if status != ToolCallStatus.COMPLETED:
             logger.error("complete_after_answer_failed", status=status)
