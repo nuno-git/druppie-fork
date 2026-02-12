@@ -90,6 +90,9 @@ export const resumeSession = (sessionId, answer = null) =>
     body: JSON.stringify({ answer }),
   })
 
+export const deleteSession = (sessionId) =>
+  request(`/api/sessions/${sessionId}`, { method: 'DELETE' })
+
 // Legacy aliases (use getSession instead - it returns everything)
 export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}`)
 export const getPlans = (page = 1, limit = 20) => request(`/api/sessions?page=${page}&limit=${limit}`)

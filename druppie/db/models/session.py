@@ -16,7 +16,7 @@ class Session(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"))
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"))
     title = Column(String(500))
     status = Column(String(20), default="active")  # active, paused_approval, paused_hitl, completed, failed
     error_message = Column(Text)  # Error details when status is 'failed'
