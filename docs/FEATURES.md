@@ -8,7 +8,7 @@ Druppie is a governance platform where users describe what they want built in na
 
 Every action an agent takes goes through a **tool call** -- either an **MCP tool** provided by an external server, or a **builtin tool** provided by the platform itself.
 
-**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Two additional builtins are restricted: `set_intent` (Router only -- declares the session intent and creates the project/repo) and `make_plan` (Planner only -- creates an ordered list of agent steps to execute).
+**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Three additional builtins are restricted: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), and `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access).
 
 **MCP tools** are provided by external MCP servers over HTTP (e.g., `read_file`, `write_file`, `docker:build`). Which tools each agent can call is configured in its YAML definition.
 
@@ -289,6 +289,53 @@ coding:
 ```
 
 This ensures agents operate on the correct repository and session without being able to target arbitrary resources.
+
+---
+
+## Skills System
+
+Skills are reusable prompt/instruction packages that grant agents temporary access to additional tools. Each skill is a Markdown file (`SKILL.md`) stored in `druppie/skills/<skill-name>/`.
+
+### Skill Definition
+
+A skill file has YAML frontmatter and a Markdown body:
+
+```markdown
+---
+name: code-review
+description: Perform a thorough code review
+allowed-tools:
+  coding:
+    - read_file
+    - list_dir
+  bestand-zoeker:
+    - search_files
+---
+# Code Review Instructions
+
+Review the code for quality, security, and best practices...
+```
+
+- **`name`** and **`description`**: Skill metadata (shown to the LLM in the `invoke_skill` tool description).
+- **`allowed-tools`**: MCP tools that become available to the agent when this skill is invoked, grouped by MCP server.
+- **Markdown body**: Instructions returned to the agent when the skill is invoked.
+
+### How Skills Work
+
+1. Agent definitions specify which skills they can use via the `skills:` field in their YAML:
+   ```yaml
+   skills:
+     - code-review
+     - git-workflow
+   ```
+2. When the agent calls `invoke_skill(skill_name="code-review")`:
+   - The skill's `allowed_tools` are dynamically added to the agent's available tools for subsequent LLM calls.
+   - The skill's Markdown body is returned as instructions to guide the agent.
+3. The agent can now use the skill's tools until it completes the task or calls another skill.
+
+### Skill-Based Tool Access
+
+Tools granted via skills are checked in `ToolExecutor` alongside the agent's static MCP permissions. If a tool is not in the agent's YAML `mcps` list but is allowed by an active skill, the agent can still use it.
 
 ---
 
