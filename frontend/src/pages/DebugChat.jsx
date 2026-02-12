@@ -48,7 +48,7 @@ const generateTimelineSummary = (timeline) => {
             result: tc.result,
             error: tc.error || undefined,
           }))
-          // Exclude: raw_request, raw_response, messages (the big LLM payloads)
+          // Exclude: tools_provided, response_content, response_tool_calls, messages (the big LLM payloads)
         }))
       }
     }
@@ -358,28 +358,41 @@ const LLMCallView = ({ llmCall, index }) => {
           </div>
         </Collapsible>
 
-        {/* Raw request to LLM */}
-        {llmCall.raw_request && (
+        {/* Tools provided to LLM */}
+        {llmCall.tools_provided && (
           <Collapsible
-            title="Raw Request (messages sent to LLM)"
+            title={`Tools Provided (${llmCall.tools_provided.length})`}
             className="text-sm"
-            copyData={llmCall.raw_request}
+            copyData={llmCall.tools_provided}
           >
             <pre className="text-xs bg-yellow-50 p-2 rounded overflow-auto max-h-96">
-              {JSON.stringify(llmCall.raw_request, null, 2)}
+              {JSON.stringify(llmCall.tools_provided, null, 2)}
             </pre>
           </Collapsible>
         )}
 
-        {/* Raw response from LLM */}
-        {llmCall.raw_response && (
+        {/* LLM Response Content */}
+        {llmCall.response_content && (
           <Collapsible
-            title="Raw LLM Response"
+            title="Response Content"
             className="text-sm"
-            copyData={llmCall.raw_response}
+            copyData={llmCall.response_content}
           >
-            <pre className="text-xs bg-gray-100 p-2 rounded overflow-auto max-h-60">
-              {JSON.stringify(llmCall.raw_response, null, 2)}
+            <pre className="text-xs bg-gray-100 p-2 rounded overflow-auto max-h-60 whitespace-pre-wrap">
+              {llmCall.response_content}
+            </pre>
+          </Collapsible>
+        )}
+
+        {/* Raw tool calls from LLM response */}
+        {llmCall.response_tool_calls?.length > 0 && (
+          <Collapsible
+            title={`Response Tool Calls (${llmCall.response_tool_calls.length})`}
+            className="text-sm"
+            copyData={llmCall.response_tool_calls}
+          >
+            <pre className="text-xs bg-orange-50 p-2 rounded overflow-auto max-h-60">
+              {JSON.stringify(llmCall.response_tool_calls, null, 2)}
             </pre>
           </Collapsible>
         )}

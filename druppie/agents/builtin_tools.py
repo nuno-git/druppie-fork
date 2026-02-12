@@ -6,6 +6,7 @@ Each agent declares which builtin tools it needs in its YAML via `builtin_tools`
 Default (all agents): done, hitl_ask_question, hitl_ask_multiple_choice_question
 Router adds: set_intent
 Planner adds: make_plan
+Agents with skills: invoke_skill (loads skill markdown prompts)
 
 Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
 Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
@@ -170,6 +171,23 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                 },
                 "required": ["steps"],
+            },
+        },
+    },
+    "invoke_skill": {
+        "type": "function",
+        "function": {
+            "name": "invoke_skill",
+            "description": "Invoke a skill to get its instructions injected into the conversation. Skills provide reusable prompts for common tasks like code review, git workflow, etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "The name of the skill to invoke (e.g., 'code-review', 'git-workflow')",
+                    },
+                },
+                "required": ["skill_name"],
             },
         },
     },
@@ -690,6 +708,80 @@ async def done(
 
 
 # =============================================================================
+# SKILL TOOL IMPLEMENTATION
+# =============================================================================
+
+async def invoke_skill(
+    skill_name: str,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Invoke a skill and return its prompt content.
+
+    Skills are markdown files that provide reusable instructions for common tasks.
+    The skill content is returned and should be injected into the conversation.
+    If the skill has allowed-tools, tool descriptions are also included.
+
+    Args:
+        skill_name: The skill name (e.g., 'code-review', 'git-workflow')
+        session_id: Session UUID
+        agent_run_id: Agent run UUID for tracking
+        execution_repo: Execution repository
+
+    Returns:
+        Skill content with optional tool descriptions, or error message
+    """
+    from druppie.services import SkillService
+    from druppie.core.tool_registry import get_tool_registry
+
+    skill_service = SkillService()
+    skill = skill_service.get_skill(skill_name)
+
+    if not skill:
+        logger.warning(
+            "skill_not_found",
+            skill_name=skill_name,
+            session_id=str(session_id),
+            agent_run_id=str(agent_run_id),
+        )
+        return {
+            "success": False,
+            "error": f"Skill not found: {skill_name}",
+        }
+
+    logger.info(
+        "skill_invoked",
+        skill_name=skill_name,
+        session_id=str(session_id),
+        agent_run_id=str(agent_run_id),
+        allowed_tools=skill.allowed_tools,
+    )
+
+    result = {
+        "success": True,
+        "skill_name": skill.name,
+        "skill_description": skill.description,
+        "instructions": skill.prompt_content,
+    }
+
+    # If skill has allowed-tools, include tool descriptions from registry
+    if skill.allowed_tools:
+        registry = get_tool_registry()
+        tool_descriptions = []
+        for server, tool_names in skill.allowed_tools.items():
+            for tool_name in tool_names:
+                tool_def = registry.get_by_server_and_name(server, tool_name)
+                if tool_def:
+                    tool_descriptions.append(f"- **{server}:{tool_name}**: {tool_def.description}")
+        if tool_descriptions:
+            result["available_tools"] = "\n".join(tool_descriptions)
+            result["allowed_tools"] = skill.allowed_tools
+
+    return result
+
+
+# =============================================================================
 # TOOL EXECUTION (called by ToolExecutor)
 # =============================================================================
 
@@ -746,6 +838,13 @@ async def execute_builtin(
             project_id=args.get("project_id"),
             project_name=args.get("project_name"),
         )
+    elif tool_name == "invoke_skill":
+        return await invoke_skill(
+            skill_name=args.get("skill_name", ""),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+        )
     else:
         return {
             "success": False,
@@ -762,6 +861,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "make_plan",
         "set_intent",
         "create_message",
+        "invoke_skill",
     )
 
 

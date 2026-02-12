@@ -12,6 +12,23 @@ from .common import AgentRunStatus, LLMMessage, TokenUsage, ToolCallStatus
 from .tool import ToolType
 
 
+class LLMRetryDetail(BaseModel):
+    """A single retry attempt on an LLM call."""
+
+    attempt: int
+    error_type: str
+    error_message: str | None = None
+    delay_seconds: int | None = None
+
+
+class NormalizationDetail(BaseModel):
+    """A single field that was normalized in a tool call."""
+
+    field_name: str
+    original_value: str | None = None
+    normalized_value: str | None = None
+
+
 class ToolCallDetail(BaseModel):
     """A tool the LLM decided to call and its execution result.
 
@@ -44,17 +61,11 @@ class ToolCallDetail(BaseModel):
     # For HITL tools - the question that was created (for answering)
     question_id: UUID | None = None
 
+    # Normalization audit trail
+    normalizations: list[NormalizationDetail] = []
+
     # For execute_agent - the spawned child run
     child_run: "AgentRunDetail | None" = None
-
-
-class LLMRawResponse(BaseModel):
-    """Raw response from the LLM API - for debugging."""
-    content: str | None = None  # Text content (may include XML tool calls)
-    tool_calls: list[dict] | None = None  # Tool calls as returned by LLM (before execution)
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
 
 
 class LLMCallDetail(BaseModel):
@@ -68,9 +79,15 @@ class LLMCallDetail(BaseModel):
     # The full prompt sent to the LLM (structured messages)
     messages: list[LLMMessage]
 
-    # Raw request/response for debugging - full JSON as sent/received
-    raw_request: dict | None = None  # The exact request sent to LLM API (messages + tools)
-    raw_response: LLMRawResponse | None = None  # What the LLM returned
+    # Tools that were available to the LLM for this call
+    tools_provided: list[dict] | None = None
+
+    # What the LLM returned (text + raw tool call requests)
+    response_content: str | None = None
+    response_tool_calls: list[dict] | None = None
+
+    # Retry audit trail
+    retries: list[LLMRetryDetail] = []
 
     # Executed tools with their results (what we did with the LLM's decisions)
     tool_calls: list[ToolCallDetail]

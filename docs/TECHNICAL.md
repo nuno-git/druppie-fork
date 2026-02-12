@@ -62,6 +62,8 @@ Key domain modules:
 | `common.py` | `SessionStatus`, `AgentRunStatus`, `ToolCallStatus`, `ApprovalStatus`, `QuestionStatus` (enums) |
 | `user.py` | `UserInfo` |
 | `agent_definition.py` | `AgentDefinition`, `ApprovalOverride` |
+| `skill.py` | `SkillSummary`, `SkillDetail` |
+| `tool.py` | `ToolDefinition`, `ToolDefinitionSummary`, `ToolType` |
 
 ### 2.3 Dependency Injection
 
@@ -144,10 +146,19 @@ druppie/
     tool_executor.py     # Routes tool calls to MCP or builtins
     mcp_http.py          # HTTP client for MCP servers
   agents/
-    runtime.py           # Agent loop, prompt construction
+    runtime.py           # Agent facade (public API)
+    loop.py              # Core LLM ↔ tool-calling loop
+    definition_loader.py # Loads YAML definitions, resolves placeholders
+    message_history.py   # Reconstructs agent state from DB for resume
+    prompt_builder.py    # Builds system/user prompts with context
     builtin_tools.py     # Built-in tool definitions and execution
     definitions/         # YAML agent configs (see Section 8)
       _common.md         # Shared instructions injected via placeholder
+  skills/
+    code-review/SKILL.md # Code review skill definition
+    git-workflow/SKILL.md# Git workflow skill definition
+  services/
+    skill_service.py     # Loads and resolves skill definitions
   llm/
     service.py           # LLMService singleton, provider factory
     base.py              # BaseLLM interface, LLMResponse model
@@ -242,6 +253,8 @@ SQLAlchemy ORM models live in `druppie/db/models/`. The schema:
 | `LlmCall` | LLM API call records (request, response, tokens, timing) |
 | `Approval` | Tool approval requests requiring human authorization |
 | `Question` | HITL questions requiring user answers |
+| `LlmRetry` | Audit trail for LLM retry attempts (error type, delay) |
+| `ToolCallNormalization` | Audit trail for argument normalization (original → normalized values) |
 
 ### 4.3 Key Relationships
 
@@ -544,17 +557,17 @@ The Docker Compose setup works on Windows, macOS, and Linux. Shell scripts use L
 
 Nine agents are defined as YAML files in `druppie/agents/definitions/`:
 
-| Agent | Role | Builtin Tools | MCP Access |
-|-------|------|---------------|------------|
-| `router` | Classifies user intent, selects project | `set_intent` | None |
-| `planner` | Creates execution plan (which agents to run) | `make_plan` | None |
-| `business_analyst` | Gathers requirements from user | Default | None (HITL only) |
-| `architect` | Designs system architecture, writes specs | Default | `coding` |
-| `developer` | Writes code, commits, creates PRs | Default | `coding` |
-| `reviewer` | Reviews code quality | Default | `coding` |
-| `tester` | Writes and runs tests | Default | `coding`, `docker` |
-| `deployer` | Builds and deploys containers | Default | `coding`, `docker` |
-| `summarizer` | Creates conversation summary message | `create_message` | None |
+| Agent | Role | Builtin Tools | MCP Access | Skills |
+|-------|------|---------------|------------|--------|
+| `router` | Classifies user intent, selects project | `set_intent` | None | — |
+| `planner` | Creates execution plan (which agents to run) | `make_plan` | None | — |
+| `business_analyst` | Gathers requirements from user | Default | None (HITL only) | — |
+| `architect` | Designs system architecture, writes specs | Default | `coding` | — |
+| `developer` | Writes code, commits, creates PRs | `invoke_skill` | `coding` | `code-review`, `git-workflow` |
+| `reviewer` | Reviews code quality | Default | `coding` | — |
+| `tester` | Writes and runs tests | Default | `coding`, `docker` | — |
+| `deployer` | Builds and deploys containers | Default | `coding`, `docker` | — |
+| `summarizer` | Creates conversation summary message | `create_message` | None | — |
 
 Default builtin tools (all agents): `done`, `hitl_ask_question`, `hitl_ask_multiple_choice_question`.
 
@@ -585,9 +598,19 @@ approval_overrides: {}
 
 **Note:** Currently only 4 agents include the `[COMMON_INSTRUCTIONS]` placeholder (deployer, architect, business_analyst, planner). The developer, reviewer, tester, and router agents do not, which can lead to inconsistent agent communication -- see BACKLOG.md.
 
-### 8.3 Agent Runtime Loop
+### 8.3 Agent Runtime Architecture
 
-The agent runtime (`druppie/agents/runtime.py`) implements a tool-calling loop:
+The agent runtime is split into focused modules:
+
+| Module | Class | Purpose |
+|--------|-------|---------|
+| `runtime.py` | `Agent` | Public facade — coordinates loader, prompt builder, and loop |
+| `loop.py` | `AgentLoop` | Core LLM ↔ tool-calling loop, skill tool enrichment |
+| `definition_loader.py` | `AgentDefinitionLoader` | Loads YAML definitions, resolves `[COMMON_INSTRUCTIONS]` |
+| `message_history.py` | `reconstruct_from_db()` | Rebuilds agent message history from DB for resume |
+| `prompt_builder.py` | `PromptBuilder` | Builds system/user prompts with context injection |
+
+The core loop (`AgentLoop.run()`):
 
 ```
 1. Build system prompt (inject common instructions + tool descriptions)
@@ -595,16 +618,22 @@ The agent runtime (`druppie/agents/runtime.py`) implements a tool-calling loop:
 3. Call LLM with messages + tool definitions
 4. Parse response for tool calls
 5. For each tool call:
-   a. Create ToolCall record in DB
-   b. Execute via ToolExecutor
-   c. If waiting_approval -> pause agent, return
-   d. If waiting_answer -> pause agent, return
-   e. If "done" tool -> agent complete, return
-   f. Otherwise -> add result to messages, loop to step 3
+   a. Normalize arguments (e.g., "null" → None) with audit trail
+   b. Create ToolCall record in DB
+   c. Execute via ToolExecutor
+   d. If waiting_approval -> pause agent, return
+   e. If waiting_answer -> pause agent, return
+   f. If "done" tool -> agent complete, return
+   g. If failed + break_on_failure -> stop batch, let LLM retry
+   h. Otherwise -> add result to messages, loop to step 3
 6. If max_iterations reached -> raise AgentMaxIterationsError
 ```
 
 If the LLM responds without tool calls, the runtime sends a correction message and retries. Agents can only interact through tool calls -- they cannot produce raw text output.
+
+**Argument normalization:** Before executing a tool call, the loop normalizes common LLM mistakes (e.g., `"null"` string → `None`, `"true"` → `true`). Each normalization is recorded in the `tool_call_normalizations` table for debugging.
+
+**Break-on-failure:** When a tool call fails, the loop stops processing remaining tool calls from the same LLM response and feeds the error back to the LLM so it can retry with corrected arguments. This prevents cascading failures from bad tool call batches.
 
 **Note:** Tool information is currently sent to the LLM twice per request: as human-readable text in the system prompt (step 1) and as structured OpenAI function schemas in the API `tools` parameter (step 3). The system prompt text carries extra context the schema cannot (e.g., approval requirements), but tool name, description, and parameters are fully duplicated, wasting tokens on every call -- see BACKLOG.md.
 
@@ -698,7 +727,27 @@ ToolExecutor.execute(tool_call_id)
 
 The `ToolCall` database record is the source of truth. `Question` and `Approval` records link back to it via `tool_call_id`.
 
-### 8.7 Orchestrator
+**Skill-based access control:** When a tool call comes from an agent with active skills, the executor also checks whether the tool is allowed by any of the agent's skills (via `_is_tool_allowed_via_skill()`). This extends the agent's tool access beyond its static YAML `mcps` configuration.
+
+### 8.7 Skills System
+
+Skills are reusable prompt/instruction packages stored as Markdown files in `druppie/skills/<skill-name>/SKILL.md`. Each skill has YAML frontmatter (`name`, `description`, `allowed-tools`) and a Markdown body with instructions.
+
+**Architecture:**
+- **`druppie/services/skill_service.py`** — `SkillService` loads skills from the filesystem, parses YAML frontmatter, and returns `SkillDetail` domain objects.
+- **`druppie/domain/skill.py`** — `SkillSummary` and `SkillDetail` Pydantic models.
+- **`druppie/agents/builtin_tools.py`** — `invoke_skill` builtin tool definition and handler.
+- **`druppie/agents/loop.py`** — `_prepare_tools()` enriches the `invoke_skill` tool description with available skills, `_add_skill_tools()` dynamically adds skill tools to the agent's tool set.
+
+**Flow:**
+1. Agent YAML defines `skills: [code-review, git-workflow]`.
+2. At tool preparation time, `invoke_skill`'s description is enriched with the list of available skills and their descriptions.
+3. When the LLM calls `invoke_skill(skill_name="code-review")`:
+   - The skill is loaded and its `allowed_tools` are added to the agent's tool set for subsequent LLM calls.
+   - The skill's Markdown body is returned as the tool result (instructions for the LLM).
+4. `ToolExecutor` checks `_is_tool_allowed_via_skill()` to permit tools granted by active skills.
+
+### 8.8 Orchestrator
 
 `druppie/execution/orchestrator.py` is the main entry point for processing user messages. The flow:
 
@@ -728,7 +777,7 @@ Key resume methods:
 
 Both methods reconstruct agent state from the database (LLM call history, tool call results) so the agent can continue where it left off.
 
-### 8.8 Pause and Resume
+### 8.9 Pause and Resume
 
 When an agent encounters a tool that requires approval or a HITL question:
 

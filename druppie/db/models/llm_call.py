@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -33,6 +33,7 @@ class LlmCall(Base):
 
     # Relationships
     tool_calls = relationship("ToolCall", back_populates="llm_call", order_by="ToolCall.tool_call_index")
+    retries = relationship("LlmRetry", back_populates="llm_call", order_by="LlmRetry.attempt")
 
     def to_dict(self) -> dict[str, Any]:
         return {

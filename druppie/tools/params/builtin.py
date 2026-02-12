@@ -50,3 +50,7 @@ class MakePlanParams(BaseModel):
 
 class CreateMessageParams(BaseModel):
     content: str = Field(description="The message content to display to the user")
+
+
+class InvokeSkillParams(BaseModel):
+    skill_name: str = Field(description="The name of the skill to invoke (e.g., 'code-review', 'git-workflow')")
