@@ -10,10 +10,13 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { getSession, sendChat, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
+import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
+import DebugEventLog from './DebugEventLog'
+import AnnotationBar from './AnnotationBar'
 import {
   chatMarkdownComponents,
   CopyJsonButton,
@@ -53,6 +56,7 @@ const InlineApproval = ({ tc, sessionId }) => {
     queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
     queryClient.invalidateQueries({ queryKey: ['tasks'] })
     queryClient.invalidateQueries({ queryKey: ['approvalHistory'] })
+    queryClient.invalidateQueries({ queryKey: ['pending-approvals-count'] })
   }
 
   const approveMut = useMutation({
@@ -250,12 +254,16 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
     }
   }
 
+  const allowOther = tc.tool_name === 'hitl_ask_multiple_choice_question'
+    && tc.arguments?.allow_other !== false
+
   const questionData = {
     id: tc.question_id,
     agent_id: agentId,
     question: tc.arguments?.question || 'Agent is asking a question',
     choices,
     context: tc.arguments?.context,
+    allowOther,
   }
 
   return (
@@ -283,8 +291,27 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
   const resolvedItems = hasFollowingMessage ? [] : extractSurfacedApprovals(run.llm_calls)
     .filter((item) => item.tc.approval.status !== 'pending')
 
+  // Show agent trace for completed runs that have no following message
+  const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
+
+  if (!showAgentTrace && resolvedItems.length === 0) return null
+
+  const config = getAgentConfig(run.agent_id)
+  const AgentIcon = config.icon
+  const colors = getAgentMessageColors(config.color)
+
   return (
     <div data-type="agent-run" data-timeline-idx={timelineIndex}>
+      {showAgentTrace && (
+        <div className="group">
+          <div className="flex items-center gap-2">
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${colors.bg} border ${colors.border}`}>
+              <AgentIcon className={`w-3.5 h-3.5 ${colors.accent}`} />
+            </div>
+            <span className={`text-sm font-medium ${colors.accent}`}>{config.name}</span>
+          </div>
+        </div>
+      )}
       {resolvedItems.length > 0 && (
         <div className="mt-2 space-y-3">
           {resolvedItems.map((item, i) => (
@@ -372,13 +399,30 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
 
 // --- Main SessionDetail ---
 
-const SessionDetail = ({ sessionId }) => {
+const VALID_VIEW_MODES = new Set(['chat', 'annotated', 'inspect'])
+const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'waiting_approval', 'waiting_answer'])
+
+const SessionDetail = ({ sessionId, initialViewMode }) => {
   const timelineEndRef = useRef(null)
   const timelineRef = useRef(null)
   const prevLengthRef = useRef(0)
   const inputRef = useRef(null)
   const [continueInput, setContinueInput] = useState('')
+  const scrollPositions = useRef({ chat: 0, annotated: 0 })
+  const [viewMode, _setViewMode] = useState(() => {
+    if (initialViewMode && VALID_VIEW_MODES.has(initialViewMode)) return initialViewMode
+    return 'chat'
+  })
+  const setViewMode = (newMode) => {
+    // Save current scroll position before switching
+    if (viewMode !== 'inspect' && timelineRef.current) {
+      scrollPositions.current[viewMode] = timelineRef.current.scrollTop
+    }
+    _setViewMode(newMode)
+  }
   const queryClient = useQueryClient()
+  const { user } = useAuth()
+  const canDebug = user?.roles?.some(r => r === 'developer' || r === 'admin')
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['session', sessionId],
@@ -400,6 +444,15 @@ const SessionDetail = ({ sessionId }) => {
     },
   })
 
+  // When session has pending approvals, keep the tasks/badge cache fresh
+  useEffect(() => {
+    const status = data?.status
+    if (status === 'paused_approval' || status === 'waiting_approval') {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      queryClient.invalidateQueries({ queryKey: ['pending-approvals-count'] })
+    }
+  }, [data?.status, queryClient])
+
   useEffect(() => {
     const currentLength = data?.timeline?.length || 0
     if (currentLength > prevLengthRef.current) {
@@ -407,6 +460,20 @@ const SessionDetail = ({ sessionId }) => {
     }
     prevLengthRef.current = currentLength
   }, [data?.timeline?.length])
+
+  // Restore scroll position when switching back to chat/annotated
+  useEffect(() => {
+    if (viewMode !== 'inspect' && timelineRef.current) {
+      const saved = scrollPositions.current[viewMode]
+      if (saved != null) {
+        requestAnimationFrame(() => {
+          if (timelineRef.current) {
+            timelineRef.current.scrollTop = saved
+          }
+        })
+      }
+    }
+  }, [viewMode])
 
   useEffect(() => {
     if (inputRef.current) {
@@ -473,13 +540,16 @@ const SessionDetail = ({ sessionId }) => {
 
   const statusDotColor = {
     completed: 'bg-green-500',
+    active: 'bg-blue-500 animate-pulse',
     running: 'bg-blue-500 animate-pulse',
     failed: 'bg-red-500',
+    cancelled: 'bg-gray-400',
     pending: 'bg-gray-400',
-    paused_hitl: 'bg-blue-500',
-    paused_tool: 'bg-blue-500',
-    waiting_approval: 'bg-blue-500 animate-pulse',
-    waiting_answer: 'bg-blue-500 animate-pulse',
+    paused_hitl: 'bg-amber-500 animate-pulse',
+    paused_tool: 'bg-amber-500 animate-pulse',
+    paused_approval: 'bg-amber-500 animate-pulse',
+    waiting_approval: 'bg-amber-500 animate-pulse',
+    waiting_answer: 'bg-amber-500 animate-pulse',
   }[data.status] || 'bg-gray-400'
 
   return (
@@ -491,7 +561,24 @@ const SessionDetail = ({ sessionId }) => {
           <h2 className="text-sm font-medium text-gray-900 truncate">
             {data.title || 'Untitled Session'}
           </h2>
-          <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+          <div className="ml-auto flex items-center gap-3 flex-shrink-0">
+            {canDebug && (
+              <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-xs">
+                {['chat', 'annotated', 'inspect'].map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setViewMode(mode)}
+                    className={`px-2 py-1 rounded transition-colors capitalize ${
+                      viewMode === mode
+                        ? 'bg-white shadow-sm text-gray-900 font-medium'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {mode === 'inspect' ? 'Inspect' : mode === 'annotated' ? 'Annotated' : 'Chat'}
+                  </button>
+                ))}
+              </div>
+            )}
             {data.project_name && (
               <a
                 href={`/projects/${data.project_id}`}
@@ -508,146 +595,190 @@ const SessionDetail = ({ sessionId }) => {
         </div>
       </div>
 
-      {/* Workflow Pipeline */}
+      {/* Workflow Pipeline — quick-glance status bar for all modes */}
       <WorkflowPipeline timeline={data.timeline} />
 
-      {/* Timeline */}
-      <div ref={timelineRef} className="flex-1 overflow-y-auto overflow-x-hidden">
-        <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-        {(!data.timeline || data.timeline.length === 0) && (
-          <div className="text-center py-12 flex flex-col items-center gap-2">
-            <MessageSquare className="w-8 h-8 text-gray-300" />
-            <p className="text-gray-400 text-sm">No timeline entries yet</p>
-          </div>
-        )}
-        {(() => {
-          const messageRunMap = new Map()
-          const runsWithMessages = new Set()
-          if (data.timeline) {
-            let lastRun = null
-            let lastRunIdx = null
-            let lastMsgIdx = null
-            for (let idx = 0; idx < data.timeline.length; idx++) {
-              const e = data.timeline[idx]
-              if (e.type === 'agent_run' && e.agent_run) {
-                if (lastRun && lastMsgIdx !== null) {
-                  messageRunMap.set(lastMsgIdx, lastRun)
-                  runsWithMessages.add(lastRunIdx)
-                }
-                lastRun = e.agent_run
-                lastRunIdx = idx
-                lastMsgIdx = null
-              } else if (
-                e.type === 'message' &&
-                e.message?.role !== 'user' &&
-                lastRun
-              ) {
-                lastMsgIdx = idx
-              }
-            }
-            if (lastRun && lastMsgIdx !== null) {
-              messageRunMap.set(lastMsgIdx, lastRun)
-              runsWithMessages.add(lastRunIdx)
-            }
-          }
-
-          return data.timeline?.map((entry, i) => {
-            // Messages always render
-            if (entry.type === 'message' && entry.message) {
-              return (
-                <div key={i}>
-                  <MessageItem
-                    message={entry.message}
-                    agentRun={messageRunMap.get(i)}
-                    sessionId={sessionId}
-                  />
-                </div>
-              )
-            }
-
-            // Agent runs: only render if they have visible content
-            if (entry.type === 'agent_run' && entry.agent_run) {
-              const questions = extractQuestions(entry.agent_run)
-              const resolvedItems = runsWithMessages.has(i) ? []
-                : extractSurfacedApprovals(entry.agent_run.llm_calls)
-                    .filter((item) => item.tc.approval.status !== 'pending')
-              if (resolvedItems.length === 0 && questions.length === 0) {
-                return null
-              }
-              return (
-                <div key={i}>
-                  <AgentRunItem
-                    run={entry.agent_run}
-                    timelineIndex={i}
-                    sessionId={sessionId}
-                    hasFollowingMessage={runsWithMessages.has(i)}
-                  />
-                  {questions.map((q, qi) => (
-                    <div key={qi} className="mt-3">
-                      <TimelineQuestion tc={q.tc} agentId={q.agentId} sessionId={sessionId} />
-                    </div>
-                  ))}
-                </div>
-              )
-            }
-
-            return null
-          })
-        })()}
-        {/* Trailing thinking indicator */}
-        {(() => {
-          const runningEntry = data.timeline?.findLast(
-            (e) => e.type === 'agent_run' && e.agent_run?.status === 'running'
-          )
-          if (!runningEntry) return null
-          const run = runningEntry.agent_run
-          const config = getAgentConfig(run.agent_id)
-          const AgentIcon = config.icon
-          const colors = getAgentMessageColors(config.color)
-          return (
-            <div>
-              <div className="flex items-center gap-2 mb-1.5">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${colors.bg} border ${colors.border}`}>
-                  <AgentIcon className={`w-3.5 h-3.5 ${colors.accent}`} />
-                </div>
-                <span className={`text-sm font-medium ${colors.accent}`}>{config.name}</span>
-              </div>
-              <div className="pl-8 flex items-center gap-1.5 py-1">
-                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
-                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
-                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
-              </div>
+      {/* Content area: Chat/Annotated timeline or Inspect event log */}
+      {viewMode === 'inspect' ? (
+        <DebugEventLog data={data} sessionId={sessionId} />
+      ) : (
+        <div ref={timelineRef} className="flex-1 overflow-y-auto overflow-x-hidden">
+          <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+          {(!data.timeline || data.timeline.length === 0) && (
+            <div className="text-center py-12 flex flex-col items-center gap-2">
+              <MessageSquare className="w-8 h-8 text-gray-300" />
+              <p className="text-gray-400 text-sm">No timeline entries yet</p>
             </div>
-          )
-        })()}
-        {/* Pending approvals */}
-        {(() => {
-          const pending = []
-          data.timeline?.forEach((entry) => {
-            if (entry.type !== 'agent_run' || !entry.agent_run) return
-            entry.agent_run.llm_calls?.forEach((llm) => {
-              llm.tool_calls?.forEach((tc) => {
-                if (tc.approval?.status === 'pending') {
-                  pending.push(tc)
+          )}
+          {(() => {
+            // messageRunMap: pairs each agent's last non-user message with its run
+            // (used for surfaced approvals in chat bubbles)
+            const messageRunMap = new Map()
+            const runsWithMessages = new Set()
+            // annotationMap: places each agent's AnnotationBar after the last
+            // timeline entry (any message role) before the next agent_run starts
+            const annotationMap = new Map()
+            if (data.timeline) {
+              let lastRun = null
+              let lastRunIdx = null
+              let lastMsgIdx = null
+              // For annotation placement
+              let annotCurrentRun = null
+              let annotCurrentRunIdx = null
+              let annotLastEntryIdx = null
+              for (let idx = 0; idx < data.timeline.length; idx++) {
+                const e = data.timeline[idx]
+                if (e.type === 'agent_run' && e.agent_run) {
+                  // messageRunMap logic (non-user messages only)
+                  if (lastRun && lastMsgIdx !== null) {
+                    messageRunMap.set(lastMsgIdx, lastRun)
+                    runsWithMessages.add(lastRunIdx)
+                  }
+                  lastRun = e.agent_run
+                  lastRunIdx = idx
+                  lastMsgIdx = null
+                  // annotationMap logic (all messages)
+                  if (annotCurrentRun) {
+                    annotationMap.set(annotLastEntryIdx ?? annotCurrentRunIdx, annotCurrentRun)
+                  }
+                  annotCurrentRun = e.agent_run
+                  annotCurrentRunIdx = idx
+                  annotLastEntryIdx = null
+                } else if (e.type === 'message') {
+                  if (e.message?.role !== 'user' && lastRun) {
+                    lastMsgIdx = idx
+                  }
+                  annotLastEntryIdx = idx
                 }
+              }
+              if (lastRun && lastMsgIdx !== null) {
+                messageRunMap.set(lastMsgIdx, lastRun)
+                runsWithMessages.add(lastRunIdx)
+              }
+              if (annotCurrentRun) {
+                annotationMap.set(annotLastEntryIdx ?? annotCurrentRunIdx, annotCurrentRun)
+              }
+            }
+
+            const renderAnnotation = (i) => {
+              if (viewMode !== 'annotated') return null
+              const run = annotationMap.get(i)
+              if (!run) return null
+              return (
+                <div className="pl-8 mt-1">
+                  <AnnotationBar run={run} />
+                </div>
+              )
+            }
+
+            return data.timeline?.map((entry, i) => {
+              // Messages always render
+              if (entry.type === 'message' && entry.message) {
+                return (
+                  <div key={i}>
+                    <MessageItem
+                      message={entry.message}
+                      agentRun={messageRunMap.get(i)}
+                      sessionId={sessionId}
+                    />
+                    {renderAnnotation(i)}
+                  </div>
+                )
+              }
+
+              // Agent runs: render if they have visible content or completed without a message
+              if (entry.type === 'agent_run' && entry.agent_run) {
+                // Skip pending agents that haven't started yet — they show in the workflow bar
+                if (!STARTED_STATUSES.has(entry.agent_run.status)) return null
+
+                const questions = extractQuestions(entry.agent_run)
+                const hasFollowingMessage = runsWithMessages.has(i)
+                const resolvedItems = hasFollowingMessage ? []
+                  : extractSurfacedApprovals(entry.agent_run.llm_calls)
+                      .filter((item) => item.tc.approval.status !== 'pending')
+                // Show completed runs without a following message (e.g. architect)
+                const isCompletedWithoutMessage = !hasFollowingMessage && entry.agent_run.status !== 'running'
+                if (resolvedItems.length === 0 && questions.length === 0 && !isCompletedWithoutMessage) {
+                  return null
+                }
+                return (
+                  <div key={i}>
+                    <AgentRunItem
+                      run={entry.agent_run}
+                      timelineIndex={i}
+                      sessionId={sessionId}
+                      hasFollowingMessage={runsWithMessages.has(i)}
+                    />
+                    {questions.map((q, qi) => (
+                      <div key={qi} className="mt-3">
+                        <TimelineQuestion tc={q.tc} agentId={q.agentId} sessionId={sessionId} />
+                      </div>
+                    ))}
+                    {renderAnnotation(i)}
+                  </div>
+                )
+              }
+
+              return null
+            })
+          })()}
+          {/* Trailing thinking indicator */}
+          {(() => {
+            // Don't show thinking indicator if session itself has ended
+            if (data.status === 'failed' || data.status === 'completed' || data.status === 'cancelled') return null
+            const runningEntry = data.timeline?.findLast(
+              (e) => e.type === 'agent_run' && e.agent_run?.status === 'running'
+            )
+            if (!runningEntry) return null
+            const run = runningEntry.agent_run
+            const config = getAgentConfig(run.agent_id)
+            const AgentIcon = config.icon
+            const colors = getAgentMessageColors(config.color)
+            return (
+              <div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${colors.bg} border ${colors.border}`}>
+                    <AgentIcon className={`w-3.5 h-3.5 ${colors.accent}`} />
+                  </div>
+                  <span className={`text-sm font-medium ${colors.accent}`}>{config.name}</span>
+                </div>
+                <div className="pl-8 flex items-center gap-1.5 py-1">
+                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
+                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
+                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
+                </div>
+              </div>
+            )
+          })()}
+          {/* Pending approvals */}
+          {(() => {
+            const pending = []
+            data.timeline?.forEach((entry) => {
+              if (entry.type !== 'agent_run' || !entry.agent_run) return
+              entry.agent_run.llm_calls?.forEach((llm) => {
+                llm.tool_calls?.forEach((tc) => {
+                  if (tc.approval?.status === 'pending') {
+                    pending.push(tc)
+                  }
+                })
               })
             })
-          })
-          if (pending.length === 0) return null
-          return (
-            <div className="space-y-3">
-              {pending.map((tc, i) => (
-                <InlineApproval key={tc.approval.id || i} tc={tc} sessionId={sessionId} />
-              ))}
-            </div>
-          )
-        })()}
-        <div ref={timelineEndRef} />
+            if (pending.length === 0) return null
+            return (
+              <div className="space-y-3">
+                {pending.map((tc, i) => (
+                  <InlineApproval key={tc.approval.id || i} tc={tc} sessionId={sessionId} />
+                ))}
+              </div>
+            )
+          })()}
+          <div ref={timelineEndRef} />
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Floating input bar */}
-      {data.status !== 'failed' && (
+      {/* Floating input bar — hidden in inspect mode */}
+      {data.status !== 'failed' && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
           <div className="max-w-3xl mx-auto">
             <div className="flex items-end gap-2 border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">

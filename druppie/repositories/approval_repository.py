@@ -65,24 +65,32 @@ class ApprovalRepository(BaseRepository):
         """Get raw approval model."""
         return self.db.query(Approval).filter_by(id=approval_id).first()
 
-    def get_pending_for_roles(self, roles: list[str]) -> PendingApprovalList:
-        """Get pending approvals that the user's roles can approve."""
-        approvals = (
+    def get_pending_for_roles(self, roles: list[str] | None) -> PendingApprovalList:
+        """Get pending approvals that the user's roles can approve.
+
+        Args:
+            roles: List of roles to filter by, or None to return all pending.
+        """
+        query = (
             self.db.query(Approval)
             .filter(Approval.status == ApprovalStatus.PENDING.value)
-            .filter(Approval.required_role.in_(roles))
-            .order_by(Approval.created_at.desc())
-            .all()
         )
+        if roles is not None:
+            query = query.filter(Approval.required_role.in_(roles))
+        approvals = query.order_by(Approval.created_at.desc()).all()
         return PendingApprovalList(
             items=[self._to_detail(a) for a in approvals],
             total=len(approvals),
         )
 
     def get_resolved_for_roles(
-        self, roles: list[str], page: int = 1, limit: int = 20
+        self, roles: list[str] | None, page: int = 1, limit: int = 20
     ) -> ApprovalHistoryList:
-        """Get resolved approvals (approved/rejected) filtered by roles, paginated."""
+        """Get resolved approvals (approved/rejected) filtered by roles, paginated.
+
+        Args:
+            roles: List of roles to filter by, or None to return all resolved.
+        """
         base_query = (
             self.db.query(Approval)
             .filter(
@@ -91,8 +99,9 @@ class ApprovalRepository(BaseRepository):
                     ApprovalStatus.REJECTED.value,
                 ])
             )
-            .filter(Approval.required_role.in_(roles))
         )
+        if roles is not None:
+            base_query = base_query.filter(Approval.required_role.in_(roles))
 
         total = base_query.count()
 
@@ -141,9 +150,13 @@ class ApprovalRepository(BaseRepository):
             session_id=approval.session_id,
             agent_run_id=approval.agent_run_id,
             tool_call_id=approval.tool_call_id,
+            approval_type=approval.approval_type or "tool_call",
             mcp_server=approval.mcp_server or "",
             tool_name=approval.tool_name or "",
             arguments=approval.arguments or {},
+            title=approval.title,
+            description=approval.description,
+            danger_level=approval.danger_level,
             agent_id=approval.agent_id,
             rejection_reason=approval.rejection_reason,
             created_at=approval.created_at,
