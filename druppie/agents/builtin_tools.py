@@ -57,7 +57,7 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "hitl_ask_multiple_choice_question",
-            "description": "Ask the user a multiple choice question. Use this when you want the user to select from predefined options. Can optionally allow a custom 'Other' answer.",
+            "description": "Ask the user a multiple choice question. Use this when you want the user to select from predefined options. Supports single-select (default) and multi-select modes. Can optionally allow a custom 'Other' answer.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -73,6 +73,10 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     "allow_other": {
                         "type": "boolean",
                         "description": "Whether to allow a custom 'Other' answer (default: true)",
+                    },
+                    "allow_multiple": {
+                        "type": "boolean",
+                        "description": "Whether to allow selecting multiple choices (default: false). When true, the user can select several options and confirm.",
                     },
                     "context": {
                         "type": "string",

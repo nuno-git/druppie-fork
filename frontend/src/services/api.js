@@ -90,6 +90,13 @@ export const resumeSession = (sessionId, answer = null) =>
     body: JSON.stringify({ answer }),
   })
 
+// Retry session from a specific agent run
+export const retrySession = (sessionId, fromRunId) =>
+  request(`/api/sessions/${sessionId}/retry`, {
+    method: 'POST',
+    body: JSON.stringify({ from_run_id: fromRunId }),
+  })
+
 // Legacy aliases (use getSession instead - it returns everything)
 export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}`)
 export const getPlans = (page = 1, limit = 20) => request(`/api/sessions?page=${page}&limit=${limit}`)
@@ -147,10 +154,13 @@ export const checkMCPPermission = (tool) =>
 export const getQuestions = (sessionId = null) =>
   request(`/api/questions${sessionId ? `?session_id=${sessionId}` : ''}`)
 export const getQuestion = (questionId) => request(`/api/questions/${questionId}`)
-export const answerQuestion = (questionId, answer) =>
+export const answerQuestion = (questionId, answer, selectedChoices = null) =>
   request(`/api/questions/${questionId}/answer`, {
     method: 'POST',
-    body: JSON.stringify({ answer }),
+    body: JSON.stringify({
+      answer,
+      ...(selectedChoices != null && { selected_choices: selectedChoices }),
+    }),
   })
 export const cancelQuestion = (questionId) =>
   request(`/api/questions/${questionId}/cancel`, { method: 'POST' })

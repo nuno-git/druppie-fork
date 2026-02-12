@@ -4,11 +4,11 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, RotateCcw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
+import { getSession, sendChat, approveApproval, rejectApproval, answerQuestion, retrySession } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
@@ -370,6 +370,61 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
   )
 }
 
+// --- Failed session retry banner ---
+
+const FailedRetryBanner = ({ sessionId, timeline }) => {
+  const queryClient = useQueryClient()
+
+  // Find the first failed run to retry from
+  const firstFailedRun = timeline
+    ?.filter((e) => e.type === 'agent_run' && e.agent_run)
+    .map((e) => e.agent_run)
+    .find((r) => r.status === 'failed')
+
+  // Fall back to the last run if no explicit failure found
+  const lastRun = timeline
+    ?.filter((e) => e.type === 'agent_run' && e.agent_run)
+    .map((e) => e.agent_run)
+    .at(-1)
+
+  const retryRunId = firstFailedRun?.id || lastRun?.id
+
+  const retryMutation = useMutation({
+    mutationFn: () => retrySession(sessionId, retryRunId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+
+  if (!retryRunId) return null
+
+  return (
+    <div className="px-4 pb-4 pt-2 flex-shrink-0">
+      <div className="max-w-3xl mx-auto bg-red-50 border border-red-200 rounded-2xl px-4 py-3 flex items-center justify-between">
+        <span className="text-sm text-red-700">Session failed</span>
+        <button
+          onClick={() => retryMutation.mutate()}
+          disabled={retryMutation.isPending}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+        >
+          {retryMutation.isPending ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <RotateCcw className="w-3.5 h-3.5" />
+          )}
+          Retry
+        </button>
+      </div>
+      {retryMutation.isError && (
+        <p className="mt-2 text-xs text-red-600 text-center">
+          {retryMutation.error.message}
+        </p>
+      )}
+    </div>
+  )
+}
+
 // --- Main SessionDetail ---
 
 const SessionDetail = ({ sessionId }) => {
@@ -509,7 +564,7 @@ const SessionDetail = ({ sessionId }) => {
       </div>
 
       {/* Workflow Pipeline */}
-      <WorkflowPipeline timeline={data.timeline} />
+      <WorkflowPipeline timeline={data.timeline} sessionId={sessionId} sessionStatus={data.status} />
 
       {/* Timeline */}
       <div ref={timelineRef} className="flex-1 overflow-y-auto overflow-x-hidden">
@@ -645,6 +700,11 @@ const SessionDetail = ({ sessionId }) => {
         <div ref={timelineEndRef} />
         </div>
       </div>
+
+      {/* Failed session retry banner */}
+      {data.status === 'failed' && (
+        <FailedRetryBanner sessionId={sessionId} timeline={data.timeline} />
+      )}
 
       {/* Floating input bar */}
       {data.status !== 'failed' && (

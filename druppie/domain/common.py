@@ -28,6 +28,7 @@ class AgentRunStatus(str, Enum):
     PAUSED_HITL = "paused_hitl"  # Waiting for user answer
     COMPLETED = "completed"
     FAILED = "failed"
+    SUPERSEDED = "superseded"  # Replaced by a retry
 
 
 class ToolCallStatus(str, Enum):

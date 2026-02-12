@@ -15,7 +15,10 @@ Services handle:
 This file went from 776 lines to ~80 lines by moving logic to services/repositories.
 """
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from uuid import UUID
 import structlog
 
@@ -23,10 +26,13 @@ from druppie.api.deps import (
     get_current_user,
     get_user_roles,
     get_session_service,
+    get_session_repository,
 )
 from druppie.api.errors import NotFoundError, AuthorizationError
 from druppie.services import SessionService
+from druppie.repositories import SessionRepository
 from druppie.domain import SessionDetail, SessionSummary
+from druppie.domain.common import SessionStatus
 
 logger = structlog.get_logger()
 
@@ -157,3 +163,107 @@ async def delete_session(
 
     logger.info("session_deleted", session_id=str(session_id), user_id=str(user_id))
     return {"success": True, "message": "Session deleted"}
+
+
+# =============================================================================
+# RETRY
+# =============================================================================
+
+
+class RetryRequest(BaseModel):
+    """Request body for session retry."""
+    from_run_id: str = Field(..., description="Agent run ID to retry from")
+
+
+async def _retry_session_background(session_id: UUID, from_run_id: UUID) -> None:
+    """Run retry in background with its own DB session."""
+    from druppie.db.database import SessionLocal
+    from druppie.repositories import (
+        SessionRepository,
+        ExecutionRepository,
+        ProjectRepository,
+        QuestionRepository,
+    )
+    from druppie.execution import Orchestrator
+
+    db = SessionLocal()
+    try:
+        orchestrator = Orchestrator(
+            session_repo=SessionRepository(db),
+            execution_repo=ExecutionRepository(db),
+            project_repo=ProjectRepository(db),
+            question_repo=QuestionRepository(db),
+        )
+        await orchestrator.retry_from_run(session_id, from_run_id)
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        logger.error(
+            "retry_session_background_error",
+            session_id=str(session_id),
+            error=error_msg,
+            exc_info=True,
+        )
+        try:
+            sr = SessionRepository(db)
+            sr.update_status(session_id, SessionStatus.FAILED, error_message=error_msg[:2000])
+            db.commit()
+        except Exception:
+            logger.error("failed_to_update_session_status_on_retry", session_id=str(session_id))
+    finally:
+        db.close()
+
+
+@router.post("/sessions/{session_id}/retry")
+async def retry_session(
+    session_id: UUID,
+    body: RetryRequest,
+    session_repo: SessionRepository = Depends(get_session_repository),
+    user: dict = Depends(get_current_user),
+):
+    """Retry a session from a specific agent run onwards.
+
+    Marks the target run and all subsequent runs as SUPERSEDED,
+    creates new PENDING copies, and re-executes in the background.
+
+    The session must not be currently ACTIVE (to prevent double-run).
+    """
+    from druppie.db.models import AgentRun
+
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+    from_run_id = UUID(body.from_run_id)
+
+    # Validate session exists and user has access
+    session = session_repo.get_by_id(session_id)
+    if not session:
+        raise NotFoundError("Session not found")
+    if str(session.user_id) != str(user_id) and "admin" not in user_roles:
+        raise AuthorizationError("Not authorized to retry this session")
+
+    # Prevent double-run
+    if session.status == SessionStatus.ACTIVE.value:
+        return {"success": False, "message": "Session is already active"}
+
+    # Validate from_run_id belongs to this session and is top-level
+    agent_run = session_repo.db.query(AgentRun).filter_by(id=from_run_id).first()
+    if not agent_run or str(agent_run.session_id) != str(session_id):
+        return {"success": False, "message": "Agent run not found in this session"}
+    if agent_run.parent_run_id is not None:
+        return {"success": False, "message": "Can only retry from top-level agent runs"}
+
+    logger.info(
+        "retry_session_requested",
+        session_id=str(session_id),
+        from_run_id=str(from_run_id),
+        user_id=str(user_id),
+    )
+
+    # Fire and forget
+    asyncio.create_task(_retry_session_background(session_id, from_run_id))
+
+    return {
+        "success": True,
+        "session_id": str(session_id),
+        "status": "active",
+        "message": "Retry started",
+    }

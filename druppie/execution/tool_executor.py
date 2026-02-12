@@ -642,7 +642,8 @@ class ToolExecutor:
 
         # Determine question type from tool name
         if tool_call.tool_name == "hitl_ask_multiple_choice_question":
-            question_type = "choice"
+            allow_multiple = args.get("allow_multiple", False)
+            question_type = "multiple_choice" if allow_multiple else "single_choice"
             choices = [{"text": c} for c in args.get("choices", [])]
         else:
             question_type = "text"

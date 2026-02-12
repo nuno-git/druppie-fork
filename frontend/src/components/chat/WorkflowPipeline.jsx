@@ -8,8 +8,10 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Check, Loader2, Circle, Pause, ChevronDown, ChevronUp } from 'lucide-react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Check, Loader2, Circle, Pause, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react'
 import { getAgentConfig, getAgentColorClasses, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
+import { retrySession } from '../../services/api'
 
 const WAITING_STATUSES = new Set([
   'paused_hitl',
@@ -18,7 +20,7 @@ const WAITING_STATUSES = new Set([
   'waiting_answer',
 ])
 
-const WorkflowPipeline = ({ timeline }) => {
+const WorkflowPipeline = ({ timeline, sessionId, sessionStatus }) => {
   const [expandedRunId, setExpandedRunId] = useState(null)
   const pillRefs = useRef({})
   const scrollContainerRef = useRef(null)
@@ -31,9 +33,9 @@ const WorkflowPipeline = ({ timeline }) => {
 
   if (!timeline) return null
 
-  // Extract agent runs from timeline
+  // Extract agent runs from timeline (exclude superseded - defensive, backend already filters)
   const agentRuns = timeline
-    .filter((e) => e.type === 'agent_run' && e.agent_run)
+    .filter((e) => e.type === 'agent_run' && e.agent_run && e.agent_run.status !== 'superseded')
     .map((e) => e.agent_run)
 
   // Only show when 2+ agent runs
@@ -100,7 +102,7 @@ const WorkflowPipeline = ({ timeline }) => {
 
       {/* Expanded LLM call details for selected agent */}
       {expandedRun && expandedRun.llm_calls?.length > 0 && (
-        <ExpandedRunDetails run={expandedRun} />
+        <ExpandedRunDetails run={expandedRun} sessionId={sessionId} sessionStatus={sessionStatus} />
       )}
     </div>
   )
@@ -122,11 +124,22 @@ const ActivePillScroller = ({ activeRunId, pillRefs }) => {
 
 // --- Expanded detail section for a single agent run ---
 
-const ExpandedRunDetails = ({ run }) => {
+const ExpandedRunDetails = ({ run, sessionId, sessionStatus }) => {
   const config = getAgentConfig(run.agent_id)
   const colors = getAgentMessageColors(config.color)
   const totalTokens = run.token_usage?.total_tokens || 0
   const llmCalls = run.llm_calls || []
+  const queryClient = useQueryClient()
+
+  const retryMutation = useMutation({
+    mutationFn: () => retrySession(sessionId, run.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+
+  const canRetry = sessionId && (sessionStatus === 'completed' || sessionStatus === 'failed')
 
   return (
     <div className={`px-4 py-3 border-t ${colors.bg} text-sm`}>
@@ -136,6 +149,20 @@ const ExpandedRunDetails = ({ run }) => {
           {llmCalls.length} LLM call{llmCalls.length !== 1 ? 's' : ''}
           {totalTokens > 0 ? ` · ${totalTokens.toLocaleString()} tokens` : ''}
         </span>
+        {canRetry && (
+          <button
+            onClick={() => retryMutation.mutate()}
+            disabled={retryMutation.isPending}
+            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded-md hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50 transition-colors"
+          >
+            {retryMutation.isPending ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <RotateCcw className="w-3 h-3" />
+            )}
+            Retry from here
+          </button>
+        )}
       </div>
       <div className="space-y-1 max-h-64 overflow-y-auto">
         {llmCalls.map((llm, i) => (

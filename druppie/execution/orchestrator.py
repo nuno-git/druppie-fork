@@ -247,6 +247,53 @@ class Orchestrator:
 
         return "\n".join(lines)
 
+    async def retry_from_run(self, session_id: UUID, from_run_id: UUID) -> None:
+        """Retry a session from a specific agent run onwards.
+
+        Marks the target run and all subsequent runs as SUPERSEDED,
+        creates new PENDING copies, resets session to ACTIVE, and
+        re-executes via execute_pending_runs().
+
+        Args:
+            session_id: Session UUID
+            from_run_id: The agent run to retry from
+        """
+        # Get the target run
+        target_run = self.execution_repo.get_by_id(from_run_id)
+        if not target_run:
+            raise ValueError(f"Agent run {from_run_id} not found")
+
+        # Get all top-level runs from this sequence number onwards
+        runs_to_supersede = self.execution_repo.get_runs_from_sequence(
+            session_id, target_run.sequence_number
+        )
+
+        logger.info(
+            "retry_from_run",
+            session_id=str(session_id),
+            from_run_id=str(from_run_id),
+            sequence_number=target_run.sequence_number,
+            runs_to_supersede=len(runs_to_supersede),
+        )
+
+        # Mark existing runs as SUPERSEDED and create new PENDING copies
+        for run in runs_to_supersede:
+            self.execution_repo.update_status(run.id, AgentRunStatus.SUPERSEDED)
+            self.execution_repo.create_agent_run(
+                session_id=session_id,
+                agent_id=run.agent_id,
+                status=AgentRunStatus.PENDING,
+                planned_prompt=run.planned_prompt,
+                sequence_number=run.sequence_number,
+            )
+
+        # Reset session to ACTIVE
+        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+        self.session_repo.commit()
+
+        # Execute the new pending runs
+        await self.execute_pending_runs(session_id)
+
     async def execute_pending_runs(self, session_id: UUID) -> None:
         """Execute all pending agent runs in sequence.
 

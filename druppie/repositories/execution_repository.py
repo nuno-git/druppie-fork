@@ -133,6 +133,24 @@ class ExecutionRepository(BaseRepository):
         )
         return self._to_summary(agent_run) if agent_run else None
 
+    def get_runs_from_sequence(self, session_id: UUID, min_sequence_number: int) -> list[AgentRunSummary]:
+        """Get all top-level runs with sequence_number >= min_sequence_number.
+
+        Used by retry logic to find runs that need to be superseded.
+        """
+        runs = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.parent_run_id.is_(None),
+                AgentRun.sequence_number >= min_sequence_number,
+                AgentRun.status != AgentRunStatus.SUPERSEDED.value,
+            )
+            .order_by(AgentRun.sequence_number)
+            .all()
+        )
+        return [self._to_summary(r) for r in runs]
+
     def get_completed_runs(self, session_id: UUID) -> list[AgentRunSummary]:
         """Get all completed agent runs for a session, ordered by completion time."""
         runs = (

@@ -28,6 +28,7 @@ class HitlAskMultipleChoiceQuestionParams(BaseModel):
     question: str = Field(description="The question to ask the user")
     choices: list[str] = Field(description="List of choices for the user to select from")
     allow_other: bool = Field(default=True, description="Whether to allow a custom 'Other' answer")
+    allow_multiple: bool = Field(default=False, description="Whether to allow selecting multiple choices")
     context: str | None = Field(default=None, description="Optional context explaining why this question is being asked")
 
 

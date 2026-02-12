@@ -217,10 +217,11 @@ class SessionRepository(BaseRepository):
                 ),
             ))
 
-        # Get agent runs (top-level only - parent_run_id is NULL)
+        # Get agent runs (top-level only - parent_run_id is NULL, exclude superseded)
         agent_runs = (
             self.db.query(AgentRun)
             .filter_by(session_id=session_id, parent_run_id=None)
+            .filter(AgentRun.status != AgentRunStatus.SUPERSEDED.value)
             .order_by(AgentRun.started_at)
             .all()
         )
