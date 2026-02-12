@@ -161,13 +161,8 @@ class Agent:
         language = self._extract_language(context)
 
         messages = [
-            {"role": "system", "content": self.prompt_builder.build_system_prompt(
-                language=language,
-                supports_native_tools=self.llm.supports_native_tools,
-            )},
-            {"role": "user", "content": self.prompt_builder.build_user_prompt(
-                prompt, context, language=language,
-            )},
+            {"role": "system", "content": self.prompt_builder.build_system_prompt(language)},
+            {"role": "user", "content": self.prompt_builder.build_user_prompt(prompt, context, language)},
         ]
 
         return await self.loop.run(
@@ -297,13 +292,8 @@ class Agent:
             language = self._extract_language(context)
 
             messages = [
-                {"role": "system", "content": self.prompt_builder.build_system_prompt(
-                    language=language,
-                    supports_native_tools=self.llm.supports_native_tools,
-                )},
-                {"role": "user", "content": self.prompt_builder.build_user_prompt(
-                    prompt, context, language=language,
-                )},
+                {"role": "system", "content": self.prompt_builder.build_system_prompt(language)},
+                {"role": "user", "content": self.prompt_builder.build_user_prompt(prompt, context, language)},
             ]
             return await self.loop.run(
                 messages=messages,
@@ -325,10 +315,7 @@ class Agent:
 
         # Update the system prompt with the current language
         if messages and messages[0].get("role") == "system":
-            messages[0]["content"] = self.prompt_builder.build_system_prompt(
-                language=language,
-                supports_native_tools=self.llm.supports_native_tools,
-            )
+            messages[0]["content"] = self.prompt_builder.build_system_prompt(language)
 
         # Add language reminder after tool responses to reinforce consistency
         if messages and messages[-1].get("role") == "tool":
