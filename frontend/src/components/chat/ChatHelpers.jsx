@@ -7,6 +7,7 @@ import { Copy, Check } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import CodeBlock from '../CodeBlock'
+import MermaidBlock from '../MermaidBlock'
 
 // --- Markdown components (code blocks with syntax highlighting + copy) ---
 
@@ -17,6 +18,9 @@ export const chatMarkdownComponents = {
   code({ className, children, ...props }) {
     const match = /language-(\w+)/.exec(className || '')
     const codeString = String(children).replace(/\n$/, '')
+    if (match?.[1] === 'mermaid') {
+      return <MermaidBlock code={codeString} />
+    }
     if (match || codeString.includes('\n')) {
       return (
         <CodeBlock
