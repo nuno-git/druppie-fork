@@ -22,6 +22,10 @@ import {
 
 import { getProjects, getDeployments, stopDeployment, deleteProject } from '../services/api'
 import { useToast } from '../components/Toast'
+import PageHeader from '../components/shared/PageHeader'
+import SharedCopyButton from '../components/shared/CopyButton'
+import { SkeletonProjectCard } from '../components/shared/Skeleton'
+import EmptyState from '../components/shared/EmptyState'
 
 const StatusBadge = ({ isRunning, hasRepo }) => {
   if (isRunning) {
@@ -50,33 +54,7 @@ const StatusBadge = ({ isRunning, hasRepo }) => {
   )
 }
 
-const CopyButton = ({ text, label }) => {
-  const [copied, setCopied] = useState(false)
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch (err) {
-      console.error('Failed to copy to clipboard:', err)
-    }
-  }
-
-  return (
-    <button
-      onClick={handleCopy}
-      className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
-      aria-label={copied ? `${label} copied` : `Copy ${label}`}
-    >
-      {copied ? (
-        <CheckCircle className="w-4 h-4 text-green-500" />
-      ) : (
-        <Copy className="w-4 h-4" />
-      )}
-    </button>
-  )
-}
+const CopyButton = SharedCopyButton
 
 const ProjectCard = ({ project, deployment, onDelete, isDeleting, onViewDetails, onStop, isStopping }) => {
   const repoUrl = project.repo_url
@@ -93,7 +71,7 @@ const ProjectCard = ({ project, deployment, onDelete, isDeleting, onViewDetails,
 
   return (
     <div
-      className={`p-4 rounded-xl border-2 transition-all relative group border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm ${isDeleting ? 'opacity-50 pointer-events-none' : ''}`}
+      className={`p-4 rounded-xl border border-gray-100 transition-all relative group bg-white hover:border-gray-200 hover:bg-gray-50/30 ${isDeleting ? 'opacity-50 pointer-events-none' : ''}`}
     >
       {/* Delete Button */}
       <button
@@ -125,10 +103,10 @@ const ProjectCard = ({ project, deployment, onDelete, isDeleting, onViewDetails,
 
       {/* Repo URL */}
       {repoUrl && (
-        <div className="mb-3 p-2 bg-gray-50 rounded-lg border border-gray-200">
+        <div className="mb-3 p-2 bg-gray-50/70 rounded-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center min-w-0 flex-1">
-              <GitBranch className="w-4 h-4 text-gray-500 mr-2 flex-shrink-0" />
+              <GitBranch className="w-4 h-4 text-gray-400 mr-2 flex-shrink-0" />
               <a
                 href={repoUrl}
                 target="_blank"
@@ -157,7 +135,7 @@ const ProjectCard = ({ project, deployment, onDelete, isDeleting, onViewDetails,
 
       {/* App URL if running */}
       {appUrl && (
-        <div className="mb-3 p-2 bg-green-50 rounded-lg border border-green-200">
+        <div className="mb-3 p-2 bg-green-50/70 rounded-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center min-w-0 flex-1">
               <Server className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
@@ -307,19 +285,14 @@ const Projects = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Projects</h1>
-          <p className="text-gray-500 mt-1">View your created projects and their repositories.</p>
-        </div>
-        <span className="text-sm text-gray-500">{projects.length} projects</span>
-      </div>
+      <PageHeader title="Projects" subtitle="View your created projects and their repositories.">
+        {!isLoading && <span className="text-sm text-gray-500">{projects.length} projects</span>}
+      </PageHeader>
 
       {/* Loading */}
       {isLoading && (
-        <div className="flex items-center justify-center h-64">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          <span className="ml-2 text-gray-600">Loading projects...</span>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => <SkeletonProjectCard key={i} />)}
         </div>
       )}
 
@@ -355,10 +328,14 @@ const Projects = () => {
           ))}
 
           {projects.length === 0 && (
-            <div className="col-span-full text-center py-16">
-              <Folder className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No projects yet</h3>
-              <p className="text-gray-500">Create a project in Chat to see it here.</p>
+            <div className="col-span-full">
+              <EmptyState
+                icon={Folder}
+                title="No projects yet"
+                description="Start a conversation in Chat to create your first project."
+                actionLabel="Go to Chat"
+                actionTo="/chat"
+              />
             </div>
           )}
         </div>
