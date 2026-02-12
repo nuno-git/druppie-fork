@@ -14,11 +14,12 @@ import {
   CheckSquare,
   FolderOpen,
   Settings,
-  Bug,
   Database,
   Shield,
   LogIn,
   LogOut,
+  Wrench,
+  Server,
 } from 'lucide-react'
 
 import { useAuth } from '../App'
@@ -64,74 +65,6 @@ const NavRailItem = ({ to, icon: Icon, label, badge, active, accent }) => {
       {showTooltip && (
         <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-2 py-1 bg-gray-800 text-white text-xs rounded whitespace-nowrap z-50 pointer-events-none shadow-lg">
           {label}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// --- Debug Flyout ---
-
-const DebugFlyout = ({ isDebugActive }) => {
-  const [open, setOpen] = useState(false)
-  const [showTooltip, setShowTooltip] = useState(false)
-  const ref = useRef(null)
-  const location = useLocation()
-
-  const debugItems = [
-    { path: '/debug-chat', icon: MessageSquare, label: 'Debug Chat' },
-    { path: '/debug-approvals', icon: Shield, label: 'Debug Approvals' },
-    { path: '/debug-mcp', icon: Database, label: 'Debug MCP' },
-    { path: '/debug-projects', icon: FolderOpen, label: 'Debug Projects' },
-  ]
-
-  const isActive = (path) => location.pathname === path || location.pathname.startsWith(path + '/')
-
-  useEffect(() => {
-    if (!open) return
-    const handleClick = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [open])
-
-  return (
-    <div className="relative flex justify-center" ref={ref}>
-      <button
-        onClick={() => { setOpen(!open); setShowTooltip(false) }}
-        onMouseEnter={() => !open && setShowTooltip(true)}
-        onMouseLeave={() => setShowTooltip(false)}
-        className={`relative w-10 h-10 flex items-center justify-center rounded-lg transition-colors ${
-          isDebugActive || open
-            ? 'bg-gray-700 text-orange-400 before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 before:w-[3px] before:h-5 before:rounded-r before:bg-orange-400'
-            : 'text-orange-400/70 hover:text-orange-400 hover:bg-gray-800'
-        }`}
-      >
-        <Bug className="w-5 h-5" />
-      </button>
-      {showTooltip && !open && (
-        <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-2 py-1 bg-gray-800 text-white text-xs rounded whitespace-nowrap z-50 pointer-events-none shadow-lg">
-          Debug
-        </div>
-      )}
-      {open && (
-        <div className="absolute left-full ml-2 top-0 bg-gray-800 border border-gray-700 rounded-lg shadow-xl py-1.5 min-w-[180px] z-50">
-          {debugItems.map(({ path, icon: Icon, label }) => (
-            <Link
-              key={path}
-              to={path}
-              onClick={() => setOpen(false)}
-              className={`flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
-                isActive(path)
-                  ? 'bg-orange-500/20 text-orange-300'
-                  : 'text-gray-300 hover:bg-gray-700 hover:text-white'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              {label}
-            </Link>
-          ))}
         </div>
       )}
     </div>
@@ -246,9 +179,6 @@ const NavRail = () => {
     return location.pathname === path || location.pathname.startsWith(path + '/')
   }
 
-  const debugPaths = ['/debug-chat', '/debug-approvals', '/debug-mcp', '/debug-projects']
-  const isDebugActive = debugPaths.some((p) => isActive(p))
-
   return (
     <nav className="w-12 flex-shrink-0 bg-gray-900 flex flex-col items-center py-3 gap-1">
       {/* Logo (decorative — Dashboard icon below handles navigation) */}
@@ -268,9 +198,10 @@ const NavRail = () => {
       />
       <NavRailItem to="/projects" icon={FolderOpen} label="Projects" active={isActive('/projects')} />
 
-      {/* Debug flyout */}
+      {/* Tools */}
       <div className="mt-1 pt-1 border-t border-gray-800 w-8" />
-      <DebugFlyout isDebugActive={isDebugActive} />
+      <NavRailItem to="/tools/mcp" icon={Wrench} label="MCP Tools" active={isActive('/tools/mcp')} />
+      <NavRailItem to="/tools/infrastructure" icon={Server} label="Infrastructure" active={isActive('/tools/infrastructure')} />
 
       {/* Admin */}
       {user?.roles?.includes('admin') && (

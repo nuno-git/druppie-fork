@@ -125,6 +125,7 @@ async def _resume_workflow_after_answer(
             exc_info=True,
         )
         try:
+            db.rollback()
             session_repo.update_status(
                 session_id,
                 SessionStatus.FAILED,
