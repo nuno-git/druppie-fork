@@ -208,7 +208,7 @@ class Agent:
 
         messages = [
             {"role": "system", "content": self._build_system_prompt(language=language)},
-            {"role": "user", "content": self._build_prompt(prompt, context)},
+            {"role": "user", "content": self._build_prompt(prompt, context, language=language)},
         ]
 
         return await self._run_loop(
@@ -387,7 +387,7 @@ class Agent:
 
             messages = [
                 {"role": "system", "content": self._build_system_prompt(language=language)},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": self._build_prompt(prompt, context, language=language)},
             ]
             return await self._run_loop(
                 messages=messages,
@@ -414,6 +414,18 @@ class Agent:
         # Update the system prompt with the current language
         if messages and messages[0].get("role") == "system":
             messages[0]["content"] = self._build_system_prompt(language=language)
+
+        # Add a language reminder as a user message to reinforce the instruction
+        # This helps when the conversation history contains mixed languages
+        language_names = {"nl": "DUTCH", "en": "ENGLISH"}
+        lang_name = language_names.get(language, language.upper())
+        language_reminder_msg = {
+            "role": "user",
+            "content": f"[SYSTEM REMINDER: Continue responding in {lang_name} ({language.upper()}) only. Your next response, including any questions, must be in {lang_name}.]",
+        }
+        # Find the last message and add reminder after it if it's a tool response
+        if messages and messages[-1].get("role") == "tool":
+            messages.append(language_reminder_msg)
 
         logger.info(
             "agent_continue_run",
@@ -868,7 +880,8 @@ This rule applies ONLY to markdown files. Your questions and responses to the us
             execution_repo: Execution repository for DB queries
 
         Returns:
-            Context dict with project info, or None if no project associated
+            Context dict with project info and always conversational_language,
+            or None if session not found
         """
         from druppie.db.models import Session as DBSession, Project
 
@@ -876,16 +889,11 @@ This rule applies ONLY to markdown files. Your questions and responses to the us
         execution_repo.db.expire_all()
 
         session = execution_repo.db.query(DBSession).filter(DBSession.id == original_session_id).first()
-        if not session or not session.project_id:
+        if not session:
             return None
 
-        project = execution_repo.db.query(Project).filter(Project.id == session.project_id).first()
-        if not project:
-            return None
-
+        # Always include conversational_language, even without a project
         context = {
-            "project_id": str(project.id),
-            "project_name": project.name,
             "session_id": str(original_session_id),
             "conversational_language": session.language or "nl",
         }
@@ -894,19 +902,26 @@ This rule applies ONLY to markdown files. Your questions and responses to the us
         if session.intent:
             context["intent"] = session.intent
 
-        # Add git repo info if available
-        if project.repo_name:
-            context["repo_name"] = project.repo_name
-        if project.repo_url:
-            context["repo_url"] = project.repo_url
-        if hasattr(project, 'repo_owner') and project.repo_owner:
-            context["repo_owner"] = project.repo_owner
+        # If there's a project, add project-specific context
+        if session.project_id:
+            project = execution_repo.db.query(Project).filter(Project.id == session.project_id).first()
+            if project:
+                context["project_id"] = str(project.id)
+                context["project_name"] = project.name
+                # Add git repo info if available
+                if project.repo_name:
+                    context["repo_name"] = project.repo_name
+                if project.repo_url:
+                    context["repo_url"] = project.repo_url
+                if hasattr(project, 'repo_owner') and project.repo_owner:
+                    context["repo_owner"] = project.repo_owner
 
         logger.debug(
             "project_context_built_for_continue",
             agent_id=self.id,
             session_id=str(original_session_id),
-            project_id=str(project.id),
+            project_id=context.get("project_id"),
+            has_project=bool(session.project_id),
             conversational_language=context.get("conversational_language"),
         )
 
@@ -965,6 +980,19 @@ This rule applies ONLY to markdown files. Your questions and responses to the us
         markdown_instruction = self._get_markdown_language_instruction()
         if markdown_instruction:
             base_prompt += markdown_instruction
+
+        # Add HITL language instruction (generalized for all agents)
+        language_names = {"nl": "DUTCH", "en": "ENGLISH"}
+        lang_name = language_names.get(language, language.upper())
+        hitl_language_instruction = f"""
+
+## HITL QUESTIONS LANGUAGE
+
+All questions you ask via hitl_ask_question or hitl_ask_multiple_choice_question
+MUST be written in {lang_name}. This is mandatory - never translate to or use
+any other language for questions, regardless of examples you may see elsewhere.
+"""
+        base_prompt += hitl_language_instruction
 
         # Generate dynamic tool descriptions from MCP config
         if self.definition.mcps:
@@ -1154,10 +1182,21 @@ RIGHT (tool call):
         # No marker found - return prompt unchanged
         return prompt
 
-    def _build_prompt(self, prompt: str, context: dict = None) -> str:
-        """Build the full prompt with context."""
+    def _build_prompt(self, prompt: str, context: dict = None, language: str = "nl") -> str:
+        """Build the full prompt with context and language reminder.
+
+        Args:
+            prompt: The task prompt
+            context: Optional context dict
+            language: Conversation language code (nl, en, etc.)
+        """
+        # Language reminder to reinforce the system prompt instruction
+        language_names = {"nl": "DUTCH", "en": "ENGLISH"}
+        lang_name = language_names.get(language, language.upper())
+        language_reminder = f"[IMPORTANT: Respond in {lang_name} ({language.upper()}) only!]\n\n"
+
         if not context:
-            return prompt
+            return language_reminder + prompt
 
         # Extract clarifications for natural inclusion
         clarifications = context.get("clarifications", [])
@@ -1182,7 +1221,7 @@ You previously asked: {question[:200]}{'...' if len(question) > 200 else ''}
 User's answer: {answer}
 """
 
-        return f"""CONTEXT:
+        return f"""{language_reminder}CONTEXT:
 {context_str}
 
 TASK:

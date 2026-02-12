@@ -330,7 +330,8 @@ class Orchestrator:
             session_id: Session UUID
 
         Returns:
-            Context dict with project info, or None if no project associated
+            Context dict with project info and always conversational_language,
+            or None if session not found
         """
         from druppie.db.models import Session as DBSession, Project
 
@@ -340,16 +341,11 @@ class Orchestrator:
         self.session_repo.db.expire_all()
 
         session = self.session_repo.db.query(DBSession).filter(DBSession.id == session_id).first()
-        if not session or not session.project_id:
+        if not session:
             return None
 
-        project = self.session_repo.db.query(Project).filter(Project.id == session.project_id).first()
-        if not project:
-            return None
-
+        # Always include conversational_language, even without a project
         context = {
-            "project_id": str(project.id),
-            "project_name": project.name,
             "session_id": str(session_id),
             "conversational_language": session.language or "nl",
         }
@@ -358,19 +354,32 @@ class Orchestrator:
         if session.intent:
             context["intent"] = session.intent
 
-        # Add git repo info if available
-        if project.repo_name:
-            context["repo_name"] = project.repo_name
-        if project.repo_url:
-            context["repo_url"] = project.repo_url
-        if hasattr(project, 'repo_owner') and project.repo_owner:
-            context["repo_owner"] = project.repo_owner
+        # If there's a project, add project-specific context
+        if session.project_id:
+            project = self.session_repo.db.query(Project).filter(Project.id == session.project_id).first()
+            if project:
+                context["project_id"] = str(project.id)
+                context["project_name"] = project.name
+                # Add git repo info if available
+                if project.repo_name:
+                    context["repo_name"] = project.repo_name
+                if project.repo_url:
+                    context["repo_url"] = project.repo_url
+                if hasattr(project, 'repo_owner') and project.repo_owner:
+                    context["repo_owner"] = project.repo_owner
+
+                logger.debug(
+                    "project_context_built",
+                    session_id=str(session_id),
+                    project_id=str(project.id),
+                    has_repo=bool(project.repo_name),
+                )
 
         logger.debug(
-            "project_context_built",
+            "context_built",
             session_id=str(session_id),
-            project_id=str(project.id),
-            has_repo=bool(project.repo_name),
+            has_project=bool(session.project_id),
+            conversational_language=context.get("conversational_language"),
         )
 
         return context
