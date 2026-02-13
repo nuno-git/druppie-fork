@@ -300,12 +300,13 @@ class ChatLiteLLM(BaseLLM):
     ) -> LLMResponse:
         """Send synchronous chat completion request."""
         effective_tools = tools or self._bound_tools
+        effective_max_tokens = min(self.max_tokens, 16384) if self.max_tokens else self.max_tokens
 
         kwargs = {
             "model": self._litellm_model,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "max_tokens": effective_max_tokens,
             "timeout": self.timeout,
             "num_retries": self.max_retries,
         }
@@ -332,6 +333,9 @@ class ChatLiteLLM(BaseLLM):
         """Send asynchronous chat completion request."""
         effective_tools = tools or self._bound_tools
         effective_max_tokens = max_tokens or self.max_tokens
+        # Clamp to safe limit for most providers
+        if effective_max_tokens and effective_max_tokens > 16384:
+            effective_max_tokens = 16384
 
         kwargs = {
             "model": self._litellm_model,
