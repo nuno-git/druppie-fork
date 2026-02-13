@@ -186,4 +186,19 @@ export const findPendingQuestion = (timeline) => {
   return null
 }
 
+// --- Extract test results from agent run's tool calls ---
+
+export const extractTestResults = (agentRun) => {
+  const results = []
+  agentRun?.llm_calls?.forEach((llm) => {
+    llm.tool_calls?.forEach((tc) => {
+      if (tc.tool_name === 'run_tests' && tc.status === 'completed' && tc.result) {
+        const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+        if (raw) results.push(raw)
+      }
+    })
+  })
+  return results
+}
+
 export const ACTIVE_STATUSES = new Set(['running', 'paused_hitl', 'paused_tool', 'waiting_approval', 'waiting_answer'])

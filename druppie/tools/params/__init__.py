@@ -48,6 +48,13 @@ from .docker import (
     DockerRunParams,
     DockerStopParams,
 )
+from .testing import (
+    GetCoverageReportParams,
+    GetTestFrameworkParams,
+    InstallTestDependenciesParams,
+    RunTestsParams,
+    ValidateTddParams,
+)
 
 __all__ = [
     # Coding
@@ -79,4 +86,10 @@ __all__ = [
     "MakePlanParams",
     "CreateMessageParams",
     "InvokeSkillParams",
+    # Testing
+    "GetTestFrameworkParams",
+    "RunTestsParams",
+    "GetCoverageReportParams",
+    "InstallTestDependenciesParams",
+    "ValidateTddParams",
 ]

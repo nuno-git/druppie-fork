@@ -2,9 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies + Node.js (for JS/TS test frameworks)
 RUN apt-get update && \
-    apt-get install -y curl git && \
+    apt-get install -y curl git gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # Install dependencies

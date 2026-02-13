@@ -92,15 +92,14 @@ async def get_test_framework(
     user_id: str | None = None,
 ) -> dict:
     """Detect test framework in workspace (alias for detect_test_framework)."""
-    return await detect_test_framework(
+    return await _detect_test_framework_impl(
         session_id=session_id,
         workspace_id=workspace_id,
         project_id=project_id,
         user_id=user_id,
     )
 
-@mcp.tool()
-async def detect_test_framework(
+async def _detect_test_framework_impl(
     session_id: str | None = None,
     workspace_id: str | None = None,
     project_id: str | None = None,
@@ -166,7 +165,7 @@ async def run_tests(
     timeout: int = 300,
 ) -> dict:
     """Run tests in workspace.
-    
+
     Args:
         session_id: Session ID (auto-creates workspace if needed)
         workspace_id: Legacy workspace ID (optional)
@@ -174,10 +173,29 @@ async def run_tests(
         user_id: User ID for workspace path (optional)
         test_command: Optional custom test command (default: auto-detected)
         timeout: Timeout in seconds (default: 300)
-        
+
     Returns:
         Dict with test results, pass/fail counts, and output
     """
+    return await _run_tests_impl(
+        session_id=session_id,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        user_id=user_id,
+        test_command=test_command,
+        timeout=timeout,
+    )
+
+
+async def _run_tests_impl(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    test_command: str | None = None,
+    timeout: int = 300,
+) -> dict:
+    """Internal implementation of run_tests."""
     try:
         # Resolve workspace
         if session_id:
@@ -197,7 +215,9 @@ async def run_tests(
         testing_module.workspace_root = workspace_path
         
         # Detect framework if command not provided
-        if not test_command:
+        # Guard against LLM passing literal "null"/"none" strings
+        if not test_command or test_command.strip().lower() in ("null", "none", ""):
+            test_command = None
             framework_info = testing_module.get_test_framework_info()
             if framework_info["framework"] == "unknown":
                 return {
@@ -282,7 +302,7 @@ async def get_coverage_report(
     framework: str | None = None,
 ) -> dict:
     """Get test coverage report for workspace (alias for get_coverage)."""
-    return await get_coverage(
+    return await _get_coverage_impl(
         session_id=session_id,
         workspace_id=workspace_id,
         project_id=project_id,
@@ -290,8 +310,7 @@ async def get_coverage_report(
         framework=framework,
     )
 
-@mcp.tool()
-async def get_coverage(
+async def _get_coverage_impl(
     session_id: str | None = None,
     workspace_id: str | None = None,
     project_id: str | None = None,
@@ -398,7 +417,7 @@ async def validate_tdd(
         testing_module.workspace_root = workspace_path
         
         # Run tests first
-        test_result = await run_tests(
+        test_result = await _run_tests_impl(
             session_id=session_id,
             workspace_id=workspace_id,
             project_id=project_id,
