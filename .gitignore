@@ -52,3 +52,6 @@ instance/
 
 # Docker volumes
 druppie-app/
+
+# Personal compose overrides
+docker-compose.robbe.yml
