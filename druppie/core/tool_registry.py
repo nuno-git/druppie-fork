@@ -72,6 +72,13 @@ from druppie.tools.params.docker import (
     DockerRunParams,
     DockerStopParams,
 )
+from druppie.tools.params.testing import (
+    GetCoverageReportParams,
+    GetTestFrameworkParams,
+    InstallTestDependenciesParams,
+    RunTestsParams,
+    ValidateTddParams,
+)
 
 logger = structlog.get_logger()
 
@@ -99,6 +106,12 @@ PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
     ("docker", "list_containers"): DockerListContainersParams,
     ("docker", "inspect"): DockerInspectParams,
     ("docker", "exec_command"): DockerExecCommandParams,
+    # Testing tools
+    ("testing", "get_test_framework"): GetTestFrameworkParams,
+    ("testing", "run_tests"): RunTestsParams,
+    ("testing", "get_coverage_report"): GetCoverageReportParams,
+    ("testing", "install_test_dependencies"): InstallTestDependenciesParams,
+    ("testing", "validate_tdd"): ValidateTddParams,
     # Builtin tools
     ("builtin", "done"): DoneParams,
     ("builtin", "hitl_ask_question"): HitlAskQuestionParams,

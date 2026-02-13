@@ -20,8 +20,10 @@ import {
   buildVisibleJson,
   extractSurfacedApprovals,
   extractQuestions,
+  extractTestResults,
   findPendingQuestion,
 } from './ChatHelpers'
+import TestResultCard from './TestResultCard'
 
 // --- Tool label helper ---
 
@@ -282,6 +284,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) => {
   const resolvedItems = hasFollowingMessage ? [] : extractSurfacedApprovals(run.llm_calls)
     .filter((item) => item.tc.approval.status !== 'pending')
+  const testResults = extractTestResults(run)
 
   return (
     <div data-type="agent-run" data-timeline-idx={timelineIndex}>
@@ -289,6 +292,13 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
         <div className="mt-2 space-y-3">
           {resolvedItems.map((item, i) => (
             <InlineApproval key={i} tc={item.tc} sessionId={sessionId} />
+          ))}
+        </div>
+      )}
+      {testResults.length > 0 && (
+        <div className="mt-2 space-y-3">
+          {testResults.map((result, i) => (
+            <TestResultCard key={i} testResult={result} />
           ))}
         </div>
       )}
@@ -568,10 +578,11 @@ const SessionDetail = ({ sessionId }) => {
             // Agent runs: only render if they have visible content
             if (entry.type === 'agent_run' && entry.agent_run) {
               const questions = extractQuestions(entry.agent_run)
+              const testResults = extractTestResults(entry.agent_run)
               const resolvedItems = runsWithMessages.has(i) ? []
                 : extractSurfacedApprovals(entry.agent_run.llm_calls)
                     .filter((item) => item.tc.approval.status !== 'pending')
-              if (resolvedItems.length === 0 && questions.length === 0) {
+              if (resolvedItems.length === 0 && questions.length === 0 && testResults.length === 0) {
                 return null
               }
               return (

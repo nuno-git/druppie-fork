@@ -23,6 +23,9 @@ mcps:
       session_id:
         from: session.id
         hidden: true
+      project_id:
+        from: project.id
+        hidden: true
       repo_name:
         from: project.repo_name
         hidden: true
@@ -399,9 +402,6 @@ mcps:
   # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
   # Configure per-agent via `builtin_tools` in agent YAML files.
 
-  bestand-zoeker:
-    url: ${MCP_WEB_URL:-http://mcp-web:9005}
-    description: "Local file search and web browsing"
   testing:
     url: ${MCP_TESTING_URL:-http://mcp-testing:9006}
     description: "Test execution and coverage analysis"
@@ -460,39 +460,20 @@ mcps:
               type: string
               description: "Optional framework name (default: auto-detected)"
           required: []
-      - name: run_tests
-        description: "Run tests and get results with coverage"
+      - name: validate_tdd
+        description: "Run full TDD validation (tests + coverage + threshold check)"
         requires_approval: false
         parameters:
           type: object
           properties:
-            test_command:
-              type: string
-              description: "Optional custom test command (default: auto-detected)"
-            timeout:
-              type: integer
-              description: "Timeout in seconds (default: 300)"
+            coverage_threshold:
+              type: number
+              description: "Minimum coverage percentage (default: 80.0)"
           required: []
-      - name: get_coverage
-        description: "Get test coverage report"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            framework:
-              type: string
-              description: "Optional framework name (default: auto-detected)"
-          required: []
-      - name: install_test_dependencies
-        description: "Install missing test dependencies for the project"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            framework:
-              type: string
-              description: "Optional framework name (default: auto-detected)"
-          required: []
+
+  bestand-zoeker:
+    url: ${MCP_WEB_URL:-http://mcp-web:9005}
+    description: "Local file search and web browsing"
     tools:
       - name: search_files
         description: "Search for text content in local files within dataset"

@@ -178,11 +178,22 @@ class TestingModule:
             }
             return "gotest", "go test ./...", config_info
         
+        # Check for test.sh (common fallback created by tester agent)
+        test_sh = workspace_path / "test.sh"
+        if test_sh.exists():
+            config_info = {
+                "version": "shell",
+                "config_file": str(test_sh),
+                "coverage_file": None,
+                "doc_url": "",
+            }
+            return "shell", "bash test.sh", config_info
+
         # Fallback to basic detection from coding MCP
         framework, command = self._detect_test_framework_basic(workspace_path)
         if framework and command:
             return framework, command, {"version": "unknown", "config_file": None, "doc_url": ""}
-        
+
         return "unknown", "", {}
 
     def _detect_test_framework_basic(self, workspace_path: Path) -> Tuple[Optional[str], Optional[str]]:
@@ -354,6 +365,35 @@ class TestingModule:
                 result["skipped"] = int(match.group(4))
                 result["passed"] = result["total"] - result["failed"] - result["skipped"]
         
+        elif framework == "shell":
+            # Shell scripts (test.sh) - try to parse common patterns
+            # First try pytest/jest/vitest patterns in case test.sh wraps them
+            pytest_match = re.search(
+                r"(\d+)\s+passed(?:,\s+(\d+)\s+failed)?(?:,\s+(\d+)\s+skipped)?",
+                combined,
+            )
+            jest_match = re.search(
+                r"Tests:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(?:(\d+)\s+passed,\s*)?(\d+)\s+total",
+                combined,
+            )
+            if pytest_match:
+                result["passed"] = int(pytest_match.group(1))
+                result["failed"] = int(pytest_match.group(2)) if pytest_match.group(2) else 0
+                result["skipped"] = int(pytest_match.group(3)) if pytest_match.group(3) else 0
+                result["total"] = result["passed"] + result["failed"] + result["skipped"]
+            elif jest_match:
+                result["failed"] = int(jest_match.group(1)) if jest_match.group(1) else 0
+                result["skipped"] = int(jest_match.group(2)) if jest_match.group(2) else 0
+                result["passed"] = int(jest_match.group(3)) if jest_match.group(3) else 0
+                result["total"] = int(jest_match.group(4))
+            else:
+                # Count PASS/FAIL lines as a last resort
+                pass_count = len(re.findall(r"(?:PASS|OK|✓|pass)", combined, re.IGNORECASE))
+                fail_count = len(re.findall(r"(?:FAIL|ERROR|✗|fail)", combined, re.IGNORECASE))
+                result["passed"] = pass_count
+                result["failed"] = fail_count
+                result["total"] = pass_count + fail_count
+
         else:
             match = re.search(r"(\d+)\s+(?:passing|passed)", combined)
             if match:
