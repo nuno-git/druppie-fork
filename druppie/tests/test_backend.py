@@ -17,9 +17,6 @@ def test_druppie_imports():
     """Test that core druppie modules can be imported."""
     try:
         import druppie
-        import druppie.config.tdd_config
-        import druppie.workflow.tdd_workflow
-        import druppie.workflow.tdd_integration
         assert True
     except ImportError as e:
         pytest.fail(f"Failed to import druppie modules: {e}")
@@ -42,28 +39,3 @@ async def test_async_example():
     assert result == "result"
 
 
-def test_tdd_config_loading():
-    """Test that TDD configuration can be loaded."""
-    from druppie.config.tdd_config import get_tdd_settings, get_max_retries
-    
-    settings = get_tdd_settings()
-    assert settings is not None
-    
-    max_retries = get_max_retries()
-    assert max_retries > 0
-
-
-def test_tdd_workflow_imports():
-    """Test that TDD workflow functions can be imported."""
-    from druppie.workflow.tdd_workflow import (
-        parse_test_result,
-        is_validation_step,
-        determine_tdd_next_action,
-        generate_builder_retry_step,
-    )
-    
-    # Just verify they're callable
-    assert callable(parse_test_result)
-    assert callable(is_validation_step)
-    assert callable(determine_tdd_next_action)
-    assert callable(generate_builder_retry_step)

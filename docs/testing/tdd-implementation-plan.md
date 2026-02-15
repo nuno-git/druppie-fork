@@ -87,15 +87,9 @@ Conditional Logic: Retry Builder or continue
 
 ### Pending Tasks (Phase 2: Standalone Integration)
 
-4. **TDD Workflow Handler Module** - STANDALONE NEW MODULE ⏳
-   - `druppie/workflow/tdd_workflow.py` (NEW FILE)
-   - Standalone TDD workflow logic
-   - Test result parsing, retry logic, validation
+4. ~~**TDD Workflow Handler Module**~~ - REMOVED (logic handled by agents + MCP servers)
 
-5. **TDD Configuration Module** - STANDALONE NEW MODULE ⏳
-   - `druppie/config/tdd_config.py` (NEW FILE)
-   - Environment-based TDD configuration
-   - Project-type specific overrides
+5. ~~**TDD Configuration Module**~~ - REMOVED (configuration handled by agent YAMLs + MCP servers)
 
 6. **Testing MCP Server** - STANDALONE NEW MCP SERVER ⏳
    - `druppie/mcp-servers/testing/` (NEW DIRECTORY)
@@ -162,8 +156,8 @@ Conditional Logic: Retry Builder or continue
 4. ✅ Planner agent TDD workflow
 
 ### Phase 2: Standalone Integration (PENDING)
-5. ⏳ TDD workflow handler module
-6. ⏳ TDD configuration module
+5. ~~TDD workflow handler module~~ - REMOVED
+6. ~~TDD configuration module~~ - REMOVED
 7. ⏳ Testing MCP server
 8. ⏳ Frontend test result UI
 9. ⏳ Documentation updates
@@ -177,11 +171,4 @@ Conditional Logic: Retry Builder or continue
 
 ## Conclusion
 
-The combined implementation plan fully addresses all user story requirements while adding important enhancements:
-- Framework-specific testing guidelines
-- Coverage analysis and thresholds
-- Standalone architecture (no breaking changes)
-- Comprehensive documentation
-- Frontend visualization components
-
-All implementation follows the principle of complete separation - no modifications to existing working code, only new standalone modules and imports.
+The implementation addresses all user story requirements. TDD logic is handled by the agent definitions (planner, builder, tester YAMLs) and the Testing MCP server, without redundant Python abstraction layers. The removed `tdd_workflow.py`, `tdd_config.py`, and `tdd_integration.py` modules were never integrated into the main loop and duplicated logic already present in agents and MCP servers.
