@@ -201,4 +201,80 @@ export const extractTestResults = (agentRun) => {
   return results
 }
 
+// --- Extract per-test error messages from test output ---
+
+export const extractTestErrors = (stdout, stderr, framework, failedTestNames) => {
+  const errors = {}
+  if (!failedTestNames?.length) return errors
+  const output = (stdout || '') + '\n' + (stderr || '')
+  const fw = framework?.toLowerCase()
+
+  if (fw === 'pytest') {
+    // Try to extract from FAILURES section first
+    const failureSection = output.split(/={3,} FAILURES ={3,}/)[1]
+    if (failureSection) {
+      for (const testName of failedTestNames) {
+        // Find the test's section: ___ test_name ___
+        const shortName = testName.split('::').pop()
+        const pattern = new RegExp(`_{3,}\\s*${shortName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*_{3,}([\\s\\S]*?)(?=_{3,}|={3,}|$)`)
+        const match = failureSection.match(pattern)
+        if (match) {
+          // Extract E lines (pytest assertion details)
+          const eLines = match[1].match(/^E\s+.+$/gm)
+          if (eLines) {
+            errors[testName] = eLines.slice(0, 3).map(l => l.replace(/^E\s+/, '')).join('\n')
+            continue
+          }
+          // Fallback: find AssertionError or last meaningful line
+          const assertMatch = match[1].match(/(?:AssertionError|AssertError|assert).*$/m)
+          if (assertMatch) {
+            errors[testName] = assertMatch[0].trim()
+            continue
+          }
+        }
+        // Fallback: scan for FAILED lines
+        const failedLine = output.match(new RegExp(`FAILED.*${shortName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*?-\\s*(.+)$`, 'm'))
+        if (failedLine) {
+          errors[testName] = failedLine[1].trim()
+        }
+      }
+    } else {
+      // No FAILURES section, try FAILED summary lines
+      for (const testName of failedTestNames) {
+        const shortName = testName.split('::').pop()
+        const failedLine = output.match(new RegExp(`FAILED.*${shortName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*?-\\s*(.+)$`, 'm'))
+        if (failedLine) {
+          errors[testName] = failedLine[1].trim()
+        }
+      }
+    }
+  } else if (fw === 'vitest' || fw === 'jest') {
+    for (const testName of failedTestNames) {
+      const escaped = testName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      // Find test name followed by error details
+      const pattern = new RegExp(`[✗×✕❌]\\s*${escaped}[\\s\\S]*?(?:Expected|Error|Received|thrown)[\\s\\S]*?$`, 'm')
+      const match = output.match(pattern)
+      if (match) {
+        // Extract the meaningful error lines after the test name
+        const afterName = match[0].split('\n').slice(1).filter(l => l.trim()).slice(0, 3)
+        if (afterName.length) {
+          errors[testName] = afterName.map(l => l.trim()).join('\n')
+          continue
+        }
+      }
+      // Fallback: look for "Error:" or "Expected" near the test name
+      const idx = output.indexOf(testName)
+      if (idx !== -1) {
+        const context = output.substring(idx, idx + 500)
+        const errLine = context.match(/(?:Error|Expected|Received|AssertionError):?\s*.+$/m)
+        if (errLine) {
+          errors[testName] = errLine[0].trim()
+        }
+      }
+    }
+  }
+
+  return errors
+}
+
 export const ACTIVE_STATUSES = new Set(['running', 'paused_hitl', 'paused_tool', 'waiting_approval', 'waiting_answer'])

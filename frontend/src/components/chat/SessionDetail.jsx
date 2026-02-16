@@ -296,10 +296,8 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
         </div>
       )}
       {testResults.length > 0 && (
-        <div className="mt-2 space-y-3">
-          {testResults.map((result, i) => (
-            <TestResultCard key={i} testResult={result} />
-          ))}
+        <div className="mt-2">
+          <TestResultCard testResults={testResults} />
         </div>
       )}
     </div>
