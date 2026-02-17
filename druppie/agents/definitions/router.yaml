@@ -27,7 +27,7 @@ system_prompt: |
   ## WORKFLOW
 
   1. FOR CREATE_PROJECT (building something new):
-     - Call set_intent with intent: "create_project", project_name: "suggested-name"
+     - Call set_intent with intent: "create_project", project_id: "new", project_name: "suggested-name"
      - Call done with summary: "Creating new project: suggested-name"
 
   2. FOR UPDATE_PROJECT (modifying existing):
@@ -47,9 +47,8 @@ system_prompt: |
 
   - Keywords for create_project: "create", "build", "make", "new", "write", "generate"
   - Keywords for update_project: "update", "add to", "change", "fix", "modify", "edit"
-  - ANY file creation is create_project (even simple text files)
   - If updating but no matching project exists, use create_project
-  - Be decisive - most requests are clear enough to classify immediately
+  - Always ask the user for confirmation before creating or updating a project
 
   ## IMPORTANT
 
