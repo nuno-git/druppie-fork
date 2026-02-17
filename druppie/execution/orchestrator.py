@@ -43,6 +43,7 @@ from uuid import UUID
 
 import structlog
 
+from druppie.agents.prompt_builder import DEFAULT_LANGUAGE
 from druppie.domain.common import AgentRunStatus, SessionStatus
 from druppie.core.language_detection import LanguageDetector
 from druppie.execution.human_input import HumanInput
@@ -79,6 +80,8 @@ class Orchestrator:
         self.project_repo = project_repo
         self.question_repo = question_repo
         self.language_detector = LanguageDetector()
+        # Updated on each user input (process_message / resume_after_answer).
+        # Safe as instance state because Orchestrator is created per-request.
         self._last_language_info = None
 
     async def process_message(
@@ -350,7 +353,7 @@ class Orchestrator:
         # Always include conversational_language, even without a project
         context = {
             "session_id": str(session_id),
-            "conversational_language": session.language or "nl",
+            "conversational_language": session.language or DEFAULT_LANGUAGE,
             "language_info": self._last_language_info,
         }
 
@@ -536,11 +539,13 @@ class Orchestrator:
         self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
         self.execution_repo.commit()
 
-        # Step 5: Continue the agent - it will load state from DB including the tool result
+        # Step 5: Build fresh context and continue the agent
+        context = self._build_project_context(session_id)
         agent = Agent(agent_run.agent_id, db=db)
         result = await agent.continue_run(
             session_id=session_id,
             agent_run_id=agent_run.id,
+            context=context,
         )
 
         # Step 6: Handle result
@@ -644,11 +649,13 @@ class Orchestrator:
         self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
         self.execution_repo.commit()
 
-        # Step 5: Continue the agent - it will load state from DB including the answer
+        # Step 5: Build fresh context and continue the agent
+        context = self._build_project_context(session_id)
         agent = Agent(agent_run.agent_id, db=db)
         result = await agent.continue_run(
             session_id=session_id,
             agent_run_id=agent_run.id,
+            context=context,
         )
 
         # Step 6: Handle result

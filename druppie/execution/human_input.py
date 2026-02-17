@@ -12,8 +12,8 @@ class HumanInput:
         self.text = text
         self.detected_language = language_detector.detect_language(text)
         # First 3 words + "..." for debug display
-        words = text.split()[:3]
-        self.preview = " ".join(words) + ("..." if len(text.split()) > 3 else "")
+        words = text.split()
+        self.preview = " ".join(words[:3]) + ("..." if len(words) > 3 else "")
 
     def language_info(self) -> dict:
         """Return language detection info for the prompt builder.
