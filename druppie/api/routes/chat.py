@@ -132,9 +132,8 @@ async def _run_orchestrator_background(
         )
         # Update session status to failed with error details
         try:
-            from druppie.repositories import SessionRepository as SR
-            sr = SR(db)
-            sr.update_status(
+            db.rollback()
+            session_repo.update_status(
                 session_id,
                 SessionStatus.FAILED,
                 error_message=error_msg[:2000],

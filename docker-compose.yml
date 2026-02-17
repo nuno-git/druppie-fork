@@ -389,6 +389,9 @@ services:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
       DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
+      FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
+      FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
+      FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
       CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
       GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
       GITEA_INTERNAL_URL: http://gitea:3000
@@ -454,6 +457,9 @@ services:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
       DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
+      FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
+      FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
+      FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
       CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
       GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
       GITEA_INTERNAL_URL: http://gitea:3000

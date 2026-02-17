@@ -277,4 +277,7 @@ export const extractTestErrors = (stdout, stderr, framework, failedTestNames) =>
   return errors
 }
 
-export const ACTIVE_STATUSES = new Set(['running', 'paused_hitl', 'paused_tool', 'waiting_approval', 'waiting_answer'])
+export const ACTIVE_STATUSES = new Set([
+  'active', 'running', 'paused_hitl', 'paused_tool',
+  'paused_approval', 'waiting_approval', 'waiting_answer',
+])
