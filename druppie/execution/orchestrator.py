@@ -294,8 +294,15 @@ class Orchestrator:
                 context=context,
             )
 
-            # If paused, stop execution
+            # If paused, update session status and stop execution
             if status == "paused":
+                # Determine pause type from agent_run status
+                refreshed_run = self.execution_repo.get_by_id(next_run.id)
+                if refreshed_run and refreshed_run.status == AgentRunStatus.PAUSED_HITL:
+                    self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
+                else:
+                    self.session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
+                self.session_repo.commit()
                 logger.info(
                     "execute_pending_runs_paused",
                     session_id=str(session_id),
@@ -506,6 +513,7 @@ class Orchestrator:
 
         # Step 4: Set status back to running
         self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
+        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
         self.execution_repo.commit()
 
         # Step 5: Continue the agent - it will load state from DB including the tool result
@@ -520,8 +528,10 @@ class Orchestrator:
             pause_reason = result.get("reason", "unknown")
             if pause_reason == "waiting_answer":
                 self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_HITL)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
             else:
                 self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_TOOL)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
             self.execution_repo.commit()
             return session_id
 
@@ -600,6 +610,7 @@ class Orchestrator:
 
         # Step 4: Set status back to running
         self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
+        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
         self.execution_repo.commit()
 
         # Step 5: Continue the agent - it will load state from DB including the answer
@@ -614,8 +625,10 @@ class Orchestrator:
             pause_reason = result.get("reason", "unknown")
             if pause_reason == "waiting_answer":
                 self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_HITL)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
             else:
                 self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_TOOL)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
             self.execution_repo.commit()
             return session_id
 

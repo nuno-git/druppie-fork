@@ -1,15 +1,15 @@
 /**
- * WorkflowPipeline - Compact horizontal stepper showing agent pipeline
+ * WorkflowPipeline - Read-only horizontal stepper showing agent pipeline
  *
  * Derives agent steps from timeline agent_run entries.
  * Shows: [Agent ✓] → [Agent ⟳] → [Agent ○]
- * Clicking an agent pill expands its LLM call details below the bar.
- * Only rendered when there are 2+ agent runs.
+ * Only rendered in Chat mode when there are 2+ agent runs.
+ * Detail expansion is handled by AnnotationBar in Annotated mode.
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Check, Loader2, Circle, Pause, ChevronDown, ChevronUp } from 'lucide-react'
-import { getAgentConfig, getAgentColorClasses, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
+import { Check, Loader2, Circle, Pause } from 'lucide-react'
+import { getAgentConfig, getAgentColorClasses, formatToolName } from '../../utils/agentConfig'
 
 const WAITING_STATUSES = new Set([
   'paused_hitl',
@@ -18,8 +18,7 @@ const WAITING_STATUSES = new Set([
   'waiting_answer',
 ])
 
-const WorkflowPipeline = ({ timeline }) => {
-  const [expandedRunId, setExpandedRunId] = useState(null)
+const WorkflowPipeline = ({ timeline, hidePending }) => {
   const pillRefs = useRef({})
   const scrollContainerRef = useRef(null)
 
@@ -32,9 +31,14 @@ const WorkflowPipeline = ({ timeline }) => {
   if (!timeline) return null
 
   // Extract agent runs from timeline
-  const agentRuns = timeline
+  const allAgentRuns = timeline
     .filter((e) => e.type === 'agent_run' && e.agent_run)
     .map((e) => e.agent_run)
+
+  // Optionally hide pending (not yet started) agents
+  const agentRuns = hidePending
+    ? allAgentRuns.filter((r) => r.status === 'completed' || r.status === 'running' || r.status === 'failed' || WAITING_STATUSES.has(r.status))
+    : allAgentRuns
 
   // Only show when 2+ agent runs
   if (agentRuns.length < 2) return null
@@ -48,8 +52,6 @@ const WorkflowPipeline = ({ timeline }) => {
     return null
   })()
 
-  const expandedRun = agentRuns.find((r) => r.id === expandedRunId)
-
   return (
     <div className="border-b bg-gray-50 flex-shrink-0 min-w-0 overflow-hidden">
       {/* Pipeline bar */}
@@ -62,21 +64,19 @@ const WorkflowPipeline = ({ timeline }) => {
           const isWaiting = WAITING_STATUSES.has(run.status)
           const isFailed = run.status === 'failed'
           const isPending = !isCompleted && !isRunning && !isWaiting && !isFailed
-          const llmCount = run.llm_calls?.length || 0
-          const isExpanded = expandedRunId === run.id
+          const hasFailedTools = isCompleted && run.llm_calls?.some(llm =>
+            llm.tool_calls?.some(tc => tc.status === 'failed')
+          )
 
           return (
             <React.Fragment key={run.id || i}>
               {i > 0 && (
                 <span className="text-gray-300 text-xs flex-shrink-0 mx-0.5">&rarr;</span>
               )}
-              <button
+              <div
                 ref={(el) => setPillRef(run.id, el)}
-                onClick={() => llmCount > 0 && setExpandedRunId(isExpanded ? null : run.id)}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border flex-shrink-0 transition-colors ${colorClasses} ${
+                className={`relative inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border flex-shrink-0 ${colorClasses} ${
                   isPending ? 'opacity-50' : ''
-                } ${isExpanded ? 'ring-2 ring-offset-1 ring-gray-300' : ''} ${
-                  llmCount > 0 ? 'cursor-pointer hover:opacity-80' : 'cursor-default'
                 }`}
               >
                 {isCompleted && <Check className="w-3 h-3" />}
@@ -85,23 +85,16 @@ const WorkflowPipeline = ({ timeline }) => {
                 {isFailed && <span className="w-3 h-3 text-red-500">!</span>}
                 {isPending && <Circle className="w-3 h-3 opacity-50" />}
                 {config.name}
-                {llmCount > 0 && (
-                  <span className="text-[10px] opacity-60">
-                    {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                  </span>
+                {hasFailedTools && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500" />
                 )}
-              </button>
+              </div>
             </React.Fragment>
           )
         })}
       </div>
       {/* Auto-scroll active agent into view */}
       <ActivePillScroller activeRunId={activeRunId} pillRefs={pillRefs} />
-
-      {/* Expanded LLM call details for selected agent */}
-      {expandedRun && expandedRun.llm_calls?.length > 0 && (
-        <ExpandedRunDetails run={expandedRun} />
-      )}
     </div>
   )
 }
@@ -120,43 +113,18 @@ const ActivePillScroller = ({ activeRunId, pillRefs }) => {
   return null
 }
 
-// --- Expanded detail section for a single agent run ---
-
-const ExpandedRunDetails = ({ run }) => {
-  const config = getAgentConfig(run.agent_id)
-  const colors = getAgentMessageColors(config.color)
-  const totalTokens = run.token_usage?.total_tokens || 0
-  const llmCalls = run.llm_calls || []
-
-  return (
-    <div className={`px-4 py-3 border-t ${colors.bg} text-sm`}>
-      <div className="flex items-center gap-2 mb-2">
-        <span className={`font-medium text-xs ${colors.accent}`}>{config.name}</span>
-        <span className="text-xs text-gray-500">
-          {llmCalls.length} LLM call{llmCalls.length !== 1 ? 's' : ''}
-          {totalTokens > 0 ? ` · ${totalTokens.toLocaleString()} tokens` : ''}
-        </span>
-      </div>
-      <div className="space-y-1 max-h-64 overflow-y-auto">
-        {llmCalls.map((llm, i) => (
-          <LlmCallRow key={llm.id || i} llm={llm} index={i} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
 // --- Single LLM call row ---
 
-const LlmCallRow = ({ llm, index }) => {
-  const [open, setOpen] = useState(false)
+export const LlmCallRow = ({ llm, index, forceOpen }) => {
+  const [manualOpen, setManualOpen] = useState(false)
   const toolCount = llm.tool_calls?.length || 0
   const tokens = llm.token_usage?.total_tokens || 0
+  const isOpen = forceOpen || manualOpen
 
   return (
     <div className="border-l-2 border-gray-200 pl-3 py-0.5">
       <button
-        onClick={() => toolCount > 0 && setOpen(!open)}
+        onClick={() => toolCount > 0 && setManualOpen(!manualOpen)}
         className={`flex items-center gap-2 text-xs w-full text-left ${
           toolCount > 0 ? 'cursor-pointer hover:text-gray-700' : 'cursor-default'
         } text-gray-500`}
@@ -170,10 +138,10 @@ const LlmCallRow = ({ llm, index }) => {
           </span>
         )}
       </button>
-      {open && toolCount > 0 && (
+      {isOpen && toolCount > 0 && (
         <div className="ml-4 mt-1 space-y-0.5">
           {llm.tool_calls.map((tc, ti) => (
-            <ToolCallRow key={tc.id || ti} tc={tc} />
+            <ToolCallRow key={tc.id || ti} tc={tc} forceOpen={forceOpen} />
           ))}
         </div>
       )}
@@ -183,8 +151,9 @@ const LlmCallRow = ({ llm, index }) => {
 
 // --- Single tool call row ---
 
-const ToolCallRow = ({ tc }) => {
-  const [open, setOpen] = useState(false)
+export const ToolCallRow = ({ tc, forceOpen }) => {
+  const [manualOpen, setManualOpen] = useState(false)
+  const isOpen = forceOpen || manualOpen
   const statusColor = tc.status === 'completed' ? 'text-green-600'
     : tc.status === 'failed' ? 'text-red-600'
     : 'text-gray-500'
@@ -192,13 +161,13 @@ const ToolCallRow = ({ tc }) => {
   return (
     <div>
       <button
-        onClick={() => setOpen(!open)}
+        onClick={() => setManualOpen(!manualOpen)}
         className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-700 w-full text-left"
       >
         <span className="text-purple-600 font-medium">{formatToolName(tc.tool_name)}</span>
         <span className={statusColor}>{tc.status}</span>
       </button>
-      {open && (
+      {isOpen && (
         <div className="ml-4 mt-1 space-y-1 text-xs">
           {tc.arguments && (
             <details>

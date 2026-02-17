@@ -625,14 +625,12 @@ class MCPClient:
 
         approval = self.approval_repo.create(
             session_id=session_id,
+            agent_run_id=agent_run_id,
+            tool_call_id=None,
             tool_name=tool_name,
             arguments=args,
             required_role=required_role_str,
-            danger_level=danger_level,
-            description=f"Execute {tool_name} with args: {json.dumps(args)[:200]}",
-            agent_id=agent_id,
             mcp_server=server,
-            agent_state=None,  # Agent state now managed by orchestrator
         )
 
         logger.info(
