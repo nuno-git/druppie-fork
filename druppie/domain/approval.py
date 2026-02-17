@@ -22,14 +22,9 @@ class ApprovalDetail(ApprovalSummary):
     agent_run_id: UUID | None
     tool_call_id: UUID
     # Tool info
-    approval_type: str = "tool_call"
     mcp_server: str
     tool_name: str
     arguments: dict
-    # Display
-    title: str | None = None
-    description: str | None = None
-    danger_level: str | None = None
     # Context
     agent_id: str | None
     rejection_reason: str | None = None
