@@ -43,6 +43,7 @@ class PromptBuilder:
 
         # Extract clarifications for natural inclusion
         clarifications = context.get("clarifications", [])
+        language = context.get("conversational_language", DEFAULT_LANGUAGE)
 
         # Build context string WITHOUT clarifications, conversational_language, and language_info
         context_items = {
@@ -66,11 +67,17 @@ You previously asked: {question[:200]}{'...' if len(question) > 200 else ''}
 User's answer: {answer}
 """
 
+        # Add language reminder when there's a user response to reinforce the instruction
+        language_reminder = ""
+        if clarifications:
+            lang_name = LANGUAGE_NAMES.get(language, language.upper())
+            language_reminder = f"\n\nREMINDER: Respond in {lang_name}."
+
         return f"""CONTEXT:
 {context_str}
 
 TASK:
-{prompt}{user_response_str}"""
+{prompt}{user_response_str}{language_reminder}"""
 
     # ------------------------------------------------------------------
     # Language block — the ONE place language is specified
