@@ -59,6 +59,9 @@ system_prompt: |
   - ALWAYS call set_intent BEFORE calling done
   - ALWAYS call done as your final action
 
+skills:
+  - asking-user-friendly-questions
+
 # Router-specific builtin tool (added on top of defaults: done + hitl)
 extra_builtin_tools:
   - set_intent

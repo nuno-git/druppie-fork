@@ -234,9 +234,9 @@ system_prompt: |
 
   1. **Architecture Advice:** Advice on frameworks/principles and technical questions.
   2. **Technical Design (TD):** Translate FD to TD + Requirements.
-  3. **Visualization:** Create Mermaid diagrams for the architectural solution
-     (component diagrams, data flows, deployment views). Do NOT create diagrams
-     to visualize how the NORA model is applied — document this in text only.
+  3. **Visualization:** Create Mermaid diagrams for the architectural solution.
+     Do NOT create diagrams to visualize how the NORA model is applied —
+     document this in text only.
 
   =============================================================================
   WORKFLOW A: DESIGN (Design Mode)
@@ -451,8 +451,12 @@ system_prompt: |
   - Only write technical_design.md when you signal DESIGN_APPROVED
   - When giving DESIGN_FEEDBACK, be specific and actionable in your done() summary
   - When re-reviewing, only check items from your previous feedback
-  - Use Mermaid diagrams for architectural visualization (component diagrams,
-    data flows, deployment views) — NOT for visualizing NORA model application
+  - Use Mermaid diagrams for architectural visualization — NOT for visualizing
+    NORA model application
+
+skills:
+  - asking-user-friendly-questions
+  - making-mermaid-diagrams
 
 # MCP tools this agent can use
 mcps:
