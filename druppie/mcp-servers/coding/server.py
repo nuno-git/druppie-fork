@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 from fastmcp import FastMCP
+from testing_module import TestingModule
 
 # Configure logging
 logging.basicConfig(
@@ -31,6 +32,9 @@ GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
 GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
 GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
+
+# Initialize testing module
+testing_module = TestingModule(str(WORKSPACE_ROOT))
 
 # In-memory workspace registry (in production, use DB)
 workspaces: dict[str, dict] = {}
@@ -1160,6 +1164,437 @@ async def get_git_status(
         }
 
     except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# TESTING TOOLS (delegated to TestingModule)
+# =============================================================================
+
+
+@mcp.tool()
+async def get_test_framework(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+) -> dict:
+    """Auto-detect test framework in workspace (pytest, vitest, jest, playwright)."""
+    try:
+        if session_id:
+            _, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
+
+        testing_module.workspace_root = workspace_path
+        framework_info = testing_module.get_test_framework_info()
+
+        if framework_info["framework"] == "unknown":
+            return {
+                "success": False,
+                "error": "Could not auto-detect test framework.",
+                "suggestion": "Check if your project has test configuration files (pytest.ini, jest.config.js, etc.)",
+            }
+
+        return {"success": True, **framework_info}
+
+    except Exception as e:
+        logger.error("Error detecting test framework: %s", str(e))
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def run_tests(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    test_command: str | None = None,
+    timeout: int = 300,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+) -> dict:
+    """Run tests in workspace and return results with coverage.
+
+    Args:
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
+        test_command: Optional custom test command (default: auto-detected)
+        timeout: Timeout in seconds (default: 300)
+        repo_name: Gitea repository name (for cloning)
+        repo_owner: Gitea repository owner (for cloning)
+
+    Returns:
+        Dict with test results, pass/fail counts, and output
+    """
+    try:
+        if session_id:
+            _, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
+
+        testing_module.workspace_root = workspace_path
+
+        # Detect framework if command not provided
+        if not test_command or test_command.strip().lower() in ("null", "none", ""):
+            test_command = None
+            framework_info = testing_module.get_test_framework_info()
+            if framework_info["framework"] == "unknown":
+                return {
+                    "success": False,
+                    "error": "Could not auto-detect test framework. Please specify test_command.",
+                }
+            test_command = framework_info["test_command"]
+            framework = framework_info["framework"]
+        else:
+            framework = "unknown"
+            if "pytest" in test_command:
+                framework = "pytest"
+            elif "jest" in test_command or "npm test" in test_command:
+                framework = "jest"
+            elif "vitest" in test_command:
+                framework = "vitest"
+            elif "go test" in test_command:
+                framework = "go"
+            elif "cargo test" in test_command:
+                framework = "cargo"
+
+        logger.info("Running tests in workspace %s: %s", workspace_path, test_command)
+
+        import time
+        start_time = time.time()
+        try:
+            result = subprocess.run(
+                test_command,
+                shell=True,
+                cwd=str(workspace_path),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            elapsed = time.time() - start_time
+
+            parsed_results = testing_module.parse_test_results(
+                result.stdout + "\n" + result.stderr,
+                framework,
+            )
+
+            coverage = None
+            if framework in ["vitest", "jest", "pytest"]:
+                coverage = testing_module.parse_coverage_json(framework)
+                if coverage:
+                    parsed_results["coverage"] = coverage
+
+            return {
+                "success": True,
+                "framework": framework,
+                "command": test_command,
+                "exit_code": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "elapsed_seconds": elapsed,
+                "results": parsed_results,
+                "coverage": coverage,
+            }
+
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "error": f"Test execution timed out after {timeout} seconds",
+                "framework": framework,
+                "command": test_command,
+            }
+
+    except Exception as e:
+        logger.error("Error running tests: %s", str(e))
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def get_coverage_report(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    framework: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+) -> dict:
+    """Get detailed test coverage report.
+
+    Args:
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
+        framework: Optional framework name (default: auto-detected)
+        repo_name: Gitea repository name (for cloning)
+        repo_owner: Gitea repository owner (for cloning)
+
+    Returns:
+        Dict with coverage information
+    """
+    try:
+        if session_id:
+            _, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
+
+        testing_module.workspace_root = workspace_path
+
+        if not framework:
+            framework_info = testing_module.get_test_framework_info()
+            if framework_info["framework"] == "unknown":
+                return {"success": False, "error": "Could not auto-detect test framework."}
+            framework = framework_info["framework"]
+
+        coverage = testing_module.parse_coverage_json(framework)
+
+        if not coverage:
+            return {
+                "success": False,
+                "error": f"No coverage data found for {framework}. Run tests with coverage first.",
+                "framework": framework,
+            }
+
+        return {"success": True, "framework": framework, "coverage": coverage}
+
+    except Exception as e:
+        logger.error("Error getting coverage: %s", str(e))
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def install_test_dependencies(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    framework: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+) -> dict:
+    """Install missing test dependencies for project.
+
+    Args:
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
+        framework: Optional framework name (default: auto-detected)
+        repo_name: Gitea repository name (for cloning)
+        repo_owner: Gitea repository owner (for cloning)
+
+    Returns:
+        Dict with installation results
+    """
+    try:
+        if session_id:
+            _, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
+
+        testing_module.workspace_root = workspace_path
+
+        if not framework:
+            framework_info = testing_module.get_test_framework_info()
+            if framework_info["framework"] == "unknown":
+                return {"success": False, "error": "Could not auto-detect test framework."}
+            framework = framework_info["framework"]
+
+        deps_check = testing_module._check_framework_dependencies(framework)
+        missing = deps_check.get("missing", [])
+
+        if not missing:
+            return {
+                "success": True,
+                "framework": framework,
+                "message": "All test dependencies are already installed.",
+                "installed": deps_check.get("installed", []),
+            }
+
+        logger.info("Installing missing dependencies for %s: %s", framework, missing)
+        results = []
+
+        if framework == "pytest":
+            for dep in missing:
+                try:
+                    result = subprocess.run(
+                        ["pip", "install", dep],
+                        cwd=str(workspace_path),
+                        capture_output=True,
+                        text=True,
+                    )
+                    results.append({
+                        "dependency": dep,
+                        "success": result.returncode == 0,
+                        "output": result.stdout,
+                        "error": result.stderr if result.returncode != 0 else None,
+                    })
+                except Exception as e:
+                    results.append({"dependency": dep, "success": False, "error": str(e)})
+
+        elif framework in ["vitest", "jest"]:
+            for dep in missing:
+                try:
+                    result = subprocess.run(
+                        ["npm", "install", "--save-dev", dep],
+                        cwd=str(workspace_path),
+                        capture_output=True,
+                        text=True,
+                    )
+                    results.append({
+                        "dependency": dep,
+                        "success": result.returncode == 0,
+                        "output": result.stdout,
+                        "error": result.stderr if result.returncode != 0 else None,
+                    })
+                except Exception as e:
+                    results.append({"dependency": dep, "success": False, "error": str(e)})
+
+        successful = [r for r in results if r["success"]]
+        failed = [r for r in results if not r["success"]]
+
+        return {
+            "success": len(failed) == 0,
+            "framework": framework,
+            "installed": [r["dependency"] for r in successful],
+            "failed": [r["dependency"] for r in failed],
+            "results": results,
+            "message": f"Installed {len(successful)}/{len(missing)} dependencies" if results else "No dependencies to install",
+        }
+
+    except Exception as e:
+        logger.error("Error installing test dependencies: %s", str(e))
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def validate_tdd(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    coverage_threshold: float = 80.0,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+) -> dict:
+    """Run full TDD validation (tests + coverage + threshold check).
+
+    Args:
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
+        coverage_threshold: Minimum coverage percentage (default: 80.0)
+        repo_name: Gitea repository name (for cloning)
+        repo_owner: Gitea repository owner (for cloning)
+
+    Returns:
+        Dict with validation results
+    """
+    try:
+        if session_id:
+            _, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
+
+        testing_module.workspace_root = workspace_path
+
+        # Run tests first
+        test_result = await run_tests(
+            session_id=session_id,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            user_id=user_id,
+            repo_name=repo_name,
+            repo_owner=repo_owner,
+        )
+
+        if not test_result.get("success"):
+            return {
+                "success": False,
+                "error": "Failed to run tests for TDD validation",
+                "test_error": test_result.get("error"),
+            }
+
+        framework_info = testing_module.get_test_framework_info()
+        framework = framework_info["framework"]
+
+        coverage = testing_module.parse_coverage_json(framework)
+        coverage_percent = coverage.get("overall_percent", 0) if coverage else 0
+
+        test_results = test_result.get("results", {})
+        config = {"coverage_threshold": coverage_threshold}
+
+        validation = testing_module.validate_tdd_workflow(test_results, config)
+
+        return {
+            "success": True,
+            "framework": framework,
+            "test_results": test_results,
+            "coverage_percent": coverage_percent,
+            "coverage_threshold": coverage_threshold,
+            "validation": validation,
+            "tdd_passed": validation["passed"],
+        }
+
+    except Exception as e:
+        logger.error("Error validating TDD: %s", str(e))
         return {"success": False, "error": str(e)}
 
 

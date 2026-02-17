@@ -178,5 +178,5 @@ TDD components use structured logging with these keys:
 Check MCP server logs:
 
 ```bash
-docker logs mcp-testing
+docker logs druppie-mcp-coding
 ```
