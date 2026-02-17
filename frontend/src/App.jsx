@@ -3,7 +3,7 @@
  */
 
 import React, { useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { Shield, LogIn } from 'lucide-react'
 
 import { initKeycloak, login, getUserInfo, hasRole } from './services/keycloak'
@@ -15,13 +15,10 @@ import NavRail from './components/NavRail'
 import Dashboard from './pages/Dashboard'
 import Tasks from './pages/Tasks'
 import Chat from './pages/Chat'
-import DebugChat from './pages/DebugChat'
-import DebugApprovals from './pages/DebugApprovals'
 import DebugMCP from './pages/DebugMCP'
 import DebugProjects from './pages/DebugProjects'
 import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
-import Debug from './pages/Debug'
 import Settings from './pages/Settings'
 import AdminDatabase from './pages/AdminDatabase'
 
@@ -64,6 +61,12 @@ const ProtectedRoute = ({ children, requiredRole }) => {
   }
 
   return children
+}
+
+// Redirect /debug/:sessionId → /chat?session=:sessionId&mode=inspect
+const DebugRedirect = () => {
+  const { sessionId } = useParams()
+  return <Navigate to={`/chat?session=${sessionId}&mode=inspect`} replace />
 }
 
 // Main App
@@ -141,7 +144,7 @@ function App() {
             <div className="flex h-screen bg-gray-50 overflow-hidden">
               <NavRail />
               <Routes>
-                {/* Full-bleed routes: Chat and DebugChat manage their own sidebars */}
+                {/* Full-bleed routes: Chat manages its own sidebar */}
                 <Route
                   path="/chat"
                   element={
@@ -152,16 +155,8 @@ function App() {
                     </ProtectedRoute>
                   }
                 />
-                <Route
-                  path="/debug-chat"
-                  element={
-                    <ProtectedRoute>
-                      <ErrorBoundary>
-                        <DebugChat />
-                      </ErrorBoundary>
-                    </ProtectedRoute>
-                  }
-                />
+                {/* Redirect old debug-chat to chat */}
+                <Route path="/debug-chat" element={<Navigate to="/chat" replace />} />
                 {/* Padded routes: standard content pages */}
                 <Route
                   path="*"
@@ -178,16 +173,12 @@ function App() {
                               </ProtectedRoute>
                             }
                           />
+                          {/* Redirect old debug routes */}
+                          <Route path="/debug-approvals" element={<Navigate to="/tasks" replace />} />
+                          <Route path="/debug-mcp" element={<Navigate to="/tools/mcp" replace />} />
+                          <Route path="/debug-projects" element={<Navigate to="/tools/infrastructure" replace />} />
                           <Route
-                            path="/debug-approvals"
-                            element={
-                              <ProtectedRoute>
-                                <DebugApprovals />
-                              </ProtectedRoute>
-                            }
-                          />
-                          <Route
-                            path="/debug-mcp"
+                            path="/tools/mcp"
                             element={
                               <ProtectedRoute>
                                 <DebugMCP />
@@ -195,7 +186,7 @@ function App() {
                             }
                           />
                           <Route
-                            path="/debug-projects"
+                            path="/tools/infrastructure"
                             element={
                               <ProtectedRoute>
                                 <DebugProjects />
@@ -226,13 +217,10 @@ function App() {
                               </ProtectedRoute>
                             }
                           />
+                          {/* Redirect old debug trace to chat with inspect mode */}
                           <Route
                             path="/debug/:sessionId"
-                            element={
-                              <ProtectedRoute>
-                                <Debug />
-                              </ProtectedRoute>
-                            }
+                            element={<DebugRedirect />}
                           />
                           <Route
                             path="/settings"
