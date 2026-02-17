@@ -19,7 +19,7 @@ class PromptBuilder:
         self.agent_id = agent_id
         self.definition = definition
 
-    def build_system_prompt(self, language: str = "nl", language_info: dict = None) -> str:
+    def build_system_prompt(self, language: str = DEFAULT_LANGUAGE, language_info: dict = None) -> str:
         """Build the full system prompt with a single language block.
 
         Injects common instructions from _common.md (if placeholder present).
