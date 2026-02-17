@@ -20,10 +20,6 @@ class ApprovalRepository(BaseRepository):
         tool_name: str,
         arguments: dict,
         required_role: str,
-        title: str | None = None,
-        description: str | None = None,
-        danger_level: str | None = None,
-        approval_type: str = "tool_call",
     ) -> Approval:
         """Create a new approval record.
 
@@ -35,10 +31,6 @@ class ApprovalRepository(BaseRepository):
             tool_name: Tool name (e.g., "write_file")
             arguments: Tool arguments
             required_role: Role required to approve (e.g., "developer")
-            title: Human-readable title
-            description: Human-readable description
-            danger_level: Risk level ("low", "medium", "high")
-            approval_type: Type of approval (default: "tool_call")
 
         Returns:
             Created Approval model
@@ -47,13 +39,9 @@ class ApprovalRepository(BaseRepository):
             session_id=session_id,
             agent_run_id=agent_run_id,
             tool_call_id=tool_call_id,
-            approval_type=approval_type,
             mcp_server=mcp_server,
             tool_name=tool_name,
-            title=title or f"Approve {mcp_server}:{tool_name}",
-            description=description or f"Execute {tool_name}",
             required_role=required_role,
-            danger_level=danger_level,
             arguments=arguments,
             status=ApprovalStatus.PENDING.value,
         )
@@ -150,13 +138,9 @@ class ApprovalRepository(BaseRepository):
             session_id=approval.session_id,
             agent_run_id=approval.agent_run_id,
             tool_call_id=approval.tool_call_id,
-            approval_type=approval.approval_type or "tool_call",
             mcp_server=approval.mcp_server or "",
             tool_name=approval.tool_name or "",
             arguments=approval.arguments or {},
-            title=approval.title,
-            description=approval.description,
-            danger_level=approval.danger_level,
             agent_id=approval.agent_id,
             rejection_reason=approval.rejection_reason,
             created_at=approval.created_at,
