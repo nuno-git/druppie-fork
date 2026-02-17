@@ -261,7 +261,9 @@ clients:
       - http://localhost:${FRONTEND_PORT}/*
       - http://${EXTERNAL_HOST}:${FRONTEND_PORT}/*
     webOrigins:
+      - http://localhost:5173
       - http://localhost:${FRONTEND_PORT}
+      - http://${EXTERNAL_HOST}:5173
       - http://${EXTERNAL_HOST}:${FRONTEND_PORT}
 
   - clientId: druppie-backend
