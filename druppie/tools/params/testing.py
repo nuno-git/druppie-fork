@@ -20,11 +20,11 @@ class RunTestsParams(BaseModel):
 
 
 class GetCoverageReportParams(BaseModel):
-    framework: str | None = Field(default=None, description="Optional framework name (default: auto-detected)")
+    framework: str | None = Field(default=None, description="Optional framework name (default: auto-detected). Valid values: pytest, vitest, jest, playwright, go, shell")
 
 
 class InstallTestDependenciesParams(BaseModel):
-    framework: str | None = Field(default=None, description="Optional framework name (default: auto-detected)")
+    framework: str | None = Field(default=None, description="Optional framework name (default: auto-detected). Valid values: pytest, vitest, jest, playwright, go, shell")
 
 
 class ValidateTddParams(BaseModel):
