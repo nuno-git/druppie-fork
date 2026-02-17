@@ -208,6 +208,28 @@ mcps:
           properties: {}
           required: []
 
+      - name: install_test_dependencies
+        description: "Install missing test dependencies for project"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            framework:
+              type: string
+              description: "Optional framework name (default: auto-detected). Valid values: pytest, vitest, jest, playwright, go, shell"
+          required: []
+
+      - name: validate_tdd
+        description: "Run full TDD validation (tests + coverage + threshold check)"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            coverage_threshold:
+              type: number
+              description: "Minimum coverage percentage (default: 80.0)"
+          required: []
+
   docker:
     url: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
     description: "Docker container operations"
@@ -401,75 +423,6 @@ mcps:
   # NOTE: HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question) are
   # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
   # Configure per-agent via `builtin_tools` in agent YAML files.
-
-  testing:
-    url: ${MCP_TESTING_URL:-http://mcp-testing:9006}
-    description: "Test execution and coverage analysis"
-    # Inject workspace context for test operations
-    inject:
-      session_id:
-        from: session.id
-        hidden: true
-      project_id:
-        from: project.id
-        hidden: true
-      repo_name:
-        from: project.repo_name
-        hidden: true
-      repo_owner:
-        from: project.repo_owner
-        hidden: true
-    tools:
-      - name: get_test_framework
-        description: "Auto-detect test framework in workspace (pytest, vitest, jest, playwright)"
-        requires_approval: false
-        parameters:
-          type: object
-          properties: {}
-          required: []
-      - name: run_tests
-        description: "Run tests and get results with coverage"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            test_command:
-              type: string
-              description: "Optional custom test command (default: auto-detected)"
-            timeout:
-              type: integer
-              description: "Timeout in seconds (default: 300)"
-          required: []
-      - name: get_coverage_report
-        description: "Get test coverage report"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            framework:
-              type: string
-              description: "Optional framework name (default: auto-detected). Valid values: pytest, vitest, jest, playwright, go, shell"
-          required: []
-      - name: install_test_dependencies
-        description: "Install missing test dependencies for project"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            framework:
-              type: string
-              description: "Optional framework name (default: auto-detected). Valid values: pytest, vitest, jest, playwright, go, shell"
-          required: []
-      - name: validate_tdd
-        description: "Run full TDD validation (tests + coverage + threshold check)"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            coverage_threshold:
-              type: number
-              description: "Minimum coverage percentage (default: 80.0)"
-          required: []
 
   bestand-zoeker:
     url: ${MCP_WEB_URL:-http://mcp-web:9005}

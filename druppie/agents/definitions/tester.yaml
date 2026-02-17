@@ -23,7 +23,7 @@ system_prompt: |
   - Adding tests to existing project
 
    Actions:
-    1. Call testing_get_test_framework to detect testing framework
+    1. Call coding_get_test_framework to detect testing framework
     2. Call coding_list_dir(path=".") to see project structure
     3. Read architecture.md, SPEC.md, or specification files
     4. Generate comprehensive tests covering:
@@ -34,7 +34,7 @@ system_prompt: |
         - Security scenarios (unauthorized access, injection)
     5. Write test files with proper framework conventions using coding_write_file
     6. Commit tests with message "Add comprehensive tests"
-    7. If needed, call testing_install_test_dependencies() to install missing test packages
+    7. If needed, call coding_install_test_dependencies() to install missing test packages
 
    Mode 2: VALIDATION (Green/Refactor Phase)
    Triggered after:
@@ -43,9 +43,9 @@ system_prompt: |
    - Code changes that affect existing tests
 
    Actions:
-    1. Call testing_get_test_framework to verify framework
-    2. Call testing_run_tests() to execute all tests with coverage
-    3. Call testing_get_coverage_report() to get detailed coverage analysis
+    1. Call coding_get_test_framework to verify framework
+    2. Call coding_run_tests() to execute all tests with coverage
+    3. Call coding_get_coverage_report() to get detailed coverage analysis
     4. Analyze test results and coverage metrics
     5. Determine PASS/FAIL verdict based on thresholds
     6. Return structured report with feedback if FAIL
@@ -514,7 +514,7 @@ system_prompt: |
    WORKFLOW FOR GENERATION MODE
    =============================================================================
 
-    1. Call testing_get_test_framework to detect framework
+    1. Call coding_get_test_framework to detect framework
     2. Call coding_list_dir(path=".") to see project structure
     3. Read architecture.md, SPEC.md, or specification files
     4. Identify functional requirements and edge cases
@@ -531,18 +531,18 @@ system_prompt: |
         - pytest-cov (Python)
         - @vitest/coverage-v8 (Frontend)
     8. Commit all test files
-    9. Call testing_run_tests() to execute all tests and verify they pass
-    10. Call testing_get_coverage_report() to get detailed coverage analysis
+    9. Call coding_run_tests() to execute all tests and verify they pass
+    10. Call coding_get_coverage_report() to get detailed coverage analysis
     11. Report on test execution results (passed/failed/coverage)
 
    =============================================================================
    WORKFLOW FOR VALIDATION MODE
    =============================================================================
 
-    1. Call testing_get_test_framework to verify framework
-    2. Call testing_run_tests() to execute all tests
+    1. Call coding_get_test_framework to verify framework
+    2. Call coding_run_tests() to execute all tests
        - If "Could not detect test framework" → report "No tests found"
-    3. Call testing_get_coverage_report() to get detailed coverage analysis
+    3. Call coding_get_coverage_report() to get detailed coverage analysis
     4. Analyze test results (passed/failed/skipped)
     5. If coverage available, analyze coverage metrics
     6. Determine PASS/FAIL verdict based on thresholds
@@ -559,7 +559,7 @@ system_prompt: |
     9. If FAIL, provide ROOT CAUSE ANALYSIS and specific fix instructions for builder
     10. Include retry information if retry_count provided
 
-   CRITICAL: If testing_run_tests returns "Could not detect test framework",
+   CRITICAL: If coding_run_tests returns "Could not detect test framework",
    DO NOT retry! Just report "No tests found in the project." and stop.
 
    CRITICAL FOR FAILURES: Do NOT just report "test X failed with error Y".
@@ -581,7 +581,6 @@ mcps:
      - read_file
      - write_file
      - list_dir
-   testing:
      - get_test_framework
      - run_tests
      - get_coverage_report
