@@ -10,9 +10,17 @@
  */
 
 import React, { useState, useEffect } from 'react'
-import { Server, RefreshCw, ChevronDown, ChevronRight, Wrench, Play, AlertCircle } from 'lucide-react'
+import { Server, RefreshCw, ChevronDown, ChevronRight, Wrench, Play, AlertCircle, Terminal } from 'lucide-react'
 import { getToken } from '../services/keycloak'
 import PageHeader from '../components/shared/PageHeader'
+import ContainerLogsModal from '../components/shared/ContainerLogsModal'
+
+const MCP_CONTAINER_MAP = {
+  coding: 'druppie-mcp-coding',
+  docker: 'druppie-mcp-docker',
+  filesearch: 'druppie-mcp-filesearch',
+  web: 'druppie-mcp-web',
+}
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -167,6 +175,9 @@ const ToolCard = ({ server, tool, onCall }) => {
 const ServerCard = ({ server }) => {
   const [tools, setTools] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [showLogs, setShowLogs] = useState(false)
+
+  const containerName = MCP_CONTAINER_MAP[server.name] || `druppie-mcp-${server.name}`
 
   const loadTools = async () => {
     if (tools) return // Already loaded
@@ -178,24 +189,35 @@ const ServerCard = ({ server }) => {
 
   return (
     <div className="bg-white border border-gray-100 rounded-xl overflow-hidden mb-4">
-      <button
-        onClick={loadTools}
-        className="w-full text-left px-4 py-4 hover:bg-gray-50 flex items-center gap-3 transition-colors"
-      >
-        <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
-          <Server className="w-5 h-5 text-gray-500" />
+      <div className="flex items-center gap-3 px-4 py-4">
+        <button
+          onClick={loadTools}
+          className="flex-1 text-left flex items-center gap-3 hover:opacity-80 transition-opacity"
+        >
+          <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+            <Server className="w-5 h-5 text-gray-500" />
+          </div>
+          <div className="flex-1">
+            <div className="font-semibold text-gray-900">{server.name}</div>
+            <div className="text-sm text-gray-500">{server.description}</div>
+            <div className="text-xs text-gray-400 font-mono mt-0.5">{server.url}</div>
+          </div>
+        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={() => setShowLogs(true)}
+            className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            title={`View ${server.name} logs`}
+          >
+            <Terminal className="w-4 h-4" />
+          </button>
+          {server.builtin && (
+            <span className="px-2.5 py-1 bg-purple-100 text-purple-700 text-xs rounded-full font-medium">
+              Built-in
+            </span>
+          )}
         </div>
-        <div className="flex-1">
-          <div className="font-semibold text-gray-900">{server.name}</div>
-          <div className="text-sm text-gray-500">{server.description}</div>
-          <div className="text-xs text-gray-400 font-mono mt-0.5">{server.url}</div>
-        </div>
-        {server.builtin && (
-          <span className="px-2.5 py-1 bg-purple-100 text-purple-700 text-xs rounded-full font-medium">
-            Built-in
-          </span>
-        )}
-      </button>
+      </div>
 
       {loading && (
         <div className="p-4 text-gray-500">Loading tools...</div>
@@ -221,6 +243,13 @@ const ServerCard = ({ server }) => {
             </div>
           )}
         </div>
+      )}
+
+      {showLogs && (
+        <ContainerLogsModal
+          containerName={containerName}
+          onClose={() => setShowLogs(false)}
+        />
       )}
     </div>
   )

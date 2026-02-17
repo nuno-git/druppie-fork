@@ -3,7 +3,7 @@
 All providers use LiteLLM internally for standardized tool calling.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra (default: zai)
+    LLM_PROVIDER: zai, deepinfra, azure_foundry (default: zai)
 
     For ZAI:
         ZAI_API_KEY (required)
@@ -14,6 +14,11 @@ Environment variables:
         DEEPINFRA_API_KEY (required)
         DEEPINFRA_MODEL (default: Qwen/Qwen3-32B)
         DEEPINFRA_BASE_URL (default: https://api.deepinfra.com/v1/openai)
+
+    For Azure Foundry:
+        FOUNDRY_API_KEY (required)
+        FOUNDRY_MODEL (default: GPT-5-MINI)
+        FOUNDRY_API_URL (default: https://druppie.cognitiveservices.azure.com/openai/v1)
 """
 
 import os
@@ -43,6 +48,7 @@ class LLMService:
     PROVIDERS = {
         "zai": "ZAI_API_KEY",
         "deepinfra": "DEEPINFRA_API_KEY",
+        "azure_foundry": "FOUNDRY_API_KEY",
     }
 
     def __init__(self):

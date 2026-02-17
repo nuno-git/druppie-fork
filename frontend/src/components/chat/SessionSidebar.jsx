@@ -108,7 +108,8 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
             </div>
             {group.sessions.map((s) => {
               const isActive = ACTIVE_STATUSES.has(s.status)
-              const isRunning = s.status === 'running'
+              const isRunning = s.status === 'active' || s.status === 'running'
+              const isPaused = s.status?.startsWith('paused_') || s.status?.startsWith('waiting_')
               const isFailed = s.status === 'failed'
               return (
                 <button
@@ -123,7 +124,7 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
                   <div className="flex items-center gap-2">
                     {isActive && (
                       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 animate-pulse ${
-                        isRunning ? 'bg-blue-500' : 'bg-blue-400'
+                        isPaused ? 'bg-amber-500' : 'bg-blue-500'
                       }`} />
                     )}
                     {isFailed && (
