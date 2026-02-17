@@ -158,8 +158,11 @@ class Agent:
         """Run the agent with the given prompt."""
         session_id, agent_run_id = self._to_uuids(session_id, agent_run_id)
 
+        language = self._extract_language(context)
+        language_info = context.get("language_info") if context else None
+
         messages = [
-            {"role": "system", "content": self.prompt_builder.build_system_prompt()},
+            {"role": "system", "content": self.prompt_builder.build_system_prompt(language, language_info)},
             {"role": "user", "content": self.prompt_builder.build_user_prompt(prompt, context)},
         ]
 
@@ -285,14 +288,18 @@ class Agent:
                 "continue_run_no_llm_calls",
                 agent_run_id=str(agent_run_id),
             )
+            context = self._build_project_context(session_id, agent_run.session_id, execution_repo)
+            language = self._extract_language(context)
+            language_info = context.get("language_info") if context else None
+
             messages = [
-                {"role": "system", "content": self.prompt_builder.build_system_prompt()},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": self.prompt_builder.build_system_prompt(language, language_info)},
+                {"role": "user", "content": self.prompt_builder.build_user_prompt(prompt, context)},
             ]
             return await self.loop.run(
                 messages=messages,
                 prompt=prompt,
-                context=None,
+                context=context,
                 session_id=session_id,
                 agent_run_id=agent_run_id,
                 start_iteration=0,
@@ -302,6 +309,16 @@ class Agent:
         messages = reconstruct_from_db(llm_calls, execution_repo)
         iteration = len(llm_calls)
 
+        # Rebuild project context to pick up updated session language
+        # (e.g., after HITL answers may have changed the language)
+        context = self._build_project_context(session_id, agent_run.session_id, execution_repo)
+        language = self._extract_language(context)
+        language_info = context.get("language_info") if context else None
+
+        # Update the system prompt with the current language
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = self.prompt_builder.build_system_prompt(language, language_info)
+
         logger.info(
             "agent_continue_run",
             agent_id=self.id,
@@ -309,12 +326,14 @@ class Agent:
             llm_calls_count=len(llm_calls),
             messages_count=len(messages),
             continuing_from_iteration=iteration,
+            has_context=bool(context),
+            conversational_language=language,
         )
 
         return await self.loop.run(
             messages=messages,
             prompt=prompt,
-            context=None,
+            context=context,
             session_id=session_id,
             agent_run_id=agent_run_id,
             start_iteration=iteration,
@@ -332,6 +351,72 @@ class Agent:
         if isinstance(agent_run_id, str):
             agent_run_id = UUID(agent_run_id)
         return session_id, agent_run_id
+
+    @staticmethod
+    def _extract_language(context: dict | None) -> str:
+        """Extract conversational language from context (default: nl)."""
+        if context and "conversational_language" in context:
+            return context["conversational_language"]
+        return "nl"
+
+    def _build_project_context(
+        self,
+        session_id: UUID,
+        original_session_id: UUID,
+        execution_repo,
+    ) -> dict | None:
+        """Build project context for agents when resuming.
+
+        Retrieves project info and conversational_language from the session.
+        Called by continue_run() to pick up fresh context (e.g., updated
+        language after HITL answer).
+        """
+        from druppie.db.models import Session as DBSession, Project
+
+        # Expire cached objects to ensure we read fresh data from DB
+        execution_repo.db.expire_all()
+
+        session = execution_repo.db.query(DBSession).filter(
+            DBSession.id == original_session_id
+        ).first()
+        if not session:
+            return None
+
+        # Always include conversational_language, even without a project
+        context = {
+            "session_id": str(original_session_id),
+            "conversational_language": session.language or "nl",
+        }
+
+        # Add intent so agents know what workflow to follow
+        if session.intent:
+            context["intent"] = session.intent
+
+        # If there's a project, add project-specific context
+        if session.project_id:
+            project = execution_repo.db.query(Project).filter(
+                Project.id == session.project_id
+            ).first()
+            if project:
+                context["project_id"] = str(project.id)
+                context["project_name"] = project.name
+                if project.repo_name:
+                    context["repo_name"] = project.repo_name
+                if project.repo_url:
+                    context["repo_url"] = project.repo_url
+                if hasattr(project, 'repo_owner') and project.repo_owner:
+                    context["repo_owner"] = project.repo_owner
+
+        logger.debug(
+            "project_context_built_for_continue",
+            agent_id=self.id,
+            session_id=str(original_session_id),
+            project_id=context.get("project_id"),
+            has_project=bool(session.project_id),
+            conversational_language=context.get("conversational_language"),
+        )
+
+        return context
 
     def __repr__(self) -> str:
         return f"Agent({self.id!r})"
