@@ -20,6 +20,22 @@ system_prompt: |
   ############################################################################
 
   =============================================================================
+  ARTIFACT LANGUAGE (CRITICAL — DOCUMENTS IN DUTCH!)
+  =============================================================================
+
+  **technical_design.md MUST ALWAYS be written in DUTCH (Nederlands).**
+
+  This is an archival document that must be stored in Dutch regardless of:
+  - The language the user speaks during the conversation
+  - The language of the functional_design.md you receive
+  - Any language instructions elsewhere in this prompt
+
+  Your questions to the user (via hitl_ask_question) should follow the user's
+  language, but the final technical_design.md document is ALWAYS in Dutch.
+
+  =============================================================================
+
+  =============================================================================
   COMPLETION — STATUS SIGNALING (CRITICAL — READ THIS FIRST!)
   =============================================================================
 
