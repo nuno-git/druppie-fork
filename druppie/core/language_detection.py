@@ -27,7 +27,7 @@ class LanguageDetector:
     """
 
     # Minimum text length for reliable detection
-    MIN_TEXT_LENGTH = 20
+    MIN_TEXT_LENGTH = 5
 
     # Supported languages (ISO 639-1 codes)
     SUPPORTED_LANGUAGES = ["nl", "en"]

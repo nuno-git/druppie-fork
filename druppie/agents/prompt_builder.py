@@ -20,10 +20,11 @@ class PromptBuilder:
         self.definition = definition
 
     def build_system_prompt(self, language: str = DEFAULT_LANGUAGE, language_info: dict = None) -> str:
-        """Build the full system prompt with a single language block.
+        """Build the full system prompt with language block at the TOP.
 
-        Injects common instructions from _common.md (if placeholder present).
-        Appends one clear language instruction block at the end.
+        Language goes first so the model sees it before all other instructions.
+        This is critical for weaker models (glm-4) where a buried instruction
+        gets drowned out by hundreds of lines of English-language content.
         """
         base_prompt = self.definition.system_prompt
 
@@ -32,10 +33,8 @@ class PromptBuilder:
         if common_prompt and "[COMMON_INSTRUCTIONS]" in base_prompt:
             base_prompt = base_prompt.replace("[COMMON_INSTRUCTIONS]", common_prompt)
 
-        # Append the single language block
-        base_prompt += self._build_language_block(language, language_info)
-
-        return base_prompt
+        # Language block FIRST — model sees it before all agent instructions
+        return self._build_language_block(language, language_info) + base_prompt
 
     def build_user_prompt(self, prompt: str, context: dict = None) -> str:
         """Build the user prompt with optional context and clarifications."""
@@ -79,12 +78,11 @@ TASK:
 
     @staticmethod
     def _build_language_block(language: str, language_info: dict = None) -> str:
-        """Build the single language instruction block.
+        """Build the leading language instruction block.
 
-        Three cases:
-        1. language_info with detection_status="detected" → shows auto-detected info
-        2. language_info with detection_status="failed" → shows default with reason
-        3. No language_info (first run, no user input yet) → simple language line
+        Placed at the TOP of the system prompt. Made assertive so the model
+        follows it even when other languages appear in the task prompt,
+        conversation history, or tool results.
         """
         lang_name = LANGUAGE_NAMES.get(language, language.upper())
 
@@ -92,32 +90,22 @@ TASK:
             preview = language_info.get("detected_from", "")
             detected = language_info.get("detected_language", language)
             detected_name = LANGUAGE_NAMES.get(detected, detected.upper())
-            header = f"""
-
----
-LANGUAGE INSTRUCTION (auto-detected):
-  Last user input: "{preview}"
-  Detected language: {detected} ({detected_name})"""
-
+            detection_line = f"Auto-detected from user input: \"{preview}\" → {detected} ({detected_name})"
         elif language_info and language_info.get("detection_status") == "failed":
             preview = language_info.get("detected_from", "")
-            header = f"""
-
----
-LANGUAGE INSTRUCTION (default):
-  Last user input: "{preview}" (too short to detect)
-  Using default language: {language} ({lang_name})"""
-
+            detection_line = f"User input \"{preview}\" too short to detect. Using default: {language} ({lang_name})"
         else:
-            header = f"""
+            detection_line = f"Language: {language} ({lang_name})"
 
----
-LANGUAGE INSTRUCTION:
-  Language: {language} ({lang_name})"""
+        return f"""===================================================================
+LEADING LANGUAGE INSTRUCTION — THIS OVERRIDES ALL OTHER LANGUAGES
+===================================================================
+{detection_line}
 
-        return f"""{header}
+You MUST respond in {lang_name}.
+Other languages may appear in the task description, conversation
+history, or tool results — ignore those for your output language.
+All your responses, questions, and tool arguments must be in {lang_name}.
+===================================================================
 
-  You MUST respond in {lang_name}. All responses, questions,
-  and tool arguments must be in {lang_name}.
----
 """
