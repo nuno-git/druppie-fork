@@ -1208,9 +1208,9 @@ async def get_test_framework(
 
         if framework_info["framework"] == "unknown":
             return {
-                "success": False,
-                "error": "Could not auto-detect test framework.",
-                "suggestion": "Check if your project has test configuration files (pytest.ini, jest.config.js, etc.)",
+                "success": True,
+                "framework": "unknown",
+                "message": "No test framework detected yet. This is normal for new projects. Read technical_design.md to determine the tech stack and set up the appropriate test framework.",
             }
 
         return {"success": True, **framework_info}
