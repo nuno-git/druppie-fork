@@ -312,9 +312,41 @@ class Agent:
         messages = reconstruct_from_db(llm_calls, execution_repo)
         iteration = len(llm_calls)
 
+        # Detect language switch by checking old system prompt
+        old_language = None
+        if messages and messages[0].get("role") == "system":
+            old_system = messages[0].get("content", "")
+            # Extract language from old system prompt
+            # Format can be: "Language: nl (DUTCH)" or "Auto-detected ... → nl (DUTCH)"
+            import re
+            # Try arrow format first (e.g., "→ nl")
+            match = re.search(r"→\s*(nl|en)\s*\(", old_system)
+            if match:
+                old_language = match.group(1).lower()
+            else:
+                # Fallback to "Language: nl" format
+                match = re.search(r"Language:\s*(nl|en)", old_system)
+                if match:
+                    old_language = match.group(1).lower()
+
         # Update the system prompt with the current language
         if messages and messages[0].get("role") == "system":
             messages[0]["content"] = self.prompt_builder.build_system_prompt(language, language_info)
+
+        # Inject synthetic system message if language switched (Option 2 + 3 combination)
+        # Use language_info as indicator of HITL answer (set in _build_project_context)
+        if context and context.get("language_info") and old_language and old_language != language:
+            from druppie.agents.prompt_builder import LANGUAGE_NAMES
+            lang_name = LANGUAGE_NAMES.get(language, language.upper())
+            messages.append({
+                "role": "system",
+                "content": f"LANGUAGE SWITCH: User now speaks {lang_name}. Respond in {lang_name}."
+            })
+            logger.info(
+                "language_switch_detected",
+                old_language=old_language,
+                new_language=language,
+            )
 
         logger.info(
             "agent_continue_run",

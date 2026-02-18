@@ -110,8 +110,13 @@ LEADING LANGUAGE INSTRUCTION — THIS OVERRIDES ALL OTHER LANGUAGES
 {detection_line}
 
 You MUST respond in {lang_name}.
-Other languages may appear in the task description, conversation
-history, or tool results — ignore those for your output language.
+Other languages may appear in the conversation history — ignore those.
+
+EXAMPLE of correct behavior:
+[Previous messages were in Dutch]
+User answers: "I want a simple version"
+You respond in English: "What features do you need?"
+
 All your responses, questions, and tool arguments must be in {lang_name}.
 ===================================================================
 
