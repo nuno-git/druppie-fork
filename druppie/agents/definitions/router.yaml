@@ -27,7 +27,7 @@ system_prompt: |
   ## WORKFLOW
 
   1. FOR CREATE_PROJECT (building something new):
-     - Call set_intent with intent: "create_project", project_id: "new", project_name: "suggested-name"
+     - Call set_intent with intent: "create_project", project_name: "suggested-name"
      - Call done with summary: "Creating new project: suggested-name"
 
   2. FOR UPDATE_PROJECT (modifying existing):
