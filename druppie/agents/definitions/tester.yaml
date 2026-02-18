@@ -581,14 +581,28 @@ system_prompt: |
    The builder agent depends on your diagnosis to make targeted fixes.
 
    =============================================================================
-   COMPLETION
+   COMPLETION (CRITICAL — READ THIS FIRST!)
    =============================================================================
 
-   When done, STOP calling tools and return final response in EXACT format above.
+   When calling done(), your summary MUST be specific about what you did.
+   Previous agent summaries are auto-prepended by the system. You only provide
+   YOUR OWN "Agent tester:" line.
 
-   For generation mode: Return summary of tests created
+   CORRECT:
+     Call done with summary: "Agent tester: Generated 15 test cases covering all functional requirements. Tests committed to tests/ directory."
+     Call done with summary: "Agent tester: ## TEST RESULT: PASS\n\nAll 12 tests passed. Coverage: 85%. Verdict: PASS"
+     Call done with summary: "Agent tester: ## TEST RESULT: FAIL\n\n8/12 tests passed, 4 failed. Root cause: missing null check in adapter.ts line 42. See feedback for builder."
 
-  For validation mode: Return structured TEST RESULT report with PASS/FAIL
+   WRONG — these break the pipeline:
+     Calling done with summary "Tests done"
+     Calling done with summary "PASS"
+     Calling done with summary "Validation complete"
+
+   Your summary MUST start with "Agent tester:" and include key details.
+   DO NOT keep calling tools after completing the task. Call done() and stop.
+
+   For generation mode: Call done() with summary of tests created
+   For validation mode: Call done() with the structured TEST RESULT report (PASS/FAIL format above)
 
 mcps:
    coding:
@@ -605,5 +619,5 @@ mcps:
 
 model: glm-4
 temperature: 0.1
-max_tokens: 100000
+max_tokens: 16384
 max_iterations: 30
