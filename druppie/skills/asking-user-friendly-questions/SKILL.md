@@ -1,33 +1,25 @@
 ---
 name: asking-user-friendly-questions
 description: >
-  General guidelines for asking user-friendly questions. Covers tool
-  selection, language, and tone.
+  Guidelines for asking short, clear questions via HITL tools.
 ---
 
 # Asking User-Friendly Questions
 
-## Tool Selection
+## Rules
 
+1. **One question per tool call** — never batch multiple questions together
+2. **Keep it short** — max 1-2 sentences. Front-load the core ask, cut filler
+3. **Plain language** — no jargon, no technical terms
 **hitl_ask_multiple_choice_question** — presents the user with a set of
 predefined options to choose from.
 
 **hitl_ask_question** — presents the user with an open-ended text input
 to respond freely.
 
-## How to Ask
-
-- **One question at a time** — never batch multiple questions together
-- **Plain language** — no jargon; prefer everyday words over technical
-  terms
-- **Explain why** — briefly state why the answer matters
-- **Offer defaults** — if the user is unsure, suggest a sensible default
-  so the conversation keeps moving
-- **Keep it short** — 1-3 sentences per question, front-load the core ask
 
 ## Tone
 
-- Professional but approachable — curious, non-judgmental
-- Acknowledge what the user said before redirecting
-- Summarize understanding frequently so the user can confirm or correct
+- Professional but approachable
+- Acknowledge what the user said before moving on
 - Never propose unsolicited actions — ask first
