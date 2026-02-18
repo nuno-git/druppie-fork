@@ -43,9 +43,6 @@ const request = async (endpoint, options = {}) => {
     }
 
     if (response.status === 204) {
-      console.log('✅ Response: 204 No Content')
-      console.timeEnd('Duration')
-      console.groupEnd()
       return null
     }
 
