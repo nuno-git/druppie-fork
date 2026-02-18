@@ -4,13 +4,16 @@ Uses LiteLLM for standardized tool calling across all providers.
 This is the only LLM implementation - all providers go through LiteLLM.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra, azure_foundry
+    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry
 
     For ZAI:
         ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
 
     For DeepInfra:
         DEEPINFRA_API_KEY, DEEPINFRA_MODEL, DEEPINFRA_BASE_URL
+
+    For DeepSeek:
+        DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL
 
     For Azure Foundry:
         FOUNDRY_API_KEY, FOUNDRY_MODEL, FOUNDRY_API_URL
@@ -178,6 +181,14 @@ PROVIDER_CONFIGS = {
         "model_env": "DEEPINFRA_MODEL",
         "base_url_env": "DEEPINFRA_BASE_URL",
         "default_base_url": "https://api.deepinfra.com/v1/openai",
+    },
+    "deepseek": {
+        "prefix": "deepseek",  # LiteLLM native DeepSeek support
+        "default_model": "deepseek-chat",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model_env": "DEEPSEEK_MODEL",
+        "base_url_env": "DEEPSEEK_BASE_URL",
+        "default_base_url": "https://api.deepseek.com/v1",
     },
     "azure_foundry": {
         "prefix": "openai",  # OpenAI-compatible API
