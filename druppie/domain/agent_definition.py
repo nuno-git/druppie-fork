@@ -48,7 +48,10 @@ class AgentDefinition(BaseModel):
     skills: list[str] = Field(default_factory=list)
 
     # LLM settings
+    provider: str | None = None
     model: str | None = None
+    fallback_provider: str | None = None
+    fallback_model: str | None = None
     temperature: float = 0.1
     max_tokens: int = 4096
     max_iterations: int = 10

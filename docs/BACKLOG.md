@@ -38,14 +38,12 @@ Last updated: 2026-02-11
 
 ---
 
-### Per-Agent Model Selection Ignored
+### ~~Per-Agent Model Selection Ignored~~ (DONE)
 
-- **Location:** `druppie/llm/service.py`, `druppie/agents/runtime.py`
-- Each agent YAML definition has `model` and `temperature` fields (e.g., `model: glm-4`, `temperature: 0.1`), but these values are ignored at runtime.
-- `LLMService` is a global singleton (`get_llm_service()`) that creates one LLM instance for all agents based on environment variables (`ZAI_MODEL`, `DEEPINFRA_MODEL`).
-- In `runtime.py:540`, only `max_tokens` from the agent definition is passed to `achat()`. The agent's `model` field is only used for logging (`runtime.py:532`), and `temperature` is never referenced.
-- **Impact:** All agents use the same model and temperature regardless of their YAML configuration. Cannot use a cheap/fast model for the router and a capable model for the developer.
-- **Fix needed:** Replace the singleton with a factory that caches LLM instances per `(provider, model, temperature)` tuple, or pass model/temperature overrides into `achat()`.
+- **Resolved in:** `feature/multi-llm` branch
+- Per-agent `provider`/`model`/`temperature` from YAML are now respected via `LLMService.create_llm_for_agent()` and the model resolver chain (override → primary → fallback → global default).
+- Runtime fallback via `FallbackLLM` retries on a secondary provider when the primary returns retryable errors.
+- See `docs/TECHNICAL.md` section 5.5 for details.
 
 ### Inconsistent [COMMON_INSTRUCTIONS] Across Agents
 

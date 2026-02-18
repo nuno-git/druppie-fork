@@ -299,6 +299,8 @@ class AgentLoop:
             iteration=iteration,
             duration_ms=duration_ms,
             has_tool_calls=bool(response.tool_calls),
+            actual_provider=response.provider,
+            actual_model=response.model,
         )
 
         return response, llm_call_id

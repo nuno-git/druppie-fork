@@ -347,6 +347,36 @@ Both providers are OpenAI-compatible and use the same unified code path via Lite
 
 LiteLLM handles all response parsing and tool call extraction automatically. The `LLMResponse` model normalizes responses into a consistent format with content, tool calls, and token usage.
 
+### 5.5 Multi-LLM Configuration
+
+Each agent can specify its own `provider`/`model` in its YAML definition. The **model resolver** (`druppie/llm/resolver.py`) determines which provider/model to use through a 4-step resolution chain:
+
+1. **Override** — `LLM_FORCE_PROVIDER` env var forces ALL agents to use a single provider (useful for testing/debugging).
+2. **Primary** — Agent YAML `provider`/`model`, used when the provider's API key env var is set.
+3. **Fallback** — Agent YAML `fallback_provider`/`fallback_model`, used when the primary API key is missing.
+4. **Global default** — `LLM_PROVIDER` env var (existing behavior, applies to agents with no YAML config).
+
+**Runtime fallback** (`druppie/llm/fallback.py`): When an agent has a fallback provider configured and the primary provider fails with a retryable error (rate limit, server error), `FallbackLLM` transparently retries the request on the fallback provider. Non-retryable errors (authentication failures) propagate immediately.
+
+```
+AgentLoop._call_llm() retry loop (3 attempts, exponential backoff)
+  └─ FallbackLLM.achat()
+       ├─ primary ChatLiteLLM.achat() (litellm internal retries: num_retries=3)
+       │   └─ retryable error after all litellm retries
+       └─ fallback ChatLiteLLM.achat() (litellm internal retries: num_retries=3)
+```
+
+Example YAML (Business Analyst uses Azure Foundry, falls back to Z.AI):
+```yaml
+provider: azure_foundry
+model: GPT-5-MINI
+fallback_provider: zai
+fallback_model: glm-4
+temperature: 0.2
+```
+
+All resolution decisions are logged as structured `model_resolved` events, and fallback activations as `llm_fallback_activated` events.
+
 ---
 
 ## 6. MCP Servers
