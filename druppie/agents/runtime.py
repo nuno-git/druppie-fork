@@ -105,9 +105,9 @@ class Agent:
 
     @property
     def llm(self):
-        """Get LLM service (lazy loaded)."""
+        """Get LLM instance configured from agent definition (lazy loaded)."""
         if self._llm is None:
-            self._llm = get_llm_service().get_llm()
+            self._llm = get_llm_service().create_llm_for_agent(self.definition)
         return self._llm
 
     @property

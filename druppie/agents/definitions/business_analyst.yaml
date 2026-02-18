@@ -776,7 +776,10 @@ mcps:
 # When business_analyst calls write_file (to create functional_design.md),
 # it requires approval from someone with the "business_analyst" role.
 
-model: glm-4
+provider: zai
+model: glm-4.7
+fallback_provider: azure_foundry
+fallback_model: GPT-5-MINI
 temperature: 0.2
 max_tokens: 100000
 max_iterations: 50

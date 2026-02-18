@@ -26,7 +26,9 @@ from .base import (
     RateLimitError,
     ServerError,
 )
+from .fallback import FallbackLLM
 from .litellm_provider import ChatLiteLLM, LITELLM_AVAILABLE
+from .resolver import ResolvedModel, resolve_model
 from .service import LLMConfigurationError, LLMService, get_llm_service
 
 __all__ = [
@@ -36,6 +38,11 @@ __all__ = [
     # Provider (LiteLLM-based)
     "ChatLiteLLM",
     "LITELLM_AVAILABLE",
+    # Fallback
+    "FallbackLLM",
+    # Resolver
+    "ResolvedModel",
+    "resolve_model",
     # Service
     "LLMService",
     "get_llm_service",

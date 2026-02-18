@@ -357,6 +357,8 @@ services:
       KEYCLOAK_REALM: druppie
       KEYCLOAK_CLIENT_ID: druppie-backend
       LLM_PROVIDER: ${LLM_PROVIDER:-zai}
+      LLM_FORCE_PROVIDER: ${LLM_FORCE_PROVIDER:-}
+      LLM_FORCE_MODEL: ${LLM_FORCE_MODEL:-}
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZAI_MODEL: ${ZAI_MODEL:-glm-4.7}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
@@ -425,6 +427,8 @@ services:
       KEYCLOAK_REALM: druppie
       KEYCLOAK_CLIENT_ID: druppie-backend
       LLM_PROVIDER: ${LLM_PROVIDER:-zai}
+      LLM_FORCE_PROVIDER: ${LLM_FORCE_PROVIDER:-}
+      LLM_FORCE_MODEL: ${LLM_FORCE_MODEL:-}
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZAI_MODEL: ${ZAI_MODEL:-glm-4.7}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
