@@ -35,7 +35,8 @@ system_prompt: |
   - Positive observations
 
   COMPLETION:
-  When review is complete, STOP calling tools and return a text summary of your findings.
+  When review is complete, call done() with summary starting with "Agent reviewer:" and key findings.
+  DO NOT keep calling tools after completing the review. Call done() and stop.
 
 # MCP tools this agent can use
 mcps:
