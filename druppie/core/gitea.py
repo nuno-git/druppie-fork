@@ -300,11 +300,12 @@ class GiteaClient:
 
         return result
 
-    async def delete_repo(self, name: str) -> dict[str, Any]:
-        """Delete a repository from the organization."""
-        result = await self._request("DELETE", f"/repos/{self.org}/{name}")
+    async def delete_repo(self, name: str, owner: str | None = None) -> dict[str, Any]:
+        """Delete a repository."""
+        repo_owner = owner or self.org
+        result = await self._request("DELETE", f"/repos/{repo_owner}/{name}")
         if result["success"]:
-            logger.info("gitea_repo_deleted", name=name)
+            logger.info("gitea_repo_deleted", name=name, owner=repo_owner)
         return result
 
     async def list_repos(self) -> dict[str, Any]:
