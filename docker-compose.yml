@@ -360,9 +360,15 @@ services:
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZAI_MODEL: ${ZAI_MODEL:-glm-4.7}
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
       DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
+      FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
+      FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
+      FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
       CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
       GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
       GITEA_INTERNAL_URL: http://gitea:3000
@@ -425,6 +431,9 @@ services:
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
       DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
+      FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
+      FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
+      FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
       CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
       GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
       GITEA_INTERNAL_URL: http://gitea:3000
@@ -435,10 +444,10 @@ services:
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
       USE_MCP_MICROSERVICES: "true"
-      MCP_CODING_URL: http://mcp-coding:9001
-      MCP_DOCKER_URL: http://mcp-docker:9002
-      MCP_FILESEARCH_URL: http://mcp-filesearch:9004
-      MCP_WEB_URL: http://mcp-web:9005
+      MCP_CODING_URL: ${MCP_CODING_URL:-http://mcp-coding:9001}
+      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
+      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
+      MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
     volumes:
       - druppie_new_workspace:/app/workspace
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock

@@ -20,10 +20,6 @@ class ApprovalRepository(BaseRepository):
         tool_name: str,
         arguments: dict,
         required_role: str,
-        title: str | None = None,
-        description: str | None = None,
-        danger_level: str | None = None,
-        approval_type: str = "tool_call",
     ) -> Approval:
         """Create a new approval record.
 
@@ -35,10 +31,6 @@ class ApprovalRepository(BaseRepository):
             tool_name: Tool name (e.g., "write_file")
             arguments: Tool arguments
             required_role: Role required to approve (e.g., "developer")
-            title: Human-readable title
-            description: Human-readable description
-            danger_level: Risk level ("low", "medium", "high")
-            approval_type: Type of approval (default: "tool_call")
 
         Returns:
             Created Approval model
@@ -47,13 +39,9 @@ class ApprovalRepository(BaseRepository):
             session_id=session_id,
             agent_run_id=agent_run_id,
             tool_call_id=tool_call_id,
-            approval_type=approval_type,
             mcp_server=mcp_server,
             tool_name=tool_name,
-            title=title or f"Approve {mcp_server}:{tool_name}",
-            description=description or f"Execute {tool_name}",
             required_role=required_role,
-            danger_level=danger_level,
             arguments=arguments,
             status=ApprovalStatus.PENDING.value,
         )
@@ -65,24 +53,32 @@ class ApprovalRepository(BaseRepository):
         """Get raw approval model."""
         return self.db.query(Approval).filter_by(id=approval_id).first()
 
-    def get_pending_for_roles(self, roles: list[str]) -> PendingApprovalList:
-        """Get pending approvals that the user's roles can approve."""
-        approvals = (
+    def get_pending_for_roles(self, roles: list[str] | None) -> PendingApprovalList:
+        """Get pending approvals that the user's roles can approve.
+
+        Args:
+            roles: List of roles to filter by, or None to return all pending.
+        """
+        query = (
             self.db.query(Approval)
             .filter(Approval.status == ApprovalStatus.PENDING.value)
-            .filter(Approval.required_role.in_(roles))
-            .order_by(Approval.created_at.desc())
-            .all()
         )
+        if roles is not None:
+            query = query.filter(Approval.required_role.in_(roles))
+        approvals = query.order_by(Approval.created_at.desc()).all()
         return PendingApprovalList(
             items=[self._to_detail(a) for a in approvals],
             total=len(approvals),
         )
 
     def get_resolved_for_roles(
-        self, roles: list[str], page: int = 1, limit: int = 20
+        self, roles: list[str] | None, page: int = 1, limit: int = 20
     ) -> ApprovalHistoryList:
-        """Get resolved approvals (approved/rejected) filtered by roles, paginated."""
+        """Get resolved approvals (approved/rejected) filtered by roles, paginated.
+
+        Args:
+            roles: List of roles to filter by, or None to return all resolved.
+        """
         base_query = (
             self.db.query(Approval)
             .filter(
@@ -91,8 +87,9 @@ class ApprovalRepository(BaseRepository):
                     ApprovalStatus.REJECTED.value,
                 ])
             )
-            .filter(Approval.required_role.in_(roles))
         )
+        if roles is not None:
+            base_query = base_query.filter(Approval.required_role.in_(roles))
 
         total = base_query.count()
 

@@ -156,6 +156,8 @@ def create_app() -> FastAPI:
                 llm_model = os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct")
             elif llm_provider == "zai":
                 llm_model = os.getenv("ZAI_MODEL", "GLM-4.7")
+            elif llm_provider == "azure_foundry":
+                llm_model = os.getenv("FOUNDRY_MODEL", "GPT-5-MINI")
             elif llm_provider == "mock":
                 llm_model = "mock"
         except LLMConfigurationError:
