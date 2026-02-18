@@ -23,8 +23,10 @@ import {
   buildVisibleJson,
   extractSurfacedApprovals,
   extractQuestions,
+  extractTestResults,
   findPendingQuestion,
 } from './ChatHelpers'
+import TestResultCard from './TestResultCard'
 
 // --- Tool label helper ---
 
@@ -290,6 +292,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) => {
   const resolvedItems = hasFollowingMessage ? [] : extractSurfacedApprovals(run.llm_calls)
     .filter((item) => item.tc.approval.status !== 'pending')
+  const testResults = extractTestResults(run)
 
   // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
@@ -317,6 +320,11 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
           {resolvedItems.map((item, i) => (
             <InlineApproval key={i} tc={item.tc} sessionId={sessionId} />
           ))}
+        </div>
+      )}
+      {testResults.length > 0 && (
+        <div className="mt-2">
+          <TestResultCard testResults={testResults} />
         </div>
       )}
     </div>

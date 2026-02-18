@@ -24,9 +24,9 @@ const request = async (endpoint, options = {}) => {
   const method = options.method || 'GET'
   const requestBody = options.body ? JSON.parse(options.body) : null
 
-  console.group(`🌐 API ${method} ${endpoint}`)
-  console.log('Request:', { method, endpoint, body: requestBody })
-  console.time('Duration')
+  // console.group(`🌐 API ${method} ${endpoint}`)
+  // console.log('Request:', { method, endpoint, body: requestBody })
+  // console.time('Duration')
 
   try {
     const response = await fetch(`${API_URL}${endpoint}`, {
