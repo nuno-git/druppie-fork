@@ -151,7 +151,9 @@ class AgentLoop:
             f"{s.name} ({s.description})" for s in available
         )
         description = (
-            f"Invoke a skill to get its instructions. "
+            f"Invoke a skill to load its instructions. "
+            f"IMPORTANT: Call this BEFORE your first user-facing question "
+            f"to load question guidelines. "
             f"Available: {skill_descriptions}"
         )
 
