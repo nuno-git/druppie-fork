@@ -2,8 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install git and curl for git operations and health checks
-RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
+# Install git, curl, and Node.js/npm for git operations, health checks, and JS test runners
+RUN apt-get update && apt-get install -y git curl nodejs npm && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
 COPY requirements.txt .

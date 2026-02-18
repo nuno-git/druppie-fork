@@ -809,7 +809,7 @@ async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
 
 @mcp.tool()
 async def batch_write_files(
-    files: dict[str, str],
+    files: list[dict[str, str]],
     session_id: str | None = None,
     workspace_id: str | None = None,
     project_id: str | None = None,
@@ -822,7 +822,7 @@ async def batch_write_files(
     Files are written to disk only. Use commit_and_push to commit and push.
 
     Args:
-        files: Dict mapping file paths (relative to workspace) to their contents
+        files: List of file objects, each with 'path' and 'content' keys
         session_id: Session ID (auto-creates workspace if needed)
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
@@ -836,11 +836,11 @@ async def batch_write_files(
     Example:
         batch_write_files(
             session_id="...",
-            files={
-                "src/index.js": "console.log('hello');",
-                "src/utils.js": "export const add = (a, b) => a + b;",
-                "package.json": '{"name": "myapp"}'
-            }
+            files=[
+                {"path": "src/index.js", "content": "console.log('hello');"},
+                {"path": "src/utils.js", "content": "export const add = (a, b) => a + b;"},
+                {"path": "package.json", "content": '{"name": "myapp"}'}
+            ]
         )
     """
     try:
@@ -865,7 +865,12 @@ async def batch_write_files(
         errors = []
 
         # Write all files
-        for path, content in files.items():
+        for file_entry in files:
+            path = file_entry.get("path")
+            content = file_entry.get("content")
+            if not path or content is None:
+                errors.append({"path": path, "error": "Missing path or content"})
+                continue
             try:
                 file_path = resolve_path(path, workspace_path)
 

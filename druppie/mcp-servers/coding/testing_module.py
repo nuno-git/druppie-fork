@@ -44,7 +44,7 @@ class TestingModule:
             "jest": {
                 "version_required": "29.x",
                 "doc_url": "https://jestjs.io/docs/getting-started",
-                "config_files": ["jest.config.js", "jest.config.ts"],
+                "config_files": ["jest.config.js", "jest.config.cjs", "jest.config.mjs", "jest.config.ts"],
                 "package_key": "devDependencies.jest",
                 "test_command": "npm test",
                 "coverage_command": "npm test -- --coverage --coverageReporters=json",
@@ -131,9 +131,14 @@ class TestingModule:
             except Exception:
                 pass
         
-        # Check for Jest
-        jest_config = workspace_path / "jest.config.js"
-        if jest_config.exists():
+        # Check for Jest (supports .js, .cjs, .mjs, .ts)
+        jest_config = None
+        for jest_ext in ["jest.config.js", "jest.config.cjs", "jest.config.mjs", "jest.config.ts"]:
+            candidate = workspace_path / jest_ext
+            if candidate.exists():
+                jest_config = candidate
+                break
+        if jest_config:
             config_info = {
                 "version": "29.x",
                 "config_file": str(jest_config),
