@@ -42,6 +42,13 @@ const request = async (endpoint, options = {}) => {
       throw new Error(error.detail || error.error || `Request failed: ${response.status}`)
     }
 
+    if (response.status === 204) {
+      console.log('✅ Response: 204 No Content')
+      console.timeEnd('Duration')
+      console.groupEnd()
+      return null
+    }
+
     const data = await response.json()
     console.log('✅ Response:', data)
     console.timeEnd('Duration')
