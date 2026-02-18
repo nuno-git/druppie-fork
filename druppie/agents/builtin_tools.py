@@ -463,7 +463,7 @@ PROJECT_ID: {str(project_id) if project_id else 'new'}
 # PLANNING TOOL IMPLEMENTATION
 # =============================================================================
 
-MAX_PLANNER_ITERATIONS = 10
+MAX_PLANNER_ITERATIONS = 30
 
 
 async def make_plan(

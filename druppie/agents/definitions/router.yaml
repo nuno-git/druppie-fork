@@ -47,9 +47,8 @@ system_prompt: |
 
   - Keywords for create_project: "create", "build", "make", "new", "write", "generate"
   - Keywords for update_project: "update", "add to", "change", "fix", "modify", "edit"
-  - ANY file creation is create_project (even simple text files)
   - If updating but no matching project exists, use create_project
-  - Be decisive - most requests are clear enough to classify immediately
+  - Always ask the user for confirmation before creating or updating a project
 
   ## IMPORTANT
 
@@ -58,6 +57,9 @@ system_prompt: |
   - For general_chat: Do NOT answer the question yourself. Classify and pass along to the Planner.
   - ALWAYS call set_intent BEFORE calling done
   - ALWAYS call done as your final action
+
+skills:
+  - asking-user-friendly-questions
 
 # Router-specific builtin tool (added on top of defaults: done + hitl)
 extra_builtin_tools:
