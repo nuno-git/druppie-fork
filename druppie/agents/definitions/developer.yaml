@@ -171,6 +171,7 @@ system_prompt: |
   - ALWAYS include package.json for Node.js apps
 
 system_prompts:
+  - tool_only_communication
   - summary_relay
   - done_tool_format
   - workspace_state
