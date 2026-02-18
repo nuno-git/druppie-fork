@@ -42,6 +42,10 @@ const request = async (endpoint, options = {}) => {
       throw new Error(error.detail || error.error || `Request failed: ${response.status}`)
     }
 
+    if (response.status === 204) {
+      return null
+    }
+
     const data = await response.json()
     console.log('✅ Response:', data)
     console.timeEnd('Duration')
@@ -89,6 +93,9 @@ export const resumeSession = (sessionId, answer = null) =>
     method: 'POST',
     body: JSON.stringify({ answer }),
   })
+
+export const deleteSession = (sessionId) =>
+  request(`/api/sessions/${sessionId}`, { method: 'DELETE' })
 
 // Legacy aliases (use getSession instead - it returns everything)
 export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}`)

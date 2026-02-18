@@ -4,6 +4,7 @@ from uuid import UUID
 import structlog
 
 from ..repositories import ProjectRepository
+from ..core.gitea import get_gitea_client
 from ..domain import ProjectDetail, ProjectSummary
 from ..api.errors import NotFoundError, AuthorizationError
 
@@ -58,13 +59,13 @@ class ProjectService:
 
         return detail
 
-    def delete(
+    async def delete(
         self,
         project_id: UUID,
         user_id: UUID,
         user_roles: list[str],
     ) -> None:
-        """Delete project (owner or admin only)."""
+        """Delete project and its Gitea repo (owner or admin only)."""
         project = self.project_repo.get_by_id(project_id)
         if not project:
             raise NotFoundError("project", str(project_id))
@@ -74,6 +75,18 @@ class ProjectService:
 
         if not is_owner and not is_admin:
             raise AuthorizationError("Only owner or admin can delete")
+
+        # Delete Gitea repository if one exists
+        if project.repo_name:
+            gitea = get_gitea_client()
+            result = await gitea.delete_repo(project.repo_name, owner=project.repo_owner)
+            if not result.get("success"):
+                logger.warning(
+                    "gitea_repo_delete_failed",
+                    project_id=str(project_id),
+                    repo_name=project.repo_name,
+                    error=result.get("error"),
+                )
 
         self.project_repo.delete(project_id)
         self.project_repo.commit()
