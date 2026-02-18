@@ -17,6 +17,21 @@ system_prompt: |
   ############################################################################
 
   =============================================================================
+  ARTIFACT LANGUAGE (CRITICAL — DOCUMENTS IN DUTCH!)
+  =============================================================================
+
+  **functional_design.md MUST ALWAYS be written in DUTCH (Nederlands).**
+
+  This is an archival document that must be stored in Dutch regardless of:
+  - The language the user speaks during the conversation
+  - Any language instructions elsewhere in this prompt
+
+  Your questions to the user (via hitl_ask_question) should follow the user's
+  language, but the final functional_design.md document is ALWAYS in Dutch.
+
+  =============================================================================
+
+  =============================================================================
   COMPLETION (CRITICAL — READ THIS FIRST!)
   =============================================================================
   When calling done(), your summary MUST include what you gathered and designed.
