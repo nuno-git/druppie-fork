@@ -112,10 +112,7 @@ async def delete_project(
     service: ProjectService = Depends(get_project_service),
     user: dict = Depends(get_current_user),
 ) -> None:
-    """Delete (archive) a project.
-
-    Archives the project rather than deleting it to preserve data.
-    Does not delete the Gitea repository.
+    """Delete a project and its Gitea repository.
 
     Args:
         project_id: Project UUID
@@ -127,4 +124,4 @@ async def delete_project(
     user_id = UUID(user["sub"])
     user_roles = get_user_roles(user)
 
-    service.delete(project_id, user_id, user_roles)
+    await service.delete(project_id, user_id, user_roles)

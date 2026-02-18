@@ -463,7 +463,7 @@ PROJECT_ID: {str(project_id) if project_id else 'new'}
 # PLANNING TOOL IMPLEMENTATION
 # =============================================================================
 
-MAX_PLANNER_ITERATIONS = 10
+MAX_PLANNER_ITERATIONS = 30
 
 
 async def make_plan(
@@ -526,6 +526,15 @@ async def make_plan(
                 "agent_id": "summarizer",
                 "prompt": "Summarize what was accomplished for the user. Note: the iteration limit was reached, so this is a forced finalization.",
             })
+
+    # Cancel any stale pending runs from a previous plan
+    cancelled_count = execution_repo.cancel_pending_runs(session_id)
+    if cancelled_count > 0:
+        logger.info(
+            "cancelled_stale_pending_runs",
+            session_id=str(session_id),
+            cancelled_count=cancelled_count,
+        )
 
     # Create pending agent runs via repository
     created_runs = []

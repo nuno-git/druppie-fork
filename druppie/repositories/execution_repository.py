@@ -56,6 +56,25 @@ class ExecutionRepository(BaseRepository):
         )
         return self._to_summary(agent_run) if agent_run else None
 
+    def cancel_pending_runs(self, session_id: UUID) -> int:
+        """Cancel all pending agent runs for a session.
+
+        Used by make_plan() to clear stale pending runs from a previous plan
+        before creating new ones.
+        """
+        pending_runs = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status == AgentRunStatus.PENDING.value,
+            )
+            .all()
+        )
+        for run in pending_runs:
+            run.status = AgentRunStatus.CANCELLED.value
+            run.completed_at = datetime.now(timezone.utc)
+        return len(pending_runs)
+
     def get_pending_runs(self, session_id: UUID) -> list[AgentRunSummary]:
         """Get all pending runs (the 'plan') for a session."""
         runs = (

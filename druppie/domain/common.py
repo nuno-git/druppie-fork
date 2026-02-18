@@ -28,6 +28,7 @@ class AgentRunStatus(str, Enum):
     PAUSED_HITL = "paused_hitl"  # Waiting for user answer
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"  # Superseded by a new plan
 
 
 class ToolCallStatus(str, Enum):
