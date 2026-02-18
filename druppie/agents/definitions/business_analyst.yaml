@@ -764,6 +764,7 @@ skills:
   - making-mermaid-diagrams
 
 system_prompts:
+  - tool_only_communication
   - summary_relay
   - done_tool_format
   - workspace_state
