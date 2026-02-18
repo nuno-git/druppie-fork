@@ -19,8 +19,13 @@ class WriteFileParams(BaseModel):
     content: str = Field(description="File content to write")
 
 
+class FileEntry(BaseModel):
+    path: str = Field(description="File path relative to workspace root")
+    content: str = Field(description="File content to write")
+
+
 class BatchWriteFilesParams(BaseModel):
-    files: dict[str, str] = Field(description="Map of file path to content")
+    files: list[FileEntry] = Field(description="List of files to write, each with path and content")
 
 
 class ListDirParams(BaseModel):

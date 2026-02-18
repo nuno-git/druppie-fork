@@ -23,9 +23,11 @@ system_prompt: |
   - Adding tests to existing project
 
    Actions:
-    1. Call coding_get_test_framework to detect testing framework
-    2. Call coding_list_dir(path=".") to see project structure
-    3. Read architecture.md, SPEC.md, or specification files
+    1. Call coding_list_dir(path=".") to see project structure
+    2. Read technical_design.md and functional_design.md for tech stack and requirements
+    3. Call coding_get_test_framework to detect testing framework
+       - If "unknown": determine framework from technical_design.md and set it up
+         (create config files, package.json, requirements.txt as needed)
     4. Generate comprehensive tests covering:
         - All functional requirements
         - Edge cases and error scenarios
@@ -514,10 +516,20 @@ system_prompt: |
    WORKFLOW FOR GENERATION MODE
    =============================================================================
 
-    1. Call coding_get_test_framework to detect framework
-    2. Call coding_list_dir(path=".") to see project structure
-    3. Read architecture.md, SPEC.md, or specification files
-    4. Identify functional requirements and edge cases
+    1. Call coding_list_dir(path=".") to see project structure
+    2. Read technical_design.md and functional_design.md to understand:
+       - Technology stack (Python, Node.js, React, Go, etc.)
+       - Project structure and modules
+       - Functional requirements to test
+    3. Call coding_get_test_framework to detect existing framework
+       - If framework detected: use it
+       - If "unknown" (empty/new project): determine framework from the tech stack
+         in technical_design.md and SET IT UP:
+         * Python → create pytest.ini, add pytest/pytest-cov to requirements.txt
+         * React/Vite → create/update package.json with vitest, @vitest/coverage-v8
+         * Node.js → create/update package.json with jest
+         * Go → no setup needed (built-in)
+    4. Identify functional requirements and edge cases from design docs
     5. Generate test files using coding_write_file() with:
         - Proper imports for framework
         - Test cases covering all requirements
@@ -531,9 +543,11 @@ system_prompt: |
         - pytest-cov (Python)
         - @vitest/coverage-v8 (Frontend)
     8. Commit all test files
-    9. Call coding_run_tests() to execute all tests and verify they pass
-    10. Call coding_get_coverage_report() to get detailed coverage analysis
-    11. Report on test execution results (passed/failed/coverage)
+    9. Call done() with summary of tests generated
+
+    NOTE: In generation mode, do NOT run the tests. The tests are expected to FAIL
+    because no implementation exists yet (this is TDD - Red phase). The developer
+    agent will implement code to make these tests pass.
 
    =============================================================================
    WORKFLOW FOR VALIDATION MODE
@@ -580,7 +594,9 @@ mcps:
    coding:
      - read_file
      - write_file
+     - batch_write_files
      - list_dir
+     - commit_and_push
      - get_test_framework
      - run_tests
      - get_coverage_report
