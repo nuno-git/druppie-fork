@@ -47,6 +47,12 @@ system_prompt: |
   - ALWAYS call done after create_message
   - Your done summary should be: "Agent summarizer: Posted completion summary."
 
+system_prompts:
+  - tool_only_communication
+  - summary_relay
+  - done_tool_format
+  - workspace_state
+
 extra_builtin_tools:
   - create_message
 

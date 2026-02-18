@@ -49,7 +49,7 @@ The agent runtime is split into focused modules:
 
 - **`runtime.py`** — Public `Agent` class (facade). Coordinates loader, prompt builder, and loop.
 - **`loop.py`** — Core `AgentLoop` class. Handles the LLM ↔ tool-calling loop, skill tool enrichment, and break-on-failure logic.
-- **`definition_loader.py`** — Loads YAML definitions and resolves `[COMMON_INSTRUCTIONS]` placeholders.
+- **`definition_loader.py`** — Loads YAML definitions and resolves `system_prompts` references.
 - **`message_history.py`** — Reconstructs agent message history from DB records for pause/resume.
 - **`prompt_builder.py`** — Builds system and user prompts with context injection (tool descriptions, project info).
 
@@ -141,8 +141,12 @@ Some MCP tools require approval:
    name: my_agent
    description: Does something useful
    system_prompt: |
-     [COMMON_INSTRUCTIONS]
      You are an agent that...
+   system_prompts:
+     - tool_only_communication
+     - summary_relay
+     - done_tool_format
+     - workspace_state
    mcps:
      - coding
    max_iterations: 10
