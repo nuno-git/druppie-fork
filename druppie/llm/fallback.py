@@ -1,13 +1,14 @@
 """FallbackLLM — thin wrapper that retries on a fallback LLM when the primary fails.
 
-Only retryable errors (RateLimitError, ServerError) trigger fallback.
-Non-retryable errors (AuthenticationError) propagate immediately.
+ANY LLMError from the primary triggers fallback, including AuthenticationError.
+This is correct for cross-provider fallback: if provider A's auth fails,
+provider B (a completely different service) may work fine.
 
 Interaction with existing retry layers:
     AgentLoop._call_llm() retry loop (3 attempts, exponential backoff)
       -> FallbackLLM.achat()
            -> primary ChatLiteLLM.achat() (litellm internal retries: num_retries=3)
-           -> (retryable error after all litellm retries)
+           -> (any LLMError after all litellm retries)
            -> fallback ChatLiteLLM.achat() (litellm internal retries: num_retries=3)
 """
 
@@ -21,7 +22,7 @@ logger = structlog.get_logger()
 
 
 class FallbackLLM(BaseLLM):
-    """LLM wrapper that falls back to a secondary LLM on retryable errors."""
+    """LLM wrapper that falls back to a secondary LLM on any error."""
 
     def __init__(self, primary: BaseLLM, fallback: BaseLLM):
         self._primary = primary
@@ -67,12 +68,11 @@ class FallbackLLM(BaseLLM):
             self._active = self._primary
             return response
         except LLMError as e:
-            if not e.retryable:
-                raise
             logger.warning(
                 "llm_fallback_activated",
                 primary_provider=self._primary.provider_name,
                 fallback_provider=self._fallback.provider_name,
+                error_type=type(e).__name__,
                 error=str(e)[:200],
             )
             response = self._fallback.chat(messages, tools)
@@ -90,12 +90,11 @@ class FallbackLLM(BaseLLM):
             self._active = self._primary
             return response
         except LLMError as e:
-            if not e.retryable:
-                raise
             logger.warning(
                 "llm_fallback_activated",
                 primary_provider=self._primary.provider_name,
                 fallback_provider=self._fallback.provider_name,
+                error_type=type(e).__name__,
                 error=str(e)[:200],
             )
             response = await self._fallback.achat(messages, tools, max_tokens)

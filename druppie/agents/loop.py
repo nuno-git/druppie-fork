@@ -290,6 +290,8 @@ class AgentLoop:
             prompt_tokens=response.prompt_tokens or 0,
             completion_tokens=response.completion_tokens or 0,
             duration_ms=duration_ms,
+            actual_provider=response.provider,
+            actual_model=response.model,
         )
         self.db.commit()
 
