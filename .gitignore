@@ -49,6 +49,10 @@ instance/
 # Local config
 .druppie/
 .playwright-mcp/
+.claude/
 
 # Docker volumes
 druppie-app/
+
+# Personal compose overrides
+docker-compose.robbe.yml

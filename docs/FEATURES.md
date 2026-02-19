@@ -256,14 +256,21 @@ max_tokens: 100000
 max_iterations: 50
 ```
 
-#### System Prompt Placeholders
+#### System Prompts
 
-Agent system prompts can contain two placeholders that are resolved at runtime:
+Agents can declare composable system prompts via the `system_prompts` list in their YAML definition. System prompts are YAML files in `agents/definitions/system_prompts/` that each contain a `name` and `prompt` field.
 
-- **`[COMMON_INSTRUCTIONS]`** -- Replaced with the contents of `agents/definitions/_common.md`, a shared prompt fragment that standardizes behavior across agents. It covers the summary relay protocol (how agents read previous summaries and format their own via `done()`), the mandatory `done()` output format, and workspace state rules (e.g., don't create branches unless asked). Currently included by: Planner, Business Analyst, Architect, Developer, Deployer.
-- **`[TOOL_DESCRIPTIONS_PLACEHOLDER]`** -- Replaced at runtime with a formatted list of the MCP tools the agent is allowed to call (based on its `mcps` config). Each tool entry includes its name, description, parameters, and whether it requires approval. This is generated dynamically from `mcp_config.yaml` so the agent's prompt always reflects the current tool definitions.
+At runtime, the declared system prompts are loaded and appended (in order) after the agent's own `system_prompt` text.
 
-Both placeholders are optional -- agents that don't include them simply won't get the injected content.
+Available system prompts:
+
+| System Prompt | Purpose |
+|----------|---------|
+| `summary_relay` | How to read previous agent summaries and format your own via `done()` |
+| `done_tool_format` | Mandatory `done()` output format rules |
+| `workspace_state` | Shared workspace and git branch rules |
+
+Currently included by: Planner, Business Analyst, Architect, Developer, Deployer. Agents without a `system_prompts` list receive no system prompts.
 
 Key sections:
 

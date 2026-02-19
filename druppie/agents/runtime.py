@@ -22,7 +22,7 @@ import structlog
 from druppie.agents.definition_loader import AgentDefinitionLoader
 from druppie.agents.loop import AgentLoop
 from druppie.agents.message_history import reconstruct_from_db
-from druppie.agents.prompt_builder import PromptBuilder
+from druppie.agents.prompt_builder import DEFAULT_LANGUAGE, PromptBuilder
 from druppie.core.mcp_config import MCPConfig
 from druppie.execution.mcp_http import MCPHttp
 from druppie.execution.tool_executor import ToolExecutor
@@ -59,6 +59,7 @@ class Agent:
     - Agent only completes when calling `done` tool
 
     All tool execution goes through ToolExecutor.
+    Context (language, project info) is always provided by the caller (orchestrator).
     """
 
     def __init__(self, agent_id: str, db: "DBSession | None" = None):
@@ -158,8 +159,11 @@ class Agent:
         """Run the agent with the given prompt."""
         session_id, agent_run_id = self._to_uuids(session_id, agent_run_id)
 
+        language = self._extract_language(context)
+        language_info = context.get("language_info") if context else None
+
         messages = [
-            {"role": "system", "content": self.prompt_builder.build_system_prompt()},
+            {"role": "system", "content": self.prompt_builder.build_system_prompt(language, language_info)},
             {"role": "user", "content": self.prompt_builder.build_user_prompt(prompt, context)},
         ]
 
@@ -261,8 +265,12 @@ class Agent:
         self,
         session_id: UUID | str,
         agent_run_id: UUID | str,
+        context: dict = None,
     ) -> Any:
-        """Continue a paused agent run by reconstructing state from the database."""
+        """Continue a paused agent run by reconstructing state from the database.
+
+        Context is provided by the orchestrator (which owns context building).
+        """
         from druppie.repositories import ExecutionRepository
 
         session_id, agent_run_id = self._to_uuids(session_id, agent_run_id)
@@ -275,6 +283,8 @@ class Agent:
             raise ValueError(f"Agent run not found: {agent_run_id}")
 
         prompt = agent_run.planned_prompt or ""
+        language = self._extract_language(context)
+        language_info = context.get("language_info") if context else None
 
         # Get all LLM calls for this run
         llm_calls = execution_repo.get_llm_calls_for_run(agent_run_id)
@@ -286,13 +296,13 @@ class Agent:
                 agent_run_id=str(agent_run_id),
             )
             messages = [
-                {"role": "system", "content": self.prompt_builder.build_system_prompt()},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": self.prompt_builder.build_system_prompt(language, language_info)},
+                {"role": "user", "content": self.prompt_builder.build_user_prompt(prompt, context)},
             ]
             return await self.loop.run(
                 messages=messages,
                 prompt=prompt,
-                context=None,
+                context=context,
                 session_id=session_id,
                 agent_run_id=agent_run_id,
                 start_iteration=0,
@@ -302,6 +312,42 @@ class Agent:
         messages = reconstruct_from_db(llm_calls, execution_repo)
         iteration = len(llm_calls)
 
+        # Detect language switch by checking old system prompt
+        old_language = None
+        if messages and messages[0].get("role") == "system":
+            old_system = messages[0].get("content", "")
+            # Extract language from old system prompt
+            # Format can be: "Language: nl (DUTCH)" or "Auto-detected ... → nl (DUTCH)"
+            import re
+            # Try arrow format first (e.g., "→ nl")
+            match = re.search(r"→\s*(nl|en)\s*\(", old_system)
+            if match:
+                old_language = match.group(1).lower()
+            else:
+                # Fallback to "Language: nl" format
+                match = re.search(r"Language:\s*(nl|en)", old_system)
+                if match:
+                    old_language = match.group(1).lower()
+
+        # Update the system prompt with the current language
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = self.prompt_builder.build_system_prompt(language, language_info)
+
+        # Inject synthetic system message if language switched (Option 2 + 3 combination)
+        # Use language_info as indicator of HITL answer (set in _build_project_context)
+        if context and context.get("language_info") and old_language and old_language != language:
+            from druppie.agents.prompt_builder import LANGUAGE_NAMES
+            lang_name = LANGUAGE_NAMES.get(language, language.upper())
+            messages.append({
+                "role": "system",
+                "content": f"LANGUAGE SWITCH: User now speaks {lang_name}. Respond in {lang_name}."
+            })
+            logger.info(
+                "language_switch_detected",
+                old_language=old_language,
+                new_language=language,
+            )
+
         logger.info(
             "agent_continue_run",
             agent_id=self.id,
@@ -309,12 +355,14 @@ class Agent:
             llm_calls_count=len(llm_calls),
             messages_count=len(messages),
             continuing_from_iteration=iteration,
+            has_context=bool(context),
+            conversational_language=language,
         )
 
         return await self.loop.run(
             messages=messages,
             prompt=prompt,
-            context=None,
+            context=context,
             session_id=session_id,
             agent_run_id=agent_run_id,
             start_iteration=iteration,
@@ -332,6 +380,13 @@ class Agent:
         if isinstance(agent_run_id, str):
             agent_run_id = UUID(agent_run_id)
         return session_id, agent_run_id
+
+    @staticmethod
+    def _extract_language(context: dict | None) -> str:
+        """Extract conversational language from context."""
+        if context and "conversational_language" in context:
+            return context["conversational_language"]
+        return DEFAULT_LANGUAGE
 
     def __repr__(self) -> str:
         return f"Agent({self.id!r})"

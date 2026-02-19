@@ -527,6 +527,15 @@ async def make_plan(
                 "prompt": "Summarize what was accomplished for the user. Note: the iteration limit was reached, so this is a forced finalization.",
             })
 
+    # Cancel any stale pending runs from a previous plan
+    cancelled_count = execution_repo.cancel_pending_runs(session_id)
+    if cancelled_count > 0:
+        logger.info(
+            "cancelled_stale_pending_runs",
+            session_id=str(session_id),
+            cancelled_count=cancelled_count,
+        )
+
     # Create pending agent runs via repository
     created_runs = []
     for i, step in enumerate(steps):

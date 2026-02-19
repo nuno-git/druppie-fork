@@ -144,8 +144,10 @@ const Dashboard = () => {
                     className={`flex-shrink-0 px-2 py-1 text-xs rounded-full ${
                       plan.status === 'completed'
                         ? 'bg-green-100 text-green-700'
-                        : plan.status === 'running'
+                        : plan.status === 'active' || plan.status === 'running'
                         ? 'bg-blue-100 text-blue-700'
+                        : plan.status === 'paused_approval' || plan.status === 'paused_hitl'
+                        ? 'bg-amber-100 text-amber-700'
                         : plan.status === 'failed'
                         ? 'bg-red-100 text-red-700'
                         : 'bg-gray-100 text-gray-700'

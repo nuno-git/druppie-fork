@@ -51,8 +51,7 @@ class ApprovalService:
         Other users see only approvals matching their roles.
         """
         if "admin" in user_roles:
-            # Admin sees all - check all common roles
-            roles_to_check = ["admin", "architect", "developer"]
+            roles_to_check = None  # Admin sees all pending approvals
         else:
             roles_to_check = user_roles
 
@@ -70,7 +69,7 @@ class ApprovalService:
         Other users see only approvals matching their roles.
         """
         if "admin" in user_roles:
-            roles_to_check = ["admin", "architect", "developer"]
+            roles_to_check = None  # Admin sees all history
         else:
             roles_to_check = user_roles
 

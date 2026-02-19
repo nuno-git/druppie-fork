@@ -440,17 +440,22 @@ const Tasks = () => {
     queryKey: ['approvalHistory'],
     queryFn: () => getApprovalHistory(1, 20),
     enabled: showHistory, // Only fetch when history section is expanded
-    staleTime: 30000, // Consider data fresh for 30 seconds
   })
 
   // Extract tasks array from paginated response
   const tasks = tasksResponse?.items || []
 
+  const invalidateApprovalCaches = () => {
+    queryClient.invalidateQueries(['tasks'])
+    queryClient.invalidateQueries(['plans'])
+    queryClient.invalidateQueries(['approvalHistory'])
+    queryClient.invalidateQueries(['pending-approvals-count'])
+  }
+
   const approveMutation = useMutation({
     mutationFn: ({ taskId, comment }) => approveTask(taskId, comment),
     onSuccess: () => {
-      queryClient.invalidateQueries(['tasks'])
-      queryClient.invalidateQueries(['plans'])
+      invalidateApprovalCaches()
       toast.success('Approval Granted', 'The task has been approved successfully.')
     },
     onError: (err) => {
@@ -461,8 +466,7 @@ const Tasks = () => {
   const rejectMutation = useMutation({
     mutationFn: ({ taskId, reason }) => rejectTask(taskId, reason),
     onSuccess: () => {
-      queryClient.invalidateQueries(['tasks'])
-      queryClient.invalidateQueries(['plans'])
+      invalidateApprovalCaches()
       toast.success('Task Rejected', 'The task has been rejected.')
     },
     onError: (err) => {
@@ -594,7 +598,7 @@ const Tasks = () => {
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium">{approval.tool_name || (approval.approval_type === 'workflow_step' ? 'Step Approval' : 'Unknown tool')}</span>
+                          <span className="font-medium">{approval.title || approval.tool_name || 'Unknown tool'}</span>
                           <span className={`px-2 py-0.5 ${
                             approval.status === 'approved'
                               ? 'bg-green-100 text-green-700'
@@ -620,18 +624,25 @@ const Tasks = () => {
                         {approval.description && (
                           <p className="text-gray-500 text-sm mt-1 line-clamp-2">{approval.description}</p>
                         )}
+                        {approval.status === 'rejected' && approval.rejection_reason && (
+                          <p className="text-red-500 text-sm mt-1 line-clamp-2">Reason: {approval.rejection_reason}</p>
+                        )}
                         <div className="flex items-center gap-4 mt-2 text-xs text-gray-500 flex-wrap">
-                          {(approval.approved_by || approval.rejected_by) && (
+                          {approval.resolved_by && (
                             <span className="flex items-center gap-1">
                               <User className="w-3 h-3" />
                               {approval.status === 'approved' ? 'Approved' : 'Rejected'} by: {
-                                approval.approved_by_username ||
-                                approval.rejected_by_username ||
-                                (approval.approved_by || approval.rejected_by)?.substring(0, 8) + '...'
+                                String(approval.resolved_by).substring(0, 8) + '...'
                               }
                             </span>
                           )}
-                          {approval.created_at && (
+                          {approval.resolved_at && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {new Date(approval.resolved_at).toLocaleString()}
+                            </span>
+                          )}
+                          {!approval.resolved_at && approval.created_at && (
                             <span className="flex items-center gap-1">
                               <Clock className="w-3 h-3" />
                               {new Date(approval.created_at).toLocaleString()}
@@ -649,11 +660,11 @@ const Tasks = () => {
                               View Conversation
                             </Link>
                             <Link
-                              to={`/debug/${approval.session_id}`}
+                              to={`/chat?session=${approval.session_id}&mode=inspect`}
                               className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
                             >
                               <ExternalLink className="w-3 h-3" />
-                              Debug Trace
+                              Inspect Trace
                             </Link>
                           </div>
                         )}

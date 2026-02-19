@@ -16,12 +16,13 @@ class Session(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"))
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"))
     title = Column(String(500))
     status = Column(String(20), default="active")  # active, paused_approval, paused_hitl, completed, failed
     error_message = Column(Text)  # Error details when status is 'failed'
     intent = Column(String(50))  # create_project, update_project, general_chat
     branch_name = Column(String(255), nullable=True)  # Feature branch for update_project
+    language = Column(String(10), nullable=True)  # Detected conversational language (e.g., "nl", "en")
 
     # Token usage (aggregated)
     prompt_tokens = Column(Integer, default=0)
@@ -41,6 +42,7 @@ class Session(Base):
             "error_message": self.error_message,
             "intent": self.intent,
             "branch_name": self.branch_name,
+            "language": self.language,
             "prompt_tokens": self.prompt_tokens or 0,
             "completion_tokens": self.completion_tokens or 0,
             "total_tokens": self.total_tokens or 0,
