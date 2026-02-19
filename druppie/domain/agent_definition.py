@@ -47,6 +47,9 @@ class AgentDefinition(BaseModel):
     # List of skill names that match directories in druppie/skills/
     skills: list[str] = Field(default_factory=list)
 
+    # System prompt fragments to include (from system_prompts/*.yaml)
+    system_prompts: list[str] = Field(default_factory=list)
+
     # LLM settings
     model: str | None = None
     temperature: float = 0.1

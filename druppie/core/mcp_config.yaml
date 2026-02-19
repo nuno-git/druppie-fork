@@ -23,6 +23,9 @@ mcps:
       session_id:
         from: session.id
         hidden: true
+      project_id:
+        from: project.id
+        hidden: true
       repo_name:
         from: project.repo_name
         hidden: true
@@ -74,8 +77,20 @@ mcps:
           type: object
           properties:
             files:
-              type: object
-              description: "Map of file path to content"
+              type: array
+              description: "List of files to write, each with path and content"
+              items:
+                type: object
+                properties:
+                  path:
+                    type: string
+                    description: "File path relative to workspace root"
+                  content:
+                    type: string
+                    description: "File content to write"
+                required:
+                  - path
+                  - content
           required:
             - files
 
@@ -123,9 +138,39 @@ mcps:
           properties:
             branch_name:
               type: string
-              description: "Name of the branch to create or switch to (e.g., feature/add-login)"
-          required:
-            - branch_name
+              description: "Name of branch to create or switch to (e.g., feature/add-login)"
+            required:
+              - branch_name
+      - name: run_tests
+        description: "Run tests in workspace (auto-detects framework)"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            test_command:
+              type: string
+              description: "Optional custom test command (default: auto-detected)"
+            timeout:
+              type: integer
+              description: "Timeout in seconds (default: 300)"
+          required: []
+      - name: get_test_framework
+        description: "Auto-detect test framework in workspace"
+        requires_approval: false
+        parameters:
+          type: object
+          properties: {}
+          required: []
+      - name: get_coverage_report
+        description: "Get detailed test coverage report"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            framework:
+              type: string
+              description: "Optional framework name (default: auto-detected)"
+          required: []
 
       - name: merge_to_main
         description: "Merge feature branch to main (direct git merge, no PR)"
@@ -173,6 +218,28 @@ mcps:
         parameters:
           type: object
           properties: {}
+          required: []
+
+      - name: install_test_dependencies
+        description: "Install missing test dependencies for project"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            framework:
+              type: string
+              description: "Optional framework name (default: auto-detected). Valid values: pytest, vitest, jest, playwright, go, shell"
+          required: []
+
+      - name: validate_tdd
+        description: "Run full TDD validation (tests + coverage + threshold check)"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            coverage_threshold:
+              type: number
+              description: "Minimum coverage percentage (default: 80.0)"
           required: []
 
   docker:

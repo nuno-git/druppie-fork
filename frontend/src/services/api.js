@@ -24,9 +24,9 @@ const request = async (endpoint, options = {}) => {
   const method = options.method || 'GET'
   const requestBody = options.body ? JSON.parse(options.body) : null
 
-  console.group(`🌐 API ${method} ${endpoint}`)
-  console.log('Request:', { method, endpoint, body: requestBody })
-  console.time('Duration')
+  // console.group(`🌐 API ${method} ${endpoint}`)
+  // console.log('Request:', { method, endpoint, body: requestBody })
+  // console.time('Duration')
 
   try {
     const response = await fetch(`${API_URL}${endpoint}`, {
@@ -40,6 +40,10 @@ const request = async (endpoint, options = {}) => {
       console.timeEnd('Duration')
       console.groupEnd()
       throw new Error(error.detail || error.error || `Request failed: ${response.status}`)
+    }
+
+    if (response.status === 204) {
+      return null
     }
 
     const data = await response.json()
@@ -89,6 +93,9 @@ export const resumeSession = (sessionId, answer = null) =>
     method: 'POST',
     body: JSON.stringify({ answer }),
   })
+
+export const deleteSession = (sessionId) =>
+  request(`/api/sessions/${sessionId}`, { method: 'DELETE' })
 
 // Legacy aliases (use getSession instead - it returns everything)
 export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}`)

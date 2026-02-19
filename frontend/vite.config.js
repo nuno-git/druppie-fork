@@ -12,5 +12,10 @@ export default defineConfig({
   },
   define: {
     'process.env': {}
+  },
+  test: {
+    exclude: ['tests/e2e/**', 'node_modules/**', 'dist/**'],
+    environment: 'jsdom',
+    globals: true
   }
 })

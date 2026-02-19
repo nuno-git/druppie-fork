@@ -16,6 +16,7 @@ import NewSessionPanel from '../components/chat/NewSessionPanel'
 const ChatPage = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const sessionId = searchParams.get('session')
+  const initialMode = searchParams.get('mode')
   const [sidebarOpen, setSidebarOpen] = useState(() =>
     localStorage.getItem('druppie-chat-sidebar') !== 'false'
   )
@@ -66,7 +67,7 @@ const ChatPage = () => {
           </button>
         )}
         {sessionId ? (
-          <SessionDetail sessionId={sessionId} />
+          <SessionDetail sessionId={sessionId} initialViewMode={initialMode} />
         ) : (
           <NewSessionPanel onSessionCreated={selectSession} />
         )}

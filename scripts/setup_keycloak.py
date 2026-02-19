@@ -289,6 +289,14 @@ def main():
     clients = users_config.get("clients", [])
 
     external_host = os.getenv("EXTERNAL_HOST", "localhost")
+    frontend_port = os.getenv("FRONTEND_PORT", "5273")
+    gitea_port = os.getenv("GITEA_PORT", "3100")
+
+    replacements = {
+        "${EXTERNAL_HOST}": external_host,
+        "${FRONTEND_PORT}": frontend_port,
+        "${GITEA_PORT}": gitea_port,
+    }
 
     # Environment variable substitutions for dynamic port configuration
     env_substitutions = {

@@ -4,13 +4,19 @@ Uses LiteLLM for standardized tool calling across all providers.
 This is the only LLM implementation - all providers go through LiteLLM.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra
+    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry
 
     For ZAI:
         ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
 
     For DeepInfra:
         DEEPINFRA_API_KEY, DEEPINFRA_MODEL, DEEPINFRA_BASE_URL
+
+    For DeepSeek:
+        DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL
+
+    For Azure Foundry:
+        FOUNDRY_API_KEY, FOUNDRY_MODEL, FOUNDRY_API_URL
 """
 
 import json
@@ -176,6 +182,24 @@ PROVIDER_CONFIGS = {
         "base_url_env": "DEEPINFRA_BASE_URL",
         "default_base_url": "https://api.deepinfra.com/v1/openai",
     },
+    "deepseek": {
+        "prefix": "deepseek",  # LiteLLM native DeepSeek support
+        "default_model": "deepseek-chat",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model_env": "DEEPSEEK_MODEL",
+        "base_url_env": "DEEPSEEK_BASE_URL",
+        "default_base_url": "https://api.deepseek.com/v1",
+    },
+    "azure_foundry": {
+        "prefix": "openai",  # OpenAI-compatible API
+        "default_model": "GPT-5-MINI",
+        "api_key_env": "FOUNDRY_API_KEY",
+        "model_env": "FOUNDRY_MODEL",
+        "base_url_env": "FOUNDRY_API_URL",
+        "default_base_url": "https://druppie.cognitiveservices.azure.com/openai/v1",
+        "use_max_completion_tokens": True,
+        "default_temperature": 1.0,
+    },
 }
 
 
@@ -220,13 +244,16 @@ class ChatLiteLLM(BaseLLM):
         # Load configuration from environment
         self.api_key = api_key or os.getenv(config["api_key_env"], "")
         self.api_base = api_base or os.getenv(config["base_url_env"], "") or config["default_base_url"]
-        self.temperature = temperature
+        self.temperature = config.get("default_temperature", temperature)
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.max_retries = max_retries
 
         # Model name (user-friendly, e.g., "glm-4.7")
         self._model = model or os.getenv(config["model_env"], "") or config["default_model"]
+
+        # Some providers (e.g. Azure OpenAI) require max_completion_tokens instead of max_tokens
+        self._use_max_completion_tokens = config.get("use_max_completion_tokens", False)
 
         # LiteLLM model format (e.g., "openai/glm-4.7" for custom endpoints)
         prefix = config["prefix"]
@@ -300,12 +327,14 @@ class ChatLiteLLM(BaseLLM):
     ) -> LLMResponse:
         """Send synchronous chat completion request."""
         effective_tools = tools or self._bound_tools
+        effective_max_tokens = min(self.max_tokens, 16384) if self.max_tokens else self.max_tokens
 
+        token_param = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
         kwargs = {
             "model": self._litellm_model,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            token_param: effective_max_tokens,
             "timeout": self.timeout,
             "num_retries": self.max_retries,
         }
@@ -332,12 +361,16 @@ class ChatLiteLLM(BaseLLM):
         """Send asynchronous chat completion request."""
         effective_tools = tools or self._bound_tools
         effective_max_tokens = max_tokens or self.max_tokens
+        # Clamp to safe limit for most providers
+        if effective_max_tokens and effective_max_tokens > 16384:
+            effective_max_tokens = 16384
 
+        token_param = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
         kwargs = {
             "model": self._litellm_model,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": effective_max_tokens,
+            token_param: effective_max_tokens,
             "timeout": self.timeout,
             "num_retries": self.max_retries,
         }

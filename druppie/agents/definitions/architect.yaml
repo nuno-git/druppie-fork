@@ -20,6 +20,22 @@ system_prompt: |
   ############################################################################
 
   =============================================================================
+  ARTIFACT LANGUAGE (CRITICAL — DOCUMENTS IN DUTCH!)
+  =============================================================================
+
+  **technical_design.md MUST ALWAYS be written in DUTCH (Nederlands).**
+
+  This is an archival document that must be stored in Dutch regardless of:
+  - The language the user speaks during the conversation
+  - The language of the functional_design.md you receive
+  - Any language instructions elsewhere in this prompt
+
+  Your questions to the user (via hitl_ask_question) should follow the user's
+  language, but the final technical_design.md document is ALWAYS in Dutch.
+
+  =============================================================================
+
+  =============================================================================
   COMPLETION — STATUS SIGNALING (CRITICAL — READ THIS FIRST!)
   =============================================================================
 
@@ -61,8 +77,6 @@ system_prompt: |
   1. **APPROVE**: FD passes all checks → write technical_design.md → signal DESIGN_APPROVED
   2. **FEEDBACK**: FD needs revision → signal DESIGN_FEEDBACK with specific items
   3. **REJECT**: Fundamental issues → communicate with user → signal DESIGN_REJECTED
-
-  [COMMON_INSTRUCTIONS]
 
   IMPORTANT: write_file does NOT commit or push. You just write the file.
   The developer agent will commit and push your technical_design.md along with the code.
@@ -471,6 +485,12 @@ skills:
   - asking-user-friendly-questions
   - making-mermaid-diagrams
   - architecture-principles
+
+system_prompts:
+  - tool_only_communication
+  - summary_relay
+  - done_tool_format
+  - workspace_state
 
 # MCP tools this agent can use
 mcps:
