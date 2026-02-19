@@ -405,6 +405,8 @@ class ExecutionRepository(BaseRepository):
         prompt_tokens: int,
         completion_tokens: int,
         duration_ms: int,
+        actual_provider: str | None = None,
+        actual_model: str | None = None,
     ) -> None:
         """Update LLM call response."""
         llm_call = self.db.query(LlmCall).filter(LlmCall.id == llm_call_id).first()
@@ -415,6 +417,10 @@ class ExecutionRepository(BaseRepository):
             llm_call.completion_tokens = completion_tokens
             llm_call.total_tokens = prompt_tokens + completion_tokens
             llm_call.duration_ms = duration_ms
+            if actual_provider:
+                llm_call.provider = actual_provider
+            if actual_model:
+                llm_call.model = actual_model
 
     def update_llm_error(
         self,

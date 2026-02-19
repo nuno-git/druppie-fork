@@ -123,13 +123,23 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
         """Async version - same logic."""
         self.log_success_event(kwargs, response_obj, start_time, end_time)
 
-    def log_failure_event(self, kwargs, exception, start_time, end_time, **extra):
-        """Capture failed request."""
-        # Handle both datetime.timedelta and float types for duration
-        if hasattr(end_time - start_time, 'total_seconds'):
-            duration_ms = int((end_time - start_time).total_seconds() * 1000)
-        else:
-            duration_ms = int((end_time - start_time) * 1000)
+    def log_failure_event(self, kwargs, *args, **extra):
+        """Capture failed request.
+
+        LiteLLM calls this with varying signatures across versions, so we
+        accept *args/**extra and extract what we need from kwargs.
+        """
+        exception = extra.get("exception") or (args[0] if args else None)
+        start_time = extra.get("start_time") or (args[1] if len(args) > 1 else None)
+        end_time = extra.get("end_time") or (args[2] if len(args) > 2 else None)
+
+        duration_ms = 0
+        if start_time and end_time:
+            diff = end_time - start_time
+            if hasattr(diff, 'total_seconds'):
+                duration_ms = int(diff.total_seconds() * 1000)
+            else:
+                duration_ms = int(diff * 1000)
 
         call_record = {
             "timestamp": self.last_request.get("timestamp") if self.last_request else None,
@@ -137,15 +147,15 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
             "provider": "litellm",
             "status": "error",
             "duration_ms": duration_ms,
-            "error": str(exception),
-            "error_type": type(exception).__name__,
+            "error": str(exception) if exception else "unknown",
+            "error_type": type(exception).__name__ if exception else "unknown",
         }
 
         self.call_history.append(call_record)
 
-    async def async_log_failure_event(self, kwargs, exception, start_time, end_time, **extra):
+    async def async_log_failure_event(self, kwargs, *args, **extra):
         """Async version - same logic."""
-        self.log_failure_event(kwargs, exception, start_time, end_time)
+        self.log_failure_event(kwargs, *args, **extra)
 
 
 # Global logger instance
