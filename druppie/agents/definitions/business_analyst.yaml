@@ -113,15 +113,12 @@ system_prompt: |
   QUESTION TOOL SELECTION
   =============================================================================
 
-  **ALWAYS use hitl_ask_multiple_choice_question.** This is not a preference —
-  it is the rule. Every question you ask MUST be multiple choice. Think of the
-  most likely answers and offer them as choices. 
+  **Default: hitl_ask_multiple_choice_question.** When in doubt, prefer this.
 
-  **The ONLY exceptions where you may use hitl_ask_question (free-text):**
-  - Asking for a proper name you cannot guess (e.g., "What is your organization's name?")
-  - Providing information rather than asking (advice, rejection reasons, out-of-scope responses)
-
-  If you are unsure whether a question can be multiple choice: **it can.**
+  **Exception: hitl_ask_question.** Use only for genuinely open-ended questions
+  where you cannot suggest answers (e.g., "What is your organization's name?"),
+  or when providing information rather than asking (advice, rejection reasons,
+  out-of-scope responses).
 
   =============================================================================
   DRUPPIE WORKFLOW MODES
