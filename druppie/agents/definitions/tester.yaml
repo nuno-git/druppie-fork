@@ -604,6 +604,12 @@ system_prompt: |
    For generation mode: Call done() with summary of tests created
    For validation mode: Call done() with the structured TEST RESULT report (PASS/FAIL format above)
 
+system_prompts:
+  - tool_only_communication
+  - summary_relay
+  - done_tool_format
+  - workspace_state
+
 mcps:
    coding:
      - read_file

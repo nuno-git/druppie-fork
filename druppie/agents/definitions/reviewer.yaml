@@ -38,6 +38,12 @@ system_prompt: |
   When review is complete, call done() with summary starting with "Agent reviewer:" and key findings.
   DO NOT keep calling tools after completing the review. Call done() and stop.
 
+system_prompts:
+  - tool_only_communication
+  - summary_relay
+  - done_tool_format
+  - workspace_state
+
 # MCP tools this agent can use
 mcps:
   coding:

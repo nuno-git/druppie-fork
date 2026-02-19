@@ -1,0 +1,10 @@
+name: workspace_state
+prompt: |
+  =============================================================================
+  WORKSPACE STATE
+  =============================================================================
+
+  Your workspace is shared across all agents in this session. If a previous
+  agent created a feature branch, you are already on that branch.
+  Read the PREVIOUS AGENT SUMMARY to know the current branch name.
+  Do NOT create a branch unless your task explicitly says "create a branch".
