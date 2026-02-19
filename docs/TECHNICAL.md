@@ -153,7 +153,7 @@ druppie/
     prompt_builder.py    # Builds system/user prompts with context
     builtin_tools.py     # Built-in tool definitions and execution
     definitions/         # YAML agent configs (see Section 8)
-      _common.md         # Shared instructions injected via placeholder
+      system_prompts/    # Composable system prompts (see Section 8.2)
   skills/
     code-review/SKILL.md # Code review skill definition
     git-workflow/SKILL.md# Git workflow skill definition
@@ -577,7 +577,10 @@ Each YAML file specifies:
 name: developer
 system_prompt: |
   You are a senior developer...
-  [COMMON_INSTRUCTIONS]
+system_prompts:           # Composable system prompts (see 8.2)
+  - summary_relay
+  - done_tool_format
+  - workspace_state
 model: null              # Uses global LLM (per-agent selection not yet active)
 temperature: 0.7
 max_tokens: 8192
@@ -592,11 +595,21 @@ extra_builtin_tools: []
 approval_overrides: {}
 ```
 
-### 8.2 Shared Instructions
+### 8.2 System Prompts
 
-`druppie/agents/definitions/_common.md` contains instructions shared across all agents (summary relay format, `done()` output format, workspace state context). The `[COMMON_INSTRUCTIONS]` placeholder in an agent's system prompt is replaced with this content at runtime.
+Reusable prompt instructions live as YAML files in `druppie/agents/definitions/system_prompts/`. Each file has a `name` (matching the filename) and a `prompt` field containing the text to inject.
 
-**Note:** Currently only 4 agents include the `[COMMON_INSTRUCTIONS]` placeholder (deployer, architect, business_analyst, planner). The developer, reviewer, tester, and router agents do not, which can lead to inconsistent agent communication -- see BACKLOG.md.
+Available system prompts:
+
+| System Prompt | Purpose |
+|----------|---------|
+| `summary_relay` | How to read previous agent summaries and format your own via `done()` |
+| `done_tool_format` | Mandatory `done()` output format rules |
+| `workspace_state` | Shared workspace and git branch rules |
+
+Agents declare which system prompts to include via the `system_prompts` list in their YAML definition. At runtime, the agent's `_build_system_prompt()` method loads each system prompt and appends it (in order) after the agent's own `system_prompt` text, before tool instructions are added.
+
+Agents without a `system_prompts` list (or with an empty list) receive no system prompts. Currently, 5 agents include all 3 system prompts: architect, business_analyst, deployer, developer, and planner. The router, summarizer, reviewer, and tester agents do not include system prompts.
 
 ### 8.3 Agent Runtime Architecture
 
@@ -606,14 +619,14 @@ The agent runtime is split into focused modules:
 |--------|-------|---------|
 | `runtime.py` | `Agent` | Public facade — coordinates loader, prompt builder, and loop |
 | `loop.py` | `AgentLoop` | Core LLM ↔ tool-calling loop, skill tool enrichment |
-| `definition_loader.py` | `AgentDefinitionLoader` | Loads YAML definitions, resolves `[COMMON_INSTRUCTIONS]` |
+| `definition_loader.py` | `AgentDefinitionLoader` | Loads YAML definitions and system prompts |
 | `message_history.py` | `reconstruct_from_db()` | Rebuilds agent message history from DB for resume |
 | `prompt_builder.py` | `PromptBuilder` | Builds system/user prompts with context injection |
 
 The core loop (`AgentLoop.run()`):
 
 ```
-1. Build system prompt (inject common instructions + tool descriptions)
+1. Build system prompt (append declared system prompts + tool descriptions)
 2. Build user prompt (inject project context)
 3. Call LLM with messages + tool definitions
 4. Parse response for tool calls
@@ -822,7 +835,7 @@ Optional:
 |------|---------|
 | `druppie/core/mcp_config.yaml` | MCP server URLs, tool schemas, approval rules, parameter injection |
 | `druppie/agents/definitions/*.yaml` | Agent definitions (prompt, tools, model config) |
-| `druppie/agents/definitions/_common.md` | Shared prompt instructions for all agents |
+| `druppie/agents/definitions/system_prompts/*.yaml` | Composable system prompts (see Section 8.2) |
 | `docker-compose.yml` | Infrastructure service definitions (at repository root) |
 | `.env` | Environment variable overrides |
 | `.env.example` | Documented template for environment variables |

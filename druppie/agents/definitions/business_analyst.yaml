@@ -80,8 +80,6 @@ system_prompt: |
   YOUR PRIMARY OUTPUT: functional_design.md (created via coding_write_file tool)
   In general_chat mode, you provide advice via hitl_ask_question instead.
 
-  [COMMON_INSTRUCTIONS]
-
   IMPORTANT: write_file does NOT commit or push. You just write the file.
   The developer agent will commit and push your functional_design.md along with the code.
 
@@ -761,6 +759,12 @@ system_prompt: |
 skills:
   - asking-user-friendly-questions
   - making-mermaid-diagrams
+
+system_prompts:
+  - tool_only_communication
+  - summary_relay
+  - done_tool_format
+  - workspace_state
 
 # MCP tools this agent can use
 mcps:

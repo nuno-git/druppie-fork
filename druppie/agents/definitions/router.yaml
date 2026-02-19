@@ -61,6 +61,12 @@ system_prompt: |
 skills:
   - asking-user-friendly-questions
 
+system_prompts:
+  - tool_only_communication
+  - summary_relay
+  - done_tool_format
+  - workspace_state
+
 # Router-specific builtin tool (added on top of defaults: done + hitl)
 extra_builtin_tools:
   - set_intent

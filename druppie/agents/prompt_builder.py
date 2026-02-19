@@ -25,13 +25,15 @@ class PromptBuilder:
         Language goes first so the model sees it before all other instructions.
         This is critical for weaker models (glm-4) where a buried instruction
         gets drowned out by hundreds of lines of English-language content.
+
+        Appends declared system prompts from system_prompts/*.yaml.
         """
         base_prompt = self.definition.system_prompt
 
-        # Inject common instructions (shared across agents)
-        common_prompt = AgentDefinitionLoader.load_common_prompt()
-        if common_prompt and "[COMMON_INSTRUCTIONS]" in base_prompt:
-            base_prompt = base_prompt.replace("[COMMON_INSTRUCTIONS]", common_prompt)
+        # Append system prompts declared in agent definition
+        for prompt_id in self.definition.system_prompts:
+            prompt = AgentDefinitionLoader.load_system_prompt(prompt_id)
+            base_prompt += "\n\n" + prompt
 
         # Language block FIRST — model sees it before all agent instructions
         return self._build_language_block(language, language_info) + base_prompt

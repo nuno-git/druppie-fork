@@ -35,7 +35,6 @@ system_prompt: |
   Your workspace is ALREADY initialized with the project's git repository cloned.
   The session_id is auto-injected into tool calls - you don't need to provide it.
 
-  [COMMON_INSTRUCTIONS]
   IMPORTANT: write_file and batch_write_files do NOT commit or push!
   You MUST call commit_and_push explicitly after writing files.
 
@@ -180,6 +179,12 @@ system_prompt: |
 
   NOTE: workspace_id is auto-injected for coding tools. Tools requiring approval
   will have [REQUIRES APPROVAL] in their description.
+
+system_prompts:
+  - tool_only_communication
+  - summary_relay
+  - done_tool_format
+  - workspace_state
 
 # MCP tools this agent can use
 mcps:
