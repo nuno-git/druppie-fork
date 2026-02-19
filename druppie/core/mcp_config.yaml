@@ -369,6 +369,134 @@ mcps:
   # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
   # Configure per-agent via `builtin_tools` in agent YAML files.
 
+  archimate:
+    url: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
+    description: "ArchiMate reference architecture models (read-only). Provides access to elements, relationships, views, and impact analysis for architecture context."
+    tools:
+      - name: list_models
+        description: "List all available ArchiMate models"
+        requires_approval: false
+
+      - name: get_statistics
+        description: "Get overview statistics for a model: element counts per layer/type, relationship counts"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+          required: []
+
+      - name: list_elements
+        description: "List elements, optionally filtered by layer (Strategy/Business/Application/Technology/Motivation) or type"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+            layer:
+              type: string
+              description: "Filter by layer: Strategy, Motivation, Business, Application, Technology, Physical"
+            element_type:
+              type: string
+              description: "Filter by type: BusinessProcess, ApplicationComponent, etc."
+            max_results:
+              type: integer
+              description: "Maximum results to return (default: 50)"
+            offset:
+              type: integer
+              description: "Offset for pagination (default: 0)"
+          required: []
+
+      - name: get_element
+        description: "Get full details of an element by name or ID, including relationships, views, and properties"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            element_name:
+              type: string
+              description: "Element name or ID"
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+          required:
+            - element_name
+
+      - name: list_views
+        description: "List all views/diagrams in the model"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+          required: []
+
+      - name: get_view
+        description: "Get all elements and relationships shown on a specific view/diagram"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            view_id:
+              type: string
+              description: "View name or ID"
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+          required:
+            - view_id
+
+      - name: search_model
+        description: "Search for elements by name, description, or property value"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            search_term:
+              type: string
+              description: "Search term (matches name, description, properties)"
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+            layer:
+              type: string
+              description: "Filter by layer"
+            element_type:
+              type: string
+              description: "Filter by element type"
+            max_results:
+              type: integer
+              description: "Maximum results (default: 20)"
+          required:
+            - search_term
+
+      - name: get_impact
+        description: "Analyze impact: traverse relationships from an element to find all connected elements"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            element_name:
+              type: string
+              description: "Element name or ID to start from"
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+            direction:
+              type: string
+              description: "Direction: 'downstream' (what this serves), 'upstream' (what depends on this), or 'both' (default)"
+            max_depth:
+              type: integer
+              description: "Maximum traversal depth (default: 3)"
+          required:
+            - element_name
+
   bestand-zoeker:
     url: ${MCP_WEB_URL:-http://mcp-web:9005}
     description: "Local file search and web browsing"
