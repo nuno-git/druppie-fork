@@ -190,7 +190,7 @@ class AgentLoop:
             session_id=session_id,
             agent_run_id=agent_run_id,
             provider=self.llm.provider_name if hasattr(self.llm, 'provider_name') else "unknown",
-            model=self.llm.model if hasattr(self.llm, 'model') else self.definition.model or "unknown",
+            model=self.llm.model if hasattr(self.llm, 'model') else "unknown",
             messages=messages,
             tools=openai_tools,
         )

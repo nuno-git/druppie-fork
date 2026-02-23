@@ -123,15 +123,11 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
         """Async version - same logic."""
         self.log_success_event(kwargs, response_obj, start_time, end_time)
 
-    def log_failure_event(self, kwargs, *args, **extra):
+    def log_failure_event(self, kwargs=None, exception=None, start_time=None, end_time=None, **extra):
         """Capture failed request.
 
-        LiteLLM calls this with varying signatures across versions, so we
-        accept *args/**extra and extract what we need from kwargs.
+        Uses keyword defaults for compatibility with different litellm callback signatures.
         """
-        exception = extra.get("exception") or (args[0] if args else None)
-        start_time = extra.get("start_time") or (args[1] if len(args) > 1 else None)
-        end_time = extra.get("end_time") or (args[2] if len(args) > 2 else None)
 
         duration_ms = 0
         if start_time and end_time:
@@ -143,7 +139,7 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
 
         call_record = {
             "timestamp": self.last_request.get("timestamp") if self.last_request else None,
-            "model": kwargs.get("model", ""),
+            "model": (kwargs or {}).get("model", ""),
             "provider": "litellm",
             "status": "error",
             "duration_ms": duration_ms,
@@ -153,9 +149,9 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
 
         self.call_history.append(call_record)
 
-    async def async_log_failure_event(self, kwargs, *args, **extra):
+    async def async_log_failure_event(self, kwargs=None, exception=None, start_time=None, end_time=None, **extra):
         """Async version - same logic."""
-        self.log_failure_event(kwargs, *args, **extra)
+        self.log_failure_event(kwargs=kwargs, exception=exception, start_time=start_time, end_time=end_time, **extra)
 
 
 # Global logger instance

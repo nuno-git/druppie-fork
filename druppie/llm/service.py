@@ -1,24 +1,12 @@
 """LLM Service for managing LLM instances.
 
-All providers use LiteLLM internally for standardized tool calling.
+Supports per-agent LLM profiles with ordered provider chains.
+Profiles are defined in agents/definitions/llm_profiles.yaml.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra, azure_foundry (default: zai)
-
-    For ZAI:
-        ZAI_API_KEY (required)
-        ZAI_MODEL (default: glm-4.7)
-        ZAI_BASE_URL (default: https://api.z.ai/api/coding/paas/v4)
-
-    For DeepInfra:
-        DEEPINFRA_API_KEY (required)
-        DEEPINFRA_MODEL (default: Qwen/Qwen3-32B)
-        DEEPINFRA_BASE_URL (default: https://api.deepinfra.com/v1/openai)
-
-    For Azure Foundry:
-        FOUNDRY_API_KEY (required)
-        FOUNDRY_MODEL (default: GPT-5-MINI)
-        FOUNDRY_API_URL (default: https://druppie.cognitiveservices.azure.com/openai/v1)
+    LLM_PROVIDER: Global default provider (zai, deepinfra, azure_foundry)
+    LLM_FORCE_PROVIDER: Force all agents to use this provider (overrides profiles)
+    LLM_FORCE_MODEL: Force all agents to use this model (requires LLM_FORCE_PROVIDER)
 """
 
 import os
@@ -29,7 +17,7 @@ import structlog
 from .base import BaseLLM
 from .fallback import FallbackLLM
 from .litellm_provider import ChatLiteLLM, LITELLM_AVAILABLE
-from .resolver import resolve_model
+from .resolver import get_profiles, resolve_model
 
 if TYPE_CHECKING:
     from druppie.domain.agent_definition import AgentDefinition
@@ -110,11 +98,15 @@ class LLMService:
 
         return self._llm
 
+    def get_profiles(self) -> dict:
+        """Get all loaded profiles (for status endpoint)."""
+        return get_profiles()
+
     def create_llm_for_agent(self, agent_def: "AgentDefinition") -> BaseLLM:
         """Create an LLM instance using the model resolution chain.
 
-        Resolution order: override → primary → fallback → global default.
-        If a runtime fallback provider is available, wraps in FallbackLLM.
+        Resolution order: override → profile → global default.
+        If a fallback provider is available, wraps in FallbackLLM.
         """
         if not LITELLM_AVAILABLE:
             raise LLMConfigurationError(
@@ -154,6 +146,7 @@ class LLMService:
         logger.info(
             "llm_created_for_agent",
             agent_id=agent_def.id,
+            profile=agent_def.llm_profile,
             provider=resolved.provider,
             model=primary.model,
             source=resolved.source,
