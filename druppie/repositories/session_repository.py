@@ -225,7 +225,7 @@ class SessionRepository(BaseRepository):
         agent_runs = (
             self.db.query(AgentRun)
             .filter_by(session_id=session_id, parent_run_id=None)
-            .order_by(AgentRun.started_at)
+            .order_by(AgentRun.sequence_number)
             .all()
         )
 
@@ -238,8 +238,12 @@ class SessionRepository(BaseRepository):
                 agent_run=self._build_agent_run_detail(run),
             ))
 
-        # Sort by timestamp for chronological order
-        entries.sort(key=lambda x: x.timestamp)
+        # Sort by timestamp, with sequence_number as tiebreaker for agent runs
+        # (pending runs after retry may have identical timestamps)
+        entries.sort(key=lambda x: (
+            x.timestamp,
+            x.agent_run.sequence_number if x.agent_run and x.agent_run.sequence_number is not None else 0,
+        ))
         return entries
 
     def _to_agent_run_summary(self, run: AgentRun) -> AgentRunSummary:
