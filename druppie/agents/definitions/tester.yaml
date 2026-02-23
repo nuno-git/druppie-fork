@@ -615,9 +615,10 @@ system_prompt: |
    - The test setup is complex (multi-file, framework config, fixtures)
 
    HOW TO USE:
-   1. Call coding_execute_coding_task(task="<detailed prompt>")
+   1. Call coding_execute_coding_task(task="<detailed prompt>", agent="druppie-tester")
       - Be specific: mention test files to create, frameworks to use, patterns to follow
       - Include relevant context from design docs or requirements
+      - ALWAYS use agent="druppie-tester" for testing tasks
    2. The tool returns: changed_files, agent_output, status
    3. If successful, changes are automatically synced to the workspace via git pull
    4. If the sandbox failed, fall back to writing test files directly with write_file
