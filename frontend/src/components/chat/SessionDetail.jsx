@@ -24,9 +24,11 @@ import {
   extractSurfacedApprovals,
   extractQuestions,
   extractTestResults,
+  extractSandboxResults,
   findPendingQuestion,
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
+import SandboxEventCard from './SandboxEventCard'
 
 // --- Tool label helper ---
 
@@ -293,6 +295,7 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
   const resolvedItems = hasFollowingMessage ? [] : extractSurfacedApprovals(run.llm_calls)
     .filter((item) => item.tc.approval.status !== 'pending')
   const testResults = extractTestResults(run)
+  const sandboxResults = extractSandboxResults(run)
 
   // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
@@ -325,6 +328,11 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
       {testResults.length > 0 && (
         <div className="mt-2">
           <TestResultCard testResults={testResults} />
+        </div>
+      )}
+      {sandboxResults.length > 0 && (
+        <div className="mt-2">
+          <SandboxEventCard sandboxResults={sandboxResults} />
         </div>
       )}
     </div>

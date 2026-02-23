@@ -234,6 +234,13 @@ export const getAgents = async () => {
 }
 export const getAgent = (agentId) => request(`/api/agents/${agentId}`)
 
+// ============ Sandbox ============
+export const getSandboxEvents = (sessionId, messageId) => {
+  let url = `/api/sandbox-sessions/${sessionId}/events?limit=500`
+  if (messageId) url += `&message_id=${messageId}`
+  return request(url)
+}
+
 // ============ Health ============
 export const getHealth = () => request('/health')
 export const getStatus = () => request('/api/status')
