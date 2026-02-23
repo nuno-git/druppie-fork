@@ -132,6 +132,9 @@ class AgentLoop:
         if self.definition.skills:
             self._enrich_invoke_skill(openai_tools)
 
+        # Enrich execute_coding_task with available sandbox agents
+        self._enrich_execute_coding_task(openai_tools)
+
         return openai_tools, registry
 
     def _enrich_invoke_skill(self, openai_tools: list[dict]) -> None:
@@ -166,6 +169,81 @@ class AgentLoop:
                     "description": "Skill to invoke",
                 }
                 break
+
+    def _enrich_execute_coding_task(self, openai_tools: list[dict]) -> None:
+        """Dynamically enrich execute_coding_task with available sandbox agents.
+
+        Reads agent markdown files from druppie/sandbox-config/agents/ and
+        injects their names as an enum + descriptions into the tool schema,
+        following the same pattern as _enrich_invoke_skill.
+        """
+        from pathlib import Path
+
+        # Only enrich if the tool is present in this agent's tools
+        target = None
+        for tool in openai_tools:
+            if tool.get("function", {}).get("name") == "coding_execute_coding_task":
+                target = tool
+                break
+        if target is None:
+            return
+
+        # Discover agents from sandbox-config/agents/*.md
+        agents_dir = Path(__file__).resolve().parent.parent / "sandbox-config" / "agents"
+        if not agents_dir.is_dir():
+            return
+
+        agents = []
+        for agent_file in sorted(agents_dir.glob("*.md")):
+            try:
+                content = agent_file.read_text()
+                if content.startswith("---"):
+                    parts = content.split("---", 2)
+                    if len(parts) >= 3:
+                        import yaml
+                        frontmatter = yaml.safe_load(parts[1])
+                        if frontmatter and isinstance(frontmatter, dict):
+                            agents.append({
+                                "name": agent_file.stem,
+                                "description": frontmatter.get("description", ""),
+                            })
+            except Exception:
+                logger.warning("sandbox_agent_load_failed", file=str(agent_file))
+
+        if not agents:
+            return
+
+        # Build enum + enriched description
+        agent_names = [a["name"] for a in agents]
+        agent_list = ", ".join(
+            f"{a['name']} ({a['description']})" for a in agents
+        )
+
+        # Read default agent from opencode-config.json
+        config_file = agents_dir.parent / "opencode-config.json"
+        default_agent = "druppie-builder"
+        if config_file.is_file():
+            try:
+                import json as _json
+                config = _json.loads(config_file.read_text())
+                default_agent = config.get("default_agent", default_agent)
+            except Exception:
+                pass
+
+        base_desc = target["function"]["description"]
+        target["function"]["description"] = (
+            f"{base_desc} Available agents: {agent_list}. "
+            f"Default: {default_agent}."
+        )
+
+        # Replace the agent property with an enum-constrained version
+        props = target["function"]["parameters"]["properties"]
+        props["agent"] = {
+            "description": f"Sandbox agent to use. Available: {agent_list}",
+            "default": default_agent,
+            "enum": agent_names,
+            "type": "string",
+        }
 
     # ------------------------------------------------------------------
     # LLM call with DB record keeping

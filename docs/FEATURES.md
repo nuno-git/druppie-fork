@@ -18,29 +18,17 @@ Because all actions are tool calls, every action can be logged, inspected, and g
 
 ## Agent Pipeline
 
-Nine agents are defined. Seven are functional; two are stubs.
-
-### Functional Agents
-
 | Agent | Purpose | Key Behavior |
 |-------|---------|--------------|
 | **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, or `general_chat`. Can ask clarifying questions. Has web search access. |
 | **Planner** | Orchestrates the pipeline | Creates execution plans as ordered sequences of agent steps. Re-evaluates after each major phase. Manages design loops (BA/Architect) and execution loops (Developer/Deployer). Max 15 iterations. |
 | **Business Analyst** | Gathers requirements | Engages the user in structured dialogue (root cause analysis, stakeholder mapping, elicitation). Produces `functional_design.md`. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Max 50 iterations. |
 | **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Three outcomes: APPROVE (writes `architecture.md`), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Applies Security by Design and Compliance by Design. Max 50 iterations. |
-| **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. For `create_project`, works on main; for `update_project`, works on feature branches. Max 100 iterations. |
+| **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. Can delegate to sandbox agents via `execute_coding_task`. Max 100 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
+| **Reviewer** | Code review | Reviews code for quality, security, and best practices. |
+| **Tester** | Testing | Writes and runs tests to validate implementations. |
 | **Summarizer** | Creates completion messages | Reads all previous agent summaries and produces a concise, user-friendly message. Always the final step. Max 5 iterations. |
-
-### Stub Agents (Not Yet Invoked by Planner)
-
-| Agent | Intended Purpose |
-|-------|-----------------|
-| **Reviewer** | Code review for quality, security, and best practices |
-
-The Reviewer agent is defined with system prompts and MCP tool access but is never included in plans by the Planner.
-
-**Note:** The Tester agent definition exists in the main pipeline but is not yet invoked by the Planner. However, both building and testing capabilities are now available via **sandbox agents** — the Developer agent can delegate coding tasks to `druppie-builder` and testing tasks to `druppie-tester` using the `execute_coding_task` tool (see Sandbox Coding below).
 
 ---
 
