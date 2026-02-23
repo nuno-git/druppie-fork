@@ -15,7 +15,8 @@ Services handle:
 This file went from 776 lines to ~80 lines by moving logic to services/repositories.
 """
 
-from fastapi import APIRouter, Depends, Query
+import asyncio
+from fastapi import APIRouter, Depends, HTTPException, Query
 from uuid import UUID
 import structlog
 
@@ -27,6 +28,7 @@ from druppie.api.deps import (
 from druppie.api.errors import NotFoundError, AuthorizationError
 from druppie.services import SessionService
 from druppie.domain import SessionDetail, SessionSummary
+from druppie.domain.common import SessionStatus
 
 logger = structlog.get_logger()
 
@@ -157,3 +159,146 @@ async def delete_session(
 
     logger.info("session_deleted", session_id=str(session_id), user_id=str(user_id))
     return {"success": True, "message": "Session deleted"}
+
+
+# =============================================================================
+# RETRY FROM RUN
+# =============================================================================
+
+
+async def _run_retry_background(
+    session_id: UUID,
+    agent_run_id: UUID,
+) -> None:
+    """Revert and re-execute from a specific agent run.
+
+    Creates fresh DB session and repositories (same pattern as chat.py).
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.repositories import (
+        SessionRepository,
+        ExecutionRepository,
+        ProjectRepository,
+        QuestionRepository,
+    )
+    from druppie.execution import Orchestrator
+    from druppie.services import RevertService
+
+    db = SessionLocal()
+    try:
+        # Step 1: Revert (delete old runs, revert git, recreate as pending)
+        revert_service = RevertService(db)
+        result = await revert_service.retry_from_run(session_id, agent_run_id)
+
+        logger.info(
+            "retry_revert_complete",
+            session_id=str(session_id),
+            result=result,
+        )
+
+        # Step 2: Execute pending runs (the recreated ones)
+        session_repo = SessionRepository(db)
+        execution_repo = ExecutionRepository(db)
+        project_repo = ProjectRepository(db)
+        question_repo = QuestionRepository(db)
+
+        orchestrator = Orchestrator(
+            session_repo=session_repo,
+            execution_repo=execution_repo,
+            project_repo=project_repo,
+            question_repo=question_repo,
+        )
+
+        await orchestrator.execute_pending_runs(session_id)
+
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        logger.error(
+            "retry_background_error",
+            session_id=str(session_id),
+            error=error_msg,
+            exc_info=True,
+        )
+        try:
+            db.rollback()
+            from druppie.repositories import SessionRepository
+            session_repo = SessionRepository(db)
+            session_repo.update_status(
+                session_id,
+                SessionStatus.FAILED,
+                error_message=error_msg[:2000],
+            )
+            db.commit()
+        except Exception as update_error:
+            logger.error(
+                "failed_to_update_session_status_after_retry",
+                session_id=str(session_id),
+                error=str(update_error),
+            )
+    finally:
+        db.close()
+
+
+@router.post("/sessions/{session_id}/retry-from/{agent_run_id}")
+async def retry_from_run(
+    session_id: UUID,
+    agent_run_id: UUID,
+    service: SessionService = Depends(get_session_service),
+    user: dict = Depends(get_current_user),
+):
+    """Retry a session from a specific agent run.
+
+    Reverts the target agent run and all subsequent runs, then re-executes
+    them with the same planned prompts. Works for any agent run status.
+
+    This endpoint:
+    1. Validates session ownership and status (must not be active)
+    2. Sets session to active immediately
+    3. Spawns background task to revert + re-execute
+    4. Returns immediately
+
+    Args:
+        session_id: Session to retry
+        agent_run_id: Agent run to retry from (this run and all after it)
+
+    Returns:
+        Success response with session_id
+    """
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+
+    # Validate session exists and user has access
+    detail = service.get_detail(
+        session_id=session_id,
+        user_id=user_id,
+        user_roles=user_roles,
+    )
+
+    # Cannot retry active sessions
+    if detail.status == "active":
+        raise HTTPException(status_code=409, detail="Cannot retry while session is active")
+
+    # Set session to active immediately so frontend shows processing
+    service.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+    service.session_repo.commit()
+
+    logger.info(
+        "retry_from_run_requested",
+        session_id=str(session_id),
+        agent_run_id=str(agent_run_id),
+        user_id=str(user_id),
+    )
+
+    # Spawn background task
+    asyncio.create_task(
+        _run_retry_background(
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+        )
+    )
+
+    return {
+        "success": True,
+        "session_id": str(session_id),
+        "message": "Retry started",
+    }
