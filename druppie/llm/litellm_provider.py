@@ -4,7 +4,7 @@ Uses LiteLLM for standardized tool calling across all providers.
 This is the only LLM implementation - all providers go through LiteLLM.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry
+    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry, ollama
 
     For ZAI:
         ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
@@ -17,6 +17,9 @@ Environment variables:
 
     For Azure Foundry:
         FOUNDRY_API_KEY, FOUNDRY_MODEL, FOUNDRY_API_URL
+
+    For Ollama:
+        OLLAMA_MODEL, OLLAMA_BASE_URL (API key optional)
 """
 
 import json
@@ -208,6 +211,15 @@ PROVIDER_CONFIGS = {
         "force_temperature": True,  # GPT-5-MINI only supports temperature=1.0
         "auth_type": "bearer",  # Use Bearer token instead of api-key header
     },
+    "ollama": {
+        "prefix": "openai",  # Ollama is OpenAI-compatible
+        "default_model": "gpt-oss:20b",
+        "api_key_env": "OLLAMA_API_KEY",
+        "api_key_optional": True,  # Ollama doesn't require auth by default
+        "model_env": "OLLAMA_MODEL",
+        "base_url_env": "OLLAMA_BASE_URL",
+        "default_base_url": "https://ollama.waterschap.org/v1",
+    },
 }
 
 
@@ -251,6 +263,9 @@ class ChatLiteLLM(BaseLLM):
 
         # Load configuration from environment
         self.api_key = api_key or os.getenv(config["api_key_env"], "")
+        # Providers with optional keys (e.g. Ollama) need a dummy key for LiteLLM
+        if not self.api_key and config.get("api_key_optional"):
+            self.api_key = "no-key-required"
         self.api_base = api_base or os.getenv(config["base_url_env"], "") or config["default_base_url"]
         # Provider may force a specific temperature (e.g. GPT-5-MINI only supports 1.0)
         if config.get("force_temperature"):
