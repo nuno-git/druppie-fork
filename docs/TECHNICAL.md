@@ -347,16 +347,39 @@ Both providers are OpenAI-compatible and use the same unified code path via Lite
 
 LiteLLM handles all response parsing and tool call extraction automatically. The `LLMResponse` model normalizes responses into a consistent format with content, tool calls, and token usage.
 
-### 5.5 Multi-LLM Configuration
+### 5.5 LLM Profiles
 
-Each agent can specify its own `provider`/`model` in its YAML definition. The **model resolver** (`druppie/llm/resolver.py`) determines which provider/model to use through a 4-step resolution chain:
+Agents reference shared **LLM profiles** defined in `druppie/agents/definitions/llm_profiles.yaml`. Each profile is an ordered list of `{provider, model}` pairs:
 
-1. **Override** — `LLM_FORCE_PROVIDER` env var forces ALL agents to use a single provider (useful for testing/debugging).
-2. **Primary** — Agent YAML `provider`/`model`, used when the provider's API key env var is set.
-3. **Fallback** — Agent YAML `fallback_provider`/`fallback_model`, used when the primary API key is missing.
-4. **Global default** — `LLM_PROVIDER` env var (existing behavior, applies to agents with no YAML config).
+```yaml
+profiles:
+  standard:
+    - provider: zai
+      model: glm-4.7
+    - provider: azure_foundry
+      model: GPT-5-MINI
+  cheap:
+    - provider: azure_foundry
+      model: GPT-5-MINI
+    - provider: zai
+      model: glm-4.7
+    - provider: deepinfra
+      model: Qwen/Qwen3-32B
+```
 
-**Runtime fallback** (`druppie/llm/fallback.py`): When an agent has a fallback provider configured and the primary provider fails with a retryable error (rate limit, server error), `FallbackLLM` transparently retries the request on the fallback provider. Non-retryable errors (authentication failures) propagate immediately.
+Agent YAMLs reference a profile by name:
+```yaml
+llm_profile: standard   # or "cheap" for router/summarizer
+temperature: 0.2
+```
+
+The **model resolver** (`druppie/llm/resolver.py`) determines which provider/model to use through a 3-step resolution:
+
+1. **Override** — `LLM_FORCE_PROVIDER` / `LLM_FORCE_MODEL` env vars force ALL agents to a single provider (useful for testing/debugging).
+2. **Profile** — Filter the profile's provider list by API key availability. First available entry becomes primary, second becomes fallback. The global `LLM_PROVIDER` env var is appended to the chain as last-resort if not already present.
+3. **Global default** — If no profile is set, falls back to `LLM_PROVIDER` env var.
+
+**Runtime fallback** (`druppie/llm/fallback.py`): When a profile has multiple available providers, `FallbackLLM` wraps primary + fallback. If the primary fails with a retryable error (rate limit, server error), the request is transparently retried on the fallback. Non-retryable errors (authentication failures) propagate immediately.
 
 ```
 AgentLoop._call_llm() retry loop (3 attempts, exponential backoff)
@@ -366,16 +389,7 @@ AgentLoop._call_llm() retry loop (3 attempts, exponential backoff)
        └─ fallback ChatLiteLLM.achat() (litellm internal retries: num_retries=3)
 ```
 
-Example YAML (Business Analyst uses Azure Foundry, falls back to Z.AI):
-```yaml
-provider: azure_foundry
-model: GPT-5-MINI
-fallback_provider: zai
-fallback_model: glm-4
-temperature: 0.2
-```
-
-All resolution decisions are logged as structured `model_resolved` events, and fallback activations as `llm_fallback_activated` events.
+All resolution decisions are logged as structured `model_resolved` events, and the `/api/status` endpoint exposes loaded profiles and their provider chains.
 
 ---
 
