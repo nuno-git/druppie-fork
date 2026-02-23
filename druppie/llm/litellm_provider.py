@@ -282,9 +282,6 @@ class ChatLiteLLM(BaseLLM):
         else:
             self._litellm_model = self._model
 
-        # Configure LiteLLM environment
-        self._configure_litellm()
-
         # Initialize logger
         self._logger = get_druppie_logger()
 
@@ -297,19 +294,6 @@ class ChatLiteLLM(BaseLLM):
             model=self.model,
             api_base=self.api_base or "default",
         )
-
-    def _configure_litellm(self):
-        """Configure LiteLLM environment.
-
-        For bearer-auth providers we set a dummy OPENAI_API_KEY so LiteLLM
-        doesn't reject the request — the real auth goes via extra_headers.
-        The actual API key is always passed per-request via the api_key kwarg
-        to avoid race conditions when multiple providers are active.
-        """
-        if not os.getenv("OPENAI_API_KEY"):
-            # Set a placeholder so LiteLLM doesn't error on missing key.
-            # The real key is passed per-request in _build_kwargs.
-            os.environ["OPENAI_API_KEY"] = "placeholder-see-per-request-api-key"
 
     @property
     def model(self) -> str:
