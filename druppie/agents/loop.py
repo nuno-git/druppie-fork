@@ -69,11 +69,6 @@ class AgentLoop:
             )
 
         for iteration in range(start_iteration, max_iterations):
-            # Check for session cancellation between iterations
-            if self._is_cancelled(session_id):
-                logger.info("agent_loop_cancelled", agent_id=self.agent_id, iteration=iteration)
-                return {"status": "cancelled"}
-
             response, llm_call_id = await self._call_llm(
                 messages, openai_tools, execution_repo,
                 session_id, agent_run_id, iteration,
@@ -105,17 +100,6 @@ class AgentLoop:
         raise AgentMaxIterationsError(
             f"Agent '{self.agent_id}' exceeded {max_iterations} iterations"
         )
-
-    # ------------------------------------------------------------------
-    # Cancellation check
-    # ------------------------------------------------------------------
-
-    def _is_cancelled(self, session_id: UUID) -> bool:
-        """Check if the session has been cancelled (DB poll)."""
-        from druppie.db.models import Session
-        self.db.expire_all()
-        session = self.db.query(Session).filter(Session.id == session_id).first()
-        return session is not None and session.status == "cancelled"
 
     # ------------------------------------------------------------------
     # Tool preparation
