@@ -19,6 +19,9 @@ Druppie is a full-stack platform composed of the following services:
 | MCP Docker | Python / FastMCP | 9002 | Container build, run, manage |
 | MCP File Search | Python / FastMCP | 9004 | Local file search within datasets |
 | MCP Web | Python / FastMCP | 9005 | Web browsing, URL fetching, web search |
+| Sandbox Control Plane | Node.js | 8787 | Sandbox session/event management, coordinates sandbox lifecycle |
+| Sandbox Manager | Node.js | 8000 | Creates/manages sandbox Docker containers, enforces resource limits |
+| Sandbox Image Builder | Docker | — | One-shot build producing `open-inspect-sandbox:latest` image |
 | Adminer | PHP | 8081 | Database admin UI |
 
 All services run in Docker containers on a shared bridge network (`druppie-new-network`). The backend communicates with MCP servers over HTTP using internal container hostnames.
@@ -100,6 +103,7 @@ druppie/
       agents.py          # Agent listing
       mcps.py            # MCP server status
       mcp_bridge.py      # Direct MCP tool invocation
+      sandbox.py         # Sandbox session registration + events proxy
   services/
     session_service.py
     approval_service.py
@@ -114,6 +118,7 @@ druppie/
     project_repository.py
     execution_repository.py
     user_repository.py
+    sandbox_session_repository.py
   domain/
     __init__.py          # Central exports for all domain models
     common.py            # Shared enums, base types
@@ -130,6 +135,11 @@ druppie/
       builtin.py         # Pydantic models for builtin tool params
       coding.py          # Pydantic models for coding MCP tool params
       docker.py          # Pydantic models for docker MCP tool params
+  sandbox-config/
+    opencode-config.json   # OpenCode default agent + permissions
+    agents/
+      druppie-builder.md   # Sandbox coding agent prompt
+      druppie-tester.md    # Sandbox testing agent prompt
   db/models/
     base.py              # SQLAlchemy base, mixins
     user.py
@@ -141,6 +151,7 @@ druppie/
     llm_call.py
     approval.py
     question.py
+    sandbox_session.py   # Sandbox session ownership mapping
   execution/
     orchestrator.py      # Main entry point: process_message()
     tool_executor.py     # Routes tool calls to MCP or builtins
@@ -255,6 +266,7 @@ SQLAlchemy ORM models live in `druppie/db/models/`. The schema:
 | `Question` | HITL questions requiring user answers |
 | `LlmRetry` | Audit trail for LLM retry attempts (error type, delay) |
 | `ToolCallNormalization` | Audit trail for argument normalization (original → normalized values) |
+| `SandboxSession` | Maps sandbox control plane session IDs to Druppie users for ownership verification |
 
 ### 4.3 Key Relationships
 
@@ -423,6 +435,7 @@ File and git operations within workspace sandboxes.
 | `create_pull_request` | None | Create PR on Gitea |
 | `merge_pull_request` | Developer | Merge PR and delete branch |
 | `merge_to_main` | Architect | Direct merge to main branch |
+| `execute_coding_task` | None | Execute coding task in isolated sandbox |
 
 ### 6.3 Docker Server (port 9002)
 
@@ -510,6 +523,9 @@ mcp-docker          FastMCP           :9002   Docker operations
 mcp-filesearch      FastMCP           :9004   File search
 mcp-web             FastMCP           :9005   Web browsing
 adminer             Adminer           :8081   DB admin UI
+sandbox-control-plane  Node.js        :8787   Sandbox session/event management
+sandbox-manager     Node.js           :8000   Sandbox container lifecycle
+sandbox-image-builder  Docker         -       Builds open-inspect-sandbox:latest image
 ```
 
 ### 7.2 Network
@@ -525,6 +541,8 @@ All containers share a single bridge network: `druppie-new-network`. Internal co
 | `druppie_new_gitea_postgres` | Gitea PostgreSQL | Git database persistence |
 | `druppie_new_gitea` | Gitea data | Repository storage |
 | `druppie_new_workspace` | `/app/workspace` (backend), `/workspaces` (MCP) | Shared workspace for agent file operations |
+| `sandbox_data` | `/data` (control plane) | Sandbox session data (SQLite) |
+| `sandbox_snapshots` | `/data/snapshots` (manager) | Sandbox container snapshots |
 | Docker socket | `/var/run/docker.sock` | Allows backend and MCP Docker to manage containers |
 
 ### 7.4 Health Checks
@@ -872,6 +890,10 @@ Optional:
 | `CORS_ORIGINS` | `http://localhost:5273,http://localhost:5173` | Allowed CORS origins |
 | `VITE_API_URL` | `http://localhost:8100` | Frontend API base URL |
 | `VITE_KEYCLOAK_URL` | `http://localhost:8180` | Frontend Keycloak URL |
+| `SANDBOX_CONTROL_PLANE_URL` | `http://sandbox-control-plane:8787` | Sandbox control plane endpoint |
+| `SANDBOX_API_SECRET` | `sandbox-dev-secret` | HMAC-SHA256 secret for sandbox auth tokens |
+| `SANDBOX_MEMORY_LIMIT` | `4g` | Docker memory limit per sandbox container |
+| `SANDBOX_CPU_LIMIT` | `2` | Docker CPU limit per sandbox container |
 
 ### 9.2 Configuration Files
 
@@ -883,4 +905,103 @@ Optional:
 | `docker-compose.yml` | Infrastructure service definitions (at repository root) |
 | `.env` | Environment variable overrides |
 | `.env.example` | Documented template for environment variables |
+| `druppie/sandbox-config/` | OpenCode config and agent prompts injected into sandboxes |
+
+---
+
+## 10. Sandbox Infrastructure (Open-Inspect)
+
+### 10.1 Architecture Overview
+
+Open-Inspect is integrated as a git submodule at `vendor/open-inspect/` (from `nuno-git/background-agents`, branch `feature/docker-compose-local-dev`). It provides isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace directly.
+
+Three Docker services power the sandbox infrastructure:
+
+- **sandbox-control-plane** (port 8787): HTTP API for session and event management, SQLite storage, coordinates sandbox lifecycle
+- **sandbox-manager** (port 8000): Creates and manages sandbox Docker containers, enforces resource limits, handles snapshots
+- **sandbox-image-builder** (one-shot): Builds the `open-inspect-sandbox:latest` image; Docker caches it so it only rebuilds when the Dockerfile changes
+
+Communication flow: MCP coding server → control plane API → sandbox manager → Docker containers.
+
+### 10.2 Docker Compose Services
+
+| Service | Build Context | Port | Key Env Vars | Volumes | Role |
+|---------|--------------|------|-------------|---------|------|
+| `sandbox-control-plane` | `vendor/open-inspect` (`packages/local-control-plane/Dockerfile`) | 8787 | `PORT`, `DATA_DIR`, `SANDBOX_MANAGER_URL`, `MODAL_API_SECRET`, `ZAI_API_KEY` | `sandbox_data:/data` | HTTP API for session/event management, SQLite storage |
+| `sandbox-manager` | `vendor/open-inspect` (`packages/local-sandbox-manager/Dockerfile`) | 8000 | `SANDBOX_RUNTIME=docker`, `SANDBOX_IMAGE`, `DOCKER_NETWORK`, `DOCKER_MEMORY_LIMIT`, `DOCKER_CPU_LIMIT` | `sandbox_snapshots:/data/snapshots`, Docker socket | Creates/manages sandbox containers, enforces limits |
+| `sandbox-image-builder` | `vendor/open-inspect` (`packages/local-sandbox-manager/Dockerfile.sandbox`) | — | — | — | One-shot build producing `open-inspect-sandbox:latest`; Docker caches the image |
+
+### 10.3 `execute_coding_task` MCP Tool
+
+Defined in `druppie/mcp-servers/coding/server.py`. The tool delegates a coding task to an isolated sandbox.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `task` | str | (required) | Coding task description / prompt |
+| `agent` | str | `druppie-builder` | Sandbox agent (`druppie-builder` for coding, `druppie-tester` for testing) |
+| `repo_url` | str | (from Gitea) | Git repo URL for sandbox to clone |
+| `model` | str | `zai-coding-plan/glm-4.7` | LLM model for the sandbox agent |
+| `timeout_seconds` | int | `86400` | Max polling time (24 hours) |
+| `session_id`, `project_id`, `repo_name`, `repo_owner`, `user_id` | str | (auto-injected) | Context parameters injected by parameter injection |
+
+**Auth:** HMAC-SHA256 tokens in the format `{unix_ms_timestamp}.{hmac_sha256_hex_signature}`, matching Open-Inspect's `verifyInternalToken`. A fresh token is generated for every API request to the control plane. The secret is `SANDBOX_API_SECRET`.
+
+**5-step execution flow:**
+
+1. **Create session** — `POST /sessions` on the control plane with repo URL, agent config, and LLM model
+2. **Register ownership** — `POST /api/sandbox-sessions/internal/register` on the Druppie backend to map the sandbox session ID to the requesting user
+3. **Send prompt** — `POST /sessions/{id}/message` with the task description
+4. **Poll events** — 5-second interval, fetching `GET /sessions/{id}/events?limit=200`. Events are deduplicated by ID (`seen_event_ids` set). Polls until an `execution_complete` event with a matching `messageId` is received, or the sandbox enters an error state (stopped/failed/stale), or timeout
+5. **Git pull sync** — Runs `git pull` in the workspace to sync changes pushed by the sandbox
+
+**Return structure:**
+
+```python
+{
+    "success": bool,
+    "sandbox_session_id": str,
+    "status": str,              # "success", "timeout", "failed", "stopped", "stale"
+    "elapsed_seconds": float,
+    "event_count": int,
+    "changed_files": [{"path": str, "action": "write"|"delete"}],
+    "agent_output": str,        # Last 5000 chars of agent output (summary at end)
+    "timed_out": bool,
+    "git_pull": str,            # "synced", "failed: ...", or "error: ..."
+}
+```
+
+### 10.4 Agent Config Injection
+
+Sandbox agents are configured via files in `druppie/sandbox-config/`:
+
+- **`opencode-config.json`** — Sets `default_agent` to `druppie-builder` and grants broad tool permissions
+- **`agents/druppie-builder.md`** — Coding agent prompt: implements features, writes code, mandatory git workflow (`git add -A` → `git commit` → `git push origin HEAD`), must output a structured `---SUMMARY---` block
+- **`agents/druppie-tester.md`** — Testing agent prompt: writes and runs tests, same mandatory git workflow, reports results in structured format
+
+Configuration is injected into sandbox containers via the `OPENCODE_CONFIG_CONTENT` environment variable. `OPENCODE_DISABLE_PROJECT_CONFIG=true` prevents user `.opencode/` overrides inside the sandbox.
+
+Agent parameter threading passes through 5 layers: MCP server → control plane router → session instance → bridge → OpenCode API.
+
+### 10.5 Sandbox Session Ownership
+
+The `sandbox_sessions` table (`druppie/db/models/sandbox_session.py`) maps control plane session IDs to Druppie user IDs:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | Primary key |
+| `sandbox_session_id` | str (unique, indexed) | Control plane session ID |
+| `session_id` | UUID (nullable, FK → sessions) | Druppie chat session |
+| `user_id` | UUID (FK → users) | Owning user |
+| `created_at` | datetime | Registration timestamp |
+
+**Registration flow:** After creating a sandbox session, the MCP coding server calls `POST /api/sandbox-sessions/internal/register` (authenticated via internal API key, not user tokens). The repository's `create()` method is idempotent — it returns the existing record if the sandbox session ID is already registered.
+
+**Events proxy:** `GET /api/sandbox-sessions/{session_id}/events` (in `druppie/api/routes/sandbox.py`) proxies events from the control plane. Before forwarding, it:
+
+1. Looks up ownership via `SandboxSessionRepository.get_by_sandbox_id()`
+2. Calls `check_resource_ownership(user, mapping.user_id)` — returns **403** for non-owners
+3. Admins bypass the ownership check
+4. **Transition period:** unregistered sessions are allowed through with a warning log
 
