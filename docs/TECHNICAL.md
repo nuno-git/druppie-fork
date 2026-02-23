@@ -39,7 +39,7 @@ Repository  -->  Domain Model  -->  Service  -->  API Route
 Each layer has a single responsibility:
 
 - **API Routes** (`druppie/api/routes/`): Thin HTTP layer. Receives requests, delegates to services, returns domain models. Route modules: `chat`, `sessions`, `approvals`, `questions`, `projects`, `deployments`, `workspace`, `agents`, `mcps`, `mcp_bridge`.
-- **Services** (`druppie/services/`): Business logic. Orchestrates repository calls, enforces rules. Modules: `session_service`, `approval_service`, `question_service`, `project_service`, `workflow_service`, `deployment_service`.
+- **Services** (`druppie/services/`): Business logic. Orchestrates repository calls, enforces rules. Modules: `session_service`, `approval_service`, `question_service`, `project_service`, `workflow_service`, `deployment_service`, `revert_service`.
 - **Repositories** (`druppie/repositories/`): Data access. Queries SQLAlchemy models, returns domain models. Modules: `session_repository`, `approval_repository`, `question_repository`, `project_repository`, `execution_repository`, `user_repository`.
 - **Domain Models** (`druppie/domain/`): Pydantic models that define the API contract. All exports go through `druppie/domain/__init__.py`.
 
@@ -107,6 +107,7 @@ druppie/
     project_service.py
     workflow_service.py
     deployment_service.py
+    revert_service.py
   repositories/
     session_repository.py
     approval_repository.py
@@ -423,6 +424,9 @@ File and git operations within workspace sandboxes.
 | `create_pull_request` | None | Create PR on Gitea |
 | `merge_pull_request` | Developer | Merge PR and delete branch |
 | `merge_to_main` | Architect | Direct merge to main branch |
+| `execute_coding_task` | None | Execute coding task in isolated sandbox |
+| `revert_to_commit` | None (internal) | Hard reset + force push to a target commit |
+| `close_pull_request` | None (internal) | Close a PR on Gitea without merging |
 
 ### 6.3 Docker Server (port 9002)
 
@@ -833,6 +837,10 @@ Key resume methods:
 - `resume_after_answer()`: Saves the answer to the tool call result, then continues the paused agent.
 
 Both methods reconstruct agent state from the database (LLM call history, tool call results) so the agent can continue where it left off.
+
+**Cooperative cancellation:** The orchestrator checks the session status (via DB poll) before each agent run and after each agent completes. If the status is `cancelled`, it cancels all remaining pending runs and stops. The agent loop also checks `_is_cancelled()` between LLM iterations. This means cancellation is cooperative — it happens at the next check point, not mid-LLM-call.
+
+**Retry from agent run:** The `POST /api/sessions/{id}/retry-from/{run_id}` endpoint spawns a background task that uses `RevertService` to revert the target run and all subsequent runs, then calls `execute_pending_runs()` to re-execute them. `RevertService` handles git revert (via `revert_to_commit` MCP tool), PR cleanup, and DB record management.
 
 ### 8.9 Pause and Resume
 

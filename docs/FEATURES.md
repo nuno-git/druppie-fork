@@ -169,7 +169,33 @@ The primary interface is a chat page where users submit natural language request
 - **Follow-up messages**: After a session completes, users can send follow-up messages to continue the conversation in the same session context.
 - **Inline approval cards**: When an agent needs approval to proceed, an approval card appears directly in the timeline.
 - **Inline HITL cards**: When an agent asks a question, an input card appears in the timeline for the user to respond.
-- **Polling**: Active sessions poll at 500ms intervals; session lists poll at 5s intervals. Polling stops when a session completes or fails.
+- **Polling**: Active sessions poll at 500ms intervals; session lists poll at 5s intervals. Polling stops when a session completes, fails, or is cancelled.
+
+---
+
+## Session Control
+
+### Stop / Cancel
+
+Users can stop a running or paused session via the **Stop** button in the session header. The button is visible when the session is active, paused for approval, or paused for a HITL question.
+
+**How it works:** The cancel endpoint sets the session status to `cancelled` in the database. The orchestrator and agent loop check this status between iterations (cooperative cancellation via DB poll) and stop gracefully. For paused sessions (no background task running), the cancel is immediate. All pending and running agent runs are marked as cancelled.
+
+Only the session owner or an admin can cancel a session.
+
+### Retry from Agent Run
+
+Users can retry a session from any agent run via the **Retry** button in the Inspect view's agent detail panel. Clicking Retry shows a confirmation dialog explaining that the target agent and all subsequent agents will be reverted and re-executed.
+
+**How it works:**
+
+1. The backend reverts git state to the commit before the target agent run (`git reset --hard` + `git push --force` via the `revert_to_commit` MCP tool)
+2. Any open pull requests created by reverted agents are closed via the Gitea API
+3. If a planner is in the revert set: the planner is reset to PENDING, everything after it is deleted (make_plan will recreate them on re-execution)
+4. If no planner: all target runs are reset to PENDING with execution artifacts cleared
+5. The orchestrator re-executes the pending runs
+
+If the git revert fails, the retry aborts and the session is marked as failed (agents never re-execute against stale git state).
 
 ---
 
