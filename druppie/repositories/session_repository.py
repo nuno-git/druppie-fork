@@ -217,6 +217,7 @@ class SessionRepository(BaseRepository):
                     role=msg.role,
                     content=msg.content or "",
                     agent_id=msg.agent_id,
+                    sequence_number=msg.sequence_number,
                     created_at=msg.created_at,
                 ),
             ))
@@ -236,11 +237,21 @@ class SessionRepository(BaseRepository):
                 agent_run=self._build_agent_run_detail(run),
             ))
 
-        # Sort: messages by timestamp, agent runs by sequence_number
-        entries.sort(key=lambda x: (
-            x.agent_run.sequence_number if x.agent_run and x.agent_run.sequence_number is not None else -1,
-            x.timestamp,
-        ))
+        # Sort by sequence_number (both messages and agent runs have one),
+        # then by type (messages before agent runs at the same sequence),
+        # then by timestamp as final tiebreaker.
+        def _sort_key(entry):
+            if entry.agent_run and entry.agent_run.sequence_number is not None:
+                seq = entry.agent_run.sequence_number
+            elif entry.message:
+                seq = entry.message.sequence_number
+            else:
+                seq = -1
+            # At the same sequence, messages sort before agent runs (0 < 1)
+            type_order = 0 if entry.message else 1
+            return (seq, type_order, entry.timestamp)
+
+        entries.sort(key=_sort_key)
         return entries
 
     def _to_agent_run_summary(self, run: AgentRun) -> AgentRunSummary:
