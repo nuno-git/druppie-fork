@@ -1,0 +1,465 @@
+# MCP Server Configuration
+# Defines all MCPs, their URLs, and tool approval requirements
+#
+# LAYERED APPROVAL SYSTEM (per goal.md):
+# - This file defines GLOBAL DEFAULTS for all agents
+# - Agents can OVERRIDE these defaults in their YAML files via approval_overrides
+# - Use "required_role" (singular string) instead of "required_roles" (array)
+# - No danger_level - keeping it simple
+#
+# Example override in agent YAML:
+#   approval_overrides:
+#     coding:write_file:
+#       requires_approval: true
+#       required_role: architect
+
+mcps:
+  coding:
+    url: ${MCP_CODING_URL:-http://mcp-coding:9001}
+    description: "File operations and git within workspace sandbox"
+    # Declarative injection rules - auto-inject these params from context
+    # Parameters marked hidden: true are removed from LLM-visible schemas
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+      project_id:
+        from: project.id
+        hidden: true
+      repo_name:
+        from: project.repo_name
+        hidden: true
+        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
+      repo_owner:
+        from: project.repo_owner
+        hidden: true
+        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
+      # NOTE: commit_and_push does NOT need branch injection.
+      # It pushes whatever branch the workspace is currently on (set by create_branch).
+      # The workspace tracks its own branch internally via ws["branch"].
+    tools:
+      - name: read_file
+        description: "Read file from workspace"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            path:
+              type: string
+              description: "File path relative to workspace root"
+          required:
+            - path
+
+      - name: write_file
+        description: "Write file to workspace (auto-commits)"
+        # DEFAULT: No approval needed for write_file
+        # Agents can OVERRIDE this (e.g., architect requires architect approval)
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            path:
+              type: string
+              description: "File path relative to workspace root"
+            content:
+              type: string
+              description: "File content to write"
+          required:
+            - path
+            - content
+
+      - name: batch_write_files
+        description: "Write multiple files at once. Use commit_and_push to commit."
+        # DEFAULT: No approval needed for batch writes
+        # Agents can OVERRIDE this (e.g., architect requires architect approval)
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            files:
+              type: array
+              description: "List of files to write, each with path and content"
+              items:
+                type: object
+                properties:
+                  path:
+                    type: string
+                    description: "File path relative to workspace root"
+                  content:
+                    type: string
+                    description: "File content to write"
+                required:
+                  - path
+                  - content
+          required:
+            - files
+
+      - name: list_dir
+        description: "List directory contents"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            path:
+              type: string
+              description: "Directory path relative to workspace root (use '.' for root)"
+          required:
+            - path
+
+      - name: delete_file
+        description: "Delete file from workspace"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            path:
+              type: string
+              description: "File path to delete"
+          required:
+            - path
+
+      - name: commit_and_push
+        description: "Commit and push changes to Gitea"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            message:
+              type: string
+              description: "Git commit message"
+          required:
+            - message
+
+      - name: create_branch
+        description: "Create and switch to a git branch (creates new or switches to existing)"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            branch_name:
+              type: string
+              description: "Name of branch to create or switch to (e.g., feature/add-login)"
+            required:
+              - branch_name
+      - name: run_tests
+        description: "Run tests in workspace (auto-detects framework)"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            test_command:
+              type: string
+              description: "Optional custom test command (default: auto-detected)"
+            timeout:
+              type: integer
+              description: "Timeout in seconds (default: 300)"
+          required: []
+      - name: get_test_framework
+        description: "Auto-detect test framework in workspace"
+        requires_approval: false
+        parameters:
+          type: object
+          properties: {}
+          required: []
+      - name: get_coverage_report
+        description: "Get detailed test coverage report"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            framework:
+              type: string
+              description: "Optional framework name (default: auto-detected)"
+          required: []
+
+      - name: merge_to_main
+        description: "Merge feature branch to main (direct git merge, no PR)"
+        requires_approval: true
+        required_role: architect
+        parameters:
+          type: object
+          properties: {}
+          required: []
+
+      - name: create_pull_request
+        description: "Create a pull request from current branch to main on Gitea"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            title:
+              type: string
+              description: "PR title"
+            body:
+              type: string
+              description: "PR description"
+          required:
+            - title
+
+      - name: merge_pull_request
+        description: "Merge a pull request on Gitea and delete the source branch"
+        requires_approval: true
+        required_role: developer
+        parameters:
+          type: object
+          properties:
+            pr_number:
+              type: integer
+              description: "PR number to merge"
+            delete_branch:
+              type: boolean
+              description: "Delete source branch after merge (default: true)"
+          required:
+            - pr_number
+
+      - name: get_git_status
+        description: "Get git status for workspace including current branch, changed files, and unpushed commits"
+        requires_approval: false
+        parameters:
+          type: object
+          properties: {}
+          required: []
+
+      - name: install_test_dependencies
+        description: "Install missing test dependencies for project"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            framework:
+              type: string
+              description: "Optional framework name (default: auto-detected). Valid values: pytest, vitest, jest, playwright, go, shell"
+          required: []
+
+      - name: validate_tdd
+        description: "Run full TDD validation (tests + coverage + threshold check)"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            coverage_threshold:
+              type: number
+              description: "Minimum coverage percentage (default: 80.0)"
+          required: []
+
+  docker:
+    url: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
+    description: "Docker container operations"
+    # Declarative injection rules for docker MCP
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+        tools: [build, run]  # Only these tools accept session_id
+      repo_name:
+        from: project.repo_name
+        hidden: true
+        tools: [build]  # Only build needs repo info
+      repo_owner:
+        from: project.repo_owner
+        hidden: true
+        tools: [build]
+      user_id:
+        from: session.user_id
+        hidden: true
+        tools: [run]  # For ownership labels
+      project_id:
+        from: session.project_id
+        hidden: true
+        tools: [run]  # For ownership labels
+    tools:
+      - name: build
+        description: "Build Docker image by cloning from git repository"
+        # GLOBAL: docker:build ALWAYS needs developer approval (per goal.md)
+        requires_approval: true
+        required_role: developer
+        parameters:
+          type: object
+          properties:
+            image_name:
+              type: string
+              description: "Name for the built image (e.g., myapp:latest)"
+            git_url:
+              type: string
+              description: "Full git URL to clone (alternative to repo_name)"
+            repo_name:
+              type: string
+              description: "Gitea repo name - will construct URL using Gitea config (alternative to git_url)"
+            repo_owner:
+              type: string
+              description: "Gitea repo owner/username (defaults to 'druppie' org)"
+            branch:
+              type: string
+              description: "Git branch (default: main)"
+            dockerfile:
+              type: string
+              description: "Dockerfile name (default: Dockerfile)"
+            build_args:
+              type: object
+              description: "Docker build arguments as key-value pairs"
+          required:
+            - image_name
+
+      - name: run
+        description: "Run Docker container - host port auto-assigned, you provide the container port from Dockerfile EXPOSE"
+        # GLOBAL: docker:run ALWAYS needs developer approval (per goal.md)
+        requires_approval: true
+        required_role: developer
+        parameters:
+          type: object
+          properties:
+            image_name:
+              type: string
+              description: "Docker image to run"
+            container_name:
+              type: string
+              description: "Name for the container"
+            container_port:
+              type: integer
+              description: "Container port from Dockerfile EXPOSE (e.g., 80 for nginx, 3000 for node)"
+            port:
+              type: integer
+              description: "Host port (auto-assigned from 9100-9199 if not provided)"
+            env_vars:
+              type: object
+              description: "Environment variables as key-value pairs"
+            volumes:
+              type: array
+              description: "Volume mounts (format: 'host:container')"
+            command:
+              type: string
+              description: "Override command"
+          required:
+            - image_name
+            - container_name
+            - container_port
+
+      - name: stop
+        description: "Stop a running container"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            container_name:
+              type: string
+              description: "Name of container to stop"
+            remove:
+              type: boolean
+              description: "Whether to remove container after stopping (default: true)"
+          required:
+            - container_name
+
+      - name: logs
+        description: "Get container logs"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            container_name:
+              type: string
+              description: "Name of container to get logs from"
+            tail:
+              type: integer
+              description: "Number of lines to show (default: 100)"
+          required:
+            - container_name
+
+      - name: remove
+        description: "Remove a container"
+        requires_approval: true
+        required_role: developer
+        parameters:
+          type: object
+          properties:
+            container_name:
+              type: string
+              description: "Name of container to remove"
+            force:
+              type: boolean
+              description: "Force remove running container (default: false)"
+          required:
+            - container_name
+
+      - name: list_containers
+        description: "List Docker containers with optional filtering by ownership labels"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            all:
+              type: boolean
+              description: "Include stopped containers (default: false)"
+            project_id:
+              type: string
+              description: "Filter by druppie.project_id label"
+            session_id:
+              type: string
+              description: "Filter by druppie.session_id label"
+            user_id:
+              type: string
+              description: "Filter by druppie.user_id label"
+          required: []
+
+      - name: inspect
+        description: "Inspect container details"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            container_name:
+              type: string
+              description: "Name of container to inspect"
+          required:
+            - container_name
+
+      - name: exec_command
+        description: "Execute command in running container"
+        requires_approval: true
+        required_role: developer
+        parameters:
+          type: object
+          properties:
+            container_name:
+              type: string
+              description: "Name of container"
+            command:
+              type: string
+              description: "Command to execute"
+            workdir:
+              type: string
+              description: "Working directory inside container"
+          required:
+            - container_name
+            - command
+
+  # NOTE: HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question) are
+  # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
+  # Configure per-agent via `builtin_tools` in agent YAML files.
+
+  bestand-zoeker:
+    url: ${MCP_WEB_URL:-http://mcp-web:9005}
+    description: "Local file search and web browsing"
+    tools:
+      - name: search_files
+        description: "Search for text content in local files within dataset"
+        requires_approval: false
+
+      - name: list_directory
+        description: "List files and directories in dataset"
+        requires_approval: false
+
+      - name: read_file
+        description: "Read file content from dataset"
+        requires_approval: false
+
+      - name: fetch_url
+        description: "Fetch and return content from a URL"
+        requires_approval: false
+
+      - name: search_web
+        description: "Search web for information"
+        requires_approval: false
+
+      - name: get_page_info
+        description: "Get basic information about a web page"
+        requires_approval: false

@@ -1,135 +1,197 @@
-# Druppie – Spec-Driven AI Architectuur
+# Druppie Governance Platform
 
-Druppie is een geavanceerd enterprise platform voor **Spec-Driven AI** en **Human-in-the-Loop** automatisering. Dit project beschrijft hoe AI-agents, compliance-regels en menselijke interactie samenkomen om software veilig, schaalbaar en consistent te bouwen en te beheren.
+AI agent governance platform with MCP tool permissions and approval workflows.
 
-De focus ligt op het automatiseren van de volledige lifecycle binnen een **overheidscontext** (Waterschap/Gemeente), met zware nadruk op **Security**, **Privacy (GDPR)** en **Compliance (BIO/NIS2/AI Act)**.
+## Quick Start
 
-**One-Stop-Shop**: Deze repository bevat zowel de architectuurdocumentatie als de **Infrastructure-as-Code** (IaC) scripts om een platform te implementeren, waarmee de bouwblokken en skills kunnen worden geïmplementeerd. De focus ligt op het experimenteren en gebruiken van AI-agents en compliance-regels in een overheidsomgeving.
+```bash
+# 1. Configure environment
+cp .env.example .env
+# Edit .env and add your LLM API key (ZAI_API_KEY or DEEPINFRA_API_KEY)
 
----
+# 2. Start (first time includes --profile init)
+docker compose --profile dev --profile init up -d
 
-## 🚀 Aan de slag met de Architectuur
+# 3. Open the app
+open http://localhost:5273
+```
 
-De volledige architectuur is interactief te verkennen.
+First startup takes a few minutes to build images and initialize services.
 
-1. Open **`index.html`** in je browser (Architecture Portal).
-2. Open **`ui/index.html`** voor de Chat Interface.
-3. Gebruik het dashboard om door de verschillende lagen (Bouwblokken, Skills, Runtime) te navigeren.
-4. **PWA Support**: Voeg de app toe aan je startscherm op mobiel voor een native ervaring.
+## Daily Usage
 
-## 💧 Locale installatie
+After first-time setup, skip `--profile init`:
 
-De locale installatie is gemaakt met GOLang je can een locale build gebruiken met ```go run ./cmd``` zorg wel dat je in de core directory bent ```cd core```. Mocht je een locale build willen gebruiken dan gebruik je ```go build -o druppie ./cmd```. Gebruik de ```help``` parameter om te zien welke commando's er beschikbaar zijn.
+```bash
+docker compose --profile dev up -d    # Start
+docker compose --profile dev down     # Stop
+```
 
-## 🚀 Snel Starten met het Platform
+## Commands
 
-De makkelijkste manier om te beginnen is via de **Druppie CLI** ```./script/druppie.sh``` of mocht je reeds een locale build gemaakt hebben dan gebruik je ```./druppie``` (of ```go run ./druppie``` voor dev mode).
+### Development Mode (hot reload)
 
-### Nieuw: Task Management
-- **Resume Plans**: Stopped of gecrashte plannen kunnen nu hervat worden via de UI ("Resume Task") of CLI: `go run ./druppie resume <plan-id>`.
-- **User Control**: Expliciete 'Cancel' en 'Review' stappen zorgen voor meer controle over de AI workflow.
+```bash
+# First time (or after reset)
+docker compose --profile dev --profile init up -d
 
-### Nieuw: MCP Support (Model Context Protocol)
-Integratie met externe en lokale tools via MCP.
-- **Connect**: Gebruik `go run ./core/druppie mcp add <name> <url>` om servers te koppelen.
-- **Templates**: Automatische, plan-specifieke servers (bijv. filesystem access voor `./.druppie/plans/<plan-id>`) via templates in de `mcp/` directory.
-- **CLI Management**: `mcp list`, `mcp add`, `mcp del`.
+# Daily usage
+docker compose --profile dev up -d
+docker compose --profile dev down
+docker compose --profile dev restart
+docker compose --profile dev up -d --build   # Rebuild after Dockerfile changes
+```
 
- ![Druppie CLI](./druppie_cli.png)
+### Production Mode
 
-Dit interactieve menu geeft toegang tot:
-1.  **☸️ Installatie**: Kubernetes (RKE2 voor Prod, k3d voor Dev 'local docker')).
-2.  **🏗️ Bootstrap**: Platform base layer (Flux, Kyverno, Tekton, Kong).
-3.  **📦 Services**: One-click setup voor Gitea, Keycloak, Prometheus, GeoServer, etc.
-4.  **🚀 UI**: Toegang scherm tot de verschillende UI's van de verschillende services.
+```bash
+# First time (or after reset)
+docker compose --profile prod --profile init up -d
 
-De password voor de verschillende services is 'druppie' worden opgeslagen in de .secrets file. De installatie logs zijn terug te vinden in de directory .logs. En de applicatie installatie overiew is terug te vinden in de .druppie_history file.
+# Daily usage
+docker compose --profile prod up -d
+docker compose --profile prod down
+```
 
-![Druppie k3d](./druppie_k3d.png) 
-Deze installatie is een lokaal installatie en draait in een docker container en is toegankelijk via de k3d cluster op [https://localhost](https://localhost) waarbij je wel even het certificaat moet accepteren.
+### Switching Between Dev and Prod
 
----
+Dev and prod use the same ports and container names, so stop one before starting the other:
 
-## 📂 Projectstructuur
+```bash
+# Switch from dev to prod
+docker compose --profile dev down
+docker compose --profile prod up -d --build
 
-De repository is opgebouwd uit verschillende lagen:
+# Switch from prod to dev
+docker compose --profile prod down
+docker compose --profile dev up -d
+```
 
-### 1. 🧱 [Bouwblokken](./blocks/)
-De lego-stenen van het platform. Definities van tools en componenten:
-*   **Security**: Trivy, SonarQube.
-*   **Data**: MinIO, Gitea, Qdrant (Vector DB).
-*   **GIS**: GeoServer, PostGIS, WebODM, GeoNode.
-*   **Observability**: LGTM Stack (Loki, Grafana, Tempo, Prometheus).
+### Infrastructure Only
 
-### 2. 🧠 [Core](./core/) & [UI](./ui/)
-De applicatie logica en interfaces:
-*   **[Core](./core/)**: Go-based backend (Server, Agent Runner, Vector DB Client).
-*   **[UI](./ui/)**: De "Mens-in-de-Loop" Chat Interface.
+Start only databases, Keycloak, Gitea, and MCP servers (no backend/frontend):
 
-### 3. 🤖 [Agents](./agents/) & [Skills](./skills/)
-De definitions van de workforce:
-*   **[Agents](./agents/)**: Definities van rollen (Architect, Developer, Reviewer).
-*   **[Skills](./skills/)**: De vaardigheden die agents kunnen gebruiken.
+```bash
+# First time (or after reset)
+docker compose --profile infra --profile init up -d
 
-### 4. 📝 [Ontwerpen (Designs)](./design/)
-Gedetailleerde technische ontwerpen en functionele beschrijvingen:
-*   **[Exoten Detectie](./design/exoten_detectie.md)**: Satelliet + Drone flow.
-*   **[Vergunning zoeker](./design/vergunning_zoeker.md)**: AI zoekt oude aktes.
-*   **[Automated Rebuild](./design/automated_rebuild.md)**: Self-healing bij security patches.
+# Daily usage
+docker compose --profile infra up -d
+docker compose --profile infra down
+```
 
-### 5. 🛡️ [Compliance](./compliance/)
-De regels en wetten vertaald naar techniek:
-*   **AI Act & Register**: Verplichte registratie van algoritmes.
-*   **BIO & NIS2**: Baseline Informatiebeveiliging.
-*   **Goed Bestuur**: Principes van transparantie en controleerbaarheid.
+### Logs
 
----
+```bash
+docker compose logs -f                       # All services
+docker compose logs -f druppie-backend-dev   # Backend only
+docker compose logs -f druppie-frontend-dev  # Frontend only
+docker compose logs -f keycloak              # Keycloak only
+```
 
-## 💡 Kernprincipes
+### Reset
 
-1.  **Alles is een Spec**: Van infrastructuur tot agent-gedrag, alles wordt vastgelegd in leesbare files.
-2.  **Human-in-the-Loop**: Kritieke beslissingen (vliegroute drone, verwijderen data) vereisen *altijd* menselijke goedkeuring.
-3.  **Secure by Design**: Security tools (Trivy, Kyverno) staan "aan" by default.
-4.  **Traceerbaarheid**: Elke actie, van prompt tot deployment, wordt gelogd in de Traceability DB.
+```bash
+# Soft reset - clears projects, sessions, chats (keeps user accounts, make sure to logout in the browser because tokens are kept there in cache.)
+docker compose --profile reset-db run --rm reset-db
 
----
+# Hard reset - wipes EVERYTHING and re-initializes Keycloak & Gitea
+docker compose --profile reset-hard run --rm reset-hard
+docker compose --profile dev up -d   # Then start the app
+```
 
-## 🛠️ Scripts & Tools
+**Soft reset keeps:** User accounts, Keycloak config, Gitea repos
+**Soft reset clears:** Projects, sessions, agent runs, messages, approvals, questions
 
-Bekijk de [Script Overview](./script/overview.md) voor een lijst van alle beschikbare beheerscripts.
+**Hard reset clears:** Everything (all databases, Keycloak, Gitea, workspace files)
 
-## 🐳 Docker (Druppie)
+## What is `--profile init`?
 
-To run the Druppie Core server (including UI and backend logic) using Docker in a production-like environment:
+The init container configures Keycloak and Gitea on first run:
+- Creates the `druppie` realm in Keycloak
+- Creates test users (admin, architect, developer, etc.)
+- Sets up Gitea admin account and OAuth integration
+- Creates the sample repository
 
-1.  **Build the image** (execute from the project root):
-    ```bash
-    docker build -t druppie .
-    ```
+**It only runs once.** A marker volume tracks completion. On subsequent runs, it exits immediately doing nothing.
 
-2.  **Run the container**:
+**When to include `--profile init`:**
+- First-time setup
+- After changing `iac/users.yaml` or `iac/realm.yaml`
+- After running `reset-hard`
 
-Local build:
-    ```bash
-    docker run -d \
-      -p 8080:80 \
-      -v $(pwd)/.druppie:/app/.druppie \
-      --name druppie-server \
-      druppie
-    ```
+**To force re-initialization:**
+```bash
+docker volume rm druppie_init_marker
+docker compose --profile dev --profile init up -d
+```
 
- Using prebuild image: 
-    ```bash
-    docker run -d \
-      -p 8080:80 \
-      -v $(pwd)/.druppie:/app/.druppie \
-      --name druppie-server \
-      3pidev/druppie
-    ```
+## URLs
 
-    *   **Port 8080**: Access the Portal at `http://localhost:8080` and UI at `http://localhost:8080/ui/`.
-    *   **Volume**: Maps your local `.druppie` directory to the container, ensuring plans and logs are persisted and accessible locally.
+| Service | URL | Login |
+|---------|-----|-------|
+| Frontend | http://localhost:5273 | Test users below |
+| API Docs | http://localhost:8100/docs | - |
+| Keycloak Admin | http://localhost:8180 | admin / admin |
+| Gitea | http://localhost:3100 | gitea_admin / GiteaAdmin123 |
+| Adminer (DB) | http://localhost:8081 | druppie / druppie_secret |
 
-## Search index
+## Test Users
 
-De search index is gemaakt met de [node generate_search_index.js](./generate_search_index.js) script en wordt opgeslagen in [search_index.json](./search_index.json).
+| User | Password | Role |
+|------|----------|------|
+| admin | Admin123! | admin (full access) |
+| architect | Architect123! | architect |
+| developer | Developer123! | developer |
+| analyst | Analyst123! | business_analyst |
+| normal_user | User123! | user |
+
+## Environment Variables
+
+Copy `.env.example` to `.env`. Required: an LLM API key.
+
+```bash
+# Option 1: Z.AI (default)
+LLM_PROVIDER=zai
+ZAI_API_KEY=your_key_here
+
+# Option 2: DeepInfra
+LLM_PROVIDER=deepinfra
+DEEPINFRA_API_KEY=your_key_here
+```
+
+Both providers use LiteLLM internally for standardized tool calling.
+
+After editing `.env`, apply changes:
+```bash
+docker compose --profile dev up -d
+```
+
+## Custom Ports
+
+Edit `.env` if default ports conflict:
+
+```bash
+BACKEND_PORT=8200
+FRONTEND_PORT=5274
+KEYCLOAK_PORT=8181
+GITEA_PORT=3101
+```
+
+## Troubleshooting
+
+**Check logs:**
+```bash
+docker compose logs -f
+```
+
+**Fresh start:**
+```bash
+docker compose --profile reset-hard run --rm reset-hard
+docker compose --profile dev up -d
+```
+
+**Container won't start:**
+```bash
+docker compose --profile dev up -d --build  # Force rebuild
+```
