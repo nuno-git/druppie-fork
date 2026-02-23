@@ -10,10 +10,14 @@ profiles:
   standard:
     - provider: zai
       model: glm-4.7
+    - provider: ollama
+      model: gpt-oss:120b
     - provider: azure_foundry
       model: GPT-5-MINI
 
   cheap:
+    - provider: ollama
+      model: gpt-oss:20b
     - provider: azure_foundry
       model: GPT-5-MINI
     - provider: zai
@@ -23,4 +27,12 @@ profiles:
 
   ollama:
     - provider: ollama
+      model: gpt-oss:120b
+    - provider: ollama
       model: gpt-oss:20b
+    - provider: ollama
+      model: qwen3-coder:30b
+    - provider: ollama
+      model: deepseek-r1:32b
+    - provider: ollama
+      model: gemma3:27b
