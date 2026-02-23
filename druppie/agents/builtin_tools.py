@@ -536,6 +536,10 @@ async def make_plan(
             cancelled_count=cancelled_count,
         )
 
+    # Determine sequence start: planner's own seq + 1 (so runs follow the planner)
+    planner_run = execution_repo.get_by_id(agent_run_id)
+    start_seq = (planner_run.sequence_number + 1) if planner_run and planner_run.sequence_number is not None else 2
+
     # Create pending agent runs via repository
     created_runs = []
     for i, step in enumerate(steps):
@@ -551,30 +555,43 @@ async def make_plan(
             )
             continue
 
+        seq = start_seq + i
         execution_repo.create_agent_run(
             session_id=session_id,
             agent_id=step_agent_id,
             status=AgentRunStatus.PENDING,
             planned_prompt=step_prompt,
-            sequence_number=i,
+            sequence_number=seq,
         )
         created_runs.append({
-            "sequence": i,
+            "sequence": seq,
             "agent_id": step_agent_id,
             "prompt_preview": step_prompt[:100] + "..." if len(step_prompt) > 100 else step_prompt,
         })
+
+    # Build full plan view: completed runs + new pending runs
+    completed_steps = [
+        {
+            "sequence": r.sequence_number,
+            "agent_id": r.agent_id,
+            "status": r.status,
+        }
+        for r in completed_runs
+    ]
 
     logger.info(
         "plan_created",
         session_id=str(session_id),
         step_count=len(created_runs),
         planner_iteration=planner_count + 1,
+        start_seq=start_seq,
     )
 
     return {
         "success": True,
         "message": f"Created plan with {len(created_runs)} steps (planner iteration {planner_count + 1})",
-        "steps": created_runs,
+        "completed_steps": completed_steps,
+        "planned_steps": created_runs,
     }
 
 
