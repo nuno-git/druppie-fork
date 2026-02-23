@@ -74,10 +74,7 @@ mcps:
     - search_web
     - get_page_info
 
-provider: azure_foundry
-model: GPT-5-MINI
-fallback_provider: zai
-fallback_model: glm-4.7
+llm_profile: cheap
 temperature: 0.1
 max_tokens: 4096
 max_iterations: 10

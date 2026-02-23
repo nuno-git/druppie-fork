@@ -2,15 +2,18 @@
 
 Resolution chain (first match wins):
 1. Override: LLM_FORCE_PROVIDER env var → use for ALL agents
-2. Primary: Agent YAML provider/model if the provider's API key is set
-3. Fallback: Agent YAML fallback_provider/fallback_model if primary key is missing
-4. Global default: LLM_PROVIDER env var (existing behavior)
+2. Profile: First entry in agent's llm_profile whose API key is set
+3. Global default: LLM_PROVIDER env var as last-resort
+
+Profiles are loaded from agents/definitions/llm_profiles.yaml.
 """
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import structlog
+import yaml
 
 from druppie.domain.agent_definition import AgentDefinition
 
@@ -25,7 +28,7 @@ class ResolvedModel:
 
     provider: str
     model: str | None
-    source: str  # "override" | "primary" | "fallback" | "global_default"
+    source: str  # "override" | "profile" | "global_default"
     fallback_provider: str | None = None
     fallback_model: str | None = None
 
@@ -38,14 +41,43 @@ def _has_api_key(provider: str) -> bool:
     return bool(os.getenv(config["api_key_env"]))
 
 
+# Module-level profile cache
+_profiles_cache: dict[str, list[dict[str, str]]] | None = None
+
+
+def _load_profiles() -> dict[str, list[dict[str, str]]]:
+    """Load LLM profiles from YAML (cached at module level)."""
+    global _profiles_cache
+    if _profiles_cache is not None:
+        return _profiles_cache
+
+    profiles_path = Path(__file__).parent.parent / "agents" / "definitions" / "llm_profiles.yaml"
+    if not profiles_path.exists():
+        logger.warning("llm_profiles_not_found", path=str(profiles_path))
+        _profiles_cache = {}
+        return _profiles_cache
+
+    with open(profiles_path) as f:
+        data = yaml.safe_load(f)
+
+    _profiles_cache = data.get("profiles", {})
+    logger.info("llm_profiles_loaded", profiles=list(_profiles_cache.keys()))
+    return _profiles_cache
+
+
+def get_profiles() -> dict[str, list[dict[str, str]]]:
+    """Get all loaded profiles (for status endpoint)."""
+    return _load_profiles()
+
+
 def resolve_model(agent_def: AgentDefinition) -> ResolvedModel:
     """Resolve which provider/model an agent should use.
 
     Resolution order:
-    1. Override  — LLM_FORCE_PROVIDER env var (ignores YAML entirely)
-    2. Primary   — agent YAML provider/model if its API key is present
-    3. Fallback  — agent YAML fallback_provider/fallback_model if primary key missing
-    4. Global    — LLM_PROVIDER env var
+    1. Override  — LLM_FORCE_PROVIDER env var (ignores profile entirely)
+    2. Profile   — first entry with a valid API key becomes primary;
+                   second entry (if any) becomes fallback
+    3. Global    — LLM_PROVIDER env var as last-resort
     """
     resolved = _resolve(agent_def)
 
@@ -55,6 +87,7 @@ def resolve_model(agent_def: AgentDefinition) -> ResolvedModel:
         provider=resolved.provider,
         model=resolved.model,
         source=resolved.source,
+        profile=agent_def.llm_profile,
         fallback_provider=resolved.fallback_provider,
         fallback_model=resolved.fallback_model,
     )
@@ -74,37 +107,41 @@ def _resolve(agent_def: AgentDefinition) -> ResolvedModel:
             source="override",
         )
 
-    # --- 2. Primary (agent YAML) -------------------------------------------
-    if agent_def.provider and _has_api_key(agent_def.provider):
-        fb_provider: str | None = None
-        fb_model: str | None = None
+    # --- 2. Profile ---------------------------------------------------------
+    profiles = _load_profiles()
+    profile_name = agent_def.llm_profile
+    chain = profiles.get(profile_name)
 
-        if agent_def.fallback_provider and _has_api_key(agent_def.fallback_provider):
-            fb_provider = agent_def.fallback_provider
-            fb_model = agent_def.fallback_model
-        else:
-            # Fall back to global default if it differs from primary
-            global_provider = os.getenv("LLM_PROVIDER", "zai").lower()
-            if global_provider != agent_def.provider and _has_api_key(global_provider):
-                fb_provider = global_provider
+    if chain:
+        # Build list of available entries (API key is set)
+        available = [e for e in chain if _has_api_key(e["provider"])]
 
-        return ResolvedModel(
-            provider=agent_def.provider,
-            model=agent_def.model,
-            source="primary",
-            fallback_provider=fb_provider,
-            fallback_model=fb_model,
-        )
+        # Append global LLM_PROVIDER as last-resort if not already in chain
+        global_provider = os.getenv("LLM_PROVIDER", "zai").lower()
+        already_listed = any(e["provider"] == global_provider for e in chain)
+        if not already_listed and _has_api_key(global_provider):
+            default_model = PROVIDER_CONFIGS.get(global_provider, {}).get("default_model")
+            available.append({"provider": global_provider, "model": default_model})
 
-    # --- 3. Fallback (agent YAML) ------------------------------------------
-    if agent_def.fallback_provider and _has_api_key(agent_def.fallback_provider):
-        return ResolvedModel(
-            provider=agent_def.fallback_provider,
-            model=agent_def.fallback_model,
-            source="fallback",
-        )
+        if available:
+            primary = available[0]
+            fb_provider = None
+            fb_model = None
+            if len(available) > 1:
+                fb_provider = available[1]["provider"]
+                fb_model = available[1].get("model")
 
-    # --- 4. Global default --------------------------------------------------
+            return ResolvedModel(
+                provider=primary["provider"],
+                model=primary.get("model"),
+                source="profile",
+                fallback_provider=fb_provider,
+                fallback_model=fb_model,
+            )
+    else:
+        logger.warning("llm_profile_not_found", profile=profile_name, agent=agent_def.id)
+
+    # --- 3. Global default --------------------------------------------------
     return ResolvedModel(
         provider=os.getenv("LLM_PROVIDER", "zai").lower(),
         model=None,

@@ -1,21 +1,20 @@
 """LLM module for Druppie platform.
 
-All providers use LiteLLM internally for standardized tool calling.
+Per-agent LLM profiles with ordered provider chains and automatic fallback.
 
 Usage:
     from druppie.llm import get_llm_service
 
-    # Get configured LLM (reads LLM_PROVIDER from env)
-    llm = get_llm_service().get_llm()
+    # Create LLM for an agent (uses its llm_profile)
+    llm = get_llm_service().create_llm_for_agent(agent_definition)
 
     # Use it
     response = await llm.achat(messages=[...], tools=[...])
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra, openai, anthropic
-
-    Provider-specific (e.g., for ZAI):
-        ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
+    LLM_PROVIDER: Global default (zai, deepinfra, azure_foundry)
+    LLM_FORCE_PROVIDER: Override all profiles
+    LLM_FORCE_MODEL: Override model (requires LLM_FORCE_PROVIDER)
 """
 
 from .base import (

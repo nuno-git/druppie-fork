@@ -202,10 +202,7 @@ mcps:
     - get_git_status
     - commit_and_push
 
-provider: zai
-model: glm-4.7
-fallback_provider: azure_foundry
-fallback_model: GPT-5-MINI
+llm_profile: standard
 temperature: 0.1
 max_tokens: 100000
 max_iterations: 100

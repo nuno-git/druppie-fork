@@ -197,10 +197,7 @@ skills:
   - code-review
   - git-workflow
 
-provider: zai
-model: glm-4.7
-fallback_provider: azure_foundry
-fallback_model: GPT-5-MINI
+llm_profile: standard
 temperature: 0.1
 max_tokens: 4096
 max_iterations: 100
