@@ -55,6 +55,7 @@ from druppie.tools.params.coding import (
     CreateBranchParams,
     CreatePullRequestParams,
     DeleteFileParams,
+    ExecuteCodingTaskParams,
     GetGitStatusParams,
     ListDirParams,
     MergePullRequestParams,
@@ -97,6 +98,7 @@ PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
     ("coding", "create_pull_request"): CreatePullRequestParams,
     ("coding", "merge_pull_request"): MergePullRequestParams,
     ("coding", "get_git_status"): GetGitStatusParams,
+    ("coding", "execute_coding_task"): ExecuteCodingTaskParams,
     # Docker tools
     ("docker", "build"): DockerBuildParams,
     ("docker", "run"): DockerRunParams,

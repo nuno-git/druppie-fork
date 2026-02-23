@@ -251,6 +251,9 @@ mcps:
             task:
               type: string
               description: "The coding task description / prompt for the sandbox agent. Be specific about what to implement, which files to modify, and what tests should pass."
+            agent:
+              type: string
+              description: "Which sandbox agent to use: druppie-builder (default, for coding) or druppie-tester (for testing)"
             model:
               type: string
               description: "LLM model for the sandbox agent (default: zai-coding-plan/glm-4.7)"
