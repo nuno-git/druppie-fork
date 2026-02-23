@@ -33,6 +33,7 @@ import structlog
 from druppie.api.deps import get_optional_user, get_session_repository, get_execution_repository
 from druppie.repositories import SessionRepository, ExecutionRepository
 from druppie.domain.common import AgentRunStatus, SessionStatus
+from druppie.api.errors import NotFoundError, AuthorizationError
 
 logger = structlog.get_logger()
 
@@ -285,11 +286,20 @@ async def cancel_session(
     For paused sessions: no background task is running, so cancel is immediate.
     """
     if not user or not user.get("sub"):
-        return {"success": False, "message": "Authentication required"}
+        raise AuthorizationError("Authentication required")
+
+    user_id = UUID(user["sub"])
+    user_roles = user.get("realm_access", {}).get("roles", [])
 
     session = session_repo.get_by_id(session_id)
     if not session:
-        return {"success": False, "message": f"Session {session_id} not found"}
+        raise NotFoundError("session", str(session_id))
+
+    # Only owner or admin can cancel
+    is_owner = session.user_id == user_id
+    is_admin = "admin" in user_roles
+    if not is_owner and not is_admin:
+        raise AuthorizationError("Cannot cancel this session")
 
     if session.status not in CANCELABLE_STATUSES:
         return {
