@@ -34,10 +34,12 @@ class ResolvedModel:
 
 
 def _has_api_key(provider: str) -> bool:
-    """Check whether the API key env var for a provider is set."""
+    """Check whether the API key env var for a provider is set (or optional)."""
     config = PROVIDER_CONFIGS.get(provider)
     if not config:
         return False
+    if config.get("api_key_optional"):
+        return True
     return bool(os.getenv(config["api_key_env"]))
 
 

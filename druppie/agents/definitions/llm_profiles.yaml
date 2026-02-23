@@ -20,3 +20,7 @@ profiles:
       model: glm-4.7
     - provider: deepinfra
       model: Qwen/Qwen3-32B
+
+  ollama:
+    - provider: ollama
+      model: gpt-oss:20b
