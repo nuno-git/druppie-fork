@@ -32,14 +32,15 @@ Nine agents are defined. Seven are functional; two are stubs.
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
 | **Summarizer** | Creates completion messages | Reads all previous agent summaries and produces a concise, user-friendly message. Always the final step. Max 5 iterations. |
 
-### Stub Agents (Not Yet Invoked)
+### Stub Agents (Not Yet Invoked by Planner)
 
 | Agent | Intended Purpose |
 |-------|-----------------|
-| **Tester** | Run tests and validate implementations |
 | **Reviewer** | Code review for quality, security, and best practices |
 
-These agents are defined with system prompts and MCP tool access but are never included in plans by the Planner.
+The Reviewer agent is defined with system prompts and MCP tool access but is never included in plans by the Planner.
+
+**Note:** The Tester agent definition exists in the main pipeline but is not yet invoked by the Planner. However, both building and testing capabilities are now available via **sandbox agents** — the Developer agent can delegate coding tasks to `druppie-builder` and testing tasks to `druppie-tester` using the `execute_coding_task` tool (see Sandbox Coding below).
 
 ---
 
@@ -297,6 +298,43 @@ coding:
 ```
 
 This ensures agents operate on the correct repository and session without being able to target arbitrary resources.
+
+---
+
+## Sandbox Coding (Isolated Execution)
+
+### What It Does
+
+Agents can delegate coding tasks to isolated Docker sandboxes. Each sandbox is a fresh container with git, a code editor (OpenCode), and LLM access. The sandbox clones the project from Gitea, executes the task, commits and pushes changes, then the MCP server syncs changes back to the shared workspace via `git pull`.
+
+### How It Works (User Perspective)
+
+1. An agent (e.g., Developer) calls `execute_coding_task` with a task description
+2. The sandbox runs autonomously — writing code, running tests, committing to git
+3. When complete, changes appear in the project workspace
+4. The chat timeline shows a **Sandbox Session card** with:
+   - Files changed (with path and action)
+   - Elapsed time
+   - Expandable sandbox events timeline
+   - Full conversation history viewer (shows the sandbox agent's thinking process)
+
+### Sandbox Agents
+
+Two preconfigured agents run inside sandboxes (defined in `druppie/sandbox-config/agents/`):
+
+| Agent | Purpose | Key Behavior |
+|-------|---------|--------------|
+| **druppie-builder** | Implements features, writes code | Must output a structured `---SUMMARY---` block with files changed, commands run, and key decisions |
+| **druppie-tester** | Writes tests, validates code | Auto-detects test framework, reports results in structured format |
+
+Both agents enforce a mandatory git workflow: `git add -A` → `git commit` → `git push origin HEAD`. No unpushed commits are allowed — the sandbox must push all changes before completion.
+
+### Security
+
+- Sandbox events are only visible to the user who triggered the sandbox session (ownership check via `sandbox_sessions` table)
+- Admins can view any session's events
+- Sandbox-to-backend communication uses internal API keys (not user tokens)
+- Conversation history is persisted in the control plane for governance but is NOT returned in the MCP tool result (avoids bloating LLM context)
 
 ---
 
