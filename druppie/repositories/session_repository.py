@@ -230,19 +230,16 @@ class SessionRepository(BaseRepository):
         )
 
         for run in agent_runs:
-            # Use started_at for running/completed runs, created_at for pending
-            timestamp = run.started_at or run.created_at
             entries.append(TimelineEntry(
                 type=TimelineEntryType.AGENT_RUN,
-                timestamp=timestamp,
+                timestamp=run.started_at or run.created_at,
                 agent_run=self._build_agent_run_detail(run),
             ))
 
-        # Sort by timestamp, with sequence_number as tiebreaker for agent runs
-        # (pending runs after retry may have identical timestamps)
+        # Sort: messages by timestamp, agent runs by sequence_number
         entries.sort(key=lambda x: (
+            x.agent_run.sequence_number if x.agent_run and x.agent_run.sequence_number is not None else -1,
             x.timestamp,
-            x.agent_run.sequence_number if x.agent_run and x.agent_run.sequence_number is not None else 0,
         ))
         return entries
 
