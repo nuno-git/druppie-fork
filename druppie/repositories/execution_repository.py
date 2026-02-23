@@ -502,3 +502,28 @@ class ExecutionRepository(BaseRepository):
     def get_message_count(self, session_id: UUID) -> int:
         """Get total message count for a session (for sequence numbering)."""
         return self.db.query(Message).filter(Message.session_id == session_id).count()
+
+    def get_next_sequence_number(self, session_id: UUID) -> int:
+        """Get the next available sequence number for a session.
+
+        Returns max(agent_run.sequence_number, message.sequence_number) + 1
+        across all entries in the session, or 0 if none exist.
+        """
+        from sqlalchemy import func
+
+        max_run_seq = (
+            self.db.query(func.max(AgentRun.sequence_number))
+            .filter(AgentRun.session_id == session_id)
+            .scalar()
+        )
+        max_msg_seq = (
+            self.db.query(func.max(Message.sequence_number))
+            .filter(Message.session_id == session_id)
+            .scalar()
+        )
+
+        current_max = max(
+            max_run_seq if max_run_seq is not None else -1,
+            max_msg_seq if max_msg_seq is not None else -1,
+        )
+        return current_max + 1
