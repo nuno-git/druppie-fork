@@ -75,8 +75,8 @@ class RevertService:
             target_sequence=target_sequence,
         )
 
-        # Step 2: Collect runs to revert (target + all after it)
-        runs_to_revert = (
+        # Step 2: Collect all runs at or after target
+        all_runs_after = (
             self.db.query(AgentRun)
             .filter(
                 AgentRun.session_id == session_id,
@@ -86,21 +86,42 @@ class RevertService:
             .all()
         )
 
-        if not runs_to_revert:
+        if not all_runs_after:
             raise ValueError("No runs found to revert")
 
-        agent_run_ids = [r.id for r in runs_to_revert]
+        # Step 3: Split into runs to RESET vs runs to DELETE
+        # If there's a planner in the set, everything AFTER it was created
+        # by make_plan and will be recreated — so delete those.
+        # The planner itself (and anything before it in the set) gets reset.
+        first_planner_seq = None
+        for run in all_runs_after:
+            if run.agent_id == "planner":
+                first_planner_seq = run.sequence_number
+                break
+
+        if first_planner_seq is not None:
+            # Reset: target through planner. Delete: everything after planner.
+            runs_to_reset = [r for r in all_runs_after if r.sequence_number <= first_planner_seq]
+            runs_to_delete = [r for r in all_runs_after if r.sequence_number > first_planner_seq]
+        else:
+            # No planner being reverted — reset everything
+            runs_to_reset = all_runs_after
+            runs_to_delete = []
+
+        all_run_ids = [r.id for r in all_runs_after]
+        reset_ids = [r.id for r in runs_to_reset]
+        delete_ids = [r.id for r in runs_to_delete]
 
         logger.info(
             "runs_to_revert",
-            count=len(runs_to_revert),
-            agents=[(r.agent_id, r.sequence_number) for r in runs_to_revert],
+            reset=[(r.agent_id, r.sequence_number) for r in runs_to_reset],
+            delete=[(r.agent_id, r.sequence_number) for r in runs_to_delete],
         )
 
-        # Step 3: Analyze and revert git side effects
+        # Step 4: Analyze and revert git side effects
         git_analysis = self._analyze_git_side_effects(
             session_id=session_id,
-            agent_run_ids=agent_run_ids,
+            agent_run_ids=all_run_ids,
             target_sequence=target_sequence,
         )
 
@@ -113,11 +134,17 @@ class RevertService:
         for pr_number in git_analysis["pr_numbers"]:
             await self._close_pr(session=session, pr_number=pr_number)
 
-        # Step 4: Clear execution artifacts for all reverted runs
-        self._clear_execution_artifacts(agent_run_ids)
+        # Step 5: Clear artifacts and reset/delete runs
+        # Clear artifacts for runs we're resetting (keep the AgentRun row)
+        if reset_ids:
+            self._clear_execution_artifacts(reset_ids)
 
-        # Step 5: Reset all reverted runs to PENDING
-        for run in runs_to_revert:
+        # Fully delete planner-created runs (artifacts + AgentRun rows)
+        if delete_ids:
+            self._delete_runs_fully(delete_ids)
+
+        # Step 6: Reset the kept runs to PENDING
+        for run in runs_to_reset:
             run.status = AgentRunStatus.PENDING.value
             run.started_at = None
             run.completed_at = None
@@ -127,7 +154,7 @@ class RevertService:
             run.completion_tokens = 0
             run.total_tokens = 0
 
-        # Step 6: Reset session
+        # Step 7: Reset session
         session.status = SessionStatus.ACTIVE.value
         session.error_message = None
         self._recalculate_session_tokens(session)
@@ -137,14 +164,16 @@ class RevertService:
         logger.info(
             "retry_from_run_complete",
             session_id=str(session_id),
-            reverted_count=len(runs_to_revert),
+            reset_count=len(runs_to_reset),
+            deleted_count=len(runs_to_delete),
             git_reverted=bool(git_analysis["pre_run_commit_sha"]),
             prs_closed=len(git_analysis["pr_numbers"]),
         )
 
         return {
             "success": True,
-            "reverted_runs": len(runs_to_revert),
+            "reset_runs": len(runs_to_reset),
+            "deleted_runs": len(runs_to_delete),
             "git_reverted": bool(git_analysis["pre_run_commit_sha"]),
             "prs_closed": git_analysis["pr_numbers"],
             "warnings": git_analysis.get("warnings", []),
@@ -211,6 +240,29 @@ class RevertService:
             tool_calls=len(tc_ids),
             llm_calls=len(llm_ids),
         )
+
+    def _delete_runs_fully(self, agent_run_ids: list[UUID]) -> None:
+        """Delete agent runs AND their execution artifacts entirely.
+
+        Used for planner-created runs during retry — these will be
+        recreated by make_plan when the planner re-executes.
+        """
+        # First clear all artifacts
+        self._clear_execution_artifacts(agent_run_ids)
+
+        # Then delete the AgentRun rows themselves
+        # Child runs first (parent_run_id FK)
+        self.db.query(AgentRun).filter(
+            AgentRun.parent_run_id.in_(agent_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        self.db.query(AgentRun).filter(
+            AgentRun.id.in_(agent_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        self.db.flush()
+
+        logger.info("runs_deleted", count=len(agent_run_ids))
 
     def _analyze_git_side_effects(
         self,
