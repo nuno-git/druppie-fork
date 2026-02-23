@@ -379,13 +379,13 @@ The **model resolver** (`druppie/llm/resolver.py`) determines which provider/mod
 2. **Profile** — Filter the profile's provider list by API key availability. First available entry becomes primary, second becomes fallback. The global `LLM_PROVIDER` env var is appended to the chain as last-resort if not already present.
 3. **Global default** — If no profile is set, falls back to `LLM_PROVIDER` env var.
 
-**Runtime fallback** (`druppie/llm/fallback.py`): When a profile has multiple available providers, `FallbackLLM` wraps primary + fallback. If the primary fails with a retryable error (rate limit, server error), the request is transparently retried on the fallback. Non-retryable errors (authentication failures) propagate immediately.
+**Runtime fallback** (`druppie/llm/fallback.py`): When a profile has multiple available providers, `FallbackLLM` wraps primary + fallback. Any `LLMError` from the primary triggers fallback — including `AuthenticationError`. This is correct for cross-provider fallback: if provider A's auth key is invalid, provider B (a completely different service) may work fine.
 
 ```
 AgentLoop._call_llm() retry loop (3 attempts, exponential backoff)
   └─ FallbackLLM.achat()
        ├─ primary ChatLiteLLM.achat() (litellm internal retries: num_retries=3)
-       │   └─ retryable error after all litellm retries
+       │   └─ any LLMError after all litellm retries
        └─ fallback ChatLiteLLM.achat() (litellm internal retries: num_retries=3)
 ```
 
