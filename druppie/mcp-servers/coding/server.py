@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from fastmcp import FastMCP
@@ -1290,7 +1291,6 @@ async def run_tests(
 
         logger.info("Running tests in workspace %s: %s", workspace_path, test_command)
 
-        import time
         start_time = time.time()
         try:
             result = subprocess.run(
@@ -1601,6 +1601,337 @@ async def validate_tdd(
     except Exception as e:
         logger.error("Error validating TDD: %s", str(e))
         return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# SANDBOX CODING TOOL (background-agents integration)
+# =============================================================================
+
+# Configuration for the external coding sandbox (background-agents control-plane)
+SANDBOX_CONTROL_PLANE_URL = os.getenv("SANDBOX_CONTROL_PLANE_URL", "")
+SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", "")
+
+
+def _generate_sandbox_auth_token() -> str:
+    """Generate HMAC-SHA256 auth token for the background-agents control-plane.
+
+    Token format: "timestamp.signature" where signature is HMAC-SHA256(secret, timestamp).
+    Matches the verifyInternalToken logic in @open-inspect/shared.
+    """
+    import hashlib
+    import hmac
+
+    timestamp = str(int(time.time() * 1000))  # Unix milliseconds
+    signature = hmac.new(
+        SANDBOX_API_SECRET.encode(),
+        timestamp.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{timestamp}.{signature}"
+
+
+@mcp.tool()
+async def execute_coding_task(
+    task: str,
+    repo_url: str = "",
+    model: str = "zai-coding-plan/glm-4.7",
+    timeout_seconds: int = 600,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+) -> dict:
+    """Execute a coding task in an isolated sandbox using an external coding agent.
+
+    Creates a sandbox session on the background-agents control-plane, sends the
+    task as a prompt, polls until completion, and returns the results (changed
+    files, agent output). The calling agent can then apply changes to the local
+    workspace using batch_write_files + commit_and_push.
+
+    Args:
+        task: The coding task description / prompt for the sandbox agent
+        repo_url: Git repo URL for the sandbox to clone (optional, uses Gitea if not set)
+        model: LLM model for the sandbox agent (default: zai-coding-plan/glm-4.7)
+        timeout_seconds: Max wait time in seconds (default: 600)
+        session_id: Druppie session ID (auto-injected)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID (auto-injected)
+        user_id: User ID (optional)
+        repo_name: Gitea repository name (auto-injected)
+        repo_owner: Gitea repository owner (auto-injected)
+
+    Returns:
+        Dict with success, sandbox_session_id, status, events, changed_files,
+        agent_output, and elapsed_seconds
+    """
+    import httpx
+
+    if not SANDBOX_CONTROL_PLANE_URL:
+        return {
+            "success": False,
+            "error": "SANDBOX_CONTROL_PLANE_URL not configured. Set it to the background-agents control-plane URL.",
+        }
+
+    if not SANDBOX_API_SECRET:
+        return {
+            "success": False,
+            "error": "SANDBOX_API_SECRET not configured. Set it to match MODAL_API_SECRET on the control-plane.",
+        }
+
+    if not task:
+        return {"success": False, "error": "task parameter is required"}
+
+    # Determine repo info for the sandbox to clone
+    sandbox_repo_owner = repo_owner or GITEA_ORG
+    sandbox_repo_name = repo_name or ""
+
+    logger.info(
+        "execute_coding_task: starting sandbox task (repo=%s/%s, model=%s, timeout=%ds)",
+        sandbox_repo_owner,
+        sandbox_repo_name,
+        model,
+        timeout_seconds,
+    )
+
+    base_url = SANDBOX_CONTROL_PLANE_URL.rstrip("/")
+    start_time = time.time()
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Step 1: Create sandbox session
+            auth_headers = {
+                "Authorization": f"Bearer {_generate_sandbox_auth_token()}",
+                "Content-Type": "application/json",
+            }
+
+            create_body = {
+                "repoOwner": sandbox_repo_owner,
+                "repoName": sandbox_repo_name,
+                "model": model,
+                "title": f"Druppie sandbox: {task[:80]}",
+            }
+
+            resp = await client.post(
+                f"{base_url}/sessions",
+                json=create_body,
+                headers=auth_headers,
+            )
+
+            if resp.status_code not in (200, 201):
+                return {
+                    "success": False,
+                    "error": f"Failed to create sandbox session: {resp.status_code} {resp.text}",
+                }
+
+            sandbox_session_id = resp.json().get("sessionId")
+            if not sandbox_session_id:
+                return {"success": False, "error": "No sessionId in create response"}
+
+            logger.info("execute_coding_task: created sandbox session %s", sandbox_session_id)
+
+            # Step 2: Send the task prompt
+            prompt_headers = {
+                "Authorization": f"Bearer {_generate_sandbox_auth_token()}",
+                "Content-Type": "application/json",
+            }
+
+            prompt_body = {
+                "content": task,
+                "authorId": "druppie-agent",
+                "source": "api",
+            }
+
+            resp = await client.post(
+                f"{base_url}/sessions/{sandbox_session_id}/prompt",
+                json=prompt_body,
+                headers=prompt_headers,
+            )
+
+            if resp.status_code not in (200, 201):
+                return {
+                    "success": False,
+                    "error": f"Failed to send prompt: {resp.status_code} {resp.text}",
+                    "sandbox_session_id": sandbox_session_id,
+                }
+
+            logger.info("execute_coding_task: prompt sent, polling for completion...")
+
+            # Step 3: Poll for completion
+            poll_interval = 5  # seconds
+            last_cursor = None
+            all_events = []
+            sandbox_status = "running"
+            agent_output = ""
+
+            while time.time() - start_time < timeout_seconds:
+                await _async_sleep(poll_interval)
+
+                # Refresh auth token each poll (tokens expire after 5 min)
+                poll_headers = {
+                    "Authorization": f"Bearer {_generate_sandbox_auth_token()}",
+                }
+
+                # Get session state to check status
+                state_resp = await client.get(
+                    f"{base_url}/sessions/{sandbox_session_id}",
+                    headers=poll_headers,
+                )
+
+                if state_resp.status_code == 200:
+                    state = state_resp.json()
+                    sandbox_status = state.get("status", "unknown")
+
+                    # Check for terminal states
+                    if sandbox_status in ("completed", "idle", "error", "failed", "archived"):
+                        logger.info(
+                            "execute_coding_task: sandbox reached terminal state: %s",
+                            sandbox_status,
+                        )
+                        break
+
+                # Fetch new events
+                events_url = f"{base_url}/sessions/{sandbox_session_id}/events"
+                if last_cursor:
+                    events_url += f"?cursor={last_cursor}"
+
+                events_resp = await client.get(events_url, headers=poll_headers)
+                if events_resp.status_code == 200:
+                    events_data = events_resp.json()
+                    events = events_data.get("events", [])
+
+                    for event in events:
+                        all_events.append(event)
+                        # Track cursor for next poll
+                        if event.get("id"):
+                            last_cursor = event["id"]
+                        # Extract agent text output
+                        if event.get("type") == "agent_message":
+                            content = event.get("content", "")
+                            if content:
+                                agent_output += content + "\n"
+
+                    # Log progress
+                    if events:
+                        logger.debug(
+                            "execute_coding_task: fetched %d new events (total: %d)",
+                            len(events),
+                            len(all_events),
+                        )
+
+            elapsed = time.time() - start_time
+            timed_out = elapsed >= timeout_seconds and sandbox_status == "running"
+
+            if timed_out:
+                logger.warning(
+                    "execute_coding_task: timed out after %.1fs (status=%s)",
+                    elapsed,
+                    sandbox_status,
+                )
+
+            # Step 4: Extract changed files from events
+            changed_files = _extract_changed_files_from_events(all_events)
+
+            return {
+                "success": not timed_out and sandbox_status not in ("error", "failed"),
+                "sandbox_session_id": sandbox_session_id,
+                "status": "timeout" if timed_out else sandbox_status,
+                "elapsed_seconds": round(elapsed, 1),
+                "event_count": len(all_events),
+                "changed_files": changed_files,
+                "agent_output": agent_output.strip()[:5000],  # Cap output size
+                "timed_out": timed_out,
+            }
+
+    except httpx.TimeoutException:
+        elapsed = time.time() - start_time
+        return {
+            "success": False,
+            "error": f"HTTP timeout connecting to sandbox control-plane at {base_url}",
+            "elapsed_seconds": round(elapsed, 1),
+        }
+    except Exception as e:
+        elapsed = time.time() - start_time
+        logger.error("execute_coding_task: unexpected error: %s", e)
+        return {
+            "success": False,
+            "error": str(e),
+            "elapsed_seconds": round(elapsed, 1),
+        }
+
+
+async def _async_sleep(seconds: float) -> None:
+    """Async sleep helper."""
+    import asyncio
+    await asyncio.sleep(seconds)
+
+
+def _extract_changed_files_from_events(events: list[dict]) -> list[dict]:
+    """Extract file changes from sandbox events.
+
+    Looks for tool_call events where the tool wrote files (write_file,
+    batch_write_files) and extracts the paths and content.
+
+    Args:
+        events: List of event dicts from the sandbox session
+
+    Returns:
+        List of dicts with 'path' and optionally 'content' keys
+    """
+    changed_files = []
+    seen_paths = set()
+
+    for event in events:
+        event_type = event.get("type", "")
+
+        # Look for tool results that indicate file writes
+        if event_type in ("tool_result", "tool_call"):
+            tool_name = event.get("tool", event.get("name", ""))
+            result = event.get("result", {})
+            args = event.get("arguments", event.get("args", {}))
+
+            if isinstance(result, str):
+                try:
+                    result = json.loads(result)
+                except (json.JSONDecodeError, TypeError):
+                    result = {}
+
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+
+            if tool_name in ("write_file", "WriteFile"):
+                path = args.get("path") or result.get("path", "")
+                if path and path not in seen_paths:
+                    seen_paths.add(path)
+                    changed_files.append({
+                        "path": path,
+                        "action": "write",
+                    })
+
+            elif tool_name in ("batch_write_files", "BatchWriteFiles"):
+                files_created = result.get("files_created", [])
+                for fp in files_created:
+                    if isinstance(fp, str) and fp not in seen_paths:
+                        seen_paths.add(fp)
+                        changed_files.append({
+                            "path": fp,
+                            "action": "write",
+                        })
+
+            elif tool_name in ("delete_file", "DeleteFile"):
+                path = args.get("path") or result.get("deleted", "")
+                if path and path not in seen_paths:
+                    seen_paths.add(path)
+                    changed_files.append({
+                        "path": path,
+                        "action": "delete",
+                    })
+
+    return changed_files
 
 
 # =============================================================================
