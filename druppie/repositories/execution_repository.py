@@ -117,7 +117,7 @@ class ExecutionRepository(BaseRepository):
                 agent_run.error_message = error_message
             if status == AgentRunStatus.RUNNING and not agent_run.started_at:
                 agent_run.started_at = datetime.now(timezone.utc)
-            elif status in (AgentRunStatus.COMPLETED, AgentRunStatus.FAILED):
+            elif status in (AgentRunStatus.COMPLETED, AgentRunStatus.FAILED, AgentRunStatus.CANCELLED):
                 agent_run.completed_at = datetime.now(timezone.utc)
 
     def update_tokens(
