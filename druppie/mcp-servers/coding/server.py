@@ -1633,6 +1633,7 @@ def _generate_sandbox_auth_token() -> str:
 @mcp.tool()
 async def execute_coding_task(
     task: str,
+    agent: str = "druppie-builder",
     repo_url: str = "",
     model: str = "zai-coding-plan/glm-4.7",
     timeout_seconds: int = 600,
@@ -1697,9 +1698,10 @@ async def execute_coding_task(
             gitea_clone_url = f"http://{quote(GITEA_USER, safe='')}:{quote(GITEA_PASSWORD, safe='')}@gitea:3000/{sandbox_repo_owner}/{sandbox_repo_name}.git"
 
     logger.info(
-        "execute_coding_task: starting sandbox task (repo=%s/%s, model=%s, timeout=%ds)",
+        "execute_coding_task: starting sandbox task (repo=%s/%s, agent=%s, model=%s, timeout=%ds)",
         sandbox_repo_owner,
         sandbox_repo_name,
+        agent,
         model,
         timeout_seconds,
     )
@@ -1767,6 +1769,7 @@ async def execute_coding_task(
                 "content": task,
                 "authorId": "druppie-agent",
                 "source": "api",
+                "agent": agent,
             }
 
             resp = await client.post(
