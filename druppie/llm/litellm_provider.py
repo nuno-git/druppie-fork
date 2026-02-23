@@ -219,6 +219,7 @@ PROVIDER_CONFIGS = {
         "model_env": "OLLAMA_MODEL",
         "base_url_env": "OLLAMA_BASE_URL",
         "default_base_url": "https://ollama.waterschap.org/v1",
+        "ssl_verify": False,  # Self-signed certificate
     },
 }
 
@@ -283,6 +284,9 @@ class ChatLiteLLM(BaseLLM):
 
         # Some providers (e.g. Azure OpenAI) require max_completion_tokens instead of max_tokens
         self._use_max_completion_tokens = config.get("use_max_completion_tokens", False)
+
+        # SSL verification (disabled for self-signed certs, e.g. Ollama)
+        self._ssl_verify = config.get("ssl_verify", True)
 
         # Bearer token auth (e.g. Azure Foundry) — send key as Authorization header
         self._auth_type = config.get("auth_type", "api_key")
@@ -365,6 +369,9 @@ class ChatLiteLLM(BaseLLM):
 
         if self.api_base:
             kwargs["api_base"] = self.api_base
+
+        if not self._ssl_verify:
+            kwargs["ssl_verify"] = False
 
         if self._extra_headers:
             kwargs["extra_headers"] = self._extra_headers
