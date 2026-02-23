@@ -243,9 +243,8 @@ mcps:
           required: []
 
       - name: execute_coding_task
-        description: "Execute a coding task in an isolated sandbox using an external coding agent. Sends a prompt to a sandbox that clones the repo, runs a coding agent (OpenCode), and returns results. Use this for implementation tasks that benefit from an isolated environment."
-        requires_approval: true
-        required_role: developer
+        description: "Execute a coding task in an isolated sandbox using an external coding agent. Sends a prompt to a sandbox that clones the repo, runs a coding agent (OpenCode), and returns results. Use this for implementation tasks that benefit from an isolated environment. The sandbox automatically clones the project from Gitea, implements changes, and pushes back. Changes are synced to the workspace via git pull."
+        requires_approval: false
         parameters:
           type: object
           properties:
