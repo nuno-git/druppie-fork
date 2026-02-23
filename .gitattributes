@@ -1,0 +1,25 @@
+# Auto detect text files and normalize to LF on commit
+* text=auto eol=lf
+
+# Force LF for shell scripts (critical for Docker)
+*.sh text eol=lf
+
+# Force LF for Dockerfiles
+Dockerfile* text eol=lf
+
+# Force LF for Python scripts
+*.py text eol=lf
+
+# Force LF for YAML files
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# Force LF for JSON
+*.json text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary

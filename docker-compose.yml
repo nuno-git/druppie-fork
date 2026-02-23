@@ -1,29 +1,631 @@
-version: '3.8'
+# Druppie Platform - Docker Compose Setup
+# =========================================
+#
+# Profiles:
+#   infra   - Infrastructure only (databases, Keycloak, Gitea, MCP servers)
+#   dev     - Development mode with hot reload (backend + frontend with volume mounts)
+#   prod    - Production mode (backend + frontend without hot reload)
+#   init    - Initialization container (Keycloak + Gitea setup)
+#
+# Usage:
+#   docker compose --profile infra --profile init up -d      # Infrastructure + init
+#   docker compose --profile dev --profile init up -d        # Full dev environment
+#   docker compose --profile prod --profile init up -d       # Full production
+#   docker compose --profile reset-db run --rm reset-db      # Reset app database
+#   docker compose --profile reset-hard run --rm reset-hard  # Full reset + re-init
+#   docker compose down                                       # Stop everything
+#
+# Ports:
+#   PostgreSQL:     5533
+#   Keycloak:       8180
+#   Gitea:          3100
+#   Backend:        8100
+#   Frontend:       5273
+#   MCP Coding:     9001
+#   MCP Docker:     9002
+#   MCP File Search:9004
+#   MCP Web:        9005
+#   Adminer:        8081
 
 services:
-  druppie:
+  # ===========================================================================
+  # DATABASES
+  # ===========================================================================
+
+  druppie-db:
+    image: postgres:15-alpine
+    container_name: druppie-new-db
+    profiles: [infra, dev, prod, reset-db]
+    environment:
+      POSTGRES_DB: druppie
+      POSTGRES_USER: druppie
+      POSTGRES_PASSWORD: ${DRUPPIE_DB_PASSWORD:-druppie_secret}
+    volumes:
+      - druppie_new_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "druppie"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "${DRUPPIE_DB_PORT:-5533}:5432"
+    networks:
+      - druppie-new-network
+
+  keycloak-db:
+    image: postgres:15-alpine
+    container_name: druppie-new-keycloak-db
+    profiles: [infra, dev, prod]
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_secret}
+    volumes:
+      - druppie_new_keycloak_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - druppie-new-network
+
+  gitea-db:
+    image: postgres:15-alpine
+    container_name: druppie-new-gitea-db
+    profiles: [infra, dev, prod]
+    environment:
+      POSTGRES_DB: gitea
+      POSTGRES_USER: gitea
+      POSTGRES_PASSWORD: ${GITEA_DB_PASSWORD:-gitea_secret}
+    volumes:
+      - druppie_new_gitea_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "gitea"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - druppie-new-network
+
+  # ===========================================================================
+  # KEYCLOAK (Identity Provider)
+  # ===========================================================================
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: druppie-new-keycloak
+    profiles: [infra, dev, prod]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak_secret}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_HOSTNAME: ${EXTERNAL_HOST:-localhost}
+      KC_HOSTNAME_PORT: ${KEYCLOAK_PORT:-8180}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY: edge
+      KC_HEALTH_ENABLED: "true"
+      JAVA_OPTS_APPEND: "-Xms256m -Xmx512m -XX:MaxGCPauseMillis=100 -Djava.net.preferIPv4Stack=true"
+      KC_CACHE: local
+      KC_CACHE_STACK: udp
+    command: start-dev
+    ports:
+      - "${KEYCLOAK_PORT:-8180}:8080"
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    mem_limit: 768m
+    mem_reservation: 384m
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e 'GET /health/ready HTTP/1.1\r\nhost: localhost\r\nConnection: close\r\n\r\n' >&3;if [ $? -eq 0 ]; then echo 'Healthcheck Successful';exit 0;else echo 'Healthcheck Failed';exit 1;fi;"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+    networks:
+      - druppie-new-network
+
+  # ===========================================================================
+  # GITEA (Git Server)
+  # ===========================================================================
+
+  gitea:
+    image: gitea/gitea:1.21
+    container_name: druppie-new-gitea
+    profiles: [infra, dev, prod]
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+      GITEA__database__DB_TYPE: postgres
+      GITEA__database__HOST: gitea-db:5432
+      GITEA__database__NAME: gitea
+      GITEA__database__USER: gitea
+      GITEA__database__PASSWD: ${GITEA_DB_PASSWORD:-gitea_secret}
+      GITEA__server__ROOT_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}/
+      GITEA__server__HTTP_PORT: 3000
+      GITEA__server__DOMAIN: ${EXTERNAL_HOST:-localhost}
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__service__DISABLE_REGISTRATION: "false"
+      GITEA__oauth2_client__ACCOUNT_LINKING: auto
+      GITEA__oauth2_client__ENABLE_AUTO_REGISTRATION: "true"
+      GITEA__oauth2_client__USERNAME: email
+    volumes:
+      - druppie_new_gitea:/data
+    ports:
+      - "${GITEA_PORT:-3100}:3000"
+      - "${GITEA_SSH_PORT:-2223}:22"
+    depends_on:
+      gitea-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - druppie-new-network
+
+  # ===========================================================================
+  # MCP SERVERS (Microservices)
+  # ===========================================================================
+
+  mcp-coding:
+    build:
+      context: ./druppie/mcp-servers/coding
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-coding
+    profiles: [infra, dev, prod]
+    environment:
+      WORKSPACE_ROOT: /workspaces
+      MCP_PORT: "9001"
+      GITEA_INTERNAL_URL: http://gitea:3000
+      GITEA_ORG: druppie
+      GITEA_TOKEN: ${GITEA_TOKEN:-}
+      GITEA_USER: ${GITEA_ADMIN_USER:-gitea_admin}
+      GITEA_PASSWORD: ${GITEA_ADMIN_PASSWORD:-GiteaAdmin123}
+    volumes:
+      - druppie_new_workspace:/workspaces
+    ports:
+      - "${MCP_CODING_PORT:-9001}:9001"
+    depends_on:
+      gitea:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  mcp-docker:
+    build:
+      context: ./druppie/mcp-servers/docker
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-docker
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9002"
+      WORKSPACE_ROOT: /workspaces
+      DOCKER_NETWORK: druppie-new-network
+    volumes:
+      - druppie_new_workspace:/workspaces
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+    ports:
+      - "${MCP_DOCKER_PORT:-9002}:9002"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  mcp-filesearch:
+    build:
+      context: ./druppie/mcp-servers/filesearch
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-filesearch
+    profiles: [infra, dev, prod]
+    environment:
+      SEARCH_ROOT: /dataset
+      MCP_PORT: "9004"
+    volumes:
+      - druppie_new_dataset:/dataset
+    ports:
+      - "${MCP_FILESEARCH_PORT:-9004}:9004"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  mcp-web:
+    build:
+      context: ./druppie/mcp-servers/web
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-web
+    profiles: [infra, dev, prod]
+    environment:
+      SEARCH_ROOT: /dataset
+      MCP_PORT: "9005"
+    volumes:
+      - druppie_new_dataset:/dataset
+    ports:
+      - "${MCP_WEB_PORT:-9005}:9005"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ===========================================================================
+  # DATABASE ADMIN
+  # ===========================================================================
+
+  adminer:
+    image: adminer:latest
+    container_name: druppie-adminer
+    profiles: [infra, dev, prod]
+    ports:
+      - "${ADMINER_PORT:-8081}:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: druppie-db
+      ADMINER_DESIGN: pepa-linha-dark
+    depends_on:
+      druppie-db:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
+
+  # ===========================================================================
+  # INITIALIZATION CONTAINER (one-time setup)
+  # ===========================================================================
+  # Runs setup_keycloak.py and setup_gitea.py on first launch.
+  # Uses init-marker volume to track if setup was already completed.
+  # Exits after completion - does not stay running.
+
+  druppie-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.init
+    container_name: druppie-init
+    profiles: [init, dev, prod]
+    environment:
+      # Keycloak config (internal Docker URLs)
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      EXTERNAL_HOST: ${EXTERNAL_HOST:-localhost}
+      # Port configuration (passed to setup scripts for Keycloak client URIs)
+      FRONTEND_PORT: ${FRONTEND_PORT:-5273}
+      KEYCLOAK_PORT: ${KEYCLOAK_PORT:-8180}
+      GITEA_PORT: ${GITEA_PORT:-3100}
+      BACKEND_PORT: ${BACKEND_PORT:-8100}
+      # Gitea config (internal Docker URLs)
+      GITEA_URL: http://gitea:3000
+      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-gitea_admin}
+      GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-GiteaAdmin123}
+      GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL:-admin@druppie.local}
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_REALM: druppie
+      # Override .env path for setup_gitea.py token writing
+      ENV_FILE: /project/.env
+    volumes:
+      - druppie_init_marker:/init-marker
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - .:/project
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      gitea:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
+    restart: "no"
+
+  # ===========================================================================
+  # BACKEND - Development Mode (hot reload)
+  # ===========================================================================
+
+  druppie-backend-dev:
     build:
       context: .
       dockerfile: Dockerfile
-    image: druppie:latest
-    ports:
-      - "8080:8080"
+    container_name: druppie-new-backend
+    profiles: [dev]
+    command: ["uvicorn", "druppie.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     environment:
-      - SHERPA_SERVER_URL=http://sherpa-server:8081
+      DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
+      DEV_MODE: ${DEV_MODE:-false}
+      KEYCLOAK_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_ISSUER_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}
+      KEYCLOAK_REALM: druppie
+      KEYCLOAK_CLIENT_ID: druppie-backend
+      LLM_PROVIDER: ${LLM_PROVIDER:-zai}
+      LLM_FORCE_PROVIDER: ${LLM_FORCE_PROVIDER:-}
+      LLM_FORCE_MODEL: ${LLM_FORCE_MODEL:-}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_MODEL: ${ZAI_MODEL:-glm-4.7}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+      DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
+      DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
+      FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
+      FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
+      FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
+      CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
+      GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
+      GITEA_INTERNAL_URL: http://gitea:3000
+      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-gitea_admin}
+      GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-GiteaAdmin123}
+      GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL:-admin@druppie.local}
+      GITEA_ORG: druppie
+      WORKSPACE_PATH: /app/workspace
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      USE_MCP_MICROSERVICES: "true"
+      MCP_CODING_URL: http://mcp-coding:9001
+      MCP_DOCKER_URL: http://mcp-docker:9002
+      MCP_FILESEARCH_URL: http://mcp-filesearch:9004
+      MCP_WEB_URL: http://mcp-web:9005
     volumes:
-      - ./.druppie:/app/.druppie
-    depends_on:
-      - sherpa-server
-
-  sherpa-server:
-    build:
-      context: ./sherpa-server
-      dockerfile: Dockerfile
-    image: druppie-sherpa:latest
+      - ./druppie:/app/druppie
+      - druppie_new_workspace:/app/workspace
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     ports:
-      - "8081:8081"
+      - "${BACKEND_PORT:-8100}:8000"
+    depends_on:
+      druppie-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      gitea:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ===========================================================================
+  # BACKEND - Production Mode
+  # ===========================================================================
+
+  druppie-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: druppie-new-backend
+    profiles: [prod]
+    environment:
+      DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
+      DEV_MODE: ${DEV_MODE:-false}
+      KEYCLOAK_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_ISSUER_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}
+      KEYCLOAK_REALM: druppie
+      KEYCLOAK_CLIENT_ID: druppie-backend
+      LLM_PROVIDER: ${LLM_PROVIDER:-zai}
+      LLM_FORCE_PROVIDER: ${LLM_FORCE_PROVIDER:-}
+      LLM_FORCE_MODEL: ${LLM_FORCE_MODEL:-}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      ZAI_MODEL: ${ZAI_MODEL:-glm-4.7}
+      ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+      DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
+      DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
+      FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
+      FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
+      FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
+      CORS_ORIGINS: http://${EXTERNAL_HOST:-localhost}:${FRONTEND_PORT:-5273},http://localhost:5173
+      GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
+      GITEA_INTERNAL_URL: http://gitea:3000
+      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-gitea_admin}
+      GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-GiteaAdmin123}
+      GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL:-admin@druppie.local}
+      GITEA_ORG: druppie
+      WORKSPACE_PATH: /app/workspace
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      USE_MCP_MICROSERVICES: "true"
+      MCP_CODING_URL: ${MCP_CODING_URL:-http://mcp-coding:9001}
+      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
+      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
+      MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
     volumes:
-      - sherpa-models:/app/models
+      - druppie_new_workspace:/app/workspace
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+    ports:
+      - "${BACKEND_PORT:-8100}:8000"
+    depends_on:
+      druppie-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      gitea:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ===========================================================================
+  # FRONTEND - Development Mode (Vite HMR)
+  # ===========================================================================
+
+  druppie-frontend-dev:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: druppie-new-frontend
+    profiles: [dev]
+    ports:
+      - "${FRONTEND_PORT:-5273}:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      VITE_API_URL: http://${EXTERNAL_HOST:-localhost}:${BACKEND_PORT:-8100}
+      VITE_KEYCLOAK_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}
+      VITE_KEYCLOAK_REALM: druppie
+      VITE_KEYCLOAK_CLIENT_ID: druppie-frontend
+    depends_on:
+      druppie-backend-dev:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
+
+  # ===========================================================================
+  # FRONTEND - Production Mode
+  # ===========================================================================
+
+  druppie-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://${EXTERNAL_HOST:-localhost}:${BACKEND_PORT:-8100}
+        VITE_KEYCLOAK_URL: http://${EXTERNAL_HOST:-localhost}:${KEYCLOAK_PORT:-8180}
+        VITE_KEYCLOAK_REALM: druppie
+        VITE_KEYCLOAK_CLIENT_ID: druppie-frontend
+        VITE_GITEA_URL: http://${EXTERNAL_HOST:-localhost}:${GITEA_PORT:-3100}
+    container_name: druppie-new-frontend
+    profiles: [prod]
+    ports:
+      - "${FRONTEND_PORT:-5273}:5173"
+    depends_on:
+      druppie-backend:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
+
+  # ===========================================================================
+  # RESET SERVICES
+  # ===========================================================================
+
+  # Reset application database only (preserves Keycloak, Gitea, and user accounts)
+  # Drops: projects, sessions, agent_runs, messages, tool_calls, llm_calls, approvals, questions
+  # Keeps: users, user_roles, user_tokens (synced from Keycloak)
+  reset-db:
+    image: docker:cli
+    container_name: druppie-reset-db
+    profiles: [reset-db]
+    environment:
+      PGPASSWORD: ${DRUPPIE_DB_PASSWORD:-druppie_secret}
+    volumes:
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "=== Resetting Druppie Application Database ==="
+        echo "Preserving user tables (users, user_roles, user_tokens)"
+        echo ""
+        echo "Waiting for database..."
+        until docker exec druppie-new-db pg_isready -U druppie; do sleep 1; done
+        echo "Dropping application tables..."
+        docker exec druppie-new-db psql -U druppie -d druppie -c "
+          DROP TABLE IF EXISTS questions CASCADE;
+          DROP TABLE IF EXISTS approvals CASCADE;
+          DROP TABLE IF EXISTS llm_calls CASCADE;
+          DROP TABLE IF EXISTS tool_calls CASCADE;
+          DROP TABLE IF EXISTS messages CASCADE;
+          DROP TABLE IF EXISTS agent_runs CASCADE;
+          DROP TABLE IF EXISTS sessions CASCADE;
+          DROP TABLE IF EXISTS projects CASCADE;
+        "
+        echo ""
+        echo "Restarting backend to recreate tables..."
+        docker restart druppie-new-backend 2>/dev/null || echo "Backend not running"
+        echo ""
+        echo "=== Database reset complete ==="
+        echo "Application tables dropped. User accounts preserved."
+        echo "Backend restarted - tables will be recreated automatically."
+    networks:
+      - druppie-new-network
+
+  # Full reset - removes ALL volumes and re-initializes
+  # NOTE: This service runs with network_mode: host to avoid being stopped by docker compose down
+  reset-hard:
+    build:
+      context: .
+      dockerfile: Dockerfile.reset
+    container_name: druppie-reset-hard
+    profiles: [reset-hard]
+    network_mode: host
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-cleaner-druppie-docker-compose}
+      # Init container env vars for re-initialization (use localhost since we're on host network)
+      KEYCLOAK_URL: http://localhost:${KEYCLOAK_PORT:-8180}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      EXTERNAL_HOST: ${EXTERNAL_HOST:-localhost}
+      # Port configuration
+      FRONTEND_PORT: ${FRONTEND_PORT:-5273}
+      KEYCLOAK_PORT: ${KEYCLOAK_PORT:-8180}
+      GITEA_PORT: ${GITEA_PORT:-3100}
+      BACKEND_PORT: ${BACKEND_PORT:-8100}
+      GITEA_URL: http://localhost:${GITEA_PORT:-3100}
+      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-gitea_admin}
+      GITEA_ADMIN_PASSWORD: ${GITEA_ADMIN_PASSWORD:-GiteaAdmin123}
+      GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL:-admin@druppie.local}
+      KEYCLOAK_INTERNAL_URL: http://localhost:${KEYCLOAK_PORT:-8180}
+      KEYCLOAK_REALM: druppie
+      ENV_FILE: /project/.env
+    volumes:
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - .:/project
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
 
 volumes:
-  sherpa-models:
+  druppie_new_postgres:
+    name: druppie_new_postgres
+  druppie_new_keycloak_postgres:
+    name: druppie_new_keycloak_postgres
+  druppie_new_gitea_postgres:
+    name: druppie_new_gitea_postgres
+  druppie_new_gitea:
+    name: druppie_new_gitea
+  druppie_new_workspace:
+    name: druppie_new_workspace
+  druppie_new_dataset:
+    name: druppie_new_dataset
+  druppie_init_marker:
+    name: druppie_init_marker
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+
+networks:
+  druppie-new-network:
+    name: druppie-new-network
+    driver: bridge
