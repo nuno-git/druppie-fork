@@ -1,0 +1,22 @@
+# LLM Profiles — shared provider chains for agents.
+#
+# Each profile is an ordered list of {provider, model} entries.
+# The resolver picks the first entry whose API key is available,
+# and optionally sets up the second as a FallbackLLM.
+#
+# Agents reference a profile by name in their YAML: llm_profile: standard
+
+profiles:
+  standard:
+    - provider: zai
+      model: glm-4.7
+    - provider: azure_foundry
+      model: GPT-5-MINI
+
+  cheap:
+    - provider: azure_foundry
+      model: GPT-5-MINI
+    - provider: zai
+      model: glm-4.7
+    - provider: deepinfra
+      model: Qwen/Qwen3-32B
