@@ -152,11 +152,12 @@ class Orchestrator:
             conversation_history = self._build_conversation_history(current_session_id)
 
         # Step 3: Save user message to the timeline
+        # sequence_number=-1 so user messages sort before Router (seq 0)
         self.execution_repo.create_message(
             session_id=current_session_id,
             role="user",
             content=message,
-            sequence_number=0,
+            sequence_number=-1,
         )
         self.execution_repo.commit()
 

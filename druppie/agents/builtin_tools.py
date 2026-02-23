@@ -618,11 +618,17 @@ async def create_message(
     Returns:
         Success status
     """
+    # Use the agent run's sequence_number so the message sorts
+    # alongside the summarizer agent run in the timeline
+    agent_run = execution_repo.get_by_id(agent_run_id)
+    seq = agent_run.sequence_number if agent_run and agent_run.sequence_number is not None else 0
+
     execution_repo.create_message(
         session_id=session_id,
         role="assistant",
         content=content,
         agent_id="summarizer",
+        sequence_number=seq,
     )
     execution_repo.flush()
 
