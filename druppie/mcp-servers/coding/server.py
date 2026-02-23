@@ -1785,11 +1785,15 @@ async def execute_coding_task(
             logger.info("execute_coding_task: prompt sent, polling for completion...")
 
             # Step 3: Poll for completion
+            # The events API returns events newest-first (backward pagination).
+            # For forward polling, we fetch all events each time and deduplicate
+            # by tracking seen event IDs.
             poll_interval = 5  # seconds
-            last_cursor = None
             all_events = []
-            sandbox_status = "running"
+            seen_event_ids = set()
+            sandbox_status = "unknown"
             agent_output = ""
+            execution_complete_seen = False
 
             while time.time() - start_time < timeout_seconds:
                 await _async_sleep(poll_interval)
@@ -1799,7 +1803,7 @@ async def execute_coding_task(
                     "Authorization": f"Bearer {_generate_sandbox_auth_token()}",
                 }
 
-                # Get session state to check status
+                # Get session state to check sandbox status
                 state_resp = await client.get(
                     f"{base_url}/sessions/{sandbox_session_id}",
                     headers=poll_headers,
@@ -1807,47 +1811,64 @@ async def execute_coding_task(
 
                 if state_resp.status_code == 200:
                     state = state_resp.json()
-                    sandbox_status = state.get("status", "unknown")
+                    sandbox_info = state.get("sandbox") or {}
+                    sandbox_status = sandbox_info.get("status", "unknown")
 
-                    # Check for terminal states
-                    if sandbox_status in ("completed", "idle", "error", "failed", "archived"):
+                    # Error states — break immediately
+                    if sandbox_status in ("stopped", "failed", "stale"):
                         logger.info(
-                            "execute_coding_task: sandbox reached terminal state: %s",
+                            "execute_coding_task: sandbox error state: %s",
                             sandbox_status,
                         )
                         break
 
-                # Fetch new events
-                events_url = f"{base_url}/sessions/{sandbox_session_id}/events"
-                if last_cursor:
-                    events_url += f"?cursor={last_cursor}"
-
+                # Fetch all events (no cursor — API paginates backward, not forward)
+                events_url = f"{base_url}/sessions/{sandbox_session_id}/events?limit=200"
                 events_resp = await client.get(events_url, headers=poll_headers)
                 if events_resp.status_code == 200:
                     events_data = events_resp.json()
                     events = events_data.get("events", [])
+                    new_count = 0
 
                     for event in events:
+                        event_id = event.get("id", "")
+                        if event_id in seen_event_ids:
+                            continue
+                        seen_event_ids.add(event_id)
                         all_events.append(event)
-                        # Track cursor for next poll
-                        if event.get("id"):
-                            last_cursor = event["id"]
-                        # Extract agent text output
-                        if event.get("type") == "agent_message":
+                        new_count += 1
+
+                        # Detect execution_complete event — primary completion signal
+                        if event.get("type") == "execution_complete":
+                            execution_complete_seen = True
+                            exec_data = event.get("data", {})
+                            if not exec_data.get("success", True):
+                                sandbox_status = "failed"
+                        # Extract agent text output from token events
+                        elif event.get("type") == "token":
+                            content = (event.get("data") or {}).get("content", "")
+                            if content:
+                                agent_output += content + "\n"
+                        elif event.get("type") == "agent_message":
                             content = event.get("content", "")
                             if content:
                                 agent_output += content + "\n"
 
-                    # Log progress
-                    if events:
-                        logger.debug(
-                            "execute_coding_task: fetched %d new events (total: %d)",
-                            len(events),
+                    if new_count > 0:
+                        logger.info(
+                            "execute_coding_task: %d new events (total: %d, types: %s)",
+                            new_count,
                             len(all_events),
+                            ", ".join(set(e.get("type", "?") for e in events[:new_count])),
                         )
 
+                # Primary exit: execution_complete event
+                if execution_complete_seen:
+                    logger.info("execute_coding_task: execution_complete event seen")
+                    break
+
             elapsed = time.time() - start_time
-            timed_out = elapsed >= timeout_seconds and sandbox_status == "running"
+            timed_out = elapsed >= timeout_seconds and not execution_complete_seen and sandbox_status not in ("stopped", "failed", "stale")
 
             if timed_out:
                 logger.warning(
@@ -1861,7 +1882,7 @@ async def execute_coding_task(
 
             # Step 5: Git pull to sync sandbox changes into local workspace
             git_pull_result = None
-            success = not timed_out and sandbox_status not in ("error", "failed")
+            success = not timed_out and sandbox_status not in ("failed", "stale")
             if success and workspace_path and changed_files:
                 try:
                     cwd = str(workspace_path)
@@ -1922,14 +1943,18 @@ async def _async_sleep(seconds: float) -> None:
 def _extract_changed_files_from_events(events: list[dict]) -> list[dict]:
     """Extract file changes from sandbox events.
 
-    Looks for tool_call events where the tool wrote files (write_file,
-    batch_write_files) and extracts the paths and content.
+    Looks for tool_call events where the tool wrote files. The sandbox uses
+    OpenCode which emits events like:
+        {"type": "tool_call", "data": {"tool": "write", "args": {"filePath": "/workspace/foo.txt", ...}}}
+        {"type": "tool_call", "data": {"tool": "bash", "args": {"command": "..."}}}
+
+    Also handles Druppie's own MCP tool names (write_file, batch_write_files, etc.).
 
     Args:
         events: List of event dicts from the sandbox session
 
     Returns:
-        List of dicts with 'path' and optionally 'content' keys
+        List of dicts with 'path' and 'action' keys
     """
     changed_files = []
     seen_paths = set()
@@ -1937,51 +1962,53 @@ def _extract_changed_files_from_events(events: list[dict]) -> list[dict]:
     for event in events:
         event_type = event.get("type", "")
 
-        # Look for tool results that indicate file writes
-        if event_type in ("tool_result", "tool_call"):
-            tool_name = event.get("tool", event.get("name", ""))
-            result = event.get("result", {})
-            args = event.get("arguments", event.get("args", {}))
+        if event_type != "tool_call":
+            continue
 
-            if isinstance(result, str):
-                try:
-                    result = json.loads(result)
-                except (json.JSONDecodeError, TypeError):
-                    result = {}
+        # Events have data nested under "data" key
+        data = event.get("data", event)
+        tool_name = data.get("tool", data.get("name", ""))
+        args = data.get("args", data.get("arguments", {}))
+        result = data.get("result", {})
 
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                result = {}
 
-            if tool_name in ("write_file", "WriteFile"):
-                path = args.get("path") or result.get("path", "")
-                if path and path not in seen_paths:
-                    seen_paths.add(path)
-                    changed_files.append({
-                        "path": path,
-                        "action": "write",
-                    })
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except (json.JSONDecodeError, TypeError):
+                args = {}
 
-            elif tool_name in ("batch_write_files", "BatchWriteFiles"):
-                files_created = result.get("files_created", [])
-                for fp in files_created:
-                    if isinstance(fp, str) and fp not in seen_paths:
-                        seen_paths.add(fp)
-                        changed_files.append({
-                            "path": fp,
-                            "action": "write",
-                        })
+        # OpenCode "write" tool: args.filePath
+        if tool_name == "write":
+            path = args.get("filePath", args.get("path", ""))
+            if path and path not in seen_paths:
+                seen_paths.add(path)
+                changed_files.append({"path": path, "action": "write"})
 
-            elif tool_name in ("delete_file", "DeleteFile"):
-                path = args.get("path") or result.get("deleted", "")
-                if path and path not in seen_paths:
-                    seen_paths.add(path)
-                    changed_files.append({
-                        "path": path,
-                        "action": "delete",
-                    })
+        # Druppie MCP write_file/WriteFile
+        elif tool_name in ("write_file", "WriteFile"):
+            path = args.get("path") or result.get("path", "")
+            if path and path not in seen_paths:
+                seen_paths.add(path)
+                changed_files.append({"path": path, "action": "write"})
+
+        elif tool_name in ("batch_write_files", "BatchWriteFiles"):
+            files_created = result.get("files_created", [])
+            for fp in files_created:
+                if isinstance(fp, str) and fp not in seen_paths:
+                    seen_paths.add(fp)
+                    changed_files.append({"path": fp, "action": "write"})
+
+        elif tool_name in ("delete_file", "DeleteFile"):
+            path = args.get("path") or result.get("deleted", "")
+            if path and path not in seen_paths:
+                seen_paths.add(path)
+                changed_files.append({"path": path, "action": "delete"})
 
     return changed_files
 
