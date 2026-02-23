@@ -254,12 +254,6 @@ mcps:
             agent:
               type: string
               description: "Which sandbox agent to use: druppie-builder (default, for coding) or druppie-tester (for testing)"
-            model:
-              type: string
-              description: "LLM model for the sandbox agent (default: zai-coding-plan/glm-4.7)"
-            timeout_seconds:
-              type: integer
-              description: "Max wait time in seconds (default: 600)"
           required:
             - task
 

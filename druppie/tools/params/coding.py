@@ -68,11 +68,3 @@ class ExecuteCodingTaskParams(BaseModel):
         default="druppie-builder",
         description="Which sandbox agent to use (druppie-builder for coding, druppie-tester for testing)",
     )
-    model: str = Field(
-        default="zai-coding-plan/glm-4.7",
-        description="LLM model for the sandbox agent",
-    )
-    timeout_seconds: int = Field(
-        default=600,
-        description="Max wait time in seconds",
-    )
