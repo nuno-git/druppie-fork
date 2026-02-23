@@ -97,6 +97,9 @@ export const resumeSession = (sessionId, answer = null) =>
 export const deleteSession = (sessionId) =>
   request(`/api/sessions/${sessionId}`, { method: 'DELETE' })
 
+export const retryFromRun = (sessionId, agentRunId) =>
+  request(`/api/sessions/${sessionId}/retry-from/${agentRunId}`, { method: 'POST' })
+
 // Legacy aliases (use getSession instead - it returns everything)
 export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}`)
 export const getPlans = (page = 1, limit = 20) => request(`/api/sessions?page=${page}&limit=${limit}`)

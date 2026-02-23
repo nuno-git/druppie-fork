@@ -630,7 +630,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
       {/* Content area: Chat/Annotated timeline or Inspect event log */}
       {viewMode === 'inspect' ? (
-        <DebugEventLog data={data} sessionId={sessionId} />
+        <DebugEventLog data={data} sessionId={sessionId} sessionStatus={data.status} />
       ) : (
         <div ref={timelineRef} className="flex-1 overflow-y-auto overflow-x-hidden">
           <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
