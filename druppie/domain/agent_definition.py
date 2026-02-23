@@ -51,7 +51,7 @@ class AgentDefinition(BaseModel):
     system_prompts: list[str] = Field(default_factory=list)
 
     # LLM settings
-    model: str | None = None
+    llm_profile: str = "standard"
     temperature: float = 0.1
     max_tokens: int = 4096
     max_iterations: int = 10

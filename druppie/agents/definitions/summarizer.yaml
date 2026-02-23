@@ -58,7 +58,7 @@ extra_builtin_tools:
 
 mcps: {}
 
-model: glm-4
+llm_profile: cheap
 temperature: 0.3
 max_tokens: 2048
 max_iterations: 5

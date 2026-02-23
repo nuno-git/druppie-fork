@@ -123,29 +123,35 @@ class DruppieLogger(CustomLogger if LITELLM_AVAILABLE else object):
         """Async version - same logic."""
         self.log_success_event(kwargs, response_obj, start_time, end_time)
 
-    def log_failure_event(self, kwargs, exception, start_time, end_time):
-        """Capture failed request."""
-        # Handle both datetime.timedelta and float types for duration
-        if hasattr(end_time - start_time, 'total_seconds'):
-            duration_ms = int((end_time - start_time).total_seconds() * 1000)
-        else:
-            duration_ms = int((end_time - start_time) * 1000)
+    def log_failure_event(self, kwargs=None, exception=None, start_time=None, end_time=None, **extra):
+        """Capture failed request.
+
+        Uses keyword defaults for compatibility with different litellm callback signatures.
+        """
+
+        duration_ms = 0
+        if start_time and end_time:
+            diff = end_time - start_time
+            if hasattr(diff, 'total_seconds'):
+                duration_ms = int(diff.total_seconds() * 1000)
+            else:
+                duration_ms = int(diff * 1000)
 
         call_record = {
             "timestamp": self.last_request.get("timestamp") if self.last_request else None,
-            "model": kwargs.get("model", ""),
+            "model": (kwargs or {}).get("model", ""),
             "provider": "litellm",
             "status": "error",
             "duration_ms": duration_ms,
-            "error": str(exception),
-            "error_type": type(exception).__name__,
+            "error": str(exception) if exception else "unknown",
+            "error_type": type(exception).__name__ if exception else "unknown",
         }
 
         self.call_history.append(call_record)
 
-    async def async_log_failure_event(self, kwargs, exception, start_time, end_time):
+    async def async_log_failure_event(self, kwargs=None, exception=None, start_time=None, end_time=None, **extra):
         """Async version - same logic."""
-        self.log_failure_event(kwargs, exception, start_time, end_time)
+        self.log_failure_event(kwargs=kwargs, exception=exception, start_time=start_time, end_time=end_time, **extra)
 
 
 # Global logger instance
@@ -199,6 +205,8 @@ PROVIDER_CONFIGS = {
         "default_base_url": "https://druppie.cognitiveservices.azure.com/openai/v1",
         "use_max_completion_tokens": True,
         "default_temperature": 1.0,
+        "force_temperature": True,  # GPT-5-MINI only supports temperature=1.0
+        "auth_type": "bearer",  # Use Bearer token instead of api-key header
     },
 }
 
@@ -216,7 +224,7 @@ class ChatLiteLLM(BaseLLM):
         model: str | None = None,
         api_key: str | None = None,
         api_base: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_tokens: int = 16384,
         timeout: float = 300.0,
         max_retries: int = 3,
@@ -228,7 +236,7 @@ class ChatLiteLLM(BaseLLM):
             model: Model name (uses provider default if not specified)
             api_key: API key (reads from env if not specified)
             api_base: Custom API base URL (reads from env if not specified)
-            temperature: Temperature for generation
+            temperature: Temperature for generation (None = use provider default)
             max_tokens: Maximum tokens to generate
             timeout: Request timeout in seconds
             max_retries: Maximum retries for transient errors
@@ -244,7 +252,13 @@ class ChatLiteLLM(BaseLLM):
         # Load configuration from environment
         self.api_key = api_key or os.getenv(config["api_key_env"], "")
         self.api_base = api_base or os.getenv(config["base_url_env"], "") or config["default_base_url"]
-        self.temperature = config.get("default_temperature", temperature)
+        # Provider may force a specific temperature (e.g. GPT-5-MINI only supports 1.0)
+        if config.get("force_temperature"):
+            self.temperature = config["default_temperature"]
+        elif temperature is not None:
+            self.temperature = temperature
+        else:
+            self.temperature = config.get("default_temperature", 0.7)
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.max_retries = max_retries
@@ -255,15 +269,18 @@ class ChatLiteLLM(BaseLLM):
         # Some providers (e.g. Azure OpenAI) require max_completion_tokens instead of max_tokens
         self._use_max_completion_tokens = config.get("use_max_completion_tokens", False)
 
+        # Bearer token auth (e.g. Azure Foundry) — send key as Authorization header
+        self._auth_type = config.get("auth_type", "api_key")
+        self._extra_headers: dict[str, str] = {}
+        if self._auth_type == "bearer" and self.api_key:
+            self._extra_headers["Authorization"] = f"Bearer {self.api_key}"
+
         # LiteLLM model format (e.g., "openai/glm-4.7" for custom endpoints)
         prefix = config["prefix"]
         if prefix and not self._model.startswith(f"{prefix}/"):
             self._litellm_model = f"{prefix}/{self._model}"
         else:
             self._litellm_model = self._model
-
-        # Configure LiteLLM environment
-        self._configure_litellm()
 
         # Initialize logger
         self._logger = get_druppie_logger()
@@ -277,13 +294,6 @@ class ChatLiteLLM(BaseLLM):
             model=self.model,
             api_base=self.api_base or "default",
         )
-
-    def _configure_litellm(self):
-        """Set environment variables for LiteLLM."""
-        # Both zai and deepinfra are OpenAI-compatible, so we set OPENAI_API_KEY
-        # for LiteLLM to use with the "openai/" prefix
-        if self.api_key:
-            os.environ["OPENAI_API_KEY"] = self.api_key
 
     @property
     def model(self) -> str:
@@ -320,20 +330,19 @@ class ChatLiteLLM(BaseLLM):
         new_instance._bound_tools = tools
         return new_instance
 
-    def chat(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
-    ) -> LLMResponse:
-        """Send synchronous chat completion request."""
+    def _build_kwargs(self, messages, tools, max_tokens_override=None):
+        """Build common kwargs for LiteLLM completion calls."""
         effective_tools = tools or self._bound_tools
-        effective_max_tokens = min(self.max_tokens, 16384) if self.max_tokens else self.max_tokens
+        effective_max_tokens = min(max_tokens_override or self.max_tokens, 16384)
 
         token_param = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
         kwargs = {
             "model": self._litellm_model,
             "messages": messages,
             "temperature": self.temperature,
+            # Bearer-auth providers authenticate via extra_headers; pass a dummy
+            # key so LiteLLM doesn't inject the real key as an api-key header.
+            "api_key": "bearer-via-header" if self._auth_type == "bearer" else self.api_key,
             token_param: effective_max_tokens,
             "timeout": self.timeout,
             "num_retries": self.max_retries,
@@ -342,9 +351,22 @@ class ChatLiteLLM(BaseLLM):
         if self.api_base:
             kwargs["api_base"] = self.api_base
 
+        if self._extra_headers:
+            kwargs["extra_headers"] = self._extra_headers
+
         if effective_tools:
             kwargs["tools"] = effective_tools
             kwargs["tool_choice"] = "auto"
+
+        return kwargs
+
+    def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> LLMResponse:
+        """Send synchronous chat completion request."""
+        kwargs = self._build_kwargs(messages, tools)
 
         try:
             response = completion(**kwargs)
@@ -359,28 +381,7 @@ class ChatLiteLLM(BaseLLM):
         max_tokens: int | None = None,
     ) -> LLMResponse:
         """Send asynchronous chat completion request."""
-        effective_tools = tools or self._bound_tools
-        effective_max_tokens = max_tokens or self.max_tokens
-        # Clamp to safe limit for most providers
-        if effective_max_tokens and effective_max_tokens > 16384:
-            effective_max_tokens = 16384
-
-        token_param = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
-        kwargs = {
-            "model": self._litellm_model,
-            "messages": messages,
-            "temperature": self.temperature,
-            token_param: effective_max_tokens,
-            "timeout": self.timeout,
-            "num_retries": self.max_retries,
-        }
-
-        if self.api_base:
-            kwargs["api_base"] = self.api_base
-
-        if effective_tools:
-            kwargs["tools"] = effective_tools
-            kwargs["tool_choice"] = "auto"
+        kwargs = self._build_kwargs(messages, tools, max_tokens_override=max_tokens or self.max_tokens)
 
         try:
             response = await acompletion(**kwargs)

@@ -197,7 +197,7 @@ mcps:
     - delete_file
     - commit_and_push
 
-model: glm-4
+llm_profile: standard
 temperature: 0.2
 max_tokens: 16384
 max_iterations: 100

@@ -36,14 +36,12 @@ Last updated: 2026-02-11
 
 ---
 
-### Per-Agent Model Selection Ignored
+### ~~Per-Agent Model Selection Ignored~~ (DONE)
 
-- **Location:** `druppie/llm/service.py`, `druppie/agents/runtime.py`
-- Each agent YAML definition has `model` and `temperature` fields (e.g., `model: glm-4`, `temperature: 0.1`), but these values are ignored at runtime.
-- `LLMService` is a global singleton (`get_llm_service()`) that creates one LLM instance for all agents based on environment variables (`ZAI_MODEL`, `DEEPINFRA_MODEL`).
-- In `runtime.py:540`, only `max_tokens` from the agent definition is passed to `achat()`. The agent's `model` field is only used for logging (`runtime.py:532`), and `temperature` is never referenced.
-- **Impact:** All agents use the same model and temperature regardless of their YAML configuration. Cannot use a cheap/fast model for the router and a capable model for the developer.
-- **Fix needed:** Replace the singleton with a factory that caches LLM instances per `(provider, model, temperature)` tuple, or pass model/temperature overrides into `achat()`.
+- **Resolved in:** `feature/multi-llm` branch
+- Agents now reference shared LLM profiles (`llm_profile: standard` or `cheap`) defined in `llm_profiles.yaml`. Each profile is an ordered provider chain; the resolver picks the first available provider as primary and the next as runtime fallback via `FallbackLLM`.
+- Override env vars (`LLM_FORCE_PROVIDER`/`LLM_FORCE_MODEL`) bypass profiles for testing.
+- See `docs/TECHNICAL.md` section 5.5 for details.
 
 ### Cancel/Resume Endpoint Missing on Backend
 

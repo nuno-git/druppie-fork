@@ -347,6 +347,50 @@ Both providers are OpenAI-compatible and use the same unified code path via Lite
 
 LiteLLM handles all response parsing and tool call extraction automatically. The `LLMResponse` model normalizes responses into a consistent format with content, tool calls, and token usage.
 
+### 5.5 LLM Profiles
+
+Agents reference shared **LLM profiles** defined in `druppie/agents/definitions/llm_profiles.yaml`. Each profile is an ordered list of `{provider, model}` pairs:
+
+```yaml
+profiles:
+  standard:
+    - provider: zai
+      model: glm-4.7
+    - provider: azure_foundry
+      model: GPT-5-MINI
+  cheap:
+    - provider: azure_foundry
+      model: GPT-5-MINI
+    - provider: zai
+      model: glm-4.7
+    - provider: deepinfra
+      model: Qwen/Qwen3-32B
+```
+
+Agent YAMLs reference a profile by name:
+```yaml
+llm_profile: standard   # or "cheap" for router/summarizer
+temperature: 0.2
+```
+
+The **model resolver** (`druppie/llm/resolver.py`) determines which provider/model to use through a 3-step resolution:
+
+1. **Override** — `LLM_FORCE_PROVIDER` / `LLM_FORCE_MODEL` env vars force ALL agents to a single provider (useful for testing/debugging).
+2. **Profile** — Filter the profile's provider list by API key availability. First available entry becomes primary, second becomes fallback. The global `LLM_PROVIDER` env var is appended to the chain as last-resort if not already present.
+3. **Global default** — If no profile is set, falls back to `LLM_PROVIDER` env var.
+
+**Runtime fallback** (`druppie/llm/fallback.py`): When a profile has multiple available providers, `FallbackLLM` wraps primary + fallback. Any `LLMError` from the primary triggers fallback — including `AuthenticationError`. This is correct for cross-provider fallback: if provider A's auth key is invalid, provider B (a completely different service) may work fine.
+
+```
+AgentLoop._call_llm() retry loop (3 attempts, exponential backoff)
+  └─ FallbackLLM.achat()
+       ├─ primary ChatLiteLLM.achat() (litellm internal retries: num_retries=3)
+       │   └─ any LLMError after all litellm retries
+       └─ fallback ChatLiteLLM.achat() (litellm internal retries: num_retries=3)
+```
+
+All resolution decisions are logged as structured `model_resolved` events, and the `/api/status` endpoint exposes loaded profiles and their provider chains.
+
 ---
 
 ## 6. MCP Servers

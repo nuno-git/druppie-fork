@@ -188,7 +188,7 @@ class AgentLoop:
             session_id=session_id,
             agent_run_id=agent_run_id,
             provider=self.llm.provider_name if hasattr(self.llm, 'provider_name') else "unknown",
-            model=self.llm.model if hasattr(self.llm, 'model') else self.definition.model or "unknown",
+            model=self.llm.model if hasattr(self.llm, 'model') else "unknown",
             messages=messages,
             tools=openai_tools,
         )
@@ -288,6 +288,8 @@ class AgentLoop:
             prompt_tokens=response.prompt_tokens or 0,
             completion_tokens=response.completion_tokens or 0,
             duration_ms=duration_ms,
+            actual_provider=response.provider,
+            actual_model=response.model,
         )
         self.db.commit()
 
@@ -297,6 +299,8 @@ class AgentLoop:
             iteration=iteration,
             duration_ms=duration_ms,
             has_tool_calls=bool(response.tool_calls),
+            actual_provider=response.provider,
+            actual_model=response.model,
         )
 
         return response, llm_call_id

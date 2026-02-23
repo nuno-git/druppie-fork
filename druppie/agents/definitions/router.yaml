@@ -80,7 +80,7 @@ mcps:
     - search_web
     - get_page_info
 
-model: glm-4
+llm_profile: cheap
 temperature: 0.1
 max_tokens: 4096
 max_iterations: 10
