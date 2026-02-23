@@ -41,8 +41,8 @@ Last updated: 2026-02-11
 ### ~~Per-Agent Model Selection Ignored~~ (DONE)
 
 - **Resolved in:** `feature/multi-llm` branch
-- Per-agent `provider`/`model`/`temperature` from YAML are now respected via `LLMService.create_llm_for_agent()` and the model resolver chain (override → primary → fallback → global default).
-- Runtime fallback via `FallbackLLM` retries on a secondary provider when the primary returns retryable errors.
+- Agents now reference shared LLM profiles (`llm_profile: standard` or `cheap`) defined in `llm_profiles.yaml`. Each profile is an ordered provider chain; the resolver picks the first available provider as primary and the next as runtime fallback via `FallbackLLM`.
+- Override env vars (`LLM_FORCE_PROVIDER`/`LLM_FORCE_MODEL`) bypass profiles for testing.
 - See `docs/TECHNICAL.md` section 5.5 for details.
 
 ### Inconsistent [COMMON_INSTRUCTIONS] Across Agents

@@ -269,8 +269,7 @@ Key sections:
 
 - **`mcps`**: Maps MCP server names to the list of tools the agent is allowed to call. An agent cannot call tools not listed here, even if the MCP server exposes them.
 - **`approval_overrides`**: Overrides the global approval configuration for specific tools. For example, `write_file` requires no approval globally, but the Business Analyst definition adds an override requiring `business_analyst` role approval. The Architect similarly overrides it to require `architect` role approval.
-- **`provider` / `model`**: Primary LLM provider and model for this agent. Resolved via a chain: override env var → agent YAML → fallback → global default.
-- **`fallback_provider` / `fallback_model`**: Optional fallback LLM used at runtime when the primary provider returns retryable errors (rate limits, server errors).
+- **`llm_profile`**: References a named profile from `llm_profiles.yaml` (e.g., `standard`, `cheap`). Each profile defines an ordered list of `{provider, model}` pairs. The resolver picks the first provider with a valid API key as primary, the next as runtime fallback.
 - **`temperature` / `max_tokens`**: LLM generation parameters for this agent.
 - **`max_iterations`**: Safety limit on the agent's tool-calling loop.
 
