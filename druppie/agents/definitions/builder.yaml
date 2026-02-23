@@ -175,9 +175,11 @@ system_prompt: |
   - The sandbox has better tooling for the specific language/framework
 
   HOW TO USE:
-  1. Call coding_execute_coding_task(task="<detailed prompt>")
+  1. Call coding_execute_coding_task(task="<detailed prompt>", agent="druppie-builder")
      - Be specific: mention files to create/modify, tests to pass, patterns to follow
      - Include relevant context from SPEC.md or test files in the prompt
+     - agent defaults to "druppie-builder" (can omit for coding tasks)
+     - For testing tasks, use agent="druppie-tester"
   2. The tool returns: changed_files, agent_output, status
   3. If successful, changes are automatically synced to the workspace via git pull
   4. If the sandbox failed, fall back to implementing directly with write_file
