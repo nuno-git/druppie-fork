@@ -30,9 +30,9 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_optional_user, get_session_repository, get_execution_repository
-from druppie.repositories import SessionRepository, ExecutionRepository
-from druppie.domain.common import AgentRunStatus, SessionStatus
+from druppie.api.deps import get_optional_user, get_session_repository
+from druppie.repositories import SessionRepository
+from druppie.domain.common import SessionStatus
 
 logger = structlog.get_logger()
 
@@ -266,66 +266,3 @@ async def chat(
             status="error",
             message=f"Error: {str(e)}",
         )
-
-
-CANCELABLE_STATUSES = {"active", "paused_approval", "paused_hitl"}
-
-
-@router.post("/chat/{session_id}/cancel")
-async def cancel_session(
-    session_id: UUID,
-    user: dict | None = Depends(get_optional_user),
-    session_repo: SessionRepository = Depends(get_session_repository),
-    execution_repo: ExecutionRepository = Depends(get_execution_repository),
-):
-    """Cancel a running or paused session.
-
-    For active sessions: sets status to cancelled in DB. The background
-    orchestrator/agent loop will detect this on its next check and stop.
-    For paused sessions: no background task is running, so cancel is immediate.
-    """
-    if not user or not user.get("sub"):
-        return {"success": False, "message": "Authentication required"}
-
-    session = session_repo.get_by_id(session_id)
-    if not session:
-        return {"success": False, "message": f"Session {session_id} not found"}
-
-    if session.status not in CANCELABLE_STATUSES:
-        return {
-            "success": False,
-            "message": f"Cannot cancel session with status '{session.status}'",
-        }
-
-    # Cancel all pending agent runs
-    execution_repo.cancel_pending_runs(session_id)
-
-    # Mark any running/paused agent run as cancelled
-    from druppie.db.models import AgentRun
-
-    active_runs = (
-        execution_repo.db.query(AgentRun)
-        .filter(
-            AgentRun.session_id == session_id,
-            AgentRun.status.in_([
-                AgentRunStatus.RUNNING.value,
-                AgentRunStatus.PAUSED_TOOL.value,
-                AgentRunStatus.PAUSED_HITL.value,
-            ]),
-        )
-        .all()
-    )
-    for run in active_runs:
-        execution_repo.update_status(run.id, AgentRunStatus.CANCELLED)
-
-    # Set session status to cancelled — this is the signal for the background task
-    session_repo.update_status(session_id, SessionStatus.CANCELLED)
-    session_repo.commit()
-
-    logger.info("session_cancelled", session_id=str(session_id))
-
-    return {
-        "success": True,
-        "session_id": str(session_id),
-        "message": "Session cancelled",
-    }

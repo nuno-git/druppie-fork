@@ -280,15 +280,6 @@ class Orchestrator:
         logger.info("execute_pending_runs_start", session_id=str(session_id))
 
         while True:
-            # Check for cancellation (DB poll — cancel endpoint sets status)
-            self.session_repo.db.expire_all()
-            session = self.session_repo.get_by_id(session_id)
-            if session and session.status == SessionStatus.CANCELLED.value:
-                self.execution_repo.cancel_pending_runs(session_id)
-                self.execution_repo.commit()
-                logger.info("execution_cancelled", session_id=str(session_id))
-                return
-
             # Get next pending run
             next_run = self.execution_repo.get_next_pending(session_id)
 
@@ -322,20 +313,6 @@ class Orchestrator:
                 prompt=next_run.planned_prompt or "",
                 context=context,
             )
-
-            # If cancelled, stop execution
-            if status == "cancelled":
-                self.execution_repo.cancel_pending_runs(session_id)
-                self.execution_repo.commit()
-                return
-
-            # Re-check cancellation after agent completes
-            self.session_repo.db.expire_all()
-            session_check = self.session_repo.get_by_id(session_id)
-            if session_check and session_check.status == SessionStatus.CANCELLED.value:
-                self.execution_repo.cancel_pending_runs(session_id)
-                self.execution_repo.commit()
-                return
 
             # If paused, update session status and stop execution
             if status == "paused":
@@ -480,12 +457,6 @@ class Orchestrator:
                 error=error_msg[:500],
             )
             raise
-
-        # Check if cancelled
-        if result.get("status") == "cancelled":
-            self.execution_repo.update_status(agent_run_id, AgentRunStatus.CANCELLED)
-            self.execution_repo.commit()
-            return "cancelled"
 
         # Check if paused
         if result.get("status") == "paused" or result.get("paused"):
