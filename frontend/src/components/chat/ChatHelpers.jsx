@@ -277,6 +277,26 @@ export const extractTestErrors = (stdout, stderr, framework, failedTestNames) =>
   return errors
 }
 
+// --- Extract sandbox results from agent run's tool calls ---
+
+export const extractSandboxResults = (agentRun) => {
+  const results = []
+  agentRun?.llm_calls?.forEach((llm) => {
+    llm.tool_calls?.forEach((tc) => {
+      if (tc.tool_name === 'execute_coding_task' && tc.status === 'completed' && tc.result) {
+        let raw
+        try {
+          raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+        } catch {
+          return
+        }
+        if (raw?.sandbox_session_id) results.push(raw)
+      }
+    })
+  })
+  return results
+}
+
 export const ACTIVE_STATUSES = new Set([
   'active', 'running', 'paused_hitl', 'paused_tool',
   'paused_approval', 'waiting_approval', 'waiting_answer',

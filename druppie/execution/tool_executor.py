@@ -705,11 +705,15 @@ class ToolExecutor:
                 execution_repo=self.execution_repo,
             )
 
-            # Mark as completed with result
+            # Check if the builtin tool reported failure via success field
+            is_success = result.get("success", True) if isinstance(result, dict) else True
+            status = ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED
+
             self.execution_repo.update_tool_call(
                 tool_call.id,
-                status=ToolCallStatus.COMPLETED,
-                result=result,
+                status=status,
+                result=result if is_success else None,
+                error=result.get("error") if not is_success else None,
             )
             self.db.commit()
 
@@ -718,9 +722,10 @@ class ToolExecutor:
                 tool_call_id=str(tool_call.id),
                 tool_name=tool_call.tool_name,
                 result_status=result.get("status"),
+                success=is_success,
             )
 
-            return ToolCallStatus.COMPLETED
+            return status
 
         except Exception as e:
             logger.error(
@@ -787,10 +792,16 @@ class ToolExecutor:
             )
 
             # Execute via HTTP
+            # Long-running tools get a longer timeout
+            timeout = 60.0
+            if tool_call.tool_name == "execute_coding_task":
+                timeout = 90000.0  # 25 hours — sandbox has its own internal timeout
+
             result = await self.mcp_http.call(
                 tool_call.mcp_server,
                 tool_call.tool_name,
                 args,
+                timeout_seconds=timeout,
             )
 
             # Check if result indicates failure

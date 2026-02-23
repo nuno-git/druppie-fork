@@ -38,6 +38,9 @@ from .project import Project
 # Question model (HITL questions from agents)
 from .question import Question
 
+# Sandbox session ownership mapping
+from .sandbox_session import SandboxSession
+
 # Session model
 from .session import Session
 from .tool_call import ToolCall
@@ -70,4 +73,6 @@ __all__ = [
     "Approval",
     # Question
     "Question",
+    # Sandbox session ownership
+    "SandboxSession",
 ]

@@ -1610,6 +1610,8 @@ async def validate_tdd(
 # Configuration for the external coding sandbox (background-agents control-plane)
 SANDBOX_CONTROL_PLANE_URL = os.getenv("SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787")
 SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", "sandbox-dev-secret")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://druppie-backend:8000")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "druppie-internal-key")
 
 
 def _generate_sandbox_auth_token() -> str:
@@ -1636,7 +1638,7 @@ async def execute_coding_task(
     agent: str = "druppie-builder",
     repo_url: str = "",
     model: str = "zai-coding-plan/glm-4.7",
-    timeout_seconds: int = 600,
+    timeout_seconds: int = 86400,
     session_id: str | None = None,
     workspace_id: str | None = None,
     project_id: str | None = None,
@@ -1759,6 +1761,25 @@ async def execute_coding_task(
 
             logger.info("execute_coding_task: created sandbox session %s", sandbox_session_id)
 
+            # Register sandbox session ownership with the backend
+            if user_id:
+                try:
+                    reg_body = {
+                        "sandbox_session_id": sandbox_session_id,
+                        "user_id": user_id,
+                    }
+                    if session_id:
+                        reg_body["session_id"] = session_id
+                    await client.post(
+                        f"{BACKEND_URL}/api/sandbox-sessions/internal/register",
+                        json=reg_body,
+                        headers={"X-Internal-API-Key": INTERNAL_API_KEY},
+                        timeout=5.0,
+                    )
+                    logger.info("execute_coding_task: registered sandbox session ownership for user %s", user_id)
+                except Exception as e:
+                    logger.warning("execute_coding_task: failed to register sandbox session ownership: %s", e)
+
             # Step 2: Send the task prompt
             prompt_headers = {
                 "Authorization": f"Bearer {_generate_sandbox_auth_token()}",
@@ -1785,7 +1806,12 @@ async def execute_coding_task(
                     "sandbox_session_id": sandbox_session_id,
                 }
 
-            logger.info("execute_coding_task: prompt sent, polling for completion...")
+            # Track our prompt's messageId so we only match OUR execution_complete
+            prompt_message_id = resp.json().get("messageId", "")
+            logger.info(
+                "execute_coding_task: prompt sent (messageId=%s), polling for completion...",
+                prompt_message_id,
+            )
 
             # Step 3: Poll for completion
             # The events API returns events newest-first (backward pagination).
@@ -1795,7 +1821,7 @@ async def execute_coding_task(
             all_events = []
             seen_event_ids = set()
             sandbox_status = "unknown"
-            agent_output = ""
+            agent_output_parts = []  # (created_at, content) for chronological ordering
             execution_complete_seen = False
 
             while time.time() - start_time < timeout_seconds:
@@ -1842,20 +1868,31 @@ async def execute_coding_task(
                         new_count += 1
 
                         # Detect execution_complete event — primary completion signal
+                        # Only match OUR prompt's messageId to ignore stale events
                         if event.get("type") == "execution_complete":
-                            execution_complete_seen = True
-                            exec_data = event.get("data", {})
-                            if not exec_data.get("success", True):
-                                sandbox_status = "failed"
+                            event_msg_id = event.get("messageId", "") or (event.get("data") or {}).get("messageId", "")
+                            if not prompt_message_id or event_msg_id == prompt_message_id:
+                                execution_complete_seen = True
+                                exec_data = event.get("data", {})
+                                if not exec_data.get("success", True):
+                                    sandbox_status = "failed"
+                            else:
+                                logger.debug(
+                                    "execute_coding_task: ignoring stale execution_complete (event=%s, ours=%s)",
+                                    event_msg_id,
+                                    prompt_message_id,
+                                )
                         # Extract agent text output from token events
                         elif event.get("type") == "token":
                             content = (event.get("data") or {}).get("content", "")
                             if content:
-                                agent_output += content + "\n"
+                                ts = event.get("createdAt") or event.get("created_at") or 0
+                                agent_output_parts.append((ts, content))
                         elif event.get("type") == "agent_message":
                             content = event.get("content", "")
                             if content:
-                                agent_output += content + "\n"
+                                ts = event.get("createdAt") or event.get("created_at") or 0
+                                agent_output_parts.append((ts, content))
 
                     if new_count > 0:
                         logger.info(
@@ -1880,12 +1917,49 @@ async def execute_coding_task(
                     sandbox_status,
                 )
 
-            # Step 4: Extract changed files from events
+            success = not timed_out and sandbox_status not in ("failed", "stale")
+
+            # Final fresh fetch of events to get the latest token content.
+            # The control plane updates token events in-place (same event ID,
+            # new content), but the polling loop deduplicates by event_id and
+            # misses content updates.  One final fetch fixes this.
+            try:
+                final_headers = {
+                    "Authorization": f"Bearer {_generate_sandbox_auth_token()}",
+                }
+                final_resp = await client.get(
+                    f"{base_url}/sessions/{sandbox_session_id}/events?limit=200",
+                    headers=final_headers,
+                )
+                if final_resp.status_code == 200:
+                    final_events = (final_resp.json().get("events") or [])
+                    # Replace agent_output_parts with fresh token content
+                    agent_output_parts = []
+                    for fe in final_events:
+                        if fe.get("type") == "token":
+                            content = (fe.get("data") or {}).get("content", "")
+                            if content:
+                                ts = fe.get("createdAt") or fe.get("created_at") or 0
+                                agent_output_parts.append((ts, content))
+                        elif fe.get("type") == "agent_message":
+                            content = fe.get("content", "")
+                            if content:
+                                ts = fe.get("createdAt") or fe.get("created_at") or 0
+                                agent_output_parts.append((ts, content))
+                    # Also update all_events for changed_files extraction
+                    for fe in final_events:
+                        fid = fe.get("id", "")
+                        if fid and fid not in seen_event_ids:
+                            all_events.append(fe)
+                            seen_event_ids.add(fid)
+            except Exception as final_err:
+                logger.warning("execute_coding_task: final events fetch failed: %s", final_err)
+
+            # Step 4: Extract changed files from events (after final fetch for completeness)
             changed_files = _extract_changed_files_from_events(all_events)
 
             # Step 5: Git pull to sync sandbox changes into local workspace
             git_pull_result = None
-            success = not timed_out and sandbox_status not in ("failed", "stale")
             if success and workspace_path and changed_files:
                 try:
                     cwd = str(workspace_path)
@@ -1906,6 +1980,10 @@ async def execute_coding_task(
                     git_pull_result = f"error: {pull_err}"
                     logger.warning("execute_coding_task: git pull error: %s", pull_err)
 
+            # Sort token parts chronologically and join
+            agent_output_parts.sort(key=lambda x: x[0])
+            agent_output = "\n".join(content for _, content in agent_output_parts).strip()
+
             result = {
                 "success": success,
                 "sandbox_session_id": sandbox_session_id,
@@ -1913,11 +1991,13 @@ async def execute_coding_task(
                 "elapsed_seconds": round(elapsed, 1),
                 "event_count": len(all_events),
                 "changed_files": changed_files,
-                "agent_output": agent_output.strip()[:5000],  # Cap output size
+                "agent_output": agent_output[-5000:],  # Keep last 5000 chars (summary is at the end)
                 "timed_out": timed_out,
             }
             if git_pull_result:
                 result["git_pull"] = git_pull_result
+            # conversation_history is persisted in the control plane events table
+            # for governance — not included in the tool result to avoid bloating LLM context
             return result
 
     except httpx.TimeoutException:
