@@ -286,7 +286,10 @@ class ChatLiteLLM(BaseLLM):
         self._use_max_completion_tokens = config.get("use_max_completion_tokens", False)
 
         # SSL verification (disabled for self-signed certs, e.g. Ollama)
+        # Set globally on litellm — the per-call ssl_verify kwarg has known bugs
         self._ssl_verify = config.get("ssl_verify", True)
+        if not self._ssl_verify and LITELLM_AVAILABLE:
+            litellm.ssl_verify = False
 
         # Bearer token auth (e.g. Azure Foundry) — send key as Authorization header
         self._auth_type = config.get("auth_type", "api_key")
