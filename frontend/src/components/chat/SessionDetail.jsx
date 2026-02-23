@@ -4,11 +4,11 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
+import { getSession, sendChat, cancelChat, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
@@ -437,7 +437,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     queryFn: () => getSession(sessionId),
     refetchInterval: (query) => {
       const status = query.state.data?.status
-      if (status === 'completed' || status === 'failed') return false
+      if (status === 'completed' || status === 'failed' || status === 'cancelled') return false
       return 500
     },
     enabled: !!sessionId,
@@ -447,6 +447,14 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     mutationFn: (message) => sendChat(message, sessionId),
     onSuccess: () => {
       setContinueInput('')
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+
+  const cancelMutation = useMutation({
+    mutationFn: () => cancelChat(sessionId),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
@@ -570,6 +578,20 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             {data.title || 'Untitled Session'}
           </h2>
           <div className="ml-auto flex items-center gap-3 flex-shrink-0">
+            {['active', 'paused_approval', 'paused_hitl'].includes(data.status) && (
+              <button
+                onClick={() => cancelMutation.mutate()}
+                disabled={cancelMutation.isPending}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-50 transition-colors"
+              >
+                {cancelMutation.isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <StopCircle className="w-3.5 h-3.5" />
+                )}
+                Stop
+              </button>
+            )}
             {canDebug && (
               <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-xs">
                 {['chat', 'annotated', 'inspect'].map((mode) => (
@@ -786,7 +808,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       )}
 
       {/* Floating input bar — hidden in inspect mode */}
-      {data.status !== 'failed' && viewMode !== 'inspect' && (
+      {data.status !== 'failed' && data.status !== 'cancelled' && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
           <div className="max-w-3xl mx-auto">
             <div className="flex items-end gap-2 border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">
