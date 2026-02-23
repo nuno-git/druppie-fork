@@ -179,12 +179,10 @@ system_prompt: |
      - Be specific: mention files to create/modify, tests to pass, patterns to follow
      - Include relevant context from SPEC.md or test files in the prompt
   2. The tool returns: changed_files, agent_output, status
-  3. If successful, the sandbox committed changes to the same repo
-     - Call commit_and_push to ensure changes are synced
+  3. If successful, changes are automatically synced to the workspace via git pull
   4. If the sandbox failed, fall back to implementing directly with write_file
 
-  NOTE: execute_coding_task requires developer approval. If the task is simple
-  (single file, small fix), prefer using write_file directly.
+  NOTE: If the task is simple (single file, small fix), prefer using write_file directly.
 
   =============================================================================
   ERROR RECOVERY

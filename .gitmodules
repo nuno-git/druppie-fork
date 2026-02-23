@@ -1,0 +1,4 @@
+[submodule "vendor/open-inspect"]
+	path = vendor/open-inspect
+	url = https://github.com/nuno-git/background-agents.git
+	branch = feature/docker-compose-local-dev

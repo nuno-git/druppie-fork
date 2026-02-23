@@ -1608,8 +1608,8 @@ async def validate_tdd(
 # =============================================================================
 
 # Configuration for the external coding sandbox (background-agents control-plane)
-SANDBOX_CONTROL_PLANE_URL = os.getenv("SANDBOX_CONTROL_PLANE_URL", "")
-SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", "")
+SANDBOX_CONTROL_PLANE_URL = os.getenv("SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787")
+SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", "sandbox-dev-secret")
 
 
 def _generate_sandbox_auth_token() -> str:
@@ -1687,6 +1687,15 @@ async def execute_coding_task(
     sandbox_repo_owner = repo_owner or GITEA_ORG
     sandbox_repo_name = repo_name or ""
 
+    # Construct Gitea clone URL for the sandbox (uses internal Docker network)
+    from urllib.parse import quote
+    gitea_clone_url = ""
+    if sandbox_repo_name:
+        if GITEA_TOKEN:
+            gitea_clone_url = f"http://{quote(GITEA_TOKEN, safe='')}@gitea:3000/{sandbox_repo_owner}/{sandbox_repo_name}.git"
+        elif GITEA_USER and GITEA_PASSWORD:
+            gitea_clone_url = f"http://{quote(GITEA_USER, safe='')}:{quote(GITEA_PASSWORD, safe='')}@gitea:3000/{sandbox_repo_owner}/{sandbox_repo_name}.git"
+
     logger.info(
         "execute_coding_task: starting sandbox task (repo=%s/%s, model=%s, timeout=%ds)",
         sandbox_repo_owner,
@@ -1694,6 +1703,21 @@ async def execute_coding_task(
         model,
         timeout_seconds,
     )
+
+    # Resolve workspace for git pull after completion
+    workspace_path = None
+    try:
+        if session_id:
+            _, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                user_id=user_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
+            )
+    except Exception as e:
+        logger.warning("execute_coding_task: could not resolve workspace for git pull: %s", e)
 
     base_url = SANDBOX_CONTROL_PLANE_URL.rstrip("/")
     start_time = time.time()
@@ -1712,6 +1736,8 @@ async def execute_coding_task(
                 "model": model,
                 "title": f"Druppie sandbox: {task[:80]}",
             }
+            if gitea_clone_url:
+                create_body["gitUrl"] = gitea_clone_url
 
             resp = await client.post(
                 f"{base_url}/sessions",
@@ -1833,8 +1859,31 @@ async def execute_coding_task(
             # Step 4: Extract changed files from events
             changed_files = _extract_changed_files_from_events(all_events)
 
-            return {
-                "success": not timed_out and sandbox_status not in ("error", "failed"),
+            # Step 5: Git pull to sync sandbox changes into local workspace
+            git_pull_result = None
+            success = not timed_out and sandbox_status not in ("error", "failed")
+            if success and workspace_path and changed_files:
+                try:
+                    cwd = str(workspace_path)
+                    pull = subprocess.run(
+                        ["git", "pull", "--rebase=false", "origin"],
+                        cwd=cwd,
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                    if pull.returncode == 0:
+                        git_pull_result = "synced"
+                        logger.info("execute_coding_task: git pull succeeded in %s", cwd)
+                    else:
+                        git_pull_result = f"failed: {pull.stderr.strip()}"
+                        logger.warning("execute_coding_task: git pull failed: %s", pull.stderr.strip())
+                except Exception as pull_err:
+                    git_pull_result = f"error: {pull_err}"
+                    logger.warning("execute_coding_task: git pull error: %s", pull_err)
+
+            result = {
+                "success": success,
                 "sandbox_session_id": sandbox_session_id,
                 "status": "timeout" if timed_out else sandbox_status,
                 "elapsed_seconds": round(elapsed, 1),
@@ -1843,6 +1892,9 @@ async def execute_coding_task(
                 "agent_output": agent_output.strip()[:5000],  # Cap output size
                 "timed_out": timed_out,
             }
+            if git_pull_result:
+                result["git_pull"] = git_pull_result
+            return result
 
     except httpx.TimeoutException:
         elapsed = time.time() - start_time

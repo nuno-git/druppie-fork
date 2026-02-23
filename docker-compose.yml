@@ -189,14 +189,16 @@ services:
       GITEA_TOKEN: ${GITEA_TOKEN:-}
       GITEA_USER: ${GITEA_ADMIN_USER:-gitea_admin}
       GITEA_PASSWORD: ${GITEA_ADMIN_PASSWORD:-GiteaAdmin123}
-      SANDBOX_CONTROL_PLANE_URL: ${SANDBOX_CONTROL_PLANE_URL:-}
-      SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-}
+      SANDBOX_CONTROL_PLANE_URL: ${SANDBOX_CONTROL_PLANE_URL:-http://sandbox-control-plane:8787}
+      SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
     volumes:
       - druppie_new_workspace:/workspaces
     ports:
       - "${MCP_CODING_PORT:-9001}:9001"
     depends_on:
       gitea:
+        condition: service_healthy
+      sandbox-control-plane:
         condition: service_healthy
     networks:
       - druppie-new-network
@@ -274,6 +276,77 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  # ===========================================================================
+  # SANDBOX INFRASTRUCTURE (background-agents)
+  # ===========================================================================
+
+  sandbox-control-plane:
+    build:
+      context: ./vendor/open-inspect
+      dockerfile: packages/local-control-plane/Dockerfile
+    container_name: druppie-sandbox-control-plane
+    profiles: [infra, dev, prod]
+    environment:
+      PORT: 8787
+      DATA_DIR: /data
+      SANDBOX_MANAGER_URL: http://sandbox-manager:8000
+      WORKER_URL: http://sandbox-control-plane:8787
+      MODAL_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      INTERNAL_CALLBACK_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      GLM_API_KEY: ${ZAI_API_KEY:-}
+      ZHIPU_API_KEY: ${ZAI_API_KEY:-}
+    volumes:
+      - sandbox_data:/data
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  sandbox-manager:
+    build:
+      context: ./vendor/open-inspect
+      dockerfile: packages/local-sandbox-manager/Dockerfile
+    container_name: druppie-sandbox-manager
+    profiles: [infra, dev, prod]
+    environment:
+      MODAL_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      SANDBOX_RUNTIME: docker
+      SANDBOX_IMAGE: open-inspect-sandbox:latest
+      DOCKER_NETWORK: druppie-new-network
+      DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
+      DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-2}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      GLM_API_KEY: ${ZAI_API_KEY:-}
+      ZHIPU_API_KEY: ${ZAI_API_KEY:-}
+    volumes:
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - sandbox_snapshots:/data/snapshots
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      sandbox-control-plane:
+        condition: service_healthy
+
+  # Builds the sandbox base image, then exits. Docker caches it — only rebuilds when Dockerfile changes.
+  sandbox-image-builder:
+    build:
+      context: ./vendor/open-inspect
+      dockerfile: packages/local-sandbox-manager/Dockerfile.sandbox
+    image: open-inspect-sandbox:latest
+    profiles: [infra, dev, prod]
+    command: ["echo", "Sandbox image built successfully"]
 
   # ===========================================================================
   # DATABASE ADMIN
@@ -622,6 +695,10 @@ volumes:
     name: druppie_new_dataset
   druppie_init_marker:
     name: druppie_init_marker
+  sandbox_data:
+    name: druppie_sandbox_data
+  sandbox_snapshots:
+    name: druppie_sandbox_snapshots
 
 # =============================================================================
 # NETWORKS
