@@ -151,14 +151,18 @@ class Orchestrator:
         if is_continuation:
             conversation_history = self._build_conversation_history(current_session_id)
 
-        # Step 3: Save user message to the timeline
-        # sequence_number=-1 so user messages sort before Router (seq 0)
+        # Step 3: Get next sequence number (session-level counter)
+        # This ensures follow-up messages don't collide with existing runs
+        next_seq = self.execution_repo.get_next_sequence_number(current_session_id)
+
+        # Step 3b: Save user message to the timeline
         self.execution_repo.create_message(
             session_id=current_session_id,
             role="user",
             content=message,
-            sequence_number=-1,
+            sequence_number=next_seq,
         )
+        next_seq += 1
         self.execution_repo.commit()
 
         # Step 3.5: Detect and update language (only if detection succeeds)
@@ -189,7 +193,7 @@ class Orchestrator:
             agent_id="router",
             status=AgentRunStatus.PENDING,
             planned_prompt=router_prompt,
-            sequence_number=0,
+            sequence_number=next_seq,
         )
 
         # Planner starts with basic prompt - set_intent will update it with context
@@ -202,7 +206,7 @@ class Orchestrator:
             agent_id="planner",
             status=AgentRunStatus.PENDING,
             planned_prompt=planner_prompt,
-            sequence_number=1,
+            sequence_number=next_seq + 1,
         )
         self.execution_repo.commit()
 
