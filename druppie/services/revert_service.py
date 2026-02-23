@@ -357,46 +357,44 @@ class RevertService:
             return None
 
     async def _revert_git_state(self, session: Session, target_commit: str) -> None:
-        """Call revert_to_commit MCP tool to reset git state."""
+        """Call revert_to_commit MCP tool to reset git state.
+
+        Raises RuntimeError if the revert fails — callers must not proceed
+        with re-execution when git state hasn't been reverted.
+        """
         from druppie.core.mcp_config import MCPConfig
         from druppie.execution.mcp_http import MCPHttp
 
-        try:
-            mcp_config = MCPConfig()
-            mcp_http = MCPHttp(mcp_config)
+        mcp_config = MCPConfig()
+        mcp_http = MCPHttp(mcp_config)
 
-            result = await mcp_http.call(
-                server="coding",
-                tool="revert_to_commit",
-                args={
-                    "target_commit": target_commit,
-                    "session_id": str(session.id),
-                },
-                timeout_seconds=120.0,
-            )
+        result = await mcp_http.call(
+            server="coding",
+            tool="revert_to_commit",
+            args={
+                "target_commit": target_commit,
+                "session_id": str(session.id),
+            },
+            timeout_seconds=120.0,
+        )
 
-            if not result.get("success"):
-                logger.warning(
-                    "git_revert_failed",
-                    session_id=str(session.id),
-                    target_commit=target_commit,
-                    error=result.get("error"),
-                )
-            else:
-                logger.info(
-                    "git_revert_success",
-                    session_id=str(session.id),
-                    previous_head=result.get("previous_head"),
-                    new_head=result.get("new_head"),
-                    force_pushed=result.get("force_pushed"),
-                )
-
-        except Exception as e:
-            logger.warning(
-                "git_revert_error",
+        if not result.get("success"):
+            error = result.get("error", "unknown error")
+            logger.error(
+                "git_revert_failed",
                 session_id=str(session.id),
-                error=str(e),
+                target_commit=target_commit,
+                error=error,
             )
+            raise RuntimeError(f"Git revert failed: {error}")
+
+        logger.info(
+            "git_revert_success",
+            session_id=str(session.id),
+            previous_head=result.get("previous_head"),
+            new_head=result.get("new_head"),
+            force_pushed=result.get("force_pushed"),
+        )
 
     async def _close_pr(self, session: Session, pr_number: int) -> None:
         """Call close_pull_request MCP tool."""
