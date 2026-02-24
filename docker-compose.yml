@@ -26,6 +26,7 @@
 #   MCP Docker:     9002
 #   MCP File Search:9004
 #   MCP Web:        9005
+#   MCP Azure DataLake: 9008
 #   MCP Registry:   9007
 #   Adminer:        8081
 
