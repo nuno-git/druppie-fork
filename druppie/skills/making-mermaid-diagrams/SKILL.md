@@ -41,84 +41,14 @@ Use **TD** (top-down) for processes and workflows. Use **LR**
 | `A[("Label")]` | Cylinder | Database / storage |
 
 Always quote the label text inside the shape brackets to avoid syntax
-<<<<<<< Updated upstream
-errors: write `A["My label"]` not `A[My label]`.
-=======
 errors: write `A["My label"]` not `A[My label]`. Keep labels short:
 3-6 words, verb-first for actions.
->>>>>>> Stashed changes
 
 **NEVER nest shape characters.** Each node uses exactly one pair of shape
 delimiters with a quoted label inside. Wrong examples:
 - ~~`A([("Label")])`~~ — stadium `([` wrapping rounded `("` = broken
 - ~~`A[("Label")]`~~ — rectangle `[` wrapping rounded `("` = broken
 - ~~`A{("Label")}`~~ — diamond `{` wrapping rounded `("` = broken
-<<<<<<< Updated upstream
-
-Correct: pick the ONE shape you need from the table above and put the
-quoted label directly inside it.
-
-## Edges and Arrows
-
-| Syntax | Type |
-|--------|------|
-| `A --> B` | Solid arrow |
-| `A --- B` | Solid line (no arrow) |
-| `A -.-> B` | Dotted arrow |
-| `A -.- B` | Dotted line (no arrow) |
-| `A ==> B` | Thick arrow |
-| `A === B` | Thick line (no arrow) |
-| `A <--> B` | Bidirectional arrow |
-
-### Labeled edges
-
-Two equivalent syntaxes — pick one and be consistent:
-
-```
-A -->|"Label text"| B
-A -- "Label text" --> B
-```
-
-Always quote label text to avoid syntax errors with special characters.
-
-## Subgraphs
-
-```
-subgraph sg1["Group Name"]
-    direction LR  %% optional: override parent direction
-    A["Step 1"] --> B["Step 2"]
-end
-```
-
-## Critical Syntax Rules
-
-1. **Never use `end` as a node ID or unquoted label.** The word `end`
-   in lowercase is reserved and breaks the diagram. Always quote it:
-   `A["End"]` or use a different ID like `finish["End"]`.
-
-2. **Always quote labels.** Use `A["Label"]` instead of `A[Label]`.
-   This prevents breakage from special characters like parentheses,
-   colons, commas, and slashes.
-
-3. **Do not start a node ID with `o` or `x` immediately after dashes.**
-   `A---oB` creates a circle edge and `A---xB` creates a cross edge.
-   Add a space: `A--- oB` or capitalize: `A---OB`.
-
-4. **Use unique node IDs.** Every node must have a unique ID. Reuse the
-   ID to reference the same node in multiple edges — do not create a
-   new node with the same label but different ID.
-
-5. **Line breaks in labels** use `<br/>` inside quoted labels:
-   `A["First line<br/>Second line"]`. Only use this when a label would
-   otherwise exceed 6 words on one line.
-
-6. **Special characters in labels** require HTML entity codes:
-   - `#35;` for `#`
-   - `#34;` for `"`
-   - `&amp;` for `&`
-
-7. **Comments** use `%%`:
-=======
 
 Correct: pick the ONE shape you need from the table above and put the
 quoted label directly inside it.
@@ -189,7 +119,6 @@ end
    - `&amp;` for `&`
 
 8. **Comments** use `%%`:
->>>>>>> Stashed changes
    ```
    %% This is a comment
    A["Start"] --> B["End point"]
@@ -221,18 +150,6 @@ classDef highlight fill:#f9f,stroke:#333,stroke-width:2px
 A:::highlight
 ```
 
-<<<<<<< Updated upstream
-## Readability
-
-- Maximum **15 nodes** per diagram — split into multiple diagrams if
-  larger
-- Use subgraphs to group distinct phases or components
-- Minimize edge crossings by reordering node declarations
-- Keep labels short: 3-6 words, verb-first for actions
-- Always label decision edges with their condition
-
-=======
->>>>>>> Stashed changes
 ## Complete Example
 
 ```mermaid
@@ -251,16 +168,10 @@ flowchart TD
 
 Before outputting a diagram, verify:
 
-<<<<<<< Updated upstream
-- [ ] Diagram renders without syntax errors
-- [ ] All node labels are quoted
-- [ ] No nested shape characters (e.g. ~~`([("Label")])`~~)
-=======
 - [ ] All node labels are quoted with plain ASCII `"`
 - [ ] No backslash escaping (`\"`) anywhere in the diagram
 - [ ] No nested shape characters (e.g. ~~`([("Label")])`~~)
 - [ ] Node IDs are alphanumeric only (no spaces or special characters)
->>>>>>> Stashed changes
 - [ ] No node uses `end` as an unquoted ID or label
 - [ ] All decision edges are labeled
 - [ ] 15 or fewer nodes (or split into parts)
