@@ -200,43 +200,58 @@ const OutlineToolLine = ({ tc, selected, onClick }) => {
 
 // ─── Retry Confirmation Dialog ──────────────────────────────────────────────
 
-const RetryConfirmDialog = ({ agentName, onConfirm, onCancel, isPending }) => (
-  <>
-    <div className="fixed inset-0 bg-black/30 z-30" onClick={onCancel} />
-    <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-white rounded-lg shadow-2xl border border-gray-200 w-96 p-5">
-      <div className="flex items-center gap-2 mb-3">
-        <RotateCcw className="w-5 h-5 text-amber-600" />
-        <h3 className="text-sm font-semibold text-gray-900">Retry from here</h3>
+const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isPending }) => {
+  const [editedPrompt, setEditedPrompt] = useState(plannedPrompt || '')
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/30 z-30" onClick={onCancel} />
+      <div className={`fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-white rounded-lg shadow-2xl border border-gray-200 p-5 ${plannedPrompt ? 'w-[32rem]' : 'w-96'}`}>
+        <div className="flex items-center gap-2 mb-3">
+          <RotateCcw className="w-5 h-5 text-amber-600" />
+          <h3 className="text-sm font-semibold text-gray-900">Retry from here</h3>
+        </div>
+        <div className="text-sm text-gray-600 space-y-2 mb-4">
+          <p>This will revert <strong>{agentName}</strong> and all subsequent agents.</p>
+          <p>Git commits will be reset and force-pushed.</p>
+        </div>
+        {plannedPrompt && (
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-gray-500 mb-1">Planned Prompt</label>
+            <textarea
+              value={editedPrompt}
+              onChange={(e) => setEditedPrompt(e.target.value)}
+              disabled={isPending}
+              rows={6}
+              className="w-full text-xs font-mono bg-gray-50 border border-gray-200 rounded p-2.5 resize-y focus:outline-none focus:ring-1 focus:ring-amber-400 focus:border-amber-400 disabled:opacity-50"
+            />
+          </div>
+        )}
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={isPending}
+            className="px-3 py-1.5 text-sm text-gray-600 rounded-md hover:bg-gray-100 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(plannedPrompt ? editedPrompt : null)}
+            disabled={isPending}
+            className="px-3 py-1.5 text-sm font-medium bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+          >
+            {isPending ? (
+              <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <RotateCcw className="w-3.5 h-3.5" />
+            )}
+            Retry from here
+          </button>
+        </div>
       </div>
-      <div className="text-sm text-gray-600 space-y-2 mb-4">
-        <p>This will revert <strong>{agentName}</strong> and all subsequent agents.</p>
-        <p>Git commits will be reset and force-pushed.</p>
-        <p>The agents will re-execute with the same inputs.</p>
-      </div>
-      <div className="flex justify-end gap-2">
-        <button
-          onClick={onCancel}
-          disabled={isPending}
-          className="px-3 py-1.5 text-sm text-gray-600 rounded-md hover:bg-gray-100 transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={onConfirm}
-          disabled={isPending}
-          className="px-3 py-1.5 text-sm font-medium bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
-        >
-          {isPending ? (
-            <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-          ) : (
-            <RotateCcw className="w-3.5 h-3.5" />
-          )}
-          Retry from here
-        </button>
-      </div>
-    </div>
-  </>
-)
+    </>
+  )
+}
 
 // ─── RIGHT PANEL: Agent Detail ──────────────────────────────────────────────
 
@@ -250,7 +265,7 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
   const queryClient = useQueryClient()
 
   const retryMutation = useMutation({
-    mutationFn: () => retryFromRun(sessionId, agentRun.id),
+    mutationFn: (editedPrompt) => retryFromRun(sessionId, agentRun.id, editedPrompt),
     onSuccess: () => {
       setShowRetryConfirm(false)
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
@@ -294,7 +309,8 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
       {showRetryConfirm && (
         <RetryConfirmDialog
           agentName={config.name}
-          onConfirm={() => retryMutation.mutate()}
+          plannedPrompt={agentRun.planned_prompt}
+          onConfirm={(editedPrompt) => retryMutation.mutate(editedPrompt)}
           onCancel={() => setShowRetryConfirm(false)}
           isPending={retryMutation.isPending}
         />

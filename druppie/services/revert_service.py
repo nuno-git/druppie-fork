@@ -36,6 +36,7 @@ class RevertService:
         self,
         session_id: UUID,
         target_agent_run_id: UUID,
+        planned_prompt: str | None = None,
     ) -> dict:
         """Retry from a specific agent run.
 
@@ -143,6 +144,15 @@ class RevertService:
         if delete_ids:
             self._delete_runs_fully(delete_ids)
 
+        # Step 5b: Clean up orphan messages (e.g. from create_message tool)
+        # These messages may have agent_run_id=NULL but belong to reverted agents
+        self.db.query(Message).filter(
+            Message.session_id == session_id,
+            Message.agent_run_id.is_(None),
+            Message.sequence_number >= target_sequence,
+        ).delete(synchronize_session="fetch")
+        self.db.flush()
+
         # Step 6: Reset the kept runs to PENDING
         for run in runs_to_reset:
             run.status = AgentRunStatus.PENDING.value
@@ -153,6 +163,10 @@ class RevertService:
             run.prompt_tokens = 0
             run.completion_tokens = 0
             run.total_tokens = 0
+
+        # Step 6b: Apply edited planned_prompt to target run only
+        if planned_prompt is not None:
+            target_run.planned_prompt = planned_prompt
 
         # Step 7: Reset session
         session.status = SessionStatus.ACTIVE.value

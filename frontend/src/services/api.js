@@ -97,8 +97,11 @@ export const resumeSession = (sessionId, answer = null) =>
 export const deleteSession = (sessionId) =>
   request(`/api/sessions/${sessionId}`, { method: 'DELETE' })
 
-export const retryFromRun = (sessionId, agentRunId) =>
-  request(`/api/sessions/${sessionId}/retry-from/${agentRunId}`, { method: 'POST' })
+export const retryFromRun = (sessionId, agentRunId, plannedPrompt = null) =>
+  request(`/api/sessions/${sessionId}/retry-from/${agentRunId}`, {
+    method: 'POST',
+    body: plannedPrompt !== null ? JSON.stringify({ planned_prompt: plannedPrompt }) : undefined,
+  })
 
 // Legacy aliases (use getSession instead - it returns everything)
 export const getSessionTrace = (sessionId) => request(`/api/sessions/${sessionId}`)
