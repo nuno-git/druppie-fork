@@ -463,3 +463,111 @@ mcps:
       - name: get_page_info
         description: "Get basic information about a web page"
         requires_approval: false
+
+  azure-datalake:
+    url: ${MCP_AZURE_DATALAKE_URL:-http://mcp-azure-datalake:9006}
+    description: "Read-only Azure Data Lake Storage Gen2 operations"
+    tools:
+      - name: list_datalakes
+        description: "List all pre-configured Azure Data Lakes"
+        requires_approval: false
+        parameters:
+          type: object
+          properties: {}
+
+      - name: test_connection
+        description: "Test connection to a Data Lake (pre-configured or public)"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            lake_name:
+              type: string
+              description: "Name of pre-configured lake (optional if account_url provided)"
+            account_url:
+              type: string
+              description: "Full URL to public lake, e.g., https://account.dfs.core.windows.net"
+
+      - name: list_containers
+        description: "List containers in a Data Lake"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            lake_name:
+              type: string
+              description: "Name of pre-configured lake"
+            account_url:
+              type: string
+              description: "Full URL to public lake"
+
+      - name: list_paths
+        description: "List files and directories in a container path"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            lake_name:
+              type: string
+              description: "Name of pre-configured lake"
+            account_url:
+              type: string
+              description: "Full URL to public lake"
+            container:
+              type: string
+              description: "Container/file system name"
+            path:
+              type: string
+              description: "Path within container (default: root)"
+            recursive:
+              type: boolean
+              description: "List recursively (default: false)"
+          required:
+            - container
+
+      - name: read_file
+        description: "Read a CSV or Parquet file from Data Lake"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            lake_name:
+              type: string
+              description: "Name of pre-configured lake"
+            account_url:
+              type: string
+              description: "Full URL to public lake"
+            container:
+              type: string
+              description: "Container/file system name"
+            path:
+              type: string
+              description: "Path to the file"
+            max_rows:
+              type: integer
+              description: "Maximum rows to return (default: 1000)"
+          required:
+            - container
+            - path
+
+      - name: read_file_schema
+        description: "Read only the schema/structure of a CSV or Parquet file"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            lake_name:
+              type: string
+              description: "Name of pre-configured lake"
+            account_url:
+              type: string
+              description: "Full URL to public lake"
+            container:
+              type: string
+              description: "Container/file system name"
+            path:
+              type: string
+              description: "Path to the file"
+          required:
+            - container
+            - path

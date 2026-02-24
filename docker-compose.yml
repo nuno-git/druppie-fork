@@ -25,6 +25,7 @@
 #   MCP Docker:     9002
 #   MCP File Search:9004
 #   MCP Web:        9005
+#   MCP Azure DataLake: 9006
 #   Adminer:        8081
 
 services:
@@ -229,6 +230,28 @@ services:
       retries: 5
       start_period: 10s
 
+  mcp-azure-datalake:
+    build:
+      context: ./druppie/mcp-servers/azure-datalake
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-azure-datalake
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9006"
+      AZURE_DATA_LAKE_1: ${AZURE_DATA_LAKE_1:-}
+      AZURE_DATA_LAKE_2: ${AZURE_DATA_LAKE_2:-}
+      AZURE_DATA_LAKE_3: ${AZURE_DATA_LAKE_3:-}
+    ports:
+      - "${MCP_AZURE_DATALAKE_PORT:-9006}:9006"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   mcp-filesearch:
     build:
       context: ./druppie/mcp-servers/filesearch
@@ -383,6 +406,7 @@ services:
       MCP_DOCKER_URL: http://mcp-docker:9002
       MCP_FILESEARCH_URL: http://mcp-filesearch:9004
       MCP_WEB_URL: http://mcp-web:9005
+      MCP_AZURE_DATALAKE_URL: http://mcp-azure-datalake:9006
     volumes:
       - ./druppie:/app/druppie
       - druppie_new_workspace:/app/workspace
@@ -448,6 +472,7 @@ services:
       MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
       MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
       MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
+      MCP_AZURE_DATALAKE_URL: ${MCP_AZURE_DATALAKE_URL:-http://mcp-azure-datalake:9006}
     volumes:
       - druppie_new_workspace:/app/workspace
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
