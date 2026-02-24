@@ -627,6 +627,7 @@ async def create_message(
         session_id=session_id,
         role="assistant",
         content=content,
+        agent_run_id=agent_run_id,
         agent_id="summarizer",
         sequence_number=seq,
     )

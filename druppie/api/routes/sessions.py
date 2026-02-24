@@ -16,7 +16,8 @@ This file went from 776 lines to ~80 lines by moving logic to services/repositor
 """
 
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import BaseModel
 from uuid import UUID
 import structlog
 
@@ -166,9 +167,15 @@ async def delete_session(
 # =============================================================================
 
 
+class RetryRequest(BaseModel):
+    """Optional body for retry endpoint."""
+    planned_prompt: str | None = None
+
+
 async def _run_retry_background(
     session_id: UUID,
     agent_run_id: UUID,
+    planned_prompt: str | None = None,
 ) -> None:
     """Revert and re-execute from a specific agent run.
 
@@ -188,7 +195,9 @@ async def _run_retry_background(
     try:
         # Step 1: Revert (delete old runs, revert git, recreate as pending)
         revert_service = RevertService(db)
-        result = await revert_service.retry_from_run(session_id, agent_run_id)
+        result = await revert_service.retry_from_run(
+            session_id, agent_run_id, planned_prompt=planned_prompt,
+        )
 
         logger.info(
             "retry_revert_complete",
@@ -243,6 +252,7 @@ async def _run_retry_background(
 async def retry_from_run(
     session_id: UUID,
     agent_run_id: UUID,
+    body: RetryRequest | None = Body(None),
     service: SessionService = Depends(get_session_service),
     user: dict = Depends(get_current_user),
 ):
@@ -294,6 +304,7 @@ async def retry_from_run(
         _run_retry_background(
             session_id=session_id,
             agent_run_id=agent_run_id,
+            planned_prompt=body.planned_prompt if body else None,
         )
     )
 
