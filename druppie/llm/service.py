@@ -1,33 +1,26 @@
 """LLM Service for managing LLM instances.
 
-All providers use LiteLLM internally for standardized tool calling.
+Supports per-agent LLM profiles with ordered provider chains.
+Profiles are defined in agents/definitions/llm_profiles.yaml.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra, azure_foundry (default: zai)
-
-    For ZAI:
-        ZAI_API_KEY (required)
-        ZAI_MODEL (default: glm-4.7)
-        ZAI_BASE_URL (default: https://api.z.ai/api/coding/paas/v4)
-
-    For DeepInfra:
-        DEEPINFRA_API_KEY (required)
-        DEEPINFRA_MODEL (default: Qwen/Qwen3-32B)
-        DEEPINFRA_BASE_URL (default: https://api.deepinfra.com/v1/openai)
-
-    For Azure Foundry:
-        FOUNDRY_API_KEY (required)
-        FOUNDRY_MODEL (default: GPT-5-MINI)
-        FOUNDRY_API_URL (default: https://druppie.cognitiveservices.azure.com/openai/v1)
+    LLM_PROVIDER: Global default provider (zai, deepinfra, azure_foundry, ollama)
+    LLM_FORCE_PROVIDER: Force all agents to use this provider (overrides profiles)
+    LLM_FORCE_MODEL: Force all agents to use this model (requires LLM_FORCE_PROVIDER)
 """
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from .base import BaseLLM
-from .litellm_provider import ChatLiteLLM, LITELLM_AVAILABLE
+from .fallback import FallbackLLM
+from .litellm_provider import ChatLiteLLM, LITELLM_AVAILABLE, PROVIDER_CONFIGS
+from .resolver import get_profiles, resolve_model
+
+if TYPE_CHECKING:
+    from druppie.domain.agent_definition import AgentDefinition
 
 logger = structlog.get_logger()
 
@@ -45,10 +38,12 @@ class LLMService:
     """
 
     # Supported providers and their required API key env vars
+    # None means the API key is optional (e.g. Ollama)
     PROVIDERS = {
         "zai": "ZAI_API_KEY",
         "deepinfra": "DEEPINFRA_API_KEY",
         "azure_foundry": "FOUNDRY_API_KEY",
+        "ollama": None,
     }
 
     def __init__(self):
@@ -75,9 +70,9 @@ class LLMService:
                 f"Valid options: {', '.join(self.PROVIDERS.keys())}"
             )
 
-        # Check API key
+        # Check API key (skip for providers with optional keys like Ollama)
         api_key_env = self.PROVIDERS[provider]
-        if not os.getenv(api_key_env):
+        if api_key_env and not os.getenv(api_key_env):
             raise LLMConfigurationError(
                 f"{api_key_env} environment variable is required for LLM_PROVIDER={provider}"
             )
@@ -87,7 +82,7 @@ class LLMService:
         return self._provider
 
     def get_llm(self) -> BaseLLM:
-        """Get or create LLM client."""
+        """Get or create the global default LLM client."""
         if self._llm is not None:
             return self._llm
 
@@ -104,6 +99,64 @@ class LLMService:
         )
 
         return self._llm
+
+    def get_profiles(self) -> dict:
+        """Get all loaded profiles (for status endpoint)."""
+        return get_profiles()
+
+    def create_llm_for_agent(self, agent_def: "AgentDefinition") -> BaseLLM:
+        """Create an LLM instance using the model resolution chain.
+
+        Resolution order: override → profile → global default.
+        If a fallback provider is available, wraps in FallbackLLM.
+        """
+        if not LITELLM_AVAILABLE:
+            raise LLMConfigurationError(
+                "litellm is not installed. Install it with: pip install litellm"
+            )
+
+        resolved = resolve_model(agent_def)
+
+        # Validate API key for the resolved provider
+        api_key_env = self.PROVIDERS.get(resolved.provider)
+        if api_key_env and not os.getenv(api_key_env):
+            raise LLMConfigurationError(
+                f"{api_key_env} environment variable is required for "
+                f"provider={resolved.provider} (source={resolved.source})"
+            )
+
+        primary = ChatLiteLLM(
+            provider=resolved.provider,
+            model=resolved.model,
+            temperature=agent_def.temperature,
+        )
+
+        has_fallback = False
+        result: BaseLLM = primary
+
+        if resolved.fallback_provider:
+            fallback_key_env = self.PROVIDERS.get(resolved.fallback_provider)
+            if fallback_key_env and os.getenv(fallback_key_env):
+                fallback = ChatLiteLLM(
+                    provider=resolved.fallback_provider,
+                    model=resolved.fallback_model,
+                    temperature=agent_def.temperature,
+                )
+                result = FallbackLLM(primary, fallback)
+                has_fallback = True
+
+        logger.info(
+            "llm_created_for_agent",
+            agent_id=agent_def.id,
+            profile=agent_def.llm_profile,
+            provider=resolved.provider,
+            model=primary.model,
+            source=resolved.source,
+            has_fallback=has_fallback,
+            fallback_provider=resolved.fallback_provider if has_fallback else None,
+        )
+
+        return result
 
     def get_call_history(self) -> list[dict[str, Any]]:
         """Get the history of LLM API calls."""

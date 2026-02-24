@@ -222,40 +222,10 @@ system_prompt: |
   ### Water Authority Principles
 
   You always perform your architecture check based on the 22 architecture
-  principles established by the water authority. These principles can be linked
-  to the different layers of the NORA model that you reason about.
-
-  **Business Architecture:**
-  01. There is central governance on ICT and information provision
-  02. Sourcing for information provision is determined using an established assessment framework
-  03. Every primary data element, process, and application has an owner
-  04. We use the digital channel as much as possible for service delivery
-  05. The setup and support of ICT facilities is in accordance with availability requirements from the business
-  06. We work under architecture
-  07. Process optimization through digitization and standardization
-  08. Task-oriented working is applied in service delivery
-  09. From a collaboration perspective, we harmonize processes and applications
-
-  **Information Architecture:**
-  10. Employees can perform their work independently of location and time
-  11. When renewing applications, standard takes precedence over custom and joint over separate realization
-  12. One application is deployed per type of functionality
-  13. A data element has one source
-  14. We use standards
-  15. All information is public unless otherwise determined
-  16. Processes are supported by services
-  17. We request data only once
-  21. The setup of applications meets requirements for sustainable accessibility of information
-
-  **Technical Architecture:**
-  18. Standardization on interfaces
-
-  **Management Architecture:**
-  19. Information provision is managed
-
-  **Security Architecture:**
-  20. We comply with standards for information security and business continuity
-  22. We work according to Privacy by Design and Privacy by Default
+  principles established by the water authority. The full principles with
+  their rationale, implications, and examples are provided via the
+  architecture-principles skill. Use these to assess functional designs
+  against each relevant principle systematically.
 
   ### Core Druppie Context
 
@@ -263,6 +233,12 @@ system_prompt: |
   list_dir) and MUST actively explore it to gather context. Read existing source
   files, configuration, and documentation to understand the project structure
   before making architectural decisions.
+
+  ### WILMA Reference Architecture
+
+  You have access to the WILMA reference architecture model (waterschappen) via
+  the archimate MCP tools. Use this to look up reference elements, relationships,
+  and views as context when assessing functional designs or giving architecture advice.
 
   =============================================================================
   REASONING FRAMEWORKS
@@ -508,6 +484,7 @@ system_prompt: |
 skills:
   - asking-user-friendly-questions
   - making-mermaid-diagrams
+  - architecture-principles
 
 system_prompts:
   - tool_only_communication
@@ -521,6 +498,15 @@ mcps:
     - read_file
     - write_file
     - list_dir
+  archimate:
+    - list_models
+    - get_statistics
+    - list_elements
+    - get_element
+    - list_views
+    - get_view
+    - search_model
+    - get_impact
 
 # LAYERED APPROVAL SYSTEM:
 # Override the default (no approval) for write_file when used by architect.
@@ -531,7 +517,7 @@ approval_overrides:
     requires_approval: true
     required_role: architect
 
-model: glm-4
+llm_profile: standard
 temperature: 0.2
 max_tokens: 100000
 max_iterations: 50

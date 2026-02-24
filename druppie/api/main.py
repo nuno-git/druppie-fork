@@ -141,25 +141,19 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.warning("database_health_check_failed", error=str(e))
 
-        # Check LLM provider configuration - get actual resolved provider
+        # Check LLM provider configuration and profiles
         from druppie.llm.service import get_llm_service, LLMConfigurationError
-        llm_provider_config = os.getenv("LLM_PROVIDER", "auto")
         llm_healthy = False
-        llm_provider = llm_provider_config
-        llm_model = None
+        llm_provider = os.getenv("LLM_PROVIDER", "zai")
+        llm_profiles = {}
         try:
             llm_service = get_llm_service()
-            llm_provider = llm_service.get_provider()  # Resolves 'auto' to actual provider
+            llm_provider = llm_service.get_provider()
             llm_healthy = True
-            # Get model name for transparency
-            if llm_provider == "deepinfra":
-                llm_model = os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-Next-80B-A3B-Instruct")
-            elif llm_provider == "zai":
-                llm_model = os.getenv("ZAI_MODEL", "GLM-4.7")
-            elif llm_provider == "azure_foundry":
-                llm_model = os.getenv("FOUNDRY_MODEL", "GPT-5-MINI")
-            elif llm_provider == "mock":
-                llm_model = "mock"
+            llm_profiles = {
+                name: [f"{e['provider']}/{e.get('model', 'default')}" for e in entries]
+                for name, entries in llm_service.get_profiles().items()
+            }
         except LLMConfigurationError:
             llm_healthy = False
 
@@ -185,7 +179,7 @@ def create_app() -> FastAPI:
             "gitea": gitea_healthy,
             "agents_count": len(agents),
             "llm_provider": llm_provider,
-            "llm_model": llm_model,
+            "llm_profiles": llm_profiles,
         }
 
     @app.get("/")
