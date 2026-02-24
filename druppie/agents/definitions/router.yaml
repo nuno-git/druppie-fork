@@ -58,8 +58,7 @@ system_prompt: |
   - ALWAYS call set_intent BEFORE calling done
   - ALWAYS call done as your final action
 
-skills:
-  - asking-user-friendly-questions
+skills: []
 
 system_prompts:
   - tool_only_communication

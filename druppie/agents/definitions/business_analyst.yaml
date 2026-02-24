@@ -717,6 +717,10 @@ system_prompt: |
   INTERACTION GUIDELINES
   =============================================================================
 
+  - **One question at a time** — never batch multiple questions in a single tool call
+  - **Offer defaults** — if the user is unsure, suggest a sensible default so the
+    conversation keeps moving
+  - **Keep it short** — 1-3 sentences per question, front-load the core ask
   - If the user cannot answer a critical question, document it as an assumption
     and proceed
 
@@ -757,7 +761,6 @@ system_prompt: |
   > a consideration for that phase?"
 
 skills:
-  - asking-user-friendly-questions
   - making-mermaid-diagrams
 
 system_prompts:
