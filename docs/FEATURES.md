@@ -8,7 +8,7 @@ Druppie is a governance platform where users describe what they want built in na
 
 Every action an agent takes goes through a **tool call** -- either an **MCP tool** provided by an external server, or a **builtin tool** provided by the platform itself.
 
-**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Three additional builtins are restricted: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), and `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access).
+**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Four additional builtins are restricted: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), `test_report` (Test Executor only -- structured test iteration reporting), and `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access).
 
 **MCP tools** are provided by external MCP servers over HTTP (e.g., `read_file`, `write_file`, `docker:build`). Which tools each agent can call is configured in its YAML definition.
 
@@ -18,7 +18,7 @@ Because all actions are tool calls, every action can be logged, inspected, and g
 
 ## Agent Pipeline
 
-Twelve agents are defined. Ten are functional; one is a stub.
+Twelve agents are defined. Eleven are functional; one is a stub.
 
 ### Functional Agents
 
@@ -60,21 +60,20 @@ A new project is created from scratch:
    - If approved: writes `technical_design.md`
 5. **Planner** re-evaluates: plans Builder Planner
 6. **Builder Planner** reads design documents, writes `builder_plan.md` with implementation strategy
-7. **Planner** re-evaluates: plans Test Builder
-8. **Test Builder** generates comprehensive tests based on design documents and builder_plan.md (TDD Red Phase)
-9. **Builder** implements source code to make the tests pass (TDD Green Phase)
-10. **Test Executor** runs tests, iteratively fixes code until tests pass (internal retry loop)
+7. **Test Builder** generates comprehensive tests based on design documents and builder_plan.md (TDD Red Phase)
+8. **Builder** implements source code to make the tests pass (TDD Green Phase)
+9. **Test Executor** runs tests, iteratively fixes code until tests pass (internal retry loop)
    - If PASS: Planner plans Deployer
    - If FAIL (retry < 3): Planner routes back to Builder with failure feedback (TDD retry)
    - If FAIL (retry >= 3): Planner escalates to user via HITL with three choices:
      - Continue with specific instructions: Builder retries with user guidance
      - Deploy with warning: Deployer deploys despite failing tests
      - Abort project: Summarizer ends the workflow
-9. **Deployer** builds Docker image, runs container, asks user for preview feedback
-10. **Planner** re-evaluates based on user feedback:
+10. **Deployer** builds Docker image, runs container, asks user for preview feedback
+11. **Planner** re-evaluates based on user feedback:
     - If approved: plans Summarizer
     - If changes requested: loops back to Developer, then Deployer
-11. **Summarizer** creates the final user-facing summary
+12. **Summarizer** creates the final user-facing summary
 
 ### update_project
 
@@ -84,14 +83,16 @@ An existing project is modified via feature branches:
 2. **Planner** creates the initial plan
 3. **Developer** creates a feature branch (branch setup only)
 4. **Business Analyst** reads existing code, gathers change requirements
-5. **Architect** reviews the change design
-6. **Planner** re-evaluates designs (design loop if needed)
-7. **Developer** implements changes on the feature branch
-8. **Deployer** builds and deploys a preview container (keeps production running)
-9. **Planner** re-evaluates based on user feedback:
-   - If approved: Developer merges PR, Deployer does final deploy from main
-   - If changes requested: loops back to Developer on the feature branch
-10. **Summarizer** creates the final summary
+5. **Architect** reviews the change design (design loop with BA if needed)
+6. **Builder Planner** reads design documents, writes `builder_plan.md`
+7. **Test Builder** generates tests based on design documents and builder_plan.md (TDD Red Phase)
+8. **Builder** implements changes to make tests pass (TDD Green Phase)
+9. **Test Executor** runs tests, iteratively fixes code (same retry/HITL flow as create_project)
+10. **Deployer** builds and deploys a preview container (keeps production running)
+11. **Planner** re-evaluates based on user feedback:
+    - If approved: Developer merges PR, Deployer does final deploy from main
+    - If changes requested: loops back to Developer on the feature branch
+12. **Summarizer** creates the final summary
 
 ### general_chat
 
@@ -283,7 +284,7 @@ Available system prompts:
 | `done_tool_format` | Mandatory `done()` output format rules |
 | `workspace_state` | Shared workspace and git branch rules |
 
-Currently included by: Planner, Business Analyst, Architect, Developer, Deployer. Agents without a `system_prompts` list receive no system prompts.
+Currently included by: Planner, Business Analyst, Architect, Builder Planner, Test Builder, Builder, Test Executor, Developer, Deployer. Agents without a `system_prompts` list receive no system prompts.
 
 Key sections:
 

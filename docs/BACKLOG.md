@@ -13,7 +13,7 @@ Last updated: 2026-02-11
 - Token/Cost Tracking Half Implemented and Buggy
 - Database Schema Does Not Match Domain Models
 - JSON/JSONB Columns Still Present
-- Tester Agent Not Invoked
+- ~~Tester Agent Not Invoked~~ ✅ DONE (replaced by test_builder + test_executor)
 - Reviewer Agent Not Invoked
 - Workflows Directory Empty
 - Settings Page is Read-Only
@@ -26,7 +26,7 @@ Last updated: 2026-02-11
 - No Observability Infrastructure
 - Keycloak in Development Mode
 - Sandboxed Execution Environment for Agents
-- Test-Driven Development (TDD) Workflow
+- ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 - ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
@@ -76,12 +76,12 @@ Last updated: 2026-02-11
 - **Exception:** Raw API requests are currently stored as JSON for debugging purposes.
 - There may be other violations — this needs to be checked and updated.
 
-### Tester Agent Not Invoked
+### ~~Tester Agent Not Invoked~~ ✅ DONE
 
-- **Location:** `druppie/agents/definitions/tester.yaml`
-- Agent YAML definition exists and references the `run_tests` tool (which does exist in the coding MCP server at `druppie/mcp-servers/coding/module.py:746`).
-- However, the planner agent never schedules the tester agent. It is not referenced in the planner's YAML definition.
-- The agent would need to be integrated into the planning workflow to be useful.
+- **Resolved in:** `feature/TDD-Loop` branch
+- The single `tester` agent has been replaced by two specialized agents: `test_builder` (TDD Red Phase — generates tests) and `test_executor` (TDD Green Phase — runs tests, diagnoses failures, fixes code). Both are integrated into the planner workflow.
+- A `builder_planner` agent was added to create implementation plans (`builder_plan.md`) between the architect and test_builder phases.
+- TDD retry mechanism: up to 3 builder → test_executor retry cycles on failure, with HITL escalation after 3 failures.
 
 ### Reviewer Agent Not Invoked
 
@@ -161,21 +161,22 @@ Last updated: 2026-02-11
 ### Sandboxed Execution Environment for Agents
 
 - **Current state:** The MCP coding server (`mcp-coding`, port 9001) provides file and git operations but no command execution beyond git. Agents cannot build, run, or test the code they write within an isolated environment.
-- **Problem:** The Developer agent writes code but cannot verify it compiles or runs. The Tester agent (currently a stub) has no way to execute tests. The Deployer agent builds via Docker but has no pre-deploy validation step.
+- **Problem:** The Developer agent writes code but cannot verify it compiles or runs. The Deployer agent builds via Docker but has no pre-deploy validation step.
 - **Desired improvement:** Replace or extend the coding MCP server with a fully sandboxed environment per project/session where agents can safely execute shell commands (install dependencies, run builds, execute tests). This sandbox should:
   - Be isolated and disposable (container-based or VM-based)
   - Mirror the production environment that the Deployer agent will later deploy to, so agents can catch environment-specific issues early
-  - Be usable by both the Tester agent (for running test suites) and the Developer agent (for build verification)
-  - Support a TDD workflow: the Tester agent writes tests first, the Developer agent implements until tests pass
+  - Be usable by both the test_executor agent (for running test suites) and the Developer agent (for build verification)
 - **Research needed:** Evaluate container-per-session vs shared sandbox approaches, security implications of command execution, and how to replicate the target production environment configuration inside the sandbox.
 
-### Test-Driven Development (TDD) Workflow
+### ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
 
-- **Current state:** The Tester agent is defined but never invoked by the Planner. There is no testing phase in either the `create_project` or `update_project` workflows.
-- **Desired improvement:** Integrate a TDD workflow where the Tester agent writes tests based on the functional design and architecture before the Developer agent implements the code. The Developer should then implement until tests pass. This requires:
-  - The Planner to schedule: Tester (write tests) → Developer (implement) → Tester (verify)
-  - The sandboxed execution environment (see Sandboxed Execution Environment for Agents) for running tests
-  - A feedback loop: if tests fail after implementation, the Developer gets the failure output and iterates
+- **Resolved in:** `feature/TDD-Loop` branch
+- TDD workflow is fully integrated into both `create_project` and `update_project` flows:
+  - `builder_planner` → `test_builder` (Red Phase) → `builder` (Green Phase) → `test_executor` (Run & Fix)
+  - Up to 3 retry cycles (builder → test_executor) on failure
+  - HITL escalation after 3 failures with user choice: continue with guidance, deploy with warning, or abort
+- The Coding MCP server provides `run_tests`, `get_test_framework`, `get_coverage_report`, and `install_test_dependencies` tools.
+- The `test_report` builtin tool provides structured iteration tracking.
 
 ### Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 

@@ -650,13 +650,14 @@ Available system prompts:
 
 | System Prompt | Purpose |
 |----------|---------|
+| `tool_only_communication` | Enforces that agents communicate only through tool calls |
 | `summary_relay` | How to read previous agent summaries and format your own via `done()` |
 | `done_tool_format` | Mandatory `done()` output format rules |
 | `workspace_state` | Shared workspace and git branch rules |
 
 Agents declare which system prompts to include via the `system_prompts` list in their YAML definition. At runtime, the agent's `_build_system_prompt()` method loads each system prompt and appends it (in order) after the agent's own `system_prompt` text, before tool instructions are added.
 
-Agents without a `system_prompts` list (or with an empty list) receive no system prompts. Currently, 7 agents include all 3 system prompts: architect, business_analyst, builder, deployer, developer, planner, test_builder, and test_executor. The router, summarizer, and reviewer agents do not include system prompts.
+Agents without a `system_prompts` list (or with an empty list) receive no system prompts. Currently, 9 agents include all 4 system prompts: architect, builder, builder_planner, business_analyst, deployer, developer, planner, test_builder, and test_executor. The router, summarizer, and reviewer agents do not include system prompts.
 
 ### 8.3 Agent Runtime Architecture
 
