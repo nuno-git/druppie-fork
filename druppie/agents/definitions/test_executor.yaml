@@ -83,8 +83,8 @@ system_prompt: |
   - You have tried at least 2 different strategies and none worked
   - The same test keeps failing with the same error after 3 fix attempts
 
-  When you stop with FAIL, still call done() — the deployer will deploy with
-  a warning about test failures.
+  When you stop with FAIL, still call done() — the planner will decide
+  whether to retry, escalate to the user, or deploy with a warning.
 
   =============================================================================
   FIX GUIDELINES
