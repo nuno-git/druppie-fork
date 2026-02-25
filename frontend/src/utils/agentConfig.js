@@ -36,6 +36,9 @@ export const AGENT_CONFIG = {
   reviewer_agent: { name: 'Reviewer', icon: CheckCircle, color: 'teal', description: 'Code review', thinkingLabel: 'Reviewing code...' },
   tester: { name: 'Tester', icon: CheckCircle, color: 'cyan', description: 'Testing', thinkingLabel: 'Running tests...' },
   tester_agent: { name: 'Tester', icon: CheckCircle, color: 'cyan', description: 'Testing', thinkingLabel: 'Running tests...' },
+  test_builder: { name: 'Test Builder', icon: CheckCircle, color: 'cyan', description: 'Test generation', thinkingLabel: 'Writing tests...' },
+  test_executor: { name: 'Test Executor', icon: CheckCircle, color: 'cyan', description: 'Running & fixing tests', thinkingLabel: 'Running tests...' },
+  builder_planner: { name: 'Builder Planner', icon: ClipboardList, color: 'indigo', description: 'Implementation planning', thinkingLabel: 'Creating implementation plan...' },
 }
 
 export const getAgentConfig = (agentId) => {
