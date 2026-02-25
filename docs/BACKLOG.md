@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-02-11
+Last updated: 2026-02-25
 
 ---
 
@@ -33,6 +33,10 @@ Last updated: 2026-02-11
 - Language Matching
 - Prompt Injection Protection
 - Compliance Agent for Input Validation
+- TDD Retry Counting in Python Runtime
+- Externalize HITL Escalation Text with Semantic Option IDs
+- Test Executor Python-Level Safety Net
+- Frontend Agent Config from API
 
 ---
 
@@ -229,3 +233,23 @@ Last updated: 2026-02-11
   - Could use a classification approach (is this input safe?) rather than generation
   - Failed validations should block the input and notify the user with a clear explanation
 - **Related to:** Prompt Injection Protection (this is the runtime enforcement mechanism for those defenses)
+
+### TDD Retry Counting in Python Runtime
+
+- **Current state:** The planner counts TDD retry attempts by pattern-matching `"Agent builder: TDD RETRY"` lines in the accumulated PREVIOUS AGENT SUMMARY. This relies on the LLM correctly counting string occurrences — LLMs are notoriously bad at counting.
+- **Desired improvement:** Move retry counting to the Python runtime layer. In `builtin_tools.py`, the `done()` function already collects previous summaries. It could count retry patterns deterministically and inject a structured `TDD_RETRY_COUNT: N` field into the planner's prompt, removing the need for LLM string-counting.
+
+### Externalize HITL Escalation Text with Semantic Option IDs
+
+- **Current state:** The TDD HITL escalation question and options are hardcoded as Dutch prose in `planner.yaml`. The planner pattern-matches on the exact Dutch option text to determine the user's choice.
+- **Desired improvement:** Define semantic option IDs (`CONTINUE_WITH_GUIDANCE`, `DEPLOY_WITH_WARNING`, `ABORT`) and externalize the display text to a localizable config. The planner should match on option IDs rather than prose strings. This also supports the Language Matching backlog item.
+
+### Test Executor Python-Level Safety Net
+
+- **Current state:** The test_executor's stopping conditions (e.g., "8+ iterations with no progress") are entirely in the system prompt — the LLM self-regulates. With `max_iterations: 100`, a misbehaving LLM could loop for dozens of expensive iterations.
+- **Desired improvement:** Track `test_report` tool calls per agent_run in the Python runtime and force a FAIL result after a configurable max (e.g., 10 test_report calls). This parallels the `MAX_PLANNER_ITERATIONS` safety net in `builtin_tools.py`.
+
+### Frontend Agent Config from API
+
+- **Current state:** Agent display properties (name, icon, color, description, thinkingLabel) are hardcoded in `frontend/src/utils/agentConfig.js` and must be manually kept in sync with backend YAML definitions. Each new agent requires updating both files.
+- **Desired improvement:** Expose UI properties via the `/api/agents` endpoint (add `color`, `icon`, `thinkingLabel` fields to `AgentResponse`). The frontend would then fetch agent config from the API instead of maintaining a local duplicate.
