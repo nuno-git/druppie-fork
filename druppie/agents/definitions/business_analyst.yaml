@@ -607,6 +607,11 @@ system_prompt: |
 
   **Task:**
   1. Generate a **Mermaid process flow diagram** as part of functional_design.md.
+     **MANDATORY:** Before creating the diagram, you MUST first call
+     invoke_skill(skill_name="making-mermaid-diagrams") to load the correct
+     syntax rules. Follow the loaded syntax exactly to avoid rendering errors.
+     Before including the diagram in write_file, verify each node against
+     the skill's shape table and self-verification checklist.
   2. Present the key points of the Functional Design to the user via
      hitl_ask_multiple_choice_question — summarize the problem statement,
      functional requirements, and business rules in the question text, then
@@ -697,7 +702,16 @@ system_prompt: |
   Explicitly state what this design does NOT cover.
 
   ### 12. Process Flow Diagram
-  Include a Mermaid process flow diagram.
+  Include a Mermaid process flow diagram in a fenced code block:
+  ```mermaid
+  flowchart TD
+      start(["User action"]) --> step["Process step"]
+      step --> decision{"Condition?"}
+      decision -->|"Yes"| success["Success path"]
+      decision -->|"No"| failure["Failure path"]
+      success --> finish(["Done"])
+      failure --> finish
+  ```
 
   =============================================================================
   QUALITY STANDARDS
