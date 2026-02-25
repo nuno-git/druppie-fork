@@ -75,6 +75,28 @@ class ExecutionRepository(BaseRepository):
             run.completed_at = datetime.now(timezone.utc)
         return len(pending_runs)
 
+    def cancel_active_runs(self, session_id: UUID) -> int:
+        """Cancel all running or paused agent runs for a session.
+
+        Used by the cancel endpoint to mark in-progress runs as cancelled.
+        """
+        active_runs = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status.in_([
+                    AgentRunStatus.RUNNING.value,
+                    AgentRunStatus.PAUSED_TOOL.value,
+                    AgentRunStatus.PAUSED_HITL.value,
+                ]),
+            )
+            .all()
+        )
+        for run in active_runs:
+            run.status = AgentRunStatus.CANCELLED.value
+            run.completed_at = datetime.now(timezone.utc)
+        return len(active_runs)
+
     def get_pending_runs(self, session_id: UUID) -> list[AgentRunSummary]:
         """Get all pending runs (the 'plan') for a session."""
         runs = (
@@ -508,6 +530,11 @@ class ExecutionRepository(BaseRepository):
 
         Returns max(agent_run.sequence_number, message.sequence_number) + 1
         across all entries in the session, or 0 if none exist.
+
+        Note: No UNIQUE constraint on sequence_number by design. Future parallel
+        agents may share the same sequence number (they start together). The
+        timeline sort handles ties via secondary keys (type, timestamp). The
+        current serial orchestrator prevents actual races.
         """
         from sqlalchemy import func
 

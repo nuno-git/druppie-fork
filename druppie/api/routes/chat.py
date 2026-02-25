@@ -26,13 +26,13 @@ approvals/questions and uses:
 import asyncio
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_optional_user, get_session_repository, get_execution_repository
+from druppie.api.deps import get_current_user, get_optional_user, get_session_repository, get_execution_repository
 from druppie.repositories import SessionRepository, ExecutionRepository
-from druppie.domain.common import AgentRunStatus, SessionStatus
+from druppie.domain.common import SessionStatus
 from druppie.api.errors import NotFoundError, AuthorizationError
 
 logger = structlog.get_logger()
@@ -275,7 +275,7 @@ CANCELABLE_STATUSES = {"active", "paused_approval", "paused_hitl"}
 @router.post("/chat/{session_id}/cancel")
 async def cancel_session(
     session_id: UUID,
-    user: dict | None = Depends(get_optional_user),
+    user: dict = Depends(get_current_user),
     session_repo: SessionRepository = Depends(get_session_repository),
     execution_repo: ExecutionRepository = Depends(get_execution_repository),
 ):
@@ -285,9 +285,6 @@ async def cancel_session(
     orchestrator/agent loop will detect this on its next check and stop.
     For paused sessions: no background task is running, so cancel is immediate.
     """
-    if not user or not user.get("sub"):
-        raise AuthorizationError("Authentication required")
-
     user_id = UUID(user["sub"])
     user_roles = user.get("realm_access", {}).get("roles", [])
 
@@ -302,31 +299,14 @@ async def cancel_session(
         raise AuthorizationError("Cannot cancel this session")
 
     if session.status not in CANCELABLE_STATUSES:
-        return {
-            "success": False,
-            "message": f"Cannot cancel session with status '{session.status}'",
-        }
-
-    # Cancel all pending agent runs
-    execution_repo.cancel_pending_runs(session_id)
-
-    # Mark any running/paused agent run as cancelled
-    from druppie.db.models import AgentRun
-
-    active_runs = (
-        execution_repo.db.query(AgentRun)
-        .filter(
-            AgentRun.session_id == session_id,
-            AgentRun.status.in_([
-                AgentRunStatus.RUNNING.value,
-                AgentRunStatus.PAUSED_TOOL.value,
-                AgentRunStatus.PAUSED_HITL.value,
-            ]),
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot cancel session with status '{session.status}'",
         )
-        .all()
-    )
-    for run in active_runs:
-        execution_repo.update_status(run.id, AgentRunStatus.CANCELLED)
+
+    # Cancel all pending and active agent runs
+    execution_repo.cancel_pending_runs(session_id)
+    execution_repo.cancel_active_runs(session_id)
 
     # Set session status to cancelled — this is the signal for the background task
     session_repo.update_status(session_id, SessionStatus.CANCELLED)
