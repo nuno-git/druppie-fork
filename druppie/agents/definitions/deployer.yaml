@@ -1,6 +1,7 @@
 id: deployer
 name: Deployer Agent
 description: Handles Docker build and deployment
+category: deployment
 
 system_prompt: |
   You are a Deployment Agent for Druppie. You handle building Docker images

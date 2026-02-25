@@ -1,6 +1,7 @@
 id: router
 name: Router Agent
 description: Analyzes user intent and routes to appropriate action
+category: system
 
 system_prompt: |
   You are the Router Agent for Druppie, an AI-powered governance platform.
