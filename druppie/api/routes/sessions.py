@@ -205,8 +205,26 @@ async def _run_retry_background(
             result=result,
         )
 
-        # Step 2: Execute pending runs (the recreated ones)
+        # Surface any warnings (e.g. merged PRs that can't be safely reverted)
+        for warning in result.get("warnings", []):
+            logger.warning(
+                "retry_revert_warning",
+                session_id=str(session_id),
+                warning=warning,
+            )
+
+        # Check if session was cancelled during the revert phase
+        db.expire_all()
         session_repo = SessionRepository(db)
+        session = session_repo.get_by_id(session_id)
+        if session and session.status == SessionStatus.CANCELLED.value:
+            logger.info("retry_cancelled_after_revert", session_id=str(session_id))
+            execution_repo = ExecutionRepository(db)
+            execution_repo.cancel_pending_runs(session_id)
+            db.commit()
+            return
+
+        # Step 2: Execute pending runs (the recreated ones)
         execution_repo = ExecutionRepository(db)
         project_repo = ProjectRepository(db)
         question_repo = QuestionRepository(db)

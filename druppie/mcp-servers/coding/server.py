@@ -1893,7 +1893,7 @@ async def merge_pull_request(
 
 
 @mcp.tool()
-async def revert_to_commit(
+async def _internal_revert_to_commit(
     target_commit: str,
     session_id: str | None = None,
     workspace_id: str | None = None,
@@ -2019,7 +2019,7 @@ async def revert_to_commit(
 
 
 @mcp.tool()
-async def close_pull_request(
+async def _internal_close_pull_request(
     pr_number: int,
     session_id: str | None = None,
     workspace_id: str | None = None,

@@ -407,7 +407,7 @@ class RevertService:
 
         result = await mcp_http.call(
             server="coding",
-            tool="revert_to_commit",
+            tool="_internal_revert_to_commit",
             args={
                 "target_commit": target_commit,
                 "session_id": str(session.id),
@@ -444,7 +444,7 @@ class RevertService:
 
             result = await mcp_http.call(
                 server="coding",
-                tool="close_pull_request",
+                tool="_internal_close_pull_request",
                 args={
                     "pr_number": pr_number,
                     "session_id": str(session.id),
