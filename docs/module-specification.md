@@ -40,6 +40,8 @@ A **Druppie module** is a containerized MCP server that:
 - Not a Python library imported into applications (that's Approach B — rejected)
 - Not a free-form microservice (must follow the MCP tool protocol)
 - Not a standalone application (modules are building blocks, not end products)
+- Not a pipeline or orchestrator — if it mainly calls other modules, it belongs in the application layer or as a skill
+- Not a thin wrapper around a single utility function — if it has no own state or heavy dependencies, use a builtin tool instead
 
 ---
 
@@ -225,6 +227,23 @@ metadata:
   category: document-processing
   tags: [ocr, text-extraction, pdf, image]
   icon: document-text
+
+# --- Agent Metadata (for LLM discovery and comprehension) ---
+agent_metadata:
+  summary: "Extracts text from images and documents using OCR"
+  when_to_use:
+    - "User needs text extracted from PDF, JPG, or PNG files"
+    - "Application processes scanned or photographed documents"
+  when_not_to_use:
+    - "Document is already digital text (use direct file reading instead)"
+    - "Only file metadata is needed, not content"
+  usage_examples:
+    - description: "Extract Dutch text from a scanned invoice"
+      input: { source: "invoice.png", language: "nl" }
+      output: { document: { text: "Factuurnummer: 1234..." }, confidence: 0.95 }
+  related_modules:
+    - module: classifier
+      pattern: "OCR output → classifier input for document categorization"
 ```
 
 ### What Each Section Controls
@@ -237,6 +256,7 @@ metadata:
 | schema_history | Version transformers | Request/response transformation between versions |
 | deprecations | SDK deprecation tracker, response headers | Developer warnings |
 | Infrastructure | Docker Compose, health checks | Deployment configuration |
+| Agent Metadata | Agent system prompts, registry | Module discovery and selection by AI agents |
 
 ---
 
@@ -1353,9 +1373,13 @@ CREATE TABLE module_ocr.extraction_jobs (
 
 ## 11. Module Lifecycle
 
-### From Code to Running
+### From Proposal to Running
 
 ```
+0. ACCEPT      Module proposal evaluated against acceptance criteria
+                AR validates: reuse, genericity, no overlap, ownership
+                (See "Module Acceptance" in modules.md)
+
 1. DEVELOP     Write module.py, server.py, MODULE.yaml, Dockerfile
                 Test locally: python server.py (no Docker needed)
 
