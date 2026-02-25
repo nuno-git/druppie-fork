@@ -87,17 +87,13 @@ async def get_sandbox_events(
 
     Verifies the requesting user owns the sandbox session before proxying.
     """
-    # Ownership check
+    # Ownership check — deny access if no mapping exists
     repo = SandboxSessionRepository(db)
     mapping = repo.get_by_sandbox_id(session_id)
-    if mapping:
-        check_resource_ownership(user, mapping.user_id)
-    else:
-        logger.warning(
-            "sandbox_session_ownership_unknown",
-            session_id=session_id,
-            message="No ownership mapping found; allowing access during transition period",
-        )
+    if not mapping:
+        logger.warning("sandbox_session_not_found", session_id=session_id)
+        raise HTTPException(status_code=404, detail="Sandbox session not found")
+    check_resource_ownership(user, mapping.user_id)
 
     base_url = os.environ.get("SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787")
     api_secret = os.environ.get("SANDBOX_API_SECRET", "sandbox-dev-secret")

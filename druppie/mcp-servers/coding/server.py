@@ -1657,7 +1657,7 @@ async def execute_coding_task(
         task: The coding task description / prompt for the sandbox agent
         repo_url: Git repo URL for the sandbox to clone (optional, uses Gitea if not set)
         model: LLM model for the sandbox agent (default: zai-coding-plan/glm-4.7)
-        timeout_seconds: Max wait time in seconds (default: 600)
+        timeout_seconds: Max wait time in seconds (default: 86400 / 24 hours)
         session_id: Druppie session ID (auto-injected)
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID (auto-injected)
