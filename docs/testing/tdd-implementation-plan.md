@@ -1,12 +1,12 @@
-# TDD Implementation Plan - Bouwer & Tester Agents
+# TDD Implementation Plan - Builder & Test Agents
 
 ## Overview
 
-This document combines the detailed implementation plan for the Tester Agent with the follow-up standalone architecture plan. It provides a complete roadmap for implementing Test-Driven Development (TDD) workflows in the Druppie project.
+This document combines the detailed implementation plan for the TDD agents (builder_planner, test_builder, builder, test_executor) with the follow-up standalone architecture plan. It provides a complete roadmap for implementing Test-Driven Development (TDD) workflows in the Druppie project.
 
 ---
 
-## Part 1: Tester Agent Implementation - Framework-Specific Actionable Steps
+## Part 1: TDD Agent Implementation - Framework-Specific Actionable Steps
 
 ### Project Context & Framework Versions
 
@@ -28,10 +28,11 @@ This document combines the detailed implementation plan for the Tester Agent wit
 
 #### Existing Components
 
-1. **Tester Agent Definition** - `druppie/agents/definitions/tester.yaml` (214 lines)
-   - Basic system prompt with TDD workflow
-   - Two modes: Test Generation (Red) and Validation (Green/Refactor)
-   - MCP tools already defined
+1. **TDD Agent Definitions** - `druppie/agents/definitions/`
+   - `builder_planner.yaml` - Creates implementation plans (builder_plan.md)
+   - `test_builder.yaml` - Test generation (Red Phase)
+   - `test_executor.yaml` - Test execution and iterative fixing (Green Phase)
+   - MCP tools defined per agent
 
 2. **Coding MCP Server** - `druppie/mcp-servers/coding/server.py` (221 lines)
    - `run_tests` tool present but basic
@@ -72,14 +73,12 @@ Planner: PASS → deploy
 
 ### Completed Tasks (Phase 1: Foundation & MCP Server)
 
-1. **Tester Agent Definition** - COMPLETED ✅
-   - Framework-specific test generation guidelines (Pytest, Vitest, Jest, Playwright)
-   - Framework versions and documentation URLs
-   - Test generation checklist
-   - Validation output format with exact PASS/FAIL structure
-   - PASS/FAIL thresholds (80% coverage for new code, 50% minimum)
-   - Framework detection logic
-   - Coverage tool configuration per framework
+1. **TDD Agent Definitions** - COMPLETED ✅
+   - builder_planner.yaml: Implementation planning (builder_plan.md)
+   - test_builder.yaml: Framework-specific test generation guidelines (Pytest, Vitest, Jest, Playwright)
+   - test_executor.yaml: Iterative test execution with strategy rotation and PASS/FAIL reporting
+   - builder.yaml: Updated with TDD retry scenario support
+   - test_report builtin tool for structured iteration tracking
 
 2. **Coding MCP Server Module** - COMPLETED ✅
    - Enhanced `run_tests()` with coverage, verbose, framework parameters
@@ -89,9 +88,9 @@ Planner: PASS → deploy
    - New `get_test_framework()` and `get_coverage_report()` methods
 
 3. **Planner Agent TDD Workflow** - COMPLETED ✅
-   - Added tester to AVAILABLE AGENTS
-   - TDD workflow for CREATE_PROJECT (7 steps)
-   - TDD retry pattern documentation
+   - Added builder_planner, test_builder, builder, test_executor to AVAILABLE AGENTS
+   - TDD workflow for CREATE_PROJECT and UPDATE_PROJECT
+   - TDD retry mechanism (up to 3x) with HITL escalation
 
 ### Pending Tasks (Phase 2: Standalone Integration)
 
@@ -99,10 +98,7 @@ Planner: PASS → deploy
 
 5. ~~**TDD Configuration Module**~~ - REMOVED (configuration handled by agent YAMLs + MCP servers)
 
-6. **Testing MCP Server** - STANDALONE NEW MCP SERVER ⏳
-   - `druppie/mcp-servers/testing/` (NEW DIRECTORY)
-   - Dedicated testing operations MCP server
-   - Test result parsing, framework info, TDD validation
+6. ~~**Testing MCP Server**~~ - REMOVED (testing tools integrated into Coding MCP server + test_report builtin)
 
 7. **Frontend Test Result UI Components** - STANDALONE NEW FILES ⏳
    - `frontend/src/components/chat/TestResultCard.jsx` (NEW)
@@ -140,7 +136,7 @@ Planner: PASS → deploy
 - **Retry Logic**: Configurable max retries (default: 3)
 - **Output Format**: Structured PASS/FAIL with detailed feedback
 - **Integration**: Standalone modules, no modifications to existing working code
-- **MCP Tools**: Enhanced coding MCP + new testing MCP server
+- **MCP Tools**: Enhanced coding MCP with test execution tools + test_report builtin
 
 ### Missing from User Story but Addressed in Plan:
 1. **Framework Detection**: Auto-detection of test frameworks
@@ -170,7 +166,7 @@ Planner: PASS → deploy
 ### Phase 2: Standalone Integration (PENDING)
 5. ~~TDD workflow handler module~~ - REMOVED
 6. ~~TDD configuration module~~ - REMOVED
-7. ⏳ Testing MCP server
+7. ~~Testing MCP server~~ - REMOVED (integrated into coding MCP)
 8. ⏳ Frontend test result UI
 9. ⏳ Documentation updates
 
@@ -183,4 +179,4 @@ Planner: PASS → deploy
 
 ## Conclusion
 
-The implementation addresses all user story requirements. TDD logic is handled by the agent definitions (planner, builder, tester YAMLs) and the Testing MCP server, without redundant Python abstraction layers. The removed `tdd_workflow.py`, `tdd_config.py`, and `tdd_integration.py` modules were never integrated into the main loop and duplicated logic already present in agents and MCP servers.
+The implementation addresses all user story requirements. TDD logic is handled by the agent definitions (planner, builder_planner, test_builder, builder, test_executor YAMLs) and the Coding MCP server, without redundant Python abstraction layers. The removed `tdd_workflow.py`, `tdd_config.py`, and `tdd_integration.py` modules were never integrated into the main loop and duplicated logic already present in agents and MCP servers.

@@ -62,9 +62,9 @@ architect → builder_planner → test_builder → builder → test_executor (in
 
 Previous flow (deprecated):
 ```
-architect → test_builder → builder → test_executor
+architect → tester(GENERATION) → builder → tester(VALIDATION)
+  → FAIL: planner → builder(RETRY) → tester(VALIDATION) (max 3x)
   → PASS: deployer
-  → FAIL (gave up): deployer with warning
 ```
 
 ## Components
