@@ -44,14 +44,31 @@ Always quote the label text inside the shape brackets to avoid syntax
 errors: write `A["My label"]` not `A[My label]`. Keep labels short:
 3-6 words, verb-first for actions.
 
-**NEVER nest shape characters.** Each node uses exactly one pair of shape
-delimiters with a quoted label inside. Wrong examples:
-- ~~`A([("Label")])`~~ — stadium `([` wrapping rounded `("` = broken
-- ~~`A[("Label")]`~~ — rectangle `[` wrapping rounded `("` = broken
-- ~~`A{("Label")}`~~ — diamond `{` wrapping rounded `("` = broken
+**Each node uses EXACTLY ONE shape from the table above.** Pick the shape
+you need and place the quoted label directly inside it — never combine
+or nest shape delimiters.
 
-Correct: pick the ONE shape you need from the table above and put the
-quoted label directly inside it.
+### Common mistakes — correct vs wrong
+
+Stadium shape:
+  CORRECT: `start(["Begin process"])`
+  WRONG:   `start([("Begin process")])` — extra `("` inside `([` breaks it
+
+Cylinder shape:
+  CORRECT: `db[("My database")]`
+  WRONG:   `db[(("My database"))]` — extra `((` inside `[(` breaks it
+
+Circle shape:
+  CORRECT: `stop(("End"))`
+  WRONG:   `stop([(("End"))])` — mixed delimiters break it
+
+Diamond shape:
+  CORRECT: `check{"Valid?"}`
+  WRONG:   `check{("Valid?")}` — extra `("` inside `{` breaks it
+
+**Why this happens:** Delimiters like `([`, `[(`, and `((` each define ONE
+shape. They cannot be combined. Two pairs of delimiters on one node is
+always wrong.
 
 ## Edges and Arrows
 
@@ -164,17 +181,26 @@ flowchart TD
     reject --> finish
 ```
 
-## Quality Checklist
+## Self-Verification (do this before outputting any diagram)
 
-Before outputting a diagram, verify:
+After writing your Mermaid code, verify it node by node before including
+it in your final output:
 
-- [ ] All node labels are quoted with plain ASCII `"`
-- [ ] No backslash escaping (`\"`) anywhere in the diagram
-- [ ] No nested shape characters (e.g. ~~`([("Label")])`~~)
-- [ ] Node IDs are alphanumeric only (no spaces or special characters)
-- [ ] No node uses `end` as an unquoted ID or label
-- [ ] All decision edges are labeled
-- [ ] 15 or fewer nodes (or split into parts)
-- [ ] Start/end points use distinct shapes
-- [ ] Node IDs are unique
-- [ ] Diagram matches the surrounding text — no contradictions
+1. **Shape check:** For each node, confirm its delimiters match exactly
+   one entry from the Node Shapes table:
+   `[""]` `("")` `([""])` `{""}` `{{""}}` `[[""]]` `((""))` `[("")]`
+   If a node has two or more pairs of shape delimiters, it is wrong.
+
+2. **Quote check:** All labels use plain ASCII `"` — no `\"` escaping.
+
+3. **Edge labels:** All decision edges are labeled: `-->|"label"|`
+
+4. **Reserved words:** No node ID is the bare word `end`.
+
+5. **IDs:** All node IDs are alphanumeric (`A-Z`, `a-z`, `0-9`, `_`).
+
+6. **Size:** 15 or fewer nodes per diagram (split if larger).
+
+7. **Consistency:** Diagram matches the surrounding text.
+
+If any check fails, fix the node before outputting the diagram.

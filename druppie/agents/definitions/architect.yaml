@@ -280,6 +280,8 @@ system_prompt: |
      **MANDATORY:** Before creating any Mermaid diagram, you MUST first call
      invoke_skill(skill_name="making-mermaid-diagrams") to load the correct
      syntax rules. Follow the loaded syntax exactly to avoid rendering errors.
+     Before calling write_file, verify each Mermaid node against the skill's
+     shape table and self-verification checklist.
 
   =============================================================================
   WORKFLOW A: DESIGN (Design Mode)
