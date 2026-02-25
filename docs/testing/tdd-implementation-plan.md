@@ -46,16 +46,24 @@ This document combines the detailed implementation plan for the Tester Agent wit
 
 ```
 Planner Agent
-    ↓ (Generates plan with tester steps)
+    ↓ (Generates plan: builder_planner → test_builder → builder → test_executor)
 Main Loop (execute_workflow_steps)
-    ↓ (Run agent with tester.yaml)
-Tester Agent (runtime.py)
-    ↓ (Uses MCP tools)
+    ↓ (Run agents in sequence)
+Builder Planner (builder_planner.yaml) → creates builder_plan.md
+    ↓
+Test Builder (test_builder.yaml) → generates tests
+    ↓
+Builder (builder.yaml) → implements code
+    ↓
+Test Executor (test_executor.yaml) → runs tests with internal retry loop
+    ↓ (Uses MCP tools + test_report builtin)
 Coding MCP (server.py/module.py)
     ↓ (Executes tests)
-Result: PASS/FAIL + feedback
-    ↓ (Back to Main Loop)
-Conditional Logic: Retry Builder or continue
+Result: PASS/FAIL
+    ↓ (Back to Planner)
+Planner: PASS → deploy
+         FAIL (< 3x) → builder retry → test_executor
+         FAIL (>= 3x) → HITL escalation → user decides
 ```
 
 ---
@@ -111,17 +119,20 @@ Conditional Logic: Retry Builder or continue
 ### User Story Requirements vs. Implementation Plan
 
 **User Story Requirements:**
-1. ✅ Two separate agents: Bouwer and Tester
-2. ✅ Bouwer and Tester interact via feedback-loop
-3. ✅ Tester validates functional & technical requirements
-4. ✅ Tester can generate tests with 100% code coverage goal
-5. ✅ Follows Test Driven Development (TDD)
-6. ✅ Automatic retry of Builder on Tester rejection
-7. ✅ Configurable maximum number of retries
-8. ✅ Explicit Pass/Fail result with justification
-9. ✅ Tester determines build quality for acceptance
-10. ✅ Planner agent directs Bouwer and Tester
+1. ✅ Four separate agents: Builder Planner, Test Builder, Builder, and Test Executor
+2. ✅ Builder and Test Executor interact via internal fix-loop (no planner round-trips)
+3. ✅ Test Executor validates functional & technical requirements
+4. ✅ Test Builder generates tests with comprehensive coverage goal
+5. ✅ Follows Test Driven Development (TDD): Plan (builder_planner) → Red (test_builder) → Green (builder + test_executor)
+6. ✅ Automatic internal retry in Test Executor with strategy rotation
+7. ✅ Max iterations in test_executor (100), strategy rotation after 2 failures
+8. ✅ Explicit Pass/Fail result with justification via test_report builtin tool
+9. ✅ Test Executor determines build quality for acceptance
+10. ✅ Planner agent directs builder_planner, test_builder, builder, and test_executor
 11. ✅ Coding MCP extended with build/test commands
+12. ✅ Builder Planner creates detailed implementation plans (builder_plan.md)
+13. ✅ TDD retry mechanism: planner retries builder → test_executor up to 3 times on failure
+14. ✅ HITL escalation after 3 failures: user chooses continue/deploy/abort
 
 **Implementation Plan Coverage:**
 - **Framework Support**: Python/Pytest, Frontend/Vitest, Node.js/Jest, E2E/Playwright
@@ -150,10 +161,11 @@ Conditional Logic: Retry Builder or continue
 ## Part 4: Implementation Order
 
 ### Phase 1: Foundation (COMPLETED ✅)
-1. ✅ Tester agent definition
+1. ✅ Test Builder + Test Executor agent definitions (split from single Tester)
 2. ✅ Coding MCP server module
 3. ✅ Coding MCP server tools
-4. ✅ Planner agent TDD workflow
+4. ✅ Planner agent TDD workflow (updated for test_builder → builder → test_executor)
+5. ✅ test_report builtin tool for structured iteration tracking
 
 ### Phase 2: Standalone Integration (PENDING)
 5. ~~TDD workflow handler module~~ - REMOVED
