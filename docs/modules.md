@@ -60,6 +60,28 @@ Throughout this document, we validate each approach against two concrete modules
 | **Agent** | A YAML-defined AI persona with tool access | Agents USE modules; they don't contain module logic |
 | **Builtin Tool** | In-process tools (done, invoke_skill) | No HTTP overhead, but no isolation; modules run in containers |
 
+### Module Scoping: When to Split vs. Combine
+
+The OCR and Document Classifier are two separate modules, not one "document-processing" module. This is intentional and illustrates the scoping principle:
+
+**Split into separate modules when:**
+- They have **different runtime dependencies** (OCR needs Tesseract/GPU, classifier needs an ML model)
+- They have **independent release cycles** (OCR can get a bugfix without touching the classifier)
+- They can be **used independently** (not every app that needs OCR also needs classification)
+- They need **different scaling** (OCR may need GPU, classifier may not)
+
+**Combine into one module when:**
+- The tools share the **same heavy dependencies** and would duplicate them in separate containers
+- The tools operate on the **same internal state or DB schema**
+- One tool without the other **makes no sense** in any realistic use case
+
+**What about pipelines (OCR → Classifier → Storage)?** A pipeline is NOT a module. Pipelines are orchestrated by the application or by agent skills. Modules are the individual steps. If you find yourself building a module that mainly calls other modules, you're building orchestration — that belongs in the application layer or as a skill, not as a module.
+
+**Anti-patterns to avoid:**
+- **God module**: a module that implements an entire business flow (e.g., "document-processing" that does upload, OCR, classification, storage). Too big, not reusable.
+- **Nano module**: a module that wraps a single utility function without own state or heavy dependencies. The container overhead is not justified — use a builtin tool instead.
+- **Facade module**: a module that only calls other modules without adding its own logic. That's orchestration, not a module.
+
 ---
 
 ## 2. Five Approaches to Module Design
@@ -766,17 +788,39 @@ GROUP BY user_id, module_id;
 | **Tester** | Required | Validates module against contract, integration tests |
 | **Deployer** | Required | Deploys module container, registers in configuration |
 
+### Module Acceptance: Who Decides?
+
+Not everything should become a module. Before development starts, a module proposal must pass these criteria:
+
+| Criterion | Question |
+|-----------|----------|
+| **Reuse** | Will at least 2 different applications use this capability? |
+| **Genericity** | Is it domain-independent, or tied to one specific client/use case? |
+| **Independence** | Can it function as a standalone service, or does it only make sense inside a larger flow? |
+| **Ownership** | Is there a team or person committed to maintaining it long-term? |
+| **No overlap** | Does a similar module already exist? Could this be a new tool on an existing module instead? |
+
+The **Architect (AR)** is responsible for evaluating scope and overlap. Module proposals that pass these criteria proceed to development. Proposals that don't are either scoped differently or implemented as application-specific services instead.
+
+### Agents as Primary Consumers
+
+Modules are not just infrastructure for developers — **agents are the first consumers**. The Architect agent needs to discover which modules exist and understand how to use them without manual system prompt updates. This means:
+
+- `MODULE.yaml` must contain enough structured metadata for an agent to decide "this module is relevant for my task" (see `agent_metadata` in the specification)
+- New modules should be **automatically discoverable** by agents through the registry, not through manual YAML edits to agent definitions
+- Module descriptions, use cases, and examples must be written with LLM comprehension in mind, not just human readability
+
 ### Module Development Workflow
 
 ```
-1. BA defines requirements → MODULE_SPEC.md
-2. AR designs contract    → tools.yaml (input/output schema)
-3. AR validates fit       → Check against existing modules, no overlap
-4. DEV implements         → module.py + server.py + tests
-5. Reviewer validates     → Code review against module convention
-6. Tester runs suite      → Contract tests + integration tests
-7. Deployer deploys       → Docker container + mcp_config.yaml update
-8. Module is live         → Available to all agents and applications
+1. BA defines requirements  → MODULE_SPEC.md
+2. AR evaluates fit         → Check acceptance criteria, no overlap
+3. AR designs contract      → tools.yaml (input/output schema)
+4. DEV implements           → module.py + server.py + tests
+5. Reviewer validates       → Code review against module convention
+6. Tester runs suite        → Contract tests + integration tests
+7. Deployer deploys         → Docker container + mcp_config.yaml update (+ registry)
+8. Module is discoverable   → Available to all agents and applications (via registry)
 ```
 
 ---
