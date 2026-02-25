@@ -1,6 +1,7 @@
 id: business_analyst
 name: Business Analyst Agent
 description: Specialized in eliciting requirements, uncovering root problems, and translating user needs into solution-agnostic functional designs
+category: execution
 
 system_prompt: |
   ############################################################################
