@@ -525,7 +525,7 @@ mcps:
         parameters:
           type: object
           properties:
-            search_term:
+            search:
               type: string
               description: "Search term (matches name, description, properties)"
             model_name:
@@ -541,7 +541,7 @@ mcps:
               type: integer
               description: "Maximum results (default: 20)"
           required:
-            - search_term
+            - search
 
       - name: get_impact
         description: "Analyze impact: traverse relationships from an element to find all connected elements"
