@@ -18,7 +18,7 @@ Because all actions are tool calls, every action can be logged, inspected, and g
 
 ## Agent Pipeline
 
-Nine agents are defined. Seven are functional; two are stubs.
+Twelve agents are defined. Ten are functional; one is a stub.
 
 ### Functional Agents
 
@@ -28,6 +28,10 @@ Nine agents are defined. Seven are functional; two are stubs.
 | **Planner** | Orchestrates the pipeline | Creates execution plans as ordered sequences of agent steps. Re-evaluates after each major phase. Manages design loops (BA/Architect) and execution loops (Developer/Deployer). Max 15 iterations. |
 | **Business Analyst** | Gathers requirements | Engages the user in structured dialogue (root cause analysis, stakeholder mapping, elicitation). Produces `functional_design.md`. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Max 50 iterations. |
 | **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Three outcomes: APPROVE (writes `architecture.md`), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Applies Security by Design and Compliance by Design. Max 50 iterations. |
+| **Builder Planner** | Creates implementation plans | Reads `functional_design.md` and `technical_design.md`, writes `builder_plan.md` with code standards, test framework, test strategy, solution strategy, and change approach. Guides downstream test_builder and builder agents. Max 30 iterations. |
+| **Test Builder** | Generates tests (TDD Red Phase) | Writes comprehensive test suites based on functional and technical design documents and builder_plan.md. Sets up test frameworks and dependencies. Does NOT run tests. Max 30 iterations. |
+| **Builder** | Implements code (TDD Green Phase) | Reads tests written by test_builder and implements source code to pass them. Follows TDD methodology. Max 100 iterations. |
+| **Test Executor** | Runs and fixes tests iteratively | Executes tests, diagnoses failures, applies fixes, and re-runs in an internal loop. Reports structured PASS/FAIL results via `test_report` builtin tool. Max 100 iterations. |
 | **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. For `create_project`, works on main; for `update_project`, works on feature branches. Max 100 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
 | **Summarizer** | Creates completion messages | Reads all previous agent summaries and produces a concise, user-friendly message. Always the final step. Max 5 iterations. |
@@ -36,10 +40,9 @@ Nine agents are defined. Seven are functional; two are stubs.
 
 | Agent | Intended Purpose |
 |-------|-----------------|
-| **Tester** | Run tests and validate implementations |
 | **Reviewer** | Code review for quality, security, and best practices |
 
-These agents are defined with system prompts and MCP tool access but are never included in plans by the Planner.
+This agent is defined with system prompts and MCP tool access but is never included in plans by the Planner.
 
 ---
 
@@ -54,14 +57,24 @@ A new project is created from scratch:
 3. **Business Analyst** gathers requirements via HITL dialogue, writes `functional_design.md`
 4. **Architect** reviews the functional design:
    - If feedback needed: sends items back to BA (design loop)
-   - If approved: writes `architecture.md`
-5. **Planner** re-evaluates: plans Developer and Deployer
-6. **Developer** implements the code on main, commits and pushes
-7. **Deployer** builds Docker image, runs container, asks user for preview feedback
-8. **Planner** re-evaluates based on user feedback:
-   - If approved: plans Summarizer
-   - If changes requested: loops back to Developer, then Deployer
-9. **Summarizer** creates the final user-facing summary
+   - If approved: writes `technical_design.md`
+5. **Planner** re-evaluates: plans Builder Planner
+6. **Builder Planner** reads design documents, writes `builder_plan.md` with implementation strategy
+7. **Planner** re-evaluates: plans Test Builder
+8. **Test Builder** generates comprehensive tests based on design documents and builder_plan.md (TDD Red Phase)
+9. **Builder** implements source code to make the tests pass (TDD Green Phase)
+10. **Test Executor** runs tests, iteratively fixes code until tests pass (internal retry loop)
+   - If PASS: Planner plans Deployer
+   - If FAIL (retry < 3): Planner routes back to Builder with failure feedback (TDD retry)
+   - If FAIL (retry >= 3): Planner escalates to user via HITL with three choices:
+     - Continue with specific instructions: Builder retries with user guidance
+     - Deploy with warning: Deployer deploys despite failing tests
+     - Abort project: Summarizer ends the workflow
+9. **Deployer** builds Docker image, runs container, asks user for preview feedback
+10. **Planner** re-evaluates based on user feedback:
+    - If approved: plans Summarizer
+    - If changes requested: loops back to Developer, then Deployer
+11. **Summarizer** creates the final user-facing summary
 
 ### update_project
 

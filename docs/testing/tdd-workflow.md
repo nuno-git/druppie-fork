@@ -9,58 +9,117 @@ The Test-Driven Development (TDD) workflow implementation provides a comprehensi
 ### Component Diagram
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Planner Agent │    │   Builder Agent │    │   Tester Agent  │
-│   (creates TDD  │───▶│   (implements   │───▶│   (validates    │
-│    workflow)    │    │    code)        │    │    tests)       │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                      │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Planner Agent │    │ Builder Planner │    │  Test Builder   │    │  Builder Agent  │    │  Test Executor  │
+│   (creates TDD  │───▶│   (creates      │───▶│   (generates    │───▶│   (implements   │───▶│   (runs tests,  │
+│    workflow)    │    │    plan)        │    │    tests)       │    │    code)        │    │    fixes code)  │
+└─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                      │                       │                       │                       │
+         │                      │                       │                       │                       │
+         ▼                      ▼                       ▼                       ▼                       ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                 Main Execution Loop                                                                         │
+│  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐   │
+│  │  TDD Pipeline: builder_planner → test_builder → builder → test_executor (retry ≤3x) → HITL         │   │
+│  │  • builder_planner creates implementation plan (builder_plan.md)                                     │   │
+│  │  • test_builder writes tests (Red Phase)                                                             │   │
+│  │  • builder implements code (Green Phase)                                                             │   │
+│  │  • test_executor runs tests & iteratively fixes (internal retry loop)                                │   │
+│  │  • On FAIL: planner retries builder → test_executor (up to 3x)                                      │   │
+│  │  • After 3 failures: HITL escalation (continue/deploy/abort)                                         │   │
+│  └──────────────────────────────────────────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
          │                      │                       │
          ▼                      ▼                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 Main Execution Loop                         │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │            TDD Integration Module                   │    │
-│  │  • Parses test results                              │    │
-│  │  • Determines retry logic                           │    │
-│  │  • Generates builder retry steps                    │    │
-│  └─────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
-         │                      │                       │
-         │                      │                       │
-         ▼                      ▼                       ▼
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│  Coding MCP     │    │  Testing MCP    │    │  Frontend UI    │
-│  Server         │    │  Server         │    │  Components     │
-│  • run_tests()  │    │  • test suites  │    │  • TestResultCard│
-│  • file ops     │◀──▶│  • coverage     │    │  • WorkflowEvent│
+│  Coding MCP     │    │  test_report    │    │  Frontend UI    │
+│  Server         │    │  builtin tool   │    │  Components     │
+│  • run_tests()  │    │  • iteration    │    │  • TestResultCard│
+│  • file ops     │    │    tracking     │    │  • WorkflowEvent│
 └─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+### Agent Responsibilities
+
+| Agent | Phase | Responsibility |
+|-------|-------|---------------|
+| **builder_planner** | Plan | Reads design docs, creates `builder_plan.md` with code standards, test strategy, solution approach, change approach. |
+| **test_builder** | Red (Write Tests) | Generates comprehensive test suites based on design docs and builder_plan.md. Sets up test framework. Does NOT run tests. |
+| **builder** | Green (Implement) | Reads tests, implements source code to pass them. Commits implementation. Handles TDD retries on failure. |
+| **test_executor** | Green/Refactor (Run & Fix) | Runs tests, diagnoses failures, applies fixes, re-runs. Internal retry loop with strategy rotation. |
+
+### Flow
+
+```
+architect → builder_planner → test_builder → builder → test_executor (internal: run → fix → run → ...)
+  → PASS: deployer
+  → FAIL (retry < 3): builder (TDD RETRY) → test_executor
+  → FAIL (retry >= 3): HITL escalation → user decides:
+      → "Continue with instructions": builder (with guidance) → test_executor
+      → "Deploy with warning": deployer
+      → "Abort": summarizer
+```
+
+Previous flow (deprecated):
+```
+architect → test_builder → builder → test_executor
+  → PASS: deployer
+  → FAIL (gave up): deployer with warning
 ```
 
 ## Components
 
-### 1. Testing MCP Server (`druppie/mcp-servers/testing/`)
+### 1. Builder Planner Agent (`agents/definitions/builder_planner.yaml`)
 
-Standalone MCP server for test execution:
+Creates detailed implementation plans before test generation begins:
+- Reads functional_design.md and technical_design.md
+- Writes builder_plan.md with code standards, test framework, test strategy, solution strategy, and change approach
+- Guides downstream test_builder and builder agents
 
-- **`server.py`**: FastAPI server with test execution endpoints
-- **`module.py`**: Test execution logic with framework detection
-- **`requirements.txt`**: Dependencies for test execution
-- **`Dockerfile`**: Containerization for microservice deployment
+### 2. Test Builder Agent (`agents/definitions/test_builder.yaml`)
 
-### 2. Frontend Components
+Generates tests before any implementation exists:
+- Reads functional_design.md and technical_design.md
+- Detects or sets up test framework
+- Writes comprehensive test files covering all requirements
+- Does NOT run tests (Red Phase — tests are expected to fail)
+
+### 3. Builder Agent (`agents/definitions/builder.yaml`)
+
+Implements code to make tests pass:
+- Reads test files to understand requirements
+- Implements source code
+- Commits and pushes implementation
+
+### 4. Test Executor Agent (`agents/definitions/test_executor.yaml`)
+
+Runs tests and iteratively fixes code:
+- Internal retry loop (no planner round-trips)
+- Error classification: assertion_failure, missing_function, import_error, type_error, syntax_error, configuration_error, environment_error, test_error
+- Fix strategies: fix_implementation, fix_test, fix_imports, fix_configuration, add_dependency, refactor_approach
+- Strategy rotation: switches strategy after 2 consecutive failures with same strategy
+- Reports via `test_report` builtin tool
+
+### 5. test_report Builtin Tool
+
+Structured reporting tool used by test_executor:
+- Tracks iteration number, pass/fail status, changed files
+- Records error classification and fix strategy
+- Data automatically stored as ToolCall records
+
+### 6. Frontend Components
 
 - **`TestResultCard.jsx`**: Rich visualization of test results with statistics, coverage, and feedback
 - **`WorkflowEvent.jsx`**: Updated to render TestResultCard for test events
-- **`eventUtils.jsx`**: Extended with test event types, icons, and styling
+- **`agentConfig.js`**: Contains `test_builder` and `test_executor` agent display config
 
 ## Configuration
 
-TDD configuration is handled through agent YAML definitions and the Testing MCP server. The planner agent defines retry limits (default: 3 attempts), and the tester agent defines coverage thresholds and framework-specific settings.
+TDD configuration is handled through agent YAML definitions and the Coding MCP server. The test_executor agent defines coverage thresholds and fix strategies.
 
 ### Project Type Detection
 
-The Testing MCP server automatically detects project types:
+The Coding MCP server automatically detects project types:
 - **Python**: `pyproject.toml`, `requirements.txt`, `setup.py`
 - **Frontend**: `package.json` with React/Vue/Angular dependencies
 - **Node.js**: `package.json` with Node.js runtime
@@ -75,31 +134,68 @@ Test results automatically appear in the chat with the `TestResultCard` componen
 ### Successful TDD Workflow
 
 ```
-1. Planner creates TDD workflow with builder → tester steps
-2. Builder implements feature
-3. Tester runs tests → PASS with 85% coverage
-4. System continues to next step
+1. Planner plans builder_planner after architect approval
+2. Builder planner reads design docs, writes builder_plan.md
+3. Planner plans test_builder
+4. Test builder generates tests based on builder_plan.md (Red Phase)
+5. Planner plans builder
+6. Builder implements code
+7. Planner plans test_executor
+8. Test executor runs tests → PASS on first try
+9. Planner plans deployer
 ```
 
-### Failed Test with Retry
+### Failed Test with Internal Retry (test_executor level)
 
 ```
-1. Builder implements feature
-2. Tester runs tests → FAIL with 3 failed tests
-3. System parses feedback, determines retry needed
-4. Creates builder retry step with feedback
-5. Builder fixes issues (attempt 2/3)
-6. Tester runs tests → PASS
-7. System continues
+1. Test executor runs tests → 3 of 12 fail
+2. Test executor classifies errors (import_error)
+3. Test executor applies fix_imports strategy
+4. Test executor commits fix, calls test_report(iteration=1)
+5. Test executor re-runs tests → 1 of 12 fails
+6. Test executor classifies error (assertion_failure)
+7. Test executor applies fix_implementation strategy
+8. Test executor commits fix, calls test_report(iteration=2)
+9. Test executor re-runs tests → PASS
+10. Test executor calls done() with PASS verdict
 ```
 
-### Coverage Below Threshold
+### TDD Retry Flow (planner level, up to 3x)
 
 ```
-1. Builder implements feature
-2. Tester runs tests → PASS with 65% coverage
-3. System continues (coverage warning logged)
-4. Optional: Can configure retry_on_low_coverage=true
+1. Test executor gives up → FAIL (attempt 1)
+2. Planner counts "## TEST RESULT: FAIL" = 1, retry < 3
+3. Planner plans builder with TDD RETRY and failure feedback
+4. Builder makes targeted fixes based on failure details
+5. Planner plans test_executor
+6. Test executor runs tests → PASS
+7. Planner plans deployer
+```
+
+### HITL Escalation Flow (after 3 failures)
+
+```
+1. Test executor gives up → FAIL (attempt 3)
+2. Planner counts "## TEST RESULT: FAIL" = 3, retry >= 3
+3. Planner plans developer with HITL escalation
+4. Developer asks user via hitl_ask_multiple_choice_question:
+   - "Doorgaan met specifieke instructies"
+   - "Toch deployen met waarschuwing"
+   - "Project afbreken"
+5a. User chooses "continue": builder retries with user guidance → test_executor
+5b. User chooses "deploy": deployer deploys with warning
+5c. User chooses "abort": summarizer ends workflow
+```
+
+### Test Executor Gives Up (single attempt detail)
+
+```
+1. Test executor runs tests → 4 fail
+2. Iterations 1-5: fix_implementation strategy (2 tests fixed, 2 remain)
+3. Iterations 6-7: fix_configuration strategy (no progress)
+4. Iteration 8: gives up after no progress
+5. Test executor calls done() with FAIL verdict
+6. Planner evaluates retry count and decides next action
 ```
 
 ## Test Frameworks Supported
@@ -112,17 +208,6 @@ Test results automatically appear in the chat with the `TestResultCard` componen
 | **Playwright** | `npx playwright test` | - | 1.40.0 |
 | **Go Test** | `go test ./...` | go test -cover | 1.21 |
 
-## Event Types
-
-The system creates these event types in the timeline:
-
-- `test_started`: Test execution began
-- `test_completed`: Test execution completed
-- `test_result`: Test results available (renders TestResultCard)
-- `tdd_validation`: TDD validation step
-- `test_passed`: Tests passed
-- `test_failed`: Tests failed
-
 ## Error Handling
 
 ### Common Error Scenarios
@@ -132,51 +217,20 @@ The system creates these event types in the timeline:
    - Logs warning with detection details
 
 2. **Coverage Report Missing**
-   - If `require_coverage=true`, validation fails
-   - If `require_coverage=false`, continues with warning
+   - Test executor still reports PASS if all tests pass
+   - Coverage noted as "unavailable" in summary
 
-3. **Test Execution Timeout**
-   - Configurable timeout (default: 300 seconds)
-   - Can retry on timeout (`retry_on_timeout=true`)
+3. **Maximum Iterations Exhausted**
+   - Test executor stops with FAIL verdict
+   - Deployer deploys with warning about test failures
 
-4. **Maximum Retries Exceeded**
-   - Workflow fails with descriptive error
-   - All retry attempts logged
+4. **Strategy Rotation**
+   - After 2 consecutive failures with same strategy, switches to different strategy
+   - Tries at least 2 different strategies before giving up
 
 ### Logging
 
 TDD components use structured logging with these keys:
-- `tdd_processing_started`: TDD processing began
-- `tdd_processing_completed`: TDD processing completed
-- `tdd_config_loaded`: Configuration loaded
+- `test_report`: Test iteration report recorded
 - `test_framework_detected`: Test framework detected
 - `coverage_validation`: Coverage validation result
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Tests Not Running**
-   - Check MCP server connectivity
-   - Verify workspace permissions
-   - Check test framework installation
-
-2. **Coverage Not Reported**
-   - Verify coverage tool installation
-   - Check test output format
-
-3. **Retry Not Triggering**
-   - Check planner agent retry instructions
-   - Verify tester agent PASS/FAIL output format
-
-4. **Frontend Not Rendering**
-   - Verify TestResultCard import
-   - Check browser console for errors
-
-### Debugging
-
-Check MCP server logs:
-
-```bash
-docker logs druppie-mcp-coding
-```
