@@ -13,7 +13,7 @@ Kata Containers run each sandbox inside a lightweight virtual machine with its o
 
 - **Linux host** with KVM support (`/dev/kvm` must exist)
 - **Nested virtualization** enabled if running inside a VM (e.g., cloud instances)
-- **containerd** installed and running
+- **WSL2** works if KVM is available (Windows 11 + WSL2 with `nestedVirtualization=true` in `.wslconfig`)
 - **Not compatible with Docker Desktop** — requires native Linux containerd
 
 Check KVM support:
@@ -33,9 +33,17 @@ Run the bundled setup script (as root or with sudo):
 sudo vendor/open-inspect/packages/local-sandbox-manager/scripts/setup-kata.sh
 ```
 
+You can pin a specific version:
+
+```bash
+sudo KATA_VERSION=3.27.0 vendor/open-inspect/packages/local-sandbox-manager/scripts/setup-kata.sh
+```
+
 This script:
 - Verifies `/dev/kvm` exists
-- Installs Kata Containers from the official repository
+- Downloads the official pre-built `kata-static` tarball from [GitHub releases](https://github.com/kata-containers/kata-containers/releases)
+- Installs to `/opt/kata` and symlinks binaries to `/usr/local/bin`
+- Installs containerd if not present
 - Configures containerd with the `io.containerd.kata.v2` runtime handler
 - Restarts containerd
 - Runs a verification test (Alpine container with Kata runtime)
