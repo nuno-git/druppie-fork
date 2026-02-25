@@ -86,7 +86,7 @@ def load_agent_definitions() -> list[AgentResponse]:
             category = "system"
             if agent_id in ["router", "planner"]:
                 category = "system"
-            elif agent_id in ["reviewer", "tester"]:
+            elif agent_id in ["reviewer", "tester", "test_builder", "test_executor", "builder_planner"]:
                 category = "quality"
             elif agent_id in ["deployer"]:
                 category = "deployment"
