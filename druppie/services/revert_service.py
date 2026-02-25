@@ -91,23 +91,46 @@ class RevertService:
             raise ValueError("No runs found to revert")
 
         # Step 3: Split into runs to RESET vs runs to DELETE
-        # If there's a planner in the set, everything AFTER it was created
-        # by make_plan and will be recreated — so delete those.
-        # The planner itself (and anything before it in the set) gets reset.
+        #
+        # Two boundaries matter:
+        # A) Turn boundary: if there's a user message after target_sequence,
+        #    all runs at or after that message belong to a later turn and
+        #    must be DELETED (they'll never re-run — the user message is gone).
+        # B) Planner boundary (within same turn): runs after the first planner
+        #    were created by make_plan and will be recreated when planner re-runs.
+        next_user_msg = (
+            self.db.query(Message)
+            .filter(
+                Message.session_id == session_id,
+                Message.role == "user",
+                Message.sequence_number > target_sequence,
+            )
+            .order_by(Message.sequence_number)
+            .first()
+        )
+        turn_boundary_seq = next_user_msg.sequence_number if next_user_msg else None
+
+        # Separate same-turn runs from later-turn runs
+        if turn_boundary_seq is not None:
+            same_turn_runs = [r for r in all_runs_after if r.sequence_number < turn_boundary_seq]
+            later_turn_runs = [r for r in all_runs_after if r.sequence_number >= turn_boundary_seq]
+        else:
+            same_turn_runs = all_runs_after
+            later_turn_runs = []
+
+        # Within the same turn, apply planner boundary logic
         first_planner_seq = None
-        for run in all_runs_after:
+        for run in same_turn_runs:
             if run.agent_id == "planner":
                 first_planner_seq = run.sequence_number
                 break
 
         if first_planner_seq is not None:
-            # Reset: target through planner. Delete: everything after planner.
-            runs_to_reset = [r for r in all_runs_after if r.sequence_number <= first_planner_seq]
-            runs_to_delete = [r for r in all_runs_after if r.sequence_number > first_planner_seq]
+            runs_to_reset = [r for r in same_turn_runs if r.sequence_number <= first_planner_seq]
+            runs_to_delete = [r for r in same_turn_runs if r.sequence_number > first_planner_seq] + later_turn_runs
         else:
-            # No planner being reverted — reset everything
-            runs_to_reset = all_runs_after
-            runs_to_delete = []
+            runs_to_reset = same_turn_runs
+            runs_to_delete = later_turn_runs
 
         all_run_ids = [r.id for r in all_runs_after]
         reset_ids = [r.id for r in runs_to_reset]
