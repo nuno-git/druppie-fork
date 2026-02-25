@@ -9,37 +9,38 @@
 
 ## Table of Contents
 
-1. [Introduction](#1-introduction)
-2. [What Is a Module?](#2-what-is-a-module)
-3. [Five Approaches to Module Design](#3-five-approaches-to-module-design)
+1. [What Is a Module?](#1-what-is-a-module)
+2. [Five Approaches to Module Design](#2-five-approaches-to-module-design)
    - [Approach A: Built-in MCP Servers](#approach-a-built-in-mcp-servers)
    - [Approach B: Library / Import Pattern](#approach-b-library--import-pattern)
    - [Approach C: SDK + MCP Hybrid (Thin Client, Remote Logic)](#approach-c-sdk--mcp-hybrid)
    - [Approach D: Template-Based Code Generation](#approach-d-template-based-code-generation)
    - [Approach E: Composable MCP with Shared DB + API Gateway](#approach-e-composable-mcp-with-shared-db--api-gateway)
-4. [Comparative Analysis](#4-comparative-analysis)
-5. [Test Cases](#5-test-cases)
-6. [Authentication: OBO Token Exchange](#6-authentication-obo-token-exchange)
-7. [Governance & Cost Tracking](#7-governance--cost-tracking)
-8. [Agent Roles in Module Development](#8-agent-roles-in-module-development)
-9. [Impact on Current Environment](#9-impact-on-current-environment)
-10. [Recommendation](#10-recommendation)
-11. [Sources](#11-sources)
+3. [Comparative Analysis](#3-comparative-analysis)
+4. [Test Cases](#4-test-cases)
+5. [Authentication: OBO Token Exchange](#5-authentication-obo-token-exchange)
+6. [Governance & Cost Tracking](#6-governance--cost-tracking)
+7. [Agent Roles in Module Development](#7-agent-roles-in-module-development)
+8. [Impact on Current Environment](#8-impact-on-current-environment)
+9. [Recommendation](#9-recommendation)
+10. [Sources](#10-sources)
 
 ---
 
-## 1. Introduction
+## 1. What Is a Module?
 
-Druppie builds applications for users through AI agents. These applications need reusable capabilities — OCR, document classification, cost tracking, authentication templates, etc. This document explores **five fundamentally different approaches** to defining these reusable building blocks ("modules") and recommends the best fit for Druppie's architecture.
+Druppie builds applications for users through AI agents. These applications need reusable capabilities — OCR, document classification, cost tracking, authentication templates, etc. Modules are the **building blocks that Druppie uses in the applications he builds**. Think of them as the standard parts in a toolbox: when Druppie builds an invoice processor, he grabs the OCR module; when he builds a document portal, he grabs the classifier module. The modules live in the Druppie core, and every application Druppie creates can use them.
 
-### Key Constraint
+A module is a **self-contained, reusable capability** that:
 
-Modules are **building blocks that Druppie uses in the applications he builds**. They must be:
+1. Is a **building block for applications** — Druppie integrates modules into the apps he builds for users
+2. Exposes a **well-defined contract** (input/output schema) so any application can use it the same way
+3. Can be **added to the core** — extending Druppie's platform capabilities for all future applications
+4. Is **generic** — works across different application types, not tied to one specific use case
+5. Supports **governance** — cost tracking, access control, and audit per user
+6. Is **invocable** by both Druppie agents (during build-time) and generated applications (at runtime via SDK)
 
-- **Generic** — work across different application types
-- **Addable to the core** — extend Druppie's platform capabilities
-- **Usable by Druppie** — the AI agent can integrate them into generated apps
-- **Governed** — cost tracking, access control, audit trails per user
+This document explores **five fundamentally different approaches** to defining these modules and recommends the best fit for Druppie's architecture.
 
 ### Test Cases for Validation
 
@@ -49,18 +50,6 @@ Throughout this document, we validate each approach against two concrete modules
 |--------|-------------|------------|
 | **OCR Module** | Extracts text from PDF, Word, JPG/PNG with standardized JSON output | High (binary processing, ML models, GPU optional) |
 | **Document Classifier** | Determines document category (e.g., "vergunning") with confidence score | Medium (ML inference, configurable categories) |
-
----
-
-## 2. What Is a Module?
-
-A module is a **self-contained, reusable capability** that:
-
-1. Exposes a **well-defined contract** (input/output schema)
-2. Can be **registered** with the Druppie core so agents and applications can discover it
-3. Runs **independently** — its own failure domain, dependencies, and lifecycle
-4. Supports **governance** — cost tracking, access control, and audit per user
-5. Is **invocable** by both Druppie agents (during build-time) and generated applications (at runtime)
 
 ### Module vs. Existing Concepts
 
@@ -73,7 +62,7 @@ A module is a **self-contained, reusable capability** that:
 
 ---
 
-## 3. Five Approaches to Module Design
+## 2. Five Approaches to Module Design
 
 ### Approach A: Built-in MCP Servers
 
@@ -586,7 +575,7 @@ async def handle_text_extracted(event: ModuleEvent):
 
 ---
 
-## 4. Comparative Analysis
+## 3. Comparative Analysis
 
 ### How Each Approach Handles the Full Lifecycle
 
@@ -623,7 +612,7 @@ async def handle_text_extracted(event: ModuleEvent):
 
 ---
 
-## 5. Test Cases
+## 4. Test Cases
 
 ### OCR Module Through Each Approach
 
@@ -657,7 +646,7 @@ async def handle_text_extracted(event: ModuleEvent):
 
 ---
 
-## 6. Authentication: OBO Token Exchange
+## 5. Authentication: OBO Token Exchange
 
 Regardless of which approach is chosen, applications need to call modules **on behalf of users**. Keycloak 26.2+ supports RFC 8693 Standard Token Exchange natively.
 
@@ -724,7 +713,7 @@ class DruppieAuth:
 
 ---
 
-## 7. Governance & Cost Tracking
+## 6. Governance & Cost Tracking
 
 ### Where Cost Tracking Happens Per Approach
 
@@ -763,7 +752,7 @@ GROUP BY user_id, module_id;
 
 ---
 
-## 8. Agent Roles in Module Development
+## 7. Agent Roles in Module Development
 
 ### Which agents are involved when adding a new module?
 
@@ -792,7 +781,7 @@ GROUP BY user_id, module_id;
 
 ---
 
-## 9. Impact on Current Environment
+## 8. Impact on Current Environment
 
 ### What Changes When a Module Is Added
 
@@ -818,7 +807,7 @@ GROUP BY user_id, module_id;
 
 ---
 
-## 10. Recommendation
+## 9. Recommendation
 
 ### The Layered Approach: C + E combined
 
@@ -865,7 +854,7 @@ Based on the analysis, the strongest approach for Druppie is a **combination of 
 
 ---
 
-## 11. Sources
+## 10. Sources
 
 ### MCP Protocol & Architecture
 - [MCP Architecture Overview](https://modelcontextprotocol.io/docs/learn/architecture)
