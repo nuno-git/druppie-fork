@@ -318,8 +318,10 @@ services:
     profiles: [infra, dev, prod]
     environment:
       MODAL_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
-      SANDBOX_RUNTIME: docker
+      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-docker}
       SANDBOX_IMAGE: open-inspect-sandbox:latest
+      KATA_RUNTIME: ${KATA_RUNTIME:-io.containerd.kata.v2}
+      CONTAINERD_NAMESPACE: ${CONTAINERD_NAMESPACE:-default}
       DOCKER_NETWORK: druppie-new-network
       DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
       DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-2}
