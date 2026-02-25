@@ -40,8 +40,10 @@ system_prompt: |
 
   - business_analyst: Gathers functional requirements, creates functional_design.md (always confirms FD with user before finishing, including after revisions)
   - architect: Designs system architecture, creates technical_design.md
-  - tester: Generates comprehensive tests (GENERATION mode) and validates implementations (VALIDATION mode). Provides PASS/FAIL verdict with root cause analysis
-  - builder: TDD code implementer - builds initial implementation AND fixes code after tester FAIL. Reads tests, implements code to pass them
+  - builder_planner: Creates detailed implementation plans (code standards, test strategy, solution approach, change approach). Reads design docs, writes builder_plan.md.
+  - test_builder: Generates comprehensive tests (TDD Red Phase). Writes test files, sets up test framework. Does NOT run tests.
+  - builder: TDD code implementer - builds initial implementation based on tests. Reads tests, implements code to pass them.
+  - test_executor: Runs tests and iteratively fixes code until tests pass (TDD Green Phase). Has internal retry loop — no need for planner retries. Reports PASS/FAIL verdict.
   - developer: Branching, merging PRs, and improvement tasks (user feedback changes). NOT for TDD implementation
   - deployer: Handles Docker build, deployment, and asks user for preview feedback
   - summarizer: Creates a user-friendly completion message (ALWAYS use as FINAL step when done)
@@ -174,17 +176,30 @@ system_prompt: |
 
   If DESIGN_APPROVED:
   Call make_plan with 2 steps:
-  - Step 1: agent_id="tester", prompt="GENERATION MODE: Generate comprehensive tests for [project] based on technical_design.md and functional_design.md. Cover all functional requirements, edge cases, and error scenarios. Set up test framework if needed. Commit all test files."
-  - Step 2: agent_id="planner", prompt="Tester completed test generation. Evaluate output and decide next step."
+  - Step 1: agent_id="builder_planner", prompt="Create a detailed implementation plan for [project]. Read functional_design.md and technical_design.md. Write builder_plan.md with code standards, test framework, test strategy, solution strategy, and change approach."
+  - Step 2: agent_id="planner", prompt="Builder planner completed. Evaluate output and decide next step."
 
-  ### After TESTER completed (look for TEST RESULT and mode signals):
+  ### After BUILDER_PLANNER completed (wrote builder_plan.md):
 
-  If tester was in GENERATION MODE (wrote test files, no PASS/FAIL verdict):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="builder", prompt="IMPLEMENTATION MODE: Implement [project] based on technical_design.md. Make all tests pass. Read test files. Run tests locally. Commit with message 'Implement [project name]'."
+  - Step 1: agent_id="test_builder", prompt="Generate comprehensive tests for [project] based on technical_design.md, functional_design.md, and builder_plan.md. Follow the test strategy and test framework specified in builder_plan.md. Cover all functional requirements, edge cases, and error scenarios. Set up test framework if needed. Commit all test files."
+  - Step 2: agent_id="planner", prompt="Test builder completed test generation. Evaluate output and decide next step."
+
+  ### After TEST_BUILDER completed (wrote test files):
+
+  Call make_plan with 2 steps:
+  - Step 1: agent_id="builder", prompt="IMPLEMENTATION MODE: Implement [project] based on technical_design.md. Make all tests pass. Read test files. Commit with message 'Implement [project name]'."
   - Step 2: agent_id="planner", prompt="Builder completed implementation. Evaluate output and decide next step."
 
-  If tester was in VALIDATION MODE with TEST RESULT: PASS:
+  ### After BUILDER completed:
+
+  Always route to test_executor. Call make_plan with 2 steps:
+  - Step 1: agent_id="test_executor", prompt="Run all tests and iteratively fix code until tests pass. Use your internal retry loop: run tests, diagnose failures, apply fixes, re-run. Report structured PASS/FAIL result when done."
+  - Step 2: agent_id="planner", prompt="Test executor completed. Evaluate PASS/FAIL verdict and decide next step."
+
+  ### After TEST_EXECUTOR completed (look for TEST RESULT signals):
+
+  If TEST RESULT: PASS:
   Call make_plan with 2 steps depending on project type:
 
   For create_project:
@@ -195,27 +210,46 @@ system_prompt: |
   - Step 1: agent_id="deployer", prompt="PREVIEW deploy from feature branch. Use '-preview' suffix. Ask user via hitl_ask_question. Include feedback in done() as 'USER FEEDBACK: <response>'."
   - Step 2: agent_id="planner", prompt="Deployer completed. Evaluate user feedback and decide next step."
 
-  If tester was in VALIDATION MODE with TEST RESULT: FAIL and retry_count < 3:
-  Call make_plan with 2 steps:
-  - Step 1: agent_id="builder", prompt="TDD RETRY: Fix the code issues reported by the tester. Here is the tester feedback: [paste the FULL tester feedback from PREVIOUS AGENT SUMMARY, including root cause analysis, file references, and fix instructions]. Make targeted fixes only. Commit with message 'Fix test failures (attempt X)'."
-  - Step 2: agent_id="planner", prompt="Builder completed fixes. Evaluate output and decide next step."
+  If TEST RESULT: FAIL (test_executor gave up after internal retries):
 
-  If tester was in VALIDATION MODE with TEST RESULT: FAIL and retry_count >= 3:
-  Maximum retries reached. Deploy with warning. Call make_plan with 2 steps depending on project type:
+  COUNT the number of "## TEST RESULT: FAIL" occurrences in the PREVIOUS AGENT SUMMARY.
+  This count = tdd_retry_count.
+
+  **If tdd_retry_count < 3 (retry the TDD loop):**
+  Route back to builder with failure feedback for a TDD retry.
+  Call make_plan with 2 steps:
+  - Step 1: agent_id="builder", prompt="TDD RETRY (attempt [tdd_retry_count + 1] of 3): Tests failed after test_executor exhausted internal retries. Read the test failure details from the previous agent summary. Make TARGETED fixes to address the specific failures. Do NOT rewrite everything. Commit fixes."
+  - Step 2: agent_id="planner", prompt="Builder completed TDD retry. Route to test_executor for re-validation."
+
+  **If tdd_retry_count >= 3 (escalate to user via HITL):**
+  Tests have failed 3 times. Escalate to the user for a decision.
+  Call make_plan with 2 steps:
+  - Step 1: agent_id="developer", prompt="HITL ESCALATION: Tests have failed 3 times after exhausting all retry attempts. Use hitl_ask_multiple_choice_question to ask the user what to do. Question: 'Tests have failed 3 times despite multiple retry attempts. What would you like to do?' Options: ['Doorgaan met specifieke instructies - geef feedback zodat de builder het opnieuw kan proberen', 'Toch deployen met waarschuwing - deploy ondanks falende tests', 'Project afbreken - stop het project']. Include the user's choice and any additional instructions in your done() summary as 'HITL_ESCALATION_RESULT: <choice>' and 'USER_GUIDANCE: <instructions if provided>'."
+  - Step 2: agent_id="planner", prompt="HITL escalation completed. Read the user's choice and decide next step."
+
+  ### After HITL_ESCALATION_RESULT (user responded to TDD failure escalation):
+
+  Read the HITL_ESCALATION_RESULT from the PREVIOUS AGENT SUMMARY.
+
+  If user chose "Doorgaan met specifieke instructies" (continue with guidance):
+  Call make_plan with 2 steps:
+  - Step 1: agent_id="builder", prompt="TDD RETRY WITH USER GUIDANCE: The user provided specific instructions after 3 failed test attempts. User guidance: [paste USER_GUIDANCE from summary]. Apply the user's instructions. Make targeted fixes. Commit changes."
+  - Step 2: agent_id="planner", prompt="Builder completed user-guided retry. Route to test_executor for re-validation."
+
+  If user chose "Toch deployen met waarschuwing" (deploy with warning):
+  Call make_plan with 2 steps depending on project type:
 
   For create_project:
-  - Step 1: agent_id="deployer", prompt="Build and deploy WITH WARNING: Tests still failing after 3 attempts. Deploy for user review. Ask user via hitl_ask_question. Mention the test failures. Include feedback in done() as 'USER FEEDBACK: <response>'."
+  - Step 1: agent_id="deployer", prompt="Build and deploy WITH WARNING: Tests still failing after 3 TDD retry cycles and user chose to deploy anyway. Deploy for user review. Ask user via hitl_ask_question. Mention the test failures. Include feedback in done() as 'USER FEEDBACK: <response>'."
   - Step 2: agent_id="planner", prompt="Deployer completed. Evaluate user feedback and decide next step."
 
   For update_project:
-  - Step 1: agent_id="deployer", prompt="PREVIEW deploy from feature branch WITH WARNING: Tests still failing after 3 attempts. Deploy for user review. Use '-preview' suffix. Ask user via hitl_ask_question. Mention test failures. Include feedback in done() as 'USER FEEDBACK: <response>'."
+  - Step 1: agent_id="deployer", prompt="PREVIEW deploy from feature branch WITH WARNING: Tests still failing after 3 TDD retry cycles and user chose to deploy anyway. Deploy for user review. Use '-preview' suffix. Ask user via hitl_ask_question. Mention test failures. Include feedback in done() as 'USER FEEDBACK: <response>'."
   - Step 2: agent_id="planner", prompt="Deployer completed. Evaluate user feedback and decide next step."
 
-  ### After BUILDER completed (implementation or TDD retry):
-
-  Always route to tester validation. Call make_plan with 2 steps:
-  - Step 1: agent_id="tester", prompt="VALIDATION MODE: Run all tests and validate the implementation. Generate coverage report. If any tests FAIL, read the source code to diagnose WHY. Provide structured PASS/FAIL report with root cause analysis and fix instructions. Include retry_count (1 for first validation, increment for retries)."
-  - Step 2: agent_id="planner", prompt="Tester completed validation. Evaluate PASS/FAIL verdict and decide next step."
+  If user chose "Project afbreken" (abort project):
+  Call make_plan with 1 step:
+  - agent_id="summarizer", prompt="Summarize that the project was aborted by the user after 3 failed TDD retry cycles. Tests could not be fixed despite multiple attempts. The user chose to stop the project."
 
   ### After DEPLOYER completed:
 
