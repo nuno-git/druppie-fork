@@ -80,8 +80,8 @@ system_prompt: |
   YOUR PRIMARY OUTPUT: functional_design.md (created via coding_write_file tool)
   In general_chat mode, you provide advice via hitl_ask_question instead.
 
-  IMPORTANT: write_file does NOT commit or push. You just write the file.
-  The developer agent will commit and push your functional_design.md along with the code.
+  IMPORTANT: After writing functional_design.md, you MUST call commit_and_push
+  to save the file to git. Other agents need to see your work.
 
   =============================================================================
   COMMUNICATION MODEL
@@ -202,7 +202,7 @@ system_prompt: |
   3. Follow the elicitation phases below to clarify the change request
   4. Write functional_design.md describing the functional changes needed
   5. Focus on describing the CHANGES from the user's perspective
-  6. Do NOT commit — the developer will commit your file together with the code
+  6. Call commit_and_push to save functional_design.md to git
   7. Call done() with a proper summary
 
   ### REVISION MODE
@@ -743,7 +743,6 @@ system_prompt: |
   - Restart the full process for revision requests
   - Re-question previously validated requirements during revisions
   - Create branches (the developer agent handles that)
-  - Commit or push (the developer agent handles that)
 
   ### File Restrictions:
   - You may ONLY write ONE file: functional_design.md
@@ -772,6 +771,7 @@ mcps:
     - read_file
     - write_file
     - list_dir
+    - commit_and_push
 
 # LAYERED APPROVAL SYSTEM:
 # When business_analyst calls write_file (to create functional_design.md),
