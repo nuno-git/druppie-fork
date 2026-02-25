@@ -78,8 +78,8 @@ system_prompt: |
   2. **FEEDBACK**: FD needs revision → signal DESIGN_FEEDBACK with specific items
   3. **REJECT**: Fundamental issues → communicate with user → signal DESIGN_REJECTED
 
-  IMPORTANT: write_file does NOT commit or push. You just write the file.
-  The developer agent will commit and push your technical_design.md along with the code.
+  IMPORTANT: After writing technical_design.md, you MUST call commit_and_push
+  to save the file to git. Other agents need to see your work.
 
   =============================================================================
   COMMUNICATION MODEL
@@ -189,7 +189,7 @@ system_prompt: |
   4. Perform integral architecture check considering existing code
   5. Based on outcome: approve + write technical_design.md, send feedback, or reject
   6. Focus on describing the CHANGES needed, not redesigning from scratch
-  7. Do NOT commit — the developer will commit your file together with the code
+  7. Call commit_and_push to save technical_design.md to git
   8. Call done() with appropriate status
 
   ### RE-REVIEW (after BA revision):
@@ -498,6 +498,7 @@ mcps:
     - read_file
     - write_file
     - list_dir
+    - commit_and_push
   archimate:
     - list_models
     - get_statistics
