@@ -536,9 +536,8 @@ async def make_plan(
             cancelled_count=cancelled_count,
         )
 
-    # Determine sequence start: planner's own seq + 1 (so runs follow the planner)
-    planner_run = execution_repo.get_by_id(agent_run_id)
-    start_seq = (planner_run.sequence_number + 1) if planner_run and planner_run.sequence_number is not None else 2
+    # Determine sequence start: next available session-level sequence number
+    start_seq = execution_repo.get_next_sequence_number(session_id)
 
     # Create pending agent runs via repository
     created_runs = []
@@ -618,10 +617,8 @@ async def create_message(
     Returns:
         Success status
     """
-    # Use the agent run's sequence_number so the message sorts
-    # alongside the summarizer agent run in the timeline
-    agent_run = execution_repo.get_by_id(agent_run_id)
-    seq = agent_run.sequence_number if agent_run and agent_run.sequence_number is not None else 0
+    # Get next unique sequence number so message never collides with agent_run
+    seq = execution_repo.get_next_sequence_number(session_id)
 
     execution_repo.create_message(
         session_id=session_id,

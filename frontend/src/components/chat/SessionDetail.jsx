@@ -834,18 +834,33 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 aria-label="Chat message input"
                 disabled={continueMutation.isPending}
               />
-              <button
-                onClick={handleContinueSend}
-                disabled={!continueInput.trim() || continueMutation.isPending}
-                className="flex-shrink-0 p-2 rounded-xl bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-30 disabled:hover:bg-gray-900 transition-colors"
-                aria-label="Send message"
-              >
-                {continueMutation.isPending ? (
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <Send className="w-4 h-4" />
-                )}
-              </button>
+              {['active', 'paused_approval', 'paused_hitl'].includes(data.status) ? (
+                <button
+                  onClick={() => cancelMutation.mutate()}
+                  disabled={cancelMutation.isPending}
+                  className="flex-shrink-0 p-2 rounded-xl bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
+                  aria-label="Stop agent"
+                >
+                  {cancelMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <StopCircle className="w-4 h-4" />
+                  )}
+                </button>
+              ) : (
+                <button
+                  onClick={handleContinueSend}
+                  disabled={!continueInput.trim() || continueMutation.isPending}
+                  className="flex-shrink-0 p-2 rounded-xl bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-30 disabled:hover:bg-gray-900 transition-colors"
+                  aria-label="Send message"
+                >
+                  {continueMutation.isPending ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4" />
+                  )}
+                </button>
+              )}
             </div>
             {continueMutation.isError && (
               <p className="mt-2 text-xs text-red-600 text-center">
