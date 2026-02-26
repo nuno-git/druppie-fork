@@ -25,9 +25,8 @@ from druppie.api.deps import (
     get_user_roles,
     get_session_service,
 )
-from druppie.api.errors import NotFoundError, AuthorizationError
 from druppie.services import SessionService
-from druppie.domain import SessionDetail, SessionSummary
+from druppie.domain import SessionDetail
 from druppie.domain.common import SessionStatus
 from druppie.core.background_tasks import create_tracked_task
 
@@ -193,8 +192,12 @@ async def _run_retry_background(
 
     db = SessionLocal()
     try:
+        # Create repositories up front — shared by RevertService and Orchestrator
+        session_repo = SessionRepository(db)
+        execution_repo = ExecutionRepository(db)
+
         # Step 1: Revert (delete old runs, revert git, recreate as pending)
-        revert_service = RevertService(db)
+        revert_service = RevertService(execution_repo, session_repo)
         result = await revert_service.retry_from_run(
             session_id, agent_run_id, planned_prompt=planned_prompt,
         )
@@ -215,17 +218,14 @@ async def _run_retry_background(
 
         # Check if session was cancelled during the revert phase
         db.expire_all()
-        session_repo = SessionRepository(db)
         session = session_repo.get_by_id(session_id)
         if session and session.status == SessionStatus.CANCELLED.value:
             logger.info("retry_cancelled_after_revert", session_id=str(session_id))
-            execution_repo = ExecutionRepository(db)
             execution_repo.cancel_pending_runs(session_id)
             db.commit()
             return
 
         # Step 2: Execute pending runs (the recreated ones)
-        execution_repo = ExecutionRepository(db)
         project_repo = ProjectRepository(db)
         question_repo = QuestionRepository(db)
 
@@ -295,25 +295,18 @@ async def retry_from_run(
     user_id = UUID(user["sub"])
     user_roles = get_user_roles(user)
 
-    # Validate session exists and user has access
-    detail = service.get_detail(
+    # Validate session exists and user has access (raises on failure)
+    service.get_detail(
         session_id=session_id,
         user_id=user_id,
         user_roles=user_roles,
     )
 
-    # Atomically check-and-update status using SELECT ... FOR UPDATE
-    # This prevents the TOCTOU race where two concurrent requests both
-    # read status=completed and both spawn background tasks.
-    session = service.session_repo.get_by_id_for_update(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if session.status == SessionStatus.ACTIVE.value:
-        raise HTTPException(status_code=409, detail="Cannot retry while session is active")
-
-    # Set session to active while holding the lock
-    session.status = SessionStatus.ACTIVE.value
-    service.session_repo.commit()  # Lock released here
+    # Atomically lock and transition session to ACTIVE
+    try:
+        service.lock_for_retry(session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
     logger.info(
         "retry_from_run_requested",

@@ -1,11 +1,13 @@
 """Session service for business logic."""
 
 from uuid import UUID
+
 import structlog
 
-from ..repositories import SessionRepository
+from ..api.errors import AuthorizationError, NotFoundError
 from ..domain import SessionDetail, SessionSummary
-from ..api.errors import NotFoundError, AuthorizationError
+from ..domain.common import SessionStatus
+from ..repositories import SessionRepository
 
 logger = structlog.get_logger()
 
@@ -74,3 +76,23 @@ class SessionService:
         self.session_repo.delete(session_id)
         self.session_repo.commit()
         logger.info("session_deleted", session_id=str(session_id), by_user=str(user_id))
+
+    def lock_for_retry(self, session_id: UUID) -> None:
+        """Atomically lock and transition session to ACTIVE for retry.
+
+        Uses SELECT ... FOR UPDATE to prevent race conditions where two
+        concurrent retry requests both read status=completed and both
+        spawn background tasks.
+
+        Raises:
+            NotFoundError: Session not found
+            ValueError: Session is already active (cannot retry)
+        """
+        session = self.session_repo.get_by_id_for_update(session_id)
+        if not session:
+            raise NotFoundError("session", str(session_id))
+        if session.status == SessionStatus.ACTIVE.value:
+            raise ValueError("Cannot retry while session is active")
+
+        session.status = SessionStatus.ACTIVE.value
+        self.session_repo.commit()  # Lock released here

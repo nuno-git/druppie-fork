@@ -3,10 +3,23 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from druppie.db.models import AgentRun, LlmCall, LlmRetry, Message, ToolCall, ToolCallNormalization
+import structlog
+
+from druppie.db.models import (
+    AgentRun,
+    Approval,
+    LlmCall,
+    LlmRetry,
+    Message,
+    Question,
+    ToolCall,
+    ToolCallNormalization,
+)
 from druppie.domain.agent_run import AgentRunSummary
 from druppie.domain.common import AgentRunStatus, TokenUsage
 from druppie.repositories.base import BaseRepository
+
+logger = structlog.get_logger()
 
 
 class ExecutionRepository(BaseRepository):
@@ -524,6 +537,231 @@ class ExecutionRepository(BaseRepository):
     def get_message_count(self, session_id: UUID) -> int:
         """Get total message count for a session (for sequence numbering)."""
         return self.db.query(Message).filter(Message.session_id == session_id).count()
+
+    # =========================================================================
+    # BULK READ METHODS (used by RevertService)
+    # =========================================================================
+
+    def get_runs_from_sequence(self, session_id: UUID, min_sequence: int) -> list[AgentRun]:
+        """Get all runs at or after a sequence number, ordered by sequence.
+
+        Returns raw ORM models (needed for mutation in RevertService).
+        """
+        return (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.sequence_number >= min_sequence,
+            )
+            .order_by(AgentRun.sequence_number)
+            .all()
+        )
+
+    def get_user_message_after_sequence(
+        self, session_id: UUID, after_sequence: int
+    ) -> Message | None:
+        """Get the first user message after a given sequence number."""
+        return (
+            self.db.query(Message)
+            .filter(
+                Message.session_id == session_id,
+                Message.role == "user",
+                Message.sequence_number > after_sequence,
+            )
+            .order_by(Message.sequence_number)
+            .first()
+        )
+
+    def get_tool_calls_for_runs(self, agent_run_ids: list[UUID]) -> list[ToolCall]:
+        """Get all tool calls across multiple runs."""
+        if not agent_run_ids:
+            return []
+        return (
+            self.db.query(ToolCall)
+            .filter(ToolCall.agent_run_id.in_(agent_run_ids))
+            .all()
+        )
+
+    def get_last_commit_before_sequence(
+        self, session_id: UUID, before_sequence: int
+    ) -> ToolCall | None:
+        """Get the last completed commit_and_push tool call before a sequence number."""
+        return (
+            self.db.query(ToolCall)
+            .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.sequence_number < before_sequence,
+                ToolCall.tool_name == "commit_and_push",
+                ToolCall.status == "completed",
+            )
+            .order_by(ToolCall.created_at.desc())
+            .first()
+        )
+
+    def get_first_commit_in_session(self, session_id: UUID) -> ToolCall | None:
+        """Get the first completed commit_and_push tool call in a session."""
+        return (
+            self.db.query(ToolCall)
+            .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
+            .filter(
+                AgentRun.session_id == session_id,
+                ToolCall.tool_name == "commit_and_push",
+                ToolCall.status == "completed",
+            )
+            .order_by(ToolCall.created_at)
+            .first()
+        )
+
+    # =========================================================================
+    # BULK DELETE METHODS (used by RevertService)
+    # =========================================================================
+
+    def clear_execution_artifacts(self, agent_run_ids: list[UUID]) -> dict:
+        """Delete execution artifacts for agent runs, keeping the runs themselves.
+
+        Deletes in FK-safe order: normalizations -> approvals -> questions ->
+        tool_calls -> llm_retries -> llm_calls -> messages
+
+        Returns counts for logging.
+        """
+        if not agent_run_ids:
+            return {"tool_calls": 0, "llm_calls": 0}
+
+        # 1. ToolCallNormalization (FK -> tool_calls)
+        tc_ids = [
+            tc.id
+            for tc in self.db.query(ToolCall.id)
+            .filter(ToolCall.agent_run_id.in_(agent_run_ids))
+            .all()
+        ]
+        if tc_ids:
+            self.db.query(ToolCallNormalization).filter(
+                ToolCallNormalization.tool_call_id.in_(tc_ids)
+            ).delete(synchronize_session="fetch")
+
+        # 2. Approval (FK -> agent_runs, tool_calls)
+        self.db.query(Approval).filter(
+            Approval.agent_run_id.in_(agent_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        # 3. Question (FK -> agent_runs)
+        self.db.query(Question).filter(
+            Question.agent_run_id.in_(agent_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        # 4. ToolCall (FK -> agent_runs, llm_calls)
+        if tc_ids:
+            self.db.query(ToolCall).filter(ToolCall.id.in_(tc_ids)).delete(
+                synchronize_session="fetch"
+            )
+
+        # 5. LlmRetry (FK -> llm_calls)
+        llm_ids = [
+            lc.id
+            for lc in self.db.query(LlmCall.id)
+            .filter(LlmCall.agent_run_id.in_(agent_run_ids))
+            .all()
+        ]
+        if llm_ids:
+            self.db.query(LlmRetry).filter(LlmRetry.llm_call_id.in_(llm_ids)).delete(
+                synchronize_session="fetch"
+            )
+
+        # 6. LlmCall (FK -> agent_runs)
+        if llm_ids:
+            self.db.query(LlmCall).filter(LlmCall.id.in_(llm_ids)).delete(
+                synchronize_session="fetch"
+            )
+
+        # 7. Message — only messages linked to these runs
+        self.db.query(Message).filter(
+            Message.agent_run_id.in_(agent_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        self.db.flush()
+
+        logger.info(
+            "artifacts_cleared",
+            agent_runs=len(agent_run_ids),
+            tool_calls=len(tc_ids),
+            llm_calls=len(llm_ids),
+        )
+        return {"tool_calls": len(tc_ids), "llm_calls": len(llm_ids)}
+
+    def delete_runs_fully(self, agent_run_ids: list[UUID]) -> None:
+        """Delete agent runs AND their execution artifacts entirely.
+
+        Used for planner-created runs during retry — these will be
+        recreated by make_plan when the planner re-executes.
+        """
+        if not agent_run_ids:
+            return
+
+        # First clear all artifacts
+        self.clear_execution_artifacts(agent_run_ids)
+
+        # Then delete the AgentRun rows themselves
+        # Child runs first (parent_run_id FK)
+        self.db.query(AgentRun).filter(
+            AgentRun.parent_run_id.in_(agent_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        self.db.query(AgentRun).filter(AgentRun.id.in_(agent_run_ids)).delete(
+            synchronize_session="fetch"
+        )
+
+        self.db.flush()
+        logger.info("runs_deleted", count=len(agent_run_ids))
+
+    def delete_orphan_messages(self, session_id: UUID, min_sequence: int) -> None:
+        """Delete messages with agent_run_id=NULL at or after a sequence number.
+
+        These are orphan messages (e.g. from create_message tool) that belong
+        to reverted agents.
+        """
+        self.db.query(Message).filter(
+            Message.session_id == session_id,
+            Message.agent_run_id.is_(None),
+            Message.sequence_number >= min_sequence,
+        ).delete(synchronize_session="fetch")
+        self.db.flush()
+
+    # =========================================================================
+    # BULK UPDATE METHODS (used by RevertService)
+    # =========================================================================
+
+    def reset_runs_to_pending(self, agent_run_ids: list[UUID]) -> None:
+        """Reset runs to PENDING status, clearing timestamps, tokens, and errors."""
+        if not agent_run_ids:
+            return
+        runs = (
+            self.db.query(AgentRun).filter(AgentRun.id.in_(agent_run_ids)).all()
+        )
+        for run in runs:
+            run.status = AgentRunStatus.PENDING.value
+            run.started_at = None
+            run.completed_at = None
+            run.error_message = None
+            run.iteration_count = 0
+            run.prompt_tokens = 0
+            run.completion_tokens = 0
+            run.total_tokens = 0
+
+    def update_planned_prompt_batch(self, updates: dict[UUID, str]) -> None:
+        """Batch update planned_prompt for multiple runs.
+
+        Args:
+            updates: Mapping of agent_run_id -> new planned_prompt
+        """
+        if not updates:
+            return
+        runs = (
+            self.db.query(AgentRun).filter(AgentRun.id.in_(updates.keys())).all()
+        )
+        for run in runs:
+            if run.id in updates:
+                run.planned_prompt = updates[run.id]
 
     def get_next_sequence_number(self, session_id: UUID) -> int:
         """Get the next available sequence number for a session.

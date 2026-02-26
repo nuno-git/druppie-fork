@@ -9,20 +9,10 @@ import re
 from uuid import UUID
 
 import structlog
-from sqlalchemy.orm import Session as DBSessionType
 
-from druppie.db.models import (
-    AgentRun,
-    Approval,
-    LlmCall,
-    LlmRetry,
-    Message,
-    Question,
-    Session,
-    ToolCall,
-    ToolCallNormalization,
-)
-from druppie.domain.common import AgentRunStatus, SessionStatus
+from druppie.domain.common import SessionStatus
+from druppie.repositories.execution_repository import ExecutionRepository
+from druppie.repositories.session_repository import SessionRepository
 
 logger = structlog.get_logger()
 
@@ -30,8 +20,13 @@ logger = structlog.get_logger()
 class RevertService:
     """Handles reverting agent runs and preparing for retry."""
 
-    def __init__(self, db: DBSessionType):
-        self.db = db
+    def __init__(
+        self,
+        execution_repo: ExecutionRepository,
+        session_repo: SessionRepository,
+    ):
+        self.execution_repo = execution_repo
+        self.session_repo = session_repo
 
     async def retry_from_run(
         self,
@@ -50,23 +45,21 @@ class RevertService:
         Args:
             session_id: Session UUID
             target_agent_run_id: Agent run to retry from
+            planned_prompt: Optional edited prompt for the target run
 
         Returns:
             Dict with revert details
         """
         # Step 1: Validate
-        session = self.db.query(Session).filter(Session.id == session_id).first()
+        session = self.session_repo.get_by_id(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
 
-        target_run = self.db.query(AgentRun).filter(
-            AgentRun.id == target_agent_run_id,
-            AgentRun.session_id == session_id,
-        ).first()
-        if not target_run:
+        target_summary = self.execution_repo.get_by_id(target_agent_run_id)
+        if not target_summary:
             raise ValueError(f"Agent run {target_agent_run_id} not found in session {session_id}")
 
-        target_sequence = target_run.sequence_number
+        target_sequence = target_summary.sequence_number
         if target_sequence is None:
             raise ValueError("Agent run has no sequence_number — cannot determine revert scope")
 
@@ -77,16 +70,15 @@ class RevertService:
             target_sequence=target_sequence,
         )
 
-        # Step 2: Collect all runs at or after target
-        all_runs_after = (
-            self.db.query(AgentRun)
-            .filter(
-                AgentRun.session_id == session_id,
-                AgentRun.sequence_number >= target_sequence,
-            )
-            .order_by(AgentRun.sequence_number)
-            .all()
+        # Step 2: Collect all runs at or after target (returns ORM models)
+        all_runs_after = self.execution_repo.get_runs_from_sequence(
+            session_id, target_sequence
         )
+
+        # Verify the target run actually belongs to this session
+        target_in_session = any(r.id == target_agent_run_id for r in all_runs_after)
+        if not target_in_session:
+            raise ValueError(f"Agent run {target_agent_run_id} not found in session {session_id}")
 
         if not all_runs_after:
             raise ValueError("No runs found to revert")
@@ -99,15 +91,8 @@ class RevertService:
         #    must be DELETED (they'll never re-run — the user message is gone).
         # B) Planner boundary (within same turn): runs after the first planner
         #    were created by make_plan and will be recreated when planner re-runs.
-        next_user_msg = (
-            self.db.query(Message)
-            .filter(
-                Message.session_id == session_id,
-                Message.role == "user",
-                Message.sequence_number > target_sequence,
-            )
-            .order_by(Message.sequence_number)
-            .first()
+        next_user_msg = self.execution_repo.get_user_message_after_sequence(
+            session_id, target_sequence
         )
         turn_boundary_seq = next_user_msg.sequence_number if next_user_msg else None
 
@@ -152,60 +137,50 @@ class RevertService:
 
         if git_analysis["pre_run_commit_sha"]:
             await self._revert_git_state(
-                session=session,
+                session_id=session_id,
                 target_commit=git_analysis["pre_run_commit_sha"],
             )
 
         for pr_number in git_analysis["pr_numbers"]:
-            await self._close_pr(session=session, pr_number=pr_number)
+            await self._close_pr(session_id=session_id, pr_number=pr_number)
 
         # Step 5: Clear artifacts and reset/delete runs
         # Clear artifacts for runs we're resetting (keep the AgentRun row)
-        if reset_ids:
-            self._clear_execution_artifacts(reset_ids)
+        self.execution_repo.clear_execution_artifacts(reset_ids)
 
         # Fully delete planner-created runs (artifacts + AgentRun rows)
-        if delete_ids:
-            self._delete_runs_fully(delete_ids)
+        self.execution_repo.delete_runs_fully(delete_ids)
 
         # Step 5b: Clean up orphan messages (e.g. from create_message tool)
-        # These messages may have agent_run_id=NULL but belong to reverted agents
-        self.db.query(Message).filter(
-            Message.session_id == session_id,
-            Message.agent_run_id.is_(None),
-            Message.sequence_number >= target_sequence,
-        ).delete(synchronize_session="fetch")
-        self.db.flush()
+        self.execution_repo.delete_orphan_messages(session_id, target_sequence)
 
         # Step 6: Reset the kept runs to PENDING
-        for run in runs_to_reset:
-            run.status = AgentRunStatus.PENDING.value
-            run.started_at = None
-            run.completed_at = None
-            run.error_message = None
-            run.iteration_count = 0
-            run.prompt_tokens = 0
-            run.completion_tokens = 0
-            run.total_tokens = 0
+        self.execution_repo.reset_runs_to_pending(reset_ids)
 
         # Step 6b: Strip accumulated context from non-target runs.
         # When agents run, done() prepends "PREVIOUS AGENT SUMMARY" and
         # set_intent() prepends "INTENT/PROJECT_ID" to the next run's prompt.
         # On retry these need stripping so re-running agents can add them fresh.
+        prompt_updates = {}
         for run in runs_to_reset:
             if run.id != target_agent_run_id and run.planned_prompt:
-                run.planned_prompt = self._strip_accumulated_context(run.planned_prompt)
+                stripped = self._strip_accumulated_context(run.planned_prompt)
+                if stripped != run.planned_prompt:
+                    prompt_updates[run.id] = stripped
 
         # Step 6c: Apply edited planned_prompt to target run only
         if planned_prompt is not None:
-            target_run.planned_prompt = planned_prompt
+            prompt_updates[target_agent_run_id] = planned_prompt
+
+        if prompt_updates:
+            self.execution_repo.update_planned_prompt_batch(prompt_updates)
 
         # Step 7: Reset session
         session.status = SessionStatus.ACTIVE.value
         session.error_message = None
-        self._recalculate_session_tokens(session)
+        self.session_repo.recalculate_token_totals(session_id)
 
-        self.db.commit()
+        self.execution_repo.commit()
 
         logger.info(
             "retry_from_run_complete",
@@ -225,91 +200,6 @@ class RevertService:
             "warnings": git_analysis.get("warnings", []),
         }
 
-    def _clear_execution_artifacts(self, agent_run_ids: list[UUID]) -> None:
-        """Delete execution artifacts for agent runs, keeping the runs themselves.
-
-        Deletes in FK-safe order: normalizations -> approvals -> questions ->
-        tool_calls -> llm_retries -> llm_calls -> messages
-        """
-        # 1. ToolCallNormalization (FK -> tool_calls)
-        tc_ids = [
-            tc.id for tc in
-            self.db.query(ToolCall.id).filter(ToolCall.agent_run_id.in_(agent_run_ids)).all()
-        ]
-        if tc_ids:
-            self.db.query(ToolCallNormalization).filter(
-                ToolCallNormalization.tool_call_id.in_(tc_ids)
-            ).delete(synchronize_session="fetch")
-
-        # 2. Approval (FK -> agent_runs, tool_calls)
-        self.db.query(Approval).filter(
-            Approval.agent_run_id.in_(agent_run_ids)
-        ).delete(synchronize_session="fetch")
-
-        # 3. Question (FK -> agent_runs)
-        self.db.query(Question).filter(
-            Question.agent_run_id.in_(agent_run_ids)
-        ).delete(synchronize_session="fetch")
-
-        # 4. ToolCall (FK -> agent_runs, llm_calls)
-        if tc_ids:
-            self.db.query(ToolCall).filter(
-                ToolCall.id.in_(tc_ids)
-            ).delete(synchronize_session="fetch")
-
-        # 5. LlmRetry (FK -> llm_calls)
-        llm_ids = [
-            lc.id for lc in
-            self.db.query(LlmCall.id).filter(LlmCall.agent_run_id.in_(agent_run_ids)).all()
-        ]
-        if llm_ids:
-            self.db.query(LlmRetry).filter(
-                LlmRetry.llm_call_id.in_(llm_ids)
-            ).delete(synchronize_session="fetch")
-
-        # 6. LlmCall (FK -> agent_runs)
-        if llm_ids:
-            self.db.query(LlmCall).filter(
-                LlmCall.id.in_(llm_ids)
-            ).delete(synchronize_session="fetch")
-
-        # 7. Message — only messages linked to these runs
-        self.db.query(Message).filter(
-            Message.agent_run_id.in_(agent_run_ids)
-        ).delete(synchronize_session="fetch")
-
-        self.db.flush()
-
-        logger.info(
-            "artifacts_cleared",
-            agent_runs=len(agent_run_ids),
-            tool_calls=len(tc_ids),
-            llm_calls=len(llm_ids),
-        )
-
-    def _delete_runs_fully(self, agent_run_ids: list[UUID]) -> None:
-        """Delete agent runs AND their execution artifacts entirely.
-
-        Used for planner-created runs during retry — these will be
-        recreated by make_plan when the planner re-executes.
-        """
-        # First clear all artifacts
-        self._clear_execution_artifacts(agent_run_ids)
-
-        # Then delete the AgentRun rows themselves
-        # Child runs first (parent_run_id FK)
-        self.db.query(AgentRun).filter(
-            AgentRun.parent_run_id.in_(agent_run_ids)
-        ).delete(synchronize_session="fetch")
-
-        self.db.query(AgentRun).filter(
-            AgentRun.id.in_(agent_run_ids)
-        ).delete(synchronize_session="fetch")
-
-        self.db.flush()
-
-        logger.info("runs_deleted", count=len(agent_run_ids))
-
     def _analyze_git_side_effects(
         self,
         session_id: UUID,
@@ -321,11 +211,7 @@ class RevertService:
         pr_numbers = []
         warnings = []
 
-        tool_calls = (
-            self.db.query(ToolCall)
-            .filter(ToolCall.agent_run_id.in_(agent_run_ids))
-            .all()
-        )
+        tool_calls = self.execution_repo.get_tool_calls_for_runs(agent_run_ids)
 
         for tc in tool_calls:
             if tc.tool_name == "commit_and_push" and tc.result:
@@ -346,17 +232,8 @@ class RevertService:
 
         # Find pre-run commit SHA from the last commit before the target sequence
         pre_run_commit_sha = None
-        prior_tool_call = (
-            self.db.query(ToolCall)
-            .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
-            .filter(
-                AgentRun.session_id == session_id,
-                AgentRun.sequence_number < target_sequence,
-                ToolCall.tool_name == "commit_and_push",
-                ToolCall.status == "completed",
-            )
-            .order_by(ToolCall.created_at.desc())
-            .first()
+        prior_tool_call = self.execution_repo.get_last_commit_before_sequence(
+            session_id, target_sequence
         )
 
         if prior_tool_call and prior_tool_call.result:
@@ -367,17 +244,7 @@ class RevertService:
         # If no prior commits but we have commits to revert,
         # find the parent of the first commit in the session
         if not pre_run_commit_sha and commit_shas:
-            first_commit_tc = (
-                self.db.query(ToolCall)
-                .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
-                .filter(
-                    AgentRun.session_id == session_id,
-                    ToolCall.tool_name == "commit_and_push",
-                    ToolCall.status == "completed",
-                )
-                .order_by(ToolCall.created_at)
-                .first()
-            )
+            first_commit_tc = self.execution_repo.get_first_commit_in_session(session_id)
             if first_commit_tc and first_commit_tc.result:
                 result = self._parse_tool_result(first_commit_tc.result)
                 sha = result.get("commit_sha") if result else None
@@ -391,7 +258,8 @@ class RevertService:
             "warnings": warnings,
         }
 
-    def _parse_tool_result(self, result: str) -> dict | None:
+    @staticmethod
+    def _parse_tool_result(result: str) -> dict | None:
         """Parse a tool call result string as JSON."""
         if not result:
             return None
@@ -402,7 +270,7 @@ class RevertService:
         except (json.JSONDecodeError, TypeError):
             return None
 
-    async def _revert_git_state(self, session: Session, target_commit: str) -> None:
+    async def _revert_git_state(self, session_id: UUID, target_commit: str) -> None:
         """Call revert_to_commit MCP tool to reset git state.
 
         Raises RuntimeError if the revert fails — callers must not proceed
@@ -419,7 +287,7 @@ class RevertService:
             tool="_internal_revert_to_commit",
             args={
                 "target_commit": target_commit,
-                "session_id": str(session.id),
+                "session_id": str(session_id),
             },
             timeout_seconds=120.0,
         )
@@ -428,7 +296,7 @@ class RevertService:
             error = result.get("error", "unknown error")
             logger.error(
                 "git_revert_failed",
-                session_id=str(session.id),
+                session_id=str(session_id),
                 target_commit=target_commit,
                 error=error,
             )
@@ -436,13 +304,13 @@ class RevertService:
 
         logger.info(
             "git_revert_success",
-            session_id=str(session.id),
+            session_id=str(session_id),
             previous_head=result.get("previous_head"),
             new_head=result.get("new_head"),
             force_pushed=result.get("force_pushed"),
         )
 
-    async def _close_pr(self, session: Session, pr_number: int) -> None:
+    async def _close_pr(self, session_id: UUID, pr_number: int) -> None:
         """Call close_pull_request MCP tool."""
         from druppie.core.mcp_config import MCPConfig
         from druppie.execution.mcp_http import MCPHttp
@@ -456,13 +324,13 @@ class RevertService:
                 tool="_internal_close_pull_request",
                 args={
                     "pr_number": pr_number,
-                    "session_id": str(session.id),
+                    "session_id": str(session_id),
                 },
                 timeout_seconds=30.0,
             )
 
             if result.get("success"):
-                logger.info("closed_pr", pr_number=pr_number, session_id=str(session.id))
+                logger.info("closed_pr", pr_number=pr_number, session_id=str(session_id))
             else:
                 logger.warning(
                     "close_pr_failed",
@@ -500,24 +368,3 @@ class RevertService:
                 changed = True
 
         return prompt
-
-    def _recalculate_session_tokens(self, session: Session) -> None:
-        """Recalculate session token totals from remaining non-pending agent runs."""
-        from sqlalchemy import func
-
-        result = (
-            self.db.query(
-                func.coalesce(func.sum(AgentRun.prompt_tokens), 0),
-                func.coalesce(func.sum(AgentRun.completion_tokens), 0),
-                func.coalesce(func.sum(AgentRun.total_tokens), 0),
-            )
-            .filter(
-                AgentRun.session_id == session.id,
-                AgentRun.status != AgentRunStatus.PENDING.value,
-            )
-            .first()
-        )
-
-        session.prompt_tokens = result[0]
-        session.completion_tokens = result[1]
-        session.total_tokens = result[2]
