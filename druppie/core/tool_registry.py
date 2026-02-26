@@ -57,10 +57,20 @@ from druppie.tools.params.coding import (
     DeleteFileParams,
     GetGitStatusParams,
     ListDirParams,
+    MakeDesignParams,
     MergePullRequestParams,
     MergeToMainParams,
     ReadFileParams,
     WriteFileParams,
+)
+from druppie.tools.params.archimate import (
+    GetElementParams,
+    GetImpactParams,
+    GetStatisticsParams,
+    GetViewParams,
+    ListElementsParams,
+    ListViewsParams,
+    SearchModelParams,
 )
 from druppie.tools.params.docker import (
     DockerBuildParams,
@@ -88,6 +98,7 @@ PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
     # Coding tools
     ("coding", "read_file"): ReadFileParams,
     ("coding", "write_file"): WriteFileParams,
+    ("coding", "make_design"): MakeDesignParams,
     ("coding", "batch_write_files"): BatchWriteFilesParams,
     ("coding", "list_dir"): ListDirParams,
     ("coding", "delete_file"): DeleteFileParams,
@@ -112,6 +123,14 @@ PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
     ("coding", "get_coverage_report"): GetCoverageReportParams,
     ("coding", "install_test_dependencies"): InstallTestDependenciesParams,
     ("coding", "validate_tdd"): ValidateTddParams,
+    # Archimate tools
+    ("archimate", "get_statistics"): GetStatisticsParams,
+    ("archimate", "list_elements"): ListElementsParams,
+    ("archimate", "get_element"): GetElementParams,
+    ("archimate", "list_views"): ListViewsParams,
+    ("archimate", "get_view"): GetViewParams,
+    ("archimate", "search_model"): SearchModelParams,
+    ("archimate", "get_impact"): GetImpactParams,
     # Builtin tools
     ("builtin", "done"): DoneParams,
     ("builtin", "hitl_ask_question"): HitlAskQuestionParams,
