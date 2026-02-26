@@ -15,7 +15,6 @@ Services handle:
 This file went from 776 lines to ~80 lines by moving logic to services/repositories.
 """
 
-import asyncio
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from uuid import UUID
@@ -30,6 +29,7 @@ from druppie.api.errors import NotFoundError, AuthorizationError
 from druppie.services import SessionService
 from druppie.domain import SessionDetail, SessionSummary
 from druppie.domain.common import SessionStatus
+from druppie.core.background_tasks import create_tracked_task
 
 logger = structlog.get_logger()
 
@@ -323,12 +323,13 @@ async def retry_from_run(
     )
 
     # Spawn background task
-    asyncio.create_task(
+    create_tracked_task(
         _run_retry_background(
             session_id=session_id,
             agent_run_id=agent_run_id,
             planned_prompt=body.planned_prompt if body else None,
-        )
+        ),
+        name=f"retry-{session_id}",
     )
 
     return {

@@ -19,7 +19,6 @@ The endpoint returns immediately. The client polls
 GET /api/sessions/{id} to track progress.
 """
 
-import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -34,6 +33,7 @@ from druppie.api.deps import (
 from druppie.services import ApprovalService
 from druppie.domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList
 from druppie.domain.common import SessionStatus
+from druppie.core.background_tasks import create_tracked_task
 
 logger = structlog.get_logger()
 
@@ -217,11 +217,12 @@ async def approve(
     )
 
     # Step 2: Spawn background task to resume workflow
-    asyncio.create_task(
+    create_tracked_task(
         _resume_workflow_after_approval(
             session_id=approval.session_id,
             approval_id=approval_id,
-        )
+        ),
+        name=f"resume-approve-{approval_id}",
     )
 
     logger.info(
@@ -282,11 +283,12 @@ async def reject(
     )
 
     # Step 2: Spawn background task to resume workflow
-    asyncio.create_task(
+    create_tracked_task(
         _resume_workflow_after_approval(
             session_id=approval.session_id,
             approval_id=approval_id,
-        )
+        ),
+        name=f"resume-reject-{approval_id}",
     )
 
     logger.info(

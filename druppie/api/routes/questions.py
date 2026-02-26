@@ -22,7 +22,6 @@ The endpoint returns immediately. The client polls
 GET /api/sessions/{id} to track progress.
 """
 
-import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -36,6 +35,7 @@ from druppie.api.deps import (
 from druppie.services import QuestionService
 from druppie.domain import QuestionDetail
 from druppie.domain.common import SessionStatus
+from druppie.core.background_tasks import create_tracked_task
 
 logger = structlog.get_logger()
 
@@ -192,12 +192,13 @@ async def answer_question(
     )
 
     # Step 2: Spawn background task to resume workflow
-    asyncio.create_task(
+    create_tracked_task(
         _resume_workflow_after_answer(
             session_id=question.session_id,
             question_id=question_id,
             answer=request.answer,
-        )
+        ),
+        name=f"resume-answer-{question_id}",
     )
 
     logger.info(
