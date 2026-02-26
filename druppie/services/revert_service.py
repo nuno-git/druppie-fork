@@ -5,6 +5,7 @@ so the orchestrator can re-execute them.
 """
 
 import json
+import re
 from uuid import UUID
 
 import structlog
@@ -187,7 +188,15 @@ class RevertService:
             run.completion_tokens = 0
             run.total_tokens = 0
 
-        # Step 6b: Apply edited planned_prompt to target run only
+        # Step 6b: Strip accumulated context from non-target runs.
+        # When agents run, done() prepends "PREVIOUS AGENT SUMMARY" and
+        # set_intent() prepends "INTENT/PROJECT_ID" to the next run's prompt.
+        # On retry these need stripping so re-running agents can add them fresh.
+        for run in runs_to_reset:
+            if run.id != target_agent_run_id and run.planned_prompt:
+                run.planned_prompt = self._strip_accumulated_context(run.planned_prompt)
+
+        # Step 6c: Apply edited planned_prompt to target run only
         if planned_prompt is not None:
             target_run.planned_prompt = planned_prompt
 
@@ -463,6 +472,34 @@ class RevertService:
 
         except Exception as e:
             logger.warning("close_pr_error", pr_number=pr_number, error=str(e))
+
+    @staticmethod
+    def _strip_accumulated_context(prompt: str) -> str:
+        """Strip accumulated PREVIOUS AGENT SUMMARY and INTENT/PROJECT_ID blocks.
+
+        These blocks are prepended by done() and set_intent() during agent
+        execution. On retry they must be removed so re-running agents can
+        add fresh versions without duplication.
+        """
+        changed = True
+        while changed:
+            changed = False
+
+            # Strip "PREVIOUS AGENT SUMMARY:\n...\n\n---\n\n"
+            if prompt.startswith("PREVIOUS AGENT SUMMARY:"):
+                separator = "\n\n---\n\n"
+                idx = prompt.find(separator)
+                if idx != -1:
+                    prompt = prompt[idx + len(separator):]
+                    changed = True
+
+            # Strip "INTENT: ...\nPROJECT_ID: ...\n\n"
+            match = re.match(r"^INTENT: .+\nPROJECT_ID: .+\n\n", prompt)
+            if match:
+                prompt = prompt[match.end():]
+                changed = True
+
+        return prompt
 
     def _recalculate_session_tokens(self, session: Session) -> None:
         """Recalculate session token totals from remaining non-pending agent runs."""
