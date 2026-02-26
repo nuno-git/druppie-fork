@@ -257,7 +257,6 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
   }
 
   const allowOther = tc.tool_name === 'hitl_ask_multiple_choice_question'
-    && tc.arguments?.allow_other !== false
 
   const questionData = {
     id: tc.question_id,
