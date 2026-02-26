@@ -14,7 +14,7 @@ httpx>=0.26.0
 litellm>=1.30.0
 
 # MCP Client
-fastmcp>=2.0.0
+fastmcp>=2.0.0,<3.0.0
 
 # Database
 sqlalchemy>=2.0.0

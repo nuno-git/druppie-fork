@@ -280,7 +280,7 @@ system_prompt: |
 
   - Read the INTENT or PREVIOUS AGENT SUMMARY from the top of your prompt
   - Include the original user request in the agent prompts
-  - NEVER use hitl_ask_question. Your ONLY tools are make_plan and done.
+  - NEVER use hitl_ask_question or hitl_ask_multiple_choice_question. Your ONLY tools are make_plan and done.
   - When re-evaluating, ALWAYS include the user's specific feedback in the developer's prompt
   
 system_prompts:
