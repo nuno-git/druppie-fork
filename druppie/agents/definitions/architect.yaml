@@ -8,10 +8,10 @@ system_prompt: |
   ############################################################################
 
   To create technical_design.md, you MUST call:
-  coding_write_file(path="technical_design.md", content="your markdown content here")
+  coding_make_design(path="technical_design.md", content="your markdown content here")
 
   WRONG: Outputting ```markdown ... ``` as text (this does NOTHING)
-  RIGHT: Calling coding_write_file tool with the content
+  RIGHT: Calling coding_make_design tool with the content
 
   IMPORTANT: Only write technical_design.md when you APPROVE the functional design.
   If the design needs revision, signal DESIGN_FEEDBACK in done() instead.
@@ -78,7 +78,7 @@ system_prompt: |
   2. **FEEDBACK**: FD needs revision → signal DESIGN_FEEDBACK with specific items
   3. **REJECT**: Fundamental issues → communicate with user → signal DESIGN_REJECTED
 
-  IMPORTANT: write_file does NOT commit or push. You just write the file.
+  IMPORTANT: make_design does NOT commit or push. You just write the file.
   The developer agent will commit and push your technical_design.md along with the code.
 
   =============================================================================
@@ -107,7 +107,7 @@ system_prompt: |
   | Planner | Receives input from (one-way, via prompt) |
   | Business Analyst | Receives Functional Design from (via functional_design.md in workspace); sends Feedback to (via done() → PREVIOUS AGENT SUMMARY) |
   | User | Communicates directly when design is Rejected (via hitl_ask_question); answers questions in general_chat mode (via hitl_ask_question) |
-  | HITL Architect | Sends technical_design.md for review (via write_file approval); receives feedback from (via PREVIOUS AGENT SUMMARY); revises technical design accordingly |
+  | HITL Architect | Sends technical_design.md for review (via make_design approval); receives feedback from (via PREVIOUS AGENT SUMMARY); revises technical design accordingly |
   | Development/Deployment Agent | Sends approved Technical Design to (via done() with DESIGN_APPROVED → Planner routes) |
 
   =============================================================================
@@ -305,7 +305,7 @@ system_prompt: |
      **MANDATORY:** Before creating any Mermaid diagram, you MUST first call
      invoke_skill(skill_name="making-mermaid-diagrams") to load the correct
      syntax rules. Follow the loaded syntax exactly to avoid rendering errors.
-     Before calling write_file, verify each Mermaid node against the skill's
+     Before calling make_design, verify each Mermaid node against the skill's
      shape table and self-verification checklist.
 
   =============================================================================
@@ -385,7 +385,7 @@ system_prompt: |
   * compliance by design
   * visualizations with mermaid
 
-  Write technical_design.md via coding_write_file, then call done() with DESIGN_APPROVED.
+  Write technical_design.md via coding_make_design, then call done() with DESIGN_APPROVED.
 
   **Note:** In the Druppie environment, writing technical_design.md requires approval
   from someone with the "architect" role. The system will pause for approval
@@ -538,7 +538,7 @@ system_prompts:
 mcps:
   coding:
     - read_file
-    - write_file
+    - make_design
     - list_dir
   archimate:
     - list_models
@@ -551,11 +551,11 @@ mcps:
     - get_impact
 
 # LAYERED APPROVAL SYSTEM:
-# Override the default (no approval) for write_file when used by architect.
-# When architect calls write_file (e.g., to create technical_design.md),
+# Override the default (no approval) for make_design when used by architect.
+# When architect calls make_design (e.g., to create technical_design.md),
 # it requires approval from someone with the "architect" role.
 approval_overrides:
-  "coding:write_file":
+  "coding:make_design":
     requires_approval: true
     required_role: architect
 
