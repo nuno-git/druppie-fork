@@ -38,6 +38,15 @@ from .coding import (
     ReadFileParams,
     WriteFileParams,
 )
+from .archimate import (
+    GetElementParams,
+    GetImpactParams,
+    GetStatisticsParams,
+    GetViewParams,
+    ListElementsParams,
+    ListViewsParams,
+    SearchModelParams,
+)
 from .docker import (
     DockerBuildParams,
     DockerExecCommandParams,
@@ -69,6 +78,14 @@ __all__ = [
     "CreatePullRequestParams",
     "MergePullRequestParams",
     "GetGitStatusParams",
+    # Archimate
+    "GetStatisticsParams",
+    "ListElementsParams",
+    "GetElementParams",
+    "ListViewsParams",
+    "GetViewParams",
+    "SearchModelParams",
+    "GetImpactParams",
     # Docker
     "DockerBuildParams",
     "DockerRunParams",

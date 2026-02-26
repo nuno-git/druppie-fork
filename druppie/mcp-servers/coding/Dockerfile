@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server.py .
 COPY module.py .
 COPY testing_module.py .
+COPY mermaid_validator.py .
 
 # Create workspace directory
 RUN mkdir -p /workspaces
