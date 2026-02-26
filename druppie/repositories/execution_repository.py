@@ -806,6 +806,18 @@ class ExecutionRepository(BaseRepository):
             if run.id in updates:
                 run.planned_prompt = updates[run.id]
 
+    def is_session_cancelled(self, session_id: UUID) -> bool:
+        """Check if the session has been cancelled (lightweight DB poll).
+
+        Expires cached state first so we always read the current DB value.
+        Used by the agent loop for cooperative cancellation checks.
+        """
+        from druppie.db.models import Session
+
+        self.db.expire_all()
+        session = self.db.query(Session).filter(Session.id == session_id).first()
+        return session is not None and session.status == "cancelled"
+
     def get_next_sequence_number(self, session_id: UUID) -> int:
         """Get the next available sequence number for a session.
 
