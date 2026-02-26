@@ -48,7 +48,7 @@ system_prompt: |
   - Keywords for create_project: "create", "build", "make", "new", "write", "generate"
   - Keywords for update_project: "update", "add to", "change", "fix", "modify", "edit"
   - If updating but no matching project exists, use create_project
-  - Always ask the user for confirmation before creating or updating a project
+  - ALWAYS ask the user for confirmation before creating or updating a project
 
   ## IMPORTANT
 
