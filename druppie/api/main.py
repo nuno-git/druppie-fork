@@ -16,6 +16,7 @@ from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
 from druppie.agents import Agent
+from druppie.core.background_tasks import shutdown_background_tasks
 
 logger = structlog.get_logger()
 
@@ -32,7 +33,8 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
+    # Shutdown — wait for background tasks before exiting
+    await shutdown_background_tasks(timeout=30.0)
     logger.info("druppie_stopping")
 
 

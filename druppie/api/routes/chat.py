@@ -23,7 +23,6 @@ approvals/questions and uses:
 - POST /questions/{id}/answer
 """
 
-import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -34,6 +33,7 @@ from druppie.api.deps import get_current_user, get_optional_user, get_session_re
 from druppie.repositories import SessionRepository, ExecutionRepository
 from druppie.domain.common import SessionStatus
 from druppie.api.errors import NotFoundError, AuthorizationError
+from druppie.core.background_tasks import create_tracked_task
 
 logger = structlog.get_logger()
 
@@ -236,13 +236,14 @@ async def chat(
         )
 
         # Step 2: Spawn background task (does NOT block)
-        asyncio.create_task(
+        create_tracked_task(
             _run_orchestrator_background(
                 message=request.message,
                 user_id=user_id,
                 session_id=current_session_id,
                 project_id=project_id,
-            )
+            ),
+            name=f"orchestrator-{current_session_id}",
         )
 
         # Step 3: Return immediately
