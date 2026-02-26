@@ -47,6 +47,20 @@ class SessionRepository(BaseRepository):
         """Get raw session model."""
         return self.db.query(SessionModel).filter_by(id=session_id).first()
 
+    def get_by_id_for_update(self, session_id: UUID) -> SessionModel | None:
+        """Get raw session model with a row-level lock (SELECT ... FOR UPDATE).
+
+        Use this when you need to read-then-update the session atomically,
+        e.g. to prevent race conditions on status transitions. The lock is
+        held until the transaction commits or rolls back.
+        """
+        return (
+            self.db.query(SessionModel)
+            .filter_by(id=session_id)
+            .with_for_update()
+            .first()
+        )
+
     def list_for_user(
         self,
         user_id: UUID | None,

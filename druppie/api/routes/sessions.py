@@ -302,13 +302,18 @@ async def retry_from_run(
         user_roles=user_roles,
     )
 
-    # Cannot retry active sessions
-    if detail.status == "active":
+    # Atomically check-and-update status using SELECT ... FOR UPDATE
+    # This prevents the TOCTOU race where two concurrent requests both
+    # read status=completed and both spawn background tasks.
+    session = service.session_repo.get_by_id_for_update(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.status == SessionStatus.ACTIVE.value:
         raise HTTPException(status_code=409, detail="Cannot retry while session is active")
 
-    # Set session to active immediately so frontend shows processing
-    service.session_repo.update_status(session_id, SessionStatus.ACTIVE)
-    service.session_repo.commit()
+    # Set session to active while holding the lock
+    session.status = SessionStatus.ACTIVE.value
+    service.session_repo.commit()  # Lock released here
 
     logger.info(
         "retry_from_run_requested",
