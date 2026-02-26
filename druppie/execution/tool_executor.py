@@ -329,6 +329,43 @@ class ToolExecutor:
             )
             return None
 
+    def _validate_make_design_content(self, content: str) -> str | None:
+        """Validate Mermaid syntax in make_design content before the approval gate.
+
+        Loads the mermaid_validator from the coding MCP server package
+        (which uses a hyphenated directory name, so importlib is needed).
+
+        Returns:
+            Error message string if validation fails, None if valid.
+        """
+        try:
+            import importlib.util
+            from pathlib import Path
+
+            validator_path = (
+                Path(__file__).parent.parent / "mcp-servers" / "coding" / "mermaid_validator.py"
+            )
+            spec = importlib.util.spec_from_file_location("mermaid_validator", validator_path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+
+            errors = mod.validate_mermaid_in_markdown(content)
+            if errors:
+                error_lines = [
+                    f"Line {e.line_number} [{e.rule}]: {e.message}"
+                    for e in errors
+                ]
+                return (
+                    "MERMAID SYNTAX ERRORS — file was NOT written. "
+                    "Fix these errors and try again:\n\n"
+                    + "\n".join(error_lines)
+                    + "\n\nAfter fixing, call make_design again with the corrected content."
+                )
+            return None
+        except Exception as e:
+            logger.warning("mermaid_pre_validation_exception", error=str(e))
+            return None
+
     def _is_tool_allowed_via_skill(
         self,
         mcp_server: str,
@@ -427,6 +464,27 @@ class ToolExecutor:
             )
             self.db.commit()
             return ToolCallStatus.FAILED
+
+        # Step 2.6: Pre-approval content validation for make_design
+        # Validates Mermaid syntax BEFORE the approval gate so agents can fix
+        # errors without wasting a human reviewer's time.
+        if tool_call.tool_name == "make_design" and tool_call.arguments:
+            content = tool_call.arguments.get("content", "")
+            if content:
+                content_error = self._validate_make_design_content(content)
+                if content_error:
+                    logger.warning(
+                        "pre_approval_content_validation_failed",
+                        tool_call_id=str(tool_call_id),
+                        tool_name=tool_call.tool_name,
+                    )
+                    self.execution_repo.update_tool_call(
+                        tool_call.id,
+                        status=ToolCallStatus.FAILED,
+                        error=content_error,
+                    )
+                    self.db.commit()
+                    return ToolCallStatus.FAILED
 
         # Step 3: Check tool access and approval for MCP tools (not builtin)
         if not is_builtin and tool_call.mcp_server:
