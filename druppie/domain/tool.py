@@ -309,13 +309,28 @@ class ToolDefinition(BaseModel):
         - "{}" string instead of empty object {}
         - "[]" string instead of empty array []
         - "true"/"false" strings instead of booleans
+        - Extra/unknown keyword arguments (e.g., "size" copied from read_file response)
 
         This is used as a fallback when initial validation fails.
         """
         import json
+        import structlog
+        _logger = structlog.get_logger()
+
+        # Strip unknown arguments not in the tool's schema
+        known_fields = set(self.params_model.model_fields.keys())
+        extra_keys = set(arguments.keys()) - known_fields
+        if extra_keys:
+            _logger.warning(
+                "stripping_unknown_tool_arguments",
+                tool=self.full_name,
+                extra_keys=sorted(extra_keys),
+            )
 
         normalized = {}
         for key, value in arguments.items():
+            if key in extra_keys:
+                continue  # Strip unknown arguments
             if isinstance(value, str):
                 # Handle string "null" -> None
                 if value.lower() == "null":
