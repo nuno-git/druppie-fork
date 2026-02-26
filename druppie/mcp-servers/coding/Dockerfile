@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy server code
 COPY server.py .
 COPY module.py .
+COPY retry_module.py .
 COPY testing_module.py .
 
 # Create workspace directory

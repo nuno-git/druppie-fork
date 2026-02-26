@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 from fastmcp import FastMCP
+from retry_module import revert_to_commit, close_pull_request
 from testing_module import TestingModule
 
 # Configure logging
@@ -1906,18 +1907,6 @@ async def _internal_revert_to_commit(
 
     Internal tool used by the backend for retry/revert operations.
     Not intended for direct agent use.
-
-    Args:
-        target_commit: The commit SHA to reset to
-        session_id: Session ID (auto-creates workspace if needed)
-        workspace_id: Legacy workspace ID (optional)
-        project_id: Project ID for workspace path (optional)
-        user_id: User ID for workspace path (optional)
-        repo_name: Gitea repository name
-        repo_owner: Gitea repository owner
-
-    Returns:
-        Dict with success, previous_head, new_head, force_pushed
     """
     try:
         # Resolve workspace
@@ -1934,83 +1923,24 @@ async def _internal_revert_to_commit(
         elif workspace_id:
             ws = get_workspace(workspace_id)
             workspace_path = Path(ws["path"])
-            resolved_workspace_id = workspace_id
         else:
             return {"success": False, "error": "Either session_id or workspace_id is required"}
 
-        cwd = str(workspace_path)
-        branch = ws["branch"]
-
-        # Capture current HEAD
-        head_result = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True
-        )
-        previous_head = head_result.stdout.strip() if head_result.returncode == 0 else None
-
-        logger.info(
-            "revert_to_commit: %s -> %s (branch=%s)",
-            previous_head, target_commit, branch,
-        )
-
-        # Hard reset to target commit
-        reset_result = subprocess.run(
-            ["git", "reset", "--hard", target_commit],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-        )
-        if reset_result.returncode != 0:
-            return {
-                "success": False,
-                "error": f"git reset --hard failed: {reset_result.stderr}",
-            }
-
-        # Capture new HEAD
-        new_head_result = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True
-        )
-        new_head = new_head_result.stdout.strip() if new_head_result.returncode == 0 else None
-
-        # Force push if Gitea is configured
-        force_pushed = False
+        # Build Gitea clone URL if configured
+        gitea_clone_url = None
         if is_gitea_configured():
             repo_name_ws = ws.get("repo_name") or repo_name
             repo_owner_ws = ws.get("repo_owner") or repo_owner
             if repo_name_ws:
-                auth_url = get_gitea_clone_url(repo_name_ws, repo_owner_ws)
-                subprocess.run(
-                    ["git", "remote", "set-url", "origin", auth_url],
-                    cwd=cwd,
-                    check=True,
-                    capture_output=True,
-                )
+                gitea_clone_url = get_gitea_clone_url(repo_name_ws, repo_owner_ws)
 
-            push_result = subprocess.run(
-                ["git", "push", "--force", "origin", branch],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if push_result.returncode == 0:
-                force_pushed = True
-                logger.info("Force pushed to %s after revert", branch)
-            else:
-                logger.error("Force push failed after revert: %s", push_result.stderr)
-                return {
-                    "success": False,
-                    "error": f"Git reset succeeded but force push failed: {push_result.stderr}",
-                    "previous_head": previous_head,
-                    "new_head": new_head,
-                    "force_pushed": False,
-                }
-
-        return {
-            "success": True,
-            "previous_head": previous_head,
-            "new_head": new_head,
-            "force_pushed": force_pushed,
-        }
+        return revert_to_commit(
+            workspace_path=workspace_path,
+            branch=ws["branch"],
+            target_commit=target_commit,
+            gitea_clone_url=gitea_clone_url,
+            is_gitea_configured=is_gitea_configured(),
+        )
 
     except Exception as e:
         logger.error("revert_to_commit error: %s", e)
@@ -2030,21 +1960,7 @@ async def _internal_close_pull_request(
     """Close an open pull request on Gitea without merging.
 
     Internal tool used by the backend for retry/revert operations.
-
-    Args:
-        pr_number: The pull request number to close
-        session_id: Session ID (auto-creates workspace if needed)
-        workspace_id: Legacy workspace ID (optional)
-        project_id: Project ID for workspace path (optional)
-        user_id: User ID for workspace path (optional)
-        repo_name: Gitea repository name
-        repo_owner: Gitea repository owner
-
-    Returns:
-        Dict with success, pr_number, closed
     """
-    import httpx
-
     try:
         # Resolve workspace to get repo info
         if session_id:
@@ -2068,26 +1984,13 @@ async def _internal_close_pull_request(
 
         owner, repo = repo_info
 
-        # Close PR via Gitea API
-        api_url = f"{GITEA_URL}/api/v1/repos/{owner}/{repo}/pulls/{pr_number}"
-        payload = {"state": "closed"}
-
-        async with httpx.AsyncClient() as client:
-            resp = await client.patch(
-                api_url,
-                json=payload,
-                headers=_gitea_api_headers(),
-                timeout=30.0,
-            )
-
-        if resp.status_code in (200, 204):
-            logger.info("Closed PR #%d on %s/%s", pr_number, owner, repo)
-            return {"success": True, "pr_number": pr_number, "closed": True}
-        else:
-            return {
-                "success": False,
-                "error": f"Gitea API error {resp.status_code}: {resp.text}",
-            }
+        return await close_pull_request(
+            pr_number=pr_number,
+            repo_owner=owner,
+            repo_name=repo,
+            gitea_url=GITEA_URL,
+            api_headers=_gitea_api_headers(),
+        )
 
     except Exception as e:
         logger.error("close_pull_request error: %s", e)
