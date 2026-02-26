@@ -112,10 +112,10 @@ class AgentLoop:
 
     def _is_cancelled(self, session_id: UUID) -> bool:
         """Check if the session has been cancelled (DB poll)."""
-        from druppie.db.models import Session
-        self.db.expire_all()
-        session = self.db.query(Session).filter(Session.id == session_id).first()
-        return session is not None and session.status == "cancelled"
+        from druppie.repositories import ExecutionRepository
+
+        execution_repo = ExecutionRepository(self.db)
+        return execution_repo.is_session_cancelled(session_id)
 
     # ------------------------------------------------------------------
     # Tool preparation

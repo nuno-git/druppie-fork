@@ -289,7 +289,8 @@ async def cancel_session(
     user_id = UUID(user["sub"])
     user_roles = user.get("realm_access", {}).get("roles", [])
 
-    session = session_repo.get_by_id(session_id)
+    # Lock the row to prevent race with concurrent retry requests
+    session = session_repo.get_by_id_for_update(session_id)
     if not session:
         raise NotFoundError("session", str(session_id))
 
