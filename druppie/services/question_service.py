@@ -53,7 +53,6 @@ class QuestionService:
         user_id: UUID,
         answer: str,
         selected_choices: list[int] | None = None,
-        is_admin: bool = False,
     ) -> QuestionDetail:
         """Record an answer to a question.
 
@@ -89,11 +88,9 @@ class QuestionService:
         if not question:
             raise NotFoundError("question", str(question_id))
 
-        # Check ownership via session (admins can answer any question)
+        # Check ownership via session
         session = self.session_repo.get_by_id(question.session_id)
-        if not session:
-            raise NotFoundError("session", str(question.session_id))
-        if session.user_id != user_id and not is_admin:
+        if not session or session.user_id != user_id:
             raise AuthorizationError("Can only answer questions in your own sessions")
 
         # Check not already answered
