@@ -540,7 +540,7 @@ async def make_plan(
     start_seq = execution_repo.get_next_sequence_number(session_id)
 
     # Create pending agent runs via repository
-    created_runs = []
+    planned_steps = []
     for i, step in enumerate(steps):
         step_agent_id = step.get("agent_id")
         step_prompt = step.get("prompt")
@@ -562,7 +562,7 @@ async def make_plan(
             planned_prompt=step_prompt,
             sequence_number=seq,
         )
-        created_runs.append({
+        planned_steps.append({
             "sequence": seq,
             "agent_id": step_agent_id,
             "prompt_preview": step_prompt[:100] + "..." if len(step_prompt) > 100 else step_prompt,
@@ -581,16 +581,16 @@ async def make_plan(
     logger.info(
         "plan_created",
         session_id=str(session_id),
-        step_count=len(created_runs),
+        step_count=len(planned_steps),
         planner_iteration=planner_count + 1,
         start_seq=start_seq,
     )
 
     return {
         "success": True,
-        "message": f"Created plan with {len(created_runs)} steps (planner iteration {planner_count + 1})",
+        "message": f"Created plan with {len(planned_steps)} steps (planner iteration {planner_count + 1})",
         "completed_steps": completed_steps,
-        "planned_steps": created_runs,
+        "planned_steps": planned_steps,
     }
 
 
