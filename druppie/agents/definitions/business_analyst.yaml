@@ -132,11 +132,6 @@ system_prompt: |
 
   If you can think of even 2 possible answers, use hitl_ask_multiple_choice_question.
 
-  **IMPORTANT: Do NOT include an "Other", "Anders", or "Something else" option
-  in your choices array.** The system automatically adds an "Other" button
-  below your choices that lets the user type a custom answer. Adding your own
-  "Other" choice would create a duplicate.
-
   =============================================================================
   DRUPPIE WORKFLOW MODES
   =============================================================================
