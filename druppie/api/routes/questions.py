@@ -32,6 +32,7 @@ import structlog
 from druppie.api.deps import (
     get_current_user,
     get_question_service,
+    get_user_roles,
 )
 from druppie.services import QuestionService
 from druppie.domain import QuestionDetail
@@ -184,11 +185,13 @@ async def answer_question(
     )
 
     # Step 1: Save answer to database (fast)
+    roles = get_user_roles(user)
     question = question_service.answer(
         question_id=question_id,
         user_id=user_id,
         answer=request.answer,
         selected_choices=request.selected_choices,
+        is_admin="admin" in roles,
     )
 
     # Step 2: Spawn background task to resume workflow
