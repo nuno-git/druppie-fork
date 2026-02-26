@@ -6,6 +6,7 @@ so the orchestrator can re-execute them.
 
 import json
 import re
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
@@ -13,6 +14,9 @@ import structlog
 from druppie.domain.common import SessionStatus
 from druppie.repositories.execution_repository import ExecutionRepository
 from druppie.repositories.session_repository import SessionRepository
+
+if TYPE_CHECKING:
+    from druppie.execution.mcp_http import MCPHttp
 
 logger = structlog.get_logger()
 
@@ -24,9 +28,11 @@ class RevertService:
         self,
         execution_repo: ExecutionRepository,
         session_repo: SessionRepository,
+        mcp_http: "MCPHttp",
     ):
         self.execution_repo = execution_repo
         self.session_repo = session_repo
+        self.mcp_http = mcp_http
 
     async def retry_from_run(
         self,
@@ -55,7 +61,9 @@ class RevertService:
         if not session:
             raise ValueError(f"Session {session_id} not found")
 
-        target_summary = self.execution_repo.get_by_id(target_agent_run_id)
+        target_summary = self.execution_repo.get_by_id_for_session(
+            target_agent_run_id, session_id
+        )
         if not target_summary:
             raise ValueError(f"Agent run {target_agent_run_id} not found in session {session_id}")
 
@@ -70,15 +78,10 @@ class RevertService:
             target_sequence=target_sequence,
         )
 
-        # Step 2: Collect all runs at or after target (returns ORM models)
+        # Step 2: Collect all runs at or after target
         all_runs_after = self.execution_repo.get_runs_from_sequence(
             session_id, target_sequence
         )
-
-        # Verify the target run actually belongs to this session
-        target_in_session = any(r.id == target_agent_run_id for r in all_runs_after)
-        if not target_in_session:
-            raise ValueError(f"Agent run {target_agent_run_id} not found in session {session_id}")
 
         if not all_runs_after:
             raise ValueError("No runs found to revert")
@@ -176,8 +179,8 @@ class RevertService:
             self.execution_repo.update_planned_prompt_batch(prompt_updates)
 
         # Step 7: Reset session
-        session.status = SessionStatus.ACTIVE.value
-        session.error_message = None
+        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+        self.session_repo.clear_error_message(session_id)
         self.session_repo.recalculate_token_totals(session_id)
 
         self.execution_repo.commit()
@@ -276,13 +279,7 @@ class RevertService:
         Raises RuntimeError if the revert fails — callers must not proceed
         with re-execution when git state hasn't been reverted.
         """
-        from druppie.core.mcp_config import MCPConfig
-        from druppie.execution.mcp_http import MCPHttp
-
-        mcp_config = MCPConfig()
-        mcp_http = MCPHttp(mcp_config)
-
-        result = await mcp_http.call(
+        result = await self.mcp_http.call(
             server="coding",
             tool="_internal_revert_to_commit",
             args={
@@ -312,14 +309,8 @@ class RevertService:
 
     async def _close_pr(self, session_id: UUID, pr_number: int) -> None:
         """Call close_pull_request MCP tool."""
-        from druppie.core.mcp_config import MCPConfig
-        from druppie.execution.mcp_http import MCPHttp
-
         try:
-            mcp_config = MCPConfig()
-            mcp_http = MCPHttp(mcp_config)
-
-            result = await mcp_http.call(
+            result = await self.mcp_http.call(
                 server="coding",
                 tool="_internal_close_pull_request",
                 args={

@@ -169,6 +169,10 @@ class SessionRepository(BaseRepository):
             updates["error_message"] = error_message
         self.db.query(SessionModel).filter_by(id=session_id).update(updates)
 
+    def clear_error_message(self, session_id: UUID) -> None:
+        """Clear the error message on a session."""
+        self.db.query(SessionModel).filter_by(id=session_id).update({"error_message": None})
+
     def update_language(self, session_id: UUID, language: str) -> None:
         """Update session's detected conversational language."""
         self.db.query(SessionModel).filter_by(id=session_id).update({"language": language})
