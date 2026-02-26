@@ -1,5 +1,6 @@
 """Execution repository - handles AgentRun, ToolCall, LLMCall, and Message records."""
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -18,6 +19,24 @@ from druppie.db.models import (
 from druppie.domain.agent_run import AgentRunSummary
 from druppie.domain.common import AgentRunStatus, TokenUsage
 from druppie.repositories.base import BaseRepository
+
+
+@dataclass(frozen=True)
+class ToolCallRecord:
+    """Lightweight read-only projection of a tool call for analysis."""
+
+    id: UUID
+    tool_name: str
+    status: str
+    result: str | None
+
+
+@dataclass(frozen=True)
+class MessageRecord:
+    """Lightweight read-only projection of a message."""
+
+    id: UUID
+    sequence_number: int
 
 logger = structlog.get_logger()
 
@@ -54,6 +73,17 @@ class ExecutionRepository(BaseRepository):
     def get_by_id(self, agent_run_id: UUID) -> AgentRunSummary | None:
         """Get agent run by ID."""
         agent_run = self.db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+        return self._to_summary(agent_run) if agent_run else None
+
+    def get_by_id_for_session(
+        self, agent_run_id: UUID, session_id: UUID
+    ) -> AgentRunSummary | None:
+        """Get agent run by ID, verifying it belongs to the given session."""
+        agent_run = (
+            self.db.query(AgentRun)
+            .filter(AgentRun.id == agent_run_id, AgentRun.session_id == session_id)
+            .first()
+        )
         return self._to_summary(agent_run) if agent_run else None
 
     def get_next_pending(self, session_id: UUID) -> AgentRunSummary | None:
@@ -542,12 +572,11 @@ class ExecutionRepository(BaseRepository):
     # BULK READ METHODS (used by RevertService)
     # =========================================================================
 
-    def get_runs_from_sequence(self, session_id: UUID, min_sequence: int) -> list[AgentRun]:
-        """Get all runs at or after a sequence number, ordered by sequence.
-
-        Returns raw ORM models (needed for mutation in RevertService).
-        """
-        return (
+    def get_runs_from_sequence(
+        self, session_id: UUID, min_sequence: int
+    ) -> list[AgentRunSummary]:
+        """Get all runs at or after a sequence number, ordered by sequence."""
+        runs = (
             self.db.query(AgentRun)
             .filter(
                 AgentRun.session_id == session_id,
@@ -556,12 +585,13 @@ class ExecutionRepository(BaseRepository):
             .order_by(AgentRun.sequence_number)
             .all()
         )
+        return [self._to_summary(r) for r in runs]
 
     def get_user_message_after_sequence(
         self, session_id: UUID, after_sequence: int
-    ) -> Message | None:
+    ) -> MessageRecord | None:
         """Get the first user message after a given sequence number."""
-        return (
+        msg = (
             self.db.query(Message)
             .filter(
                 Message.session_id == session_id,
@@ -571,22 +601,29 @@ class ExecutionRepository(BaseRepository):
             .order_by(Message.sequence_number)
             .first()
         )
+        if not msg:
+            return None
+        return MessageRecord(id=msg.id, sequence_number=msg.sequence_number)
 
-    def get_tool_calls_for_runs(self, agent_run_ids: list[UUID]) -> list[ToolCall]:
-        """Get all tool calls across multiple runs."""
+    def get_tool_calls_for_runs(self, agent_run_ids: list[UUID]) -> list[ToolCallRecord]:
+        """Get all tool calls across multiple runs (lightweight projection)."""
         if not agent_run_ids:
             return []
-        return (
+        rows = (
             self.db.query(ToolCall)
             .filter(ToolCall.agent_run_id.in_(agent_run_ids))
             .all()
         )
+        return [
+            ToolCallRecord(id=tc.id, tool_name=tc.tool_name, status=tc.status, result=tc.result)
+            for tc in rows
+        ]
 
     def get_last_commit_before_sequence(
         self, session_id: UUID, before_sequence: int
-    ) -> ToolCall | None:
+    ) -> ToolCallRecord | None:
         """Get the last completed commit_and_push tool call before a sequence number."""
-        return (
+        tc = (
             self.db.query(ToolCall)
             .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
             .filter(
@@ -598,10 +635,13 @@ class ExecutionRepository(BaseRepository):
             .order_by(ToolCall.created_at.desc())
             .first()
         )
+        if not tc:
+            return None
+        return ToolCallRecord(id=tc.id, tool_name=tc.tool_name, status=tc.status, result=tc.result)
 
-    def get_first_commit_in_session(self, session_id: UUID) -> ToolCall | None:
+    def get_first_commit_in_session(self, session_id: UUID) -> ToolCallRecord | None:
         """Get the first completed commit_and_push tool call in a session."""
-        return (
+        tc = (
             self.db.query(ToolCall)
             .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
             .filter(
@@ -612,6 +652,9 @@ class ExecutionRepository(BaseRepository):
             .order_by(ToolCall.created_at)
             .first()
         )
+        if not tc:
+            return None
+        return ToolCallRecord(id=tc.id, tool_name=tc.tool_name, status=tc.status, result=tc.result)
 
     # =========================================================================
     # BULK DELETE METHODS (used by RevertService)

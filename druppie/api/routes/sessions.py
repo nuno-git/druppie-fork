@@ -180,7 +180,9 @@ async def _run_retry_background(
 
     Creates fresh DB session and repositories (same pattern as chat.py).
     """
+    from druppie.core.mcp_config import get_mcp_config
     from druppie.db.database import SessionLocal
+    from druppie.execution.mcp_http import MCPHttp
     from druppie.repositories import (
         SessionRepository,
         ExecutionRepository,
@@ -196,8 +198,11 @@ async def _run_retry_background(
         session_repo = SessionRepository(db)
         execution_repo = ExecutionRepository(db)
 
+        # Single MCPHttp instance shared across all revert operations
+        mcp_http = MCPHttp(get_mcp_config())
+
         # Step 1: Revert (delete old runs, revert git, recreate as pending)
-        revert_service = RevertService(execution_repo, session_repo)
+        revert_service = RevertService(execution_repo, session_repo, mcp_http)
         result = await revert_service.retry_from_run(
             session_id, agent_run_id, planned_prompt=planned_prompt,
         )
