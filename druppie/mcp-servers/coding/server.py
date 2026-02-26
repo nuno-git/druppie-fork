@@ -1996,14 +1996,13 @@ async def _internal_revert_to_commit(
                 force_pushed = True
                 logger.info("Force pushed to %s after revert", branch)
             else:
-                logger.warning("Force push failed: %s", push_result.stderr)
+                logger.error("Force push failed after revert: %s", push_result.stderr)
                 return {
-                    "success": True,
-                    "message": "Reset succeeded but force push failed",
+                    "success": False,
+                    "error": f"Git reset succeeded but force push failed: {push_result.stderr}",
                     "previous_head": previous_head,
                     "new_head": new_head,
                     "force_pushed": False,
-                    "push_error": push_result.stderr,
                 }
 
         return {
