@@ -181,6 +181,29 @@ class SessionRepository(BaseRepository):
         """Update session's project."""
         self.db.query(SessionModel).filter_by(id=session_id).update({"project_id": project_id})
 
+    def recalculate_token_totals(self, session_id: UUID) -> None:
+        """Recalculate session token totals from remaining non-pending agent runs."""
+        from sqlalchemy import func
+
+        result = (
+            self.db.query(
+                func.coalesce(func.sum(AgentRun.prompt_tokens), 0),
+                func.coalesce(func.sum(AgentRun.completion_tokens), 0),
+                func.coalesce(func.sum(AgentRun.total_tokens), 0),
+            )
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status != AgentRunStatus.PENDING.value,
+            )
+            .first()
+        )
+
+        session = self.get_by_id(session_id)
+        if session:
+            session.prompt_tokens = result[0]
+            session.completion_tokens = result[1]
+            session.total_tokens = result[2]
+
     def delete(self, session_id: UUID) -> None:
         """Delete session (cascades to related data)."""
         self.db.query(SessionModel).filter_by(id=session_id).delete()
