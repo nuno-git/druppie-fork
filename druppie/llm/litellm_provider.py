@@ -4,7 +4,7 @@ Uses LiteLLM for standardized tool calling across all providers.
 This is the only LLM implementation - all providers go through LiteLLM.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry, ollama
+    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry, litellm
 
     For ZAI:
         ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
@@ -18,8 +18,8 @@ Environment variables:
     For Azure Foundry:
         FOUNDRY_API_KEY, FOUNDRY_MODEL, FOUNDRY_API_URL
 
-    For Ollama:
-        OLLAMA_MODEL, OLLAMA_BASE_URL (API key optional)
+    For LiteLLM Proxy:
+        LITELLM_KEY, LITELLM_MODEL, LITELLM_BASE_URL
 """
 
 import json
@@ -211,15 +211,16 @@ PROVIDER_CONFIGS = {
         "force_temperature": True,  # GPT-5-MINI only supports temperature=1.0
         "auth_type": "bearer",  # Use Bearer token instead of api-key header
     },
-    "ollama": {
-        "prefix": "openai",  # Ollama is OpenAI-compatible
-        "default_model": "gpt-oss:20b",
-        "api_key_env": "OLLAMA_API_KEY",
-        "api_key_optional": True,  # Ollama doesn't require auth by default
-        "model_env": "OLLAMA_MODEL",
-        "base_url_env": "OLLAMA_BASE_URL",
-        "default_base_url": "https://ollama.waterschap.org/v1",
+    "litellm": {
+        "prefix": "openai",  # OpenAI-compatible LiteLLM proxy
+        "default_model": "gpt-5-mini",
+        "api_key_env": "LITELLM_KEY",
+        "model_env": "LITELLM_MODEL",
+        "base_url_env": "LITELLM_BASE_URL",
+        "default_base_url": "https://litellm.waterschap.org",
         "ssl_verify": False,  # Self-signed certificate
+        "default_temperature": 1.0,
+        "force_temperature": True,  # GPT-5-mini only supports temperature=1.0
     },
 }
 
@@ -264,7 +265,7 @@ class ChatLiteLLM(BaseLLM):
 
         # Load configuration from environment
         self.api_key = api_key or os.getenv(config["api_key_env"], "")
-        # Providers with optional keys (e.g. Ollama) need a dummy key for LiteLLM
+        # Providers with optional keys need a dummy key for LiteLLM
         if not self.api_key and config.get("api_key_optional"):
             self.api_key = "no-key-required"
         self.api_base = api_base or os.getenv(config["base_url_env"], "") or config["default_base_url"]
@@ -285,7 +286,7 @@ class ChatLiteLLM(BaseLLM):
         # Some providers (e.g. Azure OpenAI) require max_completion_tokens instead of max_tokens
         self._use_max_completion_tokens = config.get("use_max_completion_tokens", False)
 
-        # SSL verification (disabled for self-signed certs, e.g. Ollama)
+        # SSL verification (disabled for self-signed certs, e.g. LiteLLM proxy)
         # Set globally on litellm — the per-call ssl_verify kwarg has known bugs
         self._ssl_verify = config.get("ssl_verify", True)
         if not self._ssl_verify and LITELLM_AVAILABLE:

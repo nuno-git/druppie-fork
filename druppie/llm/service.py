@@ -4,7 +4,7 @@ Supports per-agent LLM profiles with ordered provider chains.
 Profiles are defined in agents/definitions/llm_profiles.yaml.
 
 Environment variables:
-    LLM_PROVIDER: Global default provider (zai, deepinfra, azure_foundry, ollama)
+    LLM_PROVIDER: Global default provider (zai, deepinfra, azure_foundry, litellm)
     LLM_FORCE_PROVIDER: Force all agents to use this provider (overrides profiles)
     LLM_FORCE_MODEL: Force all agents to use this model (requires LLM_FORCE_PROVIDER)
 """
@@ -38,12 +38,12 @@ class LLMService:
     """
 
     # Supported providers and their required API key env vars
-    # None means the API key is optional (e.g. Ollama)
+    # None means the API key is optional (e.g. LiteLLM proxy)
     PROVIDERS = {
         "zai": "ZAI_API_KEY",
         "deepinfra": "DEEPINFRA_API_KEY",
         "azure_foundry": "FOUNDRY_API_KEY",
-        "ollama": None,
+        "litellm": "LITELLM_KEY",
     }
 
     def __init__(self):
@@ -70,7 +70,7 @@ class LLMService:
                 f"Valid options: {', '.join(self.PROVIDERS.keys())}"
             )
 
-        # Check API key (skip for providers with optional keys like Ollama)
+        # Check API key for provider
         api_key_env = self.PROVIDERS[provider]
         if api_key_env and not os.getenv(api_key_env):
             raise LLMConfigurationError(
