@@ -623,7 +623,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 Continue
               </button>
             )}
-            {['active', 'paused_approval', 'paused_hitl'].includes(data.status) && (
+            {data.status === 'active' && (
               <button
                 onClick={() => cancelMutation.mutate()}
                 disabled={cancelMutation.isPending}
@@ -887,7 +887,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 >
                   <Loader2 className="w-4 h-4 animate-spin" />
                 </button>
-              ) : ['active', 'paused_approval', 'paused_hitl'].includes(data.status) ? (
+              ) : data.status === 'active' ? (
                 <button
                   onClick={() => cancelMutation.mutate()}
                   disabled={cancelMutation.isPending}
