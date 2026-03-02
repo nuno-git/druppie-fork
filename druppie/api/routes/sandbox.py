@@ -275,13 +275,23 @@ async def sandbox_complete_webhook(
     # Resume the agent in the background (don't block the webhook response)
     import asyncio
     from druppie.execution.orchestrator import Orchestrator
+    from druppie.repositories import SessionRepository, ProjectRepository, QuestionRepository
+    from druppie.db.database import SessionLocal
 
     async def _resume():
+        resume_db = SessionLocal()
         try:
-            orchestrator = Orchestrator(db)
+            orchestrator = Orchestrator(
+                session_repo=SessionRepository(resume_db),
+                execution_repo=ExecutionRepository(resume_db),
+                project_repo=ProjectRepository(resume_db),
+                question_repo=QuestionRepository(resume_db),
+            )
             await orchestrator.resume_after_sandbox(tool_call.id)
         except Exception as e:
             logger.error("sandbox_resume_failed", tool_call_id=str(tool_call.id), error=str(e))
+        finally:
+            resume_db.close()
 
     asyncio.create_task(_resume())
 
