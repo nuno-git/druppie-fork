@@ -186,7 +186,6 @@ services:
       MCP_PORT: "9001"
       GITEA_INTERNAL_URL: http://gitea:3000
       GITEA_ORG: druppie
-      GITEA_TOKEN: ${GITEA_TOKEN:-}
       GITEA_USER: ${GITEA_ADMIN_USER:-gitea_admin}
       GITEA_PASSWORD: ${GITEA_ADMIN_PASSWORD:-GiteaAdmin123}
       SANDBOX_CONTROL_PLANE_URL: ${SANDBOX_CONTROL_PLANE_URL:-http://sandbox-control-plane:8787}
@@ -490,7 +489,6 @@ services:
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       BACKEND_URL: http://druppie-backend-dev:8000
-      GITEA_TOKEN: ${GITEA_TOKEN:-}
     volumes:
       - ./druppie:/app/druppie
       - druppie_new_workspace:/app/workspace
@@ -562,7 +560,6 @@ services:
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       BACKEND_URL: http://druppie-backend:8000
-      GITEA_TOKEN: ${GITEA_TOKEN:-}
     volumes:
       - druppie_new_workspace:/app/workspace
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
