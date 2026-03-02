@@ -182,7 +182,7 @@ class AgentLoop:
         # Only enrich if the tool is present in this agent's tools
         target = None
         for tool in openai_tools:
-            if tool.get("function", {}).get("name") == "coding_execute_coding_task":
+            if tool.get("function", {}).get("name") == "execute_coding_task":
                 target = tool
                 break
         if target is None:

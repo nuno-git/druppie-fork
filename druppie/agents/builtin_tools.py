@@ -191,6 +191,37 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             },
         },
     },
+    "execute_coding_task": {
+        "type": "function",
+        "function": {
+            "name": "execute_coding_task",
+            "description": (
+                "Execute a coding task in an isolated sandbox using an external coding agent. "
+                "Sends a prompt to a sandbox that clones the repo, runs a coding agent, and "
+                "returns results. Use this for implementation tasks that benefit from an isolated "
+                "environment. The sandbox automatically clones the project from Gitea, implements "
+                "changes, and pushes back. Changes are synced to the workspace via git pull."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": (
+                            "The coding task description / prompt for the sandbox agent. "
+                            "Be specific about what to implement, which files to modify, "
+                            "and what tests should pass."
+                        ),
+                    },
+                    "agent": {
+                        "type": "string",
+                        "description": "Which sandbox agent to use",
+                    },
+                },
+                "required": ["task"],
+            },
+        },
+    },
 }
 
 
@@ -871,6 +902,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "set_intent",
         "create_message",
         "invoke_skill",
+        "execute_coding_task",
     )
 
 
