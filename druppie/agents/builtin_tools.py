@@ -12,15 +12,43 @@ Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
 Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
 """
 
+import hashlib
+import hmac
+import os
+import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+import httpx
 import structlog
 
 if TYPE_CHECKING:
     from druppie.repositories import ExecutionRepository
 
 logger = structlog.get_logger()
+
+# Sandbox configuration (for execute_coding_task)
+SANDBOX_CONTROL_PLANE_URL = os.getenv("SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787")
+SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", "sandbox-dev-secret")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://druppie-backend:8000")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "druppie-internal-secret-key")
+GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
+GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
+
+
+def _generate_sandbox_auth_token() -> str:
+    """Generate HMAC-SHA256 auth token for the background-agents control-plane.
+
+    Token format: 'timestamp.signature' where signature is HMAC-SHA256(secret, timestamp).
+    Matches the verifyInternalToken logic in @open-inspect/shared.
+    """
+    timestamp = str(int(time.time() * 1000))
+    signature = hmac.new(
+        SANDBOX_API_SECRET.encode(),
+        timestamp.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{timestamp}.{signature}"
 
 
 # =============================================================================
@@ -822,6 +850,181 @@ async def invoke_skill(
 
 
 # =============================================================================
+# SANDBOX CODING TASK IMPLEMENTATION
+# =============================================================================
+
+async def execute_sandbox_coding_task(
+    args: dict,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Create a sandbox session, send the prompt, register ownership, return immediately.
+
+    Does NOT poll for completion. The control plane will send a webhook
+    to /api/sandbox-sessions/{sandbox_session_id}/complete when done.
+
+    Returns:
+        Dict with status="waiting_sandbox" and sandbox_session_id on success.
+        The caller (tool_executor) should set ToolCallStatus.WAITING_SANDBOX.
+    """
+    task = args.get("task", "")
+    agent = args.get("agent", "druppie-builder")
+    model = "zai-coding-plan/glm-4.7"
+
+    if not task:
+        return {"success": False, "error": "task is required"}
+
+    if not SANDBOX_CONTROL_PLANE_URL:
+        return {"success": False, "error": "SANDBOX_CONTROL_PLANE_URL not configured"}
+
+    # Get project context from the session in the DB
+    from druppie.db.models import Session as SessionModel, Project
+    db = execution_repo.db
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    if not session:
+        return {"success": False, "error": f"Session {session_id} not found"}
+
+    repo_name = None
+    repo_owner = None
+    user_id = str(session.user_id) if session.user_id else None
+
+    if session.project_id:
+        project = db.query(Project).filter(Project.id == session.project_id).first()
+        if project:
+            repo_name = project.repo_name
+            repo_owner = project.repo_owner
+
+    sandbox_repo_owner = repo_owner or GITEA_ORG
+    sandbox_repo_name = repo_name or ""
+
+    # Construct Gitea clone URL for the sandbox (internal Docker network)
+    from urllib.parse import quote
+    gitea_clone_url = ""
+    if sandbox_repo_name and GITEA_TOKEN:
+        gitea_clone_url = f"http://{quote(GITEA_TOKEN, safe='')}@gitea:3000/{sandbox_repo_owner}/{sandbox_repo_name}.git"
+
+    base_url = SANDBOX_CONTROL_PLANE_URL.rstrip("/")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            auth_headers = {
+                "Authorization": f"Bearer {_generate_sandbox_auth_token()}",
+                "Content-Type": "application/json",
+            }
+
+            # Step 1: Create sandbox session
+            create_body = {
+                "repoOwner": sandbox_repo_owner,
+                "repoName": sandbox_repo_name,
+                "model": model,
+                "title": f"Druppie sandbox: {task[:80]}",
+            }
+            if gitea_clone_url:
+                create_body["gitUrl"] = gitea_clone_url
+
+            resp = await client.post(
+                f"{base_url}/sessions",
+                json=create_body,
+                headers=auth_headers,
+            )
+
+            if resp.status_code not in (200, 201):
+                return {
+                    "success": False,
+                    "error": f"Failed to create sandbox session: {resp.status_code} {resp.text}",
+                }
+
+            sandbox_session_id = resp.json().get("sessionId")
+            if not sandbox_session_id:
+                return {"success": False, "error": "No sessionId in create response"}
+
+            logger.info(
+                "execute_coding_task: created sandbox session",
+                sandbox_session_id=sandbox_session_id,
+                repo=f"{sandbox_repo_owner}/{sandbox_repo_name}",
+            )
+
+            # Step 2: Send the task prompt with callback info
+            callback_url = f"{BACKEND_URL}/api/sandbox-sessions/{sandbox_session_id}/complete"
+
+            prompt_body = {
+                "content": task,
+                "authorId": "druppie-agent",
+                "source": "api",
+                "agent": agent,
+                "callbackUrl": callback_url,
+                "callbackSecret": SANDBOX_API_SECRET,
+            }
+
+            resp = await client.post(
+                f"{base_url}/sessions/{sandbox_session_id}/prompt",
+                json=prompt_body,
+                headers={
+                    "Authorization": f"Bearer {_generate_sandbox_auth_token()}",
+                    "Content-Type": "application/json",
+                },
+            )
+
+            if resp.status_code not in (200, 201):
+                return {
+                    "success": False,
+                    "error": f"Failed to send prompt: {resp.status_code} {resp.text}",
+                    "sandbox_session_id": sandbox_session_id,
+                }
+
+            prompt_message_id = resp.json().get("messageId", "")
+            logger.info(
+                "execute_coding_task: prompt sent, pausing for webhook",
+                sandbox_session_id=sandbox_session_id,
+                message_id=prompt_message_id,
+            )
+
+            # Step 3: Register ownership with Druppie backend
+            if user_id:
+                try:
+                    reg_body = {
+                        "sandbox_session_id": sandbox_session_id,
+                        "user_id": user_id,
+                    }
+                    if session_id:
+                        reg_body["session_id"] = str(session_id)
+                    reg_resp = await client.post(
+                        f"{BACKEND_URL}/api/sandbox-sessions/internal/register",
+                        json=reg_body,
+                        headers={"X-Internal-API-Key": INTERNAL_API_KEY},
+                        timeout=5.0,
+                    )
+                    reg_resp.raise_for_status()
+                    logger.info(
+                        "execute_coding_task: registered ownership",
+                        sandbox_session_id=sandbox_session_id,
+                        user_id=user_id,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "execute_coding_task: failed to register ownership",
+                        sandbox_session_id=sandbox_session_id,
+                        error=str(e),
+                    )
+
+            # Return with waiting_sandbox status — caller will pause the agent
+            return {
+                "success": True,
+                "status": "waiting_sandbox",
+                "sandbox_session_id": sandbox_session_id,
+                "message_id": prompt_message_id,
+            }
+
+    except httpx.TimeoutException as e:
+        logger.error("execute_coding_task: timeout connecting to control plane", error=str(e))
+        return {"success": False, "error": f"Timeout connecting to sandbox control plane: {e}"}
+    except Exception as e:
+        logger.error("execute_coding_task: unexpected error", error=str(e))
+        return {"success": False, "error": f"Sandbox error: {e}"}
+
+
+# =============================================================================
 # TOOL EXECUTION (called by ToolExecutor)
 # =============================================================================
 
@@ -881,6 +1084,13 @@ async def execute_builtin(
     elif tool_name == "invoke_skill":
         return await invoke_skill(
             skill_name=args.get("skill_name", ""),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+        )
+    elif tool_name == "execute_coding_task":
+        return await execute_sandbox_coding_task(
+            args=args,
             session_id=session_id,
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
