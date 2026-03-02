@@ -416,7 +416,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
 // --- Main SessionDetail ---
 
 const VALID_VIEW_MODES = new Set(['chat', 'annotated', 'inspect'])
-const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_user', 'waiting_approval', 'waiting_answer'])
+const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_user', 'paused_sandbox', 'waiting_approval', 'waiting_answer'])
 
 const SessionDetail = ({ sessionId, initialViewMode }) => {
   const timelineEndRef = useRef(null)
@@ -447,6 +447,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       const status = query.state.data?.status
       if (status === 'completed' || status === 'failed') return false
       if (status === 'paused_crashed') return 2000
+      if (status === 'paused_sandbox') return 2000
       if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl') {
         // Fast poll while stopping (agent still finishing current op), slow poll when fully paused
         const hasRunning = query.state.data?.timeline?.some(
@@ -596,6 +597,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         paused_crashed: 'bg-red-500',
         paused_hitl: 'bg-amber-500 animate-pulse',
         paused_tool: 'bg-amber-500 animate-pulse',
+        paused_sandbox: 'bg-blue-500 animate-pulse',
         paused_approval: 'bg-amber-500 animate-pulse',
         waiting_approval: 'bg-amber-500 animate-pulse',
         waiting_answer: 'bg-amber-500 animate-pulse',
@@ -616,6 +618,13 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Stopping…
+              </span>
+            )}
+            {/* Sandbox running indicator */}
+            {data.status === 'paused_sandbox' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Sandbox running…
               </span>
             )}
             {/* Continue button — when fully stopped, crashed, or failed */}
@@ -818,15 +827,16 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               return null
             })
           })()}
-          {/* Trailing thinking indicator */}
+          {/* Trailing thinking / sandbox-waiting indicator */}
           {(() => {
             // Don't show thinking indicator if session itself has ended
             if (data.status === 'failed' || data.status === 'completed') return null
-            const runningEntry = data.timeline?.findLast(
-              (e) => e.type === 'agent_run' && e.agent_run?.status === 'running'
+            const activeEntry = data.timeline?.findLast(
+              (e) => e.type === 'agent_run' && (e.agent_run?.status === 'running' || e.agent_run?.status === 'paused_sandbox')
             )
-            if (!runningEntry) return null
-            const run = runningEntry.agent_run
+            if (!activeEntry) return null
+            const run = activeEntry.agent_run
+            const isSandboxWaiting = run.status === 'paused_sandbox'
             const config = getAgentConfig(run.agent_id)
             const AgentIcon = config.icon
             const colors = getAgentMessageColors(config.color)
@@ -838,11 +848,18 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                   </div>
                   <span className={`text-sm font-medium ${colors.accent}`}>{config.name}</span>
                 </div>
-                <div className="pl-8 flex items-center gap-1.5 py-1">
-                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
-                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
-                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
-                </div>
+                {isSandboxWaiting ? (
+                  <div className="pl-8 flex items-center gap-2 py-1">
+                    <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+                    <span className="text-xs text-blue-600">Running coding task in sandbox…</span>
+                  </div>
+                ) : (
+                  <div className="pl-8 flex items-center gap-1.5 py-1">
+                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
+                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
+                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
+                  </div>
+                )}
               </div>
             )
           })()}
@@ -873,8 +890,20 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         </div>
       )}
 
-      {/* Floating input bar — hidden in inspect mode */}
-      {data.status !== 'failed' && viewMode !== 'inspect' && (
+      {/* Sandbox waiting bar — replaces input when sandbox is running */}
+      {data.status === 'paused_sandbox' && viewMode !== 'inspect' && (
+        <div className="px-4 pb-4 pt-2 flex-shrink-0">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-center justify-center gap-2 border border-blue-200 rounded-2xl shadow-sm px-4 py-3.5 bg-blue-50">
+              <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+              <span className="text-sm text-blue-600">Coding agent is running in sandbox…</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating input bar — hidden in inspect mode and during sandbox */}
+      {data.status !== 'failed' && data.status !== 'paused_sandbox' && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
           <div className="max-w-3xl mx-auto">
             <div className="flex items-end gap-2 border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">
