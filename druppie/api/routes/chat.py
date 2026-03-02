@@ -31,7 +31,7 @@ import structlog
 
 from druppie.api.deps import get_current_user, get_optional_user, get_session_repository, get_execution_repository
 from druppie.repositories import SessionRepository, ExecutionRepository
-from druppie.domain.common import SessionStatus
+from druppie.domain.common import AgentRunStatus, SessionStatus
 from druppie.api.errors import NotFoundError, AuthorizationError
 from druppie.core.background_tasks import create_tracked_task
 
@@ -278,6 +278,7 @@ async def stop_session(
     session_id: UUID,
     user: dict = Depends(get_current_user),
     session_repo: SessionRepository = Depends(get_session_repository),
+    execution_repo: ExecutionRepository = Depends(get_execution_repository),
 ):
     """Stop a running session (soft stop — always resumable).
 
@@ -314,6 +315,12 @@ async def stop_session(
     # Don't cancel any runs: pending stay PENDING, running will be marked
     # PAUSED_USER when the agent loop detects the pause
     session_repo.update_status(session_id, SessionStatus.PAUSED)
+
+    # If stopping during HITL/approval, no background task is running —
+    # the agent loop already exited. Transition those waiting runs to
+    # PAUSED_USER so resume_paused_session() can find them.
+    execution_repo.pause_waiting_runs(session_id)
+
     session_repo.commit()
 
     logger.info("session_stopped", session_id=str(session_id))

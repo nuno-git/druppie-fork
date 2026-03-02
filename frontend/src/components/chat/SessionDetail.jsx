@@ -408,7 +408,7 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
 // --- Main SessionDetail ---
 
 const VALID_VIEW_MODES = new Set(['chat', 'annotated', 'inspect'])
-const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'waiting_approval', 'waiting_answer'])
+const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_user', 'waiting_approval', 'waiting_answer'])
 
 const SessionDetail = ({ sessionId, initialViewMode }) => {
   const timelineEndRef = useRef(null)

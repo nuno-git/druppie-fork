@@ -118,27 +118,27 @@ class ExecutionRepository(BaseRepository):
             run.completed_at = datetime.now(timezone.utc)
         return len(pending_runs)
 
-    def cancel_active_runs(self, session_id: UUID) -> int:
-        """Cancel all running or paused agent runs for a session.
+    def pause_waiting_runs(self, session_id: UUID) -> int:
+        """Transition PAUSED_TOOL/PAUSED_HITL runs to PAUSED_USER.
 
-        Used by the cancel endpoint to mark in-progress runs as cancelled.
+        When the user stops a session during HITL or approval wait,
+        no background task is running. This transitions those waiting
+        runs so resume_paused_session() can find them.
         """
-        active_runs = (
+        waiting_runs = (
             self.db.query(AgentRun)
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.status.in_([
-                    AgentRunStatus.RUNNING.value,
                     AgentRunStatus.PAUSED_TOOL.value,
                     AgentRunStatus.PAUSED_HITL.value,
                 ]),
             )
             .all()
         )
-        for run in active_runs:
-            run.status = AgentRunStatus.CANCELLED.value
-            run.completed_at = datetime.now(timezone.utc)
-        return len(active_runs)
+        for run in waiting_runs:
+            run.status = AgentRunStatus.PAUSED_USER.value
+        return len(waiting_runs)
 
     def get_pending_runs(self, session_id: UUID) -> list[AgentRunSummary]:
         """Get all pending runs (the 'plan') for a session."""
