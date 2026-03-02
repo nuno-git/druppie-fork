@@ -631,16 +631,16 @@ system_prompts:
 
 mcps:
    coding:
-     - read_file
-     - write_file
-     - batch_write_files
-     - list_dir
-     - commit_and_push
-     - get_test_framework
-     - run_tests
-     - get_coverage_report
-     - install_test_dependencies
-     - validate_tdd
+     # - read_file
+     # - write_file
+     # - batch_write_files
+     # - list_dir
+     # - commit_and_push
+     # - get_test_framework
+     # - run_tests
+     # - get_coverage_report
+     # - install_test_dependencies
+     # - validate_tdd
 
 extra_builtin_tools:
   - execute_coding_task

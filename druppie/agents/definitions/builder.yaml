@@ -211,13 +211,13 @@ system_prompts:
 # MCP tools this agent can use
 mcps:
   coding:
-    - read_file
-    - write_file
-    - batch_write_files
-    - run_command
-    - list_dir
-    - delete_file
-    - commit_and_push
+    # - read_file
+    # - write_file
+    # - batch_write_files
+    # - run_command
+    # - list_dir
+    # - delete_file
+    # - commit_and_push
 
 extra_builtin_tools:
   - execute_coding_task
