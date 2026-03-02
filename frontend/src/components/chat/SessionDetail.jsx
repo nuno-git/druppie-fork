@@ -437,7 +437,8 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     queryFn: () => getSession(sessionId),
     refetchInterval: (query) => {
       const status = query.state.data?.status
-      if (status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'paused') return false
+      if (status === 'completed' || status === 'failed' || status === 'cancelled') return false
+      if (status === 'paused') return 2000
       return 500
     },
     enabled: !!sessionId,
@@ -455,7 +456,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const cancelMutation = useMutation({
     mutationFn: () => cancelChat(sessionId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      queryClient.refetchQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
   })
@@ -463,7 +464,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const resumeMutation = useMutation({
     mutationFn: () => resumeSession(sessionId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      queryClient.refetchQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
   })

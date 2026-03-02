@@ -28,7 +28,7 @@ from druppie.api.deps import (
 from druppie.services import SessionService
 from druppie.domain import SessionDetail
 from druppie.domain.common import SessionStatus
-from druppie.core.background_tasks import create_tracked_task, run_session_task
+from druppie.core.background_tasks import create_session_task, SessionTaskConflict, run_session_task
 
 logger = structlog.get_logger()
 
@@ -246,6 +246,15 @@ async def retry_from_run(
         user_roles=user_roles,
     )
 
+    # Reject if a background task is already running for this session.
+    # Must check BEFORE lock_for_retry (which changes DB status to active).
+    from druppie.core.background_tasks import is_session_task_running
+    if is_session_task_running(session_id):
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
+        )
+
     # Atomically lock and transition session to ACTIVE
     try:
         service.lock_for_retry(session_id)
@@ -260,7 +269,8 @@ async def retry_from_run(
     )
 
     # Spawn background task
-    create_tracked_task(
+    create_session_task(
+        session_id,
         _run_retry_background(
             session_id=session_id,
             agent_run_id=agent_run_id,
@@ -311,6 +321,15 @@ async def resume_session(
         user_roles=user_roles,
     )
 
+    # Reject if a background task is already running for this session.
+    # Must check BEFORE lock_for_resume (which changes DB status to active).
+    from druppie.core.background_tasks import is_session_task_running
+    if is_session_task_running(session_id):
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
+        )
+
     # Atomically lock and transition session to ACTIVE
     try:
         service.lock_for_resume(session_id)
@@ -324,7 +343,8 @@ async def resume_session(
     )
 
     # Spawn background task
-    create_tracked_task(
+    create_session_task(
+        session_id,
         _run_resume_background(session_id=session_id),
         name=f"resume-{session_id}",
     )

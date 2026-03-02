@@ -21,7 +21,7 @@ GET /api/sessions/{id} to track progress.
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
@@ -33,7 +33,7 @@ from druppie.api.deps import (
 from druppie.services import ApprovalService
 from druppie.domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList
 from druppie.domain.common import SessionStatus
-from druppie.core.background_tasks import create_tracked_task
+from druppie.core.background_tasks import create_session_task, SessionTaskConflict
 
 logger = structlog.get_logger()
 
@@ -217,13 +217,20 @@ async def approve(
     )
 
     # Step 2: Spawn background task to resume workflow
-    create_tracked_task(
-        _resume_workflow_after_approval(
-            session_id=approval.session_id,
-            approval_id=approval_id,
-        ),
-        name=f"resume-approve-{approval_id}",
-    )
+    try:
+        create_session_task(
+            approval.session_id,
+            _resume_workflow_after_approval(
+                session_id=approval.session_id,
+                approval_id=approval_id,
+            ),
+            name=f"resume-approve-{approval_id}",
+        )
+    except SessionTaskConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
+        )
 
     logger.info(
         "approval_recorded_resuming_in_background",
@@ -283,13 +290,20 @@ async def reject(
     )
 
     # Step 2: Spawn background task to resume workflow
-    create_tracked_task(
-        _resume_workflow_after_approval(
-            session_id=approval.session_id,
-            approval_id=approval_id,
-        ),
-        name=f"resume-reject-{approval_id}",
-    )
+    try:
+        create_session_task(
+            approval.session_id,
+            _resume_workflow_after_approval(
+                session_id=approval.session_id,
+                approval_id=approval_id,
+            ),
+            name=f"resume-reject-{approval_id}",
+        )
+    except SessionTaskConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
+        )
 
     logger.info(
         "rejection_recorded_resuming_in_background",
