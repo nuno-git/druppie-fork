@@ -733,3 +733,77 @@ class Orchestrator:
 
         await self.execute_pending_runs(session_id)
         return session_id
+
+    async def resume_paused_session(self, session_id: UUID) -> UUID:
+        """Resume a user-paused session.
+
+        Finds the PAUSED_USER agent run, continues it via continue_run(),
+        then executes remaining pending runs.
+
+        If no PAUSED_USER run exists (e.g., pause happened between runs),
+        just executes pending runs directly.
+        """
+        from druppie.agents.runtime import Agent
+
+        logger.info("resume_paused_session", session_id=str(session_id))
+
+        # Set session back to active
+        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+        self.session_repo.commit()
+
+        # Find the paused agent run
+        paused_run = self.execution_repo.get_user_paused_run(session_id)
+
+        if not paused_run:
+            # Pause happened between runs — just continue with pending
+            logger.info(
+                "resume_no_paused_run_found",
+                session_id=str(session_id),
+            )
+            await self.execute_pending_runs(session_id)
+            return session_id
+
+        logger.info(
+            "resuming_user_paused_agent",
+            agent_run_id=str(paused_run.id),
+            agent_id=paused_run.agent_id,
+        )
+
+        # Mark agent run as running
+        self.execution_repo.update_status(paused_run.id, AgentRunStatus.RUNNING)
+        self.execution_repo.commit()
+
+        # Build fresh context and continue the agent
+        db = self.execution_repo.db
+        context = self._build_project_context(session_id)
+        agent = Agent(paused_run.agent_id, db=db)
+        result = await agent.continue_run(
+            session_id=session_id,
+            agent_run_id=paused_run.id,
+            context=context,
+        )
+
+        # Handle result — same pattern as resume_after_approval
+        if result.get("status") == "paused" or result.get("paused"):
+            pause_reason = result.get("reason", "unknown")
+            if pause_reason == "waiting_answer":
+                self.execution_repo.update_status(paused_run.id, AgentRunStatus.PAUSED_HITL)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
+            else:
+                self.execution_repo.update_status(paused_run.id, AgentRunStatus.PAUSED_TOOL)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
+            self.execution_repo.commit()
+            return session_id
+
+        # Completed — mark agent and continue with remaining pending runs
+        self.execution_repo.update_status(paused_run.id, AgentRunStatus.COMPLETED)
+        self.execution_repo.commit()
+
+        logger.info(
+            "agent_resumed_after_pause_completed",
+            agent_run_id=str(paused_run.id),
+            agent_id=paused_run.agent_id,
+        )
+
+        await self.execute_pending_runs(session_id)
+        return session_id
