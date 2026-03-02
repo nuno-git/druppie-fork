@@ -132,7 +132,7 @@ class ExecutionRepository(BaseRepository):
         return [self._to_summary(r) for r in runs]
 
     def get_paused_run(self, session_id: UUID) -> AgentRunSummary | None:
-        """Get the paused agent run for a session."""
+        """Get the paused agent run for a session (lowest sequence_number first)."""
         agent_run = (
             self.db.query(AgentRun)
             .filter(
@@ -142,6 +142,7 @@ class ExecutionRepository(BaseRepository):
                     AgentRunStatus.PAUSED_HITL.value,
                 ]),
             )
+            .order_by(AgentRun.sequence_number)
             .first()
         )
         return self._to_summary(agent_run) if agent_run else None
@@ -154,6 +155,24 @@ class ExecutionRepository(BaseRepository):
                 AgentRun.session_id == session_id,
                 AgentRun.status == AgentRunStatus.PAUSED_USER.value,
             )
+            .first()
+        )
+        return self._to_summary(agent_run) if agent_run else None
+
+    def get_running_run(self, session_id: UUID) -> AgentRunSummary | None:
+        """Get a running agent run for a session.
+
+        Used to detect orphaned running runs after infrastructure crashes.
+        The background task died but the agent run was never updated to
+        failed/paused because the DB write was rolled back.
+        """
+        agent_run = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status == AgentRunStatus.RUNNING.value,
+            )
+            .order_by(AgentRun.sequence_number)
             .first()
         )
         return self._to_summary(agent_run) if agent_run else None
@@ -796,18 +815,6 @@ class ExecutionRepository(BaseRepository):
             if run.id in updates:
                 run.planned_prompt = updates[run.id]
 
-    def is_session_cancelled(self, session_id: UUID) -> bool:
-        """Check if the session has been cancelled (lightweight DB poll).
-
-        Expires cached state first so we always read the current DB value.
-        Used by the agent loop for cooperative cancellation checks.
-        """
-        from druppie.db.models import Session
-
-        self.db.expire_all()
-        session = self.db.query(Session).filter(Session.id == session_id).first()
-        return session is not None and session.status == "cancelled"
-
     def get_next_sequence_number(self, session_id: UUID) -> int:
         """Get the next available sequence number for a session.
 
@@ -845,9 +852,15 @@ class ExecutionRepository(BaseRepository):
     def recover_zombie_sessions(self) -> list[UUID]:
         """Find and recover zombie sessions after a server restart.
 
-        A zombie session is one with status='active' that has at least one
-        agent run with status='running'. On startup, no background tasks
-        exist, so these sessions are stuck.
+        On startup, no background tasks exist. ANY session with status='active'
+        is a zombie — whether it has running, pending, or no agent runs.
+        (Previously this only caught sessions with RUNNING runs, missing cases
+        where the orchestrator crashed between runs.)
+
+        Also recovers 'failed' sessions that have orphaned 'running' agent runs.
+        This happens when the app crashes mid-agent: run_session_task's error
+        handler rolls back the agent run status but successfully marks the
+        session as failed.
 
         Marks zombie sessions as PAUSED and their running runs as PAUSED_USER.
 
@@ -856,13 +869,10 @@ class ExecutionRepository(BaseRepository):
         """
         from druppie.db.models import Session as DBSession
 
-        # Find sessions that are active with running agent runs
+        # Any active session is a zombie at startup — no bg tasks exist
         zombie_sessions = (
             self.db.query(DBSession)
             .filter(DBSession.status == SessionStatus.ACTIVE.value)
-            .join(AgentRun, AgentRun.session_id == DBSession.id)
-            .filter(AgentRun.status == AgentRunStatus.RUNNING.value)
-            .distinct()
             .all()
         )
 
@@ -880,8 +890,33 @@ class ExecutionRepository(BaseRepository):
             for run in running_runs:
                 run.status = AgentRunStatus.PAUSED_USER.value
 
-            # Mark session as PAUSED
-            session.status = SessionStatus.PAUSED.value
+            # PAUSED_CRASHED if agent was mid-execution, PAUSED if between runs
+            if running_runs:
+                session.status = SessionStatus.PAUSED_CRASHED.value
+            else:
+                session.status = SessionStatus.PAUSED.value
             recovered_ids.append(session.id)
+
+        # Also recover failed sessions with orphaned running agent runs.
+        # Uses PAUSED_CRASHED so the frontend can show a distinct message.
+        failed_sessions = (
+            self.db.query(DBSession)
+            .filter(DBSession.status == SessionStatus.FAILED.value)
+            .all()
+        )
+        for session in failed_sessions:
+            running_runs = (
+                self.db.query(AgentRun)
+                .filter(
+                    AgentRun.session_id == session.id,
+                    AgentRun.status == AgentRunStatus.RUNNING.value,
+                )
+                .all()
+            )
+            if running_runs:
+                for run in running_runs:
+                    run.status = AgentRunStatus.PAUSED_USER.value
+                session.status = SessionStatus.PAUSED_CRASHED.value
+                recovered_ids.append(session.id)
 
         return recovered_ids

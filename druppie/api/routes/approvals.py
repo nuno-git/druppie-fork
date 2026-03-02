@@ -25,15 +25,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import (
-    get_current_user,
-    get_user_roles,
-    get_approval_service,
-)
+from druppie.api.deps import get_current_user, get_user_roles, get_approval_service
 from druppie.services import ApprovalService
 from druppie.domain import ApprovalDetail, ApprovalHistoryList, PendingApprovalList
-from druppie.domain.common import SessionStatus
-from druppie.core.background_tasks import create_session_task, SessionTaskConflict
+from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
 
 logger = structlog.get_logger()
 
@@ -72,66 +67,15 @@ async def _resume_workflow_after_approval(
     session_id: UUID,
     approval_id: UUID,
 ) -> None:
-    """Resume workflow in background with its own DB session."""
-    from druppie.db.database import SessionLocal
-    from druppie.repositories import (
-        SessionRepository,
-        ExecutionRepository,
-        ProjectRepository,
-        QuestionRepository,
-    )
-    from druppie.execution import Orchestrator
+    """Resume workflow in background using run_session_task for DB lifecycle."""
 
-    db = SessionLocal()
-    try:
-        session_repo = SessionRepository(db)
-        execution_repo = ExecutionRepository(db)
-        project_repo = ProjectRepository(db)
-        question_repo = QuestionRepository(db)
-
-        orchestrator = Orchestrator(
-            session_repo=session_repo,
-            execution_repo=execution_repo,
-            project_repo=project_repo,
-            question_repo=question_repo,
-        )
-
-        await orchestrator.resume_after_approval(
+    async def task(ctx):
+        await ctx.orchestrator.resume_after_approval(
             session_id=session_id,
             approval_id=approval_id,
         )
 
-        logger.info(
-            "workflow_resumed_from_approval",
-            session_id=str(session_id),
-            approval_id=str(approval_id),
-        )
-
-    except Exception as e:
-        error_msg = f"{type(e).__name__}: {e}"
-        logger.error(
-            "background_approval_resume_error",
-            session_id=str(session_id),
-            approval_id=str(approval_id),
-            error=error_msg,
-            exc_info=True,
-        )
-        try:
-            db.rollback()
-            session_repo.update_status(
-                session_id,
-                SessionStatus.FAILED,
-                error_message=error_msg[:2000],
-            )
-            db.commit()
-        except Exception as update_error:
-            logger.error(
-                "failed_to_update_session_status",
-                session_id=str(session_id),
-                error=str(update_error),
-            )
-    finally:
-        db.close()
+    await run_session_task(session_id, task, "resume_after_approval")
 
 
 # =============================================================================

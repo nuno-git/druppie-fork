@@ -28,14 +28,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import (
-    get_current_user,
-    get_question_service,
-)
+from druppie.api.deps import get_current_user, get_question_service
 from druppie.services import QuestionService
 from druppie.domain import QuestionDetail
-from druppie.domain.common import SessionStatus
-from druppie.core.background_tasks import create_session_task, SessionTaskConflict
+from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
 
 logger = structlog.get_logger()
 
@@ -79,67 +75,16 @@ async def _resume_workflow_after_answer(
     question_id: UUID,
     answer: str,
 ) -> None:
-    """Resume workflow in background with its own DB session."""
-    from druppie.db.database import SessionLocal
-    from druppie.repositories import (
-        SessionRepository,
-        ExecutionRepository,
-        ProjectRepository,
-        QuestionRepository,
-    )
-    from druppie.execution import Orchestrator
+    """Resume workflow in background using run_session_task for DB lifecycle."""
 
-    db = SessionLocal()
-    try:
-        session_repo = SessionRepository(db)
-        execution_repo = ExecutionRepository(db)
-        project_repo = ProjectRepository(db)
-        question_repo = QuestionRepository(db)
-
-        orchestrator = Orchestrator(
-            session_repo=session_repo,
-            execution_repo=execution_repo,
-            project_repo=project_repo,
-            question_repo=question_repo,
-        )
-
-        await orchestrator.resume_after_answer(
+    async def task(ctx):
+        await ctx.orchestrator.resume_after_answer(
             session_id=session_id,
             question_id=question_id,
             answer=answer,
         )
 
-        logger.info(
-            "workflow_resumed_from_answer",
-            session_id=str(session_id),
-            question_id=str(question_id),
-        )
-
-    except Exception as e:
-        error_msg = f"{type(e).__name__}: {e}"
-        logger.error(
-            "background_answer_resume_error",
-            session_id=str(session_id),
-            question_id=str(question_id),
-            error=error_msg,
-            exc_info=True,
-        )
-        try:
-            db.rollback()
-            session_repo.update_status(
-                session_id,
-                SessionStatus.FAILED,
-                error_message=error_msg[:2000],
-            )
-            db.commit()
-        except Exception as update_error:
-            logger.error(
-                "failed_to_update_session_status",
-                session_id=str(session_id),
-                error=str(update_error),
-            )
-    finally:
-        db.close()
+    await run_session_task(session_id, task, "resume_after_answer")
 
 
 # =============================================================================

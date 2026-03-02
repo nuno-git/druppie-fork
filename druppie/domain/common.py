@@ -15,10 +15,10 @@ class SessionStatus(str, Enum):
     ACTIVE = "active"
     PAUSED_APPROVAL = "paused_approval"  # Waiting for tool approval
     PAUSED_HITL = "paused_hitl"          # Waiting for user answer
-    PAUSED = "paused"                    # User-initiated pause
+    PAUSED = "paused"                    # User-initiated pause (Stop button)
+    PAUSED_CRASHED = "paused_crashed"    # System crashed during execution
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"              # Internal only: used by retry revert
 
 
 class AgentRunStatus(str, Enum):
