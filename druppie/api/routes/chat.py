@@ -270,7 +270,8 @@ async def chat(
         )
 
 
-CANCELABLE_STATUSES = {"active", "paused_approval", "paused_hitl"}
+CANCELABLE_STATUSES = {"active", "paused", "paused_approval", "paused_hitl"}
+PAUSABLE_STATUSES = {"active"}
 
 
 @router.post("/chat/{session_id}/cancel")
@@ -320,4 +321,49 @@ async def cancel_session(
         "success": True,
         "session_id": str(session_id),
         "message": "Session cancelled",
+    }
+
+
+@router.post("/chat/{session_id}/pause")
+async def pause_session(
+    session_id: UUID,
+    user: dict = Depends(get_current_user),
+    session_repo: SessionRepository = Depends(get_session_repository),
+):
+    """Pause a running session.
+
+    Sets session status to PAUSED. The background orchestrator loop will
+    detect this on its next DB poll and exit cleanly after the current
+    agent step completes. Pending runs stay PENDING for later resumption.
+    """
+    user_id = UUID(user["sub"])
+    user_roles = user.get("realm_access", {}).get("roles", [])
+
+    # Lock the row to prevent race with concurrent operations
+    session = session_repo.get_by_id_for_update(session_id)
+    if not session:
+        raise NotFoundError("session", str(session_id))
+
+    # Only owner or admin can pause
+    is_owner = session.user_id == user_id
+    is_admin = "admin" in user_roles
+    if not is_owner and not is_admin:
+        raise AuthorizationError("Cannot pause this session")
+
+    if session.status not in PAUSABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot pause session with status '{session.status}'",
+        )
+
+    # Set session status to paused — the background task will detect this
+    session_repo.update_status(session_id, SessionStatus.PAUSED)
+    session_repo.commit()
+
+    logger.info("session_paused", session_id=str(session_id))
+
+    return {
+        "success": True,
+        "session_id": str(session_id),
+        "message": "Session paused",
     }
