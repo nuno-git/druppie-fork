@@ -31,7 +31,7 @@ import structlog
 
 from druppie.api.deps import get_current_user, get_optional_user, get_session_repository, get_execution_repository
 from druppie.repositories import SessionRepository, ExecutionRepository
-from druppie.domain.common import AgentRunStatus, SessionStatus
+from druppie.domain.common import SessionStatus
 from druppie.api.errors import NotFoundError, AuthorizationError
 from druppie.core.background_tasks import create_tracked_task
 
@@ -278,7 +278,6 @@ async def stop_session(
     session_id: UUID,
     user: dict = Depends(get_current_user),
     session_repo: SessionRepository = Depends(get_session_repository),
-    execution_repo: ExecutionRepository = Depends(get_execution_repository),
 ):
     """Stop a running session (soft stop — always resumable).
 
@@ -286,8 +285,10 @@ async def stop_session(
     will detect this on its next DB poll and exit cleanly after the current
     LLM call + tool execution completes.
 
-    Pending runs stay PENDING and the running agent run will be marked
-    PAUSED_USER, so the session can be resumed later via the resume endpoint.
+    Agent runs keep their current status:
+    - RUNNING → will be marked PAUSED_USER when the agent loop detects the pause
+    - PAUSED_TOOL/PAUSED_HITL → stay as-is, resume restores their session status
+    - PENDING → stay PENDING for later execution
 
     URL kept as /cancel for backwards compatibility with existing frontend.
     """
@@ -312,15 +313,8 @@ async def stop_session(
         )
 
     # Set session status to paused — the background task will detect this
-    # Don't cancel any runs: pending stay PENDING, running will be marked
-    # PAUSED_USER when the agent loop detects the pause
+    # Agent runs are NOT touched: they keep their current status
     session_repo.update_status(session_id, SessionStatus.PAUSED)
-
-    # If stopping during HITL/approval, no background task is running —
-    # the agent loop already exited. Transition those waiting runs to
-    # PAUSED_USER so resume_paused_session() can find them.
-    execution_repo.pause_waiting_runs(session_id)
-
     session_repo.commit()
 
     logger.info("session_stopped", session_id=str(session_id))
