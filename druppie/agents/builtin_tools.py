@@ -923,12 +923,14 @@ async def execute_sandbox_coding_task(
     sandbox_repo_owner = repo_owner or GITEA_ORG
     sandbox_repo_name = repo_name or ""
 
-    # Construct Gitea clone URL for the sandbox (internal Docker network)
-    # Uses admin credentials (same as MCP coding server) — token auth is unreliable
-    from urllib.parse import quote
-    gitea_clone_url = ""
-    if sandbox_repo_name and GITEA_ADMIN_USER and GITEA_ADMIN_PASSWORD:
-        gitea_clone_url = f"http://{quote(GITEA_ADMIN_USER)}:{quote(GITEA_ADMIN_PASSWORD)}@gitea:3000/{sandbox_repo_owner}/{sandbox_repo_name}.git"
+    # Build a proxy URL instead of embedding credentials in the sandbox.
+    # The proxy key is random, session-scoped, and repo-scoped — the sandbox
+    # never sees any git credentials.
+    import secrets
+    proxy_key = secrets.token_urlsafe(32)
+    git_proxy_url = ""
+    if sandbox_repo_name:
+        git_proxy_url = f"{BACKEND_URL}/api/git-proxy/{proxy_key}/{sandbox_repo_owner}/{sandbox_repo_name}.git"
 
     base_url = SANDBOX_CONTROL_PLANE_URL.rstrip("/")
 
@@ -946,8 +948,8 @@ async def execute_sandbox_coding_task(
                 "model": model,
                 "title": f"Druppie sandbox: {task[:80]}",
             }
-            if gitea_clone_url:
-                create_body["gitUrl"] = gitea_clone_url
+            if git_proxy_url:
+                create_body["gitUrl"] = git_proxy_url
 
             resp = await client.post(
                 f"{base_url}/sessions",
@@ -1012,6 +1014,10 @@ async def execute_sandbox_coding_task(
                     reg_body = {
                         "sandbox_session_id": sandbox_session_id,
                         "user_id": user_id,
+                        "git_proxy_key": proxy_key,
+                        "git_provider": "gitea",
+                        "git_repo_owner": sandbox_repo_owner,
+                        "git_repo_name": sandbox_repo_name,
                     }
                     if session_id:
                         reg_body["session_id"] = str(session_id)

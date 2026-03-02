@@ -49,6 +49,10 @@ class RegisterSandboxSessionRequest(BaseModel):
     sandbox_session_id: str
     user_id: str
     session_id: str | None = None
+    git_proxy_key: str | None = None
+    git_provider: str | None = None
+    git_repo_owner: str | None = None
+    git_repo_name: str | None = None
 
 
 @router.post("/sandbox-sessions/internal/register")
@@ -64,6 +68,10 @@ async def register_sandbox_session(
         sandbox_session_id=body.sandbox_session_id,
         user_id=UUID(body.user_id),
         session_id=session_uuid,
+        git_proxy_key=body.git_proxy_key,
+        git_provider=body.git_provider,
+        git_repo_owner=body.git_repo_owner,
+        git_repo_name=body.git_repo_name,
     )
     db.commit()
     logger.info(
@@ -243,6 +251,10 @@ async def sandbox_complete_webhook(
                 agent_output = _extract_agent_output(events)
     except Exception as e:
         logger.warning("sandbox_webhook_event_fetch_failed", error=str(e))
+
+    # Invalidate the git proxy key so the proxy URL stops working
+    sandbox_repo = SandboxSessionRepository(db)
+    sandbox_repo.invalidate_proxy_key(sandbox_session_id)
 
     # Build the final tool result
     result = {

@@ -22,3 +22,9 @@ class SandboxSession(Base):
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    # Git proxy credentials isolation
+    git_proxy_key = Column(String(64), nullable=True, unique=True, index=True)
+    git_provider = Column(String(50), nullable=True)  # "gitea" or "github"
+    git_repo_owner = Column(String(255), nullable=True)
+    git_repo_name = Column(String(255), nullable=True)
