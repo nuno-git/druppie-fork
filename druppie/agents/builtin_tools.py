@@ -32,7 +32,8 @@ SANDBOX_CONTROL_PLANE_URL = os.getenv("SANDBOX_CONTROL_PLANE_URL", "http://sandb
 SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", "sandbox-dev-secret")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://druppie-backend:8000")
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "druppie-internal-secret-key")
-GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
+GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
+GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "")
 GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
 
 
@@ -923,10 +924,11 @@ async def execute_sandbox_coding_task(
     sandbox_repo_name = repo_name or ""
 
     # Construct Gitea clone URL for the sandbox (internal Docker network)
+    # Uses admin credentials (same as MCP coding server) — token auth is unreliable
     from urllib.parse import quote
     gitea_clone_url = ""
-    if sandbox_repo_name and GITEA_TOKEN:
-        gitea_clone_url = f"http://x-token:{quote(GITEA_TOKEN, safe='')}@gitea:3000/{sandbox_repo_owner}/{sandbox_repo_name}.git"
+    if sandbox_repo_name and GITEA_ADMIN_USER and GITEA_ADMIN_PASSWORD:
+        gitea_clone_url = f"http://{quote(GITEA_ADMIN_USER)}:{quote(GITEA_ADMIN_PASSWORD)}@gitea:3000/{sandbox_repo_owner}/{sandbox_repo_name}.git"
 
     base_url = SANDBOX_CONTROL_PLANE_URL.rstrip("/")
 
