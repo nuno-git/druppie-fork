@@ -17,7 +17,7 @@ from druppie.db.models import (
     ToolCallNormalization,
 )
 from druppie.domain.agent_run import AgentRunSummary
-from druppie.domain.common import AgentRunStatus, TokenUsage
+from druppie.domain.common import AgentRunStatus, SessionStatus, TokenUsage
 from druppie.repositories.base import BaseRepository
 
 
@@ -163,6 +163,18 @@ class ExecutionRepository(BaseRepository):
                     AgentRunStatus.PAUSED_TOOL.value,
                     AgentRunStatus.PAUSED_HITL.value,
                 ]),
+            )
+            .first()
+        )
+        return self._to_summary(agent_run) if agent_run else None
+
+    def get_user_paused_run(self, session_id: UUID) -> AgentRunSummary | None:
+        """Get the user-paused agent run for a session."""
+        agent_run = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status == AgentRunStatus.PAUSED_USER.value,
             )
             .first()
         )
@@ -847,3 +859,51 @@ class ExecutionRepository(BaseRepository):
             max_msg_seq if max_msg_seq is not None else -1,
         )
         return current_max + 1
+
+    # =========================================================================
+    # ZOMBIE SESSION RECOVERY
+    # =========================================================================
+
+    def recover_zombie_sessions(self) -> list[UUID]:
+        """Find and recover zombie sessions after a server restart.
+
+        A zombie session is one with status='active' that has at least one
+        agent run with status='running'. On startup, no background tasks
+        exist, so these sessions are stuck.
+
+        Marks zombie sessions as PAUSED and their running runs as PAUSED_USER.
+
+        Returns:
+            List of recovered session IDs.
+        """
+        from druppie.db.models import Session as DBSession
+
+        # Find sessions that are active with running agent runs
+        zombie_sessions = (
+            self.db.query(DBSession)
+            .filter(DBSession.status == SessionStatus.ACTIVE.value)
+            .join(AgentRun, AgentRun.session_id == DBSession.id)
+            .filter(AgentRun.status == AgentRunStatus.RUNNING.value)
+            .distinct()
+            .all()
+        )
+
+        recovered_ids = []
+        for session in zombie_sessions:
+            # Mark running agent runs as PAUSED_USER
+            running_runs = (
+                self.db.query(AgentRun)
+                .filter(
+                    AgentRun.session_id == session.id,
+                    AgentRun.status == AgentRunStatus.RUNNING.value,
+                )
+                .all()
+            )
+            for run in running_runs:
+                run.status = AgentRunStatus.PAUSED_USER.value
+
+            # Mark session as PAUSED
+            session.status = SessionStatus.PAUSED.value
+            recovered_ids.append(session.id)
+
+        return recovered_ids
