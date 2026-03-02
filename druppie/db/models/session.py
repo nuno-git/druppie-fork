@@ -20,8 +20,15 @@ class Session(Base):
     title = Column(String(500))
     status = Column(String(20), default="active")  # active, paused, paused_approval, paused_hitl, paused_crashed, completed, failed
     error_message = Column(Text)  # Error details when status is 'failed'
-    intent = Column(String(50))  # create_project, update_project, general_chat
+    intent = Column(String(50))  # create_project, update_project, update_core, general_chat
     branch_name = Column(String(255), nullable=True)  # Feature branch for update_project
+
+    # Repo context for update_core (GitHub) — not linked to a project record
+    repo_url = Column(String(500), nullable=True)  # e.g. https://github.com/nuno-git/druppie-fork.git
+    repo_owner = Column(String(255), nullable=True)  # e.g. nuno-git
+    repo_name = Column(String(255), nullable=True)  # e.g. druppie-fork
+    base_branch = Column(String(255), nullable=True)  # e.g. colab-dev
+
     language = Column(String(10), nullable=True)  # Detected conversational language (e.g., "nl", "en")
 
     # Token usage (aggregated)
@@ -42,6 +49,10 @@ class Session(Base):
             "error_message": self.error_message,
             "intent": self.intent,
             "branch_name": self.branch_name,
+            "repo_url": self.repo_url,
+            "repo_owner": self.repo_owner,
+            "repo_name": self.repo_name,
+            "base_branch": self.base_branch,
             "language": self.language,
             "prompt_tokens": self.prompt_tokens or 0,
             "completion_tokens": self.completion_tokens or 0,
