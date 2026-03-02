@@ -28,7 +28,7 @@ from druppie.api.deps import (
 from druppie.services import SessionService
 from druppie.domain import SessionDetail
 from druppie.domain.common import SessionStatus
-from druppie.core.background_tasks import create_tracked_task
+from druppie.core.background_tasks import create_tracked_task, run_session_task
 
 logger = structlog.get_logger()
 
@@ -176,99 +176,38 @@ async def _run_retry_background(
     agent_run_id: UUID,
     planned_prompt: str | None = None,
 ) -> None:
-    """Revert and re-execute from a specific agent run.
+    """Revert and re-execute from a specific agent run."""
 
-    Creates fresh DB session and repositories (same pattern as chat.py).
-    """
-    from druppie.core.mcp_config import get_mcp_config
-    from druppie.db.database import SessionLocal
-    from druppie.execution.mcp_http import MCPHttp
-    from druppie.repositories import (
-        SessionRepository,
-        ExecutionRepository,
-        ProjectRepository,
-        QuestionRepository,
-    )
-    from druppie.execution import Orchestrator
-    from druppie.services import RevertService
-
-    db = SessionLocal()
-    try:
-        # Create repositories up front — shared by RevertService and Orchestrator
-        session_repo = SessionRepository(db)
-        execution_repo = ExecutionRepository(db)
-
-        # Single MCPHttp instance shared across all revert operations
-        mcp_http = MCPHttp(get_mcp_config())
+    async def task(ctx):
+        from druppie.core.mcp_config import get_mcp_config
+        from druppie.execution.mcp_http import MCPHttp
+        from druppie.services import RevertService
 
         # Step 1: Revert (delete old runs, revert git, recreate as pending)
-        revert_service = RevertService(execution_repo, session_repo, mcp_http)
+        mcp_http = MCPHttp(get_mcp_config())
+        revert_service = RevertService(ctx.execution_repo, ctx.session_repo, mcp_http)
         result = await revert_service.retry_from_run(
             session_id, agent_run_id, planned_prompt=planned_prompt,
         )
 
-        logger.info(
-            "retry_revert_complete",
-            session_id=str(session_id),
-            result=result,
-        )
+        logger.info("retry_revert_complete", session_id=str(session_id), result=result)
 
-        # Surface any warnings (e.g. merged PRs that can't be safely reverted)
         for warning in result.get("warnings", []):
-            logger.warning(
-                "retry_revert_warning",
-                session_id=str(session_id),
-                warning=warning,
-            )
+            logger.warning("retry_revert_warning", session_id=str(session_id), warning=warning)
 
         # Check if session was cancelled during the revert phase
-        db.expire_all()
-        session = session_repo.get_by_id(session_id)
+        ctx.db.expire_all()
+        session = ctx.session_repo.get_by_id(session_id)
         if session and session.status == SessionStatus.CANCELLED.value:
             logger.info("retry_cancelled_after_revert", session_id=str(session_id))
-            execution_repo.cancel_pending_runs(session_id)
-            db.commit()
+            ctx.execution_repo.cancel_pending_runs(session_id)
+            ctx.db.commit()
             return
 
         # Step 2: Execute pending runs (the recreated ones)
-        project_repo = ProjectRepository(db)
-        question_repo = QuestionRepository(db)
+        await ctx.orchestrator.execute_pending_runs(session_id)
 
-        orchestrator = Orchestrator(
-            session_repo=session_repo,
-            execution_repo=execution_repo,
-            project_repo=project_repo,
-            question_repo=question_repo,
-        )
-
-        await orchestrator.execute_pending_runs(session_id)
-
-    except Exception as e:
-        error_msg = f"{type(e).__name__}: {e}"
-        logger.error(
-            "retry_background_error",
-            session_id=str(session_id),
-            error=error_msg,
-            exc_info=True,
-        )
-        try:
-            db.rollback()
-            from druppie.repositories import SessionRepository
-            session_repo = SessionRepository(db)
-            session_repo.update_status(
-                session_id,
-                SessionStatus.FAILED,
-                error_message=error_msg[:2000],
-            )
-            db.commit()
-        except Exception as update_error:
-            logger.error(
-                "failed_to_update_session_status_after_retry",
-                session_id=str(session_id),
-                error=str(update_error),
-            )
-    finally:
-        db.close()
+    await run_session_task(session_id, task, "retry_background")
 
 
 @router.post("/sessions/{session_id}/retry-from/{agent_run_id}")
@@ -343,61 +282,12 @@ async def retry_from_run(
 
 
 async def _run_resume_background(session_id: UUID) -> None:
-    """Resume a paused session in background.
+    """Resume a paused session in background."""
 
-    Creates fresh DB session and repositories (same pattern as chat.py).
-    """
-    from druppie.db.database import SessionLocal
-    from druppie.repositories import (
-        SessionRepository,
-        ExecutionRepository,
-        ProjectRepository,
-        QuestionRepository,
-    )
-    from druppie.execution import Orchestrator
+    async def task(ctx):
+        await ctx.orchestrator.resume_paused_session(session_id)
 
-    db = SessionLocal()
-    try:
-        session_repo = SessionRepository(db)
-        execution_repo = ExecutionRepository(db)
-        project_repo = ProjectRepository(db)
-        question_repo = QuestionRepository(db)
-
-        orchestrator = Orchestrator(
-            session_repo=session_repo,
-            execution_repo=execution_repo,
-            project_repo=project_repo,
-            question_repo=question_repo,
-        )
-
-        await orchestrator.resume_paused_session(session_id)
-
-    except Exception as e:
-        error_msg = f"{type(e).__name__}: {e}"
-        logger.error(
-            "resume_background_error",
-            session_id=str(session_id),
-            error=error_msg,
-            exc_info=True,
-        )
-        try:
-            db.rollback()
-            from druppie.repositories import SessionRepository
-            session_repo = SessionRepository(db)
-            session_repo.update_status(
-                session_id,
-                SessionStatus.FAILED,
-                error_message=error_msg[:2000],
-            )
-            db.commit()
-        except Exception as update_error:
-            logger.error(
-                "failed_to_update_session_status_after_resume",
-                session_id=str(session_id),
-                error=str(update_error),
-            )
-    finally:
-        db.close()
+    await run_session_task(session_id, task, "resume_background")
 
 
 @router.post("/sessions/{session_id}/resume")
