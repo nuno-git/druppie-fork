@@ -169,19 +169,46 @@ The primary interface is a chat page where users submit natural language request
 - **Follow-up messages**: After a session completes, users can send follow-up messages to continue the conversation in the same session context.
 - **Inline approval cards**: When an agent needs approval to proceed, an approval card appears directly in the timeline.
 - **Inline HITL cards**: When an agent asks a question, an input card appears in the timeline for the user to respond.
-- **Polling**: Active sessions poll at 500ms intervals; session lists poll at 5s intervals. Polling stops when a session completes, fails, or is cancelled.
+- **Polling**: Active sessions poll at 500ms intervals; session lists poll at 5s intervals. Polling stops when a session completes, fails, or is paused.
 
 ---
 
 ## Session Control
 
-### Stop / Cancel
+### Stop & Resume
 
-Users can stop a running or paused session via the **Stop** button in the session header. The button is visible when the session is active, paused for approval, or paused for a HITL question.
+Users can **stop** any running session and **resume** it later -- all context is preserved.
 
-**How it works:** The cancel endpoint sets the session status to `cancelled` in the database. The orchestrator and agent loop check this status between iterations (cooperative cancellation via DB poll) and stop gracefully. For paused sessions (no background task running), the cancel is immediate. All pending and running agent runs are marked as cancelled.
+**How it works:**
 
-Only the session owner or an admin can cancel a session.
+- Click **Stop** to pause execution. The current LLM call and tool execution completes, then the agent stops cleanly.
+- Click **Continue** to resume from where it left off. The agent reconstructs its state from the database and continues.
+- Works for **all users**, not just admins.
+- **Survives system reboots**: On startup, the system detects "zombie" sessions (sessions that were active when the server stopped) and marks them as paused so users can resume them.
+
+**Status model:**
+
+| Status | Meaning | Visual Indicator |
+|--------|---------|------------------|
+| `active` | Processing in progress | Blue pulsing dot |
+| `paused` | Stopped by user or recovered after reboot | Amber dot |
+| `paused_approval` | Waiting for tool approval | Amber dot |
+| `paused_hitl` | Waiting for user answer (HITL) | Amber dot |
+| `completed` | All agents finished | Green dot |
+| `failed` | Error occurred | Red dot |
+
+**Design choice: Stop button visible during HITL/approval waits.** The Stop button remains visible when the session is waiting for approval or a HITL answer (`paused_approval`, `paused_hitl`). This is intentional because in the future, multiple agents may work in parallel -- some may be actively running while others wait for user input. The Stop button ensures users can always halt all active work.
+
+**API endpoints:**
+
+- `POST /api/chat/{session_id}/cancel` -- Soft-stop a session (sets status to `paused`, always resumable)
+- `POST /api/sessions/{session_id}/resume` -- Resume a paused session
+
+**Architecture notes:**
+
+- Pause uses a DB-polling mechanism: the cancel endpoint sets `session.status = 'paused'` in the database, and both the orchestrator loop (between agent runs) and the agent loop (between LLM iterations) detect it and stop gracefully.
+- Resume spawns a background task that calls `agent.continue_run()`, which reconstructs the full LLM conversation from database records, then continues execution.
+- `CANCELLED` status is only used internally by the planner when it supersedes old pending runs with a new plan. It is never set by user actions.
 
 ### Retry from Agent Run
 
