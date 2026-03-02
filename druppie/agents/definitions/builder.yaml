@@ -218,7 +218,9 @@ mcps:
     - list_dir
     - delete_file
     - commit_and_push
-    - execute_coding_task
+
+extra_builtin_tools:
+  - execute_coding_task
 
 llm_profile: standard
 temperature: 0.2

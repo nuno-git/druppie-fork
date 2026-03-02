@@ -29,11 +29,11 @@ mcps:
       repo_name:
         from: project.repo_name
         hidden: true
-        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request, execute_coding_task]
+        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
       repo_owner:
         from: project.repo_owner
         hidden: true
-        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request, execute_coding_task]
+        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
       # NOTE: commit_and_push does NOT need branch injection.
       # It pushes whatever branch the workspace is currently on (set by create_branch).
       # The workspace tracks its own branch internally via ws["branch"].
@@ -241,21 +241,6 @@ mcps:
               type: number
               description: "Minimum coverage percentage (default: 80.0)"
           required: []
-
-      - name: execute_coding_task
-        description: "Execute a coding task in an isolated sandbox using an external coding agent. Sends a prompt to a sandbox that clones the repo, runs a coding agent (OpenCode), and returns results. Use this for implementation tasks that benefit from an isolated environment. The sandbox automatically clones the project from Gitea, implements changes, and pushes back. Changes are synced to the workspace via git pull."
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            task:
-              type: string
-              description: "The coding task description / prompt for the sandbox agent. Be specific about what to implement, which files to modify, and what tests should pass."
-            agent:
-              type: string
-              description: "Which sandbox agent to use: druppie-builder (default, for coding) or druppie-tester (for testing)"
-          required:
-            - task
 
   docker:
     url: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
