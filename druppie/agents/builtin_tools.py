@@ -224,11 +224,13 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
         "function": {
             "name": "execute_coding_task",
             "description": (
-                "Execute a coding task in an isolated sandbox using an external coding agent. "
-                "Sends a prompt to a sandbox that clones the repo, runs a coding agent, and "
-                "returns results. Use this for implementation tasks that benefit from an isolated "
-                "environment. The sandbox automatically clones the project from Gitea, implements "
-                "changes, and pushes back. Changes are synced to the workspace via git pull."
+                "Execute a coding task in an isolated sandbox. "
+                "IMPORTANT: Each call spawns a FRESH container that clones the project repo from git. "
+                "The sandbox is DESTROYED after the task completes. "
+                "Any work NOT committed and pushed within the sandbox is LOST. "
+                "There is NO persistent workspace between calls — each call starts from the latest git state. "
+                "The sandbox agent will automatically commit and push its work. "
+                "To build on previous work, simply call again — the new sandbox clones the repo with all previous pushes."
             ),
             "parameters": {
                 "type": "object",
@@ -236,9 +238,10 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     "task": {
                         "type": "string",
                         "description": (
-                            "The coding task description / prompt for the sandbox agent. "
-                            "Be specific about what to implement, which files to modify, "
-                            "and what tests should pass."
+                            "The complete task prompt for the sandbox coding agent. "
+                            "This is the ONLY instruction it receives, so be self-contained: "
+                            "describe what to implement, reference files to read for context "
+                            "(e.g. SPEC.md, test files), and include any patterns to follow."
                         ),
                     },
                     "agent": {
@@ -923,7 +926,7 @@ async def execute_sandbox_coding_task(
     from urllib.parse import quote
     gitea_clone_url = ""
     if sandbox_repo_name and GITEA_TOKEN:
-        gitea_clone_url = f"http://{quote(GITEA_TOKEN, safe='')}@gitea:3000/{sandbox_repo_owner}/{sandbox_repo_name}.git"
+        gitea_clone_url = f"http://x-token:{quote(GITEA_TOKEN, safe='')}@gitea:3000/{sandbox_repo_owner}/{sandbox_repo_name}.git"
 
     base_url = SANDBOX_CONTROL_PLANE_URL.rstrip("/")
 

@@ -604,38 +604,24 @@ system_prompt: |
    For generation mode: Call done() with summary of tests created
    For validation mode: Call done() with the structured TEST RESULT report (PASS/FAIL format above)
 
-   =============================================================================
-   SANDBOX CODING (execute_coding_task)
-   =============================================================================
-
-   You have access to coding_execute_coding_task which delegates tasks to an
-   isolated sandbox running a dedicated coding agent. Use it when:
-   - You need to set up a complex test framework or configuration
-   - Installing and configuring test dependencies requires build steps
-   - The test setup is complex (multi-file, framework config, fixtures)
-
-   HOW TO USE:
-   1. Call coding_execute_coding_task(task="<detailed prompt>", agent="druppie-tester")
-      - Be specific: mention test files to create, frameworks to use, patterns to follow
-      - Include relevant context from design docs or requirements
-      - ALWAYS use agent="druppie-tester" for testing tasks
-   2. The tool returns: changed_files, agent_output, status
-   3. If successful, changes are automatically synced to the workspace via git pull
-   4. If the sandbox failed, fall back to writing test files directly with write_file
-
 system_prompts:
   - tool_only_communication
   - summary_relay
   - done_tool_format
   - workspace_state
 
-# MCP coding tools commented out — tester delegates via execute_coding_task
-# coding: [read_file, write_file, batch_write_files, list_dir, commit_and_push,
-#          get_test_framework, run_tests, get_coverage_report, install_test_dependencies, validate_tdd]
-mcps: []
-
-extra_builtin_tools:
-  - execute_coding_task
+mcps:
+   coding:
+     - read_file
+     - write_file
+     - batch_write_files
+     - list_dir
+     - commit_and_push
+     - get_test_framework
+     - run_tests
+     - get_coverage_report
+     - install_test_dependencies
+     - validate_tdd
 
 llm_profile: standard
 temperature: 0.1
