@@ -466,6 +466,8 @@ services:
       MCP_WEB_URL: http://mcp-web:9005
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      BACKEND_URL: http://druppie-backend-dev:8000
+      GITEA_TOKEN: ${GITEA_TOKEN:-}
     volumes:
       - ./druppie:/app/druppie
       - druppie_new_workspace:/app/workspace
@@ -535,6 +537,8 @@ services:
       MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      BACKEND_URL: http://druppie-backend:8000
+      GITEA_TOKEN: ${GITEA_TOKEN:-}
     volumes:
       - druppie_new_workspace:/app/workspace
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
