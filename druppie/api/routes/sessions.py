@@ -335,3 +335,112 @@ async def retry_from_run(
         "session_id": str(session_id),
         "message": "Retry started",
     }
+
+
+# =============================================================================
+# RESUME PAUSED SESSION
+# =============================================================================
+
+
+async def _run_resume_background(session_id: UUID) -> None:
+    """Resume a paused session in background.
+
+    Creates fresh DB session and repositories (same pattern as chat.py).
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.repositories import (
+        SessionRepository,
+        ExecutionRepository,
+        ProjectRepository,
+        QuestionRepository,
+    )
+    from druppie.execution import Orchestrator
+
+    db = SessionLocal()
+    try:
+        session_repo = SessionRepository(db)
+        execution_repo = ExecutionRepository(db)
+        project_repo = ProjectRepository(db)
+        question_repo = QuestionRepository(db)
+
+        orchestrator = Orchestrator(
+            session_repo=session_repo,
+            execution_repo=execution_repo,
+            project_repo=project_repo,
+            question_repo=question_repo,
+        )
+
+        await orchestrator.resume_paused_session(session_id)
+
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        logger.error(
+            "resume_background_error",
+            session_id=str(session_id),
+            error=error_msg,
+            exc_info=True,
+        )
+        try:
+            db.rollback()
+            from druppie.repositories import SessionRepository as SR
+            sr = SR(db)
+            sr.update_status(
+                session_id,
+                SessionStatus.FAILED,
+                error_message=error_msg[:2000],
+            )
+            db.commit()
+        except Exception as update_error:
+            logger.error(
+                "failed_to_update_session_status_after_resume",
+                session_id=str(session_id),
+                error=str(update_error),
+            )
+    finally:
+        db.close()
+
+
+@router.post("/sessions/{session_id}/resume")
+async def resume_session(
+    session_id: UUID,
+    service: SessionService = Depends(get_session_service),
+    user: dict = Depends(get_current_user),
+):
+    """Resume a paused session.
+
+    Spawns a background task that continues the paused agent run
+    and then executes remaining pending runs.
+    """
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+
+    # Validate session exists and user has access
+    detail = service.get_detail(
+        session_id=session_id,
+        user_id=user_id,
+        user_roles=user_roles,
+    )
+
+    if detail.status != "paused":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot resume session with status '{detail.status}'",
+        )
+
+    logger.info(
+        "resume_session_requested",
+        session_id=str(session_id),
+        user_id=str(user_id),
+    )
+
+    # Spawn background task
+    create_tracked_task(
+        _run_resume_background(session_id=session_id),
+        name=f"resume-{session_id}",
+    )
+
+    return {
+        "success": True,
+        "session_id": str(session_id),
+        "message": "Session resuming",
+    }
