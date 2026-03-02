@@ -69,10 +69,14 @@ class AgentLoop:
             )
 
         for iteration in range(start_iteration, max_iterations):
-            # Check for session cancellation between iterations
+            # Check for session cancellation or user-initiated pause between iterations
             if self._is_cancelled(session_id):
                 logger.info("agent_loop_cancelled", agent_id=self.agent_id, iteration=iteration)
                 return {"status": "cancelled"}
+
+            if self._is_paused(session_id):
+                logger.info("agent_loop_paused_by_user", agent_id=self.agent_id, iteration=iteration)
+                return {"status": "paused", "reason": "user_paused"}
 
             response, llm_call_id = await self._call_llm(
                 messages, openai_tools, execution_repo,
@@ -116,6 +120,15 @@ class AgentLoop:
 
         execution_repo = ExecutionRepository(self.db)
         return execution_repo.is_session_cancelled(session_id)
+
+    def _is_paused(self, session_id: UUID) -> bool:
+        """Check if the session has been paused by the user (DB poll)."""
+        from druppie.db.models import Session
+        from druppie.domain.common import SessionStatus
+
+        self.db.expire_all()
+        session = self.db.query(Session).filter(Session.id == session_id).first()
+        return session is not None and session.status == SessionStatus.PAUSED.value
 
     # ------------------------------------------------------------------
     # Tool preparation

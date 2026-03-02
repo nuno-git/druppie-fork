@@ -270,71 +270,25 @@ async def chat(
         )
 
 
-CANCELABLE_STATUSES = {"active", "paused", "paused_approval", "paused_hitl"}
-PAUSABLE_STATUSES = {"active"}
+STOPPABLE_STATUSES = {"active", "paused_approval", "paused_hitl"}
 
 
 @router.post("/chat/{session_id}/cancel")
-async def cancel_session(
-    session_id: UUID,
-    user: dict = Depends(get_current_user),
-    session_repo: SessionRepository = Depends(get_session_repository),
-    execution_repo: ExecutionRepository = Depends(get_execution_repository),
-):
-    """Cancel a running or paused session.
-
-    For active sessions: sets status to cancelled in DB. The background
-    orchestrator/agent loop will detect this on its next check and stop.
-    For paused sessions: no background task is running, so cancel is immediate.
-    """
-    user_id = UUID(user["sub"])
-    user_roles = user.get("realm_access", {}).get("roles", [])
-
-    # Lock the row to prevent race with concurrent retry requests
-    session = session_repo.get_by_id_for_update(session_id)
-    if not session:
-        raise NotFoundError("session", str(session_id))
-
-    # Only owner or admin can cancel
-    is_owner = session.user_id == user_id
-    is_admin = "admin" in user_roles
-    if not is_owner and not is_admin:
-        raise AuthorizationError("Cannot cancel this session")
-
-    if session.status not in CANCELABLE_STATUSES:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Cannot cancel session with status '{session.status}'",
-        )
-
-    # Cancel all pending and active agent runs
-    execution_repo.cancel_pending_runs(session_id)
-    execution_repo.cancel_active_runs(session_id)
-
-    # Set session status to cancelled — this is the signal for the background task
-    session_repo.update_status(session_id, SessionStatus.CANCELLED)
-    session_repo.commit()
-
-    logger.info("session_cancelled", session_id=str(session_id))
-
-    return {
-        "success": True,
-        "session_id": str(session_id),
-        "message": "Session cancelled",
-    }
-
-
-@router.post("/chat/{session_id}/pause")
-async def pause_session(
+async def stop_session(
     session_id: UUID,
     user: dict = Depends(get_current_user),
     session_repo: SessionRepository = Depends(get_session_repository),
 ):
-    """Pause a running session.
+    """Stop a running session (soft stop — always resumable).
 
-    Sets session status to PAUSED. The background orchestrator loop will
-    detect this on its next DB poll and exit cleanly after the current
-    agent step completes. Pending runs stay PENDING for later resumption.
+    Sets session status to PAUSED. The background orchestrator/agent loop
+    will detect this on its next DB poll and exit cleanly after the current
+    LLM call + tool execution completes.
+
+    Pending runs stay PENDING and the running agent run will be marked
+    PAUSED_USER, so the session can be resumed later via the resume endpoint.
+
+    URL kept as /cancel for backwards compatibility with existing frontend.
     """
     user_id = UUID(user["sub"])
     user_roles = user.get("realm_access", {}).get("roles", [])
@@ -344,26 +298,28 @@ async def pause_session(
     if not session:
         raise NotFoundError("session", str(session_id))
 
-    # Only owner or admin can pause
+    # Only owner or admin can stop
     is_owner = session.user_id == user_id
     is_admin = "admin" in user_roles
     if not is_owner and not is_admin:
-        raise AuthorizationError("Cannot pause this session")
+        raise AuthorizationError("Cannot stop this session")
 
-    if session.status not in PAUSABLE_STATUSES:
+    if session.status not in STOPPABLE_STATUSES:
         raise HTTPException(
             status_code=409,
-            detail=f"Cannot pause session with status '{session.status}'",
+            detail=f"Cannot stop session with status '{session.status}'",
         )
 
     # Set session status to paused — the background task will detect this
+    # Don't cancel any runs: pending stay PENDING, running will be marked
+    # PAUSED_USER when the agent loop detects the pause
     session_repo.update_status(session_id, SessionStatus.PAUSED)
     session_repo.commit()
 
-    logger.info("session_paused", session_id=str(session_id))
+    logger.info("session_stopped", session_id=str(session_id))
 
     return {
         "success": True,
         "session_id": str(session_id),
-        "message": "Session paused",
+        "message": "Session stopped",
     }

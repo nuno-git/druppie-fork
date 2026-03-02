@@ -354,6 +354,8 @@ class Orchestrator:
                 refreshed_run = self.execution_repo.get_by_id(next_run.id)
                 if refreshed_run and refreshed_run.status == AgentRunStatus.PAUSED_HITL:
                     self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
+                elif refreshed_run and refreshed_run.status == AgentRunStatus.PAUSED_USER:
+                    self.session_repo.update_status(session_id, SessionStatus.PAUSED)
                 else:
                     self.session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
                 self.session_repo.commit()
@@ -503,6 +505,8 @@ class Orchestrator:
             pause_reason = result.get("reason", "unknown")
             if pause_reason == "waiting_answer":
                 self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_HITL)
+            elif pause_reason == "user_paused":
+                self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_USER)
             else:
                 self.execution_repo.update_status(agent_run_id, AgentRunStatus.PAUSED_TOOL)
             self.execution_repo.commit()
