@@ -41,6 +41,7 @@ class ToolCallStatus:
     EXECUTING = "executing"
     WAITING_APPROVAL = "waiting_approval"
     WAITING_ANSWER = "waiting_answer"
+    WAITING_SANDBOX = "waiting_sandbox"
     COMPLETED = "completed"
     FAILED = "failed"
 
