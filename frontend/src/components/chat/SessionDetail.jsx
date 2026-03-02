@@ -437,7 +437,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     queryFn: () => getSession(sessionId),
     refetchInterval: (query) => {
       const status = query.state.data?.status
-      if (status === 'completed' || status === 'failed' || status === 'cancelled') return false
+      if (status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'paused') return false
       return 500
     },
     enabled: !!sessionId,
