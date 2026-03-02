@@ -294,6 +294,12 @@ class Orchestrator:
                 logger.info("execution_cancelled", session_id=str(session_id))
                 return
 
+            # Check for user-initiated pause
+            if session and session.status == SessionStatus.PAUSED.value:
+                # Pending runs stay PENDING — they'll resume later
+                logger.info("execution_paused_by_user", session_id=str(session_id))
+                return
+
             # Get next pending run
             next_run = self.execution_repo.get_next_pending(session_id)
 
