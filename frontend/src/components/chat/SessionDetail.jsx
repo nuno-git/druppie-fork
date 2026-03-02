@@ -437,8 +437,14 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     queryFn: () => getSession(sessionId),
     refetchInterval: (query) => {
       const status = query.state.data?.status
-      if (status === 'completed' || status === 'failed' || status === 'cancelled') return false
-      if (status === 'paused') return 2000
+      if (status === 'completed' || status === 'failed') return false
+      if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl') {
+        // Fast poll while stopping (agent still finishing current op), slow poll when fully paused
+        const hasRunning = query.state.data?.timeline?.some(
+          e => e.type === 'agent_run' && e.agent_run?.status === 'running'
+        )
+        return hasRunning ? 500 : 2000
+      }
       return 500
     },
     enabled: !!sessionId,
@@ -468,6 +474,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
   })
+
+  // Derive "stopping" state: session is paused but agent is still finishing current operation
+  const hasRunningAgentRun = data?.timeline?.some(
+    e => e.type === 'agent_run' && e.agent_run?.status === 'running'
+  )
+  const isStopping = data?.status === 'paused' && hasRunningAgentRun
 
   // When session has pending approvals, keep the tasks/badge cache fresh
   useEffect(() => {
@@ -563,20 +575,21 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     continueMutation.mutate(trimmed)
   }
 
-  const statusDotColor = {
-    completed: 'bg-green-500',
-    active: 'bg-blue-500 animate-pulse',
-    running: 'bg-blue-500 animate-pulse',
-    failed: 'bg-red-500',
-    cancelled: 'bg-gray-400',
-    pending: 'bg-gray-400',
-    paused: 'bg-amber-500 animate-pulse',
-    paused_hitl: 'bg-amber-500 animate-pulse',
-    paused_tool: 'bg-amber-500 animate-pulse',
-    paused_approval: 'bg-amber-500 animate-pulse',
-    waiting_approval: 'bg-amber-500 animate-pulse',
-    waiting_answer: 'bg-amber-500 animate-pulse',
-  }[data.status] || 'bg-gray-400'
+  const statusDotColor = isStopping
+    ? 'bg-amber-500 animate-pulse'
+    : {
+        completed: 'bg-green-500',
+        active: 'bg-blue-500 animate-pulse',
+        running: 'bg-blue-500 animate-pulse',
+        failed: 'bg-red-500',
+        pending: 'bg-gray-400',
+        paused: 'bg-amber-500',
+        paused_hitl: 'bg-amber-500 animate-pulse',
+        paused_tool: 'bg-amber-500 animate-pulse',
+        paused_approval: 'bg-amber-500 animate-pulse',
+        waiting_approval: 'bg-amber-500 animate-pulse',
+        waiting_answer: 'bg-amber-500 animate-pulse',
+      }[data.status] || 'bg-gray-400'
 
   return (
     <div className="flex flex-col h-full min-w-0">
@@ -588,7 +601,15 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             {data.title || 'Untitled Session'}
           </h2>
           <div className="ml-auto flex items-center gap-3 flex-shrink-0">
-            {data.status === 'paused' && (
+            {/* Stopping indicator — session is paused but agent still finishing */}
+            {isStopping && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Stopping…
+              </span>
+            )}
+            {/* Continue button — only when fully stopped */}
+            {data.status === 'paused' && !isStopping && (
               <button
                 onClick={() => resumeMutation.mutate()}
                 disabled={resumeMutation.isPending}
@@ -779,7 +800,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
           {/* Trailing thinking indicator */}
           {(() => {
             // Don't show thinking indicator if session itself has ended
-            if (data.status === 'failed' || data.status === 'completed' || data.status === 'cancelled') return null
+            if (data.status === 'failed' || data.status === 'completed') return null
             const runningEntry = data.timeline?.findLast(
               (e) => e.type === 'agent_run' && e.agent_run?.status === 'running'
             )
@@ -832,7 +853,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       )}
 
       {/* Floating input bar — hidden in inspect mode */}
-      {data.status !== 'failed' && data.status !== 'cancelled' && viewMode !== 'inspect' && (
+      {data.status !== 'failed' && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
           <div className="max-w-3xl mx-auto">
             <div className="flex items-end gap-2 border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">
@@ -858,7 +879,15 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 aria-label="Chat message input"
                 disabled={continueMutation.isPending}
               />
-              {['active', 'paused_approval', 'paused_hitl'].includes(data.status) ? (
+              {isStopping ? (
+                <button
+                  disabled
+                  className="flex-shrink-0 p-2 rounded-xl bg-amber-500 text-white transition-colors"
+                  aria-label="Stopping"
+                >
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                </button>
+              ) : ['active', 'paused_approval', 'paused_hitl'].includes(data.status) ? (
                 <button
                   onClick={() => cancelMutation.mutate()}
                   disabled={cancelMutation.isPending}
