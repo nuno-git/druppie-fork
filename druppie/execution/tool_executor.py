@@ -55,6 +55,7 @@ BUILTIN_TOOLS = {
     "hitl_ask_multiple_choice_question",
     "create_message",
     "invoke_skill",
+    "execute_coding_task",
 }
 
 # HITL tools require user answer (create Question record)
