@@ -79,6 +79,9 @@ export const sendChat = async (message, sessionId = null, conversationHistory = 
 export const cancelChat = (sessionId) =>
   request(`/api/chat/${sessionId}/cancel`, { method: 'POST' })
 
+export const pauseSession = (sessionId) =>
+  request(`/api/chat/${sessionId}/pause`, { method: 'POST' })
+
 // ============ Sessions (replaces Plans) ============
 // Paginated sessions for sidebar
 export const getSessions = (page = 1, limit = 20) =>
@@ -87,12 +90,8 @@ export const getSessions = (page = 1, limit = 20) =>
 // Get complete session with ALL data (messages, llm_calls, events, approvals, etc.)
 export const getSession = (sessionId) => request(`/api/sessions/${sessionId}`)
 
-// Resume from chat endpoint (for HITL/approval continuation)
-export const resumeSession = (sessionId, answer = null) =>
-  request(`/api/chat/${sessionId}/resume`, {
-    method: 'POST',
-    body: JSON.stringify({ answer }),
-  })
+export const resumeSession = (sessionId) =>
+  request(`/api/sessions/${sessionId}/resume`, { method: 'POST' })
 
 export const deleteSession = (sessionId) =>
   request(`/api/sessions/${sessionId}`, { method: 'DELETE' })
