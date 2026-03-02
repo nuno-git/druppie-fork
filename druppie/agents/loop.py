@@ -9,6 +9,7 @@ from uuid import UUID
 import structlog
 
 from druppie.agents.builtin_tools import DEFAULT_BUILTIN_TOOLS, is_builtin_tool
+from druppie.domain.common import SessionStatus
 from druppie.execution.tool_executor import ToolCallStatus
 from druppie.llm.base import LLMError
 
@@ -70,11 +71,11 @@ class AgentLoop:
 
         for iteration in range(start_iteration, max_iterations):
             # Check for session cancellation or user-initiated pause between iterations
-            if self._is_cancelled(session_id):
+            session_status = self._get_session_status(session_id)
+            if session_status == "cancelled":
                 logger.info("agent_loop_cancelled", agent_id=self.agent_id, iteration=iteration)
                 return {"status": "cancelled"}
-
-            if self._is_paused(session_id):
+            if session_status == SessionStatus.PAUSED.value:
                 logger.info("agent_loop_paused_by_user", agent_id=self.agent_id, iteration=iteration)
                 return {"status": "paused", "reason": "user_paused"}
 
@@ -111,24 +112,19 @@ class AgentLoop:
         )
 
     # ------------------------------------------------------------------
-    # Cancellation check
+    # Session status check (single DB poll for cancelled/paused)
     # ------------------------------------------------------------------
 
-    def _is_cancelled(self, session_id: UUID) -> bool:
-        """Check if the session has been cancelled (DB poll)."""
-        from druppie.repositories import ExecutionRepository
+    def _get_session_status(self, session_id: UUID) -> str | None:
+        """Get current session status from DB (single expire + query).
 
-        execution_repo = ExecutionRepository(self.db)
-        return execution_repo.is_session_cancelled(session_id)
-
-    def _is_paused(self, session_id: UUID) -> bool:
-        """Check if the session has been paused by the user (DB poll)."""
+        Used for cooperative cancellation/pause checks between iterations.
+        """
         from druppie.db.models import Session
-        from druppie.domain.common import SessionStatus
 
         self.db.expire_all()
         session = self.db.query(Session).filter(Session.id == session_id).first()
-        return session is not None and session.status == SessionStatus.PAUSED.value
+        return session.status if session else None
 
     # ------------------------------------------------------------------
     # Tool preparation
