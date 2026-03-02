@@ -4,11 +4,11 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PauseCircle, PlayCircle, ArrowUp } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, pauseSession, resumeSession, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
+import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
@@ -460,14 +460,6 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     },
   })
 
-  const pauseMutation = useMutation({
-    mutationFn: () => pauseSession(sessionId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
-      queryClient.invalidateQueries({ queryKey: ['sessions'] })
-    },
-  })
-
   const resumeMutation = useMutation({
     mutationFn: () => resumeSession(sessionId),
     onSuccess: () => {
@@ -595,20 +587,6 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             {data.title || 'Untitled Session'}
           </h2>
           <div className="ml-auto flex items-center gap-3 flex-shrink-0">
-            {data.status === 'active' && (
-              <button
-                onClick={() => pauseMutation.mutate()}
-                disabled={pauseMutation.isPending}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 disabled:opacity-50 transition-colors"
-              >
-                {pauseMutation.isPending ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <PauseCircle className="w-3.5 h-3.5" />
-                )}
-                Pause
-              </button>
-            )}
             {data.status === 'paused' && (
               <button
                 onClick={() => resumeMutation.mutate()}
@@ -623,7 +601,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 Continue
               </button>
             )}
-            {['active', 'paused', 'paused_approval', 'paused_hitl'].includes(data.status) && (
+            {['active', 'paused_approval', 'paused_hitl'].includes(data.status) && (
               <button
                 onClick={() => cancelMutation.mutate()}
                 disabled={cancelMutation.isPending}
@@ -879,17 +857,17 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 aria-label="Chat message input"
                 disabled={continueMutation.isPending}
               />
-              {data.status === 'active' ? (
+              {['active', 'paused_approval', 'paused_hitl'].includes(data.status) ? (
                 <button
-                  onClick={() => pauseMutation.mutate()}
-                  disabled={pauseMutation.isPending}
-                  className="flex-shrink-0 p-2 rounded-xl bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 transition-colors"
-                  aria-label="Pause agent"
+                  onClick={() => cancelMutation.mutate()}
+                  disabled={cancelMutation.isPending}
+                  className="flex-shrink-0 p-2 rounded-xl bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
+                  aria-label="Stop agent"
                 >
-                  {pauseMutation.isPending ? (
+                  {cancelMutation.isPending ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
-                    <PauseCircle className="w-4 h-4" />
+                    <StopCircle className="w-4 h-4" />
                   )}
                 </button>
               ) : data.status === 'paused' ? (
@@ -903,19 +881,6 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <PlayCircle className="w-4 h-4" />
-                  )}
-                </button>
-              ) : ['paused_approval', 'paused_hitl'].includes(data.status) ? (
-                <button
-                  onClick={() => cancelMutation.mutate()}
-                  disabled={cancelMutation.isPending}
-                  className="flex-shrink-0 p-2 rounded-xl bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
-                  aria-label="Stop agent"
-                >
-                  {cancelMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <StopCircle className="w-4 h-4" />
                   )}
                 </button>
               ) : (
