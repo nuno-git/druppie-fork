@@ -323,7 +323,7 @@ const SandboxEventCard = ({ sandboxResults }) => {
   if (!sandboxResults?.length) return null
 
   // Aggregate stats
-  const totalFiles = new Set(sandboxResults.flatMap((r) => r.changed_files || [])).size
+  const totalFiles = new Set(sandboxResults.flatMap((r) => (r.changed_files || []).map(f => typeof f === 'string' ? f : f.path))).size
   const totalTime = sandboxResults.reduce((sum, r) => sum + (r.elapsed_seconds || 0), 0)
   const allSuccess = sandboxResults.every((r) => r.success)
 
