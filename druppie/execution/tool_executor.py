@@ -707,6 +707,21 @@ class ToolExecutor:
                 execution_repo=self.execution_repo,
             )
 
+            # Handle sandbox delegation — tool is waiting for external callback
+            if isinstance(result, dict) and result.get("status") == "waiting_sandbox":
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.WAITING_SANDBOX,
+                    result=result,  # Store sandbox_session_id for resume
+                )
+                self.db.commit()
+                logger.info(
+                    "builtin_tool_waiting_sandbox",
+                    tool_call_id=str(tool_call.id),
+                    sandbox_session_id=result.get("sandbox_session_id"),
+                )
+                return ToolCallStatus.WAITING_SANDBOX
+
             # Check if the builtin tool reported failure via success field
             is_success = result.get("success", True) if isinstance(result, dict) else True
             status = ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED
@@ -794,10 +809,7 @@ class ToolExecutor:
             )
 
             # Execute via HTTP
-            # Long-running tools get a longer timeout
             timeout = 60.0
-            if tool_call.tool_name == "execute_coding_task":
-                timeout = 90000.0  # 25 hours — sandbox has its own internal timeout
 
             result = await self.mcp_http.call(
                 tool_call.mcp_server,
