@@ -721,11 +721,16 @@ class Orchestrator:
             logger.error("sandbox_resume_tool_call_not_found", tool_call_id=str(tool_call_id))
             return None
 
-        agent_run = self.execution_repo.get_by_id(tool_call.agent_run_id)
-        if not agent_run:
+        # Query the raw DB model to get session_id (AgentRunSummary doesn't have it)
+        from druppie.db.models.agent_run import AgentRun as AgentRunModel
+        agent_run_row = self.execution_repo.db.query(AgentRunModel).filter(
+            AgentRunModel.id == tool_call.agent_run_id
+        ).first()
+        if not agent_run_row:
             logger.error("sandbox_resume_agent_run_not_found", agent_run_id=str(tool_call.agent_run_id))
             return None
 
+        agent_run = agent_run_row
         session_id = agent_run.session_id
 
         logger.info(
