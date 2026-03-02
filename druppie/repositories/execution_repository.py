@@ -197,6 +197,7 @@ class ExecutionRepository(BaseRepository):
         """Convert AgentRun model to AgentRunSummary domain model."""
         return AgentRunSummary(
             id=agent_run.id,
+            session_id=agent_run.session_id,
             agent_id=agent_run.agent_id,
             status=AgentRunStatus(agent_run.status),
             error_message=agent_run.error_message,
