@@ -373,10 +373,11 @@ class ExecutionRepository(BaseRepository):
         )
 
     def find_by_sandbox_session_id(self, sandbox_session_id: str) -> ToolCall | None:
-        """Find a tool call in WAITING_SANDBOX status by its sandbox_session_id.
+        """Find a tool call by its sandbox_session_id.
 
-        The sandbox_session_id is stored in tool_call.result (JSON) when the
-        built-in tool returns waiting_sandbox status.
+        DEPRECATED: Use SandboxSessionRepository.get_by_sandbox_id() to get the
+        tool_call_id directly. This method is kept as a fallback for sandbox
+        sessions registered before the tool_call_id column was added.
         """
         import json
 

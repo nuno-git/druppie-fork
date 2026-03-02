@@ -56,6 +56,13 @@ class SandboxSessionRepository(BaseRepository):
             .first()
         )
 
+    def update_tool_call_id(self, sandbox_session_id: str, tool_call_id: UUID) -> None:
+        """Link a sandbox session to its tool call for direct lookup."""
+        session = self.get_by_sandbox_id(sandbox_session_id)
+        if session:
+            session.tool_call_id = tool_call_id
+            self.db.flush()
+
     def invalidate_proxy_key(self, sandbox_session_id: str) -> None:
         """Clear the git proxy key so the proxy URL stops working."""
         session = self.get_by_sandbox_id(sandbox_session_id)
