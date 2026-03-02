@@ -629,18 +629,10 @@ system_prompts:
   - done_tool_format
   - workspace_state
 
-mcps:
-   coding:
-     # - read_file
-     # - write_file
-     # - batch_write_files
-     # - list_dir
-     # - commit_and_push
-     # - get_test_framework
-     # - run_tests
-     # - get_coverage_report
-     # - install_test_dependencies
-     # - validate_tdd
+# MCP coding tools commented out — tester delegates via execute_coding_task
+# coding: [read_file, write_file, batch_write_files, list_dir, commit_and_push,
+#          get_test_framework, run_tests, get_coverage_report, install_test_dependencies, validate_tdd]
+mcps: []
 
 extra_builtin_tools:
   - execute_coding_task
