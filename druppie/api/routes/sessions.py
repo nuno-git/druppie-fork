@@ -382,9 +382,9 @@ async def _run_resume_background(session_id: UUID) -> None:
         )
         try:
             db.rollback()
-            from druppie.repositories import SessionRepository as SR
-            sr = SR(db)
-            sr.update_status(
+            from druppie.repositories import SessionRepository
+            session_repo = SessionRepository(db)
+            session_repo.update_status(
                 session_id,
                 SessionStatus.FAILED,
                 error_message=error_msg[:2000],
@@ -415,17 +415,17 @@ async def resume_session(
     user_roles = get_user_roles(user)
 
     # Validate session exists and user has access
-    detail = service.get_detail(
+    service.get_detail(
         session_id=session_id,
         user_id=user_id,
         user_roles=user_roles,
     )
 
-    if detail.status != "paused":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Cannot resume session with status '{detail.status}'",
-        )
+    # Atomically lock and transition session to ACTIVE
+    try:
+        service.lock_for_resume(session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
     logger.info(
         "resume_session_requested",
