@@ -14,7 +14,7 @@ import os
 import time
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import httpx
@@ -190,12 +190,15 @@ def _extract_agent_output(events: list[dict]) -> str:
 async def sandbox_complete_webhook(
     sandbox_session_id: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """Webhook called by the control plane when a sandbox session completes.
 
     Verifies HMAC signature, fetches final events, extracts results,
     completes the tool call, and resumes the paused agent.
+
+    Idempotent: returns 200 OK if the tool call was already processed.
     """
     api_secret = os.environ.get("SANDBOX_API_SECRET", "sandbox-dev-secret")
 
@@ -215,18 +218,39 @@ async def sandbox_complete_webhook(
         message_id=body.messageId,
     )
 
-    # Find the WAITING_SANDBOX tool call for this sandbox session
+    # Find the tool call for this sandbox session via SandboxSession ownership record
     from druppie.repositories import ExecutionRepository
     from druppie.execution.tool_executor import ToolCallStatus
 
-    execution_repo = ExecutionRepository(db)
-    tool_call = execution_repo.find_by_sandbox_session_id(sandbox_session_id)
-    if not tool_call:
+    sandbox_repo = SandboxSessionRepository(db)
+    sandbox_mapping = sandbox_repo.get_by_sandbox_id(sandbox_session_id)
+    if not sandbox_mapping or not sandbox_mapping.tool_call_id:
         logger.warning(
             "sandbox_webhook_no_tool_call",
             sandbox_session_id=sandbox_session_id,
+            has_mapping=sandbox_mapping is not None,
         )
         raise HTTPException(status_code=404, detail="No waiting tool call found")
+
+    execution_repo = ExecutionRepository(db)
+    tool_call = execution_repo.get_tool_call(sandbox_mapping.tool_call_id)
+    if not tool_call:
+        logger.warning(
+            "sandbox_webhook_tool_call_missing",
+            sandbox_session_id=sandbox_session_id,
+            tool_call_id=str(sandbox_mapping.tool_call_id),
+        )
+        raise HTTPException(status_code=404, detail="Tool call not found")
+
+    # Idempotency guard: if tool call is no longer waiting, the webhook was already processed
+    if tool_call.status != ToolCallStatus.WAITING_SANDBOX:
+        logger.info(
+            "sandbox_webhook_already_processed",
+            sandbox_session_id=sandbox_session_id,
+            tool_call_id=str(tool_call.id),
+            current_status=tool_call.status,
+        )
+        return {"status": "already_processed", "sandbox_session_id": sandbox_session_id}
 
     # Fetch final events from control plane
     control_plane_url = os.environ.get(
@@ -253,7 +277,6 @@ async def sandbox_complete_webhook(
         logger.warning("sandbox_webhook_event_fetch_failed", error=str(e))
 
     # Invalidate the git proxy key so the proxy URL stops working
-    sandbox_repo = SandboxSessionRepository(db)
     sandbox_repo.invalidate_proxy_key(sandbox_session_id)
 
     # Build the final tool result
@@ -267,7 +290,6 @@ async def sandbox_complete_webhook(
     }
 
     # Complete the tool call
-    import json
     execution_repo.update_tool_call(
         tool_call.id,
         status=ToolCallStatus.COMPLETED if body.success else ToolCallStatus.FAILED,
@@ -284,27 +306,55 @@ async def sandbox_complete_webhook(
         changed_files=len(changed_files),
     )
 
-    # Resume the agent in the background (don't block the webhook response)
-    import asyncio
-    from druppie.execution.orchestrator import Orchestrator
-    from druppie.repositories import SessionRepository, ProjectRepository, QuestionRepository
-    from druppie.db.database import SessionLocal
-
-    async def _resume():
-        resume_db = SessionLocal()
-        try:
-            orchestrator = Orchestrator(
-                session_repo=SessionRepository(resume_db),
-                execution_repo=ExecutionRepository(resume_db),
-                project_repo=ProjectRepository(resume_db),
-                question_repo=QuestionRepository(resume_db),
-            )
-            await orchestrator.resume_after_sandbox(tool_call.id)
-        except Exception as e:
-            logger.error("sandbox_resume_failed", tool_call_id=str(tool_call.id), error=str(e))
-        finally:
-            resume_db.close()
-
-    asyncio.create_task(_resume())
+    # Resume the agent in the background via Starlette BackgroundTasks
+    # (properly managed lifecycle — awaited before server shutdown)
+    tool_call_id = tool_call.id
+    background_tasks.add_task(_resume_agent_after_sandbox, tool_call_id)
 
     return {"status": "ok", "sandbox_session_id": sandbox_session_id}
+
+
+async def _resume_agent_after_sandbox(tool_call_id: UUID) -> None:
+    """Resume the paused agent after sandbox completion.
+
+    Runs as a Starlette BackgroundTask (proper lifecycle management).
+    Creates its own DB session. On failure, reverts statuses so the
+    session doesn't get permanently stuck.
+    """
+    from druppie.execution.orchestrator import Orchestrator
+    from druppie.repositories import ExecutionRepository, SessionRepository, ProjectRepository, QuestionRepository
+    from druppie.db.database import SessionLocal
+    from druppie.domain.common import AgentRunStatus, SessionStatus
+
+    resume_db = SessionLocal()
+    try:
+        orchestrator = Orchestrator(
+            session_repo=SessionRepository(resume_db),
+            execution_repo=ExecutionRepository(resume_db),
+            project_repo=ProjectRepository(resume_db),
+            question_repo=QuestionRepository(resume_db),
+        )
+        await orchestrator.resume_after_sandbox(tool_call_id)
+    except Exception as e:
+        logger.error("sandbox_resume_failed", tool_call_id=str(tool_call_id), error=str(e))
+        # Revert statuses so the session doesn't get permanently stuck
+        try:
+            resume_db.rollback()
+            execution_repo = ExecutionRepository(resume_db)
+            tool_call = execution_repo.get_tool_call(tool_call_id)
+            if tool_call and tool_call.agent_run_id:
+                agent_run = execution_repo.get_by_id(tool_call.agent_run_id)
+                if agent_run and agent_run.status == AgentRunStatus.RUNNING:
+                    execution_repo.update_status(agent_run.id, AgentRunStatus.FAILED, error_message=f"Resume failed: {e}")
+                    session_repo = SessionRepository(resume_db)
+                    session_repo.update_status(agent_run.session_id, SessionStatus.COMPLETED)
+                    resume_db.commit()
+                    logger.info(
+                        "sandbox_resume_statuses_reverted",
+                        tool_call_id=str(tool_call_id),
+                        agent_run_id=str(agent_run.id),
+                    )
+        except Exception as revert_error:
+            logger.error("sandbox_resume_status_revert_failed", error=str(revert_error))
+    finally:
+        resume_db.close()
