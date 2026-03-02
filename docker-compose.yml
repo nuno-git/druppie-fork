@@ -257,6 +257,28 @@ services:
       retries: 5
       start_period: 10s
 
+  mcp-archimate:
+    build:
+      context: ./druppie/mcp-servers/archimate
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-archimate
+    profiles: [infra, dev, prod]
+    environment:
+      MODELS_DIR: /models
+      MCP_PORT: "9006"
+    volumes:
+      - ./druppie/mcp-servers/archimate/models:/models:ro
+    ports:
+      - "${MCP_ARCHIMATE_PORT:-9006}:9006"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   mcp-web:
     build:
       context: ./druppie/mcp-servers/web
@@ -464,6 +486,7 @@ services:
       MCP_DOCKER_URL: http://mcp-docker:9002
       MCP_FILESEARCH_URL: http://mcp-filesearch:9004
       MCP_WEB_URL: http://mcp-web:9005
+      MCP_ARCHIMATE_URL: http://mcp-archimate:9006
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       BACKEND_URL: http://druppie-backend-dev:8000
@@ -535,6 +558,7 @@ services:
       MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
       MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
       MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
+      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       BACKEND_URL: http://druppie-backend:8000

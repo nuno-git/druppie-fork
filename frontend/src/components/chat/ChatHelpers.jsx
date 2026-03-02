@@ -298,6 +298,6 @@ export const extractSandboxResults = (agentRun) => {
 }
 
 export const ACTIVE_STATUSES = new Set([
-  'active', 'running', 'paused_hitl', 'paused_tool',
+  'active', 'running', 'paused', 'paused_hitl', 'paused_tool',
   'paused_approval', 'waiting_approval', 'waiting_answer',
 ])
