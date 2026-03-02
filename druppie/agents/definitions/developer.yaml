@@ -179,19 +179,19 @@ system_prompts:
 # MCP tools this agent can use
 mcps:
   coding:
-   # - read_file
-    #- write_file
-   # - batch_write_files
-   # - commit_and_push
-   # - create_branch
-   # - create_pull_request
-   # - merge_pull_request
-   # - get_git_status
-   # - list_dir
-   # - delete_file
-    - execute_coding_task
+    - read_file
+    - write_file
+    - batch_write_files
+    - commit_and_push
+    - create_branch
+    - create_pull_request
+    - merge_pull_request
+    - get_git_status
+    - list_dir
+    - delete_file
 
-
+extra_builtin_tools:
+  - execute_coding_task
 
 # NO approval_overrides needed!
 # Per goal.md:
