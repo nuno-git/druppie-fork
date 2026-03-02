@@ -126,7 +126,7 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                 "properties": {
                     "intent": {
                         "type": "string",
-                        "enum": ["create_project", "update_project", "general_chat"],
+                        "enum": ["create_project", "update_project", "update_core", "general_chat"],
                         "description": "The type of user intent",
                     },
                     "project_id": {
@@ -336,8 +336,8 @@ async def set_intent(
         project_name=project_name,
     )
 
-    # Validate intent
-    valid_intents = ("create_project", "update_project", "general_chat")
+    # Validate intent — update_core is a new intent for modifying Druppie's own codebase
+    valid_intents = ("create_project", "update_project", "update_core", "general_chat")
     if intent not in valid_intents:
         return {
             "success": False,
@@ -472,6 +472,34 @@ async def set_intent(
                 "success": False,
                 "error": f"Invalid project_id format: {project_id}",
             }
+
+    elif intent == "update_core":
+        # update_core: Druppie modifies its own codebase via a PR to GitHub.
+        # No project record or Gitea repo is created — we hardcode the repo context
+        # for nuno-git/druppie-fork and store it directly on the session.
+        repo_url = "https://github.com/nuno-git/druppie-fork.git"
+        repo_owner = "nuno-git"
+        repo_name = "druppie-fork"
+        base_branch = "colab-dev"
+
+        # Store the repo context on the session so execute_coding_task can read it later
+        session.repo_url = repo_url
+        session.repo_owner = repo_owner
+        session.repo_name = repo_name
+        session.base_branch = base_branch
+
+        result["repo_url"] = repo_url
+        result["repo_owner"] = repo_owner
+        result["repo_name"] = repo_name
+        result["base_branch"] = base_branch
+        result["message"] = f"Intent set to update_core — PR will target {repo_owner}/{repo_name}:{base_branch}"
+
+        logger.info(
+            "update_core_intent_set",
+            session_id=str(session_id),
+            repo_url=repo_url,
+            base_branch=base_branch,
+        )
 
     else:  # general_chat
         result["message"] = "Intent set to general_chat"
