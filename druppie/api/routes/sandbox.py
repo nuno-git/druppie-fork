@@ -1,11 +1,11 @@
-"""Sandbox events API routes.
+"""Sandbox API routes.
 
-Thin proxy to the sandbox control plane's events API.
-Lets the frontend fetch detailed sandbox session events for observability.
+Proxy to the sandbox control plane, ownership registration, and webhook receiver.
 
 Endpoints:
-- POST /sandbox-sessions/internal/register - Register sandbox session ownership (MCP server only)
-- GET /sandbox-sessions/{session_id}/events - Fetch events for a sandbox session
+- POST /sandbox-sessions/internal/register - Register sandbox session ownership (internal)
+- GET /sandbox-sessions/{session_id}/events - Fetch events for a sandbox session (frontend)
+- POST /sandbox-sessions/{sandbox_session_id}/complete - Webhook from control plane on completion
 """
 
 import hashlib
@@ -14,7 +14,7 @@ import os
 import time
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import httpx
@@ -66,7 +66,6 @@ async def register_sandbox_session(
         session_id=session_uuid,
     )
     db.commit()
-    already_existed = mapping.created_at is not None  # always true after flush
     logger.info(
         "sandbox_session_registered",
         sandbox_session_id=body.sandbox_session_id,
@@ -119,3 +118,171 @@ async def get_sandbox_events(
     except httpx.RequestError as e:
         logger.warning("sandbox_events_connection_error", session_id=session_id, error=str(e))
         raise HTTPException(status_code=502, detail="Sandbox control plane unavailable")
+
+
+# =============================================================================
+# WEBHOOK: Sandbox completion callback from control plane
+# =============================================================================
+
+
+class SandboxCompletePayload(BaseModel):
+    """Webhook payload from control plane on sandbox completion."""
+    sessionId: str
+    messageId: str = ""
+    success: bool = True
+    timestamp: int = 0
+
+
+def _verify_webhook_signature(payload_bytes: bytes, signature: str, secret: str) -> bool:
+    """Verify HMAC-SHA256 signature from control plane webhook."""
+    expected = hmac.new(
+        secret.encode(),
+        payload_bytes,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+def _extract_changed_files(events: list[dict]) -> list[dict]:
+    """Extract changed files from sandbox events (tool_call events with write operations)."""
+    files = []
+    seen_paths = set()
+    for event in events:
+        if event.get("type") != "tool_call":
+            continue
+        data = event.get("data", {})
+        tool = data.get("tool", "")
+        args = data.get("args", {})
+        path = args.get("filePath") or args.get("path") or ""
+        if tool in ("write", "write_file", "batch_write_files") and path and path not in seen_paths:
+            seen_paths.add(path)
+            files.append({"path": path, "action": tool})
+    return files
+
+
+def _extract_agent_output(events: list[dict]) -> str:
+    """Extract agent text output from token events, sorted chronologically."""
+    parts = []
+    for event in events:
+        if event.get("type") == "token":
+            content = (event.get("data") or {}).get("content", "")
+            if content:
+                ts = event.get("createdAt") or event.get("created_at") or ""
+                parts.append((ts, content))
+        elif event.get("type") == "agent_message":
+            content = event.get("content", "")
+            if content:
+                ts = event.get("createdAt") or event.get("created_at") or ""
+                parts.append((ts, content))
+    parts.sort(key=lambda x: x[0])
+    return "\n".join(c for _, c in parts).strip()
+
+
+@router.post("/sandbox-sessions/{sandbox_session_id}/complete")
+async def sandbox_complete_webhook(
+    sandbox_session_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Webhook called by the control plane when a sandbox session completes.
+
+    Verifies HMAC signature, fetches final events, extracts results,
+    completes the tool call, and resumes the paused agent.
+    """
+    api_secret = os.environ.get("SANDBOX_API_SECRET", "sandbox-dev-secret")
+
+    # Verify HMAC signature
+    raw_body = await request.body()
+    signature = request.headers.get("X-Signature", "")
+    if not _verify_webhook_signature(raw_body, signature, api_secret):
+        logger.warning("sandbox_webhook_invalid_signature", sandbox_session_id=sandbox_session_id)
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    body = SandboxCompletePayload.model_validate_json(raw_body)
+
+    logger.info(
+        "sandbox_webhook_received",
+        sandbox_session_id=sandbox_session_id,
+        success=body.success,
+        message_id=body.messageId,
+    )
+
+    # Find the WAITING_SANDBOX tool call for this sandbox session
+    from druppie.repositories import ExecutionRepository
+    from druppie.execution.tool_executor import ToolCallStatus
+
+    execution_repo = ExecutionRepository(db)
+    tool_call = execution_repo.find_by_sandbox_session_id(sandbox_session_id)
+    if not tool_call:
+        logger.warning(
+            "sandbox_webhook_no_tool_call",
+            sandbox_session_id=sandbox_session_id,
+        )
+        raise HTTPException(status_code=404, detail="No waiting tool call found")
+
+    # Fetch final events from control plane
+    control_plane_url = os.environ.get(
+        "SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787"
+    ).rstrip("/")
+    changed_files = []
+    agent_output = ""
+    event_count = 0
+
+    try:
+        token = _generate_internal_token(api_secret)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            events_resp = await client.get(
+                f"{control_plane_url}/sessions/{sandbox_session_id}/events?limit=500",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if events_resp.status_code == 200:
+                events_data = events_resp.json()
+                events = events_data.get("events", [])
+                event_count = len(events)
+                changed_files = _extract_changed_files(events)
+                agent_output = _extract_agent_output(events)
+    except Exception as e:
+        logger.warning("sandbox_webhook_event_fetch_failed", error=str(e))
+
+    # Build the final tool result
+    result = {
+        "success": body.success,
+        "sandbox_session_id": sandbox_session_id,
+        "status": "completed" if body.success else "failed",
+        "event_count": event_count,
+        "changed_files": changed_files,
+        "agent_output": agent_output[-5000:] if agent_output else "",
+    }
+
+    # Complete the tool call
+    import json
+    execution_repo.update_tool_call(
+        tool_call.id,
+        status=ToolCallStatus.COMPLETED if body.success else ToolCallStatus.FAILED,
+        result=result,
+    )
+    db.commit()
+
+    logger.info(
+        "sandbox_webhook_tool_call_completed",
+        sandbox_session_id=sandbox_session_id,
+        tool_call_id=str(tool_call.id),
+        success=body.success,
+        event_count=event_count,
+        changed_files=len(changed_files),
+    )
+
+    # Resume the agent in the background (don't block the webhook response)
+    import asyncio
+    from druppie.execution.orchestrator import Orchestrator
+
+    async def _resume():
+        try:
+            orchestrator = Orchestrator(db)
+            await orchestrator.resume_after_sandbox(tool_call.id)
+        except Exception as e:
+            logger.error("sandbox_resume_failed", tool_call_id=str(tool_call.id), error=str(e))
+
+    asyncio.create_task(_resume())
+
+    return {"status": "ok", "sandbox_session_id": sandbox_session_id}
