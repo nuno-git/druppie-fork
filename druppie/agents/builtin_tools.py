@@ -35,6 +35,7 @@ INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "druppie-internal-secret-key")
 GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
 GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "")
 GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
+SANDBOX_MODEL = os.getenv("SANDBOX_MODEL", "zai-coding-plan/glm-4.7")
 
 
 def _generate_sandbox_auth_token() -> str:
@@ -895,7 +896,7 @@ async def execute_sandbox_coding_task(
     """
     task = args.get("task", "")
     agent = args.get("agent", "druppie-builder")
-    model = "zai-coding-plan/glm-4.7"
+    model = SANDBOX_MODEL
 
     if not task:
         return {"success": False, "error": "task is required"}
