@@ -906,11 +906,21 @@ class Orchestrator:
         db = self.execution_repo.db
         context = self._build_project_context(session_id)
         agent = Agent(agent_run.agent_id, db=db)
-        result = await agent.continue_run(
-            session_id=session_id,
-            agent_run_id=agent_run.id,
-            context=context,
-        )
+        try:
+            result = await agent.continue_run(
+                session_id=session_id,
+                agent_run_id=agent_run.id,
+                context=context,
+            )
+        except Exception as e:
+            error_msg = f"{type(e).__name__}: {e}"
+            self.execution_repo.update_status(
+                agent_run.id,
+                AgentRunStatus.FAILED,
+                error_message=error_msg[:2000],
+            )
+            self.execution_repo.commit()
+            raise
 
         # Handle result — agent may pause again
         status = self._handle_agent_resume_result(session_id, agent_run.id, result)

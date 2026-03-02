@@ -31,7 +31,6 @@ logger = structlog.get_logger()
 SANDBOX_CONTROL_PLANE_URL = os.getenv("SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787")
 SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", "sandbox-dev-secret")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://druppie-backend:8000")
-INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "druppie-internal-secret-key")
 GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
 GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "")
 GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
@@ -1009,37 +1008,39 @@ async def execute_sandbox_coding_task(
                 message_id=prompt_message_id,
             )
 
-            # Step 3: Register ownership with Druppie backend
+            # Step 3: Register ownership directly via repository
+            # This must succeed — without ownership the webhook cannot find
+            # the tool call and the session would be stuck forever.
             if user_id:
                 try:
-                    reg_body = {
-                        "sandbox_session_id": sandbox_session_id,
-                        "user_id": user_id,
-                        "git_proxy_key": proxy_key,
-                        "git_provider": "gitea",
-                        "git_repo_owner": sandbox_repo_owner,
-                        "git_repo_name": sandbox_repo_name,
-                    }
-                    if session_id:
-                        reg_body["session_id"] = str(session_id)
-                    reg_resp = await client.post(
-                        f"{BACKEND_URL}/api/sandbox-sessions/internal/register",
-                        json=reg_body,
-                        headers={"X-Internal-API-Key": INTERNAL_API_KEY},
-                        timeout=5.0,
+                    from druppie.repositories.sandbox_session_repository import SandboxSessionRepository
+                    sandbox_repo = SandboxSessionRepository(db)
+                    sandbox_repo.create(
+                        sandbox_session_id=sandbox_session_id,
+                        user_id=UUID(user_id),
+                        session_id=session_id,
+                        git_proxy_key=proxy_key,
+                        git_provider="gitea",
+                        git_repo_owner=sandbox_repo_owner,
+                        git_repo_name=sandbox_repo_name,
                     )
-                    reg_resp.raise_for_status()
+                    db.commit()
                     logger.info(
                         "execute_coding_task: registered ownership",
                         sandbox_session_id=sandbox_session_id,
                         user_id=user_id,
                     )
                 except Exception as e:
-                    logger.warning(
+                    logger.error(
                         "execute_coding_task: failed to register ownership",
                         sandbox_session_id=sandbox_session_id,
                         error=str(e),
                     )
+                    return {
+                        "success": False,
+                        "error": f"Failed to register sandbox ownership: {e}",
+                        "sandbox_session_id": sandbox_session_id,
+                    }
 
             # Return with waiting_sandbox status — caller will pause the agent
             return {
