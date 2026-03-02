@@ -756,6 +756,24 @@ class Orchestrator:
         paused_run = self.execution_repo.get_user_paused_run(session_id)
 
         if not paused_run:
+            # Check if there's a run waiting for approval/answer — if so,
+            # restore the session to its waiting status and let the
+            # approval/answer flow handle it naturally
+            waiting_run = self.execution_repo.get_paused_run(session_id)
+            if waiting_run:
+                if waiting_run.status == AgentRunStatus.PAUSED_HITL:
+                    self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
+                else:
+                    self.session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
+                self.session_repo.commit()
+                logger.info(
+                    "resume_restored_waiting_status",
+                    session_id=str(session_id),
+                    agent_run_id=str(waiting_run.id),
+                    restored_status=waiting_run.status,
+                )
+                return session_id
+
             # Pause happened between runs — just continue with pending
             logger.info(
                 "resume_no_paused_run_found",
