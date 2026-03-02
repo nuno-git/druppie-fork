@@ -4,11 +4,11 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PauseCircle, PlayCircle, ArrowUp } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
+import { getSession, sendChat, cancelChat, pauseSession, resumeSession, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
@@ -460,6 +460,16 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     },
   })
 
+  const pauseMutation = useMutation({
+    mutationFn: () => pauseSession(sessionId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
+  })
+
+  const resumeMutation = useMutation({
+    mutationFn: () => resumeSession(sessionId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
+  })
+
   // When session has pending approvals, keep the tasks/badge cache fresh
   useEffect(() => {
     const status = data?.status
@@ -561,6 +571,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     failed: 'bg-red-500',
     cancelled: 'bg-gray-400',
     pending: 'bg-gray-400',
+    paused: 'bg-amber-500 animate-pulse',
     paused_hitl: 'bg-amber-500 animate-pulse',
     paused_tool: 'bg-amber-500 animate-pulse',
     paused_approval: 'bg-amber-500 animate-pulse',
@@ -578,7 +589,35 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
             {data.title || 'Untitled Session'}
           </h2>
           <div className="ml-auto flex items-center gap-3 flex-shrink-0">
-            {['active', 'paused_approval', 'paused_hitl'].includes(data.status) && (
+            {data.status === 'active' && (
+              <button
+                onClick={() => pauseMutation.mutate()}
+                disabled={pauseMutation.isPending}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 disabled:opacity-50 transition-colors"
+              >
+                {pauseMutation.isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <PauseCircle className="w-3.5 h-3.5" />
+                )}
+                Pause
+              </button>
+            )}
+            {data.status === 'paused' && (
+              <button
+                onClick={() => resumeMutation.mutate()}
+                disabled={resumeMutation.isPending}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-green-600 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 disabled:opacity-50 transition-colors"
+              >
+                {resumeMutation.isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <PlayCircle className="w-3.5 h-3.5" />
+                )}
+                Continue
+              </button>
+            )}
+            {['active', 'paused', 'paused_approval', 'paused_hitl'].includes(data.status) && (
               <button
                 onClick={() => cancelMutation.mutate()}
                 disabled={cancelMutation.isPending}
@@ -834,7 +873,33 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 aria-label="Chat message input"
                 disabled={continueMutation.isPending}
               />
-              {['active', 'paused_approval', 'paused_hitl'].includes(data.status) ? (
+              {data.status === 'active' ? (
+                <button
+                  onClick={() => pauseMutation.mutate()}
+                  disabled={pauseMutation.isPending}
+                  className="flex-shrink-0 p-2 rounded-xl bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 transition-colors"
+                  aria-label="Pause agent"
+                >
+                  {pauseMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <PauseCircle className="w-4 h-4" />
+                  )}
+                </button>
+              ) : data.status === 'paused' ? (
+                <button
+                  onClick={() => resumeMutation.mutate()}
+                  disabled={resumeMutation.isPending}
+                  className="flex-shrink-0 p-2 rounded-xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
+                  aria-label="Continue agent"
+                >
+                  {resumeMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <PlayCircle className="w-4 h-4" />
+                  )}
+                </button>
+              ) : ['paused_approval', 'paused_hitl'].includes(data.status) ? (
                 <button
                   onClick={() => cancelMutation.mutate()}
                   disabled={cancelMutation.isPending}
@@ -855,9 +920,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                   aria-label="Send message"
                 >
                   {continueMutation.isPending ? (
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
-                    <Send className="w-4 h-4" />
+                    <ArrowUp className="w-4 h-4" />
                   )}
                 </button>
               )}
