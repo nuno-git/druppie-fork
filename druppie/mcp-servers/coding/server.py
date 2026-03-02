@@ -1611,7 +1611,7 @@ async def validate_tdd(
 SANDBOX_CONTROL_PLANE_URL = os.getenv("SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787")
 SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", "sandbox-dev-secret")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://druppie-backend:8000")
-INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "druppie-internal-key")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "druppie-internal-secret-key")
 
 
 def _generate_sandbox_auth_token() -> str:
