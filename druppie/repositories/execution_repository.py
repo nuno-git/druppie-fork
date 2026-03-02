@@ -319,6 +319,19 @@ class ExecutionRepository(BaseRepository):
         """Get tool call by ID (returns raw model for ToolExecutor)."""
         return self.db.query(ToolCall).filter(ToolCall.id == tool_call_id).first()
 
+    def get_tool_call_for_update(self, tool_call_id: UUID) -> ToolCall | None:
+        """Get tool call with row-level lock (SELECT ... FOR UPDATE).
+
+        Use when you need to read-then-update atomically, e.g. the webhook
+        handler checking status before completing the tool call.
+        """
+        return (
+            self.db.query(ToolCall)
+            .filter(ToolCall.id == tool_call_id)
+            .with_for_update()
+            .first()
+        )
+
     def get_tool_calls_for_run(self, agent_run_id: UUID) -> list[ToolCall]:
         """Get all tool calls for an agent run."""
         return (

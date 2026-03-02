@@ -10,8 +10,9 @@ Routes:
 
 import os
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
+from sqlalchemy.orm import Session
 import httpx
 import structlog
 
@@ -37,76 +38,72 @@ async def git_proxy(
     repo_name: str,
     git_path: str,
     request: Request,
+    db: Session = Depends(get_db),
 ):
     """Forward git HTTP protocol requests to the git host with injected auth.
 
     The proxy_key is the sole authentication — it maps to a SandboxSession
     that authorizes access to a specific repo.
     """
-    db = next(get_db())
-    try:
-        repo = SandboxSessionRepository(db)
-        session = repo.get_by_proxy_key(proxy_key)
+    repo = SandboxSessionRepository(db)
+    session = repo.get_by_proxy_key(proxy_key)
 
-        if not session:
-            logger.warning("git_proxy_invalid_key", proxy_key=proxy_key[:8] + "...")
-            raise HTTPException(status_code=403, detail="Invalid or expired proxy key")
+    if not session:
+        logger.warning("git_proxy_invalid_key", proxy_key=proxy_key[:8] + "...")
+        raise HTTPException(status_code=403, detail="Invalid or expired proxy key")
 
-        # Verify the requested repo matches what this key authorizes
-        if session.git_repo_owner != owner or session.git_repo_name != repo_name:
-            logger.warning(
-                "git_proxy_repo_mismatch",
-                proxy_key=proxy_key[:8] + "...",
-                requested=f"{owner}/{repo_name}",
-                authorized=f"{session.git_repo_owner}/{session.git_repo_name}",
-            )
-            raise HTTPException(status_code=403, detail="Proxy key not authorized for this repo")
-
-        # Build target URL based on provider
-        if session.git_provider == "github":
-            # Future: forward to https://github.com with GitHub App token
-            raise HTTPException(status_code=501, detail="GitHub proxy not yet implemented")
-
-        # Default: Gitea
-        target_url = f"{GITEA_INTERNAL_URL}/{owner}/{repo_name}.git/{git_path}"
-
-        # Forward query string (e.g., ?service=git-upload-pack)
-        if request.url.query:
-            target_url += f"?{request.url.query}"
-
-        # Forward the request to Gitea with admin auth
-        body = await request.body()
-
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.request(
-                method=request.method,
-                url=target_url,
-                content=body,
-                auth=(GITEA_ADMIN_USER, GITEA_ADMIN_PASSWORD),
-                headers={
-                    k: v
-                    for k, v in request.headers.items()
-                    if k.lower() in ("content-type", "accept", "git-protocol")
-                },
-            )
-
-        logger.debug(
-            "git_proxy_request",
-            method=request.method,
-            git_path=git_path,
-            repo=f"{owner}/{repo_name}",
-            status=resp.status_code,
+    # Verify the requested repo matches what this key authorizes
+    if session.git_repo_owner != owner or session.git_repo_name != repo_name:
+        logger.warning(
+            "git_proxy_repo_mismatch",
+            proxy_key=proxy_key[:8] + "...",
+            requested=f"{owner}/{repo_name}",
+            authorized=f"{session.git_repo_owner}/{session.git_repo_name}",
         )
+        raise HTTPException(status_code=403, detail="Proxy key not authorized for this repo")
 
-        return Response(
-            content=resp.content,
-            status_code=resp.status_code,
+    # Build target URL based on provider
+    if session.git_provider == "github":
+        # Future: forward to https://github.com with GitHub App token
+        raise HTTPException(status_code=501, detail="GitHub proxy not yet implemented")
+
+    # Default: Gitea
+    target_url = f"{GITEA_INTERNAL_URL}/{owner}/{repo_name}.git/{git_path}"
+
+    # Forward query string (e.g., ?service=git-upload-pack)
+    if request.url.query:
+        target_url += f"?{request.url.query}"
+
+    # Forward the request to Gitea with admin auth
+    body = await request.body()
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.request(
+            method=request.method,
+            url=target_url,
+            content=body,
+            auth=(GITEA_ADMIN_USER, GITEA_ADMIN_PASSWORD),
             headers={
                 k: v
-                for k, v in resp.headers.items()
-                if k.lower() in ("content-type", "content-length", "cache-control", "pragma")
+                for k, v in request.headers.items()
+                if k.lower() in ("content-type", "accept", "git-protocol")
             },
         )
 
-    finally:
-        db.close()
+    logger.debug(
+        "git_proxy_request",
+        method=request.method,
+        git_path=git_path,
+        repo=f"{owner}/{repo_name}",
+        status=resp.status_code,
+    )
+
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        headers={
+            k: v
+            for k, v in resp.headers.items()
+            if k.lower() in ("content-type", "content-length", "cache-control", "pragma")
+        },
+    )

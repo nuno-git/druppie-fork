@@ -233,7 +233,9 @@ async def sandbox_complete_webhook(
         raise HTTPException(status_code=404, detail="No waiting tool call found")
 
     execution_repo = ExecutionRepository(db)
-    tool_call = execution_repo.get_tool_call(sandbox_mapping.tool_call_id)
+    # SELECT ... FOR UPDATE: prevents concurrent webhook retries from both
+    # reading WAITING_SANDBOX and spawning duplicate resume tasks.
+    tool_call = execution_repo.get_tool_call_for_update(sandbox_mapping.tool_call_id)
     if not tool_call:
         logger.warning(
             "sandbox_webhook_tool_call_missing",
