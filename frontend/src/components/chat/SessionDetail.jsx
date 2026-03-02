@@ -4,7 +4,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -438,6 +438,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     refetchInterval: (query) => {
       const status = query.state.data?.status
       if (status === 'completed' || status === 'failed') return false
+      if (status === 'paused_crashed') return 2000
       if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl') {
         // Fast poll while stopping (agent still finishing current op), slow poll when fully paused
         const hasRunning = query.state.data?.timeline?.some(
@@ -584,6 +585,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         failed: 'bg-red-500',
         pending: 'bg-gray-400',
         paused: 'bg-amber-500',
+        paused_crashed: 'bg-red-500',
         paused_hitl: 'bg-amber-500 animate-pulse',
         paused_tool: 'bg-amber-500 animate-pulse',
         paused_approval: 'bg-amber-500 animate-pulse',
@@ -608,8 +610,8 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 Stopping…
               </span>
             )}
-            {/* Continue button — only when fully stopped */}
-            {data.status === 'paused' && !isStopping && (
+            {/* Continue button — when fully stopped, crashed, or failed */}
+            {['paused', 'paused_crashed', 'failed'].includes(data.status) && !isStopping && (
               <button
                 onClick={() => resumeMutation.mutate()}
                 disabled={resumeMutation.isPending}
@@ -669,6 +671,17 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
           </div>
         </div>
       </div>
+
+      {/* Crash recovery banner */}
+      {data.status === 'paused_crashed' && (
+        <div className="mx-4 mt-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+          <div className="text-xs text-amber-800">
+            <span className="font-medium">The system restarted during this run.</span>{' '}
+            Click Continue to pick up where it left off.
+          </div>
+        </div>
+      )}
 
       {/* Workflow Pipeline — quick-glance status bar for all modes */}
       <WorkflowPipeline timeline={data.timeline} />
@@ -900,7 +913,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                     <StopCircle className="w-4 h-4" />
                   )}
                 </button>
-              ) : data.status === 'paused' ? (
+              ) : ['paused', 'paused_crashed', 'failed'].includes(data.status) ? (
                 <button
                   onClick={() => resumeMutation.mutate()}
                   disabled={resumeMutation.isPending}

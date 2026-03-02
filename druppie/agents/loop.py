@@ -70,11 +70,8 @@ class AgentLoop:
             )
 
         for iteration in range(start_iteration, max_iterations):
-            # Check for session cancellation or user-initiated pause between iterations
+            # Check for user-initiated pause between iterations (cooperative pause)
             session_status = self._get_session_status(session_id)
-            if session_status == "cancelled":
-                logger.info("agent_loop_cancelled", agent_id=self.agent_id, iteration=iteration)
-                return {"status": "cancelled"}
             if session_status == SessionStatus.PAUSED.value:
                 logger.info("agent_loop_paused_by_user", agent_id=self.agent_id, iteration=iteration)
                 return {"status": "paused", "reason": "user_paused"}
@@ -112,13 +109,13 @@ class AgentLoop:
         )
 
     # ------------------------------------------------------------------
-    # Session status check (single DB poll for cancelled/paused)
+    # Session status check (single DB poll for pause detection)
     # ------------------------------------------------------------------
 
     def _get_session_status(self, session_id: UUID) -> str | None:
         """Get current session status from DB (single expire + query).
 
-        Used for cooperative cancellation/pause checks between iterations.
+        Used for cooperative pause checks between iterations.
         """
         from druppie.db.models import Session
 

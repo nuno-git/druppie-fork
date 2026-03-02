@@ -104,14 +104,22 @@ class SessionService:
         concurrent resume requests both read status=paused and both
         spawn background tasks.
 
+        Allows both paused and failed sessions (failed sessions may have
+        orphaned running agent runs after infrastructure crashes).
+
         Raises:
             NotFoundError: Session not found
-            ValueError: Session is not paused (cannot resume)
+            ValueError: Session is not paused or failed (cannot resume)
         """
         session = self.session_repo.get_by_id_for_update(session_id)
         if not session:
             raise NotFoundError("session", str(session_id))
-        if session.status != SessionStatus.PAUSED.value:
+        resumable = {
+            SessionStatus.PAUSED.value,
+            SessionStatus.PAUSED_CRASHED.value,
+            SessionStatus.FAILED.value,
+        }
+        if session.status not in resumable:
             raise ValueError(f"Cannot resume session with status '{session.status}'")
 
         session.status = SessionStatus.ACTIVE.value

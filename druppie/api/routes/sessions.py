@@ -27,7 +27,6 @@ from druppie.api.deps import (
 )
 from druppie.services import SessionService
 from druppie.domain import SessionDetail
-from druppie.domain.common import SessionStatus
 from druppie.core.background_tasks import create_session_task, SessionTaskConflict, run_session_task
 
 logger = structlog.get_logger()
@@ -195,16 +194,8 @@ async def _run_retry_background(
         for warning in result.get("warnings", []):
             logger.warning("retry_revert_warning", session_id=str(session_id), warning=warning)
 
-        # Check if session was cancelled during the revert phase
-        ctx.db.expire_all()
-        session = ctx.session_repo.get_by_id(session_id)
-        if session and session.status == SessionStatus.CANCELLED.value:
-            logger.info("retry_cancelled_after_revert", session_id=str(session_id))
-            ctx.execution_repo.cancel_pending_runs(session_id)
-            ctx.db.commit()
-            return
-
         # Step 2: Execute pending runs (the recreated ones)
+        # If user paused during revert, execute_pending_runs detects PAUSED and returns
         await ctx.orchestrator.execute_pending_runs(session_id)
 
     await run_session_task(session_id, task, "retry_background")
