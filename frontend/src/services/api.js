@@ -79,9 +79,6 @@ export const sendChat = async (message, sessionId = null, conversationHistory = 
 export const cancelChat = (sessionId) =>
   request(`/api/chat/${sessionId}/cancel`, { method: 'POST' })
 
-export const pauseSession = (sessionId) =>
-  request(`/api/chat/${sessionId}/pause`, { method: 'POST' })
-
 // ============ Sessions (replaces Plans) ============
 // Paginated sessions for sidebar
 export const getSessions = (page = 1, limit = 20) =>
