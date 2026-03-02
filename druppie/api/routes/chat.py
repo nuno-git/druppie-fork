@@ -33,7 +33,7 @@ from druppie.api.deps import get_current_user, get_optional_user, get_session_re
 from druppie.repositories import SessionRepository, ExecutionRepository
 from druppie.domain.common import SessionStatus
 from druppie.api.errors import NotFoundError, AuthorizationError
-from druppie.core.background_tasks import create_tracked_task
+from druppie.core.background_tasks import create_tracked_task, run_session_task
 
 logger = structlog.get_logger()
 
@@ -86,68 +86,17 @@ async def _run_orchestrator_background(
     session_id: UUID,
     project_id: UUID | None,
 ) -> None:
-    """Run orchestrator in background with its own DB session.
+    """Run orchestrator in background with its own DB session."""
 
-    This task creates fresh repositories with a new DB session that lives
-    for the duration of the task (not tied to the HTTP request lifecycle).
-    """
-    from druppie.db.database import SessionLocal
-    from druppie.repositories import (
-        SessionRepository,
-        ExecutionRepository,
-        ProjectRepository,
-        QuestionRepository,
-    )
-    from druppie.execution import Orchestrator
-
-    db = SessionLocal()
-    try:
-        # Create fresh repositories with background DB session
-        session_repo = SessionRepository(db)
-        execution_repo = ExecutionRepository(db)
-        project_repo = ProjectRepository(db)
-        question_repo = QuestionRepository(db)
-
-        orchestrator = Orchestrator(
-            session_repo=session_repo,
-            execution_repo=execution_repo,
-            project_repo=project_repo,
-            question_repo=question_repo,
-        )
-
-        # Process the message (this does all the heavy work)
-        await orchestrator.process_message(
+    async def task(ctx):
+        await ctx.orchestrator.process_message(
             message=message,
             user_id=user_id,
             session_id=session_id,
             project_id=project_id,
         )
 
-    except Exception as e:
-        error_msg = f"{type(e).__name__}: {e}"
-        logger.error(
-            "background_orchestrator_error",
-            session_id=str(session_id),
-            error=error_msg,
-            exc_info=True,
-        )
-        # Update session status to failed with error details
-        try:
-            db.rollback()
-            session_repo.update_status(
-                session_id,
-                SessionStatus.FAILED,
-                error_message=error_msg[:2000],
-            )
-            db.commit()
-        except Exception as update_error:
-            logger.error(
-                "failed_to_update_session_status",
-                session_id=str(session_id),
-                error=str(update_error),
-            )
-    finally:
-        db.close()
+    await run_session_task(session_id, task, "background_orchestrator")
 
 
 # =============================================================================

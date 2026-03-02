@@ -5,17 +5,25 @@ Solves two problems with bare asyncio.create_task():
 2. No graceful shutdown — untracked tasks get killed mid-operation
 
 Usage:
-    from druppie.core.background_tasks import create_tracked_task
+    from druppie.core.background_tasks import create_tracked_task, run_session_task
+
+    # Track a raw coroutine:
+    create_tracked_task(some_coro(), name="my-task")
+
+    # Run orchestrator work with DB lifecycle + error handling:
+    async def my_work(ctx):
+        await ctx.orchestrator.resume_paused_session(session_id)
 
     create_tracked_task(
-        _run_orchestrator_background(...),
-        name=f"orchestrator-{session_id}",
+        run_session_task(session_id, my_work, "resume"),
+        name=f"resume-{session_id}",
     )
 """
 
 import asyncio
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from typing import Any
+from uuid import UUID
 
 import structlog
 
@@ -99,3 +107,109 @@ async def shutdown_background_tasks(timeout: float = 30.0) -> None:
     # Wait briefly for cancellation to propagate
     await asyncio.wait(pending, timeout=5.0)
     logger.info("shutdown_complete")
+
+
+# =============================================================================
+# Session task helper — DB lifecycle + error handling for background work
+# =============================================================================
+
+
+class SessionTaskContext:
+    """Context passed to session task callables.
+
+    Provides access to the DB session, repositories, and orchestrator
+    so task functions don't need to create their own.
+    """
+
+    __slots__ = ("db", "session_repo", "execution_repo", "project_repo", "question_repo", "orchestrator")
+
+    def __init__(self, db, session_repo, execution_repo, project_repo, question_repo, orchestrator):
+        self.db = db
+        self.session_repo = session_repo
+        self.execution_repo = execution_repo
+        self.project_repo = project_repo
+        self.question_repo = question_repo
+        self.orchestrator = orchestrator
+
+
+async def run_session_task(
+    session_id: UUID,
+    task_fn: Callable[[SessionTaskContext], Coroutine[Any, Any, None]],
+    task_name: str,
+) -> None:
+    """Run an async task with a fresh DB session, repos, and orchestrator.
+
+    Handles the full lifecycle:
+    1. Create DB session + repositories + orchestrator
+    2. Call task_fn(ctx)
+    3. On error: rollback, mark session FAILED, commit
+    4. Always: close DB session
+
+    Usage:
+        async def my_work(ctx: SessionTaskContext):
+            await ctx.orchestrator.process_message(...)
+
+        create_tracked_task(
+            run_session_task(session_id, my_work, "orchestrator"),
+            name=f"orchestrator-{session_id}",
+        )
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.domain.common import SessionStatus
+    from druppie.repositories import (
+        SessionRepository,
+        ExecutionRepository,
+        ProjectRepository,
+        QuestionRepository,
+    )
+    from druppie.execution import Orchestrator
+
+    db = SessionLocal()
+    try:
+        session_repo = SessionRepository(db)
+        execution_repo = ExecutionRepository(db)
+        project_repo = ProjectRepository(db)
+        question_repo = QuestionRepository(db)
+
+        orchestrator = Orchestrator(
+            session_repo=session_repo,
+            execution_repo=execution_repo,
+            project_repo=project_repo,
+            question_repo=question_repo,
+        )
+
+        ctx = SessionTaskContext(
+            db=db,
+            session_repo=session_repo,
+            execution_repo=execution_repo,
+            project_repo=project_repo,
+            question_repo=question_repo,
+            orchestrator=orchestrator,
+        )
+
+        await task_fn(ctx)
+
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        logger.error(
+            f"{task_name}_error",
+            session_id=str(session_id),
+            error=error_msg,
+            exc_info=True,
+        )
+        try:
+            db.rollback()
+            SessionRepository(db).update_status(
+                session_id,
+                SessionStatus.FAILED,
+                error_message=error_msg[:2000],
+            )
+            db.commit()
+        except Exception as update_error:
+            logger.error(
+                f"failed_to_update_session_status_after_{task_name}",
+                session_id=str(session_id),
+                error=str(update_error),
+            )
+    finally:
+        db.close()
