@@ -562,6 +562,9 @@ class Orchestrator:
             if pause_reason == "waiting_answer":
                 self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_HITL)
                 self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
+            elif pause_reason == "waiting_sandbox":
+                self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_SANDBOX)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_SANDBOX)
             else:
                 self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_TOOL)
                 self.session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
@@ -675,6 +678,9 @@ class Orchestrator:
             if pause_reason == "waiting_answer":
                 self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_HITL)
                 self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
+            elif pause_reason == "waiting_sandbox":
+                self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_SANDBOX)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_SANDBOX)
             else:
                 self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_TOOL)
                 self.session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
@@ -687,6 +693,84 @@ class Orchestrator:
 
         logger.info(
             "agent_resumed_and_completed",
+            agent_run_id=str(agent_run.id),
+            agent_id=agent_run.agent_id,
+        )
+
+        await self.execute_pending_runs(session_id)
+        return session_id
+
+    async def resume_after_sandbox(self, tool_call_id: UUID) -> UUID | None:
+        """Resume execution after a sandbox task completes.
+
+        Called by the webhook handler after the control plane notifies
+        that a sandbox session finished. The tool call result is already
+        populated by the webhook handler.
+
+        This method:
+        1. Finds the paused agent run from the tool call
+        2. Sets statuses back to RUNNING/ACTIVE
+        3. Continues the agent (it reconstructs state from DB)
+        4. Executes any remaining pending runs
+        """
+        from druppie.agents.runtime import Agent
+
+        # Find the tool call and its agent run
+        tool_call = self.execution_repo.get_tool_call(tool_call_id)
+        if not tool_call or not tool_call.agent_run_id:
+            logger.error("sandbox_resume_tool_call_not_found", tool_call_id=str(tool_call_id))
+            return None
+
+        agent_run = self.execution_repo.get_by_id(tool_call.agent_run_id)
+        if not agent_run:
+            logger.error("sandbox_resume_agent_run_not_found", agent_run_id=str(tool_call.agent_run_id))
+            return None
+
+        session_id = agent_run.session_id
+
+        logger.info(
+            "resume_after_sandbox",
+            tool_call_id=str(tool_call_id),
+            agent_run_id=str(agent_run.id),
+            session_id=str(session_id),
+        )
+
+        # Set statuses back to running
+        self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
+        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+        self.execution_repo.commit()
+
+        # Build fresh context and continue the agent
+        db = self.execution_repo.db
+        context = self._build_project_context(session_id)
+        agent = Agent(agent_run.agent_id, db=db)
+        result = await agent.continue_run(
+            session_id=session_id,
+            agent_run_id=agent_run.id,
+            context=context,
+        )
+
+        # Handle result — agent may pause again
+        if result.get("status") == "paused" or result.get("paused"):
+            pause_reason = result.get("reason", "unknown")
+            if pause_reason == "waiting_answer":
+                self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_HITL)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
+            elif pause_reason == "waiting_sandbox":
+                self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_SANDBOX)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_SANDBOX)
+            else:
+                self.execution_repo.update_status(agent_run.id, AgentRunStatus.PAUSED_TOOL)
+                self.session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
+            self.execution_repo.commit()
+            return session_id
+
+        # Agent completed — mark and continue with pending runs
+        self.execution_repo.update_status(agent_run.id, AgentRunStatus.COMPLETED)
+        self.execution_repo.commit()
+
+        logger.info(
+            "agent_resumed_after_sandbox_completed",
             agent_run_id=str(agent_run.id),
             agent_id=agent_run.agent_id,
         )
