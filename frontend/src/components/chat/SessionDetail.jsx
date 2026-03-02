@@ -4,11 +4,11 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
+import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion, getSandboxEvents } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
@@ -408,6 +408,135 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
       </div>
       <div className="pl-8 text-sm text-gray-700 leading-relaxed overflow-hidden">
         <div className="whitespace-pre-wrap break-words">{message.content}</div>
+      </div>
+    </div>
+  )
+}
+
+// --- Sandbox Live Progress ---
+
+/** Extract sandbox_session_id from a waiting_sandbox tool call in the timeline */
+const findWaitingSandboxId = (timeline) => {
+  if (!timeline) return null
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const entry = timeline[i]
+    if (entry.type !== 'agent_run' || !entry.agent_run) continue
+    for (const llm of (entry.agent_run.llm_calls || [])) {
+      for (const tc of (llm.tool_calls || [])) {
+        if (tc.tool_name === 'execute_coding_task' && tc.status === 'waiting_sandbox') {
+          let result = tc.result
+          if (typeof result === 'string') {
+            try { result = JSON.parse(result) } catch { continue }
+          }
+          if (result?.sandbox_session_id) return result.sandbox_session_id
+        }
+      }
+    }
+  }
+  return null
+}
+
+const SandboxLiveProgress = ({ sandboxSessionId }) => {
+  const [expanded, setExpanded] = useState(true)
+
+  const { data: eventsData } = useQuery({
+    queryKey: ['sandbox-events-live', sandboxSessionId],
+    queryFn: () => getSandboxEvents(sandboxSessionId),
+    refetchInterval: 3000,
+    enabled: !!sandboxSessionId,
+  })
+
+  const rawEvents = eventsData?.events || (Array.isArray(eventsData) ? eventsData : [])
+  // API returns newest-first; reverse for chronological display
+  const events = [...rawEvents].reverse()
+
+  // Extract the latest activity from events
+  const recentActivity = []
+  for (const event of events) {
+    const type = event.type || event.event_type || ''
+    const data = typeof event.data === 'string' ? (() => { try { return JSON.parse(event.data) } catch { return {} } })() : (event.data || {})
+
+    if (type === 'tool_call' || type === 'tool_use') {
+      const toolName = data.toolName || data.tool_name || data.name || 'tool'
+      recentActivity.push({ type: 'tool', text: toolName, timestamp: event.timestamp || event.created_at })
+    } else if (type === 'tool_result') {
+      const toolName = data.toolName || data.tool_name || data.name || 'tool'
+      const success = data.success !== false
+      recentActivity.push({ type: 'tool_result', text: toolName, success, timestamp: event.timestamp || event.created_at })
+    } else if (type === 'step_start') {
+      recentActivity.push({ type: 'step', text: 'Thinking…', timestamp: event.timestamp || event.created_at })
+    }
+  }
+
+  // Show only the last few events
+  const visibleActivity = recentActivity.slice(-8)
+  const latestEvent = recentActivity[recentActivity.length - 1]
+
+  if (!sandboxSessionId) return null
+
+  return (
+    <div className="pl-8 mt-1">
+      <div className="border border-blue-200 rounded-lg bg-blue-50/50 overflow-hidden">
+        {/* Header with latest status */}
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-blue-100/50 transition-colors"
+        >
+          <Terminal className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+          <Loader2 className="w-3 h-3 text-blue-400 animate-spin flex-shrink-0" />
+          <span className="text-blue-600 font-medium">Sandbox Agent</span>
+          {latestEvent && (
+            <span className="text-blue-400 truncate">
+              — {latestEvent.type === 'tool' ? `calling ${latestEvent.text}` : latestEvent.type === 'tool_result' ? `${latestEvent.text} ${latestEvent.success ? 'done' : 'failed'}` : latestEvent.text}
+            </span>
+          )}
+          <span className="ml-auto text-blue-300 flex-shrink-0">
+            {events.length > 0 && <span className="mr-1">{events.length} events</span>}
+            {expanded ? <ChevronDown className="w-3 h-3 inline" /> : <ChevronRight className="w-3 h-3 inline" />}
+          </span>
+        </button>
+
+        {/* Expanded: show recent activity */}
+        {expanded && visibleActivity.length > 0 && (
+          <div className="border-t border-blue-200 px-3 py-1.5 space-y-0.5 max-h-48 overflow-y-auto">
+            {visibleActivity.map((item, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs py-0.5">
+                {item.type === 'tool' && (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+                    <span className="text-blue-700 font-mono">{item.text}</span>
+                    <span className="text-blue-400">calling…</span>
+                  </>
+                )}
+                {item.type === 'tool_result' && (
+                  <>
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${item.success ? 'bg-green-400' : 'bg-red-400'}`} />
+                    <span className="text-gray-600 font-mono">{item.text}</span>
+                    <span className={item.success ? 'text-green-600' : 'text-red-600'}>{item.success ? 'done' : 'failed'}</span>
+                  </>
+                )}
+                {item.type === 'step' && (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0" />
+                    <span className="text-gray-500 italic">{item.text}</span>
+                  </>
+                )}
+                {item.timestamp && (
+                  <span className="text-gray-300 ml-auto text-[10px] flex-shrink-0">
+                    {new Date(item.timestamp).toLocaleTimeString()}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* No events yet */}
+        {expanded && visibleActivity.length === 0 && events.length === 0 && (
+          <div className="border-t border-blue-200 px-3 py-2">
+            <span className="text-xs text-blue-400 italic">Starting up…</span>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -849,10 +978,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                   <span className={`text-sm font-medium ${colors.accent}`}>{config.name}</span>
                 </div>
                 {isSandboxWaiting ? (
-                  <div className="pl-8 flex items-center gap-2 py-1">
-                    <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
-                    <span className="text-xs text-blue-600">Running coding task in sandbox…</span>
-                  </div>
+                  <SandboxLiveProgress sandboxSessionId={findWaitingSandboxId(data.timeline)} />
                 ) : (
                   <div className="pl-8 flex items-center gap-1.5 py-1">
                     <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
