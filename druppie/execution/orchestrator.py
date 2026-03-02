@@ -747,10 +747,7 @@ class Orchestrator:
 
         logger.info("resume_paused_session", session_id=str(session_id))
 
-        # Set session back to active
-        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
-        self.session_repo.commit()
-
+        # Session is already set to ACTIVE by the endpoint's lock_for_resume()
         # Find the paused agent run
         paused_run = self.execution_repo.get_user_paused_run(session_id)
 
@@ -777,11 +774,21 @@ class Orchestrator:
         db = self.execution_repo.db
         context = self._build_project_context(session_id)
         agent = Agent(paused_run.agent_id, db=db)
-        result = await agent.continue_run(
-            session_id=session_id,
-            agent_run_id=paused_run.id,
-            context=context,
-        )
+        try:
+            result = await agent.continue_run(
+                session_id=session_id,
+                agent_run_id=paused_run.id,
+                context=context,
+            )
+        except Exception as e:
+            error_msg = f"{type(e).__name__}: {e}"
+            self.execution_repo.update_status(
+                paused_run.id,
+                AgentRunStatus.FAILED,
+                error_message=error_msg[:2000],
+            )
+            self.execution_repo.commit()
+            raise
 
         # Handle result — same pattern as resume_after_approval
         if result.get("status") == "paused" or result.get("paused"):

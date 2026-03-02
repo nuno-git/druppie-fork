@@ -462,12 +462,18 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
 
   const pauseMutation = useMutation({
     mutationFn: () => pauseSession(sessionId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
   })
 
   const resumeMutation = useMutation({
     mutationFn: () => resumeSession(sessionId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
   })
 
   // When session has pending approvals, keep the tasks/badge cache fresh

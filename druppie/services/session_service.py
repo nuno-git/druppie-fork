@@ -96,3 +96,23 @@ class SessionService:
 
         session.status = SessionStatus.ACTIVE.value
         self.session_repo.commit()  # Lock released here
+
+    def lock_for_resume(self, session_id: UUID) -> None:
+        """Atomically lock and transition session to ACTIVE for resume.
+
+        Uses SELECT ... FOR UPDATE to prevent race conditions where two
+        concurrent resume requests both read status=paused and both
+        spawn background tasks.
+
+        Raises:
+            NotFoundError: Session not found
+            ValueError: Session is not paused (cannot resume)
+        """
+        session = self.session_repo.get_by_id_for_update(session_id)
+        if not session:
+            raise NotFoundError("session", str(session_id))
+        if session.status != SessionStatus.PAUSED.value:
+            raise ValueError(f"Cannot resume session with status '{session.status}'")
+
+        session.status = SessionStatus.ACTIVE.value
+        self.session_repo.commit()  # Lock released here
