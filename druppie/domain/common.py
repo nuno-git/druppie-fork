@@ -15,6 +15,7 @@ class SessionStatus(str, Enum):
     ACTIVE = "active"
     PAUSED_APPROVAL = "paused_approval"  # Waiting for tool approval
     PAUSED_HITL = "paused_hitl"  # Waiting for user answer
+    PAUSED_SANDBOX = "paused_sandbox"  # Waiting for sandbox completion
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -26,6 +27,7 @@ class AgentRunStatus(str, Enum):
     RUNNING = "running"
     PAUSED_TOOL = "paused_tool"  # Waiting for tool approval
     PAUSED_HITL = "paused_hitl"  # Waiting for user answer
+    PAUSED_SANDBOX = "paused_sandbox"  # Waiting for sandbox completion
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"  # Superseded by a new plan
@@ -36,6 +38,7 @@ class ToolCallStatus(str, Enum):
     PENDING = "pending"  # Not yet executed
     WAITING_APPROVAL = "waiting_approval"  # Needs approval before execution
     WAITING_ANSWER = "waiting_answer"  # HITL tool waiting for user answer
+    WAITING_SANDBOX = "waiting_sandbox"  # Waiting for sandbox completion
     EXECUTING = "executing"  # Currently running
     COMPLETED = "completed"
     FAILED = "failed"
