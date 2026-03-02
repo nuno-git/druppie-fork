@@ -14,23 +14,25 @@ class SessionStatus(str, Enum):
     """Session execution status."""
     ACTIVE = "active"
     PAUSED_APPROVAL = "paused_approval"  # Waiting for tool approval
-    PAUSED_HITL = "paused_hitl"  # Waiting for user answer
-    PAUSED_SANDBOX = "paused_sandbox"  # Waiting for sandbox completion
+    PAUSED_HITL = "paused_hitl"          # Waiting for user answer
+    PAUSED_SANDBOX = "paused_sandbox"    # Waiting for sandbox completion
+    PAUSED = "paused"                    # User-initiated pause (Stop button)
+    PAUSED_CRASHED = "paused_crashed"    # System crashed during execution
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 class AgentRunStatus(str, Enum):
     """Agent run execution status."""
-    PENDING = "pending"  # Created by planner, not started yet
+    PENDING = "pending"       # Created by planner, not started yet
     RUNNING = "running"
     PAUSED_TOOL = "paused_tool"  # Waiting for tool approval
     PAUSED_HITL = "paused_hitl"  # Waiting for user answer
     PAUSED_SANDBOX = "paused_sandbox"  # Waiting for sandbox completion
+    PAUSED_USER = "paused_user"  # User-initiated pause (via Stop button)
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"  # Superseded by a new plan
+    CANCELLED = "cancelled"   # Superseded by a new plan (make_plan only)
 
 
 class ToolCallStatus(str, Enum):

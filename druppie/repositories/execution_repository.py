@@ -1,12 +1,44 @@
 """Execution repository - handles AgentRun, ToolCall, LLMCall, and Message records."""
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
-from druppie.db.models import AgentRun, LlmCall, LlmRetry, Message, ToolCall, ToolCallNormalization
+import structlog
+
+from druppie.db.models import (
+    AgentRun,
+    Approval,
+    LlmCall,
+    LlmRetry,
+    Message,
+    Question,
+    ToolCall,
+    ToolCallNormalization,
+)
 from druppie.domain.agent_run import AgentRunSummary
-from druppie.domain.common import AgentRunStatus, TokenUsage
+from druppie.domain.common import AgentRunStatus, SessionStatus, TokenUsage
 from druppie.repositories.base import BaseRepository
+
+
+@dataclass(frozen=True)
+class ToolCallRecord:
+    """Lightweight read-only projection of a tool call for analysis."""
+
+    id: UUID
+    tool_name: str
+    status: str
+    result: str | None
+
+
+@dataclass(frozen=True)
+class MessageRecord:
+    """Lightweight read-only projection of a message."""
+
+    id: UUID
+    sequence_number: int
+
+logger = structlog.get_logger()
 
 
 class ExecutionRepository(BaseRepository):
@@ -41,6 +73,17 @@ class ExecutionRepository(BaseRepository):
     def get_by_id(self, agent_run_id: UUID) -> AgentRunSummary | None:
         """Get agent run by ID."""
         agent_run = self.db.query(AgentRun).filter(AgentRun.id == agent_run_id).first()
+        return self._to_summary(agent_run) if agent_run else None
+
+    def get_by_id_for_session(
+        self, agent_run_id: UUID, session_id: UUID
+    ) -> AgentRunSummary | None:
+        """Get agent run by ID, verifying it belongs to the given session."""
+        agent_run = (
+            self.db.query(AgentRun)
+            .filter(AgentRun.id == agent_run_id, AgentRun.session_id == session_id)
+            .first()
+        )
         return self._to_summary(agent_run) if agent_run else None
 
     def get_next_pending(self, session_id: UUID) -> AgentRunSummary | None:
@@ -89,7 +132,7 @@ class ExecutionRepository(BaseRepository):
         return [self._to_summary(r) for r in runs]
 
     def get_paused_run(self, session_id: UUID) -> AgentRunSummary | None:
-        """Get the paused agent run for a session."""
+        """Get the paused agent run for a session (lowest sequence_number first)."""
         agent_run = (
             self.db.query(AgentRun)
             .filter(
@@ -99,6 +142,37 @@ class ExecutionRepository(BaseRepository):
                     AgentRunStatus.PAUSED_HITL.value,
                 ]),
             )
+            .order_by(AgentRun.sequence_number)
+            .first()
+        )
+        return self._to_summary(agent_run) if agent_run else None
+
+    def get_user_paused_run(self, session_id: UUID) -> AgentRunSummary | None:
+        """Get the user-paused agent run for a session."""
+        agent_run = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status == AgentRunStatus.PAUSED_USER.value,
+            )
+            .first()
+        )
+        return self._to_summary(agent_run) if agent_run else None
+
+    def get_running_run(self, session_id: UUID) -> AgentRunSummary | None:
+        """Get a running agent run for a session.
+
+        Used to detect orphaned running runs after infrastructure crashes.
+        The background task died but the agent run was never updated to
+        failed/paused because the DB write was rolled back.
+        """
+        agent_run = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status == AgentRunStatus.RUNNING.value,
+            )
+            .order_by(AgentRun.sequence_number)
             .first()
         )
         return self._to_summary(agent_run) if agent_run else None
@@ -117,7 +191,7 @@ class ExecutionRepository(BaseRepository):
                 agent_run.error_message = error_message
             if status == AgentRunStatus.RUNNING and not agent_run.started_at:
                 agent_run.started_at = datetime.now(timezone.utc)
-            elif status in (AgentRunStatus.COMPLETED, AgentRunStatus.FAILED):
+            elif status in (AgentRunStatus.COMPLETED, AgentRunStatus.FAILED, AgentRunStatus.CANCELLED):
                 agent_run.completed_at = datetime.now(timezone.utc)
 
     def update_tokens(
@@ -526,3 +600,347 @@ class ExecutionRepository(BaseRepository):
     def get_message_count(self, session_id: UUID) -> int:
         """Get total message count for a session (for sequence numbering)."""
         return self.db.query(Message).filter(Message.session_id == session_id).count()
+
+    # =========================================================================
+    # BULK READ METHODS (used by RevertService)
+    # =========================================================================
+
+    def get_runs_from_sequence(
+        self, session_id: UUID, min_sequence: int
+    ) -> list[AgentRunSummary]:
+        """Get all runs at or after a sequence number, ordered by sequence."""
+        runs = (
+            self.db.query(AgentRun)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.sequence_number >= min_sequence,
+            )
+            .order_by(AgentRun.sequence_number)
+            .all()
+        )
+        return [self._to_summary(r) for r in runs]
+
+    def get_user_message_after_sequence(
+        self, session_id: UUID, after_sequence: int
+    ) -> MessageRecord | None:
+        """Get the first user message after a given sequence number."""
+        msg = (
+            self.db.query(Message)
+            .filter(
+                Message.session_id == session_id,
+                Message.role == "user",
+                Message.sequence_number > after_sequence,
+            )
+            .order_by(Message.sequence_number)
+            .first()
+        )
+        if not msg:
+            return None
+        return MessageRecord(id=msg.id, sequence_number=msg.sequence_number)
+
+    def get_tool_calls_for_runs(self, agent_run_ids: list[UUID]) -> list[ToolCallRecord]:
+        """Get all tool calls across multiple runs (lightweight projection)."""
+        if not agent_run_ids:
+            return []
+        rows = (
+            self.db.query(ToolCall)
+            .filter(ToolCall.agent_run_id.in_(agent_run_ids))
+            .all()
+        )
+        return [
+            ToolCallRecord(id=tc.id, tool_name=tc.tool_name, status=tc.status, result=tc.result)
+            for tc in rows
+        ]
+
+    def get_last_commit_before_sequence(
+        self, session_id: UUID, before_sequence: int
+    ) -> ToolCallRecord | None:
+        """Get the last completed commit_and_push tool call before a sequence number."""
+        tc = (
+            self.db.query(ToolCall)
+            .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.sequence_number < before_sequence,
+                ToolCall.tool_name == "commit_and_push",
+                ToolCall.status == "completed",
+            )
+            .order_by(ToolCall.created_at.desc())
+            .first()
+        )
+        if not tc:
+            return None
+        return ToolCallRecord(id=tc.id, tool_name=tc.tool_name, status=tc.status, result=tc.result)
+
+    def get_first_commit_in_session(self, session_id: UUID) -> ToolCallRecord | None:
+        """Get the first completed commit_and_push tool call in a session."""
+        tc = (
+            self.db.query(ToolCall)
+            .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
+            .filter(
+                AgentRun.session_id == session_id,
+                ToolCall.tool_name == "commit_and_push",
+                ToolCall.status == "completed",
+            )
+            .order_by(ToolCall.created_at)
+            .first()
+        )
+        if not tc:
+            return None
+        return ToolCallRecord(id=tc.id, tool_name=tc.tool_name, status=tc.status, result=tc.result)
+
+    # =========================================================================
+    # BULK DELETE METHODS (used by RevertService)
+    # =========================================================================
+
+    def clear_execution_artifacts(self, agent_run_ids: list[UUID]) -> dict:
+        """Delete execution artifacts for agent runs, keeping the runs themselves.
+
+        Deletes in FK-safe order: normalizations -> approvals -> questions ->
+        tool_calls -> llm_retries -> llm_calls -> messages
+
+        Returns counts for logging.
+        """
+        if not agent_run_ids:
+            return {"tool_calls": 0, "llm_calls": 0}
+
+        # 1. ToolCallNormalization (FK -> tool_calls)
+        tc_ids = [
+            tc.id
+            for tc in self.db.query(ToolCall.id)
+            .filter(ToolCall.agent_run_id.in_(agent_run_ids))
+            .all()
+        ]
+        if tc_ids:
+            self.db.query(ToolCallNormalization).filter(
+                ToolCallNormalization.tool_call_id.in_(tc_ids)
+            ).delete(synchronize_session="fetch")
+
+        # 2. Approval (FK -> agent_runs, tool_calls)
+        self.db.query(Approval).filter(
+            Approval.agent_run_id.in_(agent_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        # 3. Question (FK -> agent_runs)
+        self.db.query(Question).filter(
+            Question.agent_run_id.in_(agent_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        # 4. ToolCall (FK -> agent_runs, llm_calls)
+        if tc_ids:
+            self.db.query(ToolCall).filter(ToolCall.id.in_(tc_ids)).delete(
+                synchronize_session="fetch"
+            )
+
+        # 5. LlmRetry (FK -> llm_calls)
+        llm_ids = [
+            lc.id
+            for lc in self.db.query(LlmCall.id)
+            .filter(LlmCall.agent_run_id.in_(agent_run_ids))
+            .all()
+        ]
+        if llm_ids:
+            self.db.query(LlmRetry).filter(LlmRetry.llm_call_id.in_(llm_ids)).delete(
+                synchronize_session="fetch"
+            )
+
+        # 6. LlmCall (FK -> agent_runs)
+        if llm_ids:
+            self.db.query(LlmCall).filter(LlmCall.id.in_(llm_ids)).delete(
+                synchronize_session="fetch"
+            )
+
+        # 7. Message — only messages linked to these runs
+        self.db.query(Message).filter(
+            Message.agent_run_id.in_(agent_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        self.db.flush()
+
+        logger.info(
+            "artifacts_cleared",
+            agent_runs=len(agent_run_ids),
+            tool_calls=len(tc_ids),
+            llm_calls=len(llm_ids),
+        )
+        return {"tool_calls": len(tc_ids), "llm_calls": len(llm_ids)}
+
+    def delete_runs_fully(self, agent_run_ids: list[UUID]) -> None:
+        """Delete agent runs AND their execution artifacts entirely.
+
+        Used for planner-created runs during retry — these will be
+        recreated by make_plan when the planner re-executes.
+        """
+        if not agent_run_ids:
+            return
+
+        # First clear all artifacts
+        self.clear_execution_artifacts(agent_run_ids)
+
+        # Then delete the AgentRun rows themselves
+        # Child runs first (parent_run_id FK)
+        self.db.query(AgentRun).filter(
+            AgentRun.parent_run_id.in_(agent_run_ids)
+        ).delete(synchronize_session="fetch")
+
+        self.db.query(AgentRun).filter(AgentRun.id.in_(agent_run_ids)).delete(
+            synchronize_session="fetch"
+        )
+
+        self.db.flush()
+        logger.info("runs_deleted", count=len(agent_run_ids))
+
+    def delete_orphan_messages(self, session_id: UUID, min_sequence: int) -> None:
+        """Delete messages with agent_run_id=NULL at or after a sequence number.
+
+        These are orphan messages (e.g. from create_message tool) that belong
+        to reverted agents.
+        """
+        self.db.query(Message).filter(
+            Message.session_id == session_id,
+            Message.agent_run_id.is_(None),
+            Message.sequence_number >= min_sequence,
+        ).delete(synchronize_session="fetch")
+        self.db.flush()
+
+    # =========================================================================
+    # BULK UPDATE METHODS (used by RevertService)
+    # =========================================================================
+
+    def reset_runs_to_pending(self, agent_run_ids: list[UUID]) -> None:
+        """Reset runs to PENDING status, clearing timestamps, tokens, and errors."""
+        if not agent_run_ids:
+            return
+        runs = (
+            self.db.query(AgentRun).filter(AgentRun.id.in_(agent_run_ids)).all()
+        )
+        for run in runs:
+            run.status = AgentRunStatus.PENDING.value
+            run.started_at = None
+            run.completed_at = None
+            run.error_message = None
+            run.iteration_count = 0
+            run.prompt_tokens = 0
+            run.completion_tokens = 0
+            run.total_tokens = 0
+
+    def update_planned_prompt_batch(self, updates: dict[UUID, str]) -> None:
+        """Batch update planned_prompt for multiple runs.
+
+        Args:
+            updates: Mapping of agent_run_id -> new planned_prompt
+        """
+        if not updates:
+            return
+        runs = (
+            self.db.query(AgentRun).filter(AgentRun.id.in_(updates.keys())).all()
+        )
+        for run in runs:
+            if run.id in updates:
+                run.planned_prompt = updates[run.id]
+
+    def get_next_sequence_number(self, session_id: UUID) -> int:
+        """Get the next available sequence number for a session.
+
+        Returns max(agent_run.sequence_number, message.sequence_number) + 1
+        across all entries in the session, or 0 if none exist.
+
+        Note: No UNIQUE constraint on sequence_number by design. Future parallel
+        agents may share the same sequence number (they start together). The
+        timeline sort handles ties via secondary keys (type, timestamp). The
+        current serial orchestrator prevents actual races.
+        """
+        from sqlalchemy import func
+
+        max_run_seq = (
+            self.db.query(func.max(AgentRun.sequence_number))
+            .filter(AgentRun.session_id == session_id)
+            .scalar()
+        )
+        max_msg_seq = (
+            self.db.query(func.max(Message.sequence_number))
+            .filter(Message.session_id == session_id)
+            .scalar()
+        )
+
+        current_max = max(
+            max_run_seq if max_run_seq is not None else -1,
+            max_msg_seq if max_msg_seq is not None else -1,
+        )
+        return current_max + 1
+
+    # =========================================================================
+    # ZOMBIE SESSION RECOVERY
+    # =========================================================================
+
+    def recover_zombie_sessions(self) -> list[UUID]:
+        """Find and recover zombie sessions after a server restart.
+
+        On startup, no background tasks exist. ANY session with status='active'
+        is a zombie — whether it has running, pending, or no agent runs.
+        (Previously this only caught sessions with RUNNING runs, missing cases
+        where the orchestrator crashed between runs.)
+
+        Also recovers 'failed' sessions that have orphaned 'running' agent runs.
+        This happens when the app crashes mid-agent: run_session_task's error
+        handler rolls back the agent run status but successfully marks the
+        session as failed.
+
+        Marks zombie sessions as PAUSED and their running runs as PAUSED_USER.
+
+        Returns:
+            List of recovered session IDs.
+        """
+        from druppie.db.models import Session as DBSession
+
+        # Any active session is a zombie at startup — no bg tasks exist
+        zombie_sessions = (
+            self.db.query(DBSession)
+            .filter(DBSession.status == SessionStatus.ACTIVE.value)
+            .all()
+        )
+
+        recovered_ids = []
+        for session in zombie_sessions:
+            # Mark running agent runs as PAUSED_USER
+            running_runs = (
+                self.db.query(AgentRun)
+                .filter(
+                    AgentRun.session_id == session.id,
+                    AgentRun.status == AgentRunStatus.RUNNING.value,
+                )
+                .all()
+            )
+            for run in running_runs:
+                run.status = AgentRunStatus.PAUSED_USER.value
+
+            # PAUSED_CRASHED if agent was mid-execution, PAUSED if between runs
+            if running_runs:
+                session.status = SessionStatus.PAUSED_CRASHED.value
+            else:
+                session.status = SessionStatus.PAUSED.value
+            recovered_ids.append(session.id)
+
+        # Also recover failed sessions with orphaned running agent runs.
+        # Uses PAUSED_CRASHED so the frontend can show a distinct message.
+        failed_sessions = (
+            self.db.query(DBSession)
+            .filter(DBSession.status == SessionStatus.FAILED.value)
+            .all()
+        )
+        for session in failed_sessions:
+            running_runs = (
+                self.db.query(AgentRun)
+                .filter(
+                    AgentRun.session_id == session.id,
+                    AgentRun.status == AgentRunStatus.RUNNING.value,
+                )
+                .all()
+            )
+            if running_runs:
+                for run in running_runs:
+                    run.status = AgentRunStatus.PAUSED_USER.value
+                session.status = SessionStatus.PAUSED_CRASHED.value
+                recovered_ids.append(session.id)
+
+        return recovered_ids

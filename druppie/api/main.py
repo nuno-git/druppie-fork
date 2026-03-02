@@ -16,8 +16,39 @@ from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
 from druppie.agents import Agent
+from druppie.core.background_tasks import shutdown_background_tasks
 
 logger = structlog.get_logger()
+
+
+def _recover_zombie_sessions() -> None:
+    """Recover sessions that were active when the server stopped.
+
+    On startup, any session with status='active' and running agent runs
+    is a zombie — mark it as PAUSED so users can resume via the UI.
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.repositories import ExecutionRepository
+
+    db = SessionLocal()
+    try:
+        execution_repo = ExecutionRepository(db)
+        recovered = execution_repo.recover_zombie_sessions()
+
+        if recovered:
+            db.commit()
+            logger.warning(
+                "zombie_sessions_recovered",
+                count=len(recovered),
+                session_ids=[str(sid) for sid in recovered],
+            )
+        else:
+            logger.info("no_zombie_sessions_found")
+    except Exception as e:
+        logger.error("zombie_recovery_failed", error=str(e), exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
 
 
 @asynccontextmanager
@@ -30,9 +61,14 @@ async def lifespan(app: FastAPI):
     agents_list = Agent.list_agents()
     logger.info("druppie_initialized", agents=len(agents_list))
 
+    # Recover zombie sessions (active sessions with running agent runs
+    # that were interrupted by server shutdown/crash)
+    _recover_zombie_sessions()
+
     yield
 
-    # Shutdown
+    # Shutdown — wait for background tasks before exiting
+    await shutdown_background_tasks(timeout=30.0)
     logger.info("druppie_stopping")
 
 
