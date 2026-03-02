@@ -129,7 +129,7 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
             {group.sessions.map((s) => {
               const isActive = ACTIVE_STATUSES.has(s.status)
               const isRunning = s.status === 'active' || s.status === 'running'
-              const isPaused = (s.status?.startsWith('paused_') && s.status !== 'paused_crashed') || s.status?.startsWith('waiting_')
+              const isPaused = s.status === 'paused' || (s.status?.startsWith('paused_') && s.status !== 'paused_crashed') || s.status?.startsWith('waiting_')
               const isCrashed = s.status === 'paused_crashed'
               const isFailed = s.status === 'failed'
               return (
@@ -155,7 +155,7 @@ const SessionSidebar = ({ activeSessionId, onSelectSession, onNewChat, onCollaps
                       {s.title || 'Untitled'}
                     </span>
                   </div>
-                  <div className={`flex items-center gap-2 mt-0.5 ${isActive || isFailed ? 'ml-3.5' : ''}`}>
+                  <div className={`flex items-center gap-2 mt-0.5 ${isActive || isFailed || isCrashed ? 'ml-3.5' : ''}`}>
                     {s.project_name && (
                       <span className="text-xs text-gray-400 truncate">
                         {s.project_name}

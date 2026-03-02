@@ -178,8 +178,7 @@ class RevertService:
         if prompt_updates:
             self.execution_repo.update_planned_prompt_batch(prompt_updates)
 
-        # Step 7: Reset session
-        self.session_repo.update_status(session_id, SessionStatus.ACTIVE)
+        # Step 7: Reset session (status already set to ACTIVE by lock_for_retry)
         self.session_repo.clear_error_message(session_id)
         self.session_repo.recalculate_token_totals(session_id)
 

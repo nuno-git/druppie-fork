@@ -30,7 +30,7 @@ class AgentRun(Base):
     parent_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id"))
 
     # pending = created by planner, not started yet
-    status = Column(String(20), default="running")  # pending, running, paused_tool, paused_hitl, completed, failed
+    status = Column(String(20), default="running")  # pending, running, paused_tool, paused_hitl, paused_user, cancelled, completed, failed
     error_message = Column(Text)  # Error details when status is 'failed'
     iteration_count = Column(Integer, default=0)
 
