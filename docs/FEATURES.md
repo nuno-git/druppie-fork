@@ -8,7 +8,7 @@ Druppie is a governance platform where users describe what they want built in na
 
 Every action an agent takes goes through a **tool call** -- either an **MCP tool** provided by an external server, or a **builtin tool** provided by the platform itself.
 
-**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Three additional builtins are restricted: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), and `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access).
+**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Additional builtins are restricted to specific agents: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access), and `execute_coding_task` (Developer/Tester -- delegates coding to an isolated sandbox).
 
 **MCP tools** are provided by external MCP servers over HTTP (e.g., `read_file`, `write_file`, `docker:build`). Which tools each agent can call is configured in its YAML definition.
 
@@ -293,14 +293,15 @@ This ensures agents operate on the correct repository and session without being 
 
 ### What It Does
 
-Agents can delegate coding tasks to isolated Docker sandboxes. Each sandbox is a fresh container with git, a code editor (OpenCode), and LLM access. The sandbox clones the project from Gitea, executes the task, commits and pushes changes, then the MCP server syncs changes back to the shared workspace via `git pull`.
+Agents can delegate coding tasks to isolated Docker sandboxes. Each sandbox is a fresh container with git, a code editor (OpenCode), and LLM access. The sandbox clones the project from Gitea, executes the task, commits and pushes changes back.
 
 ### How It Works (User Perspective)
 
 1. An agent (e.g., Developer) calls `execute_coding_task` with a task description
-2. The sandbox runs autonomously — writing code, running tests, committing to git
-3. When complete, changes appear in the project workspace
-4. The chat timeline shows a **Sandbox Session card** with:
+2. The agent **pauses** (session status: `paused_sandbox`) while the sandbox runs autonomously
+3. When the sandbox completes, it sends a webhook callback to the backend
+4. The agent **resumes** automatically with the sandbox results
+5. The chat timeline shows a **Sandbox Session card** with:
    - Files changed (with path and action)
    - Elapsed time
    - Expandable sandbox events timeline

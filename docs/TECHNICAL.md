@@ -103,7 +103,7 @@ druppie/
       agents.py          # Agent listing
       mcps.py            # MCP server status
       mcp_bridge.py      # Direct MCP tool invocation
-      sandbox.py         # Sandbox session registration + events proxy
+      sandbox.py         # Sandbox session registration, events proxy, completion webhook
   services/
     session_service.py
     approval_service.py
@@ -435,7 +435,6 @@ File and git operations within workspace sandboxes.
 | `create_pull_request` | None | Create PR on Gitea |
 | `merge_pull_request` | Developer | Merge PR and delete branch |
 | `merge_to_main` | Architect | Direct merge to main branch |
-| `execute_coding_task` | None | Execute coding task in isolated sandbox |
 
 ### 6.3 Docker Server (port 9002)
 
@@ -625,13 +624,13 @@ Nine agents are defined as YAML files in `druppie/agents/definitions/`:
 | `planner` | Creates execution plan (which agents to run) | `make_plan` | None | — |
 | `business_analyst` | Gathers requirements from user | Default | None (HITL only) | — |
 | `architect` | Designs system architecture, writes specs | Default | `coding` | — |
-| `developer` | Writes code, commits, creates PRs | `invoke_skill` | `coding` | `code-review`, `git-workflow` |
+| `developer` | Writes code, commits, creates PRs | `invoke_skill`, `execute_coding_task` | `coding` | `code-review`, `git-workflow` |
 | `reviewer` | Reviews code quality | Default | `coding` | — |
-| `tester` | Writes and runs tests | Default | `coding`, `docker` | — |
+| `tester` | Writes and runs tests | `execute_coding_task` | `coding`, `docker` | — |
 | `deployer` | Builds and deploys containers | Default | `coding`, `docker` | — |
 | `summarizer` | Creates conversation summary message | `create_message` | None | — |
 
-Default builtin tools (all agents): `done`, `hitl_ask_question`, `hitl_ask_multiple_choice_question`.
+Default builtin tools (all agents): `done`, `hitl_ask_question`, `hitl_ask_multiple_choice_question`. Optional extra builtins: `execute_coding_task` (sandbox delegation, used by Developer/Tester).
 
 Each YAML file specifies:
 
@@ -921,7 +920,7 @@ Three Docker services power the sandbox infrastructure:
 - **sandbox-manager** (port 8000): Creates and manages sandbox Docker containers, enforces resource limits, handles snapshots
 - **sandbox-image-builder** (one-shot): Builds the `open-inspect-sandbox:latest` image; Docker caches it so it only rebuilds when the Dockerfile changes
 
-Communication flow: MCP coding server → control plane API → sandbox manager → Docker containers.
+Communication flow: Druppie backend (built-in tool) → control plane API → sandbox manager → Docker containers. On completion, the control plane sends a webhook back to the backend.
 
 ### 10.2 Docker Compose Services
 
@@ -931,9 +930,9 @@ Communication flow: MCP coding server → control plane API → sandbox manager 
 | `sandbox-manager` | `vendor/open-inspect` (`packages/local-sandbox-manager/Dockerfile`) | 8000 | `SANDBOX_RUNTIME=docker`, `SANDBOX_IMAGE`, `DOCKER_NETWORK`, `DOCKER_MEMORY_LIMIT`, `DOCKER_CPU_LIMIT` | `sandbox_snapshots:/data/snapshots`, Docker socket | Creates/manages sandbox containers, enforces limits |
 | `sandbox-image-builder` | `vendor/open-inspect` (`packages/local-sandbox-manager/Dockerfile.sandbox`) | — | — | — | One-shot build producing `open-inspect-sandbox:latest`; Docker caches the image |
 
-### 10.3 `execute_coding_task` MCP Tool
+### 10.3 `execute_coding_task` Built-in Tool
 
-Defined in `druppie/mcp-servers/coding/server.py`. The tool delegates a coding task to an isolated sandbox.
+Defined in `druppie/agents/builtin_tools.py`. This is a **built-in tool** (not an MCP tool) — it runs inside the backend process. It delegates a coding task to an isolated sandbox and uses a **webhook + pause/resume** pattern instead of long-polling.
 
 **Parameters:**
 
@@ -941,34 +940,46 @@ Defined in `druppie/mcp-servers/coding/server.py`. The tool delegates a coding t
 |-----------|------|---------|-------------|
 | `task` | str | (required) | Coding task description / prompt |
 | `agent` | str | `druppie-builder` | Sandbox agent (`druppie-builder` for coding, `druppie-tester` for testing) |
-| `repo_url` | str | (from Gitea) | Git repo URL for sandbox to clone |
-| `model` | str | `zai-coding-plan/glm-4.7` | LLM model for the sandbox agent |
-| `timeout_seconds` | int | `86400` | Max polling time (24 hours) |
-| `session_id`, `project_id`, `repo_name`, `repo_owner`, `user_id` | str | (auto-injected) | Context parameters injected by parameter injection |
+| `repo_name`, `repo_owner`, `session_id`, `project_id`, `user_id` | str | (auto-injected) | Context parameters injected by parameter injection |
+
+Agents that can use this tool declare it via `extra_builtin_tools: [execute_coding_task]` in their YAML definition (currently: `builder`, `tester`).
 
 **Auth:** HMAC-SHA256 tokens in the format `{unix_ms_timestamp}.{hmac_sha256_hex_signature}`, matching Open-Inspect's `verifyInternalToken`. A fresh token is generated for every API request to the control plane. The secret is `SANDBOX_API_SECRET`.
 
-**5-step execution flow:**
+**Execution flow (fire-and-forget with webhook callback):**
 
 1. **Create session** — `POST /sessions` on the control plane with repo URL, agent config, and LLM model
-2. **Register ownership** — `POST /api/sandbox-sessions/internal/register` on the Druppie backend to map the sandbox session ID to the requesting user
-3. **Send prompt** — `POST /sessions/{id}/message` with the task description
-4. **Poll events** — 5-second interval, fetching `GET /sessions/{id}/events?limit=200`. Events are deduplicated by ID (`seen_event_ids` set). Polls until an `execution_complete` event with a matching `messageId` is received, or the sandbox enters an error state (stopped/failed/stale), or timeout
-5. **Git pull sync** — Runs `git pull` in the workspace to sync changes pushed by the sandbox
+2. **Send prompt with callback** — `POST /sessions/{id}/message` with the task description plus `callbackUrl` and `callbackSecret`. The callback URL points to `POST /api/sandbox-sessions/{id}/complete` on the Druppie backend.
+3. **Register ownership** — `POST /api/sandbox-sessions/internal/register` on the Druppie backend to map the sandbox session ID to the requesting user
+4. **Return immediately** — The tool returns `{"status": "waiting_sandbox", "sandbox_session_id": "..."}`. The tool executor detects this status and sets the tool call to `WAITING_SANDBOX`, which pauses the agent (agent run → `PAUSED_SANDBOX`, session → `paused_sandbox`).
+5. **Webhook callback** — When the sandbox completes (or is cancelled), the control plane POSTs to the callback URL with an HMAC-signed payload. The webhook endpoint fetches final events, extracts changed files and agent output, completes the tool call, and resumes the agent via `Orchestrator.resume_after_sandbox()`.
 
-**Return structure:**
+**Status model:**
+
+| Level | Status | Meaning |
+|-------|--------|---------|
+| ToolCallStatus | `WAITING_SANDBOX` | Tool call dispatched, waiting for webhook |
+| AgentRunStatus | `PAUSED_SANDBOX` | Agent paused while sandbox executes |
+| SessionStatus | `paused_sandbox` | Session paused, visible in UI |
+
+**Webhook endpoint:** `POST /api/sandbox-sessions/{sandbox_session_id}/complete` (in `druppie/api/routes/sandbox.py`). Verifies HMAC-SHA256 signature via `X-Signature` header, then:
+
+1. Finds the `WAITING_SANDBOX` tool call via `ExecutionRepository.find_by_sandbox_session_id()`
+2. Fetches final events from control plane (`GET /sessions/{id}/events?limit=500`)
+3. Extracts changed files and agent output from events
+4. Completes the tool call with result payload
+5. Resumes the agent asynchronously via `asyncio.create_task(orchestrator.resume_after_sandbox())`
+
+**Tool call result (after webhook):**
 
 ```python
 {
     "success": bool,
     "sandbox_session_id": str,
-    "status": str,              # "success", "timeout", "failed", "stopped", "stale"
-    "elapsed_seconds": float,
+    "status": "completed" | "failed",
     "event_count": int,
-    "changed_files": [{"path": str, "action": "write"|"delete"}],
-    "agent_output": str,        # Last 5000 chars of agent output (summary at end)
-    "timed_out": bool,
-    "git_pull": str,            # "synced", "failed: ...", or "error: ..."
+    "changed_files": [{"path": str, "action": str}],
+    "agent_output": str,        # Last 5000 chars of agent output
 }
 ```
 
@@ -996,12 +1007,11 @@ The `sandbox_sessions` table (`druppie/db/models/sandbox_session.py`) maps contr
 | `user_id` | UUID (FK → users) | Owning user |
 | `created_at` | datetime | Registration timestamp |
 
-**Registration flow:** After creating a sandbox session, the MCP coding server calls `POST /api/sandbox-sessions/internal/register` (authenticated via internal API key, not user tokens). The repository's `create()` method is idempotent — it returns the existing record if the sandbox session ID is already registered.
+**Registration flow:** After creating a sandbox session, the built-in tool calls `POST /api/sandbox-sessions/internal/register` (authenticated via internal API key, not user tokens). The repository's `create()` method is idempotent — it returns the existing record if the sandbox session ID is already registered.
 
 **Events proxy:** `GET /api/sandbox-sessions/{session_id}/events` (in `druppie/api/routes/sandbox.py`) proxies events from the control plane. Before forwarding, it:
 
 1. Looks up ownership via `SandboxSessionRepository.get_by_sandbox_id()`
 2. Calls `check_resource_ownership(user, mapping.user_id)` — returns **403** for non-owners
 3. Admins bypass the ownership check
-4. **Transition period:** unregistered sessions are allowed through with a warning log
 
