@@ -9,7 +9,7 @@ Last updated: 2026-02-11
 ## Summary
 
 - Per-Agent Model Selection Ignored
-- Cancel/Resume Endpoint Missing on Backend
+- ~~Cancel/Resume Endpoint Missing on Backend~~ ✅ DONE
 - Token/Cost Tracking Half Implemented and Buggy
 - Database Schema Does Not Match Domain Models
 - JSON/JSONB Columns Still Present
@@ -43,12 +43,16 @@ Last updated: 2026-02-11
 - Override env vars (`LLM_FORCE_PROVIDER`/`LLM_FORCE_MODEL`) bypass profiles for testing.
 - See `docs/TECHNICAL.md` section 5.5 for details.
 
-### Cancel/Resume Endpoint Missing on Backend
+### ~~Cancel/Resume Endpoint Missing on Backend~~ (DONE)
 
-- **Location:** `frontend/src/services/api.js:75-76`
-- The frontend defines `cancelChat(sessionId)` which POSTs to `/api/chat/{sessionId}/cancel`.
-- No corresponding backend route exists in the API layer (`druppie/api/`). The cancel button in the UI will receive a 404 or similar error.
-- The domain model defines a `CANCELLED` status (`druppie/domain/common.py:20`), but there is no service logic to transition a session into that state.
+- **Resolved in:** `feature/continue-agent-run` branch
+- Full stop and resume support: `POST /api/chat/{sessionId}/cancel` sets session status to `paused` (not cancelled), making every stopped session resumable. `POST /api/sessions/{sessionId}/resume` reconstructs agent state from the database and continues execution.
+- Cooperative pause via DB poll -- orchestrator and agent loop check session status between iterations and stop gracefully. Paused sessions (approval/HITL) stop immediately.
+- Zombie session recovery on startup: sessions left in `active` status after a server restart are automatically marked as `paused` so users can resume them.
+- `CANCELLED` status is now internal only (used by the planner when superseding old pending runs). User actions never set `CANCELLED`.
+- Retry from any agent run via `POST /api/sessions/{sessionId}/retry-from/{agentRunId}`. Reverts git state (hard reset + force push), closes open PRs, resets/deletes agent runs, and re-executes.
+- `RevertService` handles the full revert logic. MCP tools: `revert_to_commit`, `close_pull_request`.
+- See `docs/FEATURES.md` "Stop & Resume" and `docs/TECHNICAL.md` section 8.9 for full details.
 
 ### Token/Cost Tracking Half Implemented and Buggy
 

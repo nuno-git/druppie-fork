@@ -274,6 +274,7 @@ const ConversationsTab = ({ sessions }) => {
       case 'active': return 'bg-yellow-500'
       case 'paused_approval': return 'bg-blue-500'
       case 'paused_hitl': return 'bg-blue-500'
+      case 'paused_crashed': return 'bg-red-500'
       case 'failed': return 'bg-red-500'
       default: return 'bg-gray-500'
     }
