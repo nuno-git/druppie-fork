@@ -24,7 +24,7 @@ GET /api/sessions/{id} to track progress.
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
@@ -35,7 +35,7 @@ from druppie.api.deps import (
 from druppie.services import QuestionService
 from druppie.domain import QuestionDetail
 from druppie.domain.common import SessionStatus
-from druppie.core.background_tasks import create_tracked_task
+from druppie.core.background_tasks import create_session_task, SessionTaskConflict
 
 logger = structlog.get_logger()
 
@@ -192,14 +192,21 @@ async def answer_question(
     )
 
     # Step 2: Spawn background task to resume workflow
-    create_tracked_task(
-        _resume_workflow_after_answer(
-            session_id=question.session_id,
-            question_id=question_id,
-            answer=request.answer,
-        ),
-        name=f"resume-answer-{question_id}",
-    )
+    try:
+        create_session_task(
+            question.session_id,
+            _resume_workflow_after_answer(
+                session_id=question.session_id,
+                question_id=question_id,
+                answer=request.answer,
+            ),
+            name=f"resume-answer-{question_id}",
+        )
+    except SessionTaskConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
+        )
 
     logger.info(
         "answer_recorded_resuming_in_background",

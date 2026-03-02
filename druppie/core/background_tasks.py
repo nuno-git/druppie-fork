@@ -14,7 +14,8 @@ Usage:
     async def my_work(ctx):
         await ctx.orchestrator.resume_paused_session(session_id)
 
-    create_tracked_task(
+    create_session_task(
+        session_id,
         run_session_task(session_id, my_work, "resume"),
         name=f"resume-{session_id}",
     )
@@ -31,6 +32,11 @@ logger = structlog.get_logger()
 
 # Module-level set: prevents GC of running tasks and enables shutdown enumeration.
 _background_tasks: set[asyncio.Task] = set()
+
+# Per-session guard: maps session_id → running Task.
+# Prevents concurrent background tasks for the same session (e.g. rapid
+# stop → resume → stop → resume spawning two tasks that both run agents).
+_active_session_tasks: dict[UUID, asyncio.Task] = {}
 
 
 def _on_task_done(task: asyncio.Task) -> None:
@@ -65,6 +71,54 @@ def create_tracked_task(
     task = asyncio.create_task(coro, name=name)
     _background_tasks.add(task)
     task.add_done_callback(_on_task_done)
+    return task
+
+
+class SessionTaskConflict(Exception):
+    """Raised when a background task is already running for a session."""
+    pass
+
+
+def is_session_task_running(session_id: UUID) -> bool:
+    """Check if a background task is already running for a session."""
+    task = _active_session_tasks.get(session_id)
+    return task is not None and not task.done()
+
+
+def create_session_task(
+    session_id: UUID,
+    coro: Coroutine[Any, Any, Any],
+    *,
+    name: str | None = None,
+) -> asyncio.Task:
+    """Create a tracked task for a session, ensuring only one runs at a time.
+
+    This MUST be called synchronously from the endpoint handler (no await
+    between the call site and this function) so the check+add is atomic
+    in the single-threaded event loop.
+
+    Raises:
+        SessionTaskConflict: If a task is already running for this session.
+    """
+    existing = _active_session_tasks.get(session_id)
+    if existing is not None and not existing.done():
+        logger.warning(
+            "session_task_conflict",
+            session_id=str(session_id),
+            existing_task=existing.get_name(),
+            requested_task=name,
+        )
+        raise SessionTaskConflict(
+            f"A background task is already running for session {session_id}"
+        )
+
+    task = create_tracked_task(coro, name=name)
+    _active_session_tasks[session_id] = task
+
+    def _cleanup(_t: asyncio.Task) -> None:
+        _active_session_tasks.pop(session_id, None)
+
+    task.add_done_callback(_cleanup)
     return task
 
 
