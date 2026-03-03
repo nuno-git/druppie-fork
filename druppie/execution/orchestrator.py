@@ -768,6 +768,8 @@ class Orchestrator:
             if waiting_run:
                 if waiting_run.status == AgentRunStatus.PAUSED_HITL:
                     self.session_repo.update_status(session_id, SessionStatus.PAUSED_HITL)
+                elif waiting_run.status == AgentRunStatus.PAUSED_SANDBOX:
+                    self.session_repo.update_status(session_id, SessionStatus.PAUSED_SANDBOX)
                 else:
                     self.session_repo.update_status(session_id, SessionStatus.PAUSED_APPROVAL)
                 self.session_repo.commit()

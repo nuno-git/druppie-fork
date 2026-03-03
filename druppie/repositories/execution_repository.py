@@ -140,6 +140,7 @@ class ExecutionRepository(BaseRepository):
                 AgentRun.status.in_([
                     AgentRunStatus.PAUSED_TOOL.value,
                     AgentRunStatus.PAUSED_HITL.value,
+                    AgentRunStatus.PAUSED_SANDBOX.value,
                 ]),
             )
             .order_by(AgentRun.sequence_number)
