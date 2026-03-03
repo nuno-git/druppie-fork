@@ -18,7 +18,7 @@ class Session(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"))
     title = Column(String(500))
-    status = Column(String(20), default="active")  # active, paused_approval, paused_hitl, completed, failed
+    status = Column(String(20), default="active")  # active, paused, paused_approval, paused_hitl, paused_crashed, completed, failed
     error_message = Column(Text)  # Error details when status is 'failed'
     intent = Column(String(50))  # create_project, update_project, general_chat
     branch_name = Column(String(255), nullable=True)  # Feature branch for update_project

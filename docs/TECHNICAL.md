@@ -19,6 +19,7 @@ Druppie is a full-stack platform composed of the following services:
 | MCP Docker | Python / FastMCP | 9002 | Container build, run, manage |
 | MCP File Search | Python / FastMCP | 9004 | Local file search within datasets |
 | MCP Web | Python / FastMCP | 9005 | Web browsing, URL fetching, web search |
+| MCP ArchiMate | Python / FastMCP | 9006 | ArchiMate model operations (list, read, search, export) |
 | Adminer | PHP | 8081 | Database admin UI |
 
 All services run in Docker containers on a shared bridge network (`druppie-new-network`). The backend communicates with MCP servers over HTTP using internal container hostnames.
@@ -39,7 +40,7 @@ Repository  -->  Domain Model  -->  Service  -->  API Route
 Each layer has a single responsibility:
 
 - **API Routes** (`druppie/api/routes/`): Thin HTTP layer. Receives requests, delegates to services, returns domain models. Route modules: `chat`, `sessions`, `approvals`, `questions`, `projects`, `deployments`, `workspace`, `agents`, `mcps`, `mcp_bridge`.
-- **Services** (`druppie/services/`): Business logic. Orchestrates repository calls, enforces rules. Modules: `session_service`, `approval_service`, `question_service`, `project_service`, `workflow_service`, `deployment_service`.
+- **Services** (`druppie/services/`): Business logic. Orchestrates repository calls, enforces rules. Modules: `session_service`, `approval_service`, `question_service`, `project_service`, `workflow_service`, `deployment_service`, `revert_service`.
 - **Repositories** (`druppie/repositories/`): Data access. Queries SQLAlchemy models, returns domain models. Modules: `session_repository`, `approval_repository`, `question_repository`, `project_repository`, `execution_repository`, `user_repository`.
 - **Domain Models** (`druppie/domain/`): Pydantic models that define the API contract. All exports go through `druppie/domain/__init__.py`.
 
@@ -107,6 +108,7 @@ druppie/
     project_service.py
     workflow_service.py
     deployment_service.py
+    revert_service.py
   repositories/
     session_repository.py
     approval_repository.py
@@ -171,10 +173,11 @@ druppie/
     mcp_config.yaml      # MCP server + tool + approval definitions
     tool_registry.py     # Unified tool registry with Pydantic models
   mcp-servers/
-    coding/              # Port 9001
+    coding/              # Port 9001 (includes mermaid_validator.py)
     docker/              # Port 9002
     filesearch/          # Port 9004
     web/                 # Port 9005
+    archimate/           # Port 9006
 ```
 
 ---
@@ -423,6 +426,10 @@ File and git operations within workspace sandboxes.
 | `create_pull_request` | None | Create PR on Gitea |
 | `merge_pull_request` | Developer | Merge PR and delete branch |
 | `merge_to_main` | Architect | Direct merge to main branch |
+| `execute_coding_task` | None | Execute coding task in isolated sandbox |
+| `make_design` | None (overridable per agent) | Write design document (FD/TD) with Mermaid syntax validation; file is rejected if Mermaid contains errors |
+| `revert_to_commit` | None (internal) | Hard reset + force push to a target commit |
+| `close_pull_request` | None (internal) | Close a PR on Gitea without merging |
 
 ### 6.3 Docker Server (port 9002)
 
@@ -456,7 +463,18 @@ Web browsing and local file search within datasets.
 
 Local file search capability over mounted dataset volumes.
 
-### 6.6 Declarative Parameter Injection
+### 6.6 ArchiMate Server (port 9006)
+
+ArchiMate model operations. Reads `.archimate` files from a mounted models directory.
+
+| Tool | Approval | Description |
+|------|----------|-------------|
+| `list_models` | None | List available ArchiMate models |
+| `read_model` | None | Read a full ArchiMate model |
+| `search_model` | None | Search for elements by query |
+| `export_view` | None | Export an ArchiMate view |
+
+### 6.7 Declarative Parameter Injection
 
 MCP tools can have parameters auto-injected from the session/project context. Injected parameters are marked `hidden: true` and are removed from the LLM-visible tool schema. This prevents the LLM from needing to know internal IDs.
 
@@ -473,7 +491,7 @@ inject:
     tools: [read_file, write_file, list_dir, ...]
 ```
 
-### 6.7 Layered Approval System
+### 6.8 Layered Approval System
 
 Approvals have two layers:
 
@@ -509,6 +527,7 @@ mcp-coding          FastMCP           :9001   File/git operations
 mcp-docker          FastMCP           :9002   Docker operations
 mcp-filesearch      FastMCP           :9004   File search
 mcp-web             FastMCP           :9005   Web browsing
+mcp-archimate       FastMCP           :9006   ArchiMate models
 adminer             Adminer           :8081   DB admin UI
 ```
 
@@ -605,8 +624,8 @@ Twelve agents are defined as YAML files in `druppie/agents/definitions/`:
 |-------|------|---------------|------------|--------|
 | `router` | Classifies user intent, selects project | `set_intent` | None | — |
 | `planner` | Creates execution plan (which agents to run) | `make_plan` | None | — |
-| `business_analyst` | Gathers requirements from user | Default | None (HITL only) | — |
-| `architect` | Designs system architecture, writes specs | Default | `coding` | — |
+| `business_analyst` | Gathers requirements from user | Default | `coding` (read_file, make_design, list_dir) | `making-mermaid-diagrams` |
+| `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, make_design, list_dir), `archimate` | `making-mermaid-diagrams` |
 | `builder_planner` | Creates implementation plans, writes builder_plan.md | Default | `coding` | — |
 | `test_builder` | Generates tests (TDD Red Phase) | Default | `coding` | — |
 | `builder` | Implements code to pass tests (TDD Green Phase) | Default | `coding` | — |
@@ -838,7 +857,15 @@ Key resume methods:
 
 Both methods reconstruct agent state from the database (LLM call history, tool call results) so the agent can continue where it left off.
 
+**Cooperative pause/cancellation:** The orchestrator checks the session status (via DB poll) before each agent run and after each agent completes. If the status is `paused` or `cancelled`, it stops executing further runs. The agent loop also checks the session status between LLM iterations. This means stopping is cooperative -- it happens at the next check point, not mid-LLM-call. See section 8.9 for the full stop and resume architecture.
+
+**Retry from agent run:** The `POST /api/sessions/{id}/retry-from/{run_id}` endpoint spawns a background task that uses `RevertService` to revert the target run and all subsequent runs, then calls `execute_pending_runs()` to re-execute them. `RevertService` handles git revert (via `revert_to_commit` MCP tool), PR cleanup, and DB record management.
+
 ### 8.9 Pause and Resume
+
+The platform supports two kinds of pause: **automatic** (tool approval / HITL questions) and **user-initiated** (stop button).
+
+#### Automatic Pause (Approval / HITL)
 
 When an agent encounters a tool that requires approval or a HITL question:
 
@@ -849,6 +876,44 @@ When an agent encounters a tool that requires approval or a HITL question:
 5. When the user responds, the API calls the orchestrator's resume method.
 6. The orchestrator reconstructs the agent's message history from `LlmCall` and `ToolCall` records.
 7. The agent loop continues from the iteration where it paused.
+
+#### User-Initiated Stop & Resume
+
+Users can stop any running session and resume it later with full context preservation.
+
+**Stop flow:**
+
+1. The user clicks the **Stop** button (visible during `active`, `paused_approval`, and `paused_hitl` states).
+2. `POST /api/chat/{session_id}/cancel` sets `session.status = 'paused'` in the database.
+3. Both the orchestrator loop (between agent runs) and the agent loop (between LLM iterations) poll the session status from the database and detect the pause.
+4. The current LLM call and tool execution completes, then the agent stops cleanly at the next check point (cooperative cancellation).
+5. For sessions already paused for approval or HITL (no background task running), the status change is immediate.
+
+**Resume flow:**
+
+1. The user clicks the **Continue** button (visible when session status is `paused`).
+2. `POST /api/sessions/{session_id}/resume` spawns a background task.
+3. The background task calls `agent.continue_run()`, which uses `reconstruct_from_db()` (`druppie/agents/message_history.py`) to rebuild the full LLM conversation from `LlmCall` and `ToolCall` database records.
+4. The agent loop continues execution from where it left off.
+5. After the current agent completes, the orchestrator continues executing remaining pending agent runs.
+
+**Zombie session recovery:**
+
+On application startup, the system detects "zombie" sessions -- sessions that were in `active` status when the server stopped (e.g., due to a reboot or crash). These sessions are automatically marked as `paused` so users can resume them via the Continue button.
+
+**Status model:**
+
+| Status | Meaning | Set By |
+|--------|---------|--------|
+| `active` | Processing in progress | Orchestrator on session start / resume |
+| `paused` | Stopped by user or recovered after reboot | Cancel endpoint / startup recovery |
+| `paused_approval` | Waiting for tool approval | ToolExecutor |
+| `paused_hitl` | Waiting for user answer (HITL) | ToolExecutor |
+| `completed` | All agents finished | Orchestrator |
+| `failed` | Error occurred | Orchestrator |
+| `cancelled` | Internal only -- planner superseded old pending runs | Planner (via `make_plan`) |
+
+Note: `CANCELLED` is never set by user actions. It is only used internally by the planner when it creates a new plan that supersedes previously pending agent runs.
 
 ---
 

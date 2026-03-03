@@ -23,16 +23,17 @@ approvals/questions and uses:
 - POST /questions/{id}/answer
 """
 
-import asyncio
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_optional_user, get_session_repository
-from druppie.repositories import SessionRepository
+from druppie.api.deps import get_current_user, get_optional_user, get_session_repository, get_execution_repository
+from druppie.repositories import SessionRepository, ExecutionRepository
 from druppie.domain.common import SessionStatus
+from druppie.api.errors import NotFoundError, AuthorizationError
+from druppie.core.background_tasks import create_session_task, SessionTaskConflict, run_session_task
 
 logger = structlog.get_logger()
 
@@ -85,68 +86,17 @@ async def _run_orchestrator_background(
     session_id: UUID,
     project_id: UUID | None,
 ) -> None:
-    """Run orchestrator in background with its own DB session.
+    """Run orchestrator in background with its own DB session."""
 
-    This task creates fresh repositories with a new DB session that lives
-    for the duration of the task (not tied to the HTTP request lifecycle).
-    """
-    from druppie.db.database import SessionLocal
-    from druppie.repositories import (
-        SessionRepository,
-        ExecutionRepository,
-        ProjectRepository,
-        QuestionRepository,
-    )
-    from druppie.execution import Orchestrator
-
-    db = SessionLocal()
-    try:
-        # Create fresh repositories with background DB session
-        session_repo = SessionRepository(db)
-        execution_repo = ExecutionRepository(db)
-        project_repo = ProjectRepository(db)
-        question_repo = QuestionRepository(db)
-
-        orchestrator = Orchestrator(
-            session_repo=session_repo,
-            execution_repo=execution_repo,
-            project_repo=project_repo,
-            question_repo=question_repo,
-        )
-
-        # Process the message (this does all the heavy work)
-        await orchestrator.process_message(
+    async def task(ctx):
+        await ctx.orchestrator.process_message(
             message=message,
             user_id=user_id,
             session_id=session_id,
             project_id=project_id,
         )
 
-    except Exception as e:
-        error_msg = f"{type(e).__name__}: {e}"
-        logger.error(
-            "background_orchestrator_error",
-            session_id=str(session_id),
-            error=error_msg,
-            exc_info=True,
-        )
-        # Update session status to failed with error details
-        try:
-            db.rollback()
-            session_repo.update_status(
-                session_id,
-                SessionStatus.FAILED,
-                error_message=error_msg[:2000],
-            )
-            db.commit()
-        except Exception as update_error:
-            logger.error(
-                "failed_to_update_session_status",
-                session_id=str(session_id),
-                error=str(update_error),
-            )
-    finally:
-        db.close()
+    await run_session_task(session_id, task, "background_orchestrator")
 
 
 # =============================================================================
@@ -235,14 +185,22 @@ async def chat(
         )
 
         # Step 2: Spawn background task (does NOT block)
-        asyncio.create_task(
-            _run_orchestrator_background(
-                message=request.message,
-                user_id=user_id,
-                session_id=current_session_id,
-                project_id=project_id,
+        try:
+            create_session_task(
+                current_session_id,
+                _run_orchestrator_background(
+                    message=request.message,
+                    user_id=user_id,
+                    session_id=current_session_id,
+                    project_id=project_id,
+                ),
+                name=f"orchestrator-{current_session_id}",
             )
-        )
+        except SessionTaskConflict:
+            raise HTTPException(
+                status_code=409,
+                detail="A task is already running for this session",
+            )
 
         # Step 3: Return immediately
         return ChatResponse(
@@ -266,3 +224,59 @@ async def chat(
             status="error",
             message=f"Error: {str(e)}",
         )
+
+
+STOPPABLE_STATUSES = {"active", "paused_approval", "paused_hitl"}
+
+
+@router.post("/chat/{session_id}/cancel")
+async def stop_session(
+    session_id: UUID,
+    user: dict = Depends(get_current_user),
+    session_repo: SessionRepository = Depends(get_session_repository),
+):
+    """Stop a running session (soft stop — always resumable).
+
+    Sets session status to PAUSED. The background orchestrator/agent loop
+    will detect this on its next DB poll and exit cleanly after the current
+    LLM call + tool execution completes.
+
+    Agent runs keep their current status:
+    - RUNNING → will be marked PAUSED_USER when the agent loop detects the pause
+    - PAUSED_TOOL/PAUSED_HITL → stay as-is, resume restores their session status
+    - PENDING → stay PENDING for later execution
+
+    URL kept as /cancel for backwards compatibility with existing frontend.
+    """
+    user_id = UUID(user["sub"])
+    user_roles = user.get("realm_access", {}).get("roles", [])
+
+    # Lock the row to prevent race with concurrent operations
+    session = session_repo.get_by_id_for_update(session_id)
+    if not session:
+        raise NotFoundError("session", str(session_id))
+
+    # Only owner or admin can stop
+    is_owner = session.user_id == user_id
+    is_admin = "admin" in user_roles
+    if not is_owner and not is_admin:
+        raise AuthorizationError("Cannot stop this session")
+
+    if session.status not in STOPPABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot stop session with status '{session.status}'",
+        )
+
+    # Set session status to paused — the background task will detect this
+    # Agent runs are NOT touched: they keep their current status
+    session_repo.update_status(session_id, SessionStatus.PAUSED)
+    session_repo.commit()
+
+    logger.info("session_stopped", session_id=str(session_id))
+
+    return {
+        "success": True,
+        "session_id": str(session_id),
+        "message": "Session stopped",
+    }

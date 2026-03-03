@@ -13,6 +13,8 @@ import tempfile
 from pathlib import Path
 
 from fastmcp import FastMCP
+from mermaid_validator import validate_mermaid_in_markdown
+from retry_module import revert_to_commit, close_pull_request
 from testing_module import TestingModule
 
 # Configure logging
@@ -533,6 +535,107 @@ async def write_file(
 
 
 @mcp.tool()
+async def make_design(
+    path: str,
+    content: str,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+) -> dict:
+    """Write a design document with Mermaid syntax validation.
+
+    Validates all Mermaid code blocks before writing. If any Mermaid diagram
+    contains syntax errors, the file is NOT written and errors are returned.
+
+    Args:
+        path: File path relative to workspace (e.g. technical_design.md)
+        content: Full markdown content for the design document
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for git remote setup)
+        repo_owner: Gitea repository owner/username (for git remote setup)
+
+    Returns:
+        Dict with success, path, size — or error with Mermaid validation details
+    """
+    try:
+        # Step 1: Validate Mermaid syntax before writing
+        errors = validate_mermaid_in_markdown(content)
+        if errors:
+            error_lines = [
+                f"Line {e.line_number} [{e.rule}]: {e.message}"
+                for e in errors
+            ]
+            error_msg = (
+                "MERMAID SYNTAX ERRORS — file was NOT written. "
+                "Fix these errors and try again:\n\n"
+                + "\n".join(error_lines)
+                + "\n\nAfter fixing, call make_design again with the corrected content."
+            )
+            return {"success": False, "error": error_msg}
+
+        # Step 2: No errors — write the file (same logic as write_file)
+        if session_id:
+            resolved_workspace_id, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+            resolved_workspace_id = workspace_id
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
+        file_path = resolve_path(path, workspace_path)
+
+        logger.info(
+            "Writing design file in workspace %s: %s (%d bytes, Mermaid validated)",
+            resolved_workspace_id,
+            path,
+            len(content),
+        )
+
+        # Ensure parent directory exists
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write file
+        file_path.write_text(content, encoding="utf-8")
+
+        return {
+            "success": True,
+            "path": str(file_path.relative_to(workspace_path)),
+            "size": len(content),
+            "workspace_path": str(workspace_path),
+        }
+
+    except ValueError as e:
+        logger.warning(
+            "Path resolution error writing design in workspace %s: %s - %s",
+            session_id or workspace_id,
+            path,
+            str(e),
+        )
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(
+            "Error writing design in workspace %s: %s - %s",
+            session_id or workspace_id,
+            path,
+            str(e),
+        )
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
 async def list_dir(
     path: str = ".",
     session_id: str | None = None,
@@ -762,7 +865,15 @@ async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
             # Commit staged changes
             subprocess.run(["git", "commit", "-m", message], cwd=cwd, check=True)
 
-        # Attempt to push if Gitea is configured and we have remote info
+        # Capture commit SHA after commit
+        commit_sha = None
+        if has_changes:
+            sha_result = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True
+            )
+            commit_sha = sha_result.stdout.strip() if sha_result.returncode == 0 else None
+
+        # Always attempt to push (there may be unpushed commits from auto-commits)
         if is_gitea_configured():
             try:
                 ws = get_workspace(workspace_id)
@@ -788,30 +899,39 @@ async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
                         capture_output=True,
                     )
 
-                if has_origin:
-                    push_result = subprocess.run(
-                        ["git", "push", "-u", "origin", branch],
-                        cwd=cwd,
-                        capture_output=True,
-                        text=True,
-                        timeout=60,
-                    )
-                    if push_result.returncode == 0:
-                        msg = f"Committed and pushed: {message}" if has_changes else f"Pushed (no new changes to commit): {message}"
-                        return {"success": True, "message": msg, "pushed": True, "committed": has_changes}
-                    else:
-                        logger.warning("Push failed: %s", push_result.stderr)
-                        msg = f"Committed: {message}" if has_changes else "No changes to commit"
-                        return {"success": True, "message": msg, "pushed": False, "committed": has_changes, "push_error": push_result.stderr}
+                push_result = subprocess.run(
+                    ["git", "push", "-u", "origin", branch],
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if push_result.returncode == 0:
+                    msg = f"Committed and pushed: {message}" if has_changes else f"Pushed (no new changes to commit): {message}"
+                    result = {"success": True, "message": msg, "pushed": True, "committed": has_changes}
+                    if commit_sha:
+                        result["commit_sha"] = commit_sha
+                    return result
                 else:
-                    logger.info("No origin remote configured, skipping push")
+                    logger.warning("Push failed: %s", push_result.stderr)
+                    msg = f"Committed: {message}" if has_changes else "No changes to commit"
+                    result = {"success": True, "message": msg, "pushed": False, "committed": has_changes, "push_error": push_result.stderr}
+                    if commit_sha:
+                        result["commit_sha"] = commit_sha
+                    return result
             except subprocess.CalledProcessError as e:
                 msg = f"Committed: {message}" if has_changes else "No changes to commit"
-                return {"success": True, "message": msg, "pushed": False, "committed": has_changes, "push_error": str(e)}
+                result = {"success": True, "message": msg, "pushed": False, "committed": has_changes, "push_error": str(e)}
+                if commit_sha:
+                    result["commit_sha"] = commit_sha
+                return result
 
         if not has_changes:
             return {"success": True, "message": "No changes to commit", "pushed": False, "committed": False}
-        return {"success": True, "message": f"Committed: {message}", "pushed": False, "committed": True}
+        result = {"success": True, "message": f"Committed: {message}", "pushed": False, "committed": True}
+        if commit_sha:
+            result["commit_sha"] = commit_sha
+        return result
 
     except subprocess.CalledProcessError as e:
         return {"success": False, "error": str(e)}
@@ -1925,6 +2045,115 @@ async def merge_pull_request(
             }
 
     except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# INTERNAL TOOLS (used by backend, not exposed to agents)
+# =============================================================================
+
+
+@mcp.tool()
+async def _internal_revert_to_commit(
+    target_commit: str,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+) -> dict:
+    """Revert workspace to a specific commit (hard reset + force push).
+
+    Internal tool used by the backend for retry/revert operations.
+    Not intended for direct agent use.
+    """
+    try:
+        # Resolve workspace
+        if session_id:
+            resolved_workspace_id, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
+            )
+            ws = workspaces[resolved_workspace_id]
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
+
+        # Build Gitea clone URL if configured
+        gitea_clone_url = None
+        if is_gitea_configured():
+            repo_name_ws = ws.get("repo_name") or repo_name
+            repo_owner_ws = ws.get("repo_owner") or repo_owner
+            if repo_name_ws:
+                gitea_clone_url = get_gitea_clone_url(repo_name_ws, repo_owner_ws)
+
+        return revert_to_commit(
+            workspace_path=workspace_path,
+            branch=ws["branch"],
+            target_commit=target_commit,
+            gitea_clone_url=gitea_clone_url,
+            is_gitea_configured=is_gitea_configured(),
+        )
+
+    except Exception as e:
+        logger.error("revert_to_commit error: %s", e)
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def _internal_close_pull_request(
+    pr_number: int,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+) -> dict:
+    """Close an open pull request on Gitea without merging.
+
+    Internal tool used by the backend for retry/revert operations.
+    """
+    try:
+        # Resolve workspace to get repo info
+        if session_id:
+            resolved_workspace_id, _ = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
+            )
+        elif workspace_id:
+            resolved_workspace_id = workspace_id
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
+
+        # Get repo info from remote
+        repo_info = _get_repo_info(resolved_workspace_id)
+        if not repo_info:
+            return {"success": False, "error": "Could not determine repo owner/name from git remote"}
+
+        owner, repo = repo_info
+
+        return await close_pull_request(
+            pr_number=pr_number,
+            repo_owner=owner,
+            repo_name=repo,
+            gitea_url=GITEA_URL,
+            api_headers=_gitea_api_headers(),
+        )
+
+    except Exception as e:
+        logger.error("close_pull_request error: %s", e)
         return {"success": False, "error": str(e)}
 
 
