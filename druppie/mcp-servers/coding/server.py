@@ -762,15 +762,24 @@ async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
             # Commit staged changes
             subprocess.run(["git", "commit", "-m", message], cwd=cwd, check=True)
 
-        # Always attempt to push (there may be unpushed commits from auto-commits)
+        # Attempt to push if Gitea is configured and we have remote info
         if is_gitea_configured():
             try:
-                # Ensure remote has credentials for push
                 ws = get_workspace(workspace_id)
                 repo_name = ws.get("repo_name")
                 repo_owner = ws.get("repo_owner")
-                if repo_name:
-                    # Update remote URL with credentials if needed
+
+                # Check if origin remote exists
+                remote_check = subprocess.run(
+                    ["git", "remote", "get-url", "origin"],
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                )
+                has_origin = remote_check.returncode == 0
+
+                if repo_name and has_origin:
+                    # Update remote URL with credentials for push
                     auth_url = get_gitea_clone_url(repo_name, repo_owner)
                     subprocess.run(
                         ["git", "remote", "set-url", "origin", auth_url],
@@ -779,20 +788,23 @@ async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
                         capture_output=True,
                     )
 
-                push_result = subprocess.run(
-                    ["git", "push", "-u", "origin", branch],
-                    cwd=cwd,
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
-                if push_result.returncode == 0:
-                    msg = f"Committed and pushed: {message}" if has_changes else f"Pushed (no new changes to commit): {message}"
-                    return {"success": True, "message": msg, "pushed": True, "committed": has_changes}
+                if has_origin:
+                    push_result = subprocess.run(
+                        ["git", "push", "-u", "origin", branch],
+                        cwd=cwd,
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                    if push_result.returncode == 0:
+                        msg = f"Committed and pushed: {message}" if has_changes else f"Pushed (no new changes to commit): {message}"
+                        return {"success": True, "message": msg, "pushed": True, "committed": has_changes}
+                    else:
+                        logger.warning("Push failed: %s", push_result.stderr)
+                        msg = f"Committed: {message}" if has_changes else "No changes to commit"
+                        return {"success": True, "message": msg, "pushed": False, "committed": has_changes, "push_error": push_result.stderr}
                 else:
-                    logger.warning("Push failed: %s", push_result.stderr)
-                    msg = f"Committed: {message}" if has_changes else "No changes to commit"
-                    return {"success": True, "message": msg, "pushed": False, "committed": has_changes, "push_error": push_result.stderr}
+                    logger.info("No origin remote configured, skipping push")
             except subprocess.CalledProcessError as e:
                 msg = f"Committed: {message}" if has_changes else "No changes to commit"
                 return {"success": True, "message": msg, "pushed": False, "committed": has_changes, "push_error": str(e)}
@@ -1279,10 +1291,16 @@ async def run_tests(
             framework = "unknown"
             if "pytest" in test_command:
                 framework = "pytest"
-            elif "jest" in test_command or "npm test" in test_command:
-                framework = "jest"
             elif "vitest" in test_command:
                 framework = "vitest"
+            elif "jest" in test_command:
+                framework = "jest"
+            elif test_command.strip() in ("npm test", "npm run test"):
+                # Generic npm test — try to detect the actual framework
+                testing_module.workspace_root = workspace_path
+                framework_info = testing_module.get_test_framework_info()
+                if framework_info["framework"] != "unknown":
+                    framework = framework_info["framework"]
             elif "go test" in test_command:
                 framework = "go"
             elif "cargo test" in test_command:
@@ -1473,6 +1491,7 @@ async def install_test_dependencies(
                         cwd=str(workspace_path),
                         capture_output=True,
                         text=True,
+                        timeout=120,
                     )
                     results.append({
                         "dependency": dep,
@@ -1484,13 +1503,55 @@ async def install_test_dependencies(
                     results.append({"dependency": dep, "success": False, "error": str(e)})
 
         elif framework in ["vitest", "jest"]:
-            for dep in missing:
+            # Run npm install first if node_modules doesn't exist
+            node_modules = workspace_path / "node_modules"
+            if not node_modules.exists():
+                logger.info("node_modules missing, running npm install first in %s", workspace_path)
+                try:
+                    npm_result = subprocess.run(
+                        ["npm", "install"],
+                        cwd=str(workspace_path),
+                        capture_output=True,
+                        text=True,
+                        timeout=180,
+                    )
+                    results.append({
+                        "dependency": "npm install (all)",
+                        "success": npm_result.returncode == 0,
+                        "output": npm_result.stdout,
+                        "error": npm_result.stderr if npm_result.returncode != 0 else None,
+                    })
+                    if npm_result.returncode != 0:
+                        return {
+                            "success": False,
+                            "framework": framework,
+                            "error": f"npm install failed: {npm_result.stderr}",
+                            "results": results,
+                        }
+                except subprocess.TimeoutExpired:
+                    return {
+                        "success": False,
+                        "framework": framework,
+                        "error": "npm install timed out after 180 seconds",
+                        "results": results,
+                    }
+                except Exception as e:
+                    results.append({"dependency": "npm install (all)", "success": False, "error": str(e)})
+
+            # Install any still-missing individual packages
+            # Re-check after npm install
+            testing_module.workspace_root = workspace_path
+            deps_recheck = testing_module._check_framework_dependencies(framework)
+            still_missing = deps_recheck.get("missing", [])
+
+            for dep in still_missing:
                 try:
                     result = subprocess.run(
                         ["npm", "install", "--save-dev", dep],
                         cwd=str(workspace_path),
                         capture_output=True,
                         text=True,
+                        timeout=120,
                     )
                     results.append({
                         "dependency": dep,
