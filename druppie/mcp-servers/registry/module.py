@@ -160,13 +160,18 @@ class RegistryModule:
             tree = ast.parse(source)
 
             for node in ast.walk(tree):
-                if not isinstance(node, ast.Assign):
+                # Handle both regular (x = ...) and annotated (x: type = ...) assignments
+                if isinstance(node, ast.Assign):
+                    targets = [t for t in node.targets if isinstance(t, ast.Name)]
+                    value = node.value
+                elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value:
+                    targets = [node.target]
+                    value = node.value
+                else:
                     continue
-                for target in node.targets:
-                    if not isinstance(target, ast.Name):
-                        continue
+                for target in targets:
                     if target.id == "BUILTIN_TOOL_DEFS":
-                        defs = ast.literal_eval(ast.unparse(node.value))
+                        defs = ast.literal_eval(ast.unparse(value))
                         for tool_name, tool_def in defs.items():
                             func = tool_def.get("function", {})
                             self.builtin_tools[tool_name] = {
@@ -177,7 +182,7 @@ class RegistryModule:
                         logger.info("Loaded %d builtin tools", len(self.builtin_tools))
                     elif target.id == "DEFAULT_BUILTIN_TOOLS":
                         self.default_builtin_tools = ast.literal_eval(
-                            ast.unparse(node.value)
+                            ast.unparse(value)
                         )
         except Exception as e:
             logger.error("Failed to parse builtin tools: %s", e)
