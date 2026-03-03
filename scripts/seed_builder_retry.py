@@ -630,6 +630,14 @@ def main():
     print(f"\n[STEP 1] Creating {sum(1 for s in SESSIONS if s['project_name'])} Gitea repos...")
     repos: dict[int, dict] = {}
     with httpx.Client(base_url=GITEA_URL, auth=(GITEA_USER, GITEA_PASS), timeout=15) as c:
+        # Quick health check — fail fast with a clear message
+        try:
+            r = c.get("/api/v1/version")
+            r.raise_for_status()
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            print(f"  [ERROR] Gitea not reachable at {GITEA_URL}")
+            print("  Make sure Gitea is running: docker compose --profile dev up -d")
+            sys.exit(1)
         ensure_gitea_user(c)
         for s in SESSIONS:
             if s["project_name"]:
