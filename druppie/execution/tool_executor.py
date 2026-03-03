@@ -63,6 +63,14 @@ HITL_TOOLS = {
     "hitl_ask_multiple_choice_question",
 }
 
+# Tools that can take significantly longer than the default 60s timeout.
+# These get the configurable MCP_TIMEOUT (default 300s) instead.
+LONG_RUNNING_TOOLS = {
+    "run_tests",
+    "install_test_dependencies",
+    "run_command",
+}
+
 
 class ToolExecutor:
     """Executes all tools (builtin and MCP).
@@ -787,11 +795,17 @@ class ToolExecutor:
                 status=ToolCallStatus.EXECUTING,
             )
 
+            # Long-running tools (run_tests, install_test_dependencies, etc.)
+            # have their own server-side subprocess timeouts, so we wait
+            # indefinitely for the server to respond.
+            timeout = None if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
+
             # Execute via HTTP
             result = await self.mcp_http.call(
                 tool_call.mcp_server,
                 tool_call.tool_name,
                 args,
+                timeout_seconds=timeout,
             )
 
             # Check if result indicates failure
