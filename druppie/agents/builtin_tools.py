@@ -1047,6 +1047,23 @@ async def execute_sandbox_coding_task(
             )
 
             if resp.status_code not in (200, 201):
+                # Clean up: cancel the orphaned sandbox and invalidate proxy key
+                try:
+                    async with httpx.AsyncClient(timeout=10.0) as cancel_client:
+                        await cancel_client.delete(
+                            f"{base_url}/sessions/{sandbox_session_id}",
+                            headers={"Authorization": f"Bearer {_generate_sandbox_auth_token()}"},
+                        )
+                    logger.info("execute_coding_task: cancelled sandbox after prompt failure", sandbox_session_id=sandbox_session_id)
+                except Exception as cancel_err:
+                    logger.warning("execute_coding_task: failed to cancel sandbox after prompt failure", error=str(cancel_err))
+                try:
+                    from druppie.repositories.sandbox_session_repository import SandboxSessionRepository
+                    cleanup_repo = SandboxSessionRepository(db)
+                    cleanup_repo.invalidate_proxy_key(sandbox_session_id)
+                    db.flush()
+                except Exception as cleanup_err:
+                    logger.warning("execute_coding_task: failed to invalidate proxy key after prompt failure", error=str(cleanup_err))
                 return {
                     "success": False,
                     "error": f"Failed to send prompt: {resp.status_code} {resp.text}",
