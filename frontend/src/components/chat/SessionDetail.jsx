@@ -417,15 +417,15 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const prevLengthRef = useRef(0)
   const inputRef = useRef(null)
   const [continueInput, setContinueInput] = useState('')
-  const scrollPositions = useRef({ chat: 0, annotated: 0 })
+  const savedInspectScroll = useRef(0)
   const [viewMode, _setViewMode] = useState(() => {
     if (initialViewMode && VALID_VIEW_MODES.has(initialViewMode)) return initialViewMode
     return 'chat'
   })
   const setViewMode = (newMode) => {
-    // Save current scroll position before switching
-    if (viewMode !== 'inspect' && timelineRef.current) {
-      scrollPositions.current[viewMode] = timelineRef.current.scrollTop
+    // Save scroll only when leaving timeline for inspect
+    if (viewMode !== 'inspect' && newMode === 'inspect' && timelineRef.current) {
+      savedInspectScroll.current = timelineRef.current.scrollTop
     }
     _setViewMode(newMode)
   }
@@ -500,23 +500,33 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   useEffect(() => {
     const currentLength = data?.timeline?.length || 0
     if (currentLength > prevLengthRef.current) {
-      timelineEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      const isInitial = prevLengthRef.current === 0
+      // Double rAF for initial load: ensures flex layout is fully computed
+      // (cached data can arrive before the container has its final height).
+      // Single rAF suffices for incremental new-message scrolls.
+      const schedule = isInitial
+        ? (fn) => requestAnimationFrame(() => requestAnimationFrame(fn))
+        : (fn) => requestAnimationFrame(fn)
+      schedule(() => {
+        const el = timelineRef.current
+        if (el) el.scrollTo({ top: el.scrollHeight, behavior: isInitial ? 'instant' : 'smooth' })
+      })
     }
     prevLengthRef.current = currentLength
   }, [data?.timeline?.length])
 
-  // Restore scroll position when switching back to chat/annotated
+  // Restore scroll position when returning from inspect to timeline
+  const prevViewMode = useRef(viewMode)
   useEffect(() => {
-    if (viewMode !== 'inspect' && timelineRef.current) {
-      const saved = scrollPositions.current[viewMode]
-      if (saved != null) {
-        requestAnimationFrame(() => {
-          if (timelineRef.current) {
-            timelineRef.current.scrollTop = saved
-          }
-        })
-      }
+    if (prevViewMode.current === 'inspect' && viewMode !== 'inspect') {
+      const saved = savedInspectScroll.current
+      requestAnimationFrame(() => {
+        if (timelineRef.current) {
+          timelineRef.current.scrollTop = saved
+        }
+      })
     }
+    prevViewMode.current = viewMode
   }, [viewMode])
 
   useEffect(() => {
