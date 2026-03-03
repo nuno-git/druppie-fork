@@ -238,6 +238,11 @@ class ToolExecutor:
             return Agent._load_definition(agent_run.agent_id)
 
         except Exception as e:
+            # Rollback in case the exception left the transaction poisoned
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
             logger.warning(
                 "failed_to_load_agent_definition",
                 agent_run_id=str(agent_run_id),
@@ -323,7 +328,13 @@ class ToolExecutor:
             return None
 
         except Exception as e:
-            # Log but don't fail - let the tool execution handle it
+            # Log but don't fail - let the tool execution handle it.
+            # Rollback in case the exception left the transaction poisoned
+            # (e.g. failed flush during normalization).
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
             logger.warning(
                 "tool_validation_exception",
                 tool_name=tool_call.tool_name,
@@ -464,6 +475,7 @@ class ToolExecutor:
                         status=ToolCallStatus.FAILED,
                         error=error_msg,
                     )
+                    self.db.commit()
                     return ToolCallStatus.FAILED
 
             needs_approval, required_role = self.mcp_config.needs_approval(
@@ -809,11 +821,13 @@ class ToolExecutor:
         )
 
         try:
-            # Mark as executing
+            # Mark as executing and commit so the session is clean
+            # before the HTTP call (avoids auto-flush issues later)
             self.execution_repo.update_tool_call(
                 tool_call.id,
                 status=ToolCallStatus.EXECUTING,
             )
+            self.db.commit()
 
             # Execute via HTTP
             timeout = 60.0
