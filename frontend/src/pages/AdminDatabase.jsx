@@ -54,6 +54,7 @@ const StatusBadge = ({ value }) => {
     active: 'bg-green-100 text-green-700',
     completed: 'bg-blue-100 text-blue-700',
     paused: 'bg-blue-100 text-blue-700',
+    paused_crashed: 'bg-red-100 text-red-700',
     paused_approval: 'bg-blue-100 text-blue-700',
     paused_hitl: 'bg-blue-100 text-blue-700',
     paused_tool: 'bg-blue-100 text-blue-700',
