@@ -26,11 +26,59 @@ const formatTime = (sec) => {
   return sec >= 60 ? `${(sec / 60).toFixed(1)}m` : `${sec.toFixed(1)}s`
 }
 
+/** Client-side fallback: parse test counts from stdout/stderr when server-side parsing returned zeros */
+const parseResultsFallback = (result) => {
+  const res = result.results || {}
+  if ((res.total || 0) > 0) return res // Server-side parsing worked
+
+  const output = (result.stdout || '') + '\n' + (result.stderr || '')
+  if (!output.trim()) return res
+
+  let passed = 0, failed = 0, skipped = 0
+
+  // Vitest modern: "Tests  3 passed (3)" or "Tests  1 failed | 2 passed (3)" or "Tests  3 failed (3)"
+  const vitest = output.match(/Tests\s+(?:(\d+)\s+failed\s*\|?\s*)?(?:(\d+)\s+skipped\s*\|?\s*)?(?:(\d+)\s+passed\s*)?\((\d+)\)/)
+  if (vitest) {
+    return {
+      ...res,
+      failed: parseInt(vitest[1] || '0'),
+      skipped: parseInt(vitest[2] || '0'),
+      passed: parseInt(vitest[3] || '0'),
+      total: parseInt(vitest[4]),
+    }
+  }
+
+  // Jest: "Tests: 1 failed, 3 passed, 4 total"
+  const jest = output.match(/Tests:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(?:(\d+)\s+passed,\s*)?(\d+)\s+total/)
+  if (jest) {
+    return {
+      ...res,
+      failed: parseInt(jest[1] || '0'),
+      skipped: parseInt(jest[2] || '0'),
+      passed: parseInt(jest[3] || '0'),
+      total: parseInt(jest[4]),
+    }
+  }
+
+  // Generic: "N passed", "N failed"
+  const passedM = output.match(/(\d+)\s+(?:passing|passed)/)
+  const failedM = output.match(/(\d+)\s+(?:failing|failed)/)
+  const skippedM = output.match(/(\d+)\s+(?:pending|skipped)/)
+  if (passedM || failedM) {
+    passed = parseInt(passedM?.[1] || '0')
+    failed = parseInt(failedM?.[1] || '0')
+    skipped = parseInt(skippedM?.[1] || '0')
+    return { ...res, passed, failed, skipped, total: passed + failed + skipped }
+  }
+
+  return res
+}
+
 /** Single run section inside the expanded area */
 const TestRunSection = ({ result }) => {
   const [showOutput, setShowOutput] = useState(false)
 
-  const r = result.results || {}
+  const r = parseResultsFallback(result)
   const passed = r.passed || 0
   const failed = r.failed || 0
   const total = r.total || 0
@@ -102,32 +150,27 @@ const TestResultCard = ({ testResults }) => {
 
   if (!testResults?.length) return null
 
-  // Aggregate stats across all runs
-  let totalPassed = 0, totalFailed = 0, totalSkipped = 0, totalTests = 0
-  let totalTime = 0
-  let coveragePercent = null
-  let allPass = true
-
-  for (const r of testResults) {
-    const res = r.results || {}
-    totalPassed += res.passed || 0
-    totalFailed += res.failed || 0
-    totalSkipped += res.skipped || 0
-    totalTests += res.total || 0
-    if (r.elapsed_seconds) totalTime += r.elapsed_seconds
-    if (r.coverage?.overall_percent != null) coveragePercent = r.coverage.overall_percent
-    if (!r.success || r.exit_code !== 0 || (res.failed || 0) > 0) allPass = false
-  }
+  // Use the LAST test run as the primary result (reflects final state after fixes)
+  const lastRun = testResults[testResults.length - 1]
+  const lastRes = parseResultsFallback(lastRun)
+  const totalPassed = lastRes.passed || 0
+  const totalFailed = lastRes.failed || 0
+  const totalSkipped = lastRes.skipped || 0
+  const totalTests = lastRes.total || 0
+  const coveragePercent = lastRun.coverage?.overall_percent ?? null
+  const allPass = lastRun.success && lastRun.exit_code === 0 && totalFailed === 0
 
   const passRatio = totalTests > 0 ? totalPassed / totalTests : 0
+  const iterations = testResults.length
 
   // Build inline summary parts
   const summaryParts = []
   summaryParts.push(`${totalPassed} passed`)
   if (totalFailed > 0) summaryParts.push(`${totalFailed} failed`)
   if (totalSkipped > 0) summaryParts.push(`${totalSkipped} skipped`)
-  if (coveragePercent != null) summaryParts.push(`${coveragePercent.toFixed(0)}% cov`)
-  if (totalTime > 0) summaryParts.push(formatTime(totalTime))
+  if (coveragePercent != null && coveragePercent > 0) summaryParts.push(`${coveragePercent.toFixed(0)}% cov`)
+  if (iterations > 1) summaryParts.push(`${iterations} iterations`)
+  if (lastRun.elapsed_seconds) summaryParts.push(formatTime(lastRun.elapsed_seconds))
 
   return (
     <div className={`rounded-xl border bg-gray-50 border-gray-200 border-l-4 ${allPass ? 'border-l-green-500' : 'border-l-red-500'} transition-all`}>
