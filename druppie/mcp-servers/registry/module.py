@@ -314,6 +314,21 @@ class RegistryModule:
 
     def get_tool(self, server_name: str, tool_name: str) -> dict:
         """Get full tool definition with parameters and approval info."""
+        if server_name == "builtin":
+            tool = self.builtin_tools.get(tool_name)
+            if not tool:
+                return {
+                    "success": False,
+                    "error": f"Builtin tool '{tool_name}' not found. Use list_components(category='builtin_tools') to see available tools.",
+                }
+            return {
+                "success": True,
+                "tool": {
+                    **tool,
+                    "server": "builtin",
+                },
+            }
+
         server = self.mcp_servers.get(server_name)
         if not server:
             return {
