@@ -181,6 +181,11 @@ _LINE_CHECKS = [
 ]
 
 
+# Puppeteer config path (co-located with this module in the Docker container).
+# Provides --no-sandbox flag required for running Chromium as root in Docker.
+_PUPPETEER_CONFIG = Path(__file__).parent / "puppeteer-config.json"
+
+
 def _validate_with_mmdc(markdown: str) -> list[MermaidError]:
     """Validate Mermaid blocks structurally using mmdc (mermaid-cli).
 
@@ -196,6 +201,11 @@ def _validate_with_mmdc(markdown: str) -> list[MermaidError]:
 
     if not blocks:
         return errors
+
+    # Build mmdc command with puppeteer config if available
+    mmdc_cmd = ["mmdc"]
+    if _PUPPETEER_CONFIG.exists():
+        mmdc_cmd.extend(["-p", str(_PUPPETEER_CONFIG)])
 
     for block_start, block_end in blocks:
         block_lines = lines[block_start - 1 : block_end]
@@ -213,7 +223,7 @@ def _validate_with_mmdc(markdown: str) -> list[MermaidError]:
             tmp_output = tmp_input.replace(".mmd", ".svg")
 
             result = subprocess.run(
-                ["mmdc", "-i", tmp_input, "-o", tmp_output],
+                [*mmdc_cmd, "-i", tmp_input, "-o", tmp_output],
                 capture_output=True,
                 text=True,
                 timeout=15,
