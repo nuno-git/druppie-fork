@@ -12,10 +12,7 @@ Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
 Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
 """
 
-import hashlib
-import hmac
 import os
-import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -29,32 +26,27 @@ logger = structlog.get_logger()
 
 # Sandbox configuration (for execute_coding_task)
 SANDBOX_CONTROL_PLANE_URL = os.getenv("SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787")
-SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", "sandbox-dev-secret")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://druppie-backend:8000")
 GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
 GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "")
 GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
-SANDBOX_MODEL = os.getenv("SANDBOX_MODEL", "zai-coding-plan/glm-4.7")
-if not os.getenv("SANDBOX_MODEL"):
-    logger.warning(
-        "SANDBOX_MODEL not set — falling back to default 'zai-coding-plan/glm-4.7'. "
-        "Set SANDBOX_MODEL in .env to match your LLM provider."
-    )
+_sandbox_model_warned = False
 
 
-def _generate_sandbox_auth_token() -> str:
-    """Generate HMAC-SHA256 auth token for the background-agents control-plane.
+def _get_sandbox_model() -> str:
+    """Get the sandbox model, warning once if not explicitly configured."""
+    global _sandbox_model_warned
+    model = os.getenv("SANDBOX_MODEL", "zai-coding-plan/glm-4.7")
+    if not os.getenv("SANDBOX_MODEL") and not _sandbox_model_warned:
+        _sandbox_model_warned = True
+        logger.warning(
+            "SANDBOX_MODEL not set — falling back to default 'zai-coding-plan/glm-4.7'. "
+            "Set SANDBOX_MODEL in .env to match your LLM provider."
+        )
+    return model
 
-    Token format: 'timestamp.signature' where signature is HMAC-SHA256(secret, timestamp).
-    Matches the verifyInternalToken logic in @open-inspect/shared.
-    """
-    timestamp = str(int(time.time() * 1000))
-    signature = hmac.new(
-        SANDBOX_API_SECRET.encode(),
-        timestamp.encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    return f"{timestamp}.{signature}"
+
+from druppie.core.sandbox_auth import generate_control_plane_token as _generate_sandbox_auth_token
 
 
 # =============================================================================
@@ -900,7 +892,7 @@ async def execute_sandbox_coding_task(
     """
     task = args.get("task", "")
     agent = args.get("agent", "druppie-builder")
-    model = SANDBOX_MODEL
+    model = _get_sandbox_model()
 
     if not task:
         return {"success": False, "error": "task is required"}
@@ -908,19 +900,24 @@ async def execute_sandbox_coding_task(
     if not SANDBOX_CONTROL_PLANE_URL:
         return {"success": False, "error": "SANDBOX_CONTROL_PLANE_URL not configured"}
 
-    # Get project context from the session in the DB
-    from druppie.db.models import Session as SessionModel, Project
+    # Get project context from the session via repositories
+    from druppie.repositories import SessionRepository, ProjectRepository
     db = execution_repo.db
-    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    session_repo = SessionRepository(db)
+    session = session_repo.get_by_id(session_id)
     if not session:
         return {"success": False, "error": f"Session {session_id} not found"}
 
+    user_id = str(session.user_id) if session.user_id else None
+    if not user_id:
+        return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
+
     repo_name = None
     repo_owner = None
-    user_id = str(session.user_id) if session.user_id else None
 
     if session.project_id:
-        project = db.query(Project).filter(Project.id == session.project_id).first()
+        project_repo = ProjectRepository(db)
+        project = project_repo.get_by_id(session.project_id)
         if project:
             repo_name = project.repo_name
             repo_owner = project.repo_owner
@@ -1017,47 +1014,48 @@ async def execute_sandbox_coding_task(
             # Step 3: Register ownership directly via repository
             # This must succeed — without ownership the webhook cannot find
             # the tool call and the session would be stuck forever.
-            if user_id:
+            try:
+                from druppie.repositories.sandbox_session_repository import SandboxSessionRepository
+                sandbox_repo = SandboxSessionRepository(db)
+                sandbox_repo.create(
+                    sandbox_session_id=sandbox_session_id,
+                    user_id=UUID(user_id),
+                    session_id=session_id,
+                    git_proxy_key=proxy_key,
+                    git_provider="gitea",
+                    git_repo_owner=sandbox_repo_owner,
+                    git_repo_name=sandbox_repo_name,
+                    webhook_secret=webhook_secret,
+                )
+                # flush() not commit(): let the tool_executor's commit handle
+                # both ownership and WAITING_SANDBOX status in one transaction.
+                db.flush()
+                logger.info(
+                    "execute_coding_task: registered ownership",
+                    sandbox_session_id=sandbox_session_id,
+                    user_id=user_id,
+                )
+            except Exception as e:
+                logger.error(
+                    "execute_coding_task: failed to register ownership",
+                    sandbox_session_id=sandbox_session_id,
+                    error=str(e),
+                )
+                # Best-effort: cancel the orphaned sandbox session on the control plane
                 try:
-                    from druppie.repositories.sandbox_session_repository import SandboxSessionRepository
-                    sandbox_repo = SandboxSessionRepository(db)
-                    sandbox_repo.create(
-                        sandbox_session_id=sandbox_session_id,
-                        user_id=UUID(user_id),
-                        session_id=session_id,
-                        git_proxy_key=proxy_key,
-                        git_provider="gitea",
-                        git_repo_owner=sandbox_repo_owner,
-                        git_repo_name=sandbox_repo_name,
-                        webhook_secret=webhook_secret,
-                    )
-                    db.commit()
-                    logger.info(
-                        "execute_coding_task: registered ownership",
-                        sandbox_session_id=sandbox_session_id,
-                        user_id=user_id,
-                    )
-                except Exception as e:
-                    logger.error(
-                        "execute_coding_task: failed to register ownership",
-                        sandbox_session_id=sandbox_session_id,
-                        error=str(e),
-                    )
-                    # Best-effort: cancel the orphaned sandbox session on the control plane
-                    try:
-                        async with httpx.AsyncClient(timeout=10.0) as cancel_client:
-                            await cancel_client.delete(
-                                f"{base_url}/sessions/{sandbox_session_id}",
-                                headers={"Authorization": f"Bearer {_generate_sandbox_auth_token()}"},
-                            )
-                        logger.info("execute_coding_task: cancelled orphaned sandbox", sandbox_session_id=sandbox_session_id)
-                    except Exception as cancel_err:
-                        logger.warning("execute_coding_task: failed to cancel orphaned sandbox", error=str(cancel_err))
-                    return {
-                        "success": False,
-                        "error": f"Failed to register sandbox ownership: {e}",
-                        "sandbox_session_id": sandbox_session_id,
-                    }
+                    async with httpx.AsyncClient(timeout=10.0) as cancel_client:
+                        await cancel_client.delete(
+                            f"{base_url}/sessions/{sandbox_session_id}",
+                            headers={"Authorization": f"Bearer {_generate_sandbox_auth_token()}"},
+                        )
+                    logger.info("execute_coding_task: cancelled orphaned sandbox", sandbox_session_id=sandbox_session_id)
+                except Exception as cancel_err:
+                    logger.warning("execute_coding_task: failed to cancel orphaned sandbox", error=str(cancel_err))
+                return {
+                    "success": False,
+                    "error": f"Failed to register sandbox ownership: {e}",
+                    "sandbox_session_id": sandbox_session_id,
+                }
 
             # Return with waiting_sandbox status — caller will pause the agent
             return {
