@@ -11,7 +11,7 @@ import remarkGfm from 'remark-gfm'
 import { getSession, sendChat, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
-import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
+import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
@@ -31,23 +31,6 @@ import {
 import TestResultCard from './TestResultCard'
 import FileReviewCard from './FileReviewCard'
 import DependencyInstallCard from './DependencyInstallCard'
-
-// --- Tool label helper ---
-
-const getToolLabel = (toolName) => {
-  if (!toolName) return 'Unknown Tool'
-  const labels = {
-    'write_file': 'Write File',
-    'coding:write_file': 'Write File',
-    'batch_write_files': 'Write Files',
-    'coding:batch_write_files': 'Write Files',
-    'run_command': 'Run Command',
-    'coding:run_command': 'Run Command',
-    'commit_and_push': 'Git Commit & Push',
-    'coding:commit_and_push': 'Git Commit & Push',
-  }
-  return labels[toolName] || toolName?.split(':').pop() || 'Tool Action'
-}
 
 // --- Inline Approval (minimal chat card) ---
 
@@ -84,7 +67,7 @@ const InlineApproval = ({ tc, sessionId }) => {
   const isRejected = tc.approval.status === 'rejected'
   const isProcessing = approveMut.isPending || rejectMut.isPending
 
-  const toolLabel = getToolLabel(tc.tool_name)
+  const toolLabel = formatToolName(tc.tool_name)
   const args = tc.arguments || {}
   const contextLine = args.path || args.file_path || args.command || args.message || args.commit_message || null
 

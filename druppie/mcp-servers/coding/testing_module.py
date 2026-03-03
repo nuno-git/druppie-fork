@@ -12,6 +12,27 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Compiled regex patterns for test output parsing
+_RE_JEST = re.compile(
+    r"Tests:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(?:(\d+)\s+passed,\s*)?(\d+)\s+total"
+)
+_RE_VITEST = re.compile(
+    r"Tests\s+(?:(\d+)\s+failed\s*\|?\s*)?(?:(\d+)\s+skipped\s*\|?\s*)?(?:(\d+)\s+passed\s*)?\((\d+)\)"
+)
+_RE_GENERIC_PASSED = re.compile(r"(\d+)\s+(?:passing|passed)")
+_RE_GENERIC_FAILED = re.compile(r"(\d+)\s+(?:failing|failed)")
+_RE_GENERIC_SKIPPED = re.compile(r"(\d+)\s+(?:pending|skipped)")
+
+
+def _extract_counts(match):
+    """Convert a 4-group regex match (failed, skipped, passed, total) to a dict."""
+    return {
+        "failed": int(match.group(1)) if match.group(1) else 0,
+        "skipped": int(match.group(2)) if match.group(2) else 0,
+        "passed": int(match.group(3)) if match.group(3) else 0,
+        "total": int(match.group(4)),
+    }
+
 
 class TestingModule:
     """Testing operations module."""
@@ -280,7 +301,7 @@ class TestingModule:
         return (None, None)
 
     def _parse_test_output(self, stdout: str, stderr: str, framework: str) -> Dict[str, Any]:
-        """Parse test output to extract pass/fail counts (copied from coding MCP)."""
+        """Parse test output to extract pass/fail counts."""
         result = {
             "total": 0,
             "passed": 0,
@@ -308,31 +329,16 @@ class TestingModule:
             result["failed_tests"] = failed_matches
 
         elif framework in ("jest", "vitest"):
-            # Jest format: "Tests:  1 failed, 3 passed, 4 total"
-            jest_match = re.search(
-                r"Tests:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(?:(\d+)\s+passed,\s*)?(\d+)\s+total",
-                combined,
-            )
-            # Vitest modern format: "Tests  1 failed | 2 passed (3)" or "Tests  3 passed (3)"
-            vitest_match = re.search(
-                r"Tests\s+(?:(\d+)\s+failed\s*\|?\s*)?(?:(\d+)\s+skipped\s*\|?\s*)?(?:(\d+)\s+passed\s*)?\((\d+)\)",
-                combined,
-            )
+            jest_match = _RE_JEST.search(combined)
+            vitest_match = _RE_VITEST.search(combined)
             if jest_match:
-                result["failed"] = int(jest_match.group(1)) if jest_match.group(1) else 0
-                result["skipped"] = int(jest_match.group(2)) if jest_match.group(2) else 0
-                result["passed"] = int(jest_match.group(3)) if jest_match.group(3) else 0
-                result["total"] = int(jest_match.group(4))
+                result.update(_extract_counts(jest_match))
             elif vitest_match:
-                result["failed"] = int(vitest_match.group(1)) if vitest_match.group(1) else 0
-                result["skipped"] = int(vitest_match.group(2)) if vitest_match.group(2) else 0
-                result["passed"] = int(vitest_match.group(3)) if vitest_match.group(3) else 0
-                result["total"] = int(vitest_match.group(4))
+                result.update(_extract_counts(vitest_match))
             else:
-                # Fallback: search for individual counts anywhere in output
-                passed_m = re.search(r"(\d+)\s+passed", combined)
-                failed_m = re.search(r"(\d+)\s+failed", combined)
-                skipped_m = re.search(r"(\d+)\s+skipped", combined)
+                passed_m = _RE_GENERIC_PASSED.search(combined)
+                failed_m = _RE_GENERIC_FAILED.search(combined)
+                skipped_m = _RE_GENERIC_SKIPPED.search(combined)
                 if passed_m or failed_m:
                     result["passed"] = int(passed_m.group(1)) if passed_m else 0
                     result["failed"] = int(failed_m.group(1)) if failed_m else 0
@@ -402,73 +408,56 @@ class TestingModule:
         
         elif framework == "shell":
             # Shell scripts (test.sh) - try to parse common patterns
-            # First try pytest/jest/vitest patterns in case test.sh wraps them
-            passed_m = re.search(r"(\d+)\s+passed", combined)
-            failed_m = re.search(r"(\d+)\s+failed", combined)
-            skipped_m = re.search(r"(\d+)\s+skipped", combined)
-            jest_match = re.search(
-                r"Tests:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(?:(\d+)\s+passed,\s*)?(\d+)\s+total",
-                combined,
-            )
-            vitest_match = re.search(
-                r"Tests\s+(?:(\d+)\s+failed\s*\|?\s*)?(?:(\d+)\s+skipped\s*\|?\s*)?(?:(\d+)\s+passed\s*)?\((\d+)\)",
-                combined,
-            )
+            jest_match = _RE_JEST.search(combined)
+            vitest_match = _RE_VITEST.search(combined)
             if jest_match:
-                result["failed"] = int(jest_match.group(1)) if jest_match.group(1) else 0
-                result["skipped"] = int(jest_match.group(2)) if jest_match.group(2) else 0
-                result["passed"] = int(jest_match.group(3)) if jest_match.group(3) else 0
-                result["total"] = int(jest_match.group(4))
+                result.update(_extract_counts(jest_match))
             elif vitest_match:
-                result["failed"] = int(vitest_match.group(1)) if vitest_match.group(1) else 0
-                result["skipped"] = int(vitest_match.group(2)) if vitest_match.group(2) else 0
-                result["passed"] = int(vitest_match.group(3)) if vitest_match.group(3) else 0
-                result["total"] = int(vitest_match.group(4))
-            elif passed_m or failed_m:
-                result["passed"] = int(passed_m.group(1)) if passed_m else 0
-                result["failed"] = int(failed_m.group(1)) if failed_m else 0
-                result["skipped"] = int(skipped_m.group(1)) if skipped_m else 0
-                result["total"] = result["passed"] + result["failed"] + result["skipped"]
+                result.update(_extract_counts(vitest_match))
             else:
-                # Count PASS/FAIL lines as a last resort
-                pass_count = len(re.findall(r"(?:PASS|OK|✓|pass)", combined, re.IGNORECASE))
-                fail_count = len(re.findall(r"(?:FAIL|ERROR|✗|fail)", combined, re.IGNORECASE))
-                result["passed"] = pass_count
-                result["failed"] = fail_count
-                result["total"] = pass_count + fail_count
+                passed_m = _RE_GENERIC_PASSED.search(combined)
+                failed_m = _RE_GENERIC_FAILED.search(combined)
+                skipped_m = _RE_GENERIC_SKIPPED.search(combined)
+                if passed_m or failed_m:
+                    result["passed"] = int(passed_m.group(1)) if passed_m else 0
+                    result["failed"] = int(failed_m.group(1)) if failed_m else 0
+                    result["skipped"] = int(skipped_m.group(1)) if skipped_m else 0
+                    result["total"] = result["passed"] + result["failed"] + result["skipped"]
+                else:
+                    # Count PASS/FAIL lines as a last resort
+                    pass_count = len(re.findall(r"(?:PASS|OK|✓|pass)", combined, re.IGNORECASE))
+                    fail_count = len(re.findall(r"(?:FAIL|ERROR|✗|fail)", combined, re.IGNORECASE))
+                    result["passed"] = pass_count
+                    result["failed"] = fail_count
+                    result["total"] = pass_count + fail_count
 
         else:
-            match = re.search(r"(\d+)\s+(?:passing|passed)", combined)
-            if match:
-                result["passed"] = int(match.group(1))
-            match = re.search(r"(\d+)\s+(?:failing|failed)", combined)
-            if match:
-                result["failed"] = int(match.group(1))
-            match = re.search(r"(\d+)\s+(?:pending|skipped)", combined)
-            if match:
-                result["skipped"] = int(match.group(1))
+            passed_m = _RE_GENERIC_PASSED.search(combined)
+            failed_m = _RE_GENERIC_FAILED.search(combined)
+            skipped_m = _RE_GENERIC_SKIPPED.search(combined)
+            if passed_m:
+                result["passed"] = int(passed_m.group(1))
+            if failed_m:
+                result["failed"] = int(failed_m.group(1))
+            if skipped_m:
+                result["skipped"] = int(skipped_m.group(1))
             result["total"] = result["passed"] + result["failed"] + result["skipped"]
 
         # Generic fallback: if framework-specific parsing returned nothing,
         # try common patterns regardless of framework
         if result["total"] == 0 and combined.strip():
-            passed_m = re.search(r"(\d+)\s+(?:passing|passed)", combined)
-            failed_m = re.search(r"(\d+)\s+(?:failing|failed)", combined)
-            skipped_m = re.search(r"(\d+)\s+(?:pending|skipped)", combined)
-            vitest_m = re.search(
-                r"Tests\s+(?:(\d+)\s+failed\s*\|?\s*)?(?:(\d+)\s+skipped\s*\|?\s*)?(?:(\d+)\s+passed\s*)?\((\d+)\)",
-                combined,
-            )
+            vitest_m = _RE_VITEST.search(combined)
             if vitest_m:
-                result["failed"] = int(vitest_m.group(1)) if vitest_m.group(1) else 0
-                result["skipped"] = int(vitest_m.group(2)) if vitest_m.group(2) else 0
-                result["passed"] = int(vitest_m.group(3)) if vitest_m.group(3) else 0
-                result["total"] = int(vitest_m.group(4))
-            elif passed_m or failed_m:
-                result["passed"] = int(passed_m.group(1)) if passed_m else 0
-                result["failed"] = int(failed_m.group(1)) if failed_m else 0
-                result["skipped"] = int(skipped_m.group(1)) if skipped_m else 0
-                result["total"] = result["passed"] + result["failed"] + result["skipped"]
+                result.update(_extract_counts(vitest_m))
+            else:
+                passed_m = _RE_GENERIC_PASSED.search(combined)
+                failed_m = _RE_GENERIC_FAILED.search(combined)
+                skipped_m = _RE_GENERIC_SKIPPED.search(combined)
+                if passed_m or failed_m:
+                    result["passed"] = int(passed_m.group(1)) if passed_m else 0
+                    result["failed"] = int(failed_m.group(1)) if failed_m else 0
+                    result["skipped"] = int(skipped_m.group(1)) if skipped_m else 0
+                    result["total"] = result["passed"] + result["failed"] + result["skipped"]
 
         return result
 
