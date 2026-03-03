@@ -77,14 +77,22 @@ async def git_proxy(
 
     # Reject oversized payloads to prevent memory exhaustion
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > MAX_GIT_BODY_SIZE:
-        raise HTTPException(status_code=413, detail="Request body too large")
+    if content_length:
+        try:
+            if int(content_length) > MAX_GIT_BODY_SIZE:
+                raise HTTPException(status_code=413, detail="Request body too large")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid content-length header")
 
     # Forward the request to Gitea with admin auth
     body = await request.body()
     if len(body) > MAX_GIT_BODY_SIZE:
         raise HTTPException(status_code=413, detail="Request body too large")
 
+    # Auth: admin credentials are used because the system has no per-user Gitea
+    # accounts. The security boundary is the proxy key + repo-scoping above —
+    # each sandbox can only reach the single repo its session authorizes.
+    # TODO: use per-user Gitea tokens once user-level Gitea accounts are added.
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.request(
             method=request.method,
