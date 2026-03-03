@@ -11,6 +11,7 @@ Also provides a sandbox watchdog that detects stuck sandbox tool calls.
 """
 
 import asyncio
+import hashlib
 import hmac
 import os
 from datetime import datetime, timezone
