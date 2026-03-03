@@ -11,10 +11,8 @@ Also provides a sandbox watchdog that detects stuck sandbox tool calls.
 """
 
 import asyncio
-import hashlib
 import hmac
 import os
-import time
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -29,6 +27,7 @@ from druppie.api.deps import (
     get_current_user,
     verify_internal_api_key,
 )
+from druppie.core.sandbox_auth import generate_control_plane_token
 from druppie.db.database import get_db
 from druppie.repositories import SandboxSessionRepository
 
@@ -39,18 +38,6 @@ SANDBOX_WATCHDOG_INTERVAL_SECONDS = int(os.getenv("SANDBOX_WATCHDOG_INTERVAL_SEC
 logger = structlog.get_logger()
 
 router = APIRouter()
-
-
-def _generate_internal_token(secret: str) -> str:
-    """Generate an HMAC-SHA256 token matching Open-Inspect's auth format.
-
-    Token format: <unix-ms-timestamp>.<hmac-sha256-hex-signature>
-    """
-    timestamp = str(int(time.time() * 1000))
-    signature = hmac.new(
-        secret.encode(), timestamp.encode(), hashlib.sha256
-    ).hexdigest()
-    return f"{timestamp}.{signature}"
 
 
 class RegisterSandboxSessionRequest(BaseModel):
@@ -117,7 +104,7 @@ async def get_sandbox_events(
     if message_id:
         url += f"&message_id={message_id}"
 
-    token = _generate_internal_token(api_secret)
+    token = generate_control_plane_token(api_secret)
 
     try:
         async with httpx.AsyncClient() as client:
@@ -277,7 +264,7 @@ async def sandbox_complete_webhook(
 
     api_secret = os.environ.get("SANDBOX_API_SECRET", "sandbox-dev-secret")
     try:
-        token = _generate_internal_token(api_secret)
+        token = generate_control_plane_token(api_secret)
         async with httpx.AsyncClient(timeout=30.0) as client:
             events_resp = await client.get(
                 f"{control_plane_url}/sessions/{sandbox_session_id}/events?limit=500",
@@ -366,7 +353,7 @@ async def _resume_agent_after_sandbox(tool_call_id: UUID) -> None:
                 if agent_run and agent_run.status == AgentRunStatus.RUNNING:
                     execution_repo.update_status(agent_run.id, AgentRunStatus.FAILED, error_message=f"Resume failed: {e}")
                     session_repo = SessionRepository(resume_db)
-                    session_repo.update_status(agent_run.session_id, SessionStatus.COMPLETED)
+                    session_repo.update_status(agent_run.session_id, SessionStatus.FAILED)
                     resume_db.commit()
                     logger.info(
                         "sandbox_resume_statuses_reverted",
@@ -452,10 +439,32 @@ async def sandbox_watchdog_loop() -> None:
                                 error_message=f"Sandbox timed out after {SANDBOX_TIMEOUT_MINUTES} min",
                             )
 
-                    # Invalidate the git proxy key for this sandbox
+                    # Invalidate the git proxy key and cancel the sandbox container
                     sandbox_mapping = sandbox_repo.get_by_tool_call_id(tc.id)
                     if sandbox_mapping:
                         sandbox_repo.invalidate_proxy_key(sandbox_mapping.sandbox_session_id)
+                        # Best-effort: cancel the sandbox on the control plane to free resources
+                        try:
+                            control_plane_url = os.environ.get(
+                                "SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787"
+                            ).rstrip("/")
+                            api_secret = os.environ.get("SANDBOX_API_SECRET", "sandbox-dev-secret")
+                            token = generate_control_plane_token(api_secret)
+                            async with httpx.AsyncClient(timeout=10.0) as client:
+                                await client.delete(
+                                    f"{control_plane_url}/sessions/{sandbox_mapping.sandbox_session_id}",
+                                    headers={"Authorization": f"Bearer {token}"},
+                                )
+                            logger.info(
+                                "sandbox_watchdog_cancelled_sandbox",
+                                sandbox_session_id=sandbox_mapping.sandbox_session_id,
+                            )
+                        except Exception as cancel_err:
+                            logger.warning(
+                                "sandbox_watchdog_cancel_failed",
+                                sandbox_session_id=sandbox_mapping.sandbox_session_id,
+                                error=str(cancel_err),
+                            )
 
                     db.commit()
                     logger.warning(
