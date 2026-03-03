@@ -160,7 +160,6 @@ const TestResultCard = ({ testResults }) => {
   const coveragePercent = lastRun.coverage?.overall_percent ?? null
   const allPass = lastRun.success && lastRun.exit_code === 0 && totalFailed === 0
 
-  const passRatio = totalTests > 0 ? totalPassed / totalTests : 0
   const iterations = testResults.length
 
   // Build inline summary parts
@@ -195,12 +194,12 @@ const TestResultCard = ({ testResults }) => {
         </div>
 
         {/* Ratio bar */}
-        <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-          {totalTests > 0 && (
-            <div
-              className={`h-full rounded-full transition-all ${allPass ? 'bg-green-500' : 'bg-green-500'}`}
-              style={{ width: `${passRatio * 100}%` }}
-            />
+        <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden flex">
+          {totalPassed > 0 && (
+            <div className="h-full bg-green-500" style={{ width: `${(totalPassed / totalTests) * 100}%` }} />
+          )}
+          {totalFailed > 0 && (
+            <div className="h-full bg-red-500" style={{ width: `${(totalFailed / totalTests) * 100}%` }} />
           )}
         </div>
 

@@ -16,39 +16,26 @@ import {
 // Agent name formatting and icons
 export const AGENT_CONFIG = {
   router: { name: 'Router', icon: Brain, color: 'purple', description: 'Intent analysis', thinkingLabel: 'Analyzing intent...' },
-  router_agent: { name: 'Router', icon: Brain, color: 'purple', description: 'Intent analysis', thinkingLabel: 'Analyzing intent...' },
   planner: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning', thinkingLabel: 'Planning execution...' },
-  planner_agent: { name: 'Planner', icon: Clock, color: 'blue', description: 'Execution planning', thinkingLabel: 'Planning execution...' },
   business_analyst: { name: 'Business Analyst', icon: ClipboardList, color: 'teal', description: 'Requirements gathering', thinkingLabel: 'Creating functional design...' },
-  business_analyst_agent: { name: 'Business Analyst', icon: ClipboardList, color: 'teal', description: 'Requirements gathering', thinkingLabel: 'Creating functional design...' },
   architect: { name: 'Architect', icon: Brain, color: 'indigo', description: 'System design', thinkingLabel: 'Creating technical design...' },
-  architect_agent: { name: 'Architect', icon: Brain, color: 'indigo', description: 'System design', thinkingLabel: 'Creating technical design...' },
   developer: { name: 'Developer', icon: FileCode, color: 'green', description: 'Code generation', thinkingLabel: 'Writing code...' },
-  developer_agent: { name: 'Developer', icon: FileCode, color: 'green', description: 'Code generation', thinkingLabel: 'Writing code...' },
   code_generator: { name: 'Code Generator', icon: FileCode, color: 'green', description: 'Code generation', thinkingLabel: 'Writing code...' },
-  code_generator_agent: { name: 'Code Generator', icon: FileCode, color: 'green', description: 'Code generation', thinkingLabel: 'Writing code...' },
   devops: { name: 'DevOps', icon: Hammer, color: 'orange', description: 'Build & deploy', thinkingLabel: 'Preparing deployment...' },
-  devops_agent: { name: 'DevOps', icon: Hammer, color: 'orange', description: 'Build & deploy', thinkingLabel: 'Preparing deployment...' },
   deployer: { name: 'Deployer', icon: Hammer, color: 'orange', description: 'Deployment', thinkingLabel: 'Deploying...' },
-  deployer_agent: { name: 'Deployer', icon: Hammer, color: 'orange', description: 'Deployment', thinkingLabel: 'Deploying...' },
-  git_agent: { name: 'Git', icon: GitBranch, color: 'gray', description: 'Version control', thinkingLabel: 'Managing repository...' },
+  git: { name: 'Git', icon: GitBranch, color: 'gray', description: 'Version control', thinkingLabel: 'Managing repository...' },
   reviewer: { name: 'Reviewer', icon: CheckCircle, color: 'teal', description: 'Code review', thinkingLabel: 'Reviewing code...' },
-  reviewer_agent: { name: 'Reviewer', icon: CheckCircle, color: 'teal', description: 'Code review', thinkingLabel: 'Reviewing code...' },
   tester: { name: 'Tester', icon: CheckCircle, color: 'cyan', description: 'Testing', thinkingLabel: 'Running tests...' },
-  tester_agent: { name: 'Tester', icon: CheckCircle, color: 'cyan', description: 'Testing', thinkingLabel: 'Running tests...' },
   builder: { name: 'Builder', icon: Hammer, color: 'green', description: 'Code implementation', thinkingLabel: 'Building code...' },
-  builder_agent: { name: 'Builder', icon: Hammer, color: 'green', description: 'Code implementation', thinkingLabel: 'Building code...' },
   test_builder: { name: 'Test Builder', icon: CheckCircle, color: 'cyan', description: 'Test generation', thinkingLabel: 'Writing tests...' },
-  test_builder_agent: { name: 'Test Builder', icon: CheckCircle, color: 'cyan', description: 'Test generation', thinkingLabel: 'Writing tests...' },
   test_executor: { name: 'Test Executor', icon: CheckCircle, color: 'cyan', description: 'Running & fixing tests', thinkingLabel: 'Running tests...' },
-  test_executor_agent: { name: 'Test Executor', icon: CheckCircle, color: 'cyan', description: 'Running & fixing tests', thinkingLabel: 'Running tests...' },
   builder_planner: { name: 'Builder Planner', icon: ClipboardList, color: 'indigo', description: 'Implementation planning', thinkingLabel: 'Creating implementation plan...', surfaceFileWrites: true },
-  builder_planner_agent: { name: 'Builder Planner', icon: ClipboardList, color: 'indigo', description: 'Implementation planning', thinkingLabel: 'Creating implementation plan...', surfaceFileWrites: true },
 }
 
 export const getAgentConfig = (agentId) => {
-  return AGENT_CONFIG[agentId] || {
-    name: agentId.replace('_agent', '').replace(/_/g, ' '),
+  const key = agentId?.replace(/_agent$/, '')
+  return AGENT_CONFIG[key] || AGENT_CONFIG[agentId] || {
+    name: (key || agentId || '').replace(/_/g, ' '),
     icon: Bot,
     color: 'gray',
     description: 'AI Agent',
@@ -69,41 +56,30 @@ export const getAgentColorClasses = (color) => {
   return colors[color] || colors.gray
 }
 
-// Known tool name → friendly label map (reuses getToolInfo from ApprovalCard)
+// Known tool name → friendly label map
 const TOOL_LABELS = {
   'write_file': 'Write File',
-  'coding:write_file': 'Write File',
   'batch_write_files': 'Write Files',
-  'coding:batch_write_files': 'Write Files',
   'run_command': 'Run Command',
-  'coding:run_command': 'Run Command',
   'commit_and_push': 'Git Commit',
-  'coding:commit_and_push': 'Git Commit',
   'read_file': 'Read File',
-  'coding:read_file': 'Read File',
   'list_directory': 'List Directory',
-  'coding:list_directory': 'List Directory',
   'search_files': 'Search Files',
-  'coding:search_files': 'Search Files',
   'install_test_dependencies': 'Install Dependencies',
-  'coding:install_test_dependencies': 'Install Dependencies',
   'run_tests': 'Run Tests',
-  'coding:run_tests': 'Run Tests',
   'hitl_ask': 'Ask Question',
-  'hitl:hitl_ask': 'Ask Question',
 }
 
 /**
  * Format a raw tool name into a user-friendly label.
- * Checks known tool names first, then falls back to:
- * strip server prefix, replace underscores with spaces, title-case.
+ * Checks known tool names first, then strips server prefix and retries,
+ * then falls back to: replace underscores with spaces, title-case.
  */
 export const formatToolName = (toolName) => {
   if (!toolName) return 'Unknown Tool'
   if (TOOL_LABELS[toolName]) return TOOL_LABELS[toolName]
-  // Strip "coding:" or other server prefixes
   const stripped = toolName.includes(':') ? toolName.split(':').pop() : toolName
-  // Replace underscores with spaces and title-case
+  if (TOOL_LABELS[stripped]) return TOOL_LABELS[stripped]
   return stripped
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase())
