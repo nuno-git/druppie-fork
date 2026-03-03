@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
-Seed script: populate DB + Gitea for builder-agent retry testing.
+Seed script: populate DB + Gitea with realistic session data.
 
-After a DB reset, run this to instantly get a session where the builder agent
-has FAILED so you can test the retry flow without running the full pipeline.
+Creates ~10 sessions in various states so the sidebar and dashboard look
+realistic, plus a specific "builder failed" session for retry testing.
 
 Usage:
     docker compose --profile reset-db run --rm reset-db       # reset DB first
     source venv/bin/activate                                   # activate venv (has psycopg2)
     python scripts/seed_builder_retry.py                       # then seed
 
-Connects to localhost ports (DB: 5432, Gitea: 3100). Run from host, not Docker.
+Connects to localhost ports (DB: 5533, Gitea: 3100). Run from host, not Docker.
 """
 
 import json
+import random
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import psycopg2
-import psycopg2.extras
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -31,111 +31,61 @@ GITEA_USER = "gitea_admin"
 GITEA_PASS = "GiteaAdmin123"
 FRONTEND_URL = "http://localhost:5273"
 
-# Fixed UUIDs so the script is idempotent (delete-then-insert)
-ADMIN_USER_ID = uuid.UUID("0ff7a3d5-c8a8-4621-bb68-40d9ae2a508f")
-PROJECT_ID = uuid.UUID("aaaa0001-0001-0001-0001-000000000001")
-SESSION_ID = uuid.UUID("aaaa0002-0002-0002-0002-000000000002")
-
-# Agent run UUIDs (seq 1-9)
-RUN_IDS = {
-    "router":    uuid.UUID("bbbb0001-0001-0001-0001-000000000001"),
-    "planner1":  uuid.UUID("bbbb0002-0002-0002-0002-000000000002"),
-    "ba":        uuid.UUID("bbbb0003-0003-0003-0003-000000000003"),
-    "planner2":  uuid.UUID("bbbb0004-0004-0004-0004-000000000004"),
-    "architect": uuid.UUID("bbbb0005-0005-0005-0005-000000000005"),
-    "planner3":  uuid.UUID("bbbb0006-0006-0006-0006-000000000006"),
-    "tester":    uuid.UUID("bbbb0007-0007-0007-0007-000000000007"),
-    "planner4":  uuid.UUID("bbbb0008-0008-0008-0008-000000000008"),
-    "builder":   uuid.UUID("bbbb0009-0009-0009-0009-000000000009"),
-}
-
-# LLM call UUIDs (one per agent run)
-LLM_IDS = {k: uuid.UUID(f"cccc{i:04d}-{i:04d}-{i:04d}-{i:04d}-{i:012d}")
-           for i, k in enumerate(RUN_IDS, start=1)}
-
-# Tool call UUIDs
-TC_IDS = {k: uuid.UUID(f"dddd{i:04d}-{i:04d}-{i:04d}-{i:04d}-{i:012d}")
-          for i, k in enumerate([
-              "set_intent",
-              "done_router",
-              "make_plan1",
-              "done_planner1",
-              "done_ba",
-              "make_plan2",
-              "done_planner2",
-              "done_architect",
-              "make_plan3",
-              "done_planner3",
-              "done_tester",
-              "make_plan4",
-              "done_planner4",
-              "execute_coding_task",
-          ], start=1)}
-
-# Message UUIDs
-MSG_IDS = {k: uuid.UUID(f"eeee{i:04d}-{i:04d}-{i:04d}-{i:04d}-{i:012d}")
-           for i, k in enumerate([
-               "user_msg",
-               "router_summary",
-               "planner1_summary",
-               "ba_summary",
-               "planner2_summary",
-               "architect_summary",
-               "planner3_summary",
-               "tester_summary",
-               "planner4_summary",
-               "builder_error",
-           ], start=1)}
-
 NOW = datetime.now(timezone.utc)
 
 
-# ---------------------------------------------------------------------------
-# Step 1 — Gitea repo
-# ---------------------------------------------------------------------------
-def create_gitea_repo() -> dict:
-    """Ensure druppie_admin user exists, create repo, return repo info."""
-    auth = (GITEA_USER, GITEA_PASS)
-    short = uuid.uuid4().hex[:8]
-    repo_name = f"todo-app-{short}"
+def _ts(hours_ago: float = 0) -> datetime:
+    """Return a timestamp `hours_ago` before NOW."""
+    return NOW - timedelta(hours=hours_ago)
 
-    with httpx.Client(base_url=GITEA_URL, auth=auth, timeout=15) as c:
-        # Ensure druppie_admin user exists (admin is reserved in Gitea)
-        r = c.get(f"/api/v1/users/druppie_admin")
-        if r.status_code == 404:
-            r = c.post("/api/v1/admin/users", json={
-                "username": "druppie_admin",
-                "email": "druppie_admin@druppie.local",
-                "password": "DruppieAdmin123!",
-                "must_change_password": False,
-                "login_name": "druppie_admin",
-                "source_id": 0,
-            })
-            if r.status_code not in (201, 422):
-                print(f"  [WARN] Could not create druppie_admin: {r.status_code} {r.text[:200]}")
-            else:
-                print("  [OK] Created Gitea user druppie_admin")
-        else:
-            print("  [OK] Gitea user druppie_admin already exists")
 
-        # Create repo under druppie_admin
-        r = c.post(f"/api/v1/admin/users/druppie_admin/repos", json={
-            "name": repo_name,
-            "description": "Todo App - seeded for builder retry testing",
-            "private": False,
-            "auto_init": True,
-            "readme": "Default",
+def _uid(namespace: int, index: int) -> str:
+    """Deterministic UUID from namespace + index (idempotent)."""
+    return str(uuid.UUID(f"{namespace:04x}0000-{index:04x}-4000-8000-{index:012x}"))
+
+
+# ---------------------------------------------------------------------------
+# Gitea helpers
+# ---------------------------------------------------------------------------
+def ensure_gitea_user(client: httpx.Client):
+    """Ensure druppie_admin user exists in Gitea."""
+    r = client.get("/api/v1/users/druppie_admin")
+    if r.status_code == 404:
+        r = client.post("/api/v1/admin/users", json={
+            "username": "druppie_admin",
+            "email": "druppie_admin@druppie.local",
+            "password": "DruppieAdmin123!",
+            "must_change_password": False,
+            "login_name": "druppie_admin",
+            "source_id": 0,
         })
-        if r.status_code == 201:
-            data = r.json()
-            print(f"  [OK] Created repo: {data['html_url']}")
-        elif r.status_code in (409, 422):
-            print(f"  [OK] Repo {repo_name} already exists")
-            data = c.get(f"/api/v1/repos/druppie_admin/{repo_name}").json()
+        if r.status_code not in (201, 422):
+            print(f"  [WARN] Could not create druppie_admin: {r.status_code}")
         else:
-            print(f"  [ERROR] Failed to create repo: {r.status_code} {r.text[:200]}")
-            sys.exit(1)
+            print("  [OK] Created Gitea user druppie_admin")
+    else:
+        print("  [OK] Gitea user druppie_admin already exists")
 
+
+def create_gitea_repo(client: httpx.Client, name: str) -> dict:
+    """Create a Gitea repo, return repo info dict."""
+    short = uuid.uuid4().hex[:8]
+    repo_name = f"{name}-{short}"
+    r = client.post("/api/v1/admin/users/druppie_admin/repos", json={
+        "name": repo_name,
+        "description": f"{name} — seeded test data",
+        "private": False,
+        "auto_init": True,
+        "readme": "Default",
+    })
+    if r.status_code == 201:
+        data = r.json()
+        print(f"  [OK] Created repo: druppie_admin/{repo_name}")
+    elif r.status_code in (409, 422):
+        data = client.get(f"/api/v1/repos/druppie_admin/{repo_name}").json()
+    else:
+        print(f"  [ERROR] Failed to create repo {repo_name}: {r.status_code}")
+        sys.exit(1)
     return {
         "repo_name": repo_name,
         "repo_owner": "druppie_admin",
@@ -145,11 +95,14 @@ def create_gitea_repo() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — Database population
+# Session definitions — each dict drives one session + project + agents
 # ---------------------------------------------------------------------------
+# Agent run tuples: (agent_id, status, error_message, planned_prompt_snippet)
+# "completed" agents get a done tool call + summary message automatically.
+# "failed" agents get an error tool call.
+# "pending" agents get no tool calls / LLM calls.
+# "running" agents get one LLM call but no tool calls yet.
 
-# Builder's planned_prompt — realistic content matching what the planner would
-# produce after business_analyst → architect → tester have completed.
 BUILDER_PLANNED_PROMPT = """\
 Implement the Todo App based on the architecture and test specifications.
 
@@ -186,284 +139,458 @@ Agent planner: Updated plan after BA completion. Next: architect.
 Agent architect: Designed React+Vite architecture with component structure, state management via custom hook, and REST-ready data layer. Created architecture.md and technical_design.md.
 Agent planner: Updated plan after architect completion. Next: tester.
 Agent tester: Generated 12 test files covering App integration, TodoItem unit tests, and TodoForm unit tests. All tests initially fail (TDD red phase). Created test infrastructure with vitest config.
-Agent planner: Updated plan after tester completion. Next: builder.\
-"""
+Agent planner: Updated plan after tester completion. Next: builder."""
+
+SESSIONS = [
+    # ── 0: The main builder-retry session ──────────────────────────
+    {
+        "ns": 0xA000,
+        "title": "hi build me a to do app",
+        "project_name": "todo-app",
+        "status": "failed",
+        "intent": "create_project",
+        "hours_ago": 0.5,
+        "agents": [
+            ("router",           "completed", None, None),
+            ("planner",          "completed", None, None),
+            ("business_analyst", "completed", None, "Analyze the user request and create SPEC.md."),
+            ("planner",          "completed", None, None),
+            ("architect",        "completed", None, "Design architecture for the todo app. Create architecture.md."),
+            ("planner",          "completed", None, None),
+            ("tester",           "completed", None, "Generate test files for TDD red phase."),
+            ("planner",          "completed", None, None),
+            ("builder",          "failed",
+             "Sandbox execution failed: connection timeout after 120s",
+             BUILDER_PLANNED_PROMPT),
+            ("planner",          "pending",  None, None),
+        ],
+    },
+    # ── 1: Completed weather app ───────────────────────────────────
+    {
+        "ns": 0xA001,
+        "title": "build me a weather dashboard",
+        "project_name": "weather-dashboard",
+        "status": "completed",
+        "intent": "create_project",
+        "hours_ago": 26,
+        "agents": [
+            ("router",           "completed", None, None),
+            ("planner",          "completed", None, None),
+            ("business_analyst", "completed", None, "Write SPEC.md for weather dashboard with 5-day forecast."),
+            ("planner",          "completed", None, None),
+            ("architect",        "completed", None, "Design React SPA with OpenWeatherMap API integration."),
+            ("planner",          "completed", None, None),
+            ("tester",           "completed", None, "Create tests for API service, forecast components."),
+            ("planner",          "completed", None, None),
+            ("builder",          "completed", None, "Implement weather dashboard to pass all 18 tests."),
+            ("planner",          "completed", None, None),
+            ("deployer",         "completed", None, "Deploy weather dashboard container on port 3001."),
+        ],
+    },
+    # ── 2: Calculator — stuck at architect approval ────────────────
+    {
+        "ns": 0xA002,
+        "title": "create a scientific calculator",
+        "project_name": "calculator",
+        "status": "paused_approval",
+        "intent": "create_project",
+        "hours_ago": 3,
+        "agents": [
+            ("router",           "completed", None, None),
+            ("planner",          "completed", None, None),
+            ("business_analyst", "completed", None, "Define calculator requirements: basic + scientific modes."),
+            ("planner",          "completed", None, None),
+            ("architect",        "running",   None, "Design the calculator architecture with expression parser."),
+        ],
+    },
+    # ── 3: Blog platform — tester running ──────────────────────────
+    {
+        "ns": 0xA003,
+        "title": "make a blog platform with markdown support",
+        "project_name": "blog-platform",
+        "status": "active",
+        "intent": "create_project",
+        "hours_ago": 1.5,
+        "agents": [
+            ("router",           "completed", None, None),
+            ("planner",          "completed", None, None),
+            ("business_analyst", "completed", None, "Write SPEC for blog with markdown rendering and tags."),
+            ("planner",          "completed", None, None),
+            ("architect",        "completed", None, "Design Next.js blog with MDX and SQLite storage."),
+            ("planner",          "completed", None, None),
+            ("tester",           "running",   None, "Generate tests for markdown renderer and post CRUD."),
+        ],
+    },
+    # ── 4: Chat app — failed at router ─────────────────────────────
+    {
+        "ns": 0xA004,
+        "title": "asdfghjkl",
+        "project_name": None,  # no project — router failed
+        "status": "failed",
+        "intent": None,
+        "hours_ago": 48,
+        "agents": [
+            ("router", "failed", "LLM returned empty response after 3 retries", None),
+        ],
+    },
+    # ── 5: General chat — completed quickly ────────────────────────
+    {
+        "ns": 0xA005,
+        "title": "what agents do you have?",
+        "project_name": None,
+        "status": "completed",
+        "intent": "general_chat",
+        "hours_ago": 72,
+        "agents": [
+            ("router", "completed", None, None),
+        ],
+    },
+    # ── 6: E-commerce — completed through builder ──────────────────
+    {
+        "ns": 0xA006,
+        "title": "build an e-commerce product page",
+        "project_name": "ecommerce-page",
+        "status": "completed",
+        "intent": "create_project",
+        "hours_ago": 50,
+        "agents": [
+            ("router",           "completed", None, None),
+            ("planner",          "completed", None, None),
+            ("architect",        "completed", None, "Design product page with cart and Stripe checkout."),
+            ("planner",          "completed", None, None),
+            ("tester",           "completed", None, "Write tests for product display, cart, checkout flow."),
+            ("planner",          "completed", None, None),
+            ("builder",          "completed", None, "Implement e-commerce page, all 14 tests passing."),
+            ("planner",          "completed", None, None),
+            ("deployer",         "completed", None, "Deployed e-commerce container on port 3002."),
+        ],
+    },
+    # ── 7: Kanban board — BA running ───────────────────────────────
+    {
+        "ns": 0xA007,
+        "title": "create a kanban board with drag and drop",
+        "project_name": "kanban-board",
+        "status": "active",
+        "intent": "create_project",
+        "hours_ago": 0.1,
+        "agents": [
+            ("router",           "completed", None, None),
+            ("planner",          "completed", None, None),
+            ("business_analyst", "running",   None, "Analyze kanban requirements: columns, cards, drag-drop."),
+        ],
+    },
+    # ── 8: Portfolio site — completed, short pipeline ──────────────
+    {
+        "ns": 0xA008,
+        "title": "build a portfolio website for me",
+        "project_name": "portfolio-site",
+        "status": "completed",
+        "intent": "create_project",
+        "hours_ago": 120,
+        "agents": [
+            ("router",           "completed", None, None),
+            ("planner",          "completed", None, None),
+            ("business_analyst", "completed", None, "Define portfolio requirements: about, projects, contact."),
+            ("planner",          "completed", None, None),
+            ("architect",        "completed", None, "Design static HTML/CSS portfolio with responsive layout."),
+            ("planner",          "completed", None, None),
+            ("builder",          "completed", None, "Built portfolio with 3 pages, responsive CSS grid."),
+            ("planner",          "completed", None, None),
+            ("deployer",         "completed", None, "Deployed portfolio on port 3003."),
+        ],
+    },
+    # ── 9: Recipe app — failed at builder (different error) ────────
+    {
+        "ns": 0xA009,
+        "title": "make a recipe sharing app",
+        "project_name": "recipe-app",
+        "status": "failed",
+        "intent": "create_project",
+        "hours_ago": 6,
+        "agents": [
+            ("router",           "completed", None, None),
+            ("planner",          "completed", None, None),
+            ("business_analyst", "completed", None, "Spec for recipe app: search, favorites, ingredients list."),
+            ("planner",          "completed", None, None),
+            ("architect",        "completed", None, "Design React app with recipe API and local storage."),
+            ("planner",          "completed", None, None),
+            ("tester",           "completed", None, "Tests for recipe CRUD, search, favorites."),
+            ("planner",          "completed", None, None),
+            ("builder",          "failed",
+             "RateLimitError: Rate limit exceeded, retried 3 times",
+             "Implement recipe app to pass all tests."),
+            ("planner",          "pending",  None, None),
+        ],
+    },
+    # ── 10: Update project — shorter flow ──────────────────────────
+    {
+        "ns": 0xA00A,
+        "title": "add dark mode to the weather dashboard",
+        "project_name": "weather-dashboard-update",
+        "status": "completed",
+        "intent": "update_project",
+        "hours_ago": 18,
+        "agents": [
+            ("router",    "completed", None, None),
+            ("planner",   "completed", None, None),
+            ("architect", "completed", None, "Add CSS variables for dark/light theme toggle."),
+            ("planner",   "completed", None, None),
+            ("tester",    "completed", None, "Tests for theme toggle and CSS variable application."),
+            ("planner",   "completed", None, None),
+            ("builder",   "completed", None, "Implemented dark mode toggle, all 6 tests pass."),
+            ("planner",   "completed", None, None),
+            ("deployer",  "completed", None, "Redeployed weather dashboard with dark mode."),
+        ],
+    },
+]
+
+# The primary session for builder retry testing
+PRIMARY_SESSION_NS = 0xA000
 
 
-def populate_db(repo_info: dict):
-    """Insert seed records into PostgreSQL."""
+# ---------------------------------------------------------------------------
+# Database population
+# ---------------------------------------------------------------------------
+def populate_db(repos: dict[int, dict]):
+    """Insert all seed sessions into PostgreSQL."""
     conn = psycopg2.connect(DB_DSN)
     conn.autocommit = False
     cur = conn.cursor()
 
     try:
-        # ------------------------------------------------------------------
-        # Clean up any previous seed data (idempotent)
-        # ------------------------------------------------------------------
+        # -- Clean previous seed data --
         print("  Cleaning previous seed data...")
-        cur.execute("DELETE FROM sessions WHERE id = %s", (str(SESSION_ID),))
-        cur.execute("DELETE FROM projects WHERE id = %s", (str(PROJECT_ID),))
+        for s in SESSIONS:
+            ns = s["ns"]
+            session_id = _uid(ns, 0)
+            project_id = _uid(ns, 9999)
+            cur.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
+            cur.execute("DELETE FROM projects WHERE id = %s", (project_id,))
 
-        # ------------------------------------------------------------------
-        # Look up or create admin user
-        # ------------------------------------------------------------------
+        # -- Look up or create admin user --
         cur.execute("SELECT id FROM users WHERE username = 'admin'")
         row = cur.fetchone()
         if row:
-            admin_id = row[0]
+            admin_id = str(row[0])
             print(f"  [OK] Found admin user: {admin_id}")
         else:
-            admin_id = str(ADMIN_USER_ID)
+            admin_id = _uid(0xFFFF, 1)
             cur.execute(
                 """INSERT INTO users (id, username, email, display_name, created_at, updated_at)
                    VALUES (%s, %s, %s, %s, %s, %s)""",
                 (admin_id, "admin", "admin@druppie.local", "Admin User", NOW, NOW),
             )
-            cur.execute(
-                "INSERT INTO user_roles (user_id, role) VALUES (%s, %s)",
-                (admin_id, "admin"),
-            )
+            cur.execute("INSERT INTO user_roles (user_id, role) VALUES (%s, %s)", (admin_id, "admin"))
             print(f"  [OK] Created admin user: {admin_id}")
 
-        admin_id = str(admin_id)
+        total_sessions = 0
+        total_runs = 0
+        total_llm = 0
+        total_tc = 0
+        total_msg = 0
 
-        # ------------------------------------------------------------------
-        # Project
-        # ------------------------------------------------------------------
-        cur.execute(
-            """INSERT INTO projects
-               (id, name, description, repo_name, repo_owner, repo_url, clone_url,
-                owner_id, status, created_at, updated_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (
-                str(PROJECT_ID), "todo-app",
-                "A simple todo application — seeded for builder retry testing",
-                repo_info["repo_name"], repo_info["repo_owner"],
-                repo_info["repo_url"], repo_info["clone_url"],
-                admin_id, "active", NOW, NOW,
-            ),
-        )
-        print("  [OK] Inserted project")
+        for s in SESSIONS:
+            ns = s["ns"]
+            session_id = _uid(ns, 0)
+            project_id = _uid(ns, 9999)
+            base_ts = _ts(s["hours_ago"])
+            agents = s["agents"]
 
-        # ------------------------------------------------------------------
-        # Session
-        # ------------------------------------------------------------------
-        cur.execute(
-            """INSERT INTO sessions
-               (id, user_id, project_id, title, status, intent, language,
-                prompt_tokens, completion_tokens, total_tokens,
-                created_at, updated_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (
-                str(SESSION_ID), admin_id, str(PROJECT_ID),
-                "hi build me a to do app", "failed", "create_project", "en",
-                25000, 8000, 33000, NOW, NOW,
-            ),
-        )
-        print("  [OK] Inserted session")
+            # -- Project (if session has one) --
+            repo_info = repos.get(ns)
+            if repo_info:
+                cur.execute(
+                    """INSERT INTO projects
+                       (id, name, description, repo_name, repo_owner, repo_url, clone_url,
+                        owner_id, status, created_at, updated_at)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (project_id, s["project_name"], f"Seeded: {s['title']}",
+                     repo_info["repo_name"], repo_info["repo_owner"],
+                     repo_info["repo_url"], repo_info["clone_url"],
+                     admin_id, "active", base_ts, base_ts),
+                )
 
-        # ------------------------------------------------------------------
-        # Agent runs
-        # ------------------------------------------------------------------
-        agent_runs = [
-            # (key, agent_id, seq, status, error_msg, planned_prompt)
-            ("router",    "router",            1, "completed", None, None),
-            ("planner1",  "planner",           2, "completed", None, None),
-            ("ba",        "business_analyst",   3, "completed", None,
-             "Analyze the user request 'build me a to do app' and create a detailed specification document (SPEC.md)."),
-            ("planner2",  "planner",           4, "completed", None, None),
-            ("architect", "architect",         5, "completed", None,
-             "Design the architecture for the todo app based on SPEC.md. Create architecture.md and technical_design.md."),
-            ("planner3",  "planner",           6, "completed", None, None),
-            ("tester",    "tester",            7, "completed", None,
-             "Generate test files for the todo app based on architecture.md and SPEC.md. Write tests that define expected behavior (TDD red phase)."),
-            ("planner4",  "planner",           8, "completed", None, None),
-            ("builder",   "builder",           9, "failed",
-             "Sandbox execution failed: connection timeout after 120s",
-             BUILDER_PLANNED_PROMPT),
-        ]
-
-        for key, agent_id, seq, status, err, prompt in agent_runs:
-            completed_at = NOW if status == "completed" else None
-            tokens_p = 3000 if status == "completed" else 0
-            tokens_c = 1000 if status == "completed" else 0
+            # -- Session --
+            completed_agents = [a for a in agents if a[1] == "completed"]
+            tok_p = len(completed_agents) * 3000
+            tok_c = len(completed_agents) * 1000
             cur.execute(
-                """INSERT INTO agent_runs
-                   (id, session_id, agent_id, status, error_message,
-                    planned_prompt, sequence_number, iteration_count,
+                """INSERT INTO sessions
+                   (id, user_id, project_id, title, status, intent, language,
                     prompt_tokens, completion_tokens, total_tokens,
-                    started_at, completed_at, created_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (
-                    str(RUN_IDS[key]), str(SESSION_ID), agent_id, status, err,
-                    prompt, seq, 1 if status == "completed" else 0,
-                    tokens_p, tokens_c, tokens_p + tokens_c,
-                    NOW, completed_at, NOW,
-                ),
+                    created_at, updated_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (session_id, admin_id,
+                 project_id if repo_info else None,
+                 s["title"], s["status"], s["intent"], "en",
+                 tok_p, tok_c, tok_p + tok_c, base_ts, base_ts),
             )
-        print("  [OK] Inserted 9 agent runs")
+            total_sessions += 1
 
-        # ------------------------------------------------------------------
-        # LLM calls (one per agent run, minimal)
-        # ------------------------------------------------------------------
-        for key in RUN_IDS:
-            agent_id = next(a for k, a, *_ in agent_runs if k == key)
-            cur.execute(
-                """INSERT INTO llm_calls
-                   (id, session_id, agent_run_id, provider, model,
-                    prompt_tokens, completion_tokens, total_tokens,
-                    duration_ms, created_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (
-                    str(LLM_IDS[key]), str(SESSION_ID), str(RUN_IDS[key]),
-                    "zai", "claude-opus-4-6",
-                    3000, 1000, 4000, 2500, NOW,
-                ),
-            )
-        print("  [OK] Inserted 9 LLM calls")
-
-        # ------------------------------------------------------------------
-        # Tool calls
-        # ------------------------------------------------------------------
-        tool_calls = [
-            # (tc_key, run_key, llm_key, mcp_server, tool_name, status, arguments, result)
-            ("set_intent", "router", "router", "builtin", "set_intent", "completed",
-             {"intent": "create_project", "project_name": "todo-app"},
-             "Intent set to create_project"),
-            ("done_router", "router", "router", "builtin", "done", "completed",
-             {"summary": "Agent router: Classified intent as create_project, created project 'todo-app'."},
-             "Agent completed"),
-            ("make_plan1", "planner1", "planner1", "builtin", "make_plan", "completed",
-             {"steps": [
-                 {"agent_id": "business_analyst", "prompt": "Analyze the user request 'build me a to do app' and create a detailed specification document (SPEC.md)."},
-                 {"agent_id": "architect", "prompt": "Design the architecture for the todo app based on SPEC.md."},
-                 {"agent_id": "tester", "prompt": "Generate test files for the todo app."},
-                 {"agent_id": "builder", "prompt": "Implement the code to pass the tests."},
-                 {"agent_id": "deployer", "prompt": "Deploy the todo app."},
-             ]},
-             "Plan created with 5 steps"),
-            ("done_planner1", "planner1", "planner1", "builtin", "done", "completed",
-             {"summary": "Agent planner: Created plan: business_analyst → architect → tester → builder → deployer."},
-             "Agent completed"),
-            ("done_ba", "ba", "ba", "builtin", "done", "completed",
-             {"summary": "Agent business_analyst: Defined requirements for todo app with CRUD operations, localStorage persistence, and responsive design. Created SPEC.md with user stories and acceptance criteria."},
-             "Agent completed"),
-            ("make_plan2", "planner2", "planner2", "builtin", "make_plan", "completed",
-             {"steps": [
-                 {"agent_id": "architect", "prompt": "Design the architecture for the todo app based on SPEC.md. Create architecture.md and technical_design.md."},
-                 {"agent_id": "tester", "prompt": "Generate test files for the todo app based on architecture.md and SPEC.md."},
-                 {"agent_id": "builder", "prompt": "Implement the code to pass the tests."},
-                 {"agent_id": "deployer", "prompt": "Deploy the todo app."},
-             ]},
-             "Plan updated after BA completion"),
-            ("done_planner2", "planner2", "planner2", "builtin", "done", "completed",
-             {"summary": "Agent planner: Updated plan after BA completion. Next: architect."},
-             "Agent completed"),
-            ("done_architect", "architect", "architect", "builtin", "done", "completed",
-             {"summary": "Agent architect: Designed React+Vite architecture with component structure, custom hook state management, and REST-ready data layer. Created architecture.md and technical_design.md."},
-             "Agent completed"),
-            ("make_plan3", "planner3", "planner3", "builtin", "make_plan", "completed",
-             {"steps": [
-                 {"agent_id": "tester", "prompt": "Generate test files for the todo app based on architecture.md and SPEC.md. Write tests that define expected behavior (TDD red phase)."},
-                 {"agent_id": "builder", "prompt": "Implement the code to pass the tests."},
-                 {"agent_id": "deployer", "prompt": "Deploy the todo app."},
-             ]},
-             "Plan updated after architect completion"),
-            ("done_planner3", "planner3", "planner3", "builtin", "done", "completed",
-             {"summary": "Agent planner: Updated plan after architect completion. Next: tester."},
-             "Agent completed"),
-            ("done_tester", "tester", "tester", "builtin", "done", "completed",
-             {"summary": "Agent tester: Generated 12 test files covering App integration, TodoItem unit tests, and TodoForm unit tests. All tests initially fail (TDD red phase). Created vitest config and test infrastructure."},
-             "Agent completed"),
-            ("make_plan4", "planner4", "planner4", "builtin", "make_plan", "completed",
-             {"steps": [
-                 {"agent_id": "builder", "prompt": BUILDER_PLANNED_PROMPT},
-                 {"agent_id": "deployer", "prompt": "Deploy the todo app."},
-             ]},
-             "Plan updated after tester completion"),
-            ("done_planner4", "planner4", "planner4", "builtin", "done", "completed",
-             {"summary": "Agent planner: Updated plan after tester completion. Next: builder."},
-             "Agent completed"),
-            ("execute_coding_task", "builder", "builder", "builtin", "execute_coding_task", "failed",
-             {"prompt": "Read test files, implement all source code to make tests pass, create package.json, vite.config.js, and Dockerfile."},
-             None),
-        ]
-
-        for tc_key, run_key, llm_key, mcp, tool, status, args, result in tool_calls:
-            tc_index = 0
-            # done calls are typically index 1 (after make_plan or set_intent)
-            if tool == "done" and tc_key != "done_ba":
-                tc_index = 1
-            cur.execute(
-                """INSERT INTO tool_calls
-                   (id, session_id, agent_run_id, llm_call_id,
-                    mcp_server, tool_name, tool_call_index,
-                    arguments, status, result, error_message,
-                    created_at, executed_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (
-                    str(TC_IDS[tc_key]), str(SESSION_ID),
-                    str(RUN_IDS[run_key]), str(LLM_IDS[llm_key]),
-                    mcp, tool, tc_index,
-                    json.dumps(args), status, result,
-                    "Sandbox execution failed: connection timeout after 120s" if status == "failed" else None,
-                    NOW, NOW if status == "completed" else None,
-                ),
-            )
-        print(f"  [OK] Inserted {len(tool_calls)} tool calls")
-
-        # ------------------------------------------------------------------
-        # Messages
-        # ------------------------------------------------------------------
-        messages = [
-            # (msg_key, run_key_or_none, role, content, agent_id, seq)
-            ("user_msg", None, "user",
-             "hi build me a to do app", None, 0),
-            ("router_summary", "router", "assistant",
-             "Agent router: Classified intent as create_project, created project 'todo-app'.",
-             "router", 1),
-            ("planner1_summary", "planner1", "assistant",
-             "Agent planner: Created plan: business_analyst → architect → tester → builder → deployer.",
-             "planner", 2),
-            ("ba_summary", "ba", "assistant",
-             "Agent business_analyst: Defined requirements for todo app with CRUD operations, localStorage persistence, and responsive design. Created SPEC.md with user stories and acceptance criteria.",
-             "business_analyst", 3),
-            ("planner2_summary", "planner2", "assistant",
-             "Agent planner: Updated plan after BA completion. Next: architect.",
-             "planner", 4),
-            ("architect_summary", "architect", "assistant",
-             "Agent architect: Designed React+Vite architecture with component structure, custom hook state management, and REST-ready data layer. Created architecture.md and technical_design.md.",
-             "architect", 5),
-            ("planner3_summary", "planner3", "assistant",
-             "Agent planner: Updated plan after architect completion. Next: tester.",
-             "planner", 6),
-            ("tester_summary", "tester", "assistant",
-             "Agent tester: Generated 12 test files covering App integration, TodoItem unit tests, and TodoForm unit tests. All tests initially fail (TDD red phase). Created vitest config and test infrastructure.",
-             "tester", 7),
-            ("planner4_summary", "planner4", "assistant",
-             "Agent planner: Updated plan after tester completion. Next: builder.",
-             "planner", 8),
-            ("builder_error", "builder", "assistant",
-             "Agent builder: Failed — Sandbox execution failed: connection timeout after 120s",
-             "builder", 9),
-        ]
-
-        for msg_key, run_key, role, content, agent_id, seq in messages:
-            run_id = str(RUN_IDS[run_key]) if run_key else None
+            # -- Agent runs, LLM calls, tool calls, messages --
+            # User message (seq 0)
             cur.execute(
                 """INSERT INTO messages
                    (id, session_id, agent_run_id, role, content,
                     agent_id, sequence_number, created_at)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (
-                    str(MSG_IDS[msg_key]), str(SESSION_ID), run_id,
-                    role, content, agent_id, seq, NOW,
-                ),
+                (_uid(ns, 5000), session_id, None, "user", s["title"], None, 0, base_ts),
             )
-        print(f"  [OK] Inserted {len(messages)} messages")
+            total_msg += 1
+
+            planner_count = 0
+            for seq_idx, (agent_id, status, error_msg, planned_prompt) in enumerate(agents):
+                seq = seq_idx + 1
+                run_id = _uid(ns, seq)
+                run_ts = base_ts + timedelta(minutes=seq * 2)
+
+                # Track planner numbering for summary text
+                if agent_id == "planner":
+                    planner_count += 1
+
+                completed_at = run_ts if status == "completed" else None
+                is_active = status in ("completed", "failed", "running")
+                tok_p_run = 3000 if status == "completed" else (1500 if status == "running" else 0)
+                tok_c_run = 1000 if status == "completed" else (0 if status != "running" else 0)
+
+                cur.execute(
+                    """INSERT INTO agent_runs
+                       (id, session_id, agent_id, status, error_message,
+                        planned_prompt, sequence_number, iteration_count,
+                        prompt_tokens, completion_tokens, total_tokens,
+                        started_at, completed_at, created_at)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (run_id, session_id, agent_id, status, error_msg,
+                     planned_prompt, seq,
+                     1 if status in ("completed", "failed") else 0,
+                     tok_p_run, tok_c_run, tok_p_run + tok_c_run,
+                     run_ts if is_active else None, completed_at, run_ts),
+                )
+                total_runs += 1
+
+                # LLM call (not for pending agents)
+                llm_id = _uid(ns, 2000 + seq)
+                if is_active:
+                    cur.execute(
+                        """INSERT INTO llm_calls
+                           (id, session_id, agent_run_id, provider, model,
+                            prompt_tokens, completion_tokens, total_tokens,
+                            duration_ms, created_at)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (llm_id, session_id, run_id,
+                         "zai", "glm-4.7",
+                         tok_p_run, tok_c_run, tok_p_run + tok_c_run,
+                         random.randint(1500, 8000), run_ts),
+                    )
+                    total_llm += 1
+
+                # Tool calls
+                if status == "completed":
+                    tc_idx = 0
+                    # Router gets set_intent
+                    if agent_id == "router" and s["intent"]:
+                        cur.execute(
+                            """INSERT INTO tool_calls
+                               (id, session_id, agent_run_id, llm_call_id,
+                                mcp_server, tool_name, tool_call_index,
+                                arguments, status, result, created_at, executed_at)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            (_uid(ns, 3000 + seq * 10), session_id, run_id, llm_id,
+                             "builtin", "set_intent", 0,
+                             json.dumps({"intent": s["intent"],
+                                         "project_name": s.get("project_name")}),
+                             "completed", f"Intent set to {s['intent']}",
+                             run_ts, run_ts),
+                        )
+                        total_tc += 1
+                        tc_idx = 1
+
+                    # Planner gets make_plan
+                    if agent_id == "planner":
+                        # Build remaining steps from current position
+                        remaining = [(a, p) for a, st, _, p in agents[seq_idx + 1:]
+                                     if a != "planner"]
+                        steps = [{"agent_id": a, "prompt": p or f"Execute {a} tasks."}
+                                 for a, p in remaining[:4]]
+                        if steps:
+                            cur.execute(
+                                """INSERT INTO tool_calls
+                                   (id, session_id, agent_run_id, llm_call_id,
+                                    mcp_server, tool_name, tool_call_index,
+                                    arguments, status, result, created_at, executed_at)
+                                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                (_uid(ns, 3000 + seq * 10), session_id, run_id, llm_id,
+                                 "builtin", "make_plan", 0,
+                                 json.dumps({"steps": steps}),
+                                 "completed", f"Plan created with {len(steps)} steps",
+                                 run_ts, run_ts),
+                            )
+                            total_tc += 1
+                            tc_idx = 1
+
+                    # Every completed agent gets done
+                    summary = _agent_summary(agent_id, s, planner_count)
+                    cur.execute(
+                        """INSERT INTO tool_calls
+                           (id, session_id, agent_run_id, llm_call_id,
+                            mcp_server, tool_name, tool_call_index,
+                            arguments, status, result, created_at, executed_at)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (_uid(ns, 3000 + seq * 10 + 1), session_id, run_id, llm_id,
+                         "builtin", "done", tc_idx,
+                         json.dumps({"summary": summary}),
+                         "completed", "Agent completed",
+                         run_ts, run_ts),
+                    )
+                    total_tc += 1
+
+                    # Assistant message
+                    cur.execute(
+                        """INSERT INTO messages
+                           (id, session_id, agent_run_id, role, content,
+                            agent_id, sequence_number, created_at)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (_uid(ns, 5000 + seq), session_id, run_id,
+                         "assistant", summary, agent_id, seq, run_ts),
+                    )
+                    total_msg += 1
+
+                elif status == "failed":
+                    # Failed tool call (execute_coding_task for builder, generic for others)
+                    tool_name = "execute_coding_task" if agent_id == "builder" else "done"
+                    cur.execute(
+                        """INSERT INTO tool_calls
+                           (id, session_id, agent_run_id, llm_call_id,
+                            mcp_server, tool_name, tool_call_index,
+                            arguments, status, result, error_message,
+                            created_at, executed_at)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (_uid(ns, 3000 + seq * 10), session_id, run_id, llm_id,
+                         "builtin", tool_name, 0,
+                         json.dumps({"prompt": planned_prompt[:200]} if planned_prompt else {}),
+                         "failed", None, error_msg,
+                         run_ts, None),
+                    )
+                    total_tc += 1
+
+                    # Error message
+                    cur.execute(
+                        """INSERT INTO messages
+                           (id, session_id, agent_run_id, role, content,
+                            agent_id, sequence_number, created_at)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (_uid(ns, 5000 + seq), session_id, run_id,
+                         "assistant",
+                         f"Agent {agent_id}: Failed — {error_msg}",
+                         agent_id, seq, run_ts),
+                    )
+                    total_msg += 1
+
+                # running / pending agents: no tool calls or messages
 
         conn.commit()
-        print("  [OK] All records committed")
+        print(f"  [OK] Inserted {total_sessions} sessions, {total_runs} agent runs, "
+              f"{total_llm} LLM calls, {total_tc} tool calls, {total_msg} messages")
 
     except Exception:
         conn.rollback()
@@ -473,38 +600,68 @@ def populate_db(repo_info: dict):
         conn.close()
 
 
+def _agent_summary(agent_id: str, session: dict, planner_count: int) -> str:
+    """Generate a realistic done() summary for a completed agent."""
+    title = session["title"]
+    name = session.get("project_name") or "project"
+    summaries = {
+        "router": f"Agent router: Classified intent as {session.get('intent', 'general_chat')}, project '{name}'.",
+        "planner": f"Agent planner: Updated execution plan (iteration {planner_count}). Proceeding to next agent.",
+        "business_analyst": f"Agent business_analyst: Analyzed requirements for '{title}'. Created SPEC.md with user stories and acceptance criteria.",
+        "architect": f"Agent architect: Designed architecture for {name}. Created architecture.md and technical_design.md.",
+        "tester": f"Agent tester: Generated test suite for {name}. All tests initially fail (TDD red phase).",
+        "builder": f"Agent builder: Implemented {name}, all tests passing. Code committed and pushed.",
+        "deployer": f"Agent deployer: Deployed {name} container. Application is running.",
+        "developer": f"Agent developer: Applied code changes to {name}.",
+        "reviewer": f"Agent reviewer: Code review complete for {name}.",
+    }
+    return summaries.get(agent_id, f"Agent {agent_id}: Completed task for {name}.")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
     print("=" * 60)
-    print("Druppie — Seed: Builder Retry Test Data")
+    print("Druppie — Seed: Multi-Session Test Data")
     print("=" * 60)
 
-    # Step 1: Gitea
-    print("\n[STEP 1] Creating Gitea repo...")
-    repo_info = create_gitea_repo()
+    # Step 1: Gitea repos (only for sessions that have projects)
+    print(f"\n[STEP 1] Creating {sum(1 for s in SESSIONS if s['project_name'])} Gitea repos...")
+    repos: dict[int, dict] = {}
+    with httpx.Client(base_url=GITEA_URL, auth=(GITEA_USER, GITEA_PASS), timeout=15) as c:
+        ensure_gitea_user(c)
+        for s in SESSIONS:
+            if s["project_name"]:
+                repos[s["ns"]] = create_gitea_repo(c, s["project_name"])
 
     # Step 2: Database
-    print("\n[STEP 2] Populating database...")
-    populate_db(repo_info)
+    print(f"\n[STEP 2] Populating database ({len(SESSIONS)} sessions)...")
+    populate_db(repos)
 
     # Step 3: Summary
-    session_url = f"{FRONTEND_URL}/chat?session={SESSION_ID}&mode=inspect"
+    primary_id = _uid(PRIMARY_SESSION_NS, 0)
+    session_url = f"{FRONTEND_URL}/chat?session={primary_id}&mode=inspect"
     print("\n" + "=" * 60)
     print("[DONE] Seed data created successfully!")
     print("=" * 60)
     print()
-    print(f"  Session ID:  {SESSION_ID}")
-    print(f"  Session URL: {session_url}")
-    print(f"  Gitea repo:  {repo_info['repo_url']}")
-    print(f"  Project:     todo-app")
+    print(f"  Sessions created: {len(SESSIONS)}")
+    print(f"  Builder-retry:   {session_url}")
+    if PRIMARY_SESSION_NS in repos:
+        print(f"  Gitea repo:      {repos[PRIMARY_SESSION_NS]['repo_url']}")
     print()
-    print("  Next steps:")
+    print("  Session states:")
+    for s in SESSIONS:
+        sid = _uid(s["ns"], 0)[:8]
+        n_agents = len(s["agents"])
+        last = s["agents"][-1]
+        print(f"    {sid}.. {s['status']:18s} {n_agents:2d} agents  {s['title'][:50]}")
+    print()
+    print("  To test builder retry:")
     print("    1. Login as admin / Admin123!")
     print(f"    2. Open {session_url}")
     print("    3. Click retry on the failed builder agent run")
-    print("    4. Verify no 'InFailedSqlTransaction' error")
     print()
     print("=" * 60)
 
