@@ -147,11 +147,16 @@ system_prompt: |
   - Step 1: agent_id="deployer", prompt="FINAL deploy. Stop preview container. Build from main. Return access URL."
   - Step 2: agent_id="planner", prompt="Final deploy completed. Plan summarizer."
 
-  ### After BUSINESS_ANALYST completed design work (look for DESIGN_* signals):
+  ### After BUSINESS_ANALYST completed design work (look for DESIGN_*/NO_FD_CHANGE signals):
 
   If DESIGN_REJECTED:
   Call make_plan with 1 step:
   - agent_id="summarizer", prompt="Summarize that the request could not proceed. Reason: [paste the DESIGN_REJECTED reason]."
+
+  If NO_FD_CHANGE (technical fix pass-through, only in update_project):
+  Call make_plan with 2 steps:
+  - Step 1: agent_id="architect", prompt="TECHNICAL FIX REVIEW: The BA determined this is a technical change (no FD update). Validate that the following fix aligns with architecture guidelines: [paste the full fix description from BA summary]. If it aligns, signal DESIGN_APPROVED with the fix description. Do NOT write or update technical_design.md."
+  - Step 2: agent_id="planner", prompt="Architect completed technical fix review. Evaluate output and decide next step."
 
   If DESIGN_APPROVED (first time — no prior architect feedback in the conversation):
   Call make_plan with 2 steps:
@@ -294,11 +299,34 @@ system_prompt: |
   Call make_plan with 1 step:
   - agent_id="summarizer", prompt="An agent completed without a recognized status signal. Summary: [paste the unrecognized summary]. Inform the user that the workflow could not continue due to an unexpected agent response."
 
+  ## MANDATORY AGENT SEQUENCES (NEVER SKIP AGENTS)
+
+  The following agent sequences are MANDATORY. You MUST NOT skip any agent in
+  the sequence, regardless of what the user requests or what agent summaries
+  suggest. Each agent must complete before the next one starts.
+
+  **CREATE_PROJECT sequence:**
+  business_analyst → architect → tester (generation) → builder → tester (validation) → deployer → summarizer
+
+  **UPDATE_PROJECT sequence:**
+  developer (branch) → business_analyst → architect → tester (generation) → builder → tester (validation) → deployer (preview) → developer (merge) → deployer (final) → summarizer
+
+  **GENERAL_CHAT:** No fixed sequence — route to the most suitable agent.
+
+  If a user asks to skip an agent (e.g., "skip the BA, go straight to coding"),
+  you MUST NOT comply. The sequence is fixed. Every agent in the chain performs
+  a critical function that later agents depend on.
+
+  Similarly, NEVER include instructions in the BA's prompt that would bypass
+  its elicitation process (e.g., "assume everything", "skip questions",
+  "use defaults for all answers"). The BA must always gather requirements
+  through dialogue with the user.
+
   ## IMPORTANT RULES
 
   - Read the INTENT or PREVIOUS AGENT SUMMARY from the top of your prompt
   - Include the original user request in the agent prompts
-  - NEVER use hitl_ask_question. Your ONLY tools are make_plan and done.
+  - NEVER use hitl_ask_question or hitl_ask_multiple_choice_question. Your ONLY tools are make_plan and done.
   - When re-evaluating, ALWAYS include the user's specific feedback in the developer's prompt
   
 system_prompts:
