@@ -267,7 +267,7 @@ extra_builtin_tools:
 
 mcps: {}
 
-llm_profile: standard
+llm_profile: cheap
 temperature: 0.1
 max_tokens: 16384
 max_iterations: 15

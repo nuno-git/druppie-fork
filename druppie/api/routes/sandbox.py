@@ -6,12 +6,16 @@ Endpoints:
 - POST /sandbox-sessions/internal/register - Register sandbox session ownership (internal)
 - GET /sandbox-sessions/{session_id}/events - Fetch events for a sandbox session (frontend)
 - POST /sandbox-sessions/{sandbox_session_id}/complete - Webhook from control plane on completion
+
+Also provides a sandbox watchdog that detects stuck sandbox tool calls.
 """
 
+import asyncio
 import hashlib
 import hmac
 import os
 import time
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException, Request
@@ -27,6 +31,10 @@ from druppie.api.deps import (
 )
 from druppie.db.database import get_db
 from druppie.repositories import SandboxSessionRepository
+
+# Watchdog configuration
+SANDBOX_TIMEOUT_MINUTES = int(os.getenv("SANDBOX_TIMEOUT_MINUTES", "30"))
+SANDBOX_WATCHDOG_INTERVAL_SECONDS = int(os.getenv("SANDBOX_WATCHDOG_INTERVAL_SECONDS", "300"))  # 5 min
 
 logger = structlog.get_logger()
 
@@ -360,3 +368,115 @@ async def _resume_agent_after_sandbox(tool_call_id: UUID) -> None:
             logger.error("sandbox_resume_status_revert_failed", error=str(revert_error))
     finally:
         resume_db.close()
+
+
+# =============================================================================
+# WATCHDOG: Detect and fail stuck sandbox sessions
+# =============================================================================
+
+
+async def sandbox_watchdog_loop() -> None:
+    """Periodic background task that detects stuck WAITING_SANDBOX tool calls.
+
+    If a sandbox tool call has been waiting longer than SANDBOX_TIMEOUT_MINUTES,
+    the watchdog marks it as FAILED and updates the agent run / session statuses
+    so the session doesn't stay stuck forever.
+
+    Runs every SANDBOX_WATCHDOG_INTERVAL_SECONDS (default 5 min).
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.db.models.tool_call import ToolCall
+    from druppie.repositories import ExecutionRepository, SessionRepository
+    from druppie.domain.common import AgentRunStatus, SessionStatus
+    from druppie.execution.tool_executor import ToolCallStatus
+
+    logger.info(
+        "sandbox_watchdog_started",
+        timeout_minutes=SANDBOX_TIMEOUT_MINUTES,
+        interval_seconds=SANDBOX_WATCHDOG_INTERVAL_SECONDS,
+    )
+
+    while True:
+        await asyncio.sleep(SANDBOX_WATCHDOG_INTERVAL_SECONDS)
+
+        db = SessionLocal()
+        try:
+            cutoff = datetime.now(timezone.utc).timestamp() - (SANDBOX_TIMEOUT_MINUTES * 60)
+            cutoff_dt = datetime.fromtimestamp(cutoff, tz=timezone.utc)
+
+            stuck_tool_calls = (
+                db.query(ToolCall)
+                .filter(
+                    ToolCall.status == ToolCallStatus.WAITING_SANDBOX,
+                    ToolCall.created_at < cutoff_dt,
+                )
+                .all()
+            )
+
+            if not stuck_tool_calls:
+                continue
+
+            logger.warning(
+                "sandbox_watchdog_found_stuck",
+                count=len(stuck_tool_calls),
+                tool_call_ids=[str(tc.id) for tc in stuck_tool_calls],
+            )
+
+            execution_repo = ExecutionRepository(db)
+            session_repo = SessionRepository(db)
+
+            for tc in stuck_tool_calls:
+                try:
+                    execution_repo.update_tool_call(
+                        tc.id,
+                        status=ToolCallStatus.FAILED,
+                        error=f"Sandbox timed out after {SANDBOX_TIMEOUT_MINUTES} minutes (no webhook received)",
+                    )
+
+                    if tc.agent_run_id:
+                        agent_run = execution_repo.get_by_id(tc.agent_run_id)
+                        if agent_run and agent_run.status in (
+                            AgentRunStatus.PAUSED_SANDBOX,
+                            AgentRunStatus.RUNNING,
+                        ):
+                            execution_repo.update_status(
+                                agent_run.id,
+                                AgentRunStatus.FAILED,
+                                error_message=f"Sandbox timed out after {SANDBOX_TIMEOUT_MINUTES} min",
+                            )
+                            session_repo.update_status(
+                                agent_run.session_id,
+                                SessionStatus.FAILED,
+                                error_message=f"Sandbox timed out after {SANDBOX_TIMEOUT_MINUTES} min",
+                            )
+
+                    # Invalidate the git proxy key for this sandbox
+                    from druppie.db.models import SandboxSession
+                    sandbox_mapping = (
+                        db.query(SandboxSession)
+                        .filter(SandboxSession.tool_call_id == tc.id)
+                        .first()
+                    )
+                    if sandbox_mapping:
+                        sandbox_repo = SandboxSessionRepository(db)
+                        sandbox_repo.invalidate_proxy_key(sandbox_mapping.sandbox_session_id)
+
+                    db.commit()
+                    logger.warning(
+                        "sandbox_watchdog_timed_out_session",
+                        tool_call_id=str(tc.id),
+                        agent_run_id=str(tc.agent_run_id) if tc.agent_run_id else None,
+                        age_minutes=round((datetime.now(timezone.utc) - tc.created_at).total_seconds() / 60, 1),
+                    )
+                except Exception as e:
+                    db.rollback()
+                    logger.error(
+                        "sandbox_watchdog_failed_to_timeout",
+                        tool_call_id=str(tc.id),
+                        error=str(e),
+                    )
+
+        except Exception as e:
+            logger.error("sandbox_watchdog_error", error=str(e))
+        finally:
+            db.close()

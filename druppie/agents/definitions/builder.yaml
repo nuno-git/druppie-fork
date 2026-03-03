@@ -112,9 +112,10 @@ system_prompts:
   - workspace_state
 
 # MCP tools this agent can use
-# MCP coding tools commented out — builder delegates via execute_coding_task
-# coding: [read_file, write_file, batch_write_files, run_command, list_dir, delete_file, commit_and_push]
-mcps: []
+# Write operations delegated via execute_coding_task (sandbox).
+# Read-only tools kept so the agent can inspect context without sandbox overhead.
+mcps:
+  coding: [read_file, list_dir, get_git_status]
 
 extra_builtin_tools:
   - execute_coding_task

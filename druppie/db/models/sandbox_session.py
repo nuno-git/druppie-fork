@@ -11,8 +11,9 @@ from .base import Base, utcnow
 class SandboxSession(Base):
     """Maps sandbox control plane session IDs to Druppie users.
 
-    When the MCP coding server creates a sandbox session, it registers
-    the mapping here so the events proxy can verify ownership.
+    When the execute_coding_task builtin creates a sandbox session, it registers
+    the mapping here so the events proxy can verify ownership and the webhook
+    can look up the corresponding tool call.
     """
 
     __tablename__ = "sandbox_sessions"

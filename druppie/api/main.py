@@ -16,7 +16,7 @@ from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
 from druppie.agents import Agent
-from druppie.core.background_tasks import shutdown_background_tasks
+from druppie.core.background_tasks import create_tracked_task, shutdown_background_tasks
 
 logger = structlog.get_logger()
 
@@ -64,6 +64,10 @@ async def lifespan(app: FastAPI):
     # Recover zombie sessions (active sessions with running agent runs
     # that were interrupted by server shutdown/crash)
     _recover_zombie_sessions()
+
+    # Start sandbox watchdog (detects stuck WAITING_SANDBOX tool calls)
+    from druppie.api.routes.sandbox import sandbox_watchdog_loop
+    create_tracked_task(sandbox_watchdog_loop(), name="sandbox-watchdog")
 
     yield
 
