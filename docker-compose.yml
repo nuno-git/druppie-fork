@@ -574,6 +574,8 @@ services:
         until docker exec druppie-new-db pg_isready -U druppie; do sleep 1; done
         echo "Dropping application tables..."
         docker exec druppie-new-db psql -U druppie -d druppie -c "
+          DROP TABLE IF EXISTS tool_call_normalizations CASCADE;
+          DROP TABLE IF EXISTS llm_retries CASCADE;
           DROP TABLE IF EXISTS questions CASCADE;
           DROP TABLE IF EXISTS approvals CASCADE;
           DROP TABLE IF EXISTS llm_calls CASCADE;
