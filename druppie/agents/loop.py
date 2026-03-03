@@ -570,8 +570,14 @@ class AgentLoop:
             # Execute via ToolExecutor
             status = await self.tool_executor.execute(tool_call_id)
 
-            # Get updated tool call for result
-            tool_call_record = execution_repo.get_tool_call(tool_call_id)
+            # Get updated tool call for result.
+            # If a DB error inside tool execution poisoned the transaction,
+            # rollback first so we can still read the result.
+            try:
+                tool_call_record = execution_repo.get_tool_call(tool_call_id)
+            except Exception:
+                self.db.rollback()
+                tool_call_record = execution_repo.get_tool_call(tool_call_id)
 
             # Handle failed tool calls
             if status == ToolCallStatus.FAILED:

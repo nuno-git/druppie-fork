@@ -460,14 +460,25 @@ class Orchestrator:
                 context=context,
             )
         except Exception as e:
-            # Store error on agent_run before re-raising
+            # Store error on agent_run before re-raising.
+            # Rollback first — if the failure was a DB error, the transaction
+            # is in an ABORTED state and no further SQL will work until ROLLBACK.
             error_msg = f"{type(e).__name__}: {e}"
-            self.execution_repo.update_status(
-                agent_run_id,
-                AgentRunStatus.FAILED,
-                error_message=error_msg[:2000],
-            )
-            self.execution_repo.commit()
+            try:
+                self.execution_repo.db.rollback()
+                self.execution_repo.update_status(
+                    agent_run_id,
+                    AgentRunStatus.FAILED,
+                    error_message=error_msg[:2000],
+                )
+                self.execution_repo.commit()
+            except Exception as status_err:
+                logger.error(
+                    "failed_to_record_agent_run_error",
+                    session_id=str(session_id),
+                    agent_run_id=str(agent_run_id),
+                    status_error=str(status_err),
+                )
             logger.error(
                 "agent_run_failed",
                 session_id=str(session_id),
