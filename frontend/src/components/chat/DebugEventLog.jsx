@@ -14,10 +14,9 @@ import {
   Download,
   Braces,
   Check,
+  Clock,
   Terminal,
   MessageSquare,
-  ChevronDown,
-  ChevronRight,
   Bot,
   Zap,
   Hash,
@@ -81,6 +80,17 @@ const getToolContextHint = (tc) => {
   return null
 }
 
+const extractAllToolCalls = (agentRun) =>
+  (agentRun.llm_calls || []).flatMap(llm =>
+    (llm.tool_calls || []).map(tc => ({
+      tool_name: tc.tool_name,
+      status: tc.status,
+      arguments: parseArgs(tc.arguments),
+      result: tc.result || undefined,
+      error: tc.error || undefined,
+    }))
+  )
+
 // ─── Small shared components ─────────────────────────────────────────────────
 
 const StatusBadge = ({ status }) => {
@@ -100,8 +110,6 @@ const copyBtnClass = 'inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded
 // ─── Inspect Summary ─────────────────────────────────────────────────────────
 
 const InspectSummary = ({ agentRuns, data }) => {
-  const [expanded, setExpanded] = useState(false)
-
   const stats = useMemo(() => {
     let llmCallCount = 0
     let toolCallCount = 0
@@ -119,23 +127,21 @@ const InspectSummary = ({ agentRuns, data }) => {
   }, [agentRuns, data])
 
   return (
-    <div className="border-b bg-gray-50 flex-shrink-0">
-      <button onClick={() => setExpanded(!expanded)} className="w-full flex items-center gap-3 px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 transition-colors">
-        {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-        <span className="flex items-center gap-1"><Hash className="w-3 h-3" />{stats.agentCount} agents</span>
-        <span className="flex items-center gap-1"><Bot className="w-3 h-3" />{stats.llmCallCount} LLM calls</span>
-        <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{stats.toolCallCount} tools</span>
-        {stats.totalTokens > 0 && <span>{formatTokens(stats.totalTokens)} tokens</span>}
-      </button>
-      {expanded && Object.keys(stats.agentTokens).length > 0 && (
-        <div className="px-3 pb-2 flex flex-wrap gap-2">
+    <div className="border-b bg-gray-50 flex-shrink-0 px-3 py-1.5 flex flex-wrap items-center gap-3 text-xs text-gray-500">
+      <span className="flex items-center gap-1"><Hash className="w-3 h-3" />{stats.agentCount} agents</span>
+      <span className="flex items-center gap-1"><Bot className="w-3 h-3" />{stats.llmCallCount} LLM calls</span>
+      <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{stats.toolCallCount} tools</span>
+      {stats.totalTokens > 0 && <span>{formatTokens(stats.totalTokens)} tokens</span>}
+      {Object.keys(stats.agentTokens).length > 0 && (
+        <>
+          <span className="text-gray-300">|</span>
           {Object.entries(stats.agentTokens).sort((a, b) => b[1] - a[1]).map(([agent, tokens]) => (
-            <span key={agent} className="inline-flex items-center gap-1.5 bg-white border border-gray-200 rounded px-2 py-1 text-xs">
-              <span className="font-medium text-gray-700">{agent}</span>
-              <span className="text-gray-400">{formatTokens(tokens)} tok</span>
+            <span key={agent} className="inline-flex items-center gap-1">
+              <span className="font-medium text-gray-600">{agent}</span>
+              <span className="text-gray-400">{formatTokens(tokens)}</span>
             </span>
           ))}
-        </div>
+        </>
       )}
     </div>
   )
@@ -156,9 +162,12 @@ const OutlineAgentHeader = ({ agentRun, selected, onClick }) => {
   }, [agentRun])
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors border-l-2 ${
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
+      className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors border-l-2 cursor-pointer select-text ${
         selected ? `${colors.bg} border-l-current ${colors.accent}` : 'border-l-transparent hover:bg-gray-50'
       }`}
     >
@@ -172,29 +181,32 @@ const OutlineAgentHeader = ({ agentRun, selected, onClick }) => {
         {agentRun.status === 'running' && <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />}
         {agentRun.status === 'failed' && <span className="w-1.5 h-1.5 bg-red-400 rounded-full" />}
       </span>
-    </button>
+    </div>
   )
 }
 
 const OutlineToolLine = ({ tc, selected, onClick }) => {
-  const statusIcon = tc.status === 'completed' ? '✓' : tc.status === 'failed' ? '✗' : '⏳'
+  const StatusIcon = tc.status === 'completed' ? Check : tc.status === 'failed' ? X : Clock
   const statusColor = tc.status === 'completed' ? 'text-green-500' : tc.status === 'failed' ? 'text-red-500' : 'text-amber-500'
   const hint = getToolContextHint(tc)
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className={`w-full text-left pl-9 pr-3 py-1 flex items-center gap-1.5 text-[11px] transition-colors ${
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
+      className={`w-full text-left pl-9 pr-3 py-1 flex items-center gap-1.5 text-[11px] transition-colors cursor-pointer select-text ${
         selected ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50 text-gray-500'
       }`}
     >
-      <span className={`flex-shrink-0 ${statusColor}`}>{statusIcon}</span>
+      <StatusIcon className={`w-3 h-3 flex-shrink-0 ${statusColor}`} />
       <span className={`font-medium truncate ${selected ? 'text-blue-700' : 'text-gray-600'}`}>
         {formatToolName(tc.tool_name)}
       </span>
       {tc.question_id && <span className="bg-amber-50 text-amber-600 text-[9px] font-medium px-1 py-0.5 rounded flex-shrink-0">HITL</span>}
       {hint && <span className="text-gray-400 font-mono truncate ml-auto text-[10px]" title={hint}>{hint}</span>}
-    </button>
+    </div>
   )
 }
 
@@ -302,6 +314,7 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
               <span>Retry</span>
             </button>
           )}
+          <CopyButton text={extractAllToolCalls(agentRun)} label="Copy Tools" showLabel className={copyBtnClass} />
           <CopyButton text={agentRun} label="Copy JSON" showLabel className={copyBtnClass} />
         </span>
       </div>
@@ -380,6 +393,10 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
       {/* Tool calls — all shown with full details */}
       {toolCount > 0 && (
         <div className="space-y-3">
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            <span>{toolCount} tool call{toolCount !== 1 ? 's' : ''}</span>
+            <CopyButton text={llm.tool_calls} label="Copy all" showLabel className={copyBtnClass} />
+          </div>
           {llm.tool_calls.map((tc, ti) => (
             <ToolCallDetail key={tc.id || ti} tc={tc} />
           ))}
@@ -441,13 +458,13 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
 
 const ToolCallDetail = ({ tc }) => {
   const statusColor = tc.status === 'completed' ? 'text-green-600' : tc.status === 'failed' ? 'text-red-600' : 'text-amber-600'
-  const statusIcon = tc.status === 'completed' ? '✓' : tc.status === 'failed' ? '✗' : '⏳'
+  const StatusIcon = tc.status === 'completed' ? Check : tc.status === 'failed' ? X : Clock
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
       {/* Tool header */}
       <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-200 text-xs">
-        <span className={statusColor}>{statusIcon}</span>
+        <StatusIcon className={`w-3.5 h-3.5 ${statusColor}`} />
         <span className="font-medium text-gray-700">{formatToolName(tc.tool_name)}</span>
         <StatusBadge status={tc.status} />
         {tc.question_id && <span className="bg-amber-50 text-amber-700 text-[10px] font-medium px-1.5 py-0.5 rounded">HITL</span>}
@@ -458,7 +475,10 @@ const ToolCallDetail = ({ tc }) => {
       <div className="px-3 py-2 space-y-2 text-xs">
         {tc.arguments && (
           <div>
-            <span className="font-medium text-gray-400">Arguments</span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-gray-400">Arguments</span>
+              <CopyButton text={tc.arguments} label="Copy" className={copyBtnClass} />
+            </div>
             <pre className="mt-0.5 bg-gray-50 border border-gray-200 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-700">
               {formatValue(tc.arguments)}
             </pre>
@@ -467,7 +487,10 @@ const ToolCallDetail = ({ tc }) => {
 
         {tc.result && (
           <div>
-            <span className="font-medium text-gray-400">Result</span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-gray-400">Result</span>
+              <CopyButton text={tc.result} label="Copy" className={copyBtnClass} />
+            </div>
             <pre className="mt-0.5 bg-gray-50 border border-gray-200 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-700">
               {formatValue(tc.result)}
             </pre>
@@ -476,7 +499,10 @@ const ToolCallDetail = ({ tc }) => {
 
         {tc.error && (
           <div>
-            <span className="font-medium text-red-600">Error</span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-red-600">Error</span>
+              <CopyButton text={tc.error} label="Copy" className={copyBtnClass} />
+            </div>
             <pre className="mt-0.5 bg-red-50 border border-red-200 p-2 rounded overflow-auto max-h-32 whitespace-pre-wrap text-red-700">
               {tc.error}
             </pre>
