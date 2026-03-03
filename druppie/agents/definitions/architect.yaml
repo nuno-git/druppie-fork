@@ -504,6 +504,7 @@ system_prompt: |
   ```
 
   Include: Overview, Components, File Structure, Technology Choices.
+  Only use diagram types covered by the making-mermaid-diagrams skill.
   Be detailed enough that a developer can implement without asking questions.
 
   =============================================================================
