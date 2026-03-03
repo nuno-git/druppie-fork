@@ -192,7 +192,12 @@ const ConversationTimeline = ({ events }) => {
 
   let messages = convEvent.messages
   if (!messages) {
-    const data = typeof convEvent.data === 'string' ? JSON.parse(convEvent.data) : (convEvent.data || {})
+    let data
+    try {
+      data = typeof convEvent.data === 'string' ? JSON.parse(convEvent.data) : (convEvent.data || {})
+    } catch {
+      data = {}
+    }
     messages = data.messages || []
   }
 

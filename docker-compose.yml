@@ -363,6 +363,8 @@ services:
     depends_on:
       sandbox-control-plane:
         condition: service_healthy
+      sandbox-image-builder:
+        condition: service_completed_successfully
 
   # Builds the sandbox base image, then exits. Docker caches it — only rebuilds when Dockerfile changes.
   sandbox-image-builder:
@@ -488,6 +490,7 @@ services:
       MCP_ARCHIMATE_URL: http://mcp-archimate:9006
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      SANDBOX_MODEL: ${SANDBOX_MODEL:-}
       BACKEND_URL: http://druppie-backend-dev:8000
     volumes:
       - ./druppie:/app/druppie
@@ -559,6 +562,7 @@ services:
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      SANDBOX_MODEL: ${SANDBOX_MODEL:-}
       BACKEND_URL: http://druppie-backend:8000
     volumes:
       - druppie_new_workspace:/app/workspace
