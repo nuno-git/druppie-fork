@@ -208,12 +208,21 @@ async def sandbox_complete_webhook(
 
     Idempotent: returns 200 OK if the tool call was already processed.
     """
-    api_secret = os.environ.get("SANDBOX_API_SECRET", "sandbox-dev-secret")
+    # Look up the sandbox session first to get the per-session webhook secret
+    sandbox_repo = SandboxSessionRepository(db)
+    sandbox_mapping = sandbox_repo.get_by_sandbox_id(sandbox_session_id)
+    if not sandbox_mapping or not sandbox_mapping.webhook_secret:
+        logger.warning(
+            "sandbox_webhook_no_session_or_secret",
+            sandbox_session_id=sandbox_session_id,
+            has_mapping=sandbox_mapping is not None,
+        )
+        raise HTTPException(status_code=404, detail="Sandbox session not found or no webhook secret")
 
-    # Verify HMAC signature
+    # Verify HMAC signature using the per-session secret
     raw_body = await request.body()
     signature = request.headers.get("X-Signature", "")
-    if not _verify_webhook_signature(raw_body, signature, api_secret):
+    if not _verify_webhook_signature(raw_body, signature, sandbox_mapping.webhook_secret):
         logger.warning("sandbox_webhook_invalid_signature", sandbox_session_id=sandbox_session_id)
         raise HTTPException(status_code=403, detail="Invalid signature")
 
@@ -229,14 +238,10 @@ async def sandbox_complete_webhook(
     # Find the tool call for this sandbox session via SandboxSession ownership record
     from druppie.repositories import ExecutionRepository
     from druppie.execution.tool_executor import ToolCallStatus
-
-    sandbox_repo = SandboxSessionRepository(db)
-    sandbox_mapping = sandbox_repo.get_by_sandbox_id(sandbox_session_id)
-    if not sandbox_mapping or not sandbox_mapping.tool_call_id:
+    if not sandbox_mapping.tool_call_id:
         logger.warning(
             "sandbox_webhook_no_tool_call",
             sandbox_session_id=sandbox_session_id,
-            has_mapping=sandbox_mapping is not None,
         )
         raise HTTPException(status_code=404, detail="No waiting tool call found")
 
@@ -270,6 +275,7 @@ async def sandbox_complete_webhook(
     agent_output = ""
     event_count = 0
 
+    api_secret = os.environ.get("SANDBOX_API_SECRET", "sandbox-dev-secret")
     try:
         token = _generate_internal_token(api_secret)
         async with httpx.AsyncClient(timeout=30.0) as client:

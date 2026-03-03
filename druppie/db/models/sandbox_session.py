@@ -25,8 +25,11 @@ class SandboxSession(Base):
     tool_call_id = Column(UUID(as_uuid=True), ForeignKey("tool_calls.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
+    # Webhook signature secret (per-session, replaces global SANDBOX_API_SECRET for webhooks)
+    webhook_secret = Column(String(128), nullable=True)
+
     # Git proxy credentials isolation
-    git_proxy_key = Column(String(64), nullable=True, unique=True, index=True)
+    git_proxy_key = Column(String(128), nullable=True, unique=True, index=True)
     git_provider = Column(String(50), nullable=True)  # "gitea" or "github"
     git_repo_owner = Column(String(255), nullable=True)
     git_repo_name = Column(String(255), nullable=True)

@@ -933,6 +933,7 @@ async def execute_sandbox_coding_task(
     # never sees any git credentials.
     import secrets
     proxy_key = secrets.token_urlsafe(32)
+    webhook_secret = secrets.token_urlsafe(32)
     git_proxy_url = ""
     if sandbox_repo_name:
         git_proxy_url = f"{BACKEND_URL}/api/git-proxy/{proxy_key}/{sandbox_repo_owner}/{sandbox_repo_name}.git"
@@ -987,7 +988,7 @@ async def execute_sandbox_coding_task(
                 "source": "api",
                 "agent": agent,
                 "callbackUrl": callback_url,
-                "callbackSecret": SANDBOX_API_SECRET,
+                "callbackSecret": webhook_secret,
             }
 
             resp = await client.post(
@@ -1028,6 +1029,7 @@ async def execute_sandbox_coding_task(
                         git_provider="gitea",
                         git_repo_owner=sandbox_repo_owner,
                         git_repo_name=sandbox_repo_name,
+                        webhook_secret=webhook_secret,
                     )
                     db.commit()
                     logger.info(

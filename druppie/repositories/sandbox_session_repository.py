@@ -18,6 +18,7 @@ class SandboxSessionRepository(BaseRepository):
         git_provider: str | None = None,
         git_repo_owner: str | None = None,
         git_repo_name: str | None = None,
+        webhook_secret: str | None = None,
     ) -> SandboxSession:
         """Register a sandbox session ownership mapping.
 
@@ -35,6 +36,7 @@ class SandboxSessionRepository(BaseRepository):
             git_provider=git_provider,
             git_repo_owner=git_repo_owner,
             git_repo_name=git_repo_name,
+            webhook_secret=webhook_secret,
         )
         self.db.add(mapping)
         self.db.flush()
@@ -55,6 +57,13 @@ class SandboxSessionRepository(BaseRepository):
             .filter_by(git_proxy_key=proxy_key)
             .first()
         )
+
+    def get_webhook_secret(self, sandbox_session_id: str) -> str | None:
+        """Return the per-session webhook secret, or None if not found."""
+        session = self.get_by_sandbox_id(sandbox_session_id)
+        if session:
+            return session.webhook_secret
+        return None
 
     def update_tool_call_id(self, sandbox_session_id: str, tool_call_id: UUID) -> None:
         """Link a sandbox session to its tool call for direct lookup."""
