@@ -657,12 +657,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 ))}
               </div>
             )}
-            {data.project_name && (
+            {data.project && (
               <a
-                href={`/projects/${data.project_id}`}
+                href={`/projects/${data.project.id}`}
                 className="text-xs text-gray-400 hover:text-blue-500 flex items-center gap-1 transition-colors"
               >
-                {data.project_name}
+                {data.project.name}
               </a>
             )}
             <CopyJsonButton
