@@ -201,15 +201,19 @@ def _validate_with_mmdc(markdown: str) -> list[MermaidError]:
         block_lines = lines[block_start - 1 : block_end]
         block_content = "\n".join(block_lines)
 
+        tmp_input = None
+        tmp_output = None
         try:
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".mmd", delete=False
             ) as f:
                 f.write(block_content)
-                tmp_path = f.name
+                tmp_input = f.name
+
+            tmp_output = tmp_input.replace(".mmd", ".svg")
 
             result = subprocess.run(
-                ["mmdc", "-i", tmp_path, "-o", "/dev/null"],
+                ["mmdc", "-i", tmp_input, "-o", tmp_output],
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -234,7 +238,10 @@ def _validate_with_mmdc(markdown: str) -> list[MermaidError]:
         except Exception as e:
             logger.warning("mmdc validation failed: %s", e)
         finally:
-            Path(tmp_path).unlink(missing_ok=True)
+            if tmp_input:
+                Path(tmp_input).unlink(missing_ok=True)
+            if tmp_output:
+                Path(tmp_output).unlink(missing_ok=True)
 
     return errors
 
