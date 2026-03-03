@@ -257,14 +257,15 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
   }
 
   const allowOther = tc.tool_name === 'hitl_ask_multiple_choice_question'
-    && tc.arguments?.allow_other !== false
 
+  // If the LLM put the question text in context instead of question, promote it
+  const hasQuestion = !!tc.arguments?.question
   const questionData = {
     id: tc.question_id,
     agent_id: agentId,
-    question: tc.arguments?.question || 'Agent is asking a question',
+    question: tc.arguments?.question || tc.arguments?.context || 'Agent is asking a question',
     choices,
-    context: tc.arguments?.context,
+    context: hasQuestion ? tc.arguments?.context : undefined,
     allowOther,
   }
 
