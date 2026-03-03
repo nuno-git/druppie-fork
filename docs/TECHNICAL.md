@@ -19,6 +19,7 @@ Druppie is a full-stack platform composed of the following services:
 | MCP Docker | Python / FastMCP | 9002 | Container build, run, manage |
 | MCP File Search | Python / FastMCP | 9004 | Local file search within datasets |
 | MCP Web | Python / FastMCP | 9005 | Web browsing, URL fetching, web search |
+| MCP ArchiMate | Python / FastMCP | 9006 | ArchiMate model operations (list, read, search, export) |
 | Adminer | PHP | 8081 | Database admin UI |
 
 All services run in Docker containers on a shared bridge network (`druppie-new-network`). The backend communicates with MCP servers over HTTP using internal container hostnames.
@@ -172,10 +173,11 @@ druppie/
     mcp_config.yaml      # MCP server + tool + approval definitions
     tool_registry.py     # Unified tool registry with Pydantic models
   mcp-servers/
-    coding/              # Port 9001
+    coding/              # Port 9001 (includes mermaid_validator.py)
     docker/              # Port 9002
     filesearch/          # Port 9004
     web/                 # Port 9005
+    archimate/           # Port 9006
 ```
 
 ---
@@ -425,6 +427,7 @@ File and git operations within workspace sandboxes.
 | `merge_pull_request` | Developer | Merge PR and delete branch |
 | `merge_to_main` | Architect | Direct merge to main branch |
 | `execute_coding_task` | None | Execute coding task in isolated sandbox |
+| `make_design` | None (overridable per agent) | Write design document (FD/TD) with Mermaid syntax validation; file is rejected if Mermaid contains errors |
 | `revert_to_commit` | None (internal) | Hard reset + force push to a target commit |
 | `close_pull_request` | None (internal) | Close a PR on Gitea without merging |
 
@@ -460,7 +463,18 @@ Web browsing and local file search within datasets.
 
 Local file search capability over mounted dataset volumes.
 
-### 6.6 Declarative Parameter Injection
+### 6.6 ArchiMate Server (port 9006)
+
+ArchiMate model operations. Reads `.archimate` files from a mounted models directory.
+
+| Tool | Approval | Description |
+|------|----------|-------------|
+| `list_models` | None | List available ArchiMate models |
+| `read_model` | None | Read a full ArchiMate model |
+| `search_model` | None | Search for elements by query |
+| `export_view` | None | Export an ArchiMate view |
+
+### 6.7 Declarative Parameter Injection
 
 MCP tools can have parameters auto-injected from the session/project context. Injected parameters are marked `hidden: true` and are removed from the LLM-visible tool schema. This prevents the LLM from needing to know internal IDs.
 
@@ -477,7 +491,7 @@ inject:
     tools: [read_file, write_file, list_dir, ...]
 ```
 
-### 6.7 Layered Approval System
+### 6.8 Layered Approval System
 
 Approvals have two layers:
 
@@ -513,6 +527,7 @@ mcp-coding          FastMCP           :9001   File/git operations
 mcp-docker          FastMCP           :9002   Docker operations
 mcp-filesearch      FastMCP           :9004   File search
 mcp-web             FastMCP           :9005   Web browsing
+mcp-archimate       FastMCP           :9006   ArchiMate models
 adminer             Adminer           :8081   DB admin UI
 ```
 
@@ -609,8 +624,8 @@ Nine agents are defined as YAML files in `druppie/agents/definitions/`:
 |-------|------|---------------|------------|--------|
 | `router` | Classifies user intent, selects project | `set_intent` | None | — |
 | `planner` | Creates execution plan (which agents to run) | `make_plan` | None | — |
-| `business_analyst` | Gathers requirements from user | Default | None (HITL only) | — |
-| `architect` | Designs system architecture, writes specs | Default | `coding` | — |
+| `business_analyst` | Gathers requirements from user | Default | `coding` (read_file, make_design, list_dir) | `making-mermaid-diagrams` |
+| `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, make_design, list_dir), `archimate` | `making-mermaid-diagrams` |
 | `developer` | Writes code, commits, creates PRs | `invoke_skill` | `coding` | `code-review`, `git-workflow` |
 | `reviewer` | Reviews code quality | Default | `coding` | — |
 | `tester` | Writes and runs tests | Default | `coding`, `docker` | — |
