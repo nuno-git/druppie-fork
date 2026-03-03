@@ -42,8 +42,8 @@ export const AGENT_CONFIG = {
   test_builder_agent: { name: 'Test Builder', icon: CheckCircle, color: 'cyan', description: 'Test generation', thinkingLabel: 'Writing tests...' },
   test_executor: { name: 'Test Executor', icon: CheckCircle, color: 'cyan', description: 'Running & fixing tests', thinkingLabel: 'Running tests...' },
   test_executor_agent: { name: 'Test Executor', icon: CheckCircle, color: 'cyan', description: 'Running & fixing tests', thinkingLabel: 'Running tests...' },
-  builder_planner: { name: 'Builder Planner', icon: ClipboardList, color: 'indigo', description: 'Implementation planning', thinkingLabel: 'Creating implementation plan...' },
-  builder_planner_agent: { name: 'Builder Planner', icon: ClipboardList, color: 'indigo', description: 'Implementation planning', thinkingLabel: 'Creating implementation plan...' },
+  builder_planner: { name: 'Builder Planner', icon: ClipboardList, color: 'indigo', description: 'Implementation planning', thinkingLabel: 'Creating implementation plan...', surfaceFileWrites: true },
+  builder_planner_agent: { name: 'Builder Planner', icon: ClipboardList, color: 'indigo', description: 'Implementation planning', thinkingLabel: 'Creating implementation plan...', surfaceFileWrites: true },
 }
 
 export const getAgentConfig = (agentId) => {
@@ -85,6 +85,10 @@ const TOOL_LABELS = {
   'coding:list_directory': 'List Directory',
   'search_files': 'Search Files',
   'coding:search_files': 'Search Files',
+  'install_test_dependencies': 'Install Dependencies',
+  'coding:install_test_dependencies': 'Install Dependencies',
+  'run_tests': 'Run Tests',
+  'coding:run_tests': 'Run Tests',
   'hitl_ask': 'Ask Question',
   'hitl:hitl_ask': 'Ask Question',
 }

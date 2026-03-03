@@ -24,9 +24,13 @@ import {
   extractSurfacedApprovals,
   extractQuestions,
   extractTestResults,
+  extractSurfacedFileWrites,
+  extractDependencyInstalls,
   findPendingQuestion,
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
+import FileReviewCard from './FileReviewCard'
+import DependencyInstallCard from './DependencyInstallCard'
 
 // --- Tool label helper ---
 
@@ -293,11 +297,13 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
   const resolvedItems = hasFollowingMessage ? [] : extractSurfacedApprovals(run.llm_calls)
     .filter((item) => item.tc.approval.status !== 'pending')
   const testResults = extractTestResults(run)
+  const surfacedFiles = extractSurfacedFileWrites(run)
+  const depInstalls = extractDependencyInstalls(run)
 
   // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
 
-  if (!showAgentTrace && resolvedItems.length === 0) return null
+  if (!showAgentTrace && resolvedItems.length === 0 && surfacedFiles.length === 0 && depInstalls.length === 0 && testResults.length === 0) return null
 
   const config = getAgentConfig(run.agent_id)
   const AgentIcon = config.icon
@@ -320,6 +326,16 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
           {resolvedItems.map((item, i) => (
             <InlineApproval key={i} tc={item.tc} sessionId={sessionId} />
           ))}
+        </div>
+      )}
+      {surfacedFiles.length > 0 && (
+        <div className="mt-2">
+          <FileReviewCard files={surfacedFiles} />
+        </div>
+      )}
+      {depInstalls.length > 0 && (
+        <div className="mt-2">
+          <DependencyInstallCard installs={depInstalls} />
         </div>
       )}
       {testResults.length > 0 && (
@@ -704,9 +720,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 const resolvedItems = hasFollowingMessage ? []
                   : extractSurfacedApprovals(entry.agent_run.llm_calls)
                       .filter((item) => item.tc.approval.status !== 'pending')
+                const surfacedFiles = extractSurfacedFileWrites(entry.agent_run)
+                const depInstalls = extractDependencyInstalls(entry.agent_run)
+                const testResults = extractTestResults(entry.agent_run)
                 // Show completed runs without a following message (e.g. architect)
                 const isCompletedWithoutMessage = !hasFollowingMessage && entry.agent_run.status !== 'running'
-                if (resolvedItems.length === 0 && questions.length === 0 && !isCompletedWithoutMessage) {
+                if (resolvedItems.length === 0 && questions.length === 0 && surfacedFiles.length === 0 && depInstalls.length === 0 && testResults.length === 0 && !isCompletedWithoutMessage) {
                   return null
                 }
                 return (
