@@ -5,6 +5,9 @@ WORKDIR /app
 # Install git, curl, and Node.js/npm for git operations, health checks, and JS test runners
 RUN apt-get update && apt-get install -y git curl nodejs npm && rm -rf /var/lib/apt/lists/*
 
+# Install Mermaid CLI for structural diagram validation
+RUN npm install -g @mermaid-js/mermaid-cli
+
 # Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
