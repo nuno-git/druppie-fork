@@ -777,7 +777,7 @@ mcps:
 # When business_analyst calls write_file (to create functional_design.md),
 # it requires approval from someone with the "business_analyst" role.
 
-llm_profile: standard
+llm_profile: cheap
 temperature: 0.2
 max_tokens: 100000
 max_iterations: 50

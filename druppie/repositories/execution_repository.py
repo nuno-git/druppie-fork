@@ -385,30 +385,6 @@ class ExecutionRepository(BaseRepository):
             .all()
         )
 
-    def find_by_sandbox_session_id(self, sandbox_session_id: str) -> ToolCall | None:
-        """Find a tool call by its sandbox_session_id.
-
-        DEPRECATED: Use SandboxSessionRepository.get_by_sandbox_id() to get the
-        tool_call_id directly. This method is kept as a fallback for sandbox
-        sessions registered before the tool_call_id column was added.
-        """
-        import json
-
-        tool_calls = (
-            self.db.query(ToolCall)
-            .filter(ToolCall.status == "waiting_sandbox")
-            .all()
-        )
-        for tc in tool_calls:
-            if tc.result:
-                try:
-                    result = json.loads(tc.result) if isinstance(tc.result, str) else tc.result
-                    if isinstance(result, dict) and result.get("sandbox_session_id") == sandbox_session_id:
-                        return tc
-                except (json.JSONDecodeError, TypeError):
-                    continue
-        return None
-
     def update_tool_call(
         self,
         tool_call_id: UUID,

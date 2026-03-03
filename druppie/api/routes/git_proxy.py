@@ -26,6 +26,7 @@ router = APIRouter()
 GITEA_INTERNAL_URL = os.getenv("GITEA_INTERNAL_URL", os.getenv("GITEA_URL", "http://gitea:3000"))
 GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
 GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "")
+MAX_GIT_BODY_SIZE = 100 * 1024 * 1024  # 100 MB
 
 
 @router.api_route(
@@ -74,8 +75,15 @@ async def git_proxy(
     if request.url.query:
         target_url += f"?{request.url.query}"
 
+    # Reject oversized payloads to prevent memory exhaustion
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_GIT_BODY_SIZE:
+        raise HTTPException(status_code=413, detail="Request body too large")
+
     # Forward the request to Gitea with admin auth
     body = await request.body()
+    if len(body) > MAX_GIT_BODY_SIZE:
+        raise HTTPException(status_code=413, detail="Request body too large")
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.request(

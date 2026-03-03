@@ -35,6 +35,11 @@ GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
 GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "")
 GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
 SANDBOX_MODEL = os.getenv("SANDBOX_MODEL", "zai-coding-plan/glm-4.7")
+if not os.getenv("SANDBOX_MODEL"):
+    logger.warning(
+        "SANDBOX_MODEL not set — falling back to default 'zai-coding-plan/glm-4.7'. "
+        "Set SANDBOX_MODEL in .env to match your LLM provider."
+    )
 
 
 def _generate_sandbox_auth_token() -> str:
@@ -1036,6 +1041,16 @@ async def execute_sandbox_coding_task(
                         sandbox_session_id=sandbox_session_id,
                         error=str(e),
                     )
+                    # Best-effort: cancel the orphaned sandbox session on the control plane
+                    try:
+                        async with httpx.AsyncClient(timeout=10.0) as cancel_client:
+                            await cancel_client.delete(
+                                f"{base_url}/sessions/{sandbox_session_id}",
+                                headers={"Authorization": f"Bearer {_generate_sandbox_auth_token()}"},
+                            )
+                        logger.info("execute_coding_task: cancelled orphaned sandbox", sandbox_session_id=sandbox_session_id)
+                    except Exception as cancel_err:
+                        logger.warning("execute_coding_task: failed to cancel orphaned sandbox", error=str(cancel_err))
                     return {
                         "success": False,
                         "error": f"Failed to register sandbox ownership: {e}",
