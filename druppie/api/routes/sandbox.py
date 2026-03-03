@@ -342,6 +342,9 @@ async def _resume_agent_after_sandbox(tool_call_id: UUID) -> None:
     from druppie.db.database import SessionLocal
     from druppie.domain.common import AgentRunStatus, SessionStatus
 
+    # Fresh DB session: this runs as a background task after the webhook request
+    # has completed and its DB session has been closed. The rollback in the
+    # except block only affects this session, not the webhook's committed data.
     resume_db = SessionLocal()
     try:
         orchestrator = Orchestrator(
@@ -391,7 +394,6 @@ async def sandbox_watchdog_loop() -> None:
     Runs every SANDBOX_WATCHDOG_INTERVAL_SECONDS (default 5 min).
     """
     from druppie.db.database import SessionLocal
-    from druppie.db.models.tool_call import ToolCall
     from druppie.repositories import ExecutionRepository, SessionRepository
     from druppie.domain.common import AgentRunStatus, SessionStatus
     from druppie.execution.tool_executor import ToolCallStatus
@@ -410,14 +412,11 @@ async def sandbox_watchdog_loop() -> None:
             cutoff = datetime.now(timezone.utc).timestamp() - (SANDBOX_TIMEOUT_MINUTES * 60)
             cutoff_dt = datetime.fromtimestamp(cutoff, tz=timezone.utc)
 
-            stuck_tool_calls = (
-                db.query(ToolCall)
-                .filter(
-                    ToolCall.status == ToolCallStatus.WAITING_SANDBOX,
-                    ToolCall.created_at < cutoff_dt,
-                )
-                .all()
-            )
+            execution_repo = ExecutionRepository(db)
+            session_repo = SessionRepository(db)
+            sandbox_repo = SandboxSessionRepository(db)
+
+            stuck_tool_calls = execution_repo.get_stuck_sandbox_tool_calls(cutoff_dt)
 
             if not stuck_tool_calls:
                 continue
@@ -427,9 +426,6 @@ async def sandbox_watchdog_loop() -> None:
                 count=len(stuck_tool_calls),
                 tool_call_ids=[str(tc.id) for tc in stuck_tool_calls],
             )
-
-            execution_repo = ExecutionRepository(db)
-            session_repo = SessionRepository(db)
 
             for tc in stuck_tool_calls:
                 try:
@@ -457,14 +453,8 @@ async def sandbox_watchdog_loop() -> None:
                             )
 
                     # Invalidate the git proxy key for this sandbox
-                    from druppie.db.models import SandboxSession
-                    sandbox_mapping = (
-                        db.query(SandboxSession)
-                        .filter(SandboxSession.tool_call_id == tc.id)
-                        .first()
-                    )
+                    sandbox_mapping = sandbox_repo.get_by_tool_call_id(tc.id)
                     if sandbox_mapping:
-                        sandbox_repo = SandboxSessionRepository(db)
                         sandbox_repo.invalidate_proxy_key(sandbox_mapping.sandbox_session_id)
 
                     db.commit()

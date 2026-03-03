@@ -24,6 +24,8 @@ class SandboxSession(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     tool_call_id = Column(UUID(as_uuid=True), ForeignKey("tool_calls.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
 
     # Webhook signature secret (per-session, replaces global SANDBOX_API_SECRET for webhooks)
     webhook_secret = Column(String(128), nullable=True)
