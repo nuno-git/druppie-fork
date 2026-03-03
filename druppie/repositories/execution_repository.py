@@ -863,6 +863,18 @@ class ExecutionRepository(BaseRepository):
     # ZOMBIE SESSION RECOVERY
     # =========================================================================
 
+    def get_stuck_sandbox_tool_calls(self, cutoff_dt: datetime) -> list:
+        """Find WAITING_SANDBOX tool calls older than cutoff_dt."""
+        from druppie.execution.tool_executor import ToolCallStatus
+        return (
+            self.db.query(ToolCall)
+            .filter(
+                ToolCall.status == ToolCallStatus.WAITING_SANDBOX,
+                ToolCall.created_at < cutoff_dt,
+            )
+            .all()
+        )
+
     def recover_zombie_sessions(self) -> list[UUID]:
         """Find and recover zombie sessions after a server restart.
 

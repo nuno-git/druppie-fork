@@ -1,5 +1,6 @@
 """Sandbox session repository for ownership lookups."""
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from .base import BaseRepository
@@ -72,9 +73,18 @@ class SandboxSessionRepository(BaseRepository):
             session.tool_call_id = tool_call_id
             self.db.flush()
 
+    def get_by_tool_call_id(self, tool_call_id: UUID) -> SandboxSession | None:
+        """Look up a sandbox session by its linked tool call ID."""
+        return (
+            self.db.query(SandboxSession)
+            .filter_by(tool_call_id=tool_call_id)
+            .first()
+        )
+
     def invalidate_proxy_key(self, sandbox_session_id: str) -> None:
         """Clear the git proxy key so the proxy URL stops working."""
         session = self.get_by_sandbox_id(sandbox_session_id)
         if session and session.git_proxy_key:
             session.git_proxy_key = None
+            session.completed_at = datetime.now(timezone.utc)
             self.db.flush()
