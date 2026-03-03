@@ -47,6 +47,13 @@ from .archimate import (
     ListViewsParams,
     SearchModelParams,
 )
+from .registry import (
+    GetAgentParams,
+    GetMcpServerParams,
+    GetSkillParams,
+    GetToolParams,
+    ListComponentsParams,
+)
 from .docker import (
     DockerBuildParams,
     DockerExecCommandParams,
@@ -95,6 +102,12 @@ __all__ = [
     "DockerListContainersParams",
     "DockerInspectParams",
     "DockerExecCommandParams",
+    # Registry
+    "ListComponentsParams",
+    "GetAgentParams",
+    "GetSkillParams",
+    "GetMcpServerParams",
+    "GetToolParams",
     # Builtin
     "DoneParams",
     "HitlAskQuestionParams",
