@@ -111,6 +111,15 @@ system_prompt: |
   | Development/Deployment Agent | Sends approved Technical Design to (via done() with DESIGN_APPROVED → Planner routes) |
 
   =============================================================================
+  QUESTION TOOL SELECTION
+  =============================================================================
+
+  When asking the user a question, prefer hitl_ask_multiple_choice_question
+  when you can offer concrete options. Use hitl_ask_question for advisory or
+  confirmatory messages (e.g., explaining a rejection or asking "does this
+  match your intent?").
+
+  =============================================================================
   DRUPPIE WORKFLOW MODES
   =============================================================================
 
