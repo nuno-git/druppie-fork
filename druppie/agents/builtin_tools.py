@@ -976,44 +976,10 @@ async def execute_sandbox_coding_task(
                 repo=f"{sandbox_repo_owner}/{sandbox_repo_name}",
             )
 
-            # Step 2: Send the task prompt with callback info
-            callback_url = f"{BACKEND_URL}/api/sandbox-sessions/{sandbox_session_id}/complete"
-
-            prompt_body = {
-                "content": task,
-                "authorId": "druppie-agent",
-                "source": "api",
-                "agent": agent,
-                "callbackUrl": callback_url,
-                "callbackSecret": webhook_secret,
-            }
-
-            resp = await client.post(
-                f"{base_url}/sessions/{sandbox_session_id}/prompt",
-                json=prompt_body,
-                headers={
-                    "Authorization": f"Bearer {_generate_sandbox_auth_token()}",
-                    "Content-Type": "application/json",
-                },
-            )
-
-            if resp.status_code not in (200, 201):
-                return {
-                    "success": False,
-                    "error": f"Failed to send prompt: {resp.status_code} {resp.text}",
-                    "sandbox_session_id": sandbox_session_id,
-                }
-
-            prompt_message_id = resp.json().get("messageId", "")
-            logger.info(
-                "execute_coding_task: prompt sent, pausing for webhook",
-                sandbox_session_id=sandbox_session_id,
-                message_id=prompt_message_id,
-            )
-
-            # Step 3: Register ownership directly via repository
-            # This must succeed — without ownership the webhook cannot find
-            # the tool call and the session would be stuck forever.
+            # Step 2: Register ownership BEFORE sending the prompt.
+            # The prompt triggers sandbox execution which fires a webhook on
+            # completion. Ownership must exist in the DB before the webhook
+            # can arrive, otherwise it 404s and the session is stuck forever.
             try:
                 from druppie.repositories.sandbox_session_repository import SandboxSessionRepository
                 sandbox_repo = SandboxSessionRepository(db)
@@ -1056,6 +1022,43 @@ async def execute_sandbox_coding_task(
                     "error": f"Failed to register sandbox ownership: {e}",
                     "sandbox_session_id": sandbox_session_id,
                 }
+
+            # Step 3: Send the task prompt with callback info.
+            # Ownership is already in the DB, so even if the sandbox completes
+            # instantly the webhook will find the record.
+            callback_url = f"{BACKEND_URL}/api/sandbox-sessions/{sandbox_session_id}/complete"
+
+            prompt_body = {
+                "content": task,
+                "authorId": "druppie-agent",
+                "source": "api",
+                "agent": agent,
+                "callbackUrl": callback_url,
+                "callbackSecret": webhook_secret,
+            }
+
+            resp = await client.post(
+                f"{base_url}/sessions/{sandbox_session_id}/prompt",
+                json=prompt_body,
+                headers={
+                    "Authorization": f"Bearer {_generate_sandbox_auth_token()}",
+                    "Content-Type": "application/json",
+                },
+            )
+
+            if resp.status_code not in (200, 201):
+                return {
+                    "success": False,
+                    "error": f"Failed to send prompt: {resp.status_code} {resp.text}",
+                    "sandbox_session_id": sandbox_session_id,
+                }
+
+            prompt_message_id = resp.json().get("messageId", "")
+            logger.info(
+                "execute_coding_task: prompt sent, pausing for webhook",
+                sandbox_session_id=sandbox_session_id,
+                message_id=prompt_message_id,
+            )
 
             # Return with waiting_sandbox status — caller will pause the agent
             return {
