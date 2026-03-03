@@ -5,12 +5,16 @@ PR closure, used by the backend during retry-from-run operations.
 """
 
 import logging
+import re
 import subprocess
 from pathlib import Path
 
 import httpx
 
 logger = logging.getLogger("coding-mcp")
+
+# Matches a valid git commit reference: 7-40 hex chars, optionally followed by ~N
+_COMMIT_REF_RE = re.compile(r"^[0-9a-f]{7,40}(~\d+)?$")
 
 
 def revert_to_commit(
@@ -35,6 +39,13 @@ def revert_to_commit(
         error on failure.
     """
     cwd = str(workspace_path)
+
+    # Validate target_commit looks like a real commit reference
+    if not target_commit or not _COMMIT_REF_RE.match(target_commit):
+        return {
+            "success": False,
+            "error": f"Invalid target_commit: {target_commit!r}. Expected a hex SHA (7-40 chars), optionally with ~N suffix.",
+        }
 
     # Capture current HEAD
     head_result = subprocess.run(

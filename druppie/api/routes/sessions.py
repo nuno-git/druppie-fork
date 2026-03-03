@@ -260,15 +260,21 @@ async def retry_from_run(
     )
 
     # Spawn background task
-    create_session_task(
-        session_id,
-        _run_retry_background(
-            session_id=session_id,
-            agent_run_id=agent_run_id,
-            planned_prompt=body.planned_prompt if body else None,
-        ),
-        name=f"retry-{session_id}",
-    )
+    try:
+        create_session_task(
+            session_id,
+            _run_retry_background(
+                session_id=session_id,
+                agent_run_id=agent_run_id,
+                planned_prompt=body.planned_prompt if body else None,
+            ),
+            name=f"retry-{session_id}",
+        )
+    except SessionTaskConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
+        )
 
     return {
         "success": True,
@@ -334,11 +340,17 @@ async def resume_session(
     )
 
     # Spawn background task
-    create_session_task(
-        session_id,
-        _run_resume_background(session_id=session_id),
-        name=f"resume-{session_id}",
-    )
+    try:
+        create_session_task(
+            session_id,
+            _run_resume_background(session_id=session_id),
+            name=f"resume-{session_id}",
+        )
+    except SessionTaskConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
+        )
 
     return {
         "success": True,

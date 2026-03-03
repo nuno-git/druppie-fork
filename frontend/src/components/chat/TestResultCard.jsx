@@ -195,10 +195,10 @@ const TestResultCard = ({ testResults }) => {
 
         {/* Ratio bar */}
         <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden flex">
-          {totalPassed > 0 && (
+          {totalTests > 0 && totalPassed > 0 && (
             <div className="h-full bg-green-500" style={{ width: `${(totalPassed / totalTests) * 100}%` }} />
           )}
-          {totalFailed > 0 && (
+          {totalTests > 0 && totalFailed > 0 && (
             <div className="h-full bg-red-500" style={{ width: `${(totalFailed / totalTests) * 100}%` }} />
           )}
         </div>

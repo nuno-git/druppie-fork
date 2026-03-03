@@ -466,6 +466,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       queryClient.refetchQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
+    onError: (err) => {
+      console.error('Cancel failed:', err)
+    },
   })
 
   const resumeMutation = useMutation({
@@ -473,6 +476,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     onSuccess: () => {
       queryClient.refetchQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
+    onError: (err) => {
+      console.error('Resume failed:', err)
     },
   })
 
@@ -567,10 +573,14 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     const trimmed = continueInput.trim()
     if (!trimmed) return
     if (pendingQuestion) {
-      answerQuestion(pendingQuestion.tc.question_id, trimmed).then(() => {
-        setContinueInput('')
-        queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
-      })
+      answerQuestion(pendingQuestion.tc.question_id, trimmed)
+        .then(() => {
+          setContinueInput('')
+          queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+        })
+        .catch((err) => {
+          console.error('Answer question failed:', err)
+        })
       return
     }
     continueMutation.mutate(trimmed)
@@ -638,6 +648,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 )}
                 Stop
               </button>
+            )}
+            {(cancelMutation.isError || resumeMutation.isError) && (
+              <span className="text-xs text-red-600">
+                {cancelMutation.error?.message || resumeMutation.error?.message || 'Action failed'}
+              </span>
             )}
             {canDebug && (
               <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-xs">

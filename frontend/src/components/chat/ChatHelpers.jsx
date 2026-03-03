@@ -194,8 +194,10 @@ export const extractTestResults = (agentRun) => {
   agentRun?.llm_calls?.forEach((llm) => {
     llm.tool_calls?.forEach((tc) => {
       if (tc.tool_name === 'run_tests' && tc.status === 'completed' && tc.result) {
-        const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
-        if (raw) results.push(raw)
+        try {
+          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+          if (raw) results.push(raw)
+        } catch { /* malformed JSON — skip */ }
       }
     })
   })
@@ -318,8 +320,10 @@ export const extractDependencyInstalls = (agentRun) => {
   agentRun?.llm_calls?.forEach((llm) => {
     llm.tool_calls?.forEach((tc) => {
       if (tc.tool_name?.includes('install_test_dependencies') && tc.status === 'completed' && tc.result) {
-        const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
-        if (raw) results.push(raw)
+        try {
+          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+          if (raw) results.push(raw)
+        } catch { /* malformed JSON — skip */ }
       }
     })
   })
