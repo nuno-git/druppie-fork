@@ -951,7 +951,7 @@ async def execute_sandbox_coding_task(
                 "anthropic": "ANTHROPIC_API_KEY",
             }
             _provider_base_urls = {
-                "zai": os.getenv("ZAI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"),
+                "zai": os.getenv("ZAI_BASE_URL", "https://open.bigmodel.cn/api/paas"),
                 "deepseek": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
                 "deepinfra": os.getenv("DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"),
                 "openai": "https://api.openai.com",
