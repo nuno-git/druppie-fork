@@ -45,10 +45,6 @@ class RegisterSandboxSessionRequest(BaseModel):
     sandbox_session_id: str
     user_id: str
     session_id: str | None = None
-    git_proxy_key: str | None = None
-    git_provider: str | None = None
-    git_repo_owner: str | None = None
-    git_repo_name: str | None = None
 
 
 @router.post("/sandbox-sessions/internal/register")
@@ -64,10 +60,6 @@ async def register_sandbox_session(
         sandbox_session_id=body.sandbox_session_id,
         user_id=UUID(body.user_id),
         session_id=session_uuid,
-        git_proxy_key=body.git_proxy_key,
-        git_provider=body.git_provider,
-        git_repo_owner=body.git_repo_owner,
-        git_repo_name=body.git_repo_name,
     )
     db.commit()
     logger.info(
@@ -286,8 +278,8 @@ async def sandbox_complete_webhook(
     except Exception as e:
         logger.warning("sandbox_webhook_event_fetch_failed", error=str(e))
 
-    # Invalidate the git proxy key so the proxy URL stops working
-    sandbox_repo.invalidate_proxy_key(sandbox_session_id)
+    # Mark the sandbox session as completed (proxy key lifecycle managed by control plane)
+    sandbox_repo.mark_completed(sandbox_session_id)
 
     # Build the final tool result
     result = {
@@ -472,10 +464,10 @@ async def sandbox_watchdog_loop() -> None:
                                 error_message=f"Sandbox timed out after {SANDBOX_TIMEOUT_MINUTES} min",
                             )
 
-                    # Invalidate the git proxy key and cancel the sandbox container
+                    # Mark completed and cancel the sandbox container (proxy key lifecycle managed by control plane)
                     sandbox_mapping = sandbox_repo.get_by_tool_call_id(tc.id)
                     if sandbox_mapping:
-                        sandbox_repo.invalidate_proxy_key(sandbox_mapping.sandbox_session_id)
+                        sandbox_repo.mark_completed(sandbox_mapping.sandbox_session_id)
                         # Best-effort: cancel the sandbox on the control plane to free resources
                         try:
                             control_plane_url = os.environ.get(

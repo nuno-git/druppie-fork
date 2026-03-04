@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agents, approvals, chat, deployments, git_proxy, llm_proxy, mcp_bridge, mcps, projects, questions, sandbox, sessions, workspace
+from druppie.api.routes import agents, approvals, chat, deployments, mcp_bridge, mcps, projects, questions, sandbox, sessions, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
@@ -113,8 +113,6 @@ def create_app() -> FastAPI:
     app.include_router(mcps.router, prefix="/api", tags=["MCPs"])
     app.include_router(mcp_bridge.router, prefix="/api/mcp", tags=["MCP Bridge"])
     app.include_router(sandbox.router, prefix="/api", tags=["Sandbox"])
-    app.include_router(git_proxy.router, prefix="/api/git-proxy", tags=["Git Proxy"])
-    app.include_router(llm_proxy.router, prefix="/api/llm-proxy", tags=["LLM Proxy"])
 
     @app.get("/health")
     async def health_check():

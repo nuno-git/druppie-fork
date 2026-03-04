@@ -924,15 +924,8 @@ async def execute_sandbox_coding_task(
     sandbox_repo_owner = repo_owner or GITEA_ORG
     sandbox_repo_name = repo_name or ""
 
-    # Build a proxy URL instead of embedding credentials in the sandbox.
-    # The proxy key is random, session-scoped, and repo-scoped — the sandbox
-    # never sees any git credentials.
     import secrets
-    proxy_key = secrets.token_urlsafe(32)
     webhook_secret = secrets.token_urlsafe(32)
-    git_proxy_url = ""
-    if sandbox_repo_name:
-        git_proxy_url = f"{BACKEND_URL}/api/git-proxy/{proxy_key}/{sandbox_repo_owner}/{sandbox_repo_name}.git"
 
     base_url = SANDBOX_CONTROL_PLANE_URL.rstrip("/")
 
@@ -943,15 +936,54 @@ async def execute_sandbox_coding_task(
                 "Content-Type": "application/json",
             }
 
-            # Step 1: Create sandbox session
-            create_body = {
+            # Step 1: Create sandbox session with credentials for proxy isolation.
+            # The control plane stores credentials in-memory, generates proxy keys,
+            # and injects them at proxy time. Sandboxes never see raw credentials.
+
+            # Determine LLM provider and API key from model string (e.g. "zai-coding-plan/glm-4.7")
+            llm_provider = model.split("/")[0] if "/" in model else "zai"
+            # Strip sub-provider suffix (e.g. "zai-coding-plan" -> "zai")
+            llm_provider_base = llm_provider.split("-")[0]
+
+            # Map provider to API key env var and base URL
+            _provider_api_keys = {
+                "zai": "ZAI_API_KEY",
+                "deepseek": "DEEPSEEK_API_KEY",
+                "deepinfra": "DEEPINFRA_API_KEY",
+                "openai": "OPENAI_API_KEY",
+                "anthropic": "ANTHROPIC_API_KEY",
+            }
+            _provider_base_urls = {
+                "zai": os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4"),
+                "deepseek": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+                "deepinfra": os.getenv("DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"),
+                "openai": "https://api.openai.com/v1",
+                "anthropic": "https://api.anthropic.com/v1",
+            }
+
+            api_key_env = _provider_api_keys.get(llm_provider_base, "ZAI_API_KEY")
+            llm_api_key = os.getenv(api_key_env, "")
+            llm_base_url = _provider_base_urls.get(llm_provider_base, "")
+
+            create_body: dict = {
                 "repoOwner": sandbox_repo_owner,
                 "repoName": sandbox_repo_name,
                 "model": model,
                 "title": f"Druppie sandbox: {task[:80]}",
+                "credentials": {
+                    "git": {
+                        "provider": "gitea",
+                        "url": os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000"),
+                        "username": os.getenv("GITEA_ADMIN_USER", "gitea_admin"),
+                        "password": os.getenv("GITEA_ADMIN_PASSWORD", ""),
+                    },
+                    "llm": {
+                        "provider": llm_provider_base,
+                        "apiKey": llm_api_key,
+                        "baseUrl": llm_base_url,
+                    },
+                },
             }
-            if git_proxy_url:
-                create_body["gitUrl"] = git_proxy_url
 
             resp = await client.post(
                 f"{base_url}/sessions",
@@ -986,10 +1018,6 @@ async def execute_sandbox_coding_task(
                     sandbox_session_id=sandbox_session_id,
                     user_id=UUID(user_id),
                     session_id=session_id,
-                    git_proxy_key=proxy_key,
-                    git_provider="gitea",
-                    git_repo_owner=sandbox_repo_owner,
-                    git_repo_name=sandbox_repo_name,
                     webhook_secret=webhook_secret,
                 )
                 # flush() not commit(): let the tool_executor's commit handle
@@ -1056,13 +1084,6 @@ async def execute_sandbox_coding_task(
                     logger.info("execute_coding_task: cancelled sandbox after prompt failure", sandbox_session_id=sandbox_session_id)
                 except Exception as cancel_err:
                     logger.warning("execute_coding_task: failed to cancel sandbox after prompt failure", error=str(cancel_err))
-                try:
-                    from druppie.repositories.sandbox_session_repository import SandboxSessionRepository
-                    cleanup_repo = SandboxSessionRepository(db)
-                    cleanup_repo.invalidate_proxy_key(sandbox_session_id)
-                    db.flush()
-                except Exception as cleanup_err:
-                    logger.warning("execute_coding_task: failed to invalidate proxy key after prompt failure", error=str(cleanup_err))
                 return {
                     "success": False,
                     "error": f"Failed to send prompt: {resp.status_code} {resp.text}",

@@ -1059,12 +1059,6 @@ The `sandbox_sessions` table (`druppie/db/models/sandbox_session.py`) maps contr
 | `user_id` | UUID (FK → users) | Owning user |
 | `tool_call_id` | UUID (nullable, FK → tool_calls, indexed) | Linked tool call for direct webhook lookup |
 | `webhook_secret` | str (nullable) | Per-session HMAC secret for webhook verification |
-| `git_proxy_key` | str (unique, indexed) | Session-scoped key for git credential isolation |
-| `git_provider` | str | "gitea" or "github" |
-| `git_repo_owner` | str | Repository owner |
-| `git_repo_name` | str | Repository name |
-| `llm_proxy_key` | str (unique, indexed) | Session-scoped key for LLM API credential isolation |
-| `llm_provider` | str | "zai", "deepseek", "openai", etc. |
 | `created_at` | datetime | Registration timestamp |
 | `updated_at` | datetime | Last update timestamp |
 | `completed_at` | datetime (nullable) | Completion timestamp |
