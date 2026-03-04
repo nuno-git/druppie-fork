@@ -148,7 +148,7 @@ const Dashboard = () => {
                         ? 'bg-blue-100 text-blue-700'
                         : plan.status === 'paused_approval' || plan.status === 'paused_hitl'
                         ? 'bg-amber-100 text-amber-700'
-                        : plan.status === 'failed'
+                        : plan.status === 'failed' || plan.status === 'paused_crashed'
                         ? 'bg-red-100 text-red-700'
                         : 'bg-gray-100 text-gray-700'
                     }`}
