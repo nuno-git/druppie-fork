@@ -940,12 +940,9 @@ async def execute_sandbox_coding_task(
             # The control plane stores credentials in-memory, generates proxy keys,
             # and injects them at proxy time. Sandboxes never see raw credentials.
 
-            # Determine LLM provider and API key from model string (e.g. "zai-coding-plan/glm-4.7")
-            llm_provider = model.split("/")[0] if "/" in model else "zai"
-            # Strip sub-provider suffix (e.g. "zai-coding-plan" -> "zai")
-            llm_provider_base = llm_provider.split("-")[0]
-
-            # Map provider to API key env var and base URL
+            # Build LLM credentials for all configured providers.
+            # The credential store accepts an array and stores each provider
+            # so the sandbox can use multiple providers (e.g. main + subagent).
             _provider_api_keys = {
                 "zai": "ZAI_API_KEY",
                 "deepseek": "DEEPSEEK_API_KEY",
@@ -961,9 +958,15 @@ async def execute_sandbox_coding_task(
                 "anthropic": "https://api.anthropic.com/v1",
             }
 
-            api_key_env = _provider_api_keys.get(llm_provider_base, "ZAI_API_KEY")
-            llm_api_key = os.getenv(api_key_env, "")
-            llm_base_url = _provider_base_urls.get(llm_provider_base, "")
+            llm_credentials = []
+            for prov_name, api_key_env_var in _provider_api_keys.items():
+                api_key = os.getenv(api_key_env_var, "")
+                if api_key:
+                    llm_credentials.append({
+                        "provider": prov_name,
+                        "apiKey": api_key,
+                        "baseUrl": _provider_base_urls.get(prov_name, ""),
+                    })
 
             create_body: dict = {
                 "repoOwner": sandbox_repo_owner,
@@ -977,11 +980,7 @@ async def execute_sandbox_coding_task(
                         "username": os.getenv("GITEA_ADMIN_USER", "gitea_admin"),
                         "password": os.getenv("GITEA_ADMIN_PASSWORD", ""),
                     },
-                    "llm": {
-                        "provider": llm_provider_base,
-                        "apiKey": llm_api_key,
-                        "baseUrl": llm_base_url,
-                    },
+                    "llm": llm_credentials,
                 },
             }
 
