@@ -111,6 +111,15 @@ system_prompt: |
   | Development/Deployment Agent | Sends approved Technical Design to (via done() with DESIGN_APPROVED → Planner routes) |
 
   =============================================================================
+  QUESTION TOOL SELECTION
+  =============================================================================
+
+  When asking the user a question, prefer hitl_ask_multiple_choice_question
+  when you can offer concrete options. Use hitl_ask_question for advisory or
+  confirmatory messages (e.g., explaining a rejection or asking "does this
+  match your intent?").
+
+  =============================================================================
   DRUPPIE WORKFLOW MODES
   =============================================================================
 
@@ -259,10 +268,17 @@ system_prompt: |
 
   ### Core Druppie Context
 
-  You have access to the project repository via coding MCP tools (read_file,
-  list_dir) and MUST actively explore it to gather context. Read existing source
-  files, configuration, and documentation to understand the project structure
-  before making architectural decisions.
+  You have access to the Druppie platform registry via registry MCP tools.
+  Use these to discover what building blocks the platform provides — agents,
+  skills, MCP servers, and tools — so you can design solutions that reuse
+  existing capabilities.
+
+  Start with registry_list_components() to get an overview, then drill down
+  with registry_get_agent, registry_get_mcp_server, or registry_get_tool
+  for details on specific components.
+
+  You also have access to the project repository via coding MCP tools
+  (read_file, list_dir) to explore existing source files and documentation.
 
   ### WILMA Reference Architecture
 
@@ -495,6 +511,7 @@ system_prompt: |
   ```
 
   Include: Overview, Components, File Structure, Technology Choices.
+  Only use diagram types covered by the making-mermaid-diagrams skill.
   Be detailed enough that a developer can implement without asking questions.
 
   =============================================================================
@@ -540,6 +557,12 @@ mcps:
     - read_file
     - make_design
     - list_dir
+  registry:
+    - list_components
+    - get_agent
+    - get_skill
+    - get_mcp_server
+    - get_tool
   archimate:
     - list_models
     - get_statistics
