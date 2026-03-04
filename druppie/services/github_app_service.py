@@ -7,6 +7,7 @@ The service is disabled (returns None) when env vars are not set, so it never
 breaks existing Gitea-only flows.
 """
 
+import asyncio
 import time
 from datetime import datetime
 
@@ -53,6 +54,9 @@ class GitHubAppService:
             except FileNotFoundError:
                 # Log a warning but don't crash — the service will be disabled
                 logger.warning("github_app_private_key_not_found", path=config.private_key_path)
+
+        # Lock to prevent concurrent token refresh races
+        self._lock = asyncio.Lock()
 
         # Service is enabled only when all three config values are present AND key loaded
         self._enabled = config.is_configured and self._private_key is not None
@@ -160,17 +164,23 @@ class GitHubAppService:
             # Token is still fresh — reuse it
             return self._cached_token
 
-        # Token is expired or doesn't exist — request a new one
-        try:
-            token, expires_at = await self._request_installation_token()
-            # Cache the new token and its expiry for future calls
-            self._cached_token = token
-            self._token_expires_at = expires_at
-            return token
-        except Exception as e:
-            # Log the error but don't crash — return None so callers can handle it
-            logger.error("github_installation_token_failed", error=str(e))
-            return None
+        # Token is expired or doesn't exist — serialize refresh with a lock
+        async with self._lock:
+            # Double-check after acquiring lock (another coroutine may have refreshed)
+            now = time.time()
+            if self._cached_token and now < (self._token_expires_at - 300):
+                return self._cached_token
+
+            try:
+                token, expires_at = await self._request_installation_token()
+                # Cache the new token and its expiry for future calls
+                self._cached_token = token
+                self._token_expires_at = expires_at
+                return token
+            except Exception as e:
+                # Log the error but don't crash — return None so callers can handle it
+                logger.error("github_installation_token_failed", error=str(e))
+                return None
 
 
 # Module-level singleton — created once, reused across requests

@@ -483,10 +483,13 @@ async def set_intent(
         base_branch = "colab-dev"
 
         # Store the repo context on the session so execute_coding_task can read it later
-        session.repo_url = repo_url
-        session.repo_owner = repo_owner
-        session.repo_name = repo_name
-        session.base_branch = base_branch
+        session_repo.update_repo_context(
+            session_id=session_id,
+            repo_url=repo_url,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            base_branch=base_branch,
+        )
 
         result["repo_url"] = repo_url
         result["repo_owner"] = repo_owner
@@ -546,10 +549,12 @@ def _update_planner_prompt(
         return
 
     # Prepend intent context to the existing prompt
-    intent_context = f"""INTENT: {intent}
-PROJECT_ID: {str(project_id) if project_id else 'new'}
-
-"""
+    if intent == "update_core":
+        intent_context = f"INTENT: {intent}\n\n"
+    elif project_id:
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: {str(project_id)}\n\n"
+    else:
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: new\n\n"
     new_prompt = intent_context + (planner_run.planned_prompt or "")
     execution_repo.update_planned_prompt(planner_run.id, new_prompt)
 
