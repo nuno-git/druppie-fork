@@ -317,10 +317,8 @@ services:
       WORKER_URL: http://sandbox-control-plane:8787
       MODAL_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       INTERNAL_CALLBACK_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
-      # LLM API keys removed - sandboxes now use LLM proxy to prevent key exfiltration
-      # The open-inspect code needs to be modified to use LLM_PROXY_URL instead of direct keys
-      LLM_PROXY_URL: http://druppie-backend:8000/api/llm-proxy
-      # Note: ZAI_API_KEY, GLM_API_KEY, ZHIPU_API_KEY removed - no longer passed to sandboxes
+      # Credentials are now sent per-session from Druppie and proxied through the control plane.
+      # No LLM API keys or proxy URLs needed here.
     volumes:
       - sandbox_data:/data
     networks:
@@ -347,9 +345,8 @@ services:
       DOCKER_NETWORK: druppie-new-network
       DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
       DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-2}
-      # LLM API keys removed - sandboxes now use LLM proxy to prevent key exfiltration
-      LLM_PROXY_URL: http://druppie-backend:8000/api/llm-proxy
-      # Note: ZAI_API_KEY, GLM_API_KEY, ZHIPU_API_KEY removed - no longer passed to sandboxes
+      # LLM API keys and proxy URLs no longer needed here.
+      # Credentials flow per-session from Druppie -> Control Plane -> Sandbox.
     volumes:
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - sandbox_snapshots:/data/snapshots

@@ -15,10 +15,6 @@ class SandboxSessionRepository(BaseRepository):
         sandbox_session_id: str,
         user_id: UUID,
         session_id: UUID | None = None,
-        git_proxy_key: str | None = None,
-        git_provider: str | None = None,
-        git_repo_owner: str | None = None,
-        git_repo_name: str | None = None,
         webhook_secret: str | None = None,
     ) -> SandboxSession:
         """Register a sandbox session ownership mapping.
@@ -33,10 +29,6 @@ class SandboxSessionRepository(BaseRepository):
             sandbox_session_id=sandbox_session_id,
             user_id=user_id,
             session_id=session_id,
-            git_proxy_key=git_proxy_key,
-            git_provider=git_provider,
-            git_repo_owner=git_repo_owner,
-            git_repo_name=git_repo_name,
             webhook_secret=webhook_secret,
         )
         self.db.add(mapping)
@@ -48,22 +40,6 @@ class SandboxSessionRepository(BaseRepository):
         return (
             self.db.query(SandboxSession)
             .filter_by(sandbox_session_id=sandbox_session_id)
-            .first()
-        )
-
-    def get_by_proxy_key(self, proxy_key: str) -> SandboxSession | None:
-        """Look up a sandbox session by its git proxy key."""
-        return (
-            self.db.query(SandboxSession)
-            .filter_by(git_proxy_key=proxy_key)
-            .first()
-        )
-
-    def get_by_llm_proxy_key(self, proxy_key: str) -> SandboxSession | None:
-        """Look up a sandbox session by its LLM proxy key."""
-        return (
-            self.db.query(SandboxSession)
-            .filter_by(llm_proxy_key=proxy_key)
             .first()
         )
 
@@ -89,10 +65,9 @@ class SandboxSessionRepository(BaseRepository):
             .first()
         )
 
-    def invalidate_proxy_key(self, sandbox_session_id: str) -> None:
-        """Clear the git proxy key so the proxy URL stops working."""
+    def mark_completed(self, sandbox_session_id: str) -> None:
+        """Mark a sandbox session as completed."""
         session = self.get_by_sandbox_id(sandbox_session_id)
-        if session and session.git_proxy_key:
-            session.git_proxy_key = None
+        if session:
             session.completed_at = datetime.now(timezone.utc)
             self.db.flush()
