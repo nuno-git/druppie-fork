@@ -47,14 +47,20 @@ const request = async (endpoint, options = {}) => {
     }
 
     const data = await response.json()
-    console.log('✅ Response:', data)
-    console.timeEnd('Duration')
-    console.groupEnd()
+    // Only log in development mode
+    if (import.meta.env.DEV) {
+      console.log('✅ Response:', data)
+      console.timeEnd('Duration')
+      console.groupEnd()
+    }
     return data
   } catch (err) {
-    console.error('❌ Request Failed:', err.message)
-    console.timeEnd('Duration')
-    console.groupEnd()
+    // Only log in development mode
+    if (import.meta.env.DEV) {
+      console.error('❌ Request Failed:', err.message)
+      console.timeEnd('Duration')
+      console.groupEnd()
+    }
     throw err
   }
 }
@@ -64,8 +70,8 @@ export const getUser = () => request('/api/user')
 
 // ============ Chat (Main Entry Point) ============
 export const sendChat = async (message, sessionId = null, conversationHistory = null) => {
-  const mcpServers = await getMCPServers()
-  console.log('MCP Servers:', mcpServers)
+  // Note: getMCPServers() was previously called here but the result was unused.
+  // The backend handles MCP server selection internally.
   return request('/api/chat', {
     method: 'POST',
     body: JSON.stringify({

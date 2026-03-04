@@ -35,3 +35,7 @@ class SandboxSession(Base):
     git_provider = Column(String(50), nullable=True)  # "gitea" or "github"
     git_repo_owner = Column(String(255), nullable=True)
     git_repo_name = Column(String(255), nullable=True)
+    
+    # LLM proxy credentials isolation (prevents API key exfiltration from sandboxes)
+    llm_proxy_key = Column(String(128), nullable=True, unique=True, index=True)
+    llm_provider = Column(String(50), nullable=True)  # "zai", "deepseek", "openai", etc.

@@ -59,6 +59,14 @@ class SandboxSessionRepository(BaseRepository):
             .first()
         )
 
+    def get_by_llm_proxy_key(self, proxy_key: str) -> SandboxSession | None:
+        """Look up a sandbox session by its LLM proxy key."""
+        return (
+            self.db.query(SandboxSession)
+            .filter_by(llm_proxy_key=proxy_key)
+            .first()
+        )
+
     def get_webhook_secret(self, sandbox_session_id: str) -> str | None:
         """Return the per-session webhook secret, or None if not found."""
         session = self.get_by_sandbox_id(sandbox_session_id)

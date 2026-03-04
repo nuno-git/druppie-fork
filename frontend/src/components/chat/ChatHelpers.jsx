@@ -299,7 +299,10 @@ export const extractSandboxResults = (agentRun) => {
   return results
 }
 
+// Statuses that indicate a session is actively doing work or waiting for external input
+// Note: These are SessionStatus values. 'running' is an AgentRunStatus, not included here.
 export const ACTIVE_STATUSES = new Set([
-  'active', 'running', 'paused', 'paused_hitl', 'paused_tool',
-  'paused_approval', 'paused_sandbox', 'waiting_approval', 'waiting_answer',
+  'active', 'paused', 'paused_hitl', 'paused_tool',
+  'paused_approval', 'paused_sandbox', 'paused_crashed',
+  'waiting_approval', 'waiting_answer',
 ])

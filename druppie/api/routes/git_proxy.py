@@ -28,6 +28,44 @@ GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
 GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "")
 MAX_GIT_BODY_SIZE = 100 * 1024 * 1024  # 100 MB
 
+# Whitelist of allowed git protocol paths to prevent path traversal attacks
+# These are the standard git smart HTTP protocol endpoints
+ALLOWED_GIT_PATHS = {
+    "info/refs",           # Ref discovery (both fetch and push)
+    "git-upload-pack",     # Fetch (client pulls objects)
+    "git-receive-pack",    # Push (client pushes objects)
+}
+
+
+def is_allowed_git_path(git_path: str) -> bool:
+    """Check if the git path is in the allowed whitelist.
+    
+    Git protocol paths can be:
+    - info/refs (possibly with ?service=git-upload-pack query)
+    - git-upload-pack
+    - git-receive-pack
+    - objects/<hash-prefix>/<hash-suffix> (for dumb HTTP, not commonly used)
+    
+    We allow the smart HTTP protocol paths and object paths for compatibility.
+    """
+    # Normalize path
+    git_path = git_path.strip("/")
+    
+    # Check exact match for smart HTTP endpoints
+    if git_path in ALLOWED_GIT_PATHS:
+        return True
+    
+    # Allow objects/ paths for git pack file retrieval
+    # Format: objects/<2-char-prefix>/<38-char-suffix> or objects/pack/<filename>
+    if git_path.startswith("objects/"):
+        return True
+    
+    # Allow shallow info for partial clone support
+    if git_path == "shallow":
+        return True
+    
+    return False
+
 
 @router.api_route(
     "/{proxy_key}/{owner}/{repo_name}.git/{git_path:path}",
@@ -62,6 +100,15 @@ async def git_proxy(
             authorized=f"{session.git_repo_owner}/{session.git_repo_name}",
         )
         raise HTTPException(status_code=403, detail="Proxy key not authorized for this repo")
+
+    # Validate git path against whitelist to prevent path traversal attacks
+    if not is_allowed_git_path(git_path):
+        logger.warning(
+            "git_proxy_invalid_path",
+            proxy_key=proxy_key[:8] + "...",
+            git_path=git_path,
+        )
+        raise HTTPException(status_code=403, detail="Git path not allowed")
 
     # Build target URL based on provider
     if session.git_provider == "github":

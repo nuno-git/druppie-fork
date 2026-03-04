@@ -8,9 +8,21 @@ import hashlib
 import hmac
 import os
 import time
+import warnings
 
 
-SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", "sandbox-dev-secret")
+# Default secret for development only - MUST be overridden in production
+_DEFAULT_SANDBOX_SECRET = "sandbox-dev-secret"
+SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", _DEFAULT_SANDBOX_SECRET)
+
+# Warn if using the default secret (similar to INTERNAL_API_KEY warning pattern)
+if SANDBOX_API_SECRET == _DEFAULT_SANDBOX_SECRET:
+    warnings.warn(
+        "SANDBOX_API_SECRET is using the default development value. "
+        "This is insecure for production! Set the SANDBOX_API_SECRET environment variable.",
+        UserWarning,
+        stacklevel=2
+    )
 
 
 def generate_control_plane_token(secret: str | None = None) -> str:

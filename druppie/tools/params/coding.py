@@ -9,6 +9,8 @@ and not included here - they're handled by the injection system.
 
 from pydantic import BaseModel, Field
 
+from druppie.core.config import DEFAULT_SANDBOX_AGENT, DEFAULT_SANDBOX_TESTER_AGENT
+
 
 class ReadFileParams(BaseModel):
     path: str = Field(description="File path relative to workspace root")
@@ -65,6 +67,6 @@ class GetGitStatusParams(BaseModel):
 class ExecuteCodingTaskParams(BaseModel):
     task: str = Field(description="The coding task description for the sandbox agent")
     agent: str = Field(
-        default="druppie-builder",
-        description="Which sandbox agent to use (druppie-builder for coding, druppie-tester for testing)",
+        default=DEFAULT_SANDBOX_AGENT,
+        description=f"Which sandbox agent to use ({DEFAULT_SANDBOX_AGENT} for coding, {DEFAULT_SANDBOX_TESTER_AGENT} for testing)",
     )

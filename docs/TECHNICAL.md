@@ -1010,15 +1010,17 @@ Agents that can use this tool declare it via `extra_builtin_tools: [execute_codi
 |-------|--------|---------|
 | ToolCallStatus | `WAITING_SANDBOX` | Tool call dispatched, waiting for webhook |
 | AgentRunStatus | `PAUSED_SANDBOX` | Agent paused while sandbox executes |
-| SessionStatus | `paused_sandbox` | Session paused, visible in UI |
+| AgentRunStatus | `PAUSED_CRASHED` | Agent crashed, session paused for recovery |
+| SessionStatus | `paused_sandbox` | Session paused for sandbox, visible in UI |
+| SessionStatus | `paused_crashed` | Session paused due to crash, visible in UI |
 
 **Webhook endpoint:** `POST /api/sandbox-sessions/{sandbox_session_id}/complete` (in `druppie/api/routes/sandbox.py`). Verifies HMAC-SHA256 signature via `X-Signature` header, then:
 
-1. Finds the `WAITING_SANDBOX` tool call via `ExecutionRepository.find_by_sandbox_session_id()`
+1. Finds the `WAITING_SANDBOX` tool call via the `tool_call_id` FK on `sandbox_sessions` (direct lookup, no full table scan)
 2. Fetches final events from control plane (`GET /sessions/{id}/events?limit=500`)
 3. Extracts changed files and agent output from events
 4. Completes the tool call with result payload
-5. Resumes the agent asynchronously via `asyncio.create_task(orchestrator.resume_after_sandbox())`
+5. Resumes the agent asynchronously via Starlette `BackgroundTasks` (not `asyncio.create_task`)
 
 **Tool call result (after webhook):**
 
@@ -1038,7 +1040,7 @@ Agents that can use this tool declare it via `extra_builtin_tools: [execute_codi
 Sandbox agents are configured via files in `druppie/sandbox-config/`:
 
 - **`opencode-config.json`** — Sets `default_agent` to `druppie-builder` and grants broad tool permissions
-- **`agents/druppie-builder.md`** — Coding agent prompt: implements features, writes code, mandatory git workflow (`git add -A` → `git commit` → `git push origin HEAD`), must output a structured `---SUMMARY---` block
+- **`agents/druppie-builder.md`** — Coding agent prompt: implements features, writes code, mandatory git workflow (`git add <files>` → `git commit` → `git push origin HEAD`), must output a structured `---SUMMARY---` block
 - **`agents/druppie-tester.md`** — Testing agent prompt: writes and runs tests, same mandatory git workflow, reports results in structured format
 
 Configuration is injected into sandbox containers via the `OPENCODE_CONFIG_CONTENT` environment variable. `OPENCODE_DISABLE_PROJECT_CONFIG=true` prevents user `.opencode/` overrides inside the sandbox.
@@ -1055,9 +1057,21 @@ The `sandbox_sessions` table (`druppie/db/models/sandbox_session.py`) maps contr
 | `sandbox_session_id` | str (unique, indexed) | Control plane session ID |
 | `session_id` | UUID (nullable, FK → sessions) | Druppie chat session |
 | `user_id` | UUID (FK → users) | Owning user |
+| `tool_call_id` | UUID (nullable, FK → tool_calls, indexed) | Linked tool call for direct webhook lookup |
+| `webhook_secret` | str (nullable) | Per-session HMAC secret for webhook verification |
+| `git_proxy_key` | str (unique, indexed) | Session-scoped key for git credential isolation |
+| `git_provider` | str | "gitea" or "github" |
+| `git_repo_owner` | str | Repository owner |
+| `git_repo_name` | str | Repository name |
+| `llm_proxy_key` | str (unique, indexed) | Session-scoped key for LLM API credential isolation |
+| `llm_provider` | str | "zai", "deepseek", "openai", etc. |
 | `created_at` | datetime | Registration timestamp |
+| `updated_at` | datetime | Last update timestamp |
+| `completed_at` | datetime (nullable) | Completion timestamp |
 
 **Registration flow:** After creating a sandbox session, the built-in tool calls `POST /api/sandbox-sessions/internal/register` (authenticated via internal API key, not user tokens). The repository's `create()` method is idempotent — it returns the existing record if the sandbox session ID is already registered.
+
+**Tool call linkage:** The `tool_call_id` FK enables direct lookup from webhook handler → tool call without full table scans. This is set by `SandboxSessionRepository.update_tool_call_id()` after the tool executor stores the WAITING_SANDBOX status.
 
 **Events proxy:** `GET /api/sandbox-sessions/{session_id}/events` (in `druppie/api/routes/sandbox.py`) proxies events from the control plane. Before forwarding, it:
 

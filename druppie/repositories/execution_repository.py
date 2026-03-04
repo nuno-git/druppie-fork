@@ -392,6 +392,7 @@ class ExecutionRepository(BaseRepository):
         status: str | None = None,
         result: dict | str | None = None,
         error: str | None = None,
+        sandbox_waiting_at: datetime | None = None,
     ) -> None:
         """Update tool call with result.
 
@@ -400,6 +401,7 @@ class ExecutionRepository(BaseRepository):
             status: New status (pending, executing, waiting_approval, waiting_answer, completed, failed)
             result: Tool result (will be serialized to JSON if dict)
             error: Error message if failed
+            sandbox_waiting_at: Timestamp when tool entered WAITING_SANDBOX status (for watchdog timeout)
         """
         import json
 
@@ -415,6 +417,8 @@ class ExecutionRepository(BaseRepository):
                     tool_call.result = result
             if error is not None:
                 tool_call.error_message = error
+            if sandbox_waiting_at is not None:
+                tool_call.sandbox_waiting_at = sandbox_waiting_at
             if status in ("completed", "failed"):
                 tool_call.executed_at = datetime.now(timezone.utc)
 
@@ -865,13 +869,19 @@ class ExecutionRepository(BaseRepository):
     # =========================================================================
 
     def get_stuck_sandbox_tool_calls(self, cutoff_dt: datetime) -> list:
-        """Find WAITING_SANDBOX tool calls older than cutoff_dt."""
+        """Find WAITING_SANDBOX tool calls older than cutoff_dt.
+        
+        Uses sandbox_waiting_at (when status changed to WAITING_SANDBOX) rather than
+        created_at to correctly measure sandbox duration.
+        """
         from druppie.execution.tool_executor import ToolCallStatus
         return (
             self.db.query(ToolCall)
             .filter(
                 ToolCall.status == ToolCallStatus.WAITING_SANDBOX,
-                ToolCall.created_at < cutoff_dt,
+                # Use sandbox_waiting_at if available, fall back to created_at for legacy rows
+                (ToolCall.sandbox_waiting_at < cutoff_dt) |
+                ((ToolCall.sandbox_waiting_at.is_(None)) & (ToolCall.created_at < cutoff_dt)),
             )
             .all()
         )
