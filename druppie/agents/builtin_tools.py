@@ -57,7 +57,7 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "hitl_ask_multiple_choice_question",
-            "description": "Ask the user a multiple choice question. Use this when you want the user to select from predefined options. Can optionally allow a custom 'Other' answer.",
+            "description": "Ask the user a multiple choice question. Use this when you want the user to select from predefined options. An 'Other' option with free-text input is always shown automatically — do NOT include 'Other' in your choices.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -68,11 +68,7 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     "choices": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of choices for the user to select from",
-                    },
-                    "allow_other": {
-                        "type": "boolean",
-                        "description": "Whether to allow a custom 'Other' answer (default: true)",
+                        "description": "List of choices for the user to select from. Do NOT include an 'Other' option — one is added automatically.",
                     },
                     "context": {
                         "type": "string",
@@ -536,8 +532,11 @@ async def make_plan(
             cancelled_count=cancelled_count,
         )
 
+    # Determine sequence start: next available session-level sequence number
+    start_seq = execution_repo.get_next_sequence_number(session_id)
+
     # Create pending agent runs via repository
-    created_runs = []
+    planned_steps = []
     for i, step in enumerate(steps):
         step_agent_id = step.get("agent_id")
         step_prompt = step.get("prompt")
@@ -551,30 +550,43 @@ async def make_plan(
             )
             continue
 
+        seq = start_seq + i
         execution_repo.create_agent_run(
             session_id=session_id,
             agent_id=step_agent_id,
             status=AgentRunStatus.PENDING,
             planned_prompt=step_prompt,
-            sequence_number=i,
+            sequence_number=seq,
         )
-        created_runs.append({
-            "sequence": i,
+        planned_steps.append({
+            "sequence": seq,
             "agent_id": step_agent_id,
             "prompt_preview": step_prompt[:100] + "..." if len(step_prompt) > 100 else step_prompt,
         })
 
+    # Build full plan view: completed runs + new pending runs
+    completed_steps = [
+        {
+            "sequence": r.sequence_number,
+            "agent_id": r.agent_id,
+            "status": r.status,
+        }
+        for r in completed_runs
+    ]
+
     logger.info(
         "plan_created",
         session_id=str(session_id),
-        step_count=len(created_runs),
+        step_count=len(planned_steps),
         planner_iteration=planner_count + 1,
+        start_seq=start_seq,
     )
 
     return {
         "success": True,
-        "message": f"Created plan with {len(created_runs)} steps (planner iteration {planner_count + 1})",
-        "steps": created_runs,
+        "message": f"Created plan with {len(planned_steps)} steps (planner iteration {planner_count + 1})",
+        "completed_steps": completed_steps,
+        "planned_steps": planned_steps,
     }
 
 
@@ -601,11 +613,16 @@ async def create_message(
     Returns:
         Success status
     """
+    # Get next unique sequence number so message never collides with agent_run
+    seq = execution_repo.get_next_sequence_number(session_id)
+
     execution_repo.create_message(
         session_id=session_id,
         role="assistant",
         content=content,
+        agent_run_id=agent_run_id,
         agent_id="summarizer",
+        sequence_number=seq,
     )
     execution_repo.flush()
 
