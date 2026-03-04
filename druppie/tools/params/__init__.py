@@ -38,6 +38,22 @@ from .coding import (
     ReadFileParams,
     WriteFileParams,
 )
+from .archimate import (
+    GetElementParams,
+    GetImpactParams,
+    GetStatisticsParams,
+    GetViewParams,
+    ListElementsParams,
+    ListViewsParams,
+    SearchModelParams,
+)
+from .registry import (
+    GetAgentParams,
+    GetMcpServerParams,
+    GetSkillParams,
+    GetToolParams,
+    ListComponentsParams,
+)
 from .docker import (
     DockerBuildParams,
     DockerExecCommandParams,
@@ -69,6 +85,14 @@ __all__ = [
     "CreatePullRequestParams",
     "MergePullRequestParams",
     "GetGitStatusParams",
+    # Archimate
+    "GetStatisticsParams",
+    "ListElementsParams",
+    "GetElementParams",
+    "ListViewsParams",
+    "GetViewParams",
+    "SearchModelParams",
+    "GetImpactParams",
     # Docker
     "DockerBuildParams",
     "DockerRunParams",
@@ -78,6 +102,12 @@ __all__ = [
     "DockerListContainersParams",
     "DockerInspectParams",
     "DockerExecCommandParams",
+    # Registry
+    "ListComponentsParams",
+    "GetAgentParams",
+    "GetSkillParams",
+    "GetMcpServerParams",
+    "GetToolParams",
     # Builtin
     "DoneParams",
     "HitlAskQuestionParams",

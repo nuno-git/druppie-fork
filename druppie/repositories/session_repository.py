@@ -47,6 +47,20 @@ class SessionRepository(BaseRepository):
         """Get raw session model."""
         return self.db.query(SessionModel).filter_by(id=session_id).first()
 
+    def get_by_id_for_update(self, session_id: UUID) -> SessionModel | None:
+        """Get raw session model with a row-level lock (SELECT ... FOR UPDATE).
+
+        Use this when you need to read-then-update the session atomically,
+        e.g. to prevent race conditions on status transitions. The lock is
+        held until the transaction commits or rolls back.
+        """
+        return (
+            self.db.query(SessionModel)
+            .filter_by(id=session_id)
+            .with_for_update()
+            .first()
+        )
+
     def list_for_user(
         self,
         user_id: UUID | None,
@@ -155,6 +169,10 @@ class SessionRepository(BaseRepository):
             updates["error_message"] = error_message
         self.db.query(SessionModel).filter_by(id=session_id).update(updates)
 
+    def clear_error_message(self, session_id: UUID) -> None:
+        """Clear the error message on a session."""
+        self.db.query(SessionModel).filter_by(id=session_id).update({"error_message": None})
+
     def update_language(self, session_id: UUID, language: str) -> None:
         """Update session's detected conversational language."""
         self.db.query(SessionModel).filter_by(id=session_id).update({"language": language})
@@ -166,6 +184,29 @@ class SessionRepository(BaseRepository):
     def update_project(self, session_id: UUID, project_id: UUID) -> None:
         """Update session's project."""
         self.db.query(SessionModel).filter_by(id=session_id).update({"project_id": project_id})
+
+    def recalculate_token_totals(self, session_id: UUID) -> None:
+        """Recalculate session token totals from remaining non-pending agent runs."""
+        from sqlalchemy import func
+
+        result = (
+            self.db.query(
+                func.coalesce(func.sum(AgentRun.prompt_tokens), 0),
+                func.coalesce(func.sum(AgentRun.completion_tokens), 0),
+                func.coalesce(func.sum(AgentRun.total_tokens), 0),
+            )
+            .filter(
+                AgentRun.session_id == session_id,
+                AgentRun.status != AgentRunStatus.PENDING.value,
+            )
+            .first()
+        )
+
+        session = self.get_by_id(session_id)
+        if session:
+            session.prompt_tokens = result[0]
+            session.completion_tokens = result[1]
+            session.total_tokens = result[2]
 
     def delete(self, session_id: UUID) -> None:
         """Delete session (cascades to related data)."""
@@ -217,6 +258,7 @@ class SessionRepository(BaseRepository):
                     role=msg.role,
                     content=msg.content or "",
                     agent_id=msg.agent_id,
+                    sequence_number=msg.sequence_number,
                     created_at=msg.created_at,
                 ),
             ))
@@ -225,21 +267,32 @@ class SessionRepository(BaseRepository):
         agent_runs = (
             self.db.query(AgentRun)
             .filter_by(session_id=session_id, parent_run_id=None)
-            .order_by(AgentRun.started_at)
+            .order_by(AgentRun.sequence_number)
             .all()
         )
 
         for run in agent_runs:
-            # Use started_at for running/completed runs, created_at for pending
-            timestamp = run.started_at or run.created_at
             entries.append(TimelineEntry(
                 type=TimelineEntryType.AGENT_RUN,
-                timestamp=timestamp,
+                timestamp=run.started_at or run.created_at,
                 agent_run=self._build_agent_run_detail(run),
             ))
 
-        # Sort by timestamp for chronological order
-        entries.sort(key=lambda x: x.timestamp)
+        # Sort by sequence_number (both messages and agent runs have one),
+        # then by type (messages before agent runs at the same sequence),
+        # then by timestamp as final tiebreaker.
+        def _sort_key(entry):
+            if entry.agent_run and entry.agent_run.sequence_number is not None:
+                seq = entry.agent_run.sequence_number
+            elif entry.message:
+                seq = entry.message.sequence_number
+            else:
+                seq = -1
+            # At the same sequence, messages sort before agent runs (0 < 1)
+            type_order = 0 if entry.message else 1
+            return (seq, type_order, entry.timestamp)
+
+        entries.sort(key=_sort_key)
         return entries
 
     def _to_agent_run_summary(self, run: AgentRun) -> AgentRunSummary:

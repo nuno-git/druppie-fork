@@ -15,6 +15,7 @@ import { Loader2, Send, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
+import { chatMarkdownComponents } from './ChatHelpers'
 
 const HITLQuestionMessage = ({ question, onChoiceSelect, isAnswering, answered = false }) => {
   const agentId = question.agent_id || 'unknown'
@@ -50,12 +51,12 @@ const HITLQuestionMessage = ({ question, onChoiceSelect, isAnswering, answered =
       </div>
       <div className="pl-8">
         <div className="text-sm text-gray-800 leading-relaxed markdown-content">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{question.question}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{question.question}</ReactMarkdown>
         </div>
 
         {question.context && !answered && (
           <div className="mt-1 text-xs text-gray-500 markdown-content">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{question.context}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{question.context}</ReactMarkdown>
           </div>
         )}
 
