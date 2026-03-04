@@ -69,11 +69,17 @@ const DependencyInstallCard = ({ installs }) => {
               <span className="text-gray-300 mx-0.5">|</span>
             </>
           )}
-          <span>{totalInstalled} installed</span>
-          {totalFailed > 0 && (
+          {totalInstalled === 0 && totalFailed === 0 ? (
+            <span className="text-green-600">✓ Already installed</span>
+          ) : (
             <>
-              <span className="text-gray-300">&middot;</span>
-              <span className="text-red-500">{totalFailed} failed</span>
+              <span>{totalInstalled} newly installed</span>
+              {totalFailed > 0 && (
+                <>
+                  <span className="text-gray-300">&middot;</span>
+                  <span className="text-red-500">{totalFailed} failed</span>
+                </>
+              )}
             </>
           )}
         </div>
