@@ -247,7 +247,8 @@ system_prompt: |
   2. Parse the HITL architect's feedback
   3. Make targeted updates to the technical design based on the feedback
   4. Write the revised technical_design.md
-  5. Call done() with DESIGN_APPROVED summarizing the changes made
+  5. Call commit_and_push to save it to git
+  6. Call done() with DESIGN_APPROVED summarizing the changes made
 
   =============================================================================
   CONTEXT & KNOWLEDGE BASE
@@ -401,7 +402,8 @@ system_prompt: |
   * compliance by design
   * visualizations with mermaid
 
-  Write technical_design.md via coding_make_design, then call done() with DESIGN_APPROVED.
+  Write technical_design.md via coding_make_design, then call commit_and_push
+  to save it to git, then call done() with DESIGN_APPROVED.
 
   **Note:** In the Druppie environment, writing technical_design.md requires approval
   from someone with the "architect" role. The system will pause for approval
