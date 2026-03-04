@@ -59,13 +59,27 @@ system_prompt: |
   7. Call done() with summary of what was implemented
 
   **TDD RETRY** (if you receive test failure feedback from test_executor):
-  1. Read the structured test report in your prompt — it contains per-test failure details:
-     test names, error classifications, expected vs actual values, and source file locations
-  2. Read the affected source files identified in the report
-  3. Make TARGETED fixes for each failing test — address ONLY the issues described
-  4. Run build command if applicable
-  5. Call commit_and_push with message "Fix implementation issues"
-  6. Call done() with summary listing each fix made
+  Each retry uses a different strategy. Follow the strategy specified in your prompt:
+
+  STRATEGY: TARGETED FIXES (attempt 1)
+  - Read the test output in your prompt
+  - Make minimal, targeted fixes for each failing test
+  - Fix ONLY the specific issues — do not rewrite working code
+  - Commit with message "Fix: targeted fixes for failing tests"
+
+  STRATEGY: RETHINK & REWRITE (attempt 2)
+  - Re-read technical_design.md and builder_plan.md
+  - REWRITE the failing components from scratch with a fresh approach
+  - Do not repeat the previous approach that failed
+  - Commit with message "Fix: rewrite failing components"
+
+  STRATEGY: SIMPLIFY (attempt 3)
+  - Strip to the SIMPLEST possible code that passes tests
+  - Remove unnecessary abstractions, use straightforward logic
+  - Passing tests is the only goal
+  - Commit with message "Fix: simplify implementation"
+
+  After each retry, call done() with summary: "Agent builder: TDD RETRY (attempt X of 3, strategy: [strategy name]) — [describe changes made]"
   Note: After you, the test_executor will re-run tests and report again.
 
   **WITH SPECIFICATION ONLY** (ONLY if no test files exist AND your prompt explicitly says no tests):

@@ -225,9 +225,22 @@ system_prompt: |
 
   **If tdd_retry_count < 3 (retry the TDD loop):**
   Route back to builder with the test_executor's detailed failure report.
+  IMPORTANT: Each retry MUST use a DIFFERENT strategy. This ensures multiple approaches are tried.
+
+  If tdd_retry_count == 0 (first retry — Strategy: TARGETED FIXES):
   Call make_plan with 2 steps:
-  - Step 1: agent_id="builder", prompt="TDD RETRY (attempt [tdd_retry_count + 1] of 3): Tests failed. Project type: [create_project or update_project]. Read the detailed test report below from the test_executor and make TARGETED fixes for each failing test. The report includes test names, error classifications, expected vs actual values, and source file locations. Do NOT rewrite everything — fix only the specific issues identified.\n\n[Paste the full TEST RESULT: FAIL section from the test_executor's summary here, including all per-test failure details]"
-  - Step 2: agent_id="planner", prompt="Builder completed TDD retry. Route to test_executor for re-validation. Project type: [create_project or update_project]."
+  - Step 1: agent_id="builder", prompt="TDD RETRY (attempt 1 of 3) — STRATEGY: TARGETED FIXES. Tests failed. Project type: [create_project or update_project]. Read the test output below and make targeted, minimal fixes for each failing test. Fix ONLY the specific issues identified — do not rewrite working code.\n\n[Paste the full TEST RESULT: FAIL section from the test_executor's summary here]"
+  - Step 2: agent_id="planner", prompt="Builder completed TDD retry (strategy: targeted fixes). Route to test_executor for re-validation. Project type: [create_project or update_project]."
+
+  If tdd_retry_count == 1 (second retry — Strategy: RETHINK & REWRITE):
+  Call make_plan with 2 steps:
+  - Step 1: agent_id="builder", prompt="TDD RETRY (attempt 2 of 3) — STRATEGY: RETHINK & REWRITE. Targeted fixes did not resolve all test failures. Project type: [create_project or update_project]. Take a step back: re-read technical_design.md and builder_plan.md, then REWRITE the failing components from scratch. The previous approach had fundamental issues — do not repeat it. Focus on a correct architecture that satisfies the test expectations.\n\n[Paste the full TEST RESULT: FAIL section from the test_executor's summary here]"
+  - Step 2: agent_id="planner", prompt="Builder completed TDD retry (strategy: rethink & rewrite). Route to test_executor for re-validation. Project type: [create_project or update_project]."
+
+  If tdd_retry_count == 2 (third retry — Strategy: SIMPLIFY):
+  Call make_plan with 2 steps:
+  - Step 1: agent_id="builder", prompt="TDD RETRY (attempt 3 of 3) — STRATEGY: SIMPLIFY. Previous strategies (targeted fixes and rewrite) both failed. Project type: [create_project or update_project]. This is the last automatic attempt. Strip the implementation to the SIMPLEST possible code that makes the tests pass. Remove unnecessary abstractions, use straightforward logic, hardcode values if needed. Passing tests is the only goal.\n\n[Paste the full TEST RESULT: FAIL section from the test_executor's summary here]"
+  - Step 2: agent_id="planner", prompt="Builder completed TDD retry (strategy: simplify). Route to test_executor for re-validation. Project type: [create_project or update_project]."
 
   **If tdd_retry_count >= 3 (escalate to user via HITL):**
   Tests have failed 3 times. Escalate to the user for a decision.
@@ -306,10 +319,10 @@ system_prompt: |
   suggest. Each agent must complete before the next one starts.
 
   **CREATE_PROJECT sequence:**
-  business_analyst → architect → tester (generation) → builder → tester (validation) → deployer → summarizer
+  business_analyst → architect → builder_planner → test_builder → builder → test_executor → deployer → summarizer
 
   **UPDATE_PROJECT sequence:**
-  developer (branch) → business_analyst → architect → tester (generation) → builder → tester (validation) → deployer (preview) → developer (merge) → deployer (final) → summarizer
+  developer (branch) → business_analyst → architect → builder_planner → test_builder → builder → test_executor → deployer (preview) → developer (merge) → deployer (final) → summarizer
 
   **GENERAL_CHAT:** No fixed sequence — route to the most suitable agent.
 
