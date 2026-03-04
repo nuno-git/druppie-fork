@@ -287,7 +287,11 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
   // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
 
-  if (!showAgentTrace && resolvedItems.length === 0 && surfacedFiles.length === 0 && depInstalls.length === 0 && testResults.length === 0) return null
+  // Show test card immediately when test_executor is running (even with no results yet)
+  const isTestExecutor = run.agent_id === 'test_executor'
+  const showTestCard = isTestExecutor && (run.status === 'running' || testResults.length > 0)
+
+  if (!showAgentTrace && resolvedItems.length === 0 && surfacedFiles.length === 0 && depInstalls.length === 0 && !showTestCard) return null
 
   const config = getAgentConfig(run.agent_id)
   const AgentIcon = config.icon
@@ -322,9 +326,12 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
           <DependencyInstallCard installs={depInstalls} />
         </div>
       )}
-      {testResults.length > 0 && (
+      {showTestCard && (
         <div className="mt-2">
-          <TestResultCard testResults={testResults} />
+          <TestResultCard
+            testResults={testResults}
+            isRunning={run.status === 'running' && testResults.length === 0}
+          />
         </div>
       )}
     </div>
@@ -804,7 +811,10 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 const testResults = extractTestResults(entry.agent_run)
                 // Show completed runs without a following message (e.g. architect)
                 const isCompletedWithoutMessage = !hasFollowingMessage && entry.agent_run.status !== 'running'
-                if (resolvedItems.length === 0 && questions.length === 0 && surfacedFiles.length === 0 && depInstalls.length === 0 && testResults.length === 0 && !isCompletedWithoutMessage) {
+                // Show test card immediately when test_executor is running
+                const isTestExecutor = entry.agent_run.agent_id === 'test_executor'
+                const showTestCard = isTestExecutor && (entry.agent_run.status === 'running' || testResults.length > 0)
+                if (resolvedItems.length === 0 && questions.length === 0 && surfacedFiles.length === 0 && depInstalls.length === 0 && !showTestCard && !isCompletedWithoutMessage) {
                   return null
                 }
                 return (

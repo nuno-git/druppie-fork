@@ -199,6 +199,36 @@ export const extractTestResults = (agentRun) => {
           if (raw) results.push(raw)
         } catch { /* malformed JSON — skip */ }
       }
+      // Also extract from test_report builtin tool calls
+      if (tc.tool_name === 'test_report' && tc.status === 'completed' && tc.result) {
+        try {
+          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+          // Convert test_report format to run_tests format for TestResultCard
+          if (raw && tc.arguments) {
+            const args = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments
+            // Convert to numbers to avoid string concatenation
+            const passed = parseInt(args.passed_count) || 0
+            const failed = parseInt(args.failed_count) || 0
+            const testResult = {
+              success: args.tests_passed || false,
+              framework: 'unknown',
+              exit_code: args.tests_passed ? 0 : 1,
+              stdout: args.summary || '',
+              stderr: '',
+              elapsed_seconds: null,
+              results: {
+                total: passed + failed,
+                passed: passed,
+                failed: failed,
+                skipped: 0,
+                failed_tests: [],
+              },
+              coverage: null,
+            }
+            results.push(testResult)
+          }
+        } catch { /* malformed JSON — skip */ }
+      }
     })
   })
   return results

@@ -86,6 +86,10 @@ const TestRunSection = ({ result }) => {
   const isPass = result.success && result.exit_code === 0 && failed === 0
   const errors = extractTestErrors(result.stdout, result.stderr, result.framework, failedNames)
 
+  // Detect if we couldn't parse any test data
+  const noCounts = total === 0 && passed === 0 && failed === 0
+  const hasOutput = result.stdout || result.stderr
+
   return (
     <div className="py-2">
       {/* Run header */}
@@ -99,9 +103,18 @@ const TestRunSection = ({ result }) => {
         {isPass ? (
           <CheckCircle className="w-3.5 h-3.5 text-green-500" />
         ) : (
-          <XCircle className="w-3.5 h-3.5 text-red-500" />
+          <XCircle className="w-3.5 h-3.5 text-red-400" />
         )}
-        <span className="text-gray-500">{passed}/{total} passed</span>
+        {noCounts ? (
+          <span className="text-amber-600 italic">
+            {hasOutput ? 'Unable to parse results' : 'No test output'}
+            {result.exit_code && result.exit_code !== 0 && (
+              <span className="text-gray-500"> (exit {result.exit_code})</span>
+            )}
+          </span>
+        ) : (
+          <span className="text-gray-500">{passed}/{total} passed</span>
+        )}
       </div>
 
       {/* Failed tests with error excerpts */}
@@ -109,7 +122,7 @@ const TestRunSection = ({ result }) => {
         <div className="mt-1.5 ml-2 space-y-1.5">
           {failedNames.map((name, i) => (
             <div key={i} className="text-xs">
-              <div className="flex items-center gap-1 text-red-600 font-medium font-mono">
+              <div className="flex items-center gap-1 text-red-500 font-medium font-mono">
                 <XCircle className="w-3 h-3 flex-shrink-0" />
                 {name}
               </div>
@@ -145,8 +158,22 @@ const TestRunSection = ({ result }) => {
   )
 }
 
-const TestResultCard = ({ testResults }) => {
+const TestResultCard = ({ testResults, isRunning }) => {
   const [isExpanded, setIsExpanded] = useState(false)
+
+  // Show loading state if running with no results yet
+  if (isRunning && (!testResults || testResults.length === 0)) {
+    return (
+      <div className="rounded-xl border bg-gray-50 border-gray-200 border-l-4 border-l-blue-400 transition-all">
+        <div className="px-4 py-3">
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm font-medium text-gray-800">Running tests...</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (!testResults?.length) return null
 
@@ -158,21 +185,39 @@ const TestResultCard = ({ testResults }) => {
   const totalSkipped = lastRes.skipped || 0
   const totalTests = lastRes.total || 0
   const coveragePercent = lastRun.coverage?.overall_percent ?? null
-  const allPass = lastRun.success && lastRun.exit_code === 0 && totalFailed === 0
+
+  // Detect various failure modes
+  const noCounts = totalTests === 0 && totalPassed === 0 && totalFailed === 0
+  const testRunFailed = noCounts && !lastRun.success
+  const allPass = lastRun.success && lastRun.exit_code === 0 && totalFailed === 0 && !testRunFailed
 
   const iterations = testResults.length
+  const hasOutput = lastRun.stdout || lastRun.stderr
 
   // Build inline summary parts
   const summaryParts = []
-  summaryParts.push(`${totalPassed} passed`)
-  if (totalFailed > 0) summaryParts.push(`${totalFailed} failed`)
-  if (totalSkipped > 0) summaryParts.push(`${totalSkipped} skipped`)
+  if (testRunFailed) {
+    summaryParts.push('Test run failed')
+    if (lastRun.exit_code) summaryParts.push(`exit ${lastRun.exit_code}`)
+  } else if (noCounts && hasOutput) {
+    // We have output but couldn't parse counts
+    summaryParts.push('Results parsing failed')
+    if (lastRun.exit_code && lastRun.exit_code !== 0) summaryParts.push(`exit ${lastRun.exit_code}`)
+  } else if (noCounts) {
+    // No output at all
+    summaryParts.push('No test output')
+  } else {
+    // Normal case: we have counts
+    summaryParts.push(`${totalPassed} passed`)
+    if (totalFailed > 0) summaryParts.push(`${totalFailed} failed`)
+    if (totalSkipped > 0) summaryParts.push(`${totalSkipped} skipped`)
+  }
   if (coveragePercent != null && coveragePercent > 0) summaryParts.push(`${coveragePercent.toFixed(0)}% cov`)
   if (iterations > 1) summaryParts.push(`${iterations} iterations`)
   if (lastRun.elapsed_seconds) summaryParts.push(formatTime(lastRun.elapsed_seconds))
 
   return (
-    <div className={`rounded-xl border bg-gray-50 border-gray-200 border-l-4 ${allPass ? 'border-l-green-500' : 'border-l-red-500'} transition-all`}>
+    <div className={`rounded-xl border bg-gray-50 border-gray-200 border-l-4 ${allPass ? 'border-l-green-500' : 'border-l-red-400'} transition-all`}>
       {/* Header */}
       <div className="px-4 pt-3 pb-1">
         <div className="flex items-center justify-between">
@@ -180,7 +225,7 @@ const TestResultCard = ({ testResults }) => {
             {allPass ? (
               <CheckCircle className="w-4 h-4 text-green-500" />
             ) : (
-              <XCircle className="w-4 h-4 text-red-500" />
+              <XCircle className="w-4 h-4 text-red-400" />
             )}
             <span className="text-sm font-medium text-gray-800">Test Results</span>
           </div>
@@ -199,14 +244,18 @@ const TestResultCard = ({ testResults }) => {
             <div className="h-full bg-green-500" style={{ width: `${(totalPassed / totalTests) * 100}%` }} />
           )}
           {totalTests > 0 && totalFailed > 0 && (
-            <div className="h-full bg-red-500" style={{ width: `${(totalFailed / totalTests) * 100}%` }} />
+            <div className="h-full bg-red-400" style={{ width: `${(totalFailed / totalTests) * 100}%` }} />
           )}
         </div>
 
         {/* Inline summary */}
         <div className="mt-1.5 pb-2 flex items-center gap-1 text-xs text-gray-500 flex-wrap">
-          <span className="font-medium text-gray-700">{totalPassed}/{totalTests}</span>
-          <span className="text-gray-300 mx-0.5">|</span>
+          {!noCounts && (
+            <>
+              <span className="font-medium text-gray-700">{totalPassed}/{totalTests}</span>
+              <span className="text-gray-300 mx-0.5">|</span>
+            </>
+          )}
           {summaryParts.map((part, i) => (
             <span key={i} className="flex items-center gap-1">
               {i > 0 && <span className="text-gray-300">&middot;</span>}
