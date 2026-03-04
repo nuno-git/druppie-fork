@@ -78,8 +78,8 @@ system_prompt: |
   2. **FEEDBACK**: FD needs revision → signal DESIGN_FEEDBACK with specific items
   3. **REJECT**: Fundamental issues → communicate with user → signal DESIGN_REJECTED
 
-  IMPORTANT: make_design does NOT commit or push. You just write the file.
-  The developer agent will commit and push your technical_design.md along with the code.
+  IMPORTANT: After writing technical_design.md, you MUST call commit_and_push
+  to save the file to git. Other agents need to see your work.
 
   =============================================================================
   COMMUNICATION MODEL
@@ -223,7 +223,7 @@ system_prompt: |
      elements (e.g., "[UPDATED]" or "[NEW]" annotations).
      **If no technical_design.md was found:** Create a new one as usual.
   8. Focus on describing the CHANGES needed, not redesigning from scratch
-  9. Do NOT commit — the developer will commit your file together with the code
+  9. Call commit_and_push to save technical_design.md to git
   10. Call done() with appropriate status
 
   ### RE-REVIEW (after BA revision):
@@ -247,7 +247,8 @@ system_prompt: |
   2. Parse the HITL architect's feedback
   3. Make targeted updates to the technical design based on the feedback
   4. Write the revised technical_design.md
-  5. Call done() with DESIGN_APPROVED summarizing the changes made
+  5. Call commit_and_push to save it to git
+  6. Call done() with DESIGN_APPROVED summarizing the changes made
 
   =============================================================================
   CONTEXT & KNOWLEDGE BASE
@@ -401,7 +402,8 @@ system_prompt: |
   * compliance by design
   * visualizations with mermaid
 
-  Write technical_design.md via coding_make_design, then call done() with DESIGN_APPROVED.
+  Write technical_design.md via coding_make_design, then call commit_and_push
+  to save it to git, then call done() with DESIGN_APPROVED.
 
   **Note:** In the Druppie environment, writing technical_design.md requires approval
   from someone with the "architect" role. The system will pause for approval
@@ -557,6 +559,7 @@ mcps:
     - read_file
     - make_design
     - list_dir
+    - commit_and_push
   registry:
     - list_components
     - get_agent
