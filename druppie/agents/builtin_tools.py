@@ -207,11 +207,6 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "type": "string",
                         "description": "Human-readable summary of this iteration's results",
                     },
-                    "changed_files": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of files changed in this iteration",
-                    },
                     "test_command": {
                         "type": "string",
                         "description": "The test command that was executed",
@@ -227,10 +222,6 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     "error_classification": {
                         "type": "string",
                         "description": "Classification of the error: assertion_failure, missing_function, import_error, type_error, syntax_error, configuration_error, environment_error, test_error",
-                    },
-                    "strategy": {
-                        "type": "string",
-                        "description": "Fix strategy used: fix_implementation, fix_test, fix_imports, fix_configuration, add_dependency, refactor_approach",
                     },
                 },
                 "required": ["iteration", "tests_passed", "summary"],

@@ -44,7 +44,7 @@ system_prompt: |
   - builder_planner: Creates detailed implementation plans (code standards, test strategy, solution approach, change approach). Reads design docs, writes builder_plan.md.
   - test_builder: Generates comprehensive tests (TDD Red Phase). Writes test files, sets up test framework. Does NOT run tests.
   - builder: TDD code implementer - builds initial implementation based on tests. Reads tests, implements code to pass them.
-  - test_executor: Runs tests and iteratively fixes code until tests pass (TDD Green Phase). Has internal retry loop — no need for planner retries. Reports PASS/FAIL verdict.
+  - test_executor: Runs tests and reports structured PASS/FAIL results (TDD Green Phase). Does NOT fix code — only runs tests, classifies failures, and reports. On FAIL, the planner routes back to the builder with the test report.
   - developer: Branching, merging PRs, and improvement tasks (user feedback changes). NOT for TDD implementation
   - deployer: Handles Docker build, deployment, and asks user for preview feedback
   - summarizer: Creates a user-friendly completion message (ALWAYS use as FINAL step when done)
@@ -200,7 +200,7 @@ system_prompt: |
   ### After BUILDER completed:
 
   Always route to test_executor. Call make_plan with 2 steps:
-  - Step 1: agent_id="test_executor", prompt="Run all tests and iteratively fix code until tests pass. Use your internal retry loop: run tests, diagnose failures, apply fixes, re-run. Report structured PASS/FAIL result when done."
+  - Step 1: agent_id="test_executor", prompt="Run all tests with coverage. Analyze results: classify any failures (assertion_failure, import_error, missing_function, etc.) and note exact test names, file locations, expected vs actual values. Call test_report with structured data, then call done() with PASS or FAIL verdict. On FAIL, include detailed per-test failure info so the builder knows exactly what to fix."
   - Step 2: agent_id="planner", prompt="Test executor completed. Evaluate PASS/FAIL verdict and decide next step."
 
   ### After TEST_EXECUTOR completed (look for TEST RESULT signals):
@@ -216,7 +216,7 @@ system_prompt: |
   - Step 1: agent_id="deployer", prompt="PREVIEW deploy from feature branch. Use '-preview' suffix. Ask user via hitl_ask_question. Include feedback in done() as 'USER FEEDBACK: <response>'."
   - Step 2: agent_id="planner", prompt="Deployer completed. Evaluate user feedback and decide next step."
 
-  If TEST RESULT: FAIL (test_executor gave up after internal retries):
+  If TEST RESULT: FAIL:
 
   COUNT the number of lines containing "Agent builder: TDD RETRY" in the PREVIOUS AGENT SUMMARY.
   Each such line represents a completed builder retry attempt. This count = tdd_retry_count.
@@ -224,9 +224,9 @@ system_prompt: |
   so only actual retry attempts are counted. Each retry produces a unique summary line.
 
   **If tdd_retry_count < 3 (retry the TDD loop):**
-  Route back to builder with failure feedback for a TDD retry.
+  Route back to builder with the test_executor's detailed failure report.
   Call make_plan with 2 steps:
-  - Step 1: agent_id="builder", prompt="TDD RETRY (attempt [tdd_retry_count + 1] of 3): Tests failed after test_executor exhausted internal retries. Project type: [create_project or update_project]. Read the test failure details from the previous agent summary. Make TARGETED fixes to address the specific failures. Do NOT rewrite everything. Commit fixes."
+  - Step 1: agent_id="builder", prompt="TDD RETRY (attempt [tdd_retry_count + 1] of 3): Tests failed. Project type: [create_project or update_project]. Read the detailed test report below from the test_executor and make TARGETED fixes for each failing test. The report includes test names, error classifications, expected vs actual values, and source file locations. Do NOT rewrite everything — fix only the specific issues identified.\n\n[Paste the full TEST RESULT: FAIL section from the test_executor's summary here, including all per-test failure details]"
   - Step 2: agent_id="planner", prompt="Builder completed TDD retry. Route to test_executor for re-validation. Project type: [create_project or update_project]."
 
   **If tdd_retry_count >= 3 (escalate to user via HITL):**
