@@ -545,7 +545,9 @@ const SandboxLiveProgress = ({ sandboxSessionId }) => {
 // --- Main SessionDetail ---
 
 const VALID_VIEW_MODES = new Set(['chat', 'annotated', 'inspect'])
-const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_user', 'paused_sandbox', 'waiting_approval', 'waiting_answer'])
+// AgentRunStatus values that indicate the agent has started processing (not pending)
+// Note: 'paused_user' was removed as it doesn't exist; 'paused_crashed' added
+const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_sandbox', 'paused_crashed', 'waiting_approval', 'waiting_answer'])
 
 const SessionDetail = ({ sessionId, initialViewMode }) => {
   const timelineEndRef = useRef(null)
@@ -705,10 +707,15 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     const trimmed = continueInput.trim()
     if (!trimmed) return
     if (pendingQuestion) {
-      answerQuestion(pendingQuestion.tc.question_id, trimmed).then(() => {
-        setContinueInput('')
-        queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
-      })
+      answerQuestion(pendingQuestion.tc.question_id, trimmed)
+        .then(() => {
+          setContinueInput('')
+          queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+        })
+        .catch((err) => {
+          // Log error for debugging; UI feedback is handled by the mutation's error state
+          console.error('Failed to answer question:', err.message || err)
+        })
       return
     }
     continueMutation.mutate(trimmed)

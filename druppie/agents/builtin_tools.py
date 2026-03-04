@@ -27,8 +27,6 @@ logger = structlog.get_logger()
 # Sandbox configuration (for execute_coding_task)
 SANDBOX_CONTROL_PLANE_URL = os.getenv("SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://druppie-backend:8000")
-GITEA_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
-GITEA_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "")
 GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
 _sandbox_model_warned = False
 
@@ -891,7 +889,8 @@ async def execute_sandbox_coding_task(
         The caller (tool_executor) should set ToolCallStatus.WAITING_SANDBOX.
     """
     task = args.get("task", "")
-    agent = args.get("agent", "druppie-builder")
+    from druppie.core.config import DEFAULT_SANDBOX_AGENT
+    agent = args.get("agent", DEFAULT_SANDBOX_AGENT)
     model = _get_sandbox_model()
 
     if not task:

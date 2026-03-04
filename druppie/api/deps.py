@@ -19,6 +19,7 @@ Example usage in a route:
         return service.get_detail(session_id, UUID(user["sub"]), get_user_roles(user))
 """
 
+import hmac
 import os
 from functools import wraps
 from typing import Callable, Generator
@@ -235,13 +236,15 @@ async def verify_internal_api_key(
     """Verify internal API key for MCP server requests.
 
     MCP servers use this to authenticate when calling backend endpoints.
+    Uses hmac.compare_digest for constant-time comparison to prevent timing attacks.
     """
     if not x_internal_api_key:
         raise HTTPException(
             status_code=401,
             detail="Missing internal API key",
         )
-    if x_internal_api_key != INTERNAL_API_KEY:
+    # Use constant-time comparison to prevent timing attacks
+    if not hmac.compare_digest(x_internal_api_key, INTERNAL_API_KEY):
         raise HTTPException(
             status_code=403,
             detail="Invalid internal API key",

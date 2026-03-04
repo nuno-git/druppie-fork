@@ -28,7 +28,7 @@ from druppie.api.deps import (
     get_current_user,
     verify_internal_api_key,
 )
-from druppie.core.sandbox_auth import generate_control_plane_token
+from druppie.core.sandbox_auth import generate_control_plane_token, SANDBOX_API_SECRET
 from druppie.db.database import get_db
 from druppie.repositories import SandboxSessionRepository
 
@@ -99,13 +99,12 @@ async def get_sandbox_events(
     check_resource_ownership(user, mapping.user_id)
 
     base_url = os.environ.get("SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787")
-    api_secret = os.environ.get("SANDBOX_API_SECRET", "sandbox-dev-secret")
 
     url = f"{base_url}/sessions/{session_id}/events?limit={limit}"
     if message_id:
         url += f"&message_id={message_id}"
 
-    token = generate_control_plane_token(api_secret)
+    token = generate_control_plane_token(SANDBOX_API_SECRET)
 
     try:
         async with httpx.AsyncClient() as client:
@@ -130,10 +129,14 @@ async def get_sandbox_events(
 
 
 class SandboxCompletePayload(BaseModel):
-    """Webhook payload from control plane on sandbox completion."""
+    """Webhook payload from control plane on sandbox completion.
+    
+    Note: 'success' is required (no default) to ensure malformed payloads
+    fail validation rather than silently succeeding.
+    """
     sessionId: str
     messageId: str = ""
-    success: bool = True
+    success: bool  # Required - no default to prevent silent success on malformed payloads
     timestamp: int = 0
 
 
@@ -209,7 +212,11 @@ async def sandbox_complete_webhook(
 
     # Verify HMAC signature using the per-session secret
     raw_body = await request.body()
-    signature = request.headers.get("X-Signature", "")
+    signature = request.headers.get("X-Signature")
+    # Explicit check for missing signature header - don't default to empty string
+    if not signature:
+        logger.warning("sandbox_webhook_missing_signature", sandbox_session_id=sandbox_session_id)
+        raise HTTPException(status_code=403, detail="Missing signature header")
     if not _verify_webhook_signature(raw_body, signature, sandbox_mapping.webhook_secret):
         logger.warning("sandbox_webhook_invalid_signature", sandbox_session_id=sandbox_session_id)
         raise HTTPException(status_code=403, detail="Invalid signature")
@@ -263,9 +270,8 @@ async def sandbox_complete_webhook(
     agent_output = ""
     event_count = 0
 
-    api_secret = os.environ.get("SANDBOX_API_SECRET", "sandbox-dev-secret")
     try:
-        token = generate_control_plane_token(api_secret)
+        token = generate_control_plane_token(SANDBOX_API_SECRET)
         async with httpx.AsyncClient(timeout=30.0) as client:
             events_resp = await client.get(
                 f"{control_plane_url}/sessions/{sandbox_session_id}/events?limit=500",
@@ -324,6 +330,9 @@ async def _resume_agent_after_sandbox(tool_call_id: UUID) -> None:
     Runs as a Starlette BackgroundTask (proper lifecycle management).
     Creates its own DB session. On failure, reverts statuses so the
     session doesn't get permanently stuck.
+    
+    Idempotency: Checks that the agent run is still in PAUSED_SANDBOX state
+    before resuming, to prevent duplicate resume attempts.
     """
     from druppie.execution.orchestrator import Orchestrator
     from druppie.repositories import ExecutionRepository, SessionRepository, ProjectRepository, QuestionRepository
@@ -335,6 +344,28 @@ async def _resume_agent_after_sandbox(tool_call_id: UUID) -> None:
     # except block only affects this session, not the webhook's committed data.
     resume_db = SessionLocal()
     try:
+        # Idempotency guard: check if the agent run is still paused for sandbox
+        execution_repo = ExecutionRepository(resume_db)
+        tool_call = execution_repo.get_tool_call(tool_call_id)
+        if not tool_call or not tool_call.agent_run_id:
+            logger.warning("sandbox_resume_no_tool_call_or_agent", tool_call_id=str(tool_call_id))
+            return
+            
+        agent_run = execution_repo.get_by_id(tool_call.agent_run_id)
+        if not agent_run:
+            logger.warning("sandbox_resume_no_agent_run", tool_call_id=str(tool_call_id))
+            return
+            
+        # Only resume if still in PAUSED_SANDBOX - prevents duplicate resume attempts
+        if agent_run.status != AgentRunStatus.PAUSED_SANDBOX:
+            logger.info(
+                "sandbox_resume_skipped_not_paused",
+                tool_call_id=str(tool_call_id),
+                agent_run_id=str(agent_run.id),
+                current_status=agent_run.status,
+            )
+            return
+        
         orchestrator = Orchestrator(
             session_repo=SessionRepository(resume_db),
             execution_repo=ExecutionRepository(resume_db),
@@ -351,7 +382,8 @@ async def _resume_agent_after_sandbox(tool_call_id: UUID) -> None:
             tool_call = execution_repo.get_tool_call(tool_call_id)
             if tool_call and tool_call.agent_run_id:
                 agent_run = execution_repo.get_by_id(tool_call.agent_run_id)
-                if agent_run and agent_run.status == AgentRunStatus.RUNNING:
+                # Fix: Also handle PAUSED_SANDBOX state in case error occurred before status change
+                if agent_run and agent_run.status in (AgentRunStatus.RUNNING, AgentRunStatus.PAUSED_SANDBOX):
                     execution_repo.update_status(agent_run.id, AgentRunStatus.FAILED, error_message=f"Resume failed: {e}")
                     session_repo = SessionRepository(resume_db)
                     session_repo.update_status(agent_run.session_id, SessionStatus.FAILED)
@@ -449,8 +481,7 @@ async def sandbox_watchdog_loop() -> None:
                             control_plane_url = os.environ.get(
                                 "SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787"
                             ).rstrip("/")
-                            api_secret = os.environ.get("SANDBOX_API_SECRET", "sandbox-dev-secret")
-                            token = generate_control_plane_token(api_secret)
+                            token = generate_control_plane_token(SANDBOX_API_SECRET)
                             async with httpx.AsyncClient(timeout=10.0) as client:
                                 await client.delete(
                                     f"{control_plane_url}/sessions/{sandbox_mapping.sandbox_session_id}",

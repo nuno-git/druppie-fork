@@ -721,10 +721,12 @@ class ToolExecutor:
 
             # Handle sandbox delegation — tool is waiting for external callback
             if isinstance(result, dict) and result.get("status") == "waiting_sandbox":
+                from datetime import datetime, timezone
                 self.execution_repo.update_tool_call(
                     tool_call.id,
                     status=ToolCallStatus.WAITING_SANDBOX,
                     result=result,  # Store sandbox_session_id for resume
+                    sandbox_waiting_at=datetime.now(timezone.utc),  # For accurate watchdog timeout
                 )
                 # Link the SandboxSession record to this tool call for direct lookup
                 # (avoids full table scan + JSON parsing in the webhook handler)

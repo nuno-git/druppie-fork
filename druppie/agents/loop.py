@@ -242,8 +242,9 @@ class AgentLoop:
         )
 
         # Read default agent from opencode-config.json
+        from druppie.core.config import DEFAULT_SANDBOX_AGENT
         config_file = agents_dir.parent / "opencode-config.json"
-        default_agent = "druppie-builder"
+        default_agent = DEFAULT_SANDBOX_AGENT
         if config_file.is_file():
             try:
                 import json as _json

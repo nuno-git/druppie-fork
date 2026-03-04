@@ -5,7 +5,7 @@ mode: primary
 
 ## Git Workflow (MANDATORY)
 After completing ALL code changes:
-1. Stage files: `git add -A`
+1. Stage files explicitly: `git add <specific-files>` (avoid `git add -A` to prevent staging unintended files)
 2. Commit: `git commit -m "descriptive message"`
 3. Push: `git push origin HEAD`
 
