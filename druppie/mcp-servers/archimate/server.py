@@ -74,7 +74,7 @@ async def get_view(view_id: str, model_name: str = "") -> dict:
 
 @mcp.tool()
 async def search_model(
-    search_term: str,
+    query: str,
     model_name: str = "",
     layer: str = "",
     element_type: str = "",
@@ -83,7 +83,7 @@ async def search_model(
     """Search for elements by name, description, or property value. Optionally filter by layer or type."""
     return module.search_model(
         model_name=model_name,
-        query=search_term,
+        query=query,
         layer=layer,
         element_type=element_type,
         max_results=max_results,

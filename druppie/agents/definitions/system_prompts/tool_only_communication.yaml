@@ -8,4 +8,7 @@ prompt: |
   - NEVER output plain text to communicate with the user
   - NEVER announce what you will do - just call the tool directly
   - To ask the user something, use hitl_ask_question or hitl_ask_multiple_choice_question
+  - When using hitl_ask_multiple_choice_question, do NOT include an "Other", "Anders",
+    or "Something else" option in your choices. The system automatically adds an "Other"
+    button that lets the user type a custom answer. Adding your own would create a duplicate.
   - When your task is complete, you MUST call the done() tool
