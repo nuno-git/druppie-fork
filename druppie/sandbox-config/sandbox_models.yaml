@@ -1,0 +1,24 @@
+# Per-agent model chains for sandbox. First entry with available
+# API keys becomes primary. No runtime fallback — resolved at creation.
+
+default:
+  - provider: zai
+    model: zai-coding-plan/glm-4.7
+  - provider: anthropic
+    model: anthropic/claude-sonnet-4-6
+
+agents:
+  druppie-builder: null   # uses default
+  druppie-tester: null    # uses default
+
+subagents:
+  explore:
+    - provider: deepinfra
+      model: deepinfra/Qwen/QwQ-32B
+    - provider: zai
+      model: zai/glm-4.7-flash
+  analysis:
+    - provider: anthropic
+      model: anthropic/claude-sonnet-4-6
+    - provider: zai
+      model: zai-coding-plan/glm-4.7

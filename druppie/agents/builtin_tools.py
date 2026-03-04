@@ -28,23 +28,19 @@ logger = structlog.get_logger()
 SANDBOX_CONTROL_PLANE_URL = os.getenv("SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://druppie-backend:8000")
 GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
-_sandbox_model_warned = False
 
-
-def _get_sandbox_model() -> str:
-    """Get the sandbox model, warning once if not explicitly configured."""
-    global _sandbox_model_warned
-    model = os.getenv("SANDBOX_MODEL", "zai-coding-plan/glm-4.7")
-    if not os.getenv("SANDBOX_MODEL") and not _sandbox_model_warned:
-        _sandbox_model_warned = True
-        logger.warning(
-            "SANDBOX_MODEL not set — falling back to default 'zai-coding-plan/glm-4.7'. "
-            "Set SANDBOX_MODEL in .env to match your LLM provider."
-        )
-    return model
-
+from pathlib import Path
 
 from druppie.core.sandbox_auth import generate_control_plane_token as _generate_sandbox_auth_token
+from druppie.sandbox.model_resolver import PROVIDER_API_KEYS, resolve_sandbox_models
+
+
+def _load_agent_files() -> dict[str, str]:
+    """Load all .md agent files from sandbox-config/agents/ directory."""
+    agents_dir = Path(__file__).parent.parent / "sandbox-config" / "agents"
+    if agents_dir.is_dir():
+        return {f.stem: f.read_text() for f in agents_dir.glob("*.md")}
+    return {}
 
 
 # =============================================================================
@@ -891,7 +887,8 @@ async def execute_sandbox_coding_task(
     task = args.get("task", "")
     from druppie.core.config import DEFAULT_SANDBOX_AGENT
     agent = args.get("agent", DEFAULT_SANDBOX_AGENT)
-    model = _get_sandbox_model()
+    model_config = resolve_sandbox_models(agent)
+    model = model_config.primary_model
 
     if not task:
         return {"success": False, "error": "task is required"}
@@ -943,13 +940,6 @@ async def execute_sandbox_coding_task(
             # Build LLM credentials for all configured providers.
             # The credential store accepts an array and stores each provider
             # so the sandbox can use multiple providers (e.g. main + subagent).
-            _provider_api_keys = {
-                "zai": "ZAI_API_KEY",
-                "deepseek": "DEEPSEEK_API_KEY",
-                "deepinfra": "DEEPINFRA_API_KEY",
-                "openai": "OPENAI_API_KEY",
-                "anthropic": "ANTHROPIC_API_KEY",
-            }
             _provider_base_urls = {
                 "zai": os.getenv("ZAI_BASE_URL", "https://open.bigmodel.cn/api/paas"),
                 "deepseek": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
@@ -959,7 +949,7 @@ async def execute_sandbox_coding_task(
             }
 
             llm_credentials = []
-            for prov_name, api_key_env_var in _provider_api_keys.items():
+            for prov_name, api_key_env_var in PROVIDER_API_KEYS.items():
                 api_key = os.getenv(api_key_env_var, "")
                 if api_key:
                     llm_credentials.append({
@@ -972,6 +962,8 @@ async def execute_sandbox_coding_task(
                 "repoOwner": sandbox_repo_owner,
                 "repoName": sandbox_repo_name,
                 "model": model,
+                "agentModels": model_config.agents,
+                "agentFiles": _load_agent_files(),
                 "title": f"Druppie sandbox: {task[:80]}",
                 "credentials": {
                     "git": {
