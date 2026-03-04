@@ -5,8 +5,14 @@ that LLMs frequently produce. Returns actionable error messages so the LLM
 can fix and retry.
 """
 
+import logging
 import re
+import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
+
+logger = logging.getLogger("mermaid-validator")
 
 
 @dataclass
@@ -175,8 +181,113 @@ _LINE_CHECKS = [
 ]
 
 
+# Puppeteer config path (co-located with this module in the Docker container).
+# Provides --no-sandbox flag required for running Chromium as root in Docker.
+_PUPPETEER_CONFIG = Path(__file__).parent / "puppeteer-config.json"
+
+
+def _validate_with_mmdc(markdown: str) -> list[MermaidError]:
+    """Validate Mermaid blocks structurally using mmdc (mermaid-cli).
+
+    Extracts each Mermaid block, writes it to a temp file, and runs mmdc
+    to check for structural errors (mismatched subgraph/end, invalid syntax, etc.).
+
+    Returns:
+        List of MermaidError objects for blocks that fail structural validation.
+    """
+    errors: list[MermaidError] = []
+    lines = markdown.split("\n")
+    blocks = _find_mermaid_blocks(markdown)
+
+    if not blocks:
+        return errors
+
+    # Build mmdc command with puppeteer config if available
+    mmdc_cmd = ["mmdc"]
+    if _PUPPETEER_CONFIG.exists():
+        mmdc_cmd.extend(["-p", str(_PUPPETEER_CONFIG)])
+
+    for block_start, block_end in blocks:
+        block_lines = lines[block_start - 1 : block_end]
+        block_content = "\n".join(block_lines)
+
+        tmp_input = None
+        tmp_output = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".mmd", delete=False
+            ) as f:
+                f.write(block_content)
+                tmp_input = f.name
+
+            tmp_output = tmp_input.replace(".mmd", ".svg")
+
+            result = subprocess.run(
+                [*mmdc_cmd, "-i", tmp_input, "-o", tmp_output],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+
+            if result.returncode != 0:
+                stderr = result.stderr.strip()
+                message = _parse_mmdc_error(stderr, block_content)
+                errors.append(
+                    MermaidError(
+                        line_number=block_start,
+                        line_content=block_lines[0] if block_lines else "",
+                        rule="mmdc-structural",
+                        message=message,
+                    )
+                )
+        except FileNotFoundError:
+            logger.warning("mmdc not found, skipping structural validation")
+            break
+        except subprocess.TimeoutExpired:
+            logger.warning("mmdc timed out for block at line %d", block_start)
+        except Exception as e:
+            logger.warning("mmdc validation failed: %s", e)
+        finally:
+            if tmp_input:
+                Path(tmp_input).unlink(missing_ok=True)
+            if tmp_output:
+                Path(tmp_output).unlink(missing_ok=True)
+
+    return errors
+
+
+def _parse_mmdc_error(stderr: str, block_content: str) -> str:
+    """Parse mmdc stderr into an LLM-friendly error message."""
+    # mmdc outputs various error formats; extract the most useful part
+    error_lines = [
+        line.strip()
+        for line in stderr.split("\n")
+        if line.strip() and "Error" in line or "Parse" in line or "Syntax" in line
+    ]
+
+    if error_lines:
+        detail = "; ".join(error_lines[:3])
+    else:
+        # Fallback: use first non-empty lines from stderr
+        detail = "; ".join(
+            line.strip() for line in stderr.split("\n") if line.strip()
+        )[:300]
+
+    return (
+        f"Mermaid structural syntax error detected by parser. {detail}. "
+        f"Common causes: subgraph closed with ] instead of 'end', "
+        f"unbalanced brackets, or invalid diagram syntax. "
+        f"Fix the syntax and try again."
+    )
+
+
 def validate_mermaid_in_markdown(markdown: str) -> list[MermaidError]:
     """Validate all Mermaid code blocks in a markdown document.
+
+    Runs two validation passes:
+    1. Regex checks — fast, catches common LLM mistakes with actionable messages
+    2. mmdc structural validation — catches everything else (mismatched subgraph/end,
+       invalid syntax, unknown diagram types)
 
     Args:
         markdown: Full markdown document content.
@@ -184,6 +295,7 @@ def validate_mermaid_in_markdown(markdown: str) -> list[MermaidError]:
     Returns:
         List of MermaidError objects. Empty list means all Mermaid is valid.
     """
+    # Pass 1: regex checks (fast, actionable messages)
     errors: list[MermaidError] = []
     lines = markdown.split("\n")
     blocks = _find_mermaid_blocks(markdown)
@@ -196,4 +308,8 @@ def validate_mermaid_in_markdown(markdown: str) -> list[MermaidError]:
                 if error:
                     errors.append(error)
 
-    return errors
+    if errors:
+        return errors
+
+    # Pass 2: mmdc structural validation (complete)
+    return _validate_with_mmdc(markdown)
