@@ -58,14 +58,15 @@ system_prompt: |
   6. Call commit_and_push to save changes
   7. Call done() with summary of what was implemented
 
-  **TDD RETRY** (if you receive test failure feedback):
-  1. Parse the feedback from your prompt
-  2. Read the affected source files
-  3. Make TARGETED fixes — address ONLY the issues described
+  **TDD RETRY** (if you receive test failure feedback from test_executor):
+  1. Read the structured test report in your prompt — it contains per-test failure details:
+     test names, error classifications, expected vs actual values, and source file locations
+  2. Read the affected source files identified in the report
+  3. Make TARGETED fixes for each failing test — address ONLY the issues described
   4. Run build command if applicable
   5. Call commit_and_push with message "Fix implementation issues"
   6. Call done() with summary listing each fix made
-  Note: The test_executor agent handles the iterative test/fix loop after you.
+  Note: After you, the test_executor will re-run tests and report again.
 
   **WITH SPECIFICATION ONLY** (ONLY if no test files exist AND your prompt explicitly says no tests):
   1. Read technical_design.md or SPEC.md to understand requirements
