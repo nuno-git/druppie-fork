@@ -47,12 +47,14 @@ def _resolve_chain(chain: list[dict]) -> str | None:
 
 
 def _provider_from_model(model: str) -> str:
-    """Extract base provider name from a model string like 'deepinfra/Qwen/QwQ-32B'."""
+    """Extract provider prefix from a model string like 'deepinfra/Qwen/QwQ-32B'."""
     return model.split("/")[0] if "/" in model else model
 
 
 def resolve_sandbox_models(requested_agent: str) -> SandboxModelConfig:
     """Resolve models for the requested agent and all subagents.
+
+    Every agent and subagent must have an explicit chain in sandbox_models.yaml.
 
     Args:
         requested_agent: The primary agent name (e.g. "druppie-builder").
@@ -63,23 +65,31 @@ def resolve_sandbox_models(requested_agent: str) -> SandboxModelConfig:
     """
     config = yaml.safe_load(_CONFIG_PATH.read_text())
 
-    default_chain = config.get("default", [])
     agents_section = config.get("agents", {})
     subagents_section = config.get("subagents", {})
 
     # Resolve primary agent model
     agent_chain = agents_section.get(requested_agent)
-    # null means "use default"
-    if agent_chain is None:
-        agent_chain = default_chain
+    if not agent_chain:
+        logger.error(
+            "model_resolver.agent_not_configured",
+            agent=requested_agent,
+            available=list(agents_section.keys()),
+        )
+        raise ValueError(
+            f"Agent '{requested_agent}' has no model chain in sandbox_models.yaml. "
+            f"Available agents: {list(agents_section.keys())}"
+        )
+
     primary_model = _resolve_chain(agent_chain)
     if not primary_model:
-        primary_model = default_chain[0]["model"] if default_chain else "zai-coding-plan/glm-4.7"
+        # Use first entry in the chain as last-resort (no API key available)
+        primary_model = agent_chain[0]["model"]
         logger.warning(
-            "model_resolver.fallback",
+            "model_resolver.no_api_keys",
             agent=requested_agent,
             resolved_model=primary_model,
-            reason="no_api_keys_available",
+            reason="no_api_keys_available_for_any_provider_in_chain",
         )
 
     all_providers: set[str] = {_provider_from_model(primary_model)}
@@ -87,17 +97,15 @@ def resolve_sandbox_models(requested_agent: str) -> SandboxModelConfig:
 
     # Resolve all named agents
     for name, chain in agents_section.items():
-        if chain is None:
-            chain = default_chain
         model = _resolve_chain(chain)
         if model:
             resolved[name] = model
             all_providers.add(_provider_from_model(model))
+        else:
+            logger.warning("model_resolver.agent_unresolved", agent=name)
 
     # Resolve all subagents
     for name, chain in subagents_section.items():
-        if chain is None:
-            chain = default_chain
         model = _resolve_chain(chain)
         if model:
             resolved[name] = model
