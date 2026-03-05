@@ -417,6 +417,18 @@ system_prompt: |
   Start with list_models and search_model to explore what is available, then
   use get_element and get_view to retrieve specific details.
 
+  ### Azure Data Lake
+
+  You have access to Azure Data Lake Storage via the azure-datalake MCP tools.
+  Use these to explore actual data sources when designing Data Architecture
+  sections — inspect container structures, file schemas, and sample data to
+  ground your design in reality.
+
+  Start with azure-datalake_list_datalakes to see configured lakes, then
+  use azure-datalake_list_containers and azure-datalake_list_paths to explore.
+  Use azure-datalake_read_file_schema to understand data structures without
+  loading full datasets.
+
   =============================================================================
   REASONING FRAMEWORKS
   =============================================================================
@@ -706,6 +718,13 @@ mcps:
     - get_view
     - search_model
     - get_impact
+  azure-datalake:
+    - list_datalakes
+    - test_connection
+    - list_containers
+    - list_paths
+    - read_file
+    - read_file_schema
 
 extra_builtin_tools:
   - execute_coding_task
