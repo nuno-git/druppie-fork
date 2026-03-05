@@ -1292,7 +1292,7 @@ docker compose logs sandbox-control-plane | tail -5
 - Phase 2: DONE — C1 proxy error counter, C2 bridge detection, C3 LLM health watchdog
 - Phase 3: DONE — proxy failover with model rewriting in llm-proxy.ts
 - Phase 4: DONE — webhook retry + watchdog retry with _retry_sandbox_with_next_model
-- Phase 5: IN PROGRESS — committing, building, verifying
+- Phase 5: DONE — built, E2E tested, two additional bugs found and fixed
 
 **Code review fixes applied:**
 1. Watchdog retry resets sandbox_waiting_at to prevent immediate re-retries
@@ -1301,6 +1301,18 @@ docker compose logs sandbox-control-plane | tail -5
 4. C3 requires minimum 3 failed attempts before killing sandbox
 5. Bridge LLM error patterns made more specific to avoid false positives
 6. Try-catch around session manager callbacks in index.ts
+
+**E2E testing fixes (2026-03-05):**
+7. OpenCode config key: `"agent"` (singular) not `"agents"` (plural) — OpenCode 1.2.16 rejects unrecognized keys
+8. Proxy path rewrite: handle paths without `v1/` prefix — OpenCode SDK sends `chat/completions` not `v1/chat/completions` when using custom baseURL
+
+**E2E test results:**
+- OpenCode starts without config errors
+- Proxy correctly rewrites ZAI paths to `/api/paas/v4/chat/completions`
+- Bridge connects via WebSocket
+- Model chains stored in credential store
+- Failover infrastructure verified (only ZAI has credentials in test env, so failover destination unavailable)
+- ZAI returns 429 (billing issue) — treated as 4xx (no failover), correct by design
 
 ---
 
