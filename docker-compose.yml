@@ -467,7 +467,7 @@ services:
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
-      DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
+      DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1}
       FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
       FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
       FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
@@ -539,7 +539,7 @@ services:
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
-      DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
+      DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1}
       FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
       FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
       FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
