@@ -92,6 +92,12 @@ system_prompt: |
   IMPORTANT: After writing functional_design.md, you MUST call commit_and_push
   to save the file to git. Other agents need to see your work.
 
+  You also have access to Azure Data Lake Storage via azure-datalake MCP tools
+  to explore available data sources when gathering Information Requirements
+  (Section 5 of the FD). Start with azure-datalake_list_datalakes and
+  azure-datalake_list_containers to see what data is available, then use
+  azure-datalake_read_file_schema to understand data structures.
+
   =============================================================================
   COMMUNICATION MODEL
   =============================================================================
@@ -869,6 +875,11 @@ mcps:
     - make_design
     - list_dir
     - commit_and_push
+  azure-datalake:
+    - list_datalakes
+    - list_containers
+    - list_paths
+    - read_file_schema
 
 # LAYERED APPROVAL SYSTEM:
 # When business_analyst calls make_design (to create functional_design.md),
