@@ -13,7 +13,9 @@ Also provides a sandbox watchdog that detects stuck sandbox tool calls.
 import asyncio
 import hashlib
 import hmac
+import json
 import os
+import secrets
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -30,6 +32,7 @@ from druppie.api.deps import (
 )
 from druppie.core.sandbox_auth import generate_control_plane_token, SANDBOX_API_SECRET
 from druppie.db.database import get_db
+from druppie.db.models.sandbox_session import SandboxSession as SandboxSessionModel
 from druppie.repositories import SandboxSessionRepository
 
 # Watchdog configuration
@@ -177,6 +180,202 @@ def _extract_agent_output(events: list[dict]) -> str:
     return "\n".join(c for _, c in parts).strip()
 
 
+async def _retry_sandbox_with_next_model(
+    sandbox_mapping: SandboxSessionModel,
+    tool_call_id: UUID,
+    db: Session,
+) -> bool:
+    """Attempt to retry the sandbox with the next model in the chain.
+
+    Creates a new sandbox session on the control plane with the next model,
+    registers ownership, and sends the prompt. Returns True if retry was
+    initiated, False if no more models to try.
+    """
+    from druppie.sandbox.model_resolver import PROVIDER_API_KEYS, get_raw_model_chains
+
+    if not sandbox_mapping.model_chain or not sandbox_mapping.task_prompt:
+        return False
+
+    chain = json.loads(sandbox_mapping.model_chain)
+    next_index = (sandbox_mapping.model_chain_index or 0) + 1
+
+    if next_index >= len(chain):
+        logger.info(
+            "sandbox_retry_chain_exhausted",
+            sandbox_session_id=sandbox_mapping.sandbox_session_id,
+            tried_models=next_index,
+            chain_length=len(chain),
+        )
+        return False
+
+    next_entry = chain[next_index]
+    next_model = next_entry["model"]
+    next_provider = next_entry["provider"]
+
+    # Check if the next provider's API key is available
+    env_var = PROVIDER_API_KEYS.get(next_provider)
+    if not env_var or not os.getenv(env_var):
+        logger.warning(
+            "sandbox_retry_provider_unavailable",
+            provider=next_provider,
+            model=next_model,
+        )
+        # Skip to the next entry in chain
+        sandbox_mapping.model_chain_index = next_index
+        db.flush()
+        return await _retry_sandbox_with_next_model(sandbox_mapping, tool_call_id, db)
+
+    logger.info(
+        "sandbox_retry_with_next_model",
+        sandbox_session_id=sandbox_mapping.sandbox_session_id,
+        next_model=next_model,
+        next_provider=next_provider,
+        chain_index=next_index,
+    )
+
+    # Create a new sandbox session with the next model
+    control_plane_url = os.environ.get(
+        "SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787"
+    ).rstrip("/")
+
+    from druppie.core.sandbox_auth import generate_control_plane_token as _gen_token
+
+    webhook_secret = secrets.token_urlsafe(32)
+
+    _provider_base_urls = {
+        "zai": os.getenv("ZAI_BASE_URL", "https://open.bigmodel.cn/api/paas"),
+        "deepseek": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        "deepinfra": os.getenv("DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai"),
+        "openai": "https://api.openai.com",
+        "anthropic": "https://api.anthropic.com",
+    }
+
+    llm_credentials = []
+    for prov_name, api_key_env_var in PROVIDER_API_KEYS.items():
+        api_key = os.getenv(api_key_env_var, "")
+        if api_key:
+            llm_credentials.append({
+                "provider": prov_name,
+                "apiKey": api_key,
+                "baseUrl": _provider_base_urls.get(prov_name, ""),
+            })
+
+    from druppie.agents.builtin_tools import _load_agent_files
+    from druppie.sandbox.model_resolver import resolve_sandbox_models
+
+    agent = sandbox_mapping.agent_name or "druppie-builder"
+    model_config = resolve_sandbox_models(agent)
+
+    create_body = {
+        "repoOwner": os.getenv("GITEA_ORG", "druppie"),
+        "repoName": "unknown",
+        "model": next_model,
+        "agentModels": model_config.agents,
+        "agentFiles": _load_agent_files(),
+        "modelChains": get_raw_model_chains(),
+        "title": f"Druppie sandbox (retry {next_index}): {sandbox_mapping.task_prompt[:80]}",
+        "credentials": {
+            "git": {
+                "provider": "gitea",
+                "url": os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000"),
+                "username": os.getenv("GITEA_ADMIN_USER", "gitea_admin"),
+                "password": os.getenv("GITEA_ADMIN_PASSWORD", ""),
+            },
+            "llm": llm_credentials,
+        },
+    }
+
+    # Get repo info from the original session
+    if sandbox_mapping.session_id:
+        from druppie.repositories import SessionRepository, ProjectRepository
+        session_repo = SessionRepository(db)
+        session = session_repo.get_by_id(sandbox_mapping.session_id)
+        if session and session.project_id:
+            project_repo = ProjectRepository(db)
+            project = project_repo.get_by_id(session.project_id)
+            if project:
+                create_body["repoOwner"] = project.repo_owner or os.getenv("GITEA_ORG", "druppie")
+                create_body["repoName"] = project.repo_name or ""
+
+    try:
+        auth_token = _gen_token()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            auth_headers = {
+                "Authorization": f"Bearer {auth_token}",
+                "Content-Type": "application/json",
+            }
+
+            resp = await client.post(
+                f"{control_plane_url}/sessions",
+                json=create_body,
+                headers=auth_headers,
+            )
+
+            if resp.status_code not in (200, 201):
+                logger.error(
+                    "sandbox_retry_create_failed",
+                    status=resp.status_code,
+                    body=resp.text[:200],
+                )
+                return False
+
+            new_session_id = resp.json().get("sessionId")
+            if not new_session_id:
+                return False
+
+            # Register new ownership record
+            sandbox_repo = SandboxSessionRepository(db)
+            sandbox_repo.create(
+                sandbox_session_id=new_session_id,
+                user_id=sandbox_mapping.user_id,
+                session_id=sandbox_mapping.session_id,
+                webhook_secret=webhook_secret,
+                model_chain=sandbox_mapping.model_chain,
+                model_chain_index=next_index,
+                task_prompt=sandbox_mapping.task_prompt,
+                agent_name=agent,
+            )
+
+            # Link to the same tool call
+            sandbox_repo.update_tool_call_id(new_session_id, tool_call_id)
+            db.flush()
+
+            # Send the prompt to the new sandbox
+            prompt_resp = await client.post(
+                f"{control_plane_url}/sessions/{new_session_id}/prompt",
+                json={
+                    "content": sandbox_mapping.task_prompt,
+                    "authorId": str(sandbox_mapping.user_id),
+                    "source": "retry",
+                    "callbackContext": {
+                        "callbackUrl": f"{os.environ.get('BACKEND_URL', 'http://druppie-backend:8000')}/api/sandbox-sessions/{new_session_id}/complete",
+                        "callbackSecret": webhook_secret,
+                    },
+                },
+                headers=auth_headers,
+            )
+
+            if prompt_resp.status_code not in (200, 201):
+                logger.error(
+                    "sandbox_retry_prompt_failed",
+                    status=prompt_resp.status_code,
+                )
+                return False
+
+            logger.info(
+                "sandbox_retry_initiated",
+                old_sandbox=sandbox_mapping.sandbox_session_id,
+                new_sandbox=new_session_id,
+                model=next_model,
+                chain_index=next_index,
+            )
+            return True
+
+    except Exception as e:
+        logger.error("sandbox_retry_error", error=str(e))
+        return False
+
+
 @router.post("/sandbox-sessions/{sandbox_session_id}/complete")
 async def sandbox_complete_webhook(
     sandbox_session_id: str,
@@ -278,8 +477,29 @@ async def sandbox_complete_webhook(
     except Exception as e:
         logger.warning("sandbox_webhook_event_fetch_failed", error=str(e))
 
+    # Guard against duplicate webhooks for same sandbox session
+    if sandbox_mapping.completed_at is not None:
+        logger.info("sandbox_webhook_already_completed", sandbox_session_id=sandbox_session_id)
+        return {"status": "already_processed", "sandbox_session_id": sandbox_session_id}
+
     # Mark the sandbox session as completed (proxy key lifecycle managed by control plane)
     sandbox_repo.mark_completed(sandbox_session_id)
+
+    # On failure, attempt retry with next model in chain
+    if not body.success:
+        retry_initiated = await _retry_sandbox_with_next_model(
+            sandbox_mapping, sandbox_mapping.tool_call_id, db
+        )
+        if retry_initiated:
+            logger.info(
+                "sandbox_webhook_retry_initiated",
+                sandbox_session_id=sandbox_session_id,
+                tool_call_id=str(sandbox_mapping.tool_call_id),
+            )
+            # Don't complete the tool call — keep it in WAITING_SANDBOX state
+            # The new sandbox will fire its own webhook when done
+            db.commit()
+            return {"status": "retrying", "sandbox_session_id": sandbox_session_id}
 
     # Build the final tool result
     result = {
@@ -441,6 +661,42 @@ async def sandbox_watchdog_loop() -> None:
 
             for tc in stuck_tool_calls:
                 try:
+                    # Try retry with next model before failing
+                    sandbox_mapping = sandbox_repo.get_by_tool_call_id(tc.id)
+                    if sandbox_mapping:
+                        retry_initiated = await _retry_sandbox_with_next_model(
+                            sandbox_mapping, tc.id, db
+                        )
+                        if retry_initiated:
+                            # Mark old sandbox as completed but keep tool call waiting
+                            sandbox_repo.mark_completed(sandbox_mapping.sandbox_session_id)
+                            # Reset sandbox_waiting_at so watchdog doesn't re-trigger immediately
+                            execution_repo.update_tool_call(
+                                tc.id,
+                                sandbox_waiting_at=datetime.now(timezone.utc),
+                            )
+                            db.commit()
+                            logger.info(
+                                "sandbox_watchdog_retry_initiated",
+                                tool_call_id=str(tc.id),
+                                old_sandbox=sandbox_mapping.sandbox_session_id,
+                            )
+                            # Best-effort cancel old sandbox
+                            try:
+                                control_plane_url = os.environ.get(
+                                    "SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787"
+                                ).rstrip("/")
+                                token = generate_control_plane_token(SANDBOX_API_SECRET)
+                                async with httpx.AsyncClient(timeout=10.0) as client:
+                                    await client.delete(
+                                        f"{control_plane_url}/sessions/{sandbox_mapping.sandbox_session_id}",
+                                        headers={"Authorization": f"Bearer {token}"},
+                                    )
+                            except Exception:
+                                pass
+                            continue  # Don't fail the tool call
+
+                    # No retry possible — fail as before
                     execution_repo.update_tool_call(
                         tc.id,
                         status=ToolCallStatus.FAILED,
@@ -464,11 +720,9 @@ async def sandbox_watchdog_loop() -> None:
                                 error_message=f"Sandbox timed out after {SANDBOX_TIMEOUT_MINUTES} min",
                             )
 
-                    # Mark completed and cancel the sandbox container (proxy key lifecycle managed by control plane)
-                    sandbox_mapping = sandbox_repo.get_by_tool_call_id(tc.id)
+                    # Mark completed and cancel the sandbox container
                     if sandbox_mapping:
                         sandbox_repo.mark_completed(sandbox_mapping.sandbox_session_id)
-                        # Best-effort: cancel the sandbox on the control plane to free resources
                         try:
                             control_plane_url = os.environ.get(
                                 "SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787"

@@ -32,7 +32,12 @@ GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
 from pathlib import Path
 
 from druppie.core.sandbox_auth import generate_control_plane_token as _generate_sandbox_auth_token
-from druppie.sandbox.model_resolver import PROVIDER_API_KEYS, resolve_sandbox_models
+from druppie.sandbox.model_resolver import (
+    PROVIDER_API_KEYS,
+    get_agent_chain,
+    get_raw_model_chains,
+    resolve_sandbox_models,
+)
 
 
 def _load_agent_files() -> dict[str, str]:
@@ -964,6 +969,7 @@ async def execute_sandbox_coding_task(
                 "model": model,
                 "agentModels": model_config.agents,
                 "agentFiles": _load_agent_files(),
+                "modelChains": get_raw_model_chains(),
                 "title": f"Druppie sandbox: {task[:80]}",
                 "credentials": {
                     "git": {
@@ -1005,11 +1011,17 @@ async def execute_sandbox_coding_task(
             try:
                 from druppie.repositories.sandbox_session_repository import SandboxSessionRepository
                 sandbox_repo = SandboxSessionRepository(db)
+                import json as _json
+
                 sandbox_repo.create(
                     sandbox_session_id=sandbox_session_id,
                     user_id=UUID(user_id),
                     session_id=session_id,
                     webhook_secret=webhook_secret,
+                    model_chain=_json.dumps(get_agent_chain(agent)),
+                    model_chain_index=0,
+                    task_prompt=task,
+                    agent_name=agent,
                 )
                 # flush() not commit(): let the tool_executor's commit handle
                 # both ownership and WAITING_SANDBOX status in one transaction.

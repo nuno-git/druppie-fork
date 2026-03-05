@@ -2,7 +2,7 @@
 
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 
 from .base import Base, utcnow
@@ -29,3 +29,9 @@ class SandboxSession(Base):
 
     # Webhook signature secret (per-session, replaces global SANDBOX_API_SECRET for webhooks)
     webhook_secret = Column(String(128), nullable=True)
+
+    # Model chain for retry — JSON array of {provider, model} dicts
+    model_chain = Column(Text, nullable=True)
+    model_chain_index = Column(Integer, default=0)
+    task_prompt = Column(Text, nullable=True)
+    agent_name = Column(String(100), nullable=True)
