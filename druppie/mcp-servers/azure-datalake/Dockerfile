@@ -14,8 +14,8 @@ COPY server.py .
 COPY module.py .
 
 # Environment variables
-ENV MCP_PORT=9006
+ENV MCP_PORT=9008
 
-EXPOSE 9006
+EXPOSE 9008
 
 CMD ["python", "server.py"]

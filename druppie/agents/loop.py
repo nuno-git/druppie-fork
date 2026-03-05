@@ -9,6 +9,7 @@ from uuid import UUID
 import structlog
 
 from druppie.agents.builtin_tools import DEFAULT_BUILTIN_TOOLS, is_builtin_tool
+from druppie.domain.common import SessionStatus
 from druppie.execution.tool_executor import ToolCallStatus
 from druppie.llm.base import LLMError
 
@@ -69,6 +70,12 @@ class AgentLoop:
             )
 
         for iteration in range(start_iteration, max_iterations):
+            # Check for user-initiated pause between iterations (cooperative pause)
+            session_status = self._get_session_status(session_id)
+            if session_status == SessionStatus.PAUSED.value:
+                logger.info("agent_loop_paused_by_user", agent_id=self.agent_id, iteration=iteration)
+                return {"status": "paused", "reason": "user_paused"}
+
             response, llm_call_id = await self._call_llm(
                 messages, openai_tools, execution_repo,
                 session_id, agent_run_id, iteration,
@@ -100,6 +107,21 @@ class AgentLoop:
         raise AgentMaxIterationsError(
             f"Agent '{self.agent_id}' exceeded {max_iterations} iterations"
         )
+
+    # ------------------------------------------------------------------
+    # Session status check (single DB poll for pause detection)
+    # ------------------------------------------------------------------
+
+    def _get_session_status(self, session_id: UUID) -> str | None:
+        """Get current session status from DB (single expire + query).
+
+        Used for cooperative pause checks between iterations.
+        """
+        from druppie.db.models import Session
+
+        self.db.expire_all()
+        session = self.db.query(Session).filter(Session.id == session_id).first()
+        return session.status if session else None
 
     # ------------------------------------------------------------------
     # Tool preparation

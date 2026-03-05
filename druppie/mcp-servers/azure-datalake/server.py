@@ -190,7 +190,7 @@ if __name__ == "__main__":
 
     app.routes.insert(0, Route("/health", health, methods=["GET"]))
 
-    port = int(os.getenv("MCP_PORT", "9006"))
+    port = int(os.getenv("MCP_PORT", "9008"))
     logger.info(f"Starting Azure Data Lake MCP Server on port {port}")
 
     uvicorn.run(

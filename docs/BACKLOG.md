@@ -2,14 +2,14 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-02-11
+Last updated: 2026-03-03
 
 ---
 
 ## Summary
 
 - Per-Agent Model Selection Ignored
-- Cancel/Resume Endpoint Missing on Backend
+- ~~Cancel/Resume Endpoint Missing on Backend~~ ✅ DONE
 - Token/Cost Tracking Half Implemented and Buggy
 - Database Schema Does Not Match Domain Models
 - JSON/JSONB Columns Still Present
@@ -33,6 +33,7 @@ Last updated: 2026-02-11
 - Language Matching
 - Prompt Injection Protection
 - Compliance Agent for Input Validation
+- General Pre-Validation System for Tool Arguments
 
 ---
 
@@ -43,12 +44,16 @@ Last updated: 2026-02-11
 - Override env vars (`LLM_FORCE_PROVIDER`/`LLM_FORCE_MODEL`) bypass profiles for testing.
 - See `docs/TECHNICAL.md` section 5.5 for details.
 
-### Cancel/Resume Endpoint Missing on Backend
+### ~~Cancel/Resume Endpoint Missing on Backend~~ (DONE)
 
-- **Location:** `frontend/src/services/api.js:75-76`
-- The frontend defines `cancelChat(sessionId)` which POSTs to `/api/chat/{sessionId}/cancel`.
-- No corresponding backend route exists in the API layer (`druppie/api/`). The cancel button in the UI will receive a 404 or similar error.
-- The domain model defines a `CANCELLED` status (`druppie/domain/common.py:20`), but there is no service logic to transition a session into that state.
+- **Resolved in:** `feature/continue-agent-run` branch
+- Full stop and resume support: `POST /api/chat/{sessionId}/cancel` sets session status to `paused` (not cancelled), making every stopped session resumable. `POST /api/sessions/{sessionId}/resume` reconstructs agent state from the database and continues execution.
+- Cooperative pause via DB poll -- orchestrator and agent loop check session status between iterations and stop gracefully. Paused sessions (approval/HITL) stop immediately.
+- Zombie session recovery on startup: sessions left in `active` status after a server restart are automatically marked as `paused` so users can resume them.
+- `CANCELLED` status is now internal only (used by the planner when superseding old pending runs). User actions never set `CANCELLED`.
+- Retry from any agent run via `POST /api/sessions/{sessionId}/retry-from/{agentRunId}`. Reverts git state (hard reset + force push), closes open PRs, resets/deletes agent runs, and re-executes.
+- `RevertService` handles the full revert logic. MCP tools: `revert_to_commit`, `close_pull_request`.
+- See `docs/FEATURES.md` "Stop & Resume" and `docs/TECHNICAL.md` section 8.9 for full details.
 
 ### Token/Cost Tracking Half Implemented and Buggy
 
@@ -228,3 +233,11 @@ Last updated: 2026-02-11
   - Could use a classification approach (is this input safe?) rather than generation
   - Failed validations should block the input and notify the user with a clear explanation
 - **Related to:** Prompt Injection Protection (this is the runtime enforcement mechanism for those defenses)
+
+### General Pre-Validation System for Tool Arguments
+
+- **Location:** `druppie/execution/tool_executor.py` (lines 332-367, 468-487)
+- **GitHub Issue:** [#79](https://github.com/nuno-git/druppie-fork/issues/79)
+- **Current state:** The tool executor has a hardcoded `if tool_call.tool_name == "make_design"` check that runs Mermaid validation before the approval gate. The mermaid validator is imported via a fragile `importlib.util.spec_from_file_location` hack because it lives in `mcp-servers/coding/` (hyphenated directory, not a proper Python package).
+- **Problem:** Adding content validation for any other tool requires adding more `if` statements to the tool executor and more fragile imports.
+- **Desired improvement:** Add an optional `pre_validate(self) -> str | None` method to Pydantic params models. The tool executor calls it generically after schema validation succeeds. This way adding a new validator = adding a method to a params model, with zero changes to `tool_executor.py`. The mermaid validator moves to `druppie/tools/validators/mermaid.py` (properly importable). See issue #79 for the full plan.

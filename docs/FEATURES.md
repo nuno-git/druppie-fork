@@ -26,8 +26,8 @@ Nine agents are defined. Seven are functional; two are stubs.
 |-------|---------|--------------|
 | **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, or `general_chat`. Can ask clarifying questions. Has web search access. |
 | **Planner** | Orchestrates the pipeline | Creates execution plans as ordered sequences of agent steps. Re-evaluates after each major phase. Manages design loops (BA/Architect) and execution loops (Developer/Deployer). Max 15 iterations. |
-| **Business Analyst** | Gathers requirements | Engages the user in structured dialogue (root cause analysis, stakeholder mapping, elicitation). Produces `functional_design.md`. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Max 50 iterations. |
-| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Three outcomes: APPROVE (writes `architecture.md`), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Applies Security by Design and Compliance by Design. Max 50 iterations. |
+| **Business Analyst** | Gathers requirements | Engages the user in structured dialogue using a funnel approach (max 1 question at a time, almost always multiple choice). Produces `functional_design.md` via the `make_design` tool with built-in Mermaid validation. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Supports `NO_FD_CHANGE` pass-through for technical fixes. Max 50 iterations. |
+| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Three outcomes: APPROVE (writes `technical_design.md` via `make_design`), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
 | **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. For `create_project`, works on main; for `update_project`, works on feature branches. Max 100 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
 | **Summarizer** | Creates completion messages | Reads all previous agent summaries and produces a concise, user-friendly message. Always the final step. Max 5 iterations. |
@@ -152,9 +152,21 @@ Agents can pause execution to ask the user questions. Two interaction types are 
 | Type | Description |
 |------|-------------|
 | `hitl_ask_question` | Free-form text question; the user types a response |
-| `hitl_ask_multiple_choice_question` | Multiple choice with predefined options and an optional "Other" free-text field |
+| `hitl_ask_multiple_choice_question` | Multiple choice with predefined options; an "Other (specify)" free-text option is always appended automatically by the platform — agents should never add it themselves |
 
 Both types pause the agent loop until the user responds. Questions appear as interactive cards in the chat timeline.
+
+### Mermaid Diagram Validation
+
+Design documents written via the `make_design` tool include built-in Mermaid syntax validation. The validator runs **before the approval gate**, catching common LLM mistakes so agents can fix errors without wasting human reviewer time. If validation fails, the tool call is rejected with actionable error messages and the agent retries with corrected content.
+
+The validator checks for:
+- Backslash-escaped quotes (`\"` — invalid in Mermaid)
+- Nested delimiters (`[((`, `))]` — malformed shapes)
+- Single-dash arrows (`->` instead of `-->`)
+- Reserved `end` keyword used as node ID
+- Smart/curly quotes (unicode instead of ASCII)
+- Unicode characters (em dashes, unicode arrows)
 
 ---
 
@@ -169,7 +181,60 @@ The primary interface is a chat page where users submit natural language request
 - **Follow-up messages**: After a session completes, users can send follow-up messages to continue the conversation in the same session context.
 - **Inline approval cards**: When an agent needs approval to proceed, an approval card appears directly in the timeline.
 - **Inline HITL cards**: When an agent asks a question, an input card appears in the timeline for the user to respond.
-- **Polling**: Active sessions poll at 500ms intervals; session lists poll at 5s intervals. Polling stops when a session completes or fails.
+- **Polling**: Active sessions poll at 500ms intervals; session lists poll at 5s intervals. Polling stops when a session completes, fails, or is paused.
+
+---
+
+## Session Control
+
+### Stop & Resume
+
+Users can **stop** any running session and **resume** it later -- all context is preserved.
+
+**How it works:**
+
+- Click **Stop** to pause execution. The current LLM call and tool execution completes, then the agent stops cleanly.
+- Click **Continue** to resume from where it left off. The agent reconstructs its state from the database and continues.
+- Works for **all users**, not just admins.
+- **Survives system reboots**: On startup, the system detects "zombie" sessions (sessions that were active when the server stopped) and marks them as paused so users can resume them.
+
+**Status model:**
+
+| Status | Meaning | Visual Indicator |
+|--------|---------|------------------|
+| `active` | Processing in progress | Blue pulsing dot |
+| `paused` | Stopped by user or recovered after reboot | Amber dot |
+| `paused_approval` | Waiting for tool approval | Amber dot |
+| `paused_hitl` | Waiting for user answer (HITL) | Amber dot |
+| `completed` | All agents finished | Green dot |
+| `failed` | Error occurred | Red dot |
+
+**Design choice: Stop button visible during HITL/approval waits.** The Stop button remains visible when the session is waiting for approval or a HITL answer (`paused_approval`, `paused_hitl`). This is intentional because in the future, multiple agents may work in parallel -- some may be actively running while others wait for user input. The Stop button ensures users can always halt all active work.
+
+**API endpoints:**
+
+- `POST /api/chat/{session_id}/cancel` -- Soft-stop a session (sets status to `paused`, always resumable)
+- `POST /api/sessions/{session_id}/resume` -- Resume a paused session
+
+**Architecture notes:**
+
+- Pause uses a DB-polling mechanism: the cancel endpoint sets `session.status = 'paused'` in the database, and both the orchestrator loop (between agent runs) and the agent loop (between LLM iterations) detect it and stop gracefully.
+- Resume spawns a background task that calls `agent.continue_run()`, which reconstructs the full LLM conversation from database records, then continues execution.
+- `CANCELLED` status is only used internally by the planner when it supersedes old pending runs with a new plan. It is never set by user actions.
+
+### Retry from Agent Run
+
+Users can retry a session from any agent run via the **Retry** button in the Inspect view's agent detail panel. Clicking Retry shows a confirmation dialog explaining that the target agent and all subsequent agents will be reverted and re-executed.
+
+**How it works:**
+
+1. The backend reverts git state to the commit before the target agent run (`git reset --hard` + `git push --force` via the `revert_to_commit` MCP tool)
+2. Any open pull requests created by reverted agents are closed via the Gitea API
+3. If a planner is in the revert set: the planner is reset to PENDING, everything after it is deleted (make_plan will recreate them on re-execution)
+4. If no planner: all target runs are reset to PENDING with execution artifacts cleared
+5. The orchestrator re-executes the pending runs
+
+If the git revert fails, the retry aborts and the session is marked as failed (agents never re-execute against stale git state).
 
 ---
 
@@ -269,6 +334,7 @@ Available system prompts:
 | `summary_relay` | How to read previous agent summaries and format your own via `done()` |
 | `done_tool_format` | Mandatory `done()` output format rules |
 | `workspace_state` | Shared workspace and git branch rules |
+| `tool_only_communication` | Reinforces that agents must never add "Other" to multiple choice options — the platform handles it automatically |
 
 Currently included by: Planner, Business Analyst, Architect, Developer, Deployer. Agents without a `system_prompts` list receive no system prompts.
 
