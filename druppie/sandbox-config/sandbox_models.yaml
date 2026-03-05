@@ -2,18 +2,23 @@
 # API keys becomes primary. No runtime fallback — resolved at creation.
 #
 # Every agent and subagent must have an explicit chain.
+#
+# Model format: "provider/model-name" where provider matches the OpenCode
+# provider config key (used for routing through the LLM proxy).
+# Multi-segment model names are fine: "deepinfra/zai-org/GLM-4.7-Flash"
+# means provider=deepinfra, model=zai-org/GLM-4.7-Flash.
 
 agents:
   druppie-builder:
+    - provider: deepinfra
+      model: deepinfra/zai-org/GLM-4.7-Flash
     - provider: zai
       model: zai-coding-plan/glm-4.7
-    - provider: anthropic
-      model: anthropic/claude-sonnet-4-6
   druppie-tester:
+    - provider: deepinfra
+      model: deepinfra/zai-org/GLM-4.7-Flash
     - provider: zai
       model: zai-coding-plan/glm-4.7
-    - provider: anthropic
-      model: anthropic/claude-sonnet-4-6
 
 subagents:
   explore:
@@ -22,7 +27,7 @@ subagents:
     - provider: zai
       model: zai/glm-4.7-flash
   analysis:
-    - provider: anthropic
-      model: anthropic/claude-sonnet-4-6
+    - provider: deepinfra
+      model: deepinfra/zai-org/GLM-4.7-Flash
     - provider: zai
       model: zai-coding-plan/glm-4.7

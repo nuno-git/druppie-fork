@@ -8,6 +8,8 @@
 
 profiles:
   standard:
+    - provider: deepinfra
+      model: Qwen/Qwen2.5-72B-Instruct
     - provider: zai
       model: glm-4.7
     - provider: ollama
@@ -17,7 +19,7 @@ profiles:
 
   cheap:
     - provider: deepinfra
-      model: zai-org/GLM-4.7-Flash
+      model: Qwen/Qwen2.5-72B-Instruct
     - provider: ollama
       model: gpt-oss:20b
     - provider: azure_foundry
