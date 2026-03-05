@@ -16,6 +16,10 @@ class SandboxSessionRepository(BaseRepository):
         user_id: UUID,
         session_id: UUID | None = None,
         webhook_secret: str | None = None,
+        model_chain: str | None = None,
+        model_chain_index: int = 0,
+        task_prompt: str | None = None,
+        agent_name: str | None = None,
     ) -> SandboxSession:
         """Register a sandbox session ownership mapping.
 
@@ -30,6 +34,10 @@ class SandboxSessionRepository(BaseRepository):
             user_id=user_id,
             session_id=session_id,
             webhook_secret=webhook_secret,
+            model_chain=model_chain,
+            model_chain_index=model_chain_index,
+            task_prompt=task_prompt,
+            agent_name=agent_name,
         )
         self.db.add(mapping)
         self.db.flush()

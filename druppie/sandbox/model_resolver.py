@@ -122,3 +122,33 @@ def resolve_sandbox_models(requested_agent: str) -> SandboxModelConfig:
         agents=resolved,
         all_providers=all_providers,
     )
+
+
+def get_raw_model_chains() -> dict[str, list[dict[str, str]]]:
+    """Return all model chains from sandbox_models.yaml, keyed by model string.
+
+    Used by the proxy for failover — when a model's provider fails, the proxy
+    tries the next model in the chain.
+    """
+    config = yaml.safe_load(_CONFIG_PATH.read_text())
+    chains: dict[str, list[dict[str, str]]] = {}
+    for section in ("agents", "subagents"):
+        for _name, chain in config.get(section, {}).items():
+            if chain:
+                for entry in chain:
+                    model_str = entry["model"]
+                    if model_str not in chains:
+                        chains[model_str] = [
+                            {"provider": e["provider"], "model": e["model"]}
+                            for e in chain
+                        ]
+    return chains
+
+
+def get_agent_chain(agent_name: str) -> list[dict[str, str]]:
+    """Return the raw model chain for an agent from sandbox_models.yaml."""
+    config = yaml.safe_load(_CONFIG_PATH.read_text())
+    chain = config.get("agents", {}).get(agent_name)
+    if not chain:
+        chain = config.get("subagents", {}).get(agent_name, [])
+    return chain or []
