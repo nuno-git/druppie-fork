@@ -11,6 +11,9 @@ After completing ALL code changes:
 
 Never leave commits unpushed. Every task MUST end with `git push`.
 
+IMPORTANT: Only use `git` commands for version control. Do NOT use `gh` CLI — it is not
+available in this environment. Git authentication is handled automatically via proxy.
+
 ## Coding Standards
 - Write clean, working code
 - Follow existing project patterns
