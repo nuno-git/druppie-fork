@@ -1,8 +1,12 @@
 """Resolve per-agent sandbox models from sandbox_models.yaml.
 
-Reads the YAML config and picks the first provider in each chain
-that has a valid API key set in the environment. No runtime fallback —
-resolution happens once at sandbox creation time.
+Uses a profile-based approach: each agent/subagent name becomes a virtual
+"profile" that the LLM proxy resolves to a real provider chain at request time.
+
+OpenCode sees model names like "sandbox/druppie-builder" and routes all requests
+through a single "sandbox" provider pointing at our proxy. The proxy extracts
+the profile name from the request body, looks up the chain, and tries each
+real provider in order with failover on 5xx/429.
 """
 
 import os
@@ -27,7 +31,7 @@ def _load_config() -> dict:
     return _cached_config
 
 # Provider name -> env var mapping. Shared source of truth for which
-# API keys enable which providers. Imported by builtin_tools.py too.
+# API keys enable which providers. Imported by credentials.py too.
 PROVIDER_API_KEYS = {
     "zai": "ZAI_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
@@ -41,46 +45,32 @@ PROVIDER_API_KEYS = {
 class SandboxModelConfig:
     """Resolved model configuration for a sandbox session."""
 
-    primary_model: str
-    agents: dict[str, str] = field(default_factory=dict)
-    all_providers: set[str] = field(default_factory=set)
-
-
-def _resolve_chain(chain: list[dict]) -> str | None:
-    """Return the first model in the chain whose provider has a valid API key."""
-    for entry in chain:
-        provider = entry["provider"]
-        env_var = PROVIDER_API_KEYS.get(provider)
-        if env_var and os.getenv(env_var):
-            return entry["model"]
-    return None
-
-
-def _provider_from_model(model: str) -> str:
-    """Extract provider prefix from a model string like 'deepinfra/Qwen/QwQ-32B'."""
-    return model.split("/")[0] if "/" in model else model
+    primary_model: str  # e.g. "sandbox/druppie-builder"
+    agents: dict[str, str] = field(default_factory=dict)  # name → "sandbox/name"
+    all_providers: set[str] = field(default_factory=set)  # real providers for credentials
 
 
 def resolve_sandbox_models(requested_agent: str) -> SandboxModelConfig:
-    """Resolve models for the requested agent and all subagents.
+    """Resolve models for the requested agent using profile-based naming.
 
-    Every agent and subagent must have an explicit chain in sandbox_models.yaml.
+    Each agent/subagent name becomes a profile. The primary model is
+    "sandbox/{requested_agent}" and all agents/subagents get their own
+    profile name. The LLM proxy resolves profiles to real provider chains.
 
     Args:
         requested_agent: The primary agent name (e.g. "druppie-builder").
 
     Returns:
-        SandboxModelConfig with resolved primary model, per-agent model map,
-        and the set of all providers referenced.
+        SandboxModelConfig with profile-based model names and the set of
+        all real providers referenced (for credential building).
     """
     config = _load_config()
 
     agents_section = config.get("agents", {})
     subagents_section = config.get("subagents", {})
 
-    # Resolve primary agent model (check both agents and subagents sections)
-    agent_chain = agents_section.get(requested_agent) or subagents_section.get(requested_agent)
-    if not agent_chain:
+    # Verify requested agent exists
+    if requested_agent not in agents_section and requested_agent not in subagents_section:
         all_available = list(agents_section.keys()) + list(subagents_section.keys())
         logger.error(
             "model_resolver.agent_not_configured",
@@ -92,67 +82,40 @@ def resolve_sandbox_models(requested_agent: str) -> SandboxModelConfig:
             f"Available agents: {all_available}"
         )
 
-    primary_model = _resolve_chain(agent_chain)
-    if not primary_model:
-        # Use first entry in the chain as last-resort (no API key available)
-        primary_model = agent_chain[0]["model"]
-        logger.warning(
-            "model_resolver.no_api_keys",
-            agent=requested_agent,
-            resolved_model=primary_model,
-            reason="no_api_keys_available_for_any_provider_in_chain",
-        )
+    primary_model = f"sandbox/{requested_agent}"
 
-    all_providers: set[str] = {_provider_from_model(primary_model)}
-    resolved: dict[str, str] = {}
+    # Collect all real providers and build agent→profile mapping
+    all_providers: set[str] = set()
+    agents: dict[str, str] = {}
 
-    # Resolve all named agents
-    for name, chain in agents_section.items():
-        model = _resolve_chain(chain)
-        if model:
-            resolved[name] = model
-            all_providers.add(_provider_from_model(model))
-        else:
-            logger.warning("model_resolver.agent_unresolved", agent=name)
-
-    # Resolve all subagents
-    for name, chain in subagents_section.items():
-        model = _resolve_chain(chain)
-        if model:
-            resolved[name] = model
-            all_providers.add(_provider_from_model(model))
-        else:
-            logger.warning(
-                "model_resolver.subagent_unresolved",
-                subagent=name,
-                fallback="primary_model",
-            )
+    for section in (agents_section, subagents_section):
+        for name, chain in section.items():
+            agents[name] = f"sandbox/{name}"
+            for entry in chain:
+                all_providers.add(entry["provider"])
 
     return SandboxModelConfig(
         primary_model=primary_model,
-        agents=resolved,
+        agents=agents,
         all_providers=all_providers,
     )
 
 
 def get_raw_model_chains() -> dict[str, list[dict[str, str]]]:
-    """Return all model chains from sandbox_models.yaml, keyed by model string.
+    """Return all model chains keyed by profile name (agent/subagent name).
 
-    Used by the proxy for failover — when a model's provider fails, the proxy
-    tries the next model in the chain.
+    Used by the LLM proxy for failover. When a profile's primary provider
+    fails, the proxy tries the next entry in the chain.
     """
     config = _load_config()
     chains: dict[str, list[dict[str, str]]] = {}
     for section in ("agents", "subagents"):
-        for _name, chain in config.get(section, {}).items():
+        for name, chain in config.get(section, {}).items():
             if chain:
-                for entry in chain:
-                    model_str = entry["model"]
-                    if model_str not in chains:
-                        chains[model_str] = [
-                            {"provider": e["provider"], "model": e["model"]}
-                            for e in chain
-                        ]
+                chains[name] = [
+                    {"provider": e["provider"], "model": e["model"]}
+                    for e in chain
+                ]
     return chains
 
 

@@ -28,7 +28,16 @@ import {
   findPendingQuestion,
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
-import SandboxEventCard from './SandboxEventCard'
+import SandboxEventCard, {
+  processEvents,
+  groupBySubagent,
+  SubagentGroup,
+  EventItem,
+  AgentTextBlock,
+  ConversationTimeline,
+  toolCategoryConfig,
+  getToolCategory,
+} from './SandboxEventCard'
 
 // --- Tool label helper ---
 
@@ -439,6 +448,7 @@ const findWaitingSandboxId = (timeline) => {
 
 const SandboxLiveProgress = ({ sandboxSessionId }) => {
   const [expanded, setExpanded] = useState(true)
+  const [filterTool, setFilterTool] = useState(null)
 
   const { data: eventsData } = useQuery({
     queryKey: ['sandbox-events-live', sandboxSessionId],
@@ -448,37 +458,51 @@ const SandboxLiveProgress = ({ sandboxSessionId }) => {
   })
 
   const rawEvents = eventsData?.events || (Array.isArray(eventsData) ? eventsData : [])
-  // API returns newest-first; reverse for chronological display
-  const events = [...rawEvents].reverse()
+  // API returns newest-first; reverse for chronological display, then process
+  const events = processEvents([...rawEvents].reverse())
 
-  // Extract the latest activity from events
-  const recentActivity = []
-  for (const event of events) {
-    const type = event.type || event.event_type || ''
-    const data = typeof event.data === 'string' ? (() => { try { return JSON.parse(event.data) } catch { return {} } })() : (event.data || {})
-
-    if (type === 'tool_call' || type === 'tool_use') {
-      const toolName = data.toolName || data.tool_name || data.name || 'tool'
-      recentActivity.push({ type: 'tool', text: toolName, timestamp: event.timestamp || event.created_at })
-    } else if (type === 'tool_result') {
-      const toolName = data.toolName || data.tool_name || data.name || 'tool'
-      const success = data.success !== false
-      recentActivity.push({ type: 'tool_result', text: toolName, success, timestamp: event.timestamp || event.created_at })
-    } else if (type === 'step_start') {
-      recentActivity.push({ type: 'step', text: 'Thinking…', timestamp: event.timestamp || event.created_at })
+  // Compute tool stats for filter buttons
+  const toolCounts = events.reduce((acc, e) => {
+    if (e.type === 'tool_call') {
+      const tool = (e.data?.tool || 'unknown').toLowerCase()
+      acc[tool] = (acc[tool] || 0) + 1
     }
-  }
+    return acc
+  }, {})
 
-  // Show only the last few events
-  const visibleActivity = recentActivity.slice(-8)
-  const latestEvent = recentActivity[recentActivity.length - 1]
+  const filteredEvents = filterTool
+    ? events.filter((e) => e.type === 'tool_call' && (e.data?.tool || '').toLowerCase() === filterTool)
+    : events
+
+  // Group events by subagent when not filtering
+  const grouped = !filterTool ? groupBySubagent(events) : null
+  const hasSubagents = grouped?.some((g) => g.type === 'subagent')
+
+  // Latest event for header summary
+  const lastToolEvent = [...events].reverse().find(e => e.type === 'tool_call')
+  const latestLabel = lastToolEvent?.data?.tool
 
   if (!sandboxSessionId) return null
+
+  const renderGroupedEvents = () => {
+    let idx = 0
+    return grouped.map((g, i) => {
+      if (g.type === 'subagent') {
+        const startIdx = idx
+        idx += g.events.length
+        return <SubagentGroup key={g.taskId || `sg-${i}`} group={g} startIndex={startIdx} />
+      }
+      if (g.event.type === 'token') {
+        return <AgentTextBlock key={g.event.id || `t-${i}`} event={g.event} />
+      }
+      return <EventItem key={g.event.id || `e-${i}`} event={g.event} index={idx++} />
+    })
+  }
 
   return (
     <div className="pl-8 mt-1">
       <div className="border border-blue-200 rounded-lg bg-blue-50/50 overflow-hidden">
-        {/* Header with latest status */}
+        {/* Header */}
         <button
           onClick={() => setExpanded(!expanded)}
           className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-blue-100/50 transition-colors"
@@ -486,10 +510,8 @@ const SandboxLiveProgress = ({ sandboxSessionId }) => {
           <Terminal className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
           <Loader2 className="w-3 h-3 text-blue-400 animate-spin flex-shrink-0" />
           <span className="text-blue-600 font-medium">Sandbox Agent</span>
-          {latestEvent && (
-            <span className="text-blue-400 truncate">
-              — {latestEvent.type === 'tool' ? `calling ${latestEvent.text}` : latestEvent.type === 'tool_result' ? `${latestEvent.text} ${latestEvent.success ? 'done' : 'failed'}` : latestEvent.text}
-            </span>
+          {latestLabel && (
+            <span className="text-blue-400 truncate">— {latestLabel}</span>
           )}
           <span className="ml-auto text-blue-300 flex-shrink-0">
             {events.length > 0 && <span className="mr-1">{events.length} events</span>}
@@ -497,45 +519,56 @@ const SandboxLiveProgress = ({ sandboxSessionId }) => {
           </span>
         </button>
 
-        {/* Expanded: show recent activity */}
-        {expanded && visibleActivity.length > 0 && (
-          <div className="border-t border-blue-200 px-3 py-1.5 space-y-0.5 max-h-48 overflow-y-auto">
-            {visibleActivity.map((item, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs py-0.5">
-                {item.type === 'tool' && (
-                  <>
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-                    <span className="text-blue-700 font-mono">{item.text}</span>
-                    <span className="text-blue-400">calling…</span>
-                  </>
-                )}
-                {item.type === 'tool_result' && (
-                  <>
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${item.success ? 'bg-green-400' : 'bg-red-400'}`} />
-                    <span className="text-gray-600 font-mono">{item.text}</span>
-                    <span className={item.success ? 'text-green-600' : 'text-red-600'}>{item.success ? 'done' : 'failed'}</span>
-                  </>
-                )}
-                {item.type === 'step' && (
-                  <>
-                    <span className="w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0" />
-                    <span className="text-gray-500 italic">{item.text}</span>
-                  </>
-                )}
-                {item.timestamp && (
-                  <span className="text-gray-300 ml-auto text-[10px] flex-shrink-0">
-                    {new Date(item.timestamp).toLocaleTimeString()}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Expanded: full event timeline (same as completed view) */}
+        {expanded && (
+          <div className="border-t border-blue-200 px-3 py-1.5">
+            {events.length === 0 ? (
+              <span className="text-xs text-blue-400 italic">Starting up…</span>
+            ) : (
+              <>
+                {/* Conversation timeline */}
+                <ConversationTimeline events={events} />
 
-        {/* No events yet */}
-        {expanded && visibleActivity.length === 0 && events.length === 0 && (
-          <div className="border-t border-blue-200 px-3 py-2">
-            <span className="text-xs text-blue-400 italic">Starting up…</span>
+                {/* Tool filter bar */}
+                {Object.keys(toolCounts).length > 1 && (
+                  <div className="mt-1 mb-1 flex flex-wrap gap-1 items-center">
+                    <button
+                      onClick={() => setFilterTool(null)}
+                      className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${!filterTool ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                    >
+                      all ({events.length})
+                    </button>
+                    {Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).map(([tool, count]) => {
+                      const cat = getToolCategory(tool)
+                      const { colors } = toolCategoryConfig[cat]
+                      const isActive = filterTool === tool
+                      return (
+                        <button
+                          key={tool}
+                          onClick={() => setFilterTool(isActive ? null : tool)}
+                          className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${isActive ? 'bg-gray-700 text-white' : colors + ' hover:opacity-80'}`}
+                        >
+                          {tool} ({count})
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* Events timeline */}
+                <div className="max-h-[500px] overflow-y-auto">
+                  {hasSubagents && !filterTool ? (
+                    renderGroupedEvents()
+                  ) : (
+                    filteredEvents.map((event, i) => (
+                      event.type === 'token'
+                        ? <AgentTextBlock key={event.id || `t-${i}`} event={event} />
+                        : <EventItem key={event.id || i} event={event} index={i} />
+                    ))
+                  )}
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

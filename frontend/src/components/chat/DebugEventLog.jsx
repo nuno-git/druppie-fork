@@ -25,7 +25,7 @@ import {
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { formatDuration, formatTokens } from '../../utils/tokenUtils'
-import { retryFromRun } from '../../services/api'
+import { retryFromRun, getSandboxEvents } from '../../services/api'
 import CopyButton from '../shared/CopyButton'
 import ContainerLogsModal from '../shared/ContainerLogsModal'
 
@@ -454,11 +454,58 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
   )
 }
 
+// ─── Sandbox Events Copy Button ─────────────────────────────────────────────
+
+const CopySandboxEventsButton = ({ sandboxSessionId }) => {
+  const [status, setStatus] = useState('idle') // idle | loading | copied | error
+
+  const handleCopy = async () => {
+    setStatus('loading')
+    try {
+      const data = await getSandboxEvents(sandboxSessionId)
+      await navigator.clipboard.writeText(JSON.stringify(data, null, 2))
+      setStatus('copied')
+      setTimeout(() => setStatus('idle'), 2000)
+    } catch (e) {
+      setStatus('error')
+      setTimeout(() => setStatus('idle'), 2000)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      disabled={status === 'loading'}
+      className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+        status === 'copied' ? 'bg-green-100 text-green-700' :
+        status === 'error' ? 'bg-red-100 text-red-700' :
+        'bg-blue-50 text-blue-600 hover:bg-blue-100'
+      }`}
+    >
+      {status === 'loading' ? <Clock className="w-3 h-3 animate-spin" /> :
+       status === 'copied' ? <Check className="w-3 h-3" /> :
+       <Copy className="w-3 h-3" />}
+      {status === 'copied' ? 'Copied!' : status === 'error' ? 'Failed' : 'Copy Sandbox Events'}
+    </button>
+  )
+}
+
+/** Extract sandbox_session_id from a tool call result */
+const getSandboxSessionId = (tc) => {
+  if (tc.tool_name !== 'execute_coding_task') return null
+  let result = tc.result
+  if (typeof result === 'string') {
+    try { result = JSON.parse(result) } catch { return null }
+  }
+  return result?.sandbox_session_id || null
+}
+
 // ─── RIGHT PANEL: Tool Detail ───────────────────────────────────────────────
 
 const ToolCallDetail = ({ tc }) => {
   const statusColor = tc.status === 'completed' ? 'text-green-600' : tc.status === 'failed' ? 'text-red-600' : 'text-amber-600'
   const StatusIcon = tc.status === 'completed' ? Check : tc.status === 'failed' ? X : Clock
+  const sandboxId = getSandboxSessionId(tc)
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -468,6 +515,7 @@ const ToolCallDetail = ({ tc }) => {
         <span className="font-medium text-gray-700">{formatToolName(tc.tool_name)}</span>
         <StatusBadge status={tc.status} />
         {tc.question_id && <span className="bg-amber-50 text-amber-700 text-[10px] font-medium px-1.5 py-0.5 rounded">HITL</span>}
+        {sandboxId && <CopySandboxEventsButton sandboxSessionId={sandboxId} />}
         <CopyButton text={tc} label="Copy" className={`ml-auto ${copyBtnClass}`} />
       </div>
 
@@ -546,6 +594,7 @@ const ToolCallDetail = ({ tc }) => {
 
 const ToolDetailPanel = ({ tc, agentRun }) => {
   const config = getAgentConfig(agentRun.agent_id)
+  const sandboxId = getSandboxSessionId(tc)
 
   return (
     <div className="space-y-3">
@@ -555,6 +604,7 @@ const ToolDetailPanel = ({ tc, agentRun }) => {
         <span className="font-medium text-gray-700">{formatToolName(tc.tool_name)}</span>
         <StatusBadge status={tc.status} />
         {tc.question_id && <span className="bg-amber-50 text-amber-700 text-[10px] font-medium px-1.5 py-0.5 rounded">HITL</span>}
+        {sandboxId && <CopySandboxEventsButton sandboxSessionId={sandboxId} />}
         <CopyButton text={tc} label="Copy JSON" showLabel className={`ml-auto ${copyBtnClass}`} />
       </div>
 

@@ -59,7 +59,7 @@ async def create_and_start_sandbox(
 
     Args:
         task_prompt: The coding task prompt to send.
-        model: Primary model to use (e.g. "deepinfra/Qwen/QwQ-32B").
+        model: Primary model profile (e.g. "sandbox/druppie-builder").
         agent_name: Sandbox agent name (e.g. "druppie-builder").
         repo_owner: Git repository owner.
         repo_name: Git repository name.

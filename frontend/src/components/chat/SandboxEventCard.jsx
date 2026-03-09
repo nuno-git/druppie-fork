@@ -795,3 +795,6 @@ const SandboxEventCard = ({ sandboxResults }) => {
 }
 
 export default SandboxEventCard
+
+// Exported for reuse by SandboxLiveProgress (same rendering for live and completed views)
+export { processEvents, groupBySubagent, SubagentGroup, EventItem, AgentTextBlock, ConversationTimeline, toolCategoryConfig, getToolCategory }
