@@ -22,9 +22,7 @@ import {
   CopyJsonButton,
   buildVisibleJson,
   extractSurfacedApprovals,
-  extractQuestions,
-  extractTestResults,
-  extractSandboxResults,
+  extractOrderedItems,
   findPendingQuestion,
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
@@ -302,15 +300,12 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 // --- Agent Run ---
 
 const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) => {
-  const resolvedItems = hasFollowingMessage ? [] : extractSurfacedApprovals(run.llm_calls)
-    .filter((item) => item.tc.approval.status !== 'pending')
-  const testResults = extractTestResults(run)
-  const sandboxResults = extractSandboxResults(run)
+  const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
   // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
 
-  if (!showAgentTrace && resolvedItems.length === 0) return null
+  if (!showAgentTrace && orderedItems.length === 0) return null
 
   const config = getAgentConfig(run.agent_id)
   const AgentIcon = config.icon
@@ -328,23 +323,37 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
           </div>
         </div>
       )}
-      {resolvedItems.length > 0 && (
-        <div className="mt-2 space-y-3">
-          {resolvedItems.map((item, i) => (
-            <InlineApproval key={i} tc={item.tc} sessionId={sessionId} />
-          ))}
-        </div>
-      )}
-      {testResults.length > 0 && (
-        <div className="mt-2">
-          <TestResultCard testResults={testResults} />
-        </div>
-      )}
-      {sandboxResults.length > 0 && (
-        <div className="mt-2">
-          <SandboxEventCard sandboxResults={sandboxResults} />
-        </div>
-      )}
+      {orderedItems.map((item, i) => {
+        if (item.type === 'approval') {
+          return (
+            <div key={i} className="mt-2">
+              <InlineApproval tc={item.tc} sessionId={sessionId} />
+            </div>
+          )
+        }
+        if (item.type === 'question') {
+          return (
+            <div key={i} className="mt-3">
+              <TimelineQuestion tc={item.tc} agentId={item.agentId} sessionId={sessionId} />
+            </div>
+          )
+        }
+        if (item.type === 'test') {
+          return (
+            <div key={i} className="mt-2">
+              <TestResultCard testResults={[item.data]} />
+            </div>
+          )
+        }
+        if (item.type === 'sandbox') {
+          return (
+            <div key={i} className="mt-2">
+              <SandboxEventCard sandboxResult={item.data} />
+            </div>
+          )
+        }
+        return null
+      })}
     </div>
   )
 }
@@ -1006,14 +1015,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 // Skip pending agents that haven't started yet — they show in the workflow bar
                 if (!STARTED_STATUSES.has(entry.agent_run.status)) return null
 
-                const questions = extractQuestions(entry.agent_run)
                 const hasFollowingMessage = runsWithMessages.has(i)
-                const resolvedItems = hasFollowingMessage ? []
-                  : extractSurfacedApprovals(entry.agent_run.llm_calls)
-                      .filter((item) => item.tc.approval.status !== 'pending')
+                const orderedItems = extractOrderedItems(entry.agent_run, hasFollowingMessage)
                 // Show completed runs without a following message (e.g. architect)
                 const isCompletedWithoutMessage = !hasFollowingMessage && entry.agent_run.status !== 'running'
-                if (resolvedItems.length === 0 && questions.length === 0 && !isCompletedWithoutMessage) {
+                if (orderedItems.length === 0 && !isCompletedWithoutMessage) {
                   return null
                 }
                 return (
@@ -1022,13 +1028,8 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       run={entry.agent_run}
                       timelineIndex={i}
                       sessionId={sessionId}
-                      hasFollowingMessage={runsWithMessages.has(i)}
+                      hasFollowingMessage={hasFollowingMessage}
                     />
-                    {questions.map((q, qi) => (
-                      <div key={qi} className="mt-3">
-                        <TimelineQuestion tc={q.tc} agentId={q.agentId} sessionId={sessionId} />
-                      </div>
-                    ))}
                     {renderAnnotation(i)}
                   </div>
                 )

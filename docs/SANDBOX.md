@@ -230,6 +230,15 @@ Git and LLM credentials are never exposed to the sandbox. The control plane gene
 
 **Credential lifecycle:** Proxy keys (both git and LLM) are invalidated when the sandbox completes (`execution_complete`), when the container is destroyed (timeout, failure, manual kill), and when the session is deleted. Orphaned Gitea service accounts are cleaned up on backend startup.
 
+**Implementation details:**
+- Gitea users are named `sandbox-{session_id[:12]}` to stay within Gitea's username length limits
+- Each user gets `write` collaborator access on the target repo and a scoped access token (`write:repository`)
+- The `git_user_id` is stored on the `sandbox_sessions` DB table for cleanup
+- The credential store's `GitCredentials` interface includes an `authorizedRepo` field (`"owner/repo"`) enforced by the git proxy
+- Credentials are destroyed in three places: `execution_complete` event handler, `destroySandboxContainer()`, and router `DELETE /sessions/:id`
+- On backend startup, `cleanup_orphaned_sandbox_users()` deletes all restricted `sandbox-*` Gitea users (startup-only — assumes no active sandboxes survive a restart)
+- Key files: `druppie/sandbox/gitea_credentials.py` (create/delete), `druppie/sandbox/gitea_cleanup.py` (GC), `credential-store.ts` (authorizedRepo), `git-proxy.ts` (scope validation)
+
 ### Webhook Authentication
 
 All webhooks are signed with HMAC-SHA256. The `callbackSecret` is set when creating the sandbox session and verified on every webhook delivery.

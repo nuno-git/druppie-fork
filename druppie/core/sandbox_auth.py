@@ -15,13 +15,18 @@ import warnings
 _DEFAULT_SANDBOX_SECRET = "sandbox-dev-secret"
 SANDBOX_API_SECRET = os.getenv("SANDBOX_API_SECRET", _DEFAULT_SANDBOX_SECRET)
 
-# Warn if using the default secret (similar to INTERNAL_API_KEY warning pattern)
+_environment = os.getenv("ENVIRONMENT", "development").lower()
 if SANDBOX_API_SECRET == _DEFAULT_SANDBOX_SECRET:
+    if _environment in ("production", "staging", "prod"):
+        raise RuntimeError(
+            "SANDBOX_API_SECRET is using the insecure default value. "
+            "Set a unique SANDBOX_API_SECRET in your .env file for production deployments."
+        )
     warnings.warn(
         "SANDBOX_API_SECRET is using the default development value. "
-        "This is insecure for production! Set the SANDBOX_API_SECRET environment variable.",
+        "Set SANDBOX_API_SECRET in .env for production.",
         UserWarning,
-        stacklevel=2
+        stacklevel=2,
     )
 
 

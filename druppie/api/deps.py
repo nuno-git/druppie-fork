@@ -222,11 +222,18 @@ async def get_optional_user(
 
 # Internal API key for MCP servers to call backend.
 # Default matches docker-compose.yml and builtin_tools.py so local-dev works without .env.
-INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "druppie-internal-secret-key")
-if not os.getenv("INTERNAL_API_KEY"):
+_DEFAULT_INTERNAL_KEY = "druppie-internal-secret-key"
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", _DEFAULT_INTERNAL_KEY)
+_environment = os.getenv("ENVIRONMENT", "development").lower()
+if INTERNAL_API_KEY == _DEFAULT_INTERNAL_KEY:
+    if _environment in ("production", "staging", "prod"):
+        raise RuntimeError(
+            "INTERNAL_API_KEY is using the insecure default value. "
+            "Set a unique INTERNAL_API_KEY in your .env file for production deployments."
+        )
     logger.warning(
-        "INTERNAL_API_KEY not set — using default. "
-        "Set a unique key in .env for production deployments."
+        "INTERNAL_API_KEY is using the default development value. "
+        "Set INTERNAL_API_KEY in .env for production."
     )
 
 

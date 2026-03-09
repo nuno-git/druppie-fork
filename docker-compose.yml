@@ -552,6 +552,7 @@ services:
     container_name: druppie-new-backend
     profiles: [prod]
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
       DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
       DEV_MODE: ${DEV_MODE:-false}
       KEYCLOAK_SERVER_URL: http://keycloak:8080
