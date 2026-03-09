@@ -36,29 +36,32 @@ system_prompt: |
   The session_id is auto-injected into tool calls - you don't need to provide it.
 
   IMPORTANT: write_file and batch_write_files do NOT commit or push!
-  You MUST call commit_and_push explicitly after writing files.
+  You MUST use run_git explicitly after writing files to stage, commit, and push.
 
   =============================================================================
   TASK TYPES
   =============================================================================
 
   **BRANCH SETUP ONLY** (your prompt says "BRANCH SETUP ONLY"):
-  1. Call coding_create_branch(branch_name="feature/<description>")
+  1. Call coding_run_git(command="checkout -b feature/<description>") then coding_run_git(command="push -u origin feature/<description>")
   2. Call done() with the branch name. Do NOT write any files.
   Example: Call done with summary: "Agent developer: Created feature branch feature/add-login."
 
   **IMPLEMENTATION** (normal coding task):
   1. Read architecture.md or existing files to understand what to build
   2. Write all files with write_file or batch_write_files
-  3. Call commit_and_push to commit and push ALL changes
+  3. Use run_git to stage, commit, and push ALL changes:
+     - coding_run_git(command="add .")
+     - coding_run_git(command="commit -m 'feat: description'")
+     - coding_run_git(command="push")
   4. Call done() with summary including branch name, files, push status
 
   **For intent: create_project**:
-  1. You're on main. Write files, then commit_and_push.
+  1. You're on main. Write files, then use run_git to add, commit, and push.
 
   **For intent: update_project**:
   1. You're already on the feature branch (created in a prior step).
-  2. Write files, then commit_and_push to push to the feature branch.
+  2. Write files, then use run_git to add, commit, and push to the feature branch.
 
   =============================================================================
   MERGE TASK (for update_project workflow)
@@ -77,12 +80,13 @@ system_prompt: |
   If your prompt contains "IMPROVEMENT TASK":
   1. Read the user's feedback from your prompt — it tells you what to change
   2. Make the requested improvements on the feature branch
-  3. Call coding_commit_and_push to push updates
+  3. Use coding_run_git to add, commit, and push updates
   4. In your done() summary, include the branch name and what was changed
 
   GIT WORKFLOW:
   - write_file/batch_write_files only write to disk — NO git operations
-  - You MUST call commit_and_push to stage, commit, and push all changes
+  - You MUST use run_git to stage, commit, and push all changes:
+    coding_run_git(command="add ."), coding_run_git(command="commit -m 'message'"), coding_run_git(command="push")
 
   NOTE: workspace_id is auto-injected for coding tools. Tools requiring approval
   will have [REQUIRES APPROVAL] in their description.
@@ -104,12 +108,12 @@ system_prompt: |
   1. Check SPEC.md if it exists: coding_read_file(path="SPEC.md")
   2. Use coding_batch_write_files to create ALL files at once
      - Include ALL necessary files: source code, config files, Dockerfile, etc.
-  3. Use coding_commit_and_push to push all changes to remote
+  3. Use coding_run_git to add, commit, and push all changes to remote
   4. Return summary of files created
 
   For SIMPLE FILE OPERATIONS:
   1. Use coding_write_file to write the file
-  2. Use coding_commit_and_push to push
+  2. Use coding_run_git to add, commit, and push
   3. Return summary
 
   =============================================================================
@@ -182,11 +186,9 @@ mcps:
     - read_file
     - write_file
     - batch_write_files
-    - commit_and_push
-    - create_branch
+    - run_git
     - create_pull_request
     - merge_pull_request
-    - get_git_status
     - list_dir
     - delete_file
 
