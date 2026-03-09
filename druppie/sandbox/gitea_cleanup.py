@@ -33,42 +33,52 @@ async def cleanup_orphaned_sandbox_users() -> int:
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                f"{base}/api/v1/admin/users",
-                params={"limit": 50},
-                auth=_admin_auth(),
-            )
-            if resp.status_code != 200:
-                logger.warning(
-                    "sandbox_gc_list_users_failed",
-                    status=resp.status_code,
+            page = 1
+            while True:
+                resp = await client.get(
+                    f"{base}/api/v1/admin/users",
+                    params={"limit": 50, "page": page},
+                    auth=_admin_auth(),
                 )
-                return 0
+                if resp.status_code != 200:
+                    logger.warning(
+                        "sandbox_gc_list_users_failed",
+                        status=resp.status_code,
+                    )
+                    break
 
-            for user in resp.json():
-                username = user.get("login", "")
-                if username.startswith("sandbox-") and user.get("restricted"):
-                    try:
-                        del_resp = await client.delete(
-                            f"{base}/api/v1/admin/users/{username}",
-                            params={"purge": "true"},
-                            auth=_admin_auth(),
-                        )
-                        if del_resp.status_code in (204, 404):
-                            deleted += 1
-                            logger.info("sandbox_gc_user_deleted", username=username)
-                        else:
-                            logger.warning(
-                                "sandbox_gc_user_delete_failed",
-                                username=username,
-                                status=del_resp.status_code,
+                users = resp.json()
+                if not users:
+                    break
+
+                for user in users:
+                    username = user.get("login", "")
+                    if username.startswith("sandbox-") and user.get("restricted"):
+                        try:
+                            del_resp = await client.delete(
+                                f"{base}/api/v1/admin/users/{username}",
+                                params={"purge": "true"},
+                                auth=_admin_auth(),
                             )
-                    except Exception as e:
-                        logger.warning(
-                            "sandbox_gc_user_delete_error",
-                            username=username,
-                            error=str(e),
-                        )
+                            if del_resp.status_code == 204:
+                                deleted += 1
+                                logger.info("sandbox_gc_user_deleted", username=username)
+                            elif del_resp.status_code != 404:
+                                logger.warning(
+                                    "sandbox_gc_user_delete_failed",
+                                    username=username,
+                                    status=del_resp.status_code,
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                "sandbox_gc_user_delete_error",
+                                username=username,
+                                error=str(e),
+                            )
+
+                if len(users) < 50:
+                    break
+                page += 1
     except Exception as e:
         logger.warning("sandbox_gc_error", error=str(e))
 
