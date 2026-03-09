@@ -311,8 +311,6 @@ class CodingModule:
         workspace_id: str,
         path: str,
         content: str,
-        auto_commit: bool = True,
-        commit_message: str | None = None,
     ) -> dict:
         """Write file to workspace."""
         try:
@@ -336,22 +334,11 @@ class CodingModule:
                 path,
             )
 
-            result = {
+            return {
                 "success": True,
                 "path": str(file_path.relative_to(workspace_path)),
                 "size": len(content),
             }
-
-            if auto_commit:
-                commit_result = await self._do_commit_and_push(
-                    workspace_id,
-                    commit_message or f"Update {path}",
-                )
-                result["committed"] = commit_result.get("success", False)
-                if commit_result.get("success"):
-                    result["commit_message"] = commit_message or f"Update {path}"
-
-            return result
 
         except ValueError as e:
             logger.warning(
@@ -441,7 +428,6 @@ class CodingModule:
         self,
         workspace_id: str,
         path: str,
-        auto_commit: bool = True,
     ) -> dict:
         """Delete file from workspace."""
         try:
@@ -462,16 +448,10 @@ class CodingModule:
 
             logger.info("Successfully deleted file in workspace %s: %s", workspace_id, path)
 
-            result = {
+            return {
                 "success": True,
                 "deleted": str(file_path.relative_to(workspace_path)),
             }
-
-            if auto_commit:
-                commit_result = await self._do_commit_and_push(workspace_id, f"Delete {path}")
-                result["committed"] = commit_result.get("success", False)
-
-            return result
 
         except ValueError as e:
             logger.warning(
@@ -561,73 +541,10 @@ class CodingModule:
             )
             return {"success": False, "error": str(e)}
 
-    async def _do_commit_and_push(self, workspace_id: str, message: str) -> dict:
-        """Internal function to commit all changes and push to Gitea."""
-        try:
-            ws = self.get_workspace(workspace_id)
-            cwd = ws["path"]
-            branch = ws["branch"]
-
-            subprocess.run(
-                ["git", "config", "user.email", "agent@druppie.local"],
-                cwd=cwd,
-                check=False,
-            )
-            subprocess.run(
-                ["git", "config", "user.name", "Druppie Agent"],
-                cwd=cwd,
-                check=False,
-            )
-
-            subprocess.run(["git", "add", "-A"], cwd=cwd, check=True)
-
-            result = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-            )
-
-            if not result.stdout.strip():
-                return {"success": True, "message": "No changes to commit"}
-
-            subprocess.run(["git", "commit", "-m", message], cwd=cwd, check=True)
-
-            if self.is_gitea_configured():
-                try:
-                    repo_name = ws.get("repo_name")
-                    if repo_name:
-                        auth_url = self.get_gitea_clone_url(repo_name)
-                        subprocess.run(
-                            ["git", "remote", "set-url", "origin", auth_url],
-                            cwd=cwd,
-                            check=True,
-                            capture_output=True,
-                        )
-
-                    subprocess.run(
-                        ["git", "push", "-u", "origin", branch],
-                        cwd=cwd,
-                        check=True,
-                        capture_output=True,
-                        timeout=60,
-                    )
-                    return {"success": True, "message": f"Committed and pushed: {message}", "pushed": True}
-                except subprocess.CalledProcessError as e:
-                    return {"success": True, "message": f"Committed: {message}", "pushed": False, "push_error": str(e)}
-
-            return {"success": True, "message": f"Committed: {message}", "pushed": False}
-
-        except subprocess.CalledProcessError as e:
-            return {"success": False, "error": str(e)}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
     async def batch_write_files(
         self,
         workspace_id: str,
         files: dict[str, str],
-        commit_message: str = "Create multiple files",
     ) -> dict:
         """Write multiple files to workspace."""
         try:
@@ -663,19 +580,10 @@ class CodingModule:
                 result["errors"] = errors
                 result["partial_success"] = True
 
-            commit_result = await self._do_commit_and_push(workspace_id, commit_message)
-            result["committed"] = commit_result.get("success", False)
-            if commit_result.get("success"):
-                result["commit_message"] = commit_message
-
             return result
 
         except Exception as e:
             return {"success": False, "error": str(e)}
-
-    async def commit_and_push(self, workspace_id: str, message: str) -> dict:
-        """Commit all changes and push to Gitea."""
-        return await self._do_commit_and_push(workspace_id, message)
 
     async def run_git(
         self,
@@ -802,87 +710,3 @@ class CodingModule:
             response["error"] = error_output or "Command failed"
 
         return response
-
-    def create_branch(self, workspace_id: str, branch_name: str) -> dict:
-        """Create and checkout a new git branch."""
-        try:
-            ws = self.get_workspace(workspace_id)
-            cwd = ws["path"]
-
-            subprocess.run(
-                ["git", "checkout", "-b", branch_name],
-                cwd=cwd,
-                check=True,
-            )
-
-            ws["branch"] = branch_name
-
-            return {"success": True, "branch": branch_name}
-
-        except subprocess.CalledProcessError as e:
-            return {"success": False, "error": str(e)}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def merge_to_main(self, workspace_id: str) -> dict:
-        """Merge current branch to main."""
-        try:
-            ws = self.get_workspace(workspace_id)
-            cwd = ws["path"]
-            current_branch = ws["branch"]
-
-            if current_branch == "main":
-                return {"success": False, "error": "Already on main branch"}
-
-            subprocess.run(["git", "checkout", "main"], cwd=cwd, check=True)
-            subprocess.run(["git", "merge", current_branch], cwd=cwd, check=True)
-
-            if self.gitea_token:
-                subprocess.run(["git", "push", "origin", "main"], cwd=cwd, check=True)
-
-            ws["branch"] = "main"
-
-            return {"success": True, "merged": current_branch}
-
-        except subprocess.CalledProcessError as e:
-            return {"success": False, "error": str(e)}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def get_git_status(self, workspace_id: str) -> dict:
-        """Get git status for workspace."""
-        try:
-            ws = self.get_workspace(workspace_id)
-            cwd = ws["path"]
-
-            branch_result = subprocess.run(
-                ["git", "branch", "--show-current"],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-            )
-            branch = branch_result.stdout.strip() or ws["branch"]
-
-            status_result = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-            )
-
-            files = []
-            for line in status_result.stdout.strip().split("\n"):
-                if line:
-                    status = line[:2].strip()
-                    filename = line[3:]
-                    files.append({"status": status, "file": filename})
-
-            return {
-                "success": True,
-                "branch": branch,
-                "files": files,
-                "has_changes": len(files) > 0,
-            }
-
-        except Exception as e:
-            return {"success": False, "error": str(e)}
