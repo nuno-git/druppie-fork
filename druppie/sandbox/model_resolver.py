@@ -78,17 +78,18 @@ def resolve_sandbox_models(requested_agent: str) -> SandboxModelConfig:
     agents_section = config.get("agents", {})
     subagents_section = config.get("subagents", {})
 
-    # Resolve primary agent model
-    agent_chain = agents_section.get(requested_agent)
+    # Resolve primary agent model (check both agents and subagents sections)
+    agent_chain = agents_section.get(requested_agent) or subagents_section.get(requested_agent)
     if not agent_chain:
+        all_available = list(agents_section.keys()) + list(subagents_section.keys())
         logger.error(
             "model_resolver.agent_not_configured",
             agent=requested_agent,
-            available=list(agents_section.keys()),
+            available=all_available,
         )
         raise ValueError(
             f"Agent '{requested_agent}' has no model chain in sandbox_models.yaml. "
-            f"Available agents: {list(agents_section.keys())}"
+            f"Available agents: {all_available}"
         )
 
     primary_model = _resolve_chain(agent_chain)
