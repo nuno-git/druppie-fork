@@ -38,3 +38,6 @@ class SandboxSession(Base):
 
     # Per-sandbox Gitea service account ID for cleanup
     git_user_id = Column(String(50), nullable=True)
+
+    # Git provider: "gitea" or "github" — controls cleanup behavior
+    git_provider = Column(String(20), nullable=True, default="gitea")

@@ -961,14 +961,23 @@ async def execute_sandbox_coding_task(
     if not session.user_id:
         return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
 
-    repo_owner = os.getenv("GITEA_ORG", "druppie")
-    repo_name = ""
-    if session.project_id:
-        project_repo = ProjectRepository(db)
-        project = project_repo.get_by_id(session.project_id)
-        if project:
-            repo_owner = project.repo_owner or repo_owner
-            repo_name = project.repo_name or ""
+    # Determine git provider and repo context based on session intent
+    if session.intent == "update_core":
+        # update_core: use GitHub App credentials for Druppie's own repo
+        repo_owner = session.repo_owner or "nuno-git"
+        repo_name = session.repo_name or "druppie-fork"
+        git_provider = "github"
+    else:
+        # create_project / update_project: use Gitea credentials
+        repo_owner = os.getenv("GITEA_ORG", "druppie")
+        repo_name = ""
+        if session.project_id:
+            project_repo = ProjectRepository(db)
+            project = project_repo.get_by_id(session.project_id)
+            if project:
+                repo_owner = project.repo_owner or repo_owner
+                repo_name = project.repo_name or ""
+        git_provider = "gitea"
 
     try:
         result = await create_and_start_sandbox(
@@ -985,6 +994,7 @@ async def execute_sandbox_coding_task(
             source="api",
             author_id="druppie-agent",
             db=db,
+            git_provider=git_provider,
         )
 
         logger.info(

@@ -36,6 +36,31 @@ def _load_agent_files() -> dict[str, str]:
     return {}
 
 
+async def _build_github_git_credentials(repo_owner: str, repo_name: str) -> dict:
+    """Build git credentials for GitHub using the GitHub App installation token.
+
+    Returns the same dict format as create_sandbox_git_user() so the control plane
+    credential store handles it identically.
+    """
+    from druppie.services.github_app_service import get_github_app_service
+
+    service = get_github_app_service()
+    if not service.enabled:
+        raise SandboxCreateError("GitHub App is not configured — cannot create sandbox for GitHub repo")
+
+    token = await service.get_installation_token()
+    if not token:
+        raise SandboxCreateError("Failed to obtain GitHub App installation token")
+
+    return {
+        "provider": "github",
+        "url": "https://github.com",
+        "username": "x-access-token",
+        "password": token,
+        "authorizedRepo": f"{repo_owner}/{repo_name}",
+    }
+
+
 async def create_and_start_sandbox(
     *,
     task_prompt: str,
@@ -51,6 +76,7 @@ async def create_and_start_sandbox(
     source: str,
     author_id: str,
     db,
+    git_provider: str = "gitea",
 ) -> dict:
     """Create a sandbox session on the control plane, register ownership, and send the prompt.
 
@@ -71,9 +97,10 @@ async def create_and_start_sandbox(
         source: Source identifier ("api" or "retry").
         author_id: Author identifier for the prompt.
         db: SQLAlchemy session.
+        git_provider: "gitea" (default) or "github".
 
     Returns:
-        Dict with sandbox_session_id, message_id, webhook_secret, and git_user_id.
+        Dict with sandbox_session_id, message_id, webhook_secret, git_user_id, and git_provider.
 
     Raises:
         SandboxCreateError: If creation, registration, or prompt fails.
@@ -87,16 +114,22 @@ async def create_and_start_sandbox(
 
     model_config = resolve_sandbox_models(agent_name)
     webhook_secret = secrets.token_urlsafe(32)
-    git_user_id = secrets.token_hex(6)  # 12-char hex, used for Gitea username
 
-    # Create per-sandbox scoped git credentials
-    from druppie.sandbox.gitea_credentials import create_sandbox_git_user, delete_sandbox_git_user
+    # Build git credentials based on provider
+    git_user_id = None
+    delete_git_user = None  # cleanup function, only set for Gitea
 
-    scoped_git_creds = await create_sandbox_git_user(
-        sandbox_session_id=git_user_id,
-        repo_owner=repo_owner,
-        repo_name=repo_name,
-    )
+    if git_provider == "github":
+        scoped_git_creds = await _build_github_git_credentials(repo_owner, repo_name)
+    else:
+        from druppie.sandbox.gitea_credentials import create_sandbox_git_user, delete_sandbox_git_user
+        git_user_id = secrets.token_hex(6)  # 12-char hex, used for Gitea username
+        scoped_git_creds = await create_sandbox_git_user(
+            sandbox_session_id=git_user_id,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+        )
+        delete_git_user = lambda: delete_sandbox_git_user(git_user_id)
 
     create_body = {
         "repoOwner": repo_owner,
@@ -141,6 +174,7 @@ async def create_and_start_sandbox(
                 model=model,
                 agent=agent_name,
                 repo=f"{repo_owner}/{repo_name}",
+                git_provider=git_provider,
             )
 
             # Step 2: Register ownership BEFORE sending the prompt.
@@ -158,6 +192,7 @@ async def create_and_start_sandbox(
                     task_prompt=task_prompt,
                     agent_name=agent_name,
                     git_user_id=git_user_id,
+                    git_provider=git_provider,
                 )
                 db.flush()
             except Exception as e:
@@ -169,7 +204,6 @@ async def create_and_start_sandbox(
                     )
                 except Exception:
                     pass
-                # Gitea user cleanup handled by outer except SandboxCreateError
                 raise SandboxCreateError(f"Failed to register ownership: {e}") from e
 
             # Step 3: Send the task prompt with callback info
@@ -200,7 +234,6 @@ async def create_and_start_sandbox(
                     )
                 except Exception:
                     pass
-                # Gitea user cleanup handled by outer except SandboxCreateError
                 raise SandboxCreateError(
                     f"Failed to send prompt: {prompt_resp.status_code}"
                 )
@@ -219,26 +252,30 @@ async def create_and_start_sandbox(
                 "message_id": message_id,
                 "webhook_secret": webhook_secret,
                 "git_user_id": git_user_id,
+                "git_provider": git_provider,
             }
 
     except SandboxCreateError:
         # Clean up the per-sandbox Gitea user on any creation failure
-        try:
-            await delete_sandbox_git_user(git_user_id)
-        except Exception:
-            pass
+        if delete_git_user:
+            try:
+                await delete_git_user()
+            except Exception:
+                pass
         raise
     except httpx.TimeoutException as e:
-        try:
-            await delete_sandbox_git_user(git_user_id)
-        except Exception:
-            pass
+        if delete_git_user:
+            try:
+                await delete_git_user()
+            except Exception:
+                pass
         raise SandboxCreateError(
             f"Timeout connecting to sandbox control plane: {e}"
         ) from e
     except Exception as e:
-        try:
-            await delete_sandbox_git_user(git_user_id)
-        except Exception:
-            pass
+        if delete_git_user:
+            try:
+                await delete_git_user()
+            except Exception:
+                pass
         raise SandboxCreateError(f"Sandbox error: {e}") from e

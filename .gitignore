@@ -46,6 +46,9 @@ test-results/
 instance/
 *.db
 
+# Secrets (private keys, certificates)
+secrets/
+
 # Local config
 .druppie/
 .playwright-mcp/
