@@ -7,6 +7,7 @@ test execution, and workspace management.
 import json
 import logging
 import re
+import shlex
 import subprocess
 import uuid
 from pathlib import Path
@@ -74,14 +75,15 @@ class CodingModule:
                 return True, BLOCKED_COMMAND_PATTERNS[i]
         return False, None
 
-    def get_gitea_clone_url(self, repo_name: str) -> str:
+    def get_gitea_clone_url(self, repo_name: str, repo_owner: str | None = None) -> str:
         """Get Gitea clone URL with embedded credentials."""
+        owner = repo_owner or self.gitea_org
         if self.gitea_user and self.gitea_password:
             if "://" in self.gitea_url:
                 from urllib.parse import quote
                 protocol, rest = self.gitea_url.split("://", 1)
-                return f"{protocol}://{quote(self.gitea_user)}:{quote(self.gitea_password)}@{rest}/{self.gitea_org}/{repo_name}.git"
-        return f"{self.gitea_url}/{self.gitea_org}/{repo_name}.git"
+                return f"{protocol}://{quote(self.gitea_user)}:{quote(self.gitea_password)}@{rest}/{owner}/{repo_name}.git"
+        return f"{self.gitea_url}/{owner}/{repo_name}.git"
 
     def is_gitea_configured(self) -> bool:
         """Check if Gitea is configured with credentials."""
@@ -309,8 +311,6 @@ class CodingModule:
         workspace_id: str,
         path: str,
         content: str,
-        auto_commit: bool = True,
-        commit_message: str | None = None,
     ) -> dict:
         """Write file to workspace."""
         try:
@@ -334,22 +334,11 @@ class CodingModule:
                 path,
             )
 
-            result = {
+            return {
                 "success": True,
                 "path": str(file_path.relative_to(workspace_path)),
                 "size": len(content),
             }
-
-            if auto_commit:
-                commit_result = await self._do_commit_and_push(
-                    workspace_id,
-                    commit_message or f"Update {path}",
-                )
-                result["committed"] = commit_result.get("success", False)
-                if commit_result.get("success"):
-                    result["commit_message"] = commit_message or f"Update {path}"
-
-            return result
 
         except ValueError as e:
             logger.warning(
@@ -439,7 +428,6 @@ class CodingModule:
         self,
         workspace_id: str,
         path: str,
-        auto_commit: bool = True,
     ) -> dict:
         """Delete file from workspace."""
         try:
@@ -460,16 +448,10 @@ class CodingModule:
 
             logger.info("Successfully deleted file in workspace %s: %s", workspace_id, path)
 
-            result = {
+            return {
                 "success": True,
                 "deleted": str(file_path.relative_to(workspace_path)),
             }
-
-            if auto_commit:
-                commit_result = await self._do_commit_and_push(workspace_id, f"Delete {path}")
-                result["committed"] = commit_result.get("success", False)
-
-            return result
 
         except ValueError as e:
             logger.warning(
@@ -559,73 +541,10 @@ class CodingModule:
             )
             return {"success": False, "error": str(e)}
 
-    async def _do_commit_and_push(self, workspace_id: str, message: str) -> dict:
-        """Internal function to commit all changes and push to Gitea."""
-        try:
-            ws = self.get_workspace(workspace_id)
-            cwd = ws["path"]
-            branch = ws["branch"]
-
-            subprocess.run(
-                ["git", "config", "user.email", "agent@druppie.local"],
-                cwd=cwd,
-                check=False,
-            )
-            subprocess.run(
-                ["git", "config", "user.name", "Druppie Agent"],
-                cwd=cwd,
-                check=False,
-            )
-
-            subprocess.run(["git", "add", "-A"], cwd=cwd, check=True)
-
-            result = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-            )
-
-            if not result.stdout.strip():
-                return {"success": True, "message": "No changes to commit"}
-
-            subprocess.run(["git", "commit", "-m", message], cwd=cwd, check=True)
-
-            if self.is_gitea_configured():
-                try:
-                    repo_name = ws.get("repo_name")
-                    if repo_name:
-                        auth_url = self.get_gitea_clone_url(repo_name)
-                        subprocess.run(
-                            ["git", "remote", "set-url", "origin", auth_url],
-                            cwd=cwd,
-                            check=True,
-                            capture_output=True,
-                        )
-
-                    subprocess.run(
-                        ["git", "push", "-u", "origin", branch],
-                        cwd=cwd,
-                        check=True,
-                        capture_output=True,
-                        timeout=60,
-                    )
-                    return {"success": True, "message": f"Committed and pushed: {message}", "pushed": True}
-                except subprocess.CalledProcessError as e:
-                    return {"success": True, "message": f"Committed: {message}", "pushed": False, "push_error": str(e)}
-
-            return {"success": True, "message": f"Committed: {message}", "pushed": False}
-
-        except subprocess.CalledProcessError as e:
-            return {"success": False, "error": str(e)}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
     async def batch_write_files(
         self,
         workspace_id: str,
         files: dict[str, str],
-        commit_message: str = "Create multiple files",
     ) -> dict:
         """Write multiple files to workspace."""
         try:
@@ -661,100 +580,135 @@ class CodingModule:
                 result["errors"] = errors
                 result["partial_success"] = True
 
-            commit_result = await self._do_commit_and_push(workspace_id, commit_message)
-            result["committed"] = commit_result.get("success", False)
-            if commit_result.get("success"):
-                result["commit_message"] = commit_message
-
             return result
 
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def commit_and_push(self, workspace_id: str, message: str) -> dict:
-        """Commit all changes and push to Gitea."""
-        return await self._do_commit_and_push(workspace_id, message)
+    async def run_git(
+        self,
+        workspace_id: str,
+        command: str,
+        repo_name: str | None = None,
+        repo_owner: str | None = None,
+    ) -> dict:
+        """Execute a whitelisted git command and return raw output."""
+        ALLOWED_SUBCOMMANDS = {
+            "add",
+            "commit",
+            "push",
+            "pull",
+            "fetch",
+            "status",
+            "checkout",
+            "log",
+            "diff",
+            "branch",
+        }
+        CREDENTIAL_SUBCOMMANDS = {"push", "pull", "fetch"}
 
-    def create_branch(self, workspace_id: str, branch_name: str) -> dict:
-        """Create and checkout a new git branch."""
         try:
-            ws = self.get_workspace(workspace_id)
-            cwd = ws["path"]
+            parts = shlex.split(command)
+        except ValueError as e:
+            return {"success": False, "error": f"Invalid command syntax: {e}"}
 
-            subprocess.run(
-                ["git", "checkout", "-b", branch_name],
-                cwd=cwd,
-                check=True,
-            )
+        if not parts:
+            return {"success": False, "error": "Empty command"}
 
-            ws["branch"] = branch_name
+        # Strip leading "git" if provided
+        if parts[0] == "git":
+            parts = parts[1:]
 
-            return {"success": True, "branch": branch_name}
+        if not parts:
+            return {"success": False, "error": "No git subcommand provided"}
 
-        except subprocess.CalledProcessError as e:
-            return {"success": False, "error": str(e)}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        subcommand = parts[0]
 
-    async def merge_to_main(self, workspace_id: str) -> dict:
-        """Merge current branch to main."""
-        try:
-            ws = self.get_workspace(workspace_id)
-            cwd = ws["path"]
-            current_branch = ws["branch"]
-
-            if current_branch == "main":
-                return {"success": False, "error": "Already on main branch"}
-
-            subprocess.run(["git", "checkout", "main"], cwd=cwd, check=True)
-            subprocess.run(["git", "merge", current_branch], cwd=cwd, check=True)
-
-            if self.gitea_token:
-                subprocess.run(["git", "push", "origin", "main"], cwd=cwd, check=True)
-
-            ws["branch"] = "main"
-
-            return {"success": True, "merged": current_branch}
-
-        except subprocess.CalledProcessError as e:
-            return {"success": False, "error": str(e)}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    def get_git_status(self, workspace_id: str) -> dict:
-        """Get git status for workspace."""
-        try:
-            ws = self.get_workspace(workspace_id)
-            cwd = ws["path"]
-
-            branch_result = subprocess.run(
-                ["git", "branch", "--show-current"],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-            )
-            branch = branch_result.stdout.strip() or ws["branch"]
-
-            status_result = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-            )
-
-            files = []
-            for line in status_result.stdout.strip().split("\n"):
-                if line:
-                    status = line[:2].strip()
-                    filename = line[3:]
-                    files.append({"status": status, "file": filename})
-
+        if subcommand not in ALLOWED_SUBCOMMANDS:
             return {
-                "success": True,
-                "branch": branch,
-                "files": files,
-                "has_changes": len(files) > 0,
+                "success": False,
+                "error": f"Git subcommand '{subcommand}' is not allowed. "
+                f"Allowed: {', '.join(sorted(ALLOWED_SUBCOMMANDS))}",
             }
 
+        # Block destructive flags
+        BLOCKED_FLAGS = {"--force", "--hard"}
+        found = BLOCKED_FLAGS & set(parts)
+        if found:
+            return {
+                "success": False,
+                "error": f"Destructive flags are not allowed: {found}",
+            }
+
+        ws = self.get_workspace(workspace_id)
+        work_dir = ws["path"]
+
+        # Inject credentials for network commands
+        if subcommand in CREDENTIAL_SUBCOMMANDS and repo_name and repo_owner:
+            gitea_url = self.get_gitea_clone_url(repo_name, repo_owner)
+            if gitea_url:
+                try:
+                    subprocess.run(
+                        ["git", "remote", "set-url", "origin", gitea_url],
+                        cwd=work_dir,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
+
+        # Build and run the git command
+        full_cmd = ["git"] + parts
+        logger.info("run_git: command=%s work_dir=%s", full_cmd, work_dir)
+
+        try:
+            result = subprocess.run(
+                full_cmd,
+                cwd=work_dir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Command timed out after 120 seconds"}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": f"Failed to execute command: {e}"}
+
+        output = result.stdout.strip()
+        error_output = result.stderr.strip()
+        combined = f"{output}\n{error_output}".strip() if error_output else output
+
+        response = {
+            "success": result.returncode == 0,
+            "output": combined,
+            "exit_code": result.returncode,
+        }
+
+        # Auto-capture commit SHA from git commit output
+        if subcommand == "commit" and result.returncode == 0:
+            sha_match = re.search(
+                r"\[[\w/.-]+ ([a-f0-9]+)\]", output + " " + error_output
+            )
+            if sha_match:
+                response["commit_sha"] = sha_match.group(1)
+
+        # Update workspace branch tracking on checkout
+        if subcommand == "checkout" and result.returncode == 0:
+            try:
+                branch_result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=work_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if branch_result.returncode == 0:
+                    ws["branch"] = branch_result.stdout.strip()
+            except Exception:
+                pass
+
+        if not response["success"]:
+            response["error"] = error_output or "Command failed"
+
+        return response

@@ -89,8 +89,8 @@ system_prompt: |
   YOUR PRIMARY OUTPUT: functional_design.md (created via coding_make_design tool)
   In general_chat mode, you provide advice via hitl_ask_question instead.
 
-  IMPORTANT: After writing functional_design.md, you MUST call commit_and_push
-  to save the file to git. Other agents need to see your work.
+  IMPORTANT: After writing functional_design.md, you MUST use run_git to add,
+  commit, and push the file to git. Other agents need to see your work.
 
   =============================================================================
   COMMUNICATION MODEL
@@ -235,7 +235,7 @@ system_prompt: |
      (e.g., "[UPDATED]" or "[NEW]" prefix on requirement IDs).
      **If no functional_design.md was found:** Create a new one as usual.
   7. Focus on describing the CHANGES from the user's perspective
-  8. Call commit_and_push to save functional_design.md to git
+  8. Use run_git to add, commit, and push functional_design.md to git
   9. Call done() with DESIGN_APPROVED
 
   ### REVISION MODE
@@ -419,7 +419,7 @@ system_prompt: |
 
   **Task:**
   1. Make targeted updates to functional_design.md via coding_make_design.
-  2. Call commit_and_push to save the updated file to git.
+  2. Use run_git to add, commit, and push the updated file to git.
   3. Reference which Architect feedback item is being addressed.
   4. Document any new assumptions made.
   5. Do NOT restructure or rewrite sections unaffected by the feedback.
@@ -444,7 +444,7 @@ system_prompt: |
 
   **Task:**
   1. Write the revised functional_design.md via coding_make_design.
-  2. Call commit_and_push to save it to git.
+  2. Use run_git to add, commit, and push it to git.
   3. Proceed to **Phase 10: Functional Design Confirmation** — present the
      complete revised FD to the user for explicit approval before proceeding.
      Do NOT call done() until the user has confirmed the revised FD.
@@ -669,7 +669,7 @@ system_prompt: |
      Then ask for confirmation with these options:
      → Yes, this accurately captures my needs / Partially, some things need adjustment / No, there are significant issues
   3. If user has feedback on the summary → Iterate (return to relevant phase) → repeat validation.
-  4. If user confirms the summary → Write functional_design.md via coding_make_design, then call commit_and_push to save it to git.
+  4. If user confirms the summary → Write functional_design.md via coding_make_design, then use run_git to add, commit, and push it to git.
 
   ### Phase 10: Functional Design Confirmation
 
@@ -868,7 +868,7 @@ mcps:
     - read_file
     - make_design
     - list_dir
-    - commit_and_push
+    - run_git
 
 # LAYERED APPROVAL SYSTEM:
 # When business_analyst calls make_design (to create functional_design.md),

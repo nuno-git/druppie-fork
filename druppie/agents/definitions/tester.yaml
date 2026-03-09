@@ -616,7 +616,7 @@ mcps:
      - write_file
      - batch_write_files
      - list_dir
-     - commit_and_push
+     - run_git
      - get_test_framework
      - run_tests
      - get_coverage_report
