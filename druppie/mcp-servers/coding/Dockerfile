@@ -2,8 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install git, curl, and Node.js/npm for git operations, health checks, and JS test runners
-RUN apt-get update && apt-get install -y git curl nodejs npm && rm -rf /var/lib/apt/lists/*
+# Install git, curl, Node.js/npm, and Chromium for git operations, health checks,
+# JS test runners, and Mermaid diagram validation (mmdc needs a browser via Puppeteer)
+RUN apt-get update && apt-get install -y git curl nodejs npm chromium && rm -rf /var/lib/apt/lists/*
+
+# Configure Puppeteer to use system Chromium (skip bundled download)
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+# Install Mermaid CLI for structural diagram validation
+RUN npm install -g @mermaid-js/mermaid-cli
 
 # Install dependencies
 COPY requirements.txt .
@@ -15,6 +23,7 @@ COPY module.py .
 COPY retry_module.py .
 COPY testing_module.py .
 COPY mermaid_validator.py .
+COPY puppeteer-config.json .
 
 # Create workspace directory
 RUN mkdir -p /workspaces

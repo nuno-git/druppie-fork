@@ -4,7 +4,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -423,15 +423,15 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const prevLengthRef = useRef(0)
   const inputRef = useRef(null)
   const [continueInput, setContinueInput] = useState('')
-  const scrollPositions = useRef({ chat: 0, annotated: 0 })
+  const savedInspectScroll = useRef(0)
   const [viewMode, _setViewMode] = useState(() => {
     if (initialViewMode && VALID_VIEW_MODES.has(initialViewMode)) return initialViewMode
     return 'chat'
   })
   const setViewMode = (newMode) => {
-    // Save current scroll position before switching
-    if (viewMode !== 'inspect' && timelineRef.current) {
-      scrollPositions.current[viewMode] = timelineRef.current.scrollTop
+    // Save scroll only when leaving timeline for inspect
+    if (viewMode !== 'inspect' && newMode === 'inspect' && timelineRef.current) {
+      savedInspectScroll.current = timelineRef.current.scrollTop
     }
     _setViewMode(newMode)
   }
@@ -442,7 +442,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   const { data, isLoading, error } = useQuery({
     queryKey: ['session', sessionId],
     queryFn: () => getSession(sessionId),
+    retry: (failureCount, error) => {
+      if (error?.status === 403 || error?.status === 404) return false
+      return failureCount < 3
+    },
     refetchInterval: (query) => {
+      if (query.state.error) return false
       const status = query.state.data?.status
       if (status === 'completed' || status === 'failed') return false
       if (status === 'paused_crashed') return 2000
@@ -507,23 +512,33 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   useEffect(() => {
     const currentLength = data?.timeline?.length || 0
     if (currentLength > prevLengthRef.current) {
-      timelineEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      const isInitial = prevLengthRef.current === 0
+      // Double rAF for initial load: ensures flex layout is fully computed
+      // (cached data can arrive before the container has its final height).
+      // Single rAF suffices for incremental new-message scrolls.
+      const schedule = isInitial
+        ? (fn) => requestAnimationFrame(() => requestAnimationFrame(fn))
+        : (fn) => requestAnimationFrame(fn)
+      schedule(() => {
+        const el = timelineRef.current
+        if (el) el.scrollTo({ top: el.scrollHeight, behavior: isInitial ? 'instant' : 'smooth' })
+      })
     }
     prevLengthRef.current = currentLength
   }, [data?.timeline?.length])
 
-  // Restore scroll position when switching back to chat/annotated
+  // Restore scroll position when returning from inspect to timeline
+  const prevViewMode = useRef(viewMode)
   useEffect(() => {
-    if (viewMode !== 'inspect' && timelineRef.current) {
-      const saved = scrollPositions.current[viewMode]
-      if (saved != null) {
-        requestAnimationFrame(() => {
-          if (timelineRef.current) {
-            timelineRef.current.scrollTop = saved
-          }
-        })
-      }
+    if (prevViewMode.current === 'inspect' && viewMode !== 'inspect') {
+      const saved = savedInspectScroll.current
+      requestAnimationFrame(() => {
+        if (timelineRef.current) {
+          timelineRef.current.scrollTop = saved
+        }
+      })
     }
+    prevViewMode.current = viewMode
   }, [viewMode])
 
   useEffect(() => {
@@ -565,9 +580,34 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
   }
 
   if (error) {
+    const isAccessDenied = error.status === 403
+    const isNotFound = error.status === 404
     return (
-      <div className="flex items-center justify-center h-full text-red-500">
-        Error loading session: {error.message}
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center max-w-sm space-y-3">
+          {isAccessDenied ? (
+            <>
+              <ShieldOff className="w-12 h-12 text-gray-300 mx-auto" />
+              <h3 className="text-lg font-semibold text-gray-700">Access Denied</h3>
+              <p className="text-sm text-gray-500">You don't have permission to view this session. It may belong to another user.</p>
+            </>
+          ) : isNotFound ? (
+            <>
+              <MessageSquare className="w-12 h-12 text-gray-300 mx-auto" />
+              <h3 className="text-lg font-semibold text-gray-700">Session Not Found</h3>
+              <p className="text-sm text-gray-500">This session doesn't exist or may have been deleted.</p>
+            </>
+          ) : (
+            <>
+              <AlertTriangle className="w-12 h-12 text-red-300 mx-auto" />
+              <h3 className="text-lg font-semibold text-gray-700">Something Went Wrong</h3>
+              <p className="text-sm text-gray-500">{error.message}</p>
+            </>
+          )}
+          <Link to="/chat" className="inline-block text-sm text-blue-600 hover:text-blue-700 mt-2">
+            ← Back to conversations
+          </Link>
+        </div>
       </div>
     )
   }
@@ -678,12 +718,12 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 ))}
               </div>
             )}
-            {data.project_name && (
+            {data.project && (
               <a
-                href={`/projects/${data.project_id}`}
+                href={`/projects/${data.project.id}`}
                 className="text-xs text-gray-400 hover:text-blue-500 flex items-center gap-1 transition-colors"
               >
-                {data.project_name}
+                {data.project.name}
               </a>
             )}
             <CopyJsonButton

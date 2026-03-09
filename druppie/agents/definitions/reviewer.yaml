@@ -35,6 +35,8 @@ system_prompt: |
   - Recommendations
   - Positive observations
 
+  IMPORTANT: After writing REVIEW.md, call commit_and_push to save it to git.
+
   COMPLETION:
   When review is complete, call done() with summary starting with "Agent reviewer:" and key findings.
   DO NOT keep calling tools after completing the review. Call done() and stop.
@@ -51,6 +53,7 @@ mcps:
     - read_file
     - list_dir
     - write_file
+    - commit_and_push
 
 llm_profile: standard
 temperature: 0.1

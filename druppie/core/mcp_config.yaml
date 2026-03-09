@@ -607,3 +607,70 @@ mcps:
       - name: get_page_info
         description: "Get basic information about a web page"
         requires_approval: false
+
+  registry:
+    url: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+    description: "Druppie platform building block catalog (read-only)"
+    tools:
+      - name: list_components
+        description: "List all Druppie building blocks grouped by category (agents, skills, mcps, builtin_tools). Optional category filter."
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            category:
+              type: string
+              description: "Filter by category: agents, skills, mcps, builtin_tools (empty = all)"
+          required: []
+
+      - name: get_agent
+        description: "Get agent details: description, skills, MCP tools, config"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            agent_id:
+              type: string
+              description: "Agent identifier (e.g., architect, developer, planner)"
+          required:
+            - agent_id
+
+      - name: get_skill
+        description: "Get full skill content including instructions and allowed tools"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            skill_name:
+              type: string
+              description: "Skill name (e.g., code-review, architecture-principles)"
+          required:
+            - skill_name
+
+      - name: get_mcp_server
+        description: "Get MCP server details: description, tool list with descriptions, and which agents use it"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            server_name:
+              type: string
+              description: "MCP server name (e.g., coding, docker, archimate)"
+          required:
+            - server_name
+
+      - name: get_tool
+        description: "Get full tool definition: parameters, approval requirements, and per-agent overrides"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            server_name:
+              type: string
+              description: "MCP server name"
+            tool_name:
+              type: string
+              description: "Tool name within the server"
+          required:
+            - server_name
+            - tool_name
