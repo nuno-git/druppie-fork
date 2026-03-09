@@ -13,13 +13,37 @@ Never leave commits unpushed. Every task MUST end with `git push`.
 
 Git authentication is handled automatically via proxy.
 
-IMPORTANT: Do NOT use `gh` CLI — it is not authenticated in this environment.
-For GitHub API access, use `curl` with `$GITHUB_API_PROXY_URL`:
+IMPORTANT: Do NOT use `gh` CLI — it does not work in this environment.
+For GitHub API access, use `curl` with `$GITHUB_API_PROXY_URL`. Auth is automatic.
+
 ```bash
-curl "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls" \
+# Create a pull request
+curl -s -X POST "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls" \
   -H "Content-Type: application/json" \
   -d '{"title":"...","body":"...","head":"branch","base":"main"}'
+
+# View a pull request
+curl -s "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls/NUMBER" | jq
+
+# List open pull requests
+curl -s "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls" | jq
+
+# View PR diff
+curl -s -H "Accept: application/vnd.github.diff" \
+  "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls/NUMBER"
+
+# View PR/issue comments
+curl -s "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/issues/NUMBER/comments" | jq
+
+# List issues
+curl -s "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/issues" | jq
+
+# View repo info
+curl -s "$GITHUB_API_PROXY_URL/repos/OWNER/REPO" | jq
 ```
+
+Replace OWNER/REPO with actual values and NUMBER with the PR/issue number.
+Any GitHub REST API endpoint works: `curl -s "$GITHUB_API_PROXY_URL/<endpoint>" | jq`
 
 ## Coding Standards
 - Write clean, working code
