@@ -16,7 +16,6 @@ import os
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-import httpx
 import structlog
 
 if TYPE_CHECKING:
@@ -24,29 +23,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# Sandbox configuration (for execute_coding_task)
-SANDBOX_CONTROL_PLANE_URL = os.getenv("SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787")
-BACKEND_URL = os.getenv("BACKEND_URL", "http://druppie-backend:8000")
-GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
-
-from pathlib import Path
-
-from druppie.core.sandbox_auth import generate_control_plane_token as _generate_sandbox_auth_token
-from druppie.sandbox.credentials import build_git_credentials, build_llm_credentials
-from druppie.sandbox.model_resolver import (
-    PROVIDER_API_KEYS,
-    get_agent_chain,
-    get_raw_model_chains,
-    resolve_sandbox_models,
-)
-
-
-def _load_agent_files() -> dict[str, str]:
-    """Load all .md agent files from sandbox-config/agents/ directory."""
-    agents_dir = Path(__file__).parent.parent / "sandbox-config" / "agents"
-    if agents_dir.is_dir():
-        return {f.stem: f.read_text() for f in agents_dir.glob("*.md")}
-    return {}
+from druppie.sandbox.model_resolver import get_agent_chain, resolve_sandbox_models
 
 
 # =============================================================================
@@ -890,17 +867,18 @@ async def execute_sandbox_coding_task(
         Dict with status="waiting_sandbox" and sandbox_session_id on success.
         The caller (tool_executor) should set ToolCallStatus.WAITING_SANDBOX.
     """
+    import json as _json
+    from druppie.sandbox import create_and_start_sandbox, SandboxCreateError
+
     task = args.get("task", "")
     from druppie.core.config import DEFAULT_SANDBOX_AGENT
     agent = args.get("agent", DEFAULT_SANDBOX_AGENT)
-    model_config = resolve_sandbox_models(agent)
-    model = model_config.primary_model
 
     if not task:
         return {"success": False, "error": "task is required"}
 
-    if not SANDBOX_CONTROL_PLANE_URL:
-        return {"success": False, "error": "SANDBOX_CONTROL_PLANE_URL not configured"}
+    model_config = resolve_sandbox_models(agent)
+    model = model_config.primary_model
 
     # Get project context from the session via repositories
     from druppie.repositories import SessionRepository, ProjectRepository
@@ -910,185 +888,51 @@ async def execute_sandbox_coding_task(
     if not session:
         return {"success": False, "error": f"Session {session_id} not found"}
 
-    user_id = str(session.user_id) if session.user_id else None
-    if not user_id:
+    if not session.user_id:
         return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
 
-    repo_name = None
-    repo_owner = None
-
+    repo_owner = os.getenv("GITEA_ORG", "druppie")
+    repo_name = ""
     if session.project_id:
         project_repo = ProjectRepository(db)
         project = project_repo.get_by_id(session.project_id)
         if project:
-            repo_name = project.repo_name
-            repo_owner = project.repo_owner
-
-    sandbox_repo_owner = repo_owner or GITEA_ORG
-    sandbox_repo_name = repo_name or ""
-
-    import secrets
-    webhook_secret = secrets.token_urlsafe(32)
-
-    base_url = SANDBOX_CONTROL_PLANE_URL.rstrip("/")
+            repo_owner = project.repo_owner or repo_owner
+            repo_name = project.repo_name or ""
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            auth_headers = {
-                "Authorization": f"Bearer {_generate_sandbox_auth_token()}",
-                "Content-Type": "application/json",
-            }
+        result = await create_and_start_sandbox(
+            task_prompt=task,
+            model=model,
+            agent_name=agent,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            user_id=session.user_id,
+            session_id=session_id,
+            model_chain=_json.dumps(get_agent_chain(agent)),
+            model_chain_index=0,
+            title=f"Druppie sandbox: {task[:80]}",
+            source="api",
+            author_id="druppie-agent",
+            db=db,
+        )
 
-            # Step 1: Create sandbox session with credentials for proxy isolation.
-            # The control plane stores credentials in-memory, generates proxy keys,
-            # and injects them at proxy time. Sandboxes never see raw credentials.
+        logger.info(
+            "execute_coding_task: prompt sent, pausing for webhook",
+            sandbox_session_id=result["sandbox_session_id"],
+            message_id=result["message_id"],
+        )
 
-            create_body: dict = {
-                "repoOwner": sandbox_repo_owner,
-                "repoName": sandbox_repo_name,
-                "model": model,
-                "agentModels": model_config.agents,
-                "agentFiles": _load_agent_files(),
-                "modelChains": get_raw_model_chains(),
-                "title": f"Druppie sandbox: {task[:80]}",
-                "credentials": {
-                    "git": build_git_credentials(),
-                    "llm": build_llm_credentials(),
-                },
-            }
+        return {
+            "success": True,
+            "status": "waiting_sandbox",
+            "sandbox_session_id": result["sandbox_session_id"],
+            "message_id": result["message_id"],
+        }
 
-            resp = await client.post(
-                f"{base_url}/sessions",
-                json=create_body,
-                headers=auth_headers,
-            )
-
-            if resp.status_code not in (200, 201):
-                return {
-                    "success": False,
-                    "error": f"Failed to create sandbox session: {resp.status_code} {resp.text}",
-                }
-
-            sandbox_session_id = resp.json().get("sessionId")
-            if not sandbox_session_id:
-                return {"success": False, "error": "No sessionId in create response"}
-
-            logger.info(
-                "execute_coding_task: created sandbox session",
-                sandbox_session_id=sandbox_session_id,
-                repo=f"{sandbox_repo_owner}/{sandbox_repo_name}",
-            )
-
-            # Step 2: Register ownership BEFORE sending the prompt.
-            # The prompt triggers sandbox execution which fires a webhook on
-            # completion. Ownership must exist in the DB before the webhook
-            # can arrive, otherwise it 404s and the session is stuck forever.
-            try:
-                from druppie.repositories.sandbox_session_repository import SandboxSessionRepository
-                sandbox_repo = SandboxSessionRepository(db)
-                import json as _json
-
-                sandbox_repo.create(
-                    sandbox_session_id=sandbox_session_id,
-                    user_id=UUID(user_id),
-                    session_id=session_id,
-                    webhook_secret=webhook_secret,
-                    model_chain=_json.dumps(get_agent_chain(agent)),
-                    model_chain_index=0,
-                    task_prompt=task,
-                    agent_name=agent,
-                )
-                # flush() not commit(): let the tool_executor's commit handle
-                # both ownership and WAITING_SANDBOX status in one transaction.
-                db.flush()
-                logger.info(
-                    "execute_coding_task: registered ownership",
-                    sandbox_session_id=sandbox_session_id,
-                    user_id=user_id,
-                )
-            except Exception as e:
-                logger.error(
-                    "execute_coding_task: failed to register ownership",
-                    sandbox_session_id=sandbox_session_id,
-                    error=str(e),
-                )
-                # Best-effort: cancel the orphaned sandbox session on the control plane
-                try:
-                    async with httpx.AsyncClient(timeout=10.0) as cancel_client:
-                        await cancel_client.delete(
-                            f"{base_url}/sessions/{sandbox_session_id}",
-                            headers={"Authorization": f"Bearer {_generate_sandbox_auth_token()}"},
-                        )
-                    logger.info("execute_coding_task: cancelled orphaned sandbox", sandbox_session_id=sandbox_session_id)
-                except Exception as cancel_err:
-                    logger.warning("execute_coding_task: failed to cancel orphaned sandbox", error=str(cancel_err))
-                return {
-                    "success": False,
-                    "error": f"Failed to register sandbox ownership: {e}",
-                    "sandbox_session_id": sandbox_session_id,
-                }
-
-            # Step 3: Send the task prompt with callback info.
-            # Ownership is already in the DB, so even if the sandbox completes
-            # instantly the webhook will find the record.
-            callback_url = f"{BACKEND_URL}/api/sandbox-sessions/{sandbox_session_id}/complete"
-
-            prompt_body = {
-                "content": task,
-                "authorId": "druppie-agent",
-                "source": "api",
-                "agent": agent,
-                "callbackUrl": callback_url,
-                "callbackSecret": webhook_secret,
-            }
-
-            resp = await client.post(
-                f"{base_url}/sessions/{sandbox_session_id}/prompt",
-                json=prompt_body,
-                headers={
-                    "Authorization": f"Bearer {_generate_sandbox_auth_token()}",
-                    "Content-Type": "application/json",
-                },
-            )
-
-            if resp.status_code not in (200, 201):
-                # Clean up: cancel the orphaned sandbox and invalidate proxy key
-                try:
-                    async with httpx.AsyncClient(timeout=10.0) as cancel_client:
-                        await cancel_client.delete(
-                            f"{base_url}/sessions/{sandbox_session_id}",
-                            headers={"Authorization": f"Bearer {_generate_sandbox_auth_token()}"},
-                        )
-                    logger.info("execute_coding_task: cancelled sandbox after prompt failure", sandbox_session_id=sandbox_session_id)
-                except Exception as cancel_err:
-                    logger.warning("execute_coding_task: failed to cancel sandbox after prompt failure", error=str(cancel_err))
-                return {
-                    "success": False,
-                    "error": f"Failed to send prompt: {resp.status_code} {resp.text}",
-                    "sandbox_session_id": sandbox_session_id,
-                }
-
-            prompt_message_id = resp.json().get("messageId", "")
-            logger.info(
-                "execute_coding_task: prompt sent, pausing for webhook",
-                sandbox_session_id=sandbox_session_id,
-                message_id=prompt_message_id,
-            )
-
-            # Return with waiting_sandbox status — caller will pause the agent
-            return {
-                "success": True,
-                "status": "waiting_sandbox",
-                "sandbox_session_id": sandbox_session_id,
-                "message_id": prompt_message_id,
-            }
-
-    except httpx.TimeoutException as e:
-        logger.error("execute_coding_task: timeout connecting to control plane", error=str(e))
-        return {"success": False, "error": f"Timeout connecting to sandbox control plane: {e}"}
-    except Exception as e:
-        logger.error("execute_coding_task: unexpected error", error=str(e))
-        return {"success": False, "error": f"Sandbox error: {e}"}
+    except SandboxCreateError as e:
+        logger.error("execute_coding_task: failed", error=str(e))
+        return {"success": False, "error": str(e)}
 
 
 # =============================================================================
