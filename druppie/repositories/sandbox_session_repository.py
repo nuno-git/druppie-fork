@@ -20,6 +20,7 @@ class SandboxSessionRepository(BaseRepository):
         model_chain_index: int = 0,
         task_prompt: str | None = None,
         agent_name: str | None = None,
+        git_user_id: str | None = None,
     ) -> SandboxSession:
         """Register a sandbox session ownership mapping.
 
@@ -38,6 +39,7 @@ class SandboxSessionRepository(BaseRepository):
             model_chain_index=model_chain_index,
             task_prompt=task_prompt,
             agent_name=agent_name,
+            git_user_id=git_user_id,
         )
         self.db.add(mapping)
         self.db.flush()
