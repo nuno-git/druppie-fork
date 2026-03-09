@@ -937,7 +937,7 @@ async def _run_git(
 ) -> dict:
     """Execute a whitelisted git command and return raw output."""
     ALLOWED_SUBCOMMANDS = {"add", "commit", "push", "status", "checkout", "log", "diff", "branch"}
-    CREDENTIAL_SUBCOMMANDS = {"push", "fetch", "pull"}
+    CREDENTIAL_SUBCOMMANDS = {"push"}
 
     try:
         parts = shlex.split(command)
@@ -963,12 +963,13 @@ async def _run_git(
             f"Allowed: {', '.join(sorted(ALLOWED_SUBCOMMANDS))}",
         }
 
-    # Block destructive flags
-    BLOCKED_FLAGS = {"--force", "-f", "--hard"}
-    if BLOCKED_FLAGS & set(parts):
+    # Block destructive flags (not -f as it means different things per subcommand)
+    BLOCKED_FLAGS = {"--force", "--hard"}
+    found = BLOCKED_FLAGS & set(parts)
+    if found:
         return {
             "success": False,
-            "error": f"Destructive flags are not allowed: {BLOCKED_FLAGS & set(parts)}",
+            "error": f"Destructive flags are not allowed: {found}",
         }
 
     ws = get_workspace(workspace_id)
@@ -1197,11 +1198,11 @@ async def run_git(
     user_id: str | None = None,
     repo_name: str | None = None,
     repo_owner: str | None = None,
-) -> str:
+) -> dict:
     """Execute a git command in the workspace.
 
     Allowed subcommands: add, commit, push, status, checkout, log, diff, branch.
-    Destructive flags (--force, -f, --hard) are blocked.
+    Destructive flags (--force, --hard) are blocked.
 
     Args:
         command: Git command to execute (e.g. "status", "git log --oneline -5")
@@ -1213,7 +1214,7 @@ async def run_git(
         repo_owner: Gitea repository owner (for credential injection on push)
 
     Returns:
-        JSON string with success, output, exit_code, and optionally commit_sha or error
+        Dict with success, output, exit_code, and optionally commit_sha or error
     """
     # Resolve workspace
     if session_id:
@@ -1228,10 +1229,9 @@ async def run_git(
     elif workspace_id:
         resolved_workspace_id = workspace_id
     else:
-        return json.dumps({"success": False, "error": "Either session_id or workspace_id is required"})
+        return {"success": False, "error": "Either session_id or workspace_id is required"}
 
-    result = await _run_git(resolved_workspace_id, command, repo_name, repo_owner)
-    return json.dumps(result)
+    return await _run_git(resolved_workspace_id, command, repo_name, repo_owner)
 
 
 @mcp.tool()
