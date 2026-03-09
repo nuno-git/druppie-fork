@@ -39,7 +39,11 @@ const request = async (endpoint, options = {}) => {
       console.error('❌ Error Response:', { status: response.status, error })
       console.timeEnd('Duration')
       console.groupEnd()
-      throw new Error(error.detail || error.error || `Request failed: ${response.status}`)
+      const msg = [error.message, error.detail, error.error].find(v => typeof v === 'string' && v)
+        || `Request failed: ${response.status}`
+      const err = new Error(msg)
+      err.status = response.status
+      throw err
     }
 
     if (response.status === 204) {

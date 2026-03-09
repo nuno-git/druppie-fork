@@ -105,7 +105,7 @@ docker compose --profile reset-db run --rm reset-db
 
 # Hard reset - wipes EVERYTHING and re-initializes Keycloak & Gitea
 docker compose --profile reset-hard run --rm reset-hard
-docker compose --profile dev up -d   # Then start the app
+docker compose --profile dev up -d --build   # Rebuild + start (MCP servers need --build)
 ```
 
 **Soft reset keeps:** User accounts, Keycloak config, Gitea repos
@@ -205,7 +205,7 @@ docker compose logs -f
 **Fresh start:**
 ```bash
 docker compose --profile reset-hard run --rm reset-hard
-docker compose --profile dev up -d
+docker compose --profile dev up -d --build
 ```
 
 **Container won't start:**
