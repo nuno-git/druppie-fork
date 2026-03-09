@@ -88,6 +88,11 @@ def resolve_sandbox_models(requested_agent: str) -> SandboxModelConfig:
     all_providers: set[str] = set()
     agents: dict[str, str] = {}
 
+    # If force override is set, ensure that provider's credentials are included
+    force_provider = os.getenv("LLM_FORCE_PROVIDER")
+    if force_provider:
+        all_providers.add(force_provider)
+
     for section in (agents_section, subagents_section):
         for name, chain in section.items():
             agents[name] = f"sandbox/{name}"
@@ -106,16 +111,35 @@ def get_raw_model_chains() -> dict[str, list[dict[str, str]]]:
 
     Used by the LLM proxy for failover. When a profile's primary provider
     fails, the proxy tries the next entry in the chain.
+
+    If LLM_FORCE_PROVIDER and LLM_FORCE_MODEL are set, every profile gets
+    a single-entry chain with that provider/model (override → profile).
     """
     config = _load_config()
+
+    # Check for override — same env vars as the backend agent system
+    force_provider = os.getenv("LLM_FORCE_PROVIDER")
+    force_model = os.getenv("LLM_FORCE_MODEL")
+
     chains: dict[str, list[dict[str, str]]] = {}
     for section in ("agents", "subagents"):
         for name, chain in config.get(section, {}).items():
-            if chain:
+            if force_provider and force_model:
+                chains[name] = [{"provider": force_provider, "model": force_model}]
+            elif chain:
                 chains[name] = [
                     {"provider": e["provider"], "model": e["model"]}
                     for e in chain
                 ]
+
+    if force_provider and force_model:
+        logger.info(
+            "model_resolver.force_override",
+            provider=force_provider,
+            model=force_model,
+            profiles=list(chains.keys()),
+        )
+
     return chains
 
 
