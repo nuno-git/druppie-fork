@@ -1,7 +1,7 @@
 /**
- * SandboxEventCard - Expandable card displaying sandbox session events.
+ * SandboxEventCard - Expandable card displaying a single sandbox session.
  *
- * Props: { sandboxResults: Array } where each element is the raw execute_coding_task result:
+ * Props: { sandboxResult: Object } — a single execute_coding_task result:
  * { success, sandbox_session_id, changed_files, elapsed_seconds, agent_output }
  */
 
@@ -736,28 +736,27 @@ const SandboxSessionSection = ({ result }) => {
   )
 }
 
-const SandboxEventCard = ({ sandboxResults }) => {
+const SandboxEventCard = ({ sandboxResult }) => {
   const [isExpanded, setIsExpanded] = useState(false)
 
-  if (!sandboxResults?.length) return null
+  if (!sandboxResult) return null
 
-  // Aggregate stats
-  const totalFiles = new Set(sandboxResults.flatMap((r) => (r.changed_files || []).map(f => typeof f === 'string' ? f : f.path))).size
-  const totalTime = sandboxResults.reduce((sum, r) => sum + (r.elapsed_seconds || 0), 0)
-  const allSuccess = sandboxResults.every((r) => r.success)
+  const result = sandboxResult
+  const fileCount = (result.changed_files || []).length
+  const elapsed = result.elapsed_seconds || 0
+  const success = result.success
 
   const summaryParts = []
-  if (totalFiles > 0) summaryParts.push(`${totalFiles} file${totalFiles !== 1 ? 's' : ''} changed`)
-  if (totalTime > 0) summaryParts.push(formatTime(totalTime))
-  summaryParts.push(`${sandboxResults.length} session${sandboxResults.length !== 1 ? 's' : ''}`)
+  if (fileCount > 0) summaryParts.push(`${fileCount} file${fileCount !== 1 ? 's' : ''} changed`)
+  if (elapsed > 0) summaryParts.push(formatTime(elapsed))
 
   return (
-    <div className={`rounded-xl border bg-gray-50 border-gray-200 border-l-4 ${allSuccess ? 'border-l-blue-500' : 'border-l-amber-500'} transition-all`}>
+    <div className={`rounded-xl border bg-gray-50 border-gray-200 border-l-4 ${success ? 'border-l-blue-500' : 'border-l-amber-500'} transition-all`}>
       {/* Header */}
       <div className="px-4 pt-3 pb-1">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Terminal className={`w-4 h-4 ${allSuccess ? 'text-blue-500' : 'text-amber-500'}`} />
+            <Terminal className={`w-4 h-4 ${success ? 'text-blue-500' : 'text-amber-500'}`} />
             <span className="text-sm font-medium text-gray-800">Sandbox Session</span>
           </div>
           <button
@@ -770,24 +769,22 @@ const SandboxEventCard = ({ sandboxResults }) => {
         </div>
 
         {/* Summary line */}
-        <div className="mt-1.5 pb-2 flex items-center gap-1 text-xs text-gray-500 flex-wrap">
-          {summaryParts.map((part, i) => (
-            <span key={i} className="flex items-center gap-1">
-              {i > 0 && <span className="text-gray-300">&middot;</span>}
-              {part}
-            </span>
-          ))}
-        </div>
+        {summaryParts.length > 0 && (
+          <div className="mt-1.5 pb-2 flex items-center gap-1 text-xs text-gray-500 flex-wrap">
+            {summaryParts.map((part, i) => (
+              <span key={i} className="flex items-center gap-1">
+                {i > 0 && <span className="text-gray-300">&middot;</span>}
+                {part}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Expanded details */}
       {isExpanded && (
         <div className="px-4 pb-3 border-t border-gray-200">
-          <div className="divide-y divide-gray-100">
-            {sandboxResults.map((result, i) => (
-              <SandboxSessionSection key={i} result={result} />
-            ))}
-          </div>
+          <SandboxSessionSection result={result} />
         </div>
       )}
     </div>

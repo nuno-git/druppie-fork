@@ -299,6 +299,39 @@ export const extractSandboxResults = (agentRun) => {
   return results
 }
 
+// --- Extract all notable items from an agent run in tool call order ---
+
+export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
+  const items = []
+  agentRun?.llm_calls?.forEach((llm) => {
+    llm.tool_calls?.forEach((tc) => {
+      // Approvals (only when no following message)
+      if (!hasFollowingMessage && tc.approval && tc.approval.status !== 'pending') {
+        items.push({ type: 'approval', tc })
+      }
+      // HITL questions
+      if (tc.tool_name?.includes('hitl_ask')) {
+        items.push({ type: 'question', tc, agentId: agentRun.agent_id })
+      }
+      // Test results
+      if (tc.tool_name === 'run_tests' && tc.status === 'completed' && tc.result) {
+        try {
+          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+          if (raw) items.push({ type: 'test', data: raw })
+        } catch { /* skip */ }
+      }
+      // Sandbox results
+      if (tc.tool_name === 'execute_coding_task' && tc.status !== 'waiting_sandbox' && tc.status !== 'pending' && tc.result) {
+        try {
+          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+          if (raw?.sandbox_session_id) items.push({ type: 'sandbox', data: raw })
+        } catch { /* skip */ }
+      }
+    })
+  })
+  return items
+}
+
 // Statuses that indicate a session is actively doing work or waiting for external input
 // Note: These are SessionStatus values. 'running' is an AgentRunStatus, not included here.
 export const ACTIVE_STATUSES = new Set([
