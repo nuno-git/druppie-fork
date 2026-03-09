@@ -231,8 +231,7 @@ system_prompt: |
   5. Follow the elicitation phases below to clarify the change request
   6. **If an existing functional_design.md was found:** Update it by
      incorporating the new/changed requirements into the existing document.
-     Keep unchanged sections intact. Mark new or modified requirements clearly
-     (e.g., "[UPDATED]" or "[NEW]" prefix on requirement IDs).
+     Keep unchanged sections intact.
      **If no functional_design.md was found:** Create a new one as usual.
   7. Focus on describing the CHANGES from the user's perspective
   8. Call commit_and_push to save functional_design.md to git
