@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -181,6 +182,88 @@ def _extract_agent_output(events: list[dict]) -> str:
                 parts.append((ts, content))
     parts.sort(key=lambda x: x[0])
     return "\n".join(c for _, c in parts).strip()
+
+
+def _extract_pushed_branch(events: list[dict]) -> str | None:
+    """Extract the branch name that was git-pushed from sandbox bash tool_call events."""
+    for event in events:
+        if event.get("type") != "tool_call":
+            continue
+        data = event.get("data", {})
+        cmd = (data.get("args") or {}).get("command", "")
+        # Match: git push [-u] origin <branch>
+        m = re.search(r"git\s+push\s+(?:-u\s+)?origin\s+([\w/.:-]+)", cmd)
+        if m:
+            return m.group(1)
+    return None
+
+
+async def _create_github_pr_from_sandbox(
+    *,
+    repo_owner: str,
+    repo_name: str,
+    head_branch: str,
+    base_branch: str,
+    title: str,
+    agent_output: str,
+) -> dict | None:
+    """Create a PR on GitHub using the GitHub App installation token.
+
+    Returns {"pr_number": N, "pr_url": "..."} on success, None on failure.
+    """
+    from druppie.services.github_app_service import get_github_app_service
+
+    try:
+        service = get_github_app_service()
+        if not service.enabled:
+            logger.warning("github_pr_skip_not_configured")
+            return None
+
+        token = await service.get_installation_token()
+        if not token:
+            logger.warning("github_pr_skip_no_token")
+            return None
+
+        body = agent_output[:2000] if agent_output else "Automated change by Druppie sandbox."
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"https://api.github.com/repos/{repo_owner}/{repo_name}/pulls",
+                json={
+                    "title": title,
+                    "body": body,
+                    "head": head_branch,
+                    "base": base_branch,
+                },
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+
+            if resp.status_code in (200, 201):
+                pr_data = resp.json()
+                pr_result = {
+                    "pr_number": pr_data["number"],
+                    "pr_url": pr_data["html_url"],
+                }
+                logger.info(
+                    "github_pr_created",
+                    repo=f"{repo_owner}/{repo_name}",
+                    **pr_result,
+                )
+                return pr_result
+            else:
+                logger.warning(
+                    "github_pr_create_failed",
+                    status=resp.status_code,
+                    body=resp.text[:300],
+                )
+                return None
+    except Exception as e:
+        logger.error("github_pr_create_error", error=str(e))
+        return None
 
 
 async def _retry_sandbox_with_next_model(
@@ -444,6 +527,24 @@ async def sandbox_complete_webhook(
             db.commit()
             return {"status": "retrying", "sandbox_session_id": sandbox_session_id}
 
+    # For GitHub sandboxes: auto-create PR after successful sandbox completion
+    pr_result = None
+    if body.success and sandbox_mapping.git_provider == "github" and changed_files:
+        pushed_branch = _extract_pushed_branch(events if event_count > 0 else [])
+        if pushed_branch and sandbox_mapping.session_id:
+            from druppie.repositories import SessionRepository
+            session_repo = SessionRepository(db)
+            session = session_repo.get_by_id(sandbox_mapping.session_id)
+            if session and session.repo_owner and session.repo_name:
+                pr_result = await _create_github_pr_from_sandbox(
+                    repo_owner=session.repo_owner,
+                    repo_name=session.repo_name,
+                    head_branch=pushed_branch,
+                    base_branch=session.base_branch or "colab-dev",
+                    title=f"Druppie: {(sandbox_mapping.task_prompt or 'Update')[:80]}",
+                    agent_output=agent_output,
+                )
+
     # Build the final tool result
     result = {
         "success": body.success,
@@ -453,6 +554,9 @@ async def sandbox_complete_webhook(
         "changed_files": changed_files,
         "agent_output": agent_output[-5000:] if agent_output else "",
     }
+    if pr_result:
+        result["pull_request"] = pr_result
+        result["agent_output"] += f"\n\nPull request created: {pr_result['pr_url']}"
 
     # Complete the tool call
     execution_repo.update_tool_call(
