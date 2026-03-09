@@ -868,7 +868,7 @@ mcps:
     - read_file
     - make_design
     - list_dir
-    - commit_and_push
+    - run_git
 
 # LAYERED APPROVAL SYSTEM:
 # When business_analyst calls make_design (to create functional_design.md),

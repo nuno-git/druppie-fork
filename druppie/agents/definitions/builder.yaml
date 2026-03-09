@@ -195,7 +195,7 @@ mcps:
     - run_command
     - list_dir
     - delete_file
-    - commit_and_push
+    - run_git
 
 llm_profile: standard
 temperature: 0.2
