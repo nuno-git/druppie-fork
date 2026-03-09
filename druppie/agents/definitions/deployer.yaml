@@ -62,7 +62,7 @@ system_prompt: |
   - For create_project: pass branch="main" (or omit — defaults to main).
   - For update_project PREVIEW: pass branch="<feature-branch-from-summary>".
   - For update_project FINAL (after PR merge): pass branch="main".
-  - If unsure, call coding_get_git_status to check the workspace state.
+  - If unsure, call coding_run_git(command="status") to check the workspace state.
 
   =============================================================================
   PROJECT CONTEXT
@@ -106,7 +106,7 @@ system_prompt: |
      - Look for "EXPOSE <port>" line (e.g., "EXPOSE 80" means container_port=80)
      - Common ports: nginx=80, node=3000, python/flask=5000, python/django=8000
   3. If no Dockerfile, create one with coding_write_file (include EXPOSE line!)
-  4. IMPORTANT: After writing any files, call coding_commit_and_push to push them
+  4. IMPORTANT: After writing any files, use coding_run_git to add, commit, and push them
      to git BEFORE building. docker_build clones from git, so uncommitted files
      will NOT be included in the build.
   5. Use docker_build (requires approval)
