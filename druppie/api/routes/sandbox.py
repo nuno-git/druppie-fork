@@ -200,6 +200,21 @@ async def _retry_sandbox_with_next_model(
     chain = json.loads(sandbox_mapping.model_chain)
     next_index = (sandbox_mapping.model_chain_index or 0) + 1
 
+    # Skip providers whose API key is not configured
+    while next_index < len(chain):
+        entry = chain[next_index]
+        env_var = PROVIDER_API_KEYS.get(entry["provider"])
+        if env_var and os.getenv(env_var):
+            break
+        logger.warning(
+            "sandbox_retry_provider_unavailable",
+            provider=entry["provider"],
+            model=entry["model"],
+        )
+        sandbox_mapping.model_chain_index = next_index
+        db.flush()
+        next_index += 1
+
     if next_index >= len(chain):
         logger.info(
             "sandbox_retry_chain_exhausted",
@@ -212,19 +227,6 @@ async def _retry_sandbox_with_next_model(
     next_entry = chain[next_index]
     next_model = next_entry["model"]
     next_provider = next_entry["provider"]
-
-    # Check if the next provider's API key is available
-    env_var = PROVIDER_API_KEYS.get(next_provider)
-    if not env_var or not os.getenv(env_var):
-        logger.warning(
-            "sandbox_retry_provider_unavailable",
-            provider=next_provider,
-            model=next_model,
-        )
-        # Skip to the next entry in chain
-        sandbox_mapping.model_chain_index = next_index
-        db.flush()
-        return await _retry_sandbox_with_next_model(sandbox_mapping, tool_call_id, db)
 
     logger.info(
         "sandbox_retry_with_next_model",
