@@ -22,9 +22,9 @@ Because all actions are tool calls, every action can be logged, inspected, and g
 |-------|---------|--------------|
 | **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, or `general_chat`. Can ask clarifying questions. Has web search access. |
 | **Planner** | Orchestrates the pipeline | Creates execution plans as ordered sequences of agent steps. Re-evaluates after each major phase. Manages design loops (BA/Architect) and execution loops (Developer/Deployer). Max 15 iterations. |
-| **Business Analyst** | Gathers requirements | Engages the user in structured dialogue (root cause analysis, stakeholder mapping, elicitation). Produces `functional_design.md`. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Max 50 iterations. |
-| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Three outcomes: APPROVE (writes `architecture.md`), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Applies Security by Design and Compliance by Design. Max 50 iterations. |
-| **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. Can delegate to sandbox agents via `execute_coding_task`. Max 100 iterations. |
+| **Business Analyst** | Gathers requirements | Engages the user in structured dialogue using a funnel approach (max 1 question at a time, almost always multiple choice). Produces `functional_design.md` via the `make_design` tool with built-in Mermaid validation. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Supports `NO_FD_CHANGE` pass-through for technical fixes. Max 50 iterations. |
+| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Three outcomes: APPROVE (writes `technical_design.md` via `make_design`), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
+| **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. Can delegate to sandbox agents via `execute_coding_task`. For `create_project`, works on main; for `update_project`, works on feature branches. Max 100 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
 | **Reviewer** | Code review | Reviews code for quality, security, and best practices. |
 | **Tester** | Testing | Writes and runs tests to validate implementations. |
@@ -141,9 +141,21 @@ Agents can pause execution to ask the user questions. Two interaction types are 
 | Type | Description |
 |------|-------------|
 | `hitl_ask_question` | Free-form text question; the user types a response |
-| `hitl_ask_multiple_choice_question` | Multiple choice with predefined options and an optional "Other" free-text field |
+| `hitl_ask_multiple_choice_question` | Multiple choice with predefined options; an "Other (specify)" free-text option is always appended automatically by the platform — agents should never add it themselves |
 
 Both types pause the agent loop until the user responds. Questions appear as interactive cards in the chat timeline.
+
+### Mermaid Diagram Validation
+
+Design documents written via the `make_design` tool include built-in Mermaid syntax validation. The validator runs **before the approval gate**, catching common LLM mistakes so agents can fix errors without wasting human reviewer time. If validation fails, the tool call is rejected with actionable error messages and the agent retries with corrected content.
+
+The validator checks for:
+- Backslash-escaped quotes (`\"` — invalid in Mermaid)
+- Nested delimiters (`[((`, `))]` — malformed shapes)
+- Single-dash arrows (`->` instead of `-->`)
+- Reserved `end` keyword used as node ID
+- Smart/curly quotes (unicode instead of ASCII)
+- Unicode characters (em dashes, unicode arrows)
 
 ---
 
@@ -312,6 +324,7 @@ Available system prompts:
 | `summary_relay` | How to read previous agent summaries and format your own via `done()` |
 | `done_tool_format` | Mandatory `done()` output format rules |
 | `workspace_state` | Shared workspace and git branch rules |
+| `tool_only_communication` | Reinforces that agents must never add "Other" to multiple choice options — the platform handles it automatically |
 
 Currently included by: Planner, Business Analyst, Architect, Developer, Deployer. Agents without a `system_prompts` list receive no system prompts.
 

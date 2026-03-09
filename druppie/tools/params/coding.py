@@ -21,6 +21,11 @@ class WriteFileParams(BaseModel):
     content: str = Field(description="File content to write")
 
 
+class MakeDesignParams(BaseModel):
+    path: str = Field(description="File path relative to workspace root")
+    content: str = Field(description="Full markdown content for the design document")
+
+
 class FileEntry(BaseModel):
     path: str = Field(description="File path relative to workspace root")
     content: str = Field(description="File content to write")

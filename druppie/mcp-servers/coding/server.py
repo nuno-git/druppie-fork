@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from fastmcp import FastMCP
+from mermaid_validator import validate_mermaid_in_markdown
 from retry_module import revert_to_commit, close_pull_request
 from testing_module import TestingModule
 
@@ -527,6 +528,107 @@ async def write_file(
     except Exception as e:
         logger.error(
             "Error writing file in workspace %s: %s - %s",
+            session_id or workspace_id,
+            path,
+            str(e),
+        )
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def make_design(
+    path: str,
+    content: str,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+) -> dict:
+    """Write a design document with Mermaid syntax validation.
+
+    Validates all Mermaid code blocks before writing. If any Mermaid diagram
+    contains syntax errors, the file is NOT written and errors are returned.
+
+    Args:
+        path: File path relative to workspace (e.g. technical_design.md)
+        content: Full markdown content for the design document
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for git remote setup)
+        repo_owner: Gitea repository owner/username (for git remote setup)
+
+    Returns:
+        Dict with success, path, size — or error with Mermaid validation details
+    """
+    try:
+        # Step 1: Validate Mermaid syntax before writing
+        errors = validate_mermaid_in_markdown(content)
+        if errors:
+            error_lines = [
+                f"Line {e.line_number} [{e.rule}]: {e.message}"
+                for e in errors
+            ]
+            error_msg = (
+                "MERMAID SYNTAX ERRORS — file was NOT written. "
+                "Fix these errors and try again:\n\n"
+                + "\n".join(error_lines)
+                + "\n\nAfter fixing, call make_design again with the corrected content."
+            )
+            return {"success": False, "error": error_msg}
+
+        # Step 2: No errors — write the file (same logic as write_file)
+        if session_id:
+            resolved_workspace_id, workspace_path = get_or_create_workspace(
+                session_id=session_id,
+                project_id=project_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                repo_name=repo_name,
+                repo_owner=repo_owner,
+            )
+        elif workspace_id:
+            ws = get_workspace(workspace_id)
+            workspace_path = Path(ws["path"])
+            resolved_workspace_id = workspace_id
+        else:
+            return {"success": False, "error": "Either session_id or workspace_id is required"}
+        file_path = resolve_path(path, workspace_path)
+
+        logger.info(
+            "Writing design file in workspace %s: %s (%d bytes, Mermaid validated)",
+            resolved_workspace_id,
+            path,
+            len(content),
+        )
+
+        # Ensure parent directory exists
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write file
+        file_path.write_text(content, encoding="utf-8")
+
+        return {
+            "success": True,
+            "path": str(file_path.relative_to(workspace_path)),
+            "size": len(content),
+            "workspace_path": str(workspace_path),
+        }
+
+    except ValueError as e:
+        logger.warning(
+            "Path resolution error writing design in workspace %s: %s - %s",
+            session_id or workspace_id,
+            path,
+            str(e),
+        )
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(
+            "Error writing design in workspace %s: %s - %s",
             session_id or workspace_id,
             path,
             str(e),

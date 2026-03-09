@@ -29,11 +29,11 @@ mcps:
       repo_name:
         from: project.repo_name
         hidden: true
-        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
+        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
       repo_owner:
         from: project.repo_owner
         hidden: true
-        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
+        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
       # NOTE: commit_and_push does NOT need branch injection.
       # It pushes whatever branch the workspace is currently on (set by create_branch).
       # The workspace tracks its own branch internally via ws["branch"].
@@ -64,6 +64,22 @@ mcps:
             content:
               type: string
               description: "File content to write"
+          required:
+            - path
+            - content
+
+      - name: make_design
+        description: "Write a design document (FD or TD) with Mermaid syntax validation. The file is NOT written if any Mermaid diagram contains syntax errors — fix the errors and retry."
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            path:
+              type: string
+              description: "File path (e.g. technical_design.md or functional_design.md)"
+            content:
+              type: string
+              description: "Full markdown content for the design document"
           required:
             - path
             - content
@@ -525,7 +541,7 @@ mcps:
         parameters:
           type: object
           properties:
-            search_term:
+            query:
               type: string
               description: "Search term (matches name, description, properties)"
             model_name:
@@ -541,7 +557,7 @@ mcps:
               type: integer
               description: "Maximum results (default: 20)"
           required:
-            - search_term
+            - query
 
       - name: get_impact
         description: "Analyze impact: traverse relationships from an element to find all connected elements"
@@ -591,3 +607,70 @@ mcps:
       - name: get_page_info
         description: "Get basic information about a web page"
         requires_approval: false
+
+  registry:
+    url: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+    description: "Druppie platform building block catalog (read-only)"
+    tools:
+      - name: list_components
+        description: "List all Druppie building blocks grouped by category (agents, skills, mcps, builtin_tools). Optional category filter."
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            category:
+              type: string
+              description: "Filter by category: agents, skills, mcps, builtin_tools (empty = all)"
+          required: []
+
+      - name: get_agent
+        description: "Get agent details: description, skills, MCP tools, config"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            agent_id:
+              type: string
+              description: "Agent identifier (e.g., architect, developer, planner)"
+          required:
+            - agent_id
+
+      - name: get_skill
+        description: "Get full skill content including instructions and allowed tools"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            skill_name:
+              type: string
+              description: "Skill name (e.g., code-review, architecture-principles)"
+          required:
+            - skill_name
+
+      - name: get_mcp_server
+        description: "Get MCP server details: description, tool list with descriptions, and which agents use it"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            server_name:
+              type: string
+              description: "MCP server name (e.g., coding, docker, archimate)"
+          required:
+            - server_name
+
+      - name: get_tool
+        description: "Get full tool definition: parameters, approval requirements, and per-agent overrides"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            server_name:
+              type: string
+              description: "MCP server name"
+            tool_name:
+              type: string
+              description: "Tool name within the server"
+          required:
+            - server_name
+            - tool_name
