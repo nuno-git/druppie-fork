@@ -219,9 +219,13 @@ The `sandbox_sessions` table maps control plane session IDs to Druppie users. Sa
 
 ### Credential Proxying
 
-Git and LLM credentials are never exposed to the sandbox. The control plane generates per-session proxy keys and intercepts git/LLM requests to inject real credentials. This means a compromised sandbox cannot exfiltrate API keys or git tokens.
+Git and LLM credentials are never exposed to the sandbox. The control plane generates per-session proxy keys and intercepts git/LLM requests to inject real credentials.
 
-**Known limitation — git repo scope:** The git proxy currently does not validate that the requested repository matches the session's authorized repo. A sandbox could change its git remote to access other repositories in Gitea. This is mitigated by the fact that sandboxes are only created by trusted agent code (not user-controlled), but should be hardened with proxy-side repo validation.
+**Per-sandbox Gitea accounts:** Each sandbox gets its own restricted Gitea user with collaborator access to only the target repository. The user is created before the sandbox starts and deleted after it completes. Even if a sandbox extracts its proxy key, the underlying Gitea token can only access the authorized repo.
+
+**Proxy-side validation:** The git proxy validates that the requested `owner/repo` matches the session's authorized scope. Requests for other repos return 403.
+
+**Credential lifecycle:** Proxy keys (both git and LLM) are invalidated when the sandbox completes (`execution_complete`), when the container is destroyed (timeout, failure, manual kill), and when the session is deleted. Orphaned Gitea service accounts are cleaned up on backend startup.
 
 ### Webhook Authentication
 
