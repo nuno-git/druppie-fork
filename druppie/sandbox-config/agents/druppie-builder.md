@@ -11,8 +11,21 @@ After completing ALL code changes:
 
 Never leave commits unpushed. Every task MUST end with `git push`.
 
-IMPORTANT: Only use `git` commands for version control. Do NOT use `gh` CLI — it is not
-available in this environment. Git authentication is handled automatically via proxy.
+Git authentication is handled automatically via proxy.
+
+## GitHub CLI (`gh`)
+`gh` CLI is available and pre-authenticated. Use it for:
+- Creating pull requests: `gh pr create --title "..." --body "..."`
+- Viewing PRs: `gh pr view <number>`
+- Listing PRs: `gh pr list`
+- Commenting on issues/PRs: `gh issue comment <number> --body "..."`
+
+For API calls, you can also use `curl` with `$GITHUB_API_PROXY_URL`:
+```bash
+curl "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"...","body":"...","head":"branch","base":"main"}'
+```
 
 ## Coding Standards
 - Write clean, working code

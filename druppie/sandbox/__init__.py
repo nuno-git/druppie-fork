@@ -131,6 +131,20 @@ async def create_and_start_sandbox(
         )
         delete_git_user = lambda: delete_sandbox_git_user(git_user_id)
 
+    # Build credentials payload
+    credentials: dict = {
+        "git": scoped_git_creds,
+        "llm": build_llm_credentials(),
+    }
+
+    # For GitHub repos, also provide GitHub API credentials so the sandbox
+    # can use gh CLI / curl to create PRs, read issues, etc. via the proxy.
+    if git_provider == "github":
+        credentials["githubApi"] = {
+            "token": scoped_git_creds["password"],  # Same GitHub App installation token
+            "authorizedRepo": f"{repo_owner}/{repo_name}",
+        }
+
     create_body = {
         "repoOwner": repo_owner,
         "repoName": repo_name,
@@ -139,10 +153,7 @@ async def create_and_start_sandbox(
         "agentFiles": _load_agent_files(),
         "modelChains": get_raw_model_chains(),
         "title": title,
-        "credentials": {
-            "git": scoped_git_creds,
-            "llm": build_llm_credentials(),
-        },
+        "credentials": credentials,
     }
 
     try:
