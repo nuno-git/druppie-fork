@@ -21,6 +21,7 @@ class SandboxSessionRepository(BaseRepository):
         task_prompt: str | None = None,
         agent_name: str | None = None,
         git_user_id: str | None = None,
+        git_provider: str = "gitea",
     ) -> SandboxSession:
         """Register a sandbox session ownership mapping.
 
@@ -40,6 +41,7 @@ class SandboxSessionRepository(BaseRepository):
             task_prompt=task_prompt,
             agent_name=agent_name,
             git_user_id=git_user_id,
+            git_provider=git_provider,
         )
         self.db.add(mapping)
         self.db.flush()
