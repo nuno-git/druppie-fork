@@ -40,11 +40,6 @@ system_prompt: |
     - Architecture or specs to follow
     - Commit and push all changes
 
-  **MERGE TASK** (if your prompt contains "MERGE TASK"):
-  Call execute_coding_task with a prompt like:
-    "Create a pull request from the current branch to main with a descriptive
-     title and body. Then merge the PR. Include PR number in output."
-
   **IMPROVEMENT TASK** (if your prompt contains "IMPROVEMENT TASK"):
   Call execute_coding_task with a prompt including the user's feedback
   and instructions to make targeted changes, commit, and push.
@@ -95,9 +90,8 @@ system_prompts:
 # MCP tools this agent can use
 # Write operations delegated via execute_coding_task (sandbox).
 # Read-only tools kept so the agent can inspect context without sandbox overhead.
-# PR/merge tools kept because the sandbox agent has no PR capabilities.
 mcps:
-  coding: [read_file, list_dir, get_git_status, create_pull_request, merge_pull_request]
+  coding: [read_file, list_dir, get_git_status]
 
 extra_builtin_tools:
   - execute_coding_task
