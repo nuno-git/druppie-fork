@@ -183,6 +183,7 @@ Users can **stop** any running session and **resume** it later -- all context is
 | `paused` | Stopped by user or recovered after reboot | Amber dot |
 | `paused_approval` | Waiting for tool approval | Amber dot |
 | `paused_hitl` | Waiting for user answer (HITL) | Amber dot |
+| `paused_sandbox` | Waiting for sandbox completion | Amber dot |
 | `completed` | All agents finished | Green dot |
 | `failed` | Error occurred | Red dot |
 
@@ -344,39 +345,22 @@ This ensures agents operate on the correct repository and session without being 
 
 ## Sandbox Coding (Isolated Execution)
 
-### What It Does
+Agents can delegate coding tasks to isolated Docker sandboxes. Each sandbox is a fresh container with git, [OpenCode](https://github.com/opencode-ai/opencode), and proxied LLM access. The sandbox clones the project from Gitea, executes the task, commits and pushes changes back.
 
-Agents can delegate coding tasks to isolated Docker sandboxes. Each sandbox is a fresh container with git, a code editor (OpenCode), and LLM access. The sandbox clones the project from Gitea, executes the task, commits and pushes changes back.
-
-### How It Works (User Perspective)
+**How it works (user perspective):**
 
 1. An agent (e.g., Developer) calls `execute_coding_task` with a task description
-2. The agent **pauses** (session status: `paused_sandbox`) while the sandbox runs autonomously
-3. When the sandbox completes, it sends a webhook callback to the backend
-4. The agent **resumes** automatically with the sandbox results
-5. The chat timeline shows a **Sandbox Session card** with:
-   - Files changed (with path and action)
-   - Elapsed time
-   - Expandable sandbox events timeline
-   - Full conversation history viewer (shows the sandbox agent's thinking process)
+2. The agent **pauses** (`paused_sandbox`) while the sandbox runs autonomously
+3. When the sandbox completes, a webhook callback resumes the agent automatically
+4. The chat timeline shows a **Sandbox Session card** with files changed, elapsed time, expandable events timeline, and full conversation history
 
-### Sandbox Agents
+**Sandbox agents:** Two preconfigured agents run inside sandboxes -- `druppie-builder` (implements features) and `druppie-tester` (writes and runs tests). Both enforce a mandatory git workflow: add, commit, push. No unpushed commits allowed.
 
-Two preconfigured agents run inside sandboxes (defined in `druppie/sandbox-config/agents/`):
+**Provider resilience:** If an LLM provider fails mid-sandbox, a three-layer defense handles it: transparent proxy failover (sub-second), failure detection signals, and Druppie-level retry with the next model in the chain.
 
-| Agent | Purpose | Key Behavior |
-|-------|---------|--------------|
-| **druppie-builder** | Implements features, writes code | Must output a structured `---SUMMARY---` block with files changed, commands run, and key decisions |
-| **druppie-tester** | Writes tests, validates code | Auto-detects test framework, reports results in structured format |
+**Security:** Sandbox events are only visible to the owning user (admins can view any). Git and LLM credentials are proxied -- never exposed to sandbox code. Webhooks are HMAC-signed.
 
-Both agents enforce a mandatory git workflow: `git add -A` → `git commit` → `git push origin HEAD`. No unpushed commits are allowed — the sandbox must push all changes before completion.
-
-### Security
-
-- Sandbox events are only visible to the user who triggered the sandbox session (ownership check via `sandbox_sessions` table)
-- Admins can view any session's events
-- Sandbox-to-backend communication uses internal API keys (not user tokens)
-- Conversation history is persisted in the control plane for governance but is NOT returned in the MCP tool result (avoids bloating LLM context)
+> See [docs/SANDBOX.md](SANDBOX.md) for full architecture details, OpenCode integration, provider resilience, and Kata Containers setup.
 
 ---
 
