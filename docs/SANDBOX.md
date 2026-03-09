@@ -6,13 +6,15 @@ Druppie delegates coding tasks to isolated Docker sandboxes. Each sandbox is a f
 
 ## Architecture
 
-Three Docker services power the sandbox infrastructure (integrated as a git submodule at `vendor/open-inspect/`):
+The sandbox infrastructure is based on [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`), integrated as a git submodule at `vendor/open-inspect/`. Sandbox containers run [OpenCode](https://github.com/opencode-ai/opencode) pinned to `v1.2.22`.
+
+Three Docker services power the infrastructure:
 
 | Service | Port | Role |
 |---------|------|------|
 | **sandbox-control-plane** | 8787 | HTTP API for session/event management, SQLite storage, coordinates lifecycle |
 | **sandbox-manager** | 8000 | Creates/manages sandbox Docker containers, enforces resource limits |
-| **sandbox-image-builder** | — | One-shot build producing `open-inspect-sandbox:latest`; Docker caches it |
+| **sandbox-image-builder** | — | One-shot build producing `open-inspect-sandbox:latest` from our fork; Docker caches it |
 
 Communication flow:
 
@@ -218,6 +220,8 @@ The `sandbox_sessions` table maps control plane session IDs to Druppie users. Sa
 ### Credential Proxying
 
 Git and LLM credentials are never exposed to the sandbox. The control plane generates per-session proxy keys and intercepts git/LLM requests to inject real credentials. This means a compromised sandbox cannot exfiltrate API keys or git tokens.
+
+**Known limitation — git repo scope:** The git proxy currently does not validate that the requested repository matches the session's authorized repo. A sandbox could change its git remote to access other repositories in Gitea. This is mitigated by the fact that sandboxes are only created by trusted agent code (not user-controlled), but should be hardened with proxy-side repo validation.
 
 ### Webhook Authentication
 
