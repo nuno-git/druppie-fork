@@ -50,8 +50,7 @@ docker compose --profile reset-db run --rm reset-db
 docker compose --profile dev down
 docker compose --profile infra --profile reset-hard run --rm reset-hard
 
-# Rebuild after Dockerfile changes
-docker compose --profile dev up -d --build
+# Rebuild after Dockerfile changes - requires `docker compose --profile dev up -d --build`
 ```
 
 ### Backend (Python/FastAPI)
