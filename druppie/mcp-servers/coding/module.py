@@ -7,6 +7,7 @@ test execution, and workspace management.
 import json
 import logging
 import re
+import shlex
 import subprocess
 import uuid
 from pathlib import Path
@@ -674,6 +675,146 @@ class CodingModule:
     async def commit_and_push(self, workspace_id: str, message: str) -> dict:
         """Commit all changes and push to Gitea."""
         return await self._do_commit_and_push(workspace_id, message)
+
+    async def run_git(
+        self,
+        workspace_id: str,
+        command: str,
+        repo_name: str | None = None,
+        repo_owner: str | None = None,
+    ) -> dict:
+        """Execute a whitelisted git command and return raw output."""
+        ALLOWED_SUBCOMMANDS = {
+            "add",
+            "commit",
+            "push",
+            "status",
+            "checkout",
+            "log",
+            "diff",
+            "branch",
+        }
+        CREDENTIAL_SUBCOMMANDS = {"push"}
+
+        try:
+            parts = shlex.split(command)
+        except ValueError as e:
+            return {"success": False, "error": f"Invalid command syntax: {e}"}
+
+        if not parts:
+            return {"success": False, "error": "Empty command"}
+
+        # Strip leading "git" if provided
+        if parts[0] == "git":
+            parts = parts[1:]
+
+        if not parts:
+            return {"success": False, "error": "No git subcommand provided"}
+
+        subcommand = parts[0]
+
+        if subcommand not in ALLOWED_SUBCOMMANDS:
+            return {
+                "success": False,
+                "error": f"Git subcommand '{subcommand}' is not allowed. "
+                f"Allowed: {', '.join(sorted(ALLOWED_SUBCOMMANDS))}",
+            }
+
+        # Block destructive flags
+        BLOCKED_FLAGS = {"--force", "--hard"}
+        found = BLOCKED_FLAGS & set(parts)
+        if found:
+            return {
+                "success": False,
+                "error": f"Destructive flags are not allowed: {found}",
+            }
+
+        ws = self.get_workspace(workspace_id)
+        work_dir = ws["path"]
+
+        # Inject credentials for network commands
+        if subcommand in CREDENTIAL_SUBCOMMANDS and repo_name:
+            owner = repo_owner or self.gitea_org
+            gitea_url = self.get_gitea_clone_url(repo_name) if not repo_owner else None
+            # Build URL with owner if provided
+            if repo_owner:
+                if self.gitea_user and self.gitea_password and "://" in self.gitea_url:
+                    from urllib.parse import quote
+
+                    protocol, rest = self.gitea_url.split("://", 1)
+                    gitea_url = (
+                        f"{protocol}://{quote(self.gitea_user)}:{quote(self.gitea_password)}"
+                        f"@{rest}/{owner}/{repo_name}.git"
+                    )
+                else:
+                    gitea_url = f"{self.gitea_url}/{owner}/{repo_name}.git"
+
+            if gitea_url:
+                try:
+                    subprocess.run(
+                        ["git", "remote", "set-url", "origin", gitea_url],
+                        cwd=work_dir,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
+
+        # Build and run the git command
+        full_cmd = ["git"] + parts
+        logger.info("run_git: command=%s work_dir=%s", full_cmd, work_dir)
+
+        try:
+            result = subprocess.run(
+                full_cmd,
+                cwd=work_dir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Command timed out after 120 seconds"}
+        except Exception as e:
+            return {"success": False, "error": f"Failed to execute command: {e}"}
+
+        output = result.stdout.strip()
+        error_output = result.stderr.strip()
+        combined = f"{output}\n{error_output}".strip() if error_output else output
+
+        response = {
+            "success": result.returncode == 0,
+            "output": combined,
+            "exit_code": result.returncode,
+        }
+
+        # Auto-capture commit SHA from git commit output
+        if subcommand == "commit" and result.returncode == 0:
+            sha_match = re.search(
+                r"\[[\w/.-]+ ([a-f0-9]+)\]", output + " " + error_output
+            )
+            if sha_match:
+                response["commit_sha"] = sha_match.group(1)
+
+        # Update workspace branch tracking on checkout
+        if subcommand == "checkout" and result.returncode == 0:
+            try:
+                branch_result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=work_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if branch_result.returncode == 0:
+                    ws["branch"] = branch_result.stdout.strip()
+            except Exception:
+                pass
+
+        if not response["success"]:
+            response["error"] = error_output or "Command failed"
+
+        return response
 
     def create_branch(self, workspace_id: str, branch_name: str) -> dict:
         """Create and checkout a new git branch."""
