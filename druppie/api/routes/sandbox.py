@@ -253,7 +253,7 @@ async def _retry_sandbox_with_next_model(
 
     create_body = {
         "repoOwner": os.getenv("GITEA_ORG", "druppie"),
-        "repoName": "unknown",
+        "repoName": "",
         "model": next_model,
         "agentModels": model_config.agents,
         "agentFiles": _load_agent_files(),
