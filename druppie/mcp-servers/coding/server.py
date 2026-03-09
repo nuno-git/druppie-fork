@@ -7,6 +7,8 @@ Uses FastMCP framework for HTTP transport.
 import json
 import logging
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -930,6 +932,118 @@ async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
+async def _run_git(
+    workspace_id: str, command: str, repo_name: str = None, repo_owner: str = None
+) -> dict:
+    """Execute a whitelisted git command and return raw output."""
+    ALLOWED_SUBCOMMANDS = {"add", "commit", "push", "status", "checkout", "log", "diff", "branch"}
+    CREDENTIAL_SUBCOMMANDS = {"push", "fetch", "pull"}
+
+    try:
+        parts = shlex.split(command)
+    except ValueError as e:
+        return {"success": False, "error": f"Invalid command syntax: {e}"}
+
+    if not parts:
+        return {"success": False, "error": "Empty command"}
+
+    # Strip leading "git" if provided
+    if parts[0] == "git":
+        parts = parts[1:]
+
+    if not parts:
+        return {"success": False, "error": "No git subcommand provided"}
+
+    subcommand = parts[0]
+
+    if subcommand not in ALLOWED_SUBCOMMANDS:
+        return {
+            "success": False,
+            "error": f"Git subcommand '{subcommand}' is not allowed. "
+            f"Allowed: {', '.join(sorted(ALLOWED_SUBCOMMANDS))}",
+        }
+
+    # Block destructive flags
+    BLOCKED_FLAGS = {"--force", "-f", "--hard"}
+    if BLOCKED_FLAGS & set(parts):
+        return {
+            "success": False,
+            "error": f"Destructive flags are not allowed: {BLOCKED_FLAGS & set(parts)}",
+        }
+
+    ws = get_workspace(workspace_id)
+    work_dir = ws["path"]
+
+    # Inject credentials for network commands
+    if subcommand in CREDENTIAL_SUBCOMMANDS and repo_name and repo_owner:
+        gitea_url = get_gitea_clone_url(repo_owner, repo_name)
+        if gitea_url:
+            try:
+                subprocess.run(
+                    ["git", "remote", "set-url", "origin", gitea_url],
+                    cwd=work_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            except Exception:
+                pass
+
+    # Build and run the git command
+    full_cmd = ["git"] + parts
+    logger.info("run_git: command=%s work_dir=%s", full_cmd, work_dir)
+
+    try:
+        result = subprocess.run(
+            full_cmd,
+            cwd=work_dir,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Command timed out after 120 seconds"}
+    except Exception as e:
+        return {"success": False, "error": f"Failed to execute command: {e}"}
+
+    output = result.stdout.strip()
+    error_output = result.stderr.strip()
+    combined = f"{output}\n{error_output}".strip() if error_output else output
+
+    response = {
+        "success": result.returncode == 0,
+        "output": combined,
+        "exit_code": result.returncode,
+    }
+
+    # Auto-capture commit SHA from git commit output
+    if subcommand == "commit" and result.returncode == 0:
+        sha_match = re.search(r'\[[\w/.-]+ ([a-f0-9]+)\]', output + " " + error_output)
+        if sha_match:
+            response["commit_sha"] = sha_match.group(1)
+
+    # Update workspace branch tracking on checkout
+    if subcommand == "checkout" and result.returncode == 0:
+        try:
+            branch_result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=work_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if branch_result.returncode == 0:
+                ws["branch"] = branch_result.stdout.strip()
+                _save_workspace_state(ws)
+        except Exception:
+            pass
+
+    if not response["success"]:
+        response["error"] = error_output or "Command failed"
+
+    return response
+
+
 @mcp.tool()
 async def batch_write_files(
     files: list[dict[str, str]],
@@ -1072,6 +1186,52 @@ async def commit_and_push(
     else:
         return {"success": False, "error": "Either session_id or workspace_id is required"}
     return await _do_commit_and_push(resolved_workspace_id, message)
+
+
+@mcp.tool()
+async def run_git(
+    command: str,
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+) -> str:
+    """Execute a git command in the workspace.
+
+    Allowed subcommands: add, commit, push, status, checkout, log, diff, branch.
+    Destructive flags (--force, -f, --hard) are blocked.
+
+    Args:
+        command: Git command to execute (e.g. "status", "git log --oneline -5")
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for credential injection on push)
+        repo_owner: Gitea repository owner (for credential injection on push)
+
+    Returns:
+        JSON string with success, output, exit_code, and optionally commit_sha or error
+    """
+    # Resolve workspace
+    if session_id:
+        resolved_workspace_id, _ = get_or_create_workspace(
+            session_id=session_id,
+            project_id=project_id,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            repo_name=repo_name,
+            repo_owner=repo_owner,
+        )
+    elif workspace_id:
+        resolved_workspace_id = workspace_id
+    else:
+        return json.dumps({"success": False, "error": "Either session_id or workspace_id is required"})
+
+    result = await _run_git(resolved_workspace_id, command, repo_name, repo_owner)
+    return json.dumps(result)
 
 
 @mcp.tool()
