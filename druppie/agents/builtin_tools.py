@@ -32,6 +32,7 @@ GITEA_ORG = os.getenv("GITEA_ORG", "druppie")
 from pathlib import Path
 
 from druppie.core.sandbox_auth import generate_control_plane_token as _generate_sandbox_auth_token
+from druppie.sandbox.credentials import build_git_credentials, build_llm_credentials
 from druppie.sandbox.model_resolver import (
     PROVIDER_API_KEYS,
     get_agent_chain,
@@ -942,28 +943,6 @@ async def execute_sandbox_coding_task(
             # The control plane stores credentials in-memory, generates proxy keys,
             # and injects them at proxy time. Sandboxes never see raw credentials.
 
-            # Build LLM credentials for all configured providers.
-            # The credential store accepts an array and stores each provider
-            # so the sandbox can use multiple providers (e.g. main + subagent).
-            _provider_base_urls = {
-                "zai": os.getenv("ZAI_BASE_URL", "https://open.bigmodel.cn/api/paas"),
-                "deepseek": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-                # NOTE: /v1 not /v1/openai — the sandbox LLM proxy appends its own path segments
-                "deepinfra": os.getenv("DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1"),
-                "openai": "https://api.openai.com",
-                "anthropic": "https://api.anthropic.com",
-            }
-
-            llm_credentials = []
-            for prov_name, api_key_env_var in PROVIDER_API_KEYS.items():
-                api_key = os.getenv(api_key_env_var, "")
-                if api_key:
-                    llm_credentials.append({
-                        "provider": prov_name,
-                        "apiKey": api_key,
-                        "baseUrl": _provider_base_urls.get(prov_name, ""),
-                    })
-
             create_body: dict = {
                 "repoOwner": sandbox_repo_owner,
                 "repoName": sandbox_repo_name,
@@ -973,13 +952,8 @@ async def execute_sandbox_coding_task(
                 "modelChains": get_raw_model_chains(),
                 "title": f"Druppie sandbox: {task[:80]}",
                 "credentials": {
-                    "git": {
-                        "provider": "gitea",
-                        "url": os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000"),
-                        "username": os.getenv("GITEA_ADMIN_USER", "gitea_admin"),
-                        "password": os.getenv("GITEA_ADMIN_PASSWORD", ""),
-                    },
-                    "llm": llm_credentials,
+                    "git": build_git_credentials(),
+                    "llm": build_llm_credentials(),
                 },
             }
 

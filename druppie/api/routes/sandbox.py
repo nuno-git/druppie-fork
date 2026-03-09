@@ -191,6 +191,7 @@ async def _retry_sandbox_with_next_model(
     registers ownership, and sends the prompt. Returns True if retry was
     initiated, False if no more models to try.
     """
+    from druppie.sandbox.credentials import build_git_credentials, build_llm_credentials
     from druppie.sandbox.model_resolver import PROVIDER_API_KEYS, get_raw_model_chains
 
     if not sandbox_mapping.model_chain or not sandbox_mapping.task_prompt:
@@ -242,25 +243,6 @@ async def _retry_sandbox_with_next_model(
 
     webhook_secret = secrets.token_urlsafe(32)
 
-    _provider_base_urls = {
-        "zai": os.getenv("ZAI_BASE_URL", "https://open.bigmodel.cn/api/paas"),
-        "deepseek": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        # NOTE: /v1 not /v1/openai — the sandbox LLM proxy appends its own path segments
-        "deepinfra": os.getenv("DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1"),
-        "openai": "https://api.openai.com",
-        "anthropic": "https://api.anthropic.com",
-    }
-
-    llm_credentials = []
-    for prov_name, api_key_env_var in PROVIDER_API_KEYS.items():
-        api_key = os.getenv(api_key_env_var, "")
-        if api_key:
-            llm_credentials.append({
-                "provider": prov_name,
-                "apiKey": api_key,
-                "baseUrl": _provider_base_urls.get(prov_name, ""),
-            })
-
     from druppie.agents.builtin_tools import _load_agent_files
     from druppie.sandbox.model_resolver import resolve_sandbox_models
 
@@ -276,13 +258,8 @@ async def _retry_sandbox_with_next_model(
         "modelChains": get_raw_model_chains(),
         "title": f"Druppie sandbox (retry {next_index}): {sandbox_mapping.task_prompt[:80]}",
         "credentials": {
-            "git": {
-                "provider": "gitea",
-                "url": os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000"),
-                "username": os.getenv("GITEA_ADMIN_USER", "gitea_admin"),
-                "password": os.getenv("GITEA_ADMIN_PASSWORD", ""),
-            },
-            "llm": llm_credentials,
+            "git": build_git_credentials(),
+            "llm": build_llm_credentials(),
         },
     }
 
