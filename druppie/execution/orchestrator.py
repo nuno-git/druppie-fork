@@ -38,6 +38,7 @@ Architecture:
                  └─► Architect → Developer → Deployer
 """
 
+import os
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -875,6 +876,47 @@ class Orchestrator:
 
         return session_id
 
+    def _sync_workspace(self, session_id: UUID) -> None:
+        """Git pull in the workspace so it picks up sandbox commits.
+
+        The sandbox pushed to Gitea, but the MCP coding server's workspace
+        (shared Docker volume) still has the old HEAD. Without this pull,
+        the next tool call (read_file, write_file) would see stale code.
+
+        Best-effort: logs warnings on failure but never blocks the resume.
+        """
+        import subprocess
+        from pathlib import Path
+        from druppie.db.models import Session as DBSession
+
+        db = self.execution_repo.db
+        session = db.query(DBSession).filter(DBSession.id == session_id).first()
+        if not session or not session.project_id:
+            return
+
+        workspace_root = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace"))
+        user_part = str(session.user_id) if session.user_id else "default"
+        workspace_path = workspace_root / user_part / str(session.project_id) / str(session.id)
+
+        if not (workspace_path / ".git").exists():
+            logger.debug("sync_workspace_no_git_dir", workspace=str(workspace_path))
+            return
+
+        try:
+            result = subprocess.run(
+                ["git", "pull", "--ff-only"],
+                cwd=str(workspace_path),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                logger.info("sync_workspace_pulled", workspace=str(workspace_path), output=result.stdout.strip())
+            else:
+                logger.warning("sync_workspace_pull_failed", workspace=str(workspace_path), stderr=result.stderr.strip())
+        except Exception as e:
+            logger.warning("sync_workspace_error", workspace=str(workspace_path), error=str(e))
+
     async def resume_after_sandbox(self, tool_call_id: UUID) -> UUID | None:
         """Resume execution after a sandbox task completes.
 
@@ -909,6 +951,11 @@ class Orchestrator:
             agent_run_id=str(agent_run.id),
             session_id=str(session_id),
         )
+
+        # Pull sandbox commits into the workspace before resuming.
+        # The sandbox pushed to Gitea but the shared workspace volume
+        # still has the old HEAD.
+        self._sync_workspace(session_id)
 
         # Set statuses back to running
         self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
