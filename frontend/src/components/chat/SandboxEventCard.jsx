@@ -95,8 +95,8 @@ const processEvents = (rawEvents) => {
 
   for (const event of rawEvents) {
     const type = event.type || ''
-    // Skip step boundaries entirely
-    if (type === 'step_start' || type === 'step_finish') continue
+    // Skip noise events
+    if (type === 'step_start' || type === 'step_finish' || type === 'heartbeat') continue
 
     if (type === 'tool_call') {
       const data = event.data || {}
@@ -134,8 +134,10 @@ const processEvents = (rawEvents) => {
 
 /**
  * Group processed events by subagent boundaries.
- * tool_call with tool="task" marks the start of a subagent's execution.
- * All events until the next task call or session boundary belong to that subagent.
+ * tool_call with tool="task" marks a subagent invocation.
+ * - If task errored immediately: push as closed group with 0 events,
+ *   subsequent events belong to the main agent (not the failed subagent).
+ * - If task is running/completed: capture subsequent events until next task or boundary.
  */
 const groupBySubagent = (events) => {
   const groups = []
@@ -157,9 +159,12 @@ const groupBySubagent = (events) => {
     } else if (isTaskCall) {
       if (currentSubagent) {
         groups.push(currentSubagent)
+        currentSubagent = null
       }
       const args = event.data?.args || {}
-      currentSubagent = {
+      const taskStatus = event.data?.status
+
+      const subagentGroup = {
         type: 'subagent',
         event,
         name: args.subagent_type || args.description || 'Subagent',
@@ -167,9 +172,18 @@ const groupBySubagent = (events) => {
         prompt: args.prompt || '',
         subagentType: args.subagent_type || '',
         taskId: args.task_id,
-        status: event.data?.status,
-        output: event.data?.output,
+        status: taskStatus,
+        output: event.data?.output || '',
+        error: event.data?.error || '',
         events: [],
+      }
+
+      if (taskStatus === 'error') {
+        // Failed immediately — closed group, subsequent events are main agent
+        groups.push(subagentGroup)
+      } else {
+        // Running/completed — capture subsequent events
+        currentSubagent = subagentGroup
       }
     } else if (currentSubagent) {
       currentSubagent.events.push(event)
@@ -186,24 +200,23 @@ const groupBySubagent = (events) => {
 }
 
 const SubagentGroup = ({ group, startIndex }) => {
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(!group.error)
   const [showResult, setShowResult] = useState(false)
   const [showPrompt, setShowPrompt] = useState(false)
-  const { description, subagentType, events, output, status, prompt } = group
+  const { description, subagentType, events, output, status, prompt, error: errorMsg } = group
   const isError = status === 'error'
 
-  // Fallback result: if task output is empty, use last token event's content
-  const fallbackResult = !output
-    ? [...events].reverse().find(e => e.type === 'token')?.data?.content
+  // For errors, show error message. For success, show output or fallback to last token.
+  const fallbackResult = !isError && !output
+    ? [...events].reverse().find(e => e.type === 'token' && e.data?.type !== 'reasoning')?.data?.content
     : null
-  const displayResult = output || fallbackResult
+  const displayResult = isError ? (errorMsg || output || null) : (output || fallbackResult)
 
   // Compute tool stats within this subagent (exclude token events)
-  const toolSummary = events.reduce((acc, e) => {
-    if (e.type === 'tool_call') {
-      const t = (e.data?.tool || 'other').toLowerCase()
-      acc[t] = (acc[t] || 0) + 1
-    }
+  const toolCalls = events.filter(e => e.type === 'tool_call')
+  const toolSummary = toolCalls.reduce((acc, e) => {
+    const t = (e.data?.tool || 'other').toLowerCase()
+    acc[t] = (acc[t] || 0) + 1
     return acc
   }, {})
   const summaryStr = Object.entries(toolSummary)
@@ -224,7 +237,7 @@ const SubagentGroup = ({ group, startIndex }) => {
       {/* Subagent header */}
       <div
         className={`flex items-center gap-1.5 rounded px-2 py-1.5 cursor-pointer ${isError ? 'bg-red-50 hover:bg-red-100' : 'bg-violet-50 hover:bg-violet-100'} transition-colors`}
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => events.length > 0 && setExpanded(!expanded)}
       >
         <GitBranch className={`w-3.5 h-3.5 flex-shrink-0 ${isError ? 'text-red-500' : 'text-violet-500'}`} />
         <span className={`text-xs font-semibold ${isError ? 'text-red-700' : 'text-violet-700'}`}>
@@ -238,23 +251,34 @@ const SubagentGroup = ({ group, startIndex }) => {
         <span className="flex-1" />
         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${statusColors}`}>{statusLabel}</span>
         {summaryStr && <span className="text-[10px] text-gray-400 flex-shrink-0 ml-1">{summaryStr}</span>}
-        <span className="text-[10px] text-gray-400 flex-shrink-0 ml-1">{events.length} events</span>
-        {expanded ? <ChevronDown className="w-3 h-3 text-gray-400" /> : <ChevronRight className="w-3 h-3 text-gray-400" />}
+        {events.length > 0 && (
+          <>
+            <span className="text-[10px] text-gray-400 flex-shrink-0 ml-1">{events.length} events</span>
+            {expanded ? <ChevronDown className="w-3 h-3 text-gray-400" /> : <ChevronRight className="w-3 h-3 text-gray-400" />}
+          </>
+        )}
       </div>
 
-      {/* Subagent result (what it told the main agent) */}
-      {displayResult && (
+      {/* Error message shown inline for failed subagents */}
+      {isError && errorMsg && (
+        <div className="mt-1 ml-1 text-xs text-red-600 bg-red-50 rounded px-2 py-1 font-mono">
+          {errorMsg}
+        </div>
+      )}
+
+      {/* Subagent result (what it told the main agent) - only for non-error */}
+      {!isError && displayResult && (
         <div className="mt-1 ml-1">
           <button
             onClick={() => setShowResult(!showResult)}
-            className={`flex items-center gap-1 text-xs font-medium ${isError ? 'text-red-600 hover:text-red-800' : 'text-violet-600 hover:text-violet-800'}`}
+            className="flex items-center gap-1 text-xs font-medium text-violet-600 hover:text-violet-800"
           >
             {showResult ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-            {isError ? 'Error' : 'Result'}
+            Result
             {!output && fallbackResult && <span className="text-[10px] text-gray-400 ml-1">(from agent text)</span>}
           </button>
           {showResult && (
-            <pre className={`mt-1 p-2 rounded text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-48 overflow-y-auto ${isError ? 'bg-red-900 text-red-200' : 'bg-gray-900 text-gray-300'}`}>
+            <pre className="mt-1 p-2 rounded text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-48 overflow-y-auto bg-gray-900 text-gray-300">
               {typeof displayResult === 'string' ? displayResult : JSON.stringify(displayResult, null, 2)}
             </pre>
           )}
@@ -294,16 +318,40 @@ const SubagentGroup = ({ group, startIndex }) => {
 }
 
 const AgentTextBlock = ({ event }) => {
-  const [expanded, setExpanded] = useState(false)
   const data = event.data || {}
   const content = data.content || ''
+  const isReasoning = data.type === 'reasoning' || data.type === 'thinking'
+  const [expanded, setExpanded] = useState(false)
+
+  if (!content) return null
+
+  // Reasoning tokens: collapsed by default, subtle gray styling
+  if (isReasoning) {
+    return (
+      <div className="py-0.5 border-b border-gray-100 last:border-0">
+        <div
+          className="flex items-center gap-1.5 rounded px-1 -mx-1 py-0.5 cursor-pointer hover:bg-gray-50"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <Bot className="w-3 h-3 flex-shrink-0 text-gray-300" />
+          <span className="text-[10px] text-gray-400 italic">thinking...</span>
+          <span className="flex-1" />
+          {expanded ? <ChevronDown className="w-3 h-3 text-gray-300" /> : <ChevronRight className="w-3 h-3 text-gray-300" />}
+        </div>
+        {expanded && (
+          <pre className="ml-5 mt-0.5 p-1.5 text-[11px] text-gray-400 italic whitespace-pre-wrap break-words max-h-32 overflow-y-auto bg-gray-50 rounded">
+            {content}
+          </pre>
+        )}
+      </div>
+    )
+  }
+
+  // Text output: show preview with expand
   const timestamp = event.timestamp || event.createdAt || event.created_at
   const timeStr = timestamp
     ? new Date(typeof timestamp === 'number' ? timestamp * (timestamp < 1e12 ? 1000 : 1) : timestamp).toLocaleTimeString()
     : null
-
-  if (!content) return null
-
   const preview = content.length > 200 ? content.slice(0, 197) + '...' : content
   const needsExpand = content.length > 200
 
