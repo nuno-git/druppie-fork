@@ -72,6 +72,13 @@ from druppie.tools.params.archimate import (
     ListViewsParams,
     SearchModelParams,
 )
+from druppie.tools.params.registry import (
+    GetAgentParams,
+    GetMcpServerParams,
+    GetSkillParams,
+    GetToolParams,
+    ListComponentsParams,
+)
 from druppie.tools.params.docker import (
     DockerBuildParams,
     DockerExecCommandParams,
@@ -131,6 +138,12 @@ PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
     ("archimate", "get_view"): GetViewParams,
     ("archimate", "search_model"): SearchModelParams,
     ("archimate", "get_impact"): GetImpactParams,
+    # Registry tools
+    ("registry", "list_components"): ListComponentsParams,
+    ("registry", "get_agent"): GetAgentParams,
+    ("registry", "get_skill"): GetSkillParams,
+    ("registry", "get_mcp_server"): GetMcpServerParams,
+    ("registry", "get_tool"): GetToolParams,
     # Builtin tools
     ("builtin", "done"): DoneParams,
     ("builtin", "hitl_ask_question"): HitlAskQuestionParams,

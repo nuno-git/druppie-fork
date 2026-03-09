@@ -25,6 +25,7 @@
 #   MCP Docker:     9002
 #   MCP File Search:9004
 #   MCP Web:        9005
+#   MCP Registry:   9007
 #   Adminer:        8081
 
 services:
@@ -295,6 +296,31 @@ services:
       retries: 5
       start_period: 10s
 
+  mcp-registry:
+    build:
+      context: ./druppie/mcp-servers/registry
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-registry
+    profiles: [infra, dev, prod]
+    environment:
+      DATA_DIR: /data
+      MCP_PORT: "9007"
+    volumes:
+      - ./druppie/agents/definitions:/data/agents:ro
+      - ./druppie/core/mcp_config.yaml:/data/mcp_config.yaml:ro
+      - ./druppie/skills:/data/skills:ro
+      - ./druppie/agents/builtin_tools.py:/data/builtin_tools.py:ro
+    ports:
+      - "${MCP_REGISTRY_PORT:-9007}:9007"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9007/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # ===========================================================================
   # DATABASE ADMIN
   # ===========================================================================
@@ -408,6 +434,7 @@ services:
       MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
       MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
+      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
     volumes:
       - ./druppie:/app/druppie
       - druppie_new_workspace:/app/workspace
@@ -476,6 +503,7 @@ services:
       MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
       MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
+      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
     volumes:
       - druppie_new_workspace:/app/workspace
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
