@@ -23,6 +23,7 @@ import {
   TerminalSquare,
   Filter,
   GitBranch,
+  MessageCircle,
 } from 'lucide-react'
 import { getSandboxEvents } from '../../services/api'
 
@@ -102,13 +103,19 @@ const processEvents = (rawEvents) => {
       const callId = data.callId || data.call_id || data.id
 
       if (callId && toolCalls.has(callId)) {
-        // This is the result half — merge output into existing entry
+        // This is the result half — merge output and status into existing entry
         const existing = toolCalls.get(callId)
-        if (data.output && !existing.data.output) {
+        // Prefer non-empty output from the result event
+        if (data.output && data.output !== existing.data.output) {
           existing.data = { ...existing.data, output: data.output }
         }
-        if (data.status) {
+        // Always take the latest non-empty status (completed/error overrides pending)
+        if (data.status && data.status !== existing.data.status) {
           existing.data = { ...existing.data, status: data.status }
+        }
+        // Merge args if missing (invocation might have args, result might not)
+        if (data.args && Object.keys(data.args).length > 0 && (!existing.data.args || Object.keys(existing.data.args).length === 0)) {
+          existing.data = { ...existing.data, args: data.args }
         }
         continue
       }
@@ -133,7 +140,7 @@ const processEvents = (rawEvents) => {
 const groupBySubagent = (events) => {
   const groups = []
   let currentSubagent = null
-  const boundaryTypes = new Set(['execution_complete', 'conversation_history', 'token', 'token_usage'])
+  const boundaryTypes = new Set(['execution_complete', 'conversation_history', 'token_usage'])
 
   for (const event of events) {
     const type = event.type || ''
@@ -185,7 +192,13 @@ const SubagentGroup = ({ group, startIndex }) => {
   const { description, subagentType, events, output, status, prompt } = group
   const isError = status === 'error'
 
-  // Compute tool stats within this subagent
+  // Fallback result: if task output is empty, use last token event's content
+  const fallbackResult = !output
+    ? [...events].reverse().find(e => e.type === 'token')?.data?.content
+    : null
+  const displayResult = output || fallbackResult
+
+  // Compute tool stats within this subagent (exclude token events)
   const toolSummary = events.reduce((acc, e) => {
     if (e.type === 'tool_call') {
       const t = (e.data?.tool || 'other').toLowerCase()
@@ -197,6 +210,14 @@ const SubagentGroup = ({ group, startIndex }) => {
     .sort((a, b) => b[1] - a[1])
     .map(([t, n]) => `${n} ${t}`)
     .join(', ')
+
+  // Status badge styling
+  const statusLabel = status || 'running'
+  const statusColors = isError
+    ? 'text-red-600 bg-red-100'
+    : status === 'completed'
+      ? 'text-green-600 bg-green-100'
+      : 'text-gray-500 bg-gray-100'
 
   return (
     <div className={`border-l-2 ${isError ? 'border-red-300' : 'border-violet-300'} ml-1 pl-2 my-2`}>
@@ -215,13 +236,14 @@ const SubagentGroup = ({ group, startIndex }) => {
           </span>
         )}
         <span className="flex-1" />
-        {summaryStr && <span className="text-[10px] text-gray-400 flex-shrink-0">{summaryStr}</span>}
+        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${statusColors}`}>{statusLabel}</span>
+        {summaryStr && <span className="text-[10px] text-gray-400 flex-shrink-0 ml-1">{summaryStr}</span>}
         <span className="text-[10px] text-gray-400 flex-shrink-0 ml-1">{events.length} events</span>
         {expanded ? <ChevronDown className="w-3 h-3 text-gray-400" /> : <ChevronRight className="w-3 h-3 text-gray-400" />}
       </div>
 
       {/* Subagent result (what it told the main agent) */}
-      {output && (
+      {displayResult && (
         <div className="mt-1 ml-1">
           <button
             onClick={() => setShowResult(!showResult)}
@@ -229,10 +251,11 @@ const SubagentGroup = ({ group, startIndex }) => {
           >
             {showResult ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
             {isError ? 'Error' : 'Result'}
+            {!output && fallbackResult && <span className="text-[10px] text-gray-400 ml-1">(from agent text)</span>}
           </button>
           {showResult && (
             <pre className={`mt-1 p-2 rounded text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-48 overflow-y-auto ${isError ? 'bg-red-900 text-red-200' : 'bg-gray-900 text-gray-300'}`}>
-              {typeof output === 'string' ? output : JSON.stringify(output, null, 2)}
+              {typeof displayResult === 'string' ? displayResult : JSON.stringify(displayResult, null, 2)}
             </pre>
           )}
         </div>
@@ -260,10 +283,50 @@ const SubagentGroup = ({ group, startIndex }) => {
       {expanded && events.length > 0 && (
         <div className="mt-1">
           {events.map((event, i) => (
-            <EventItem key={event.id || `sa-${startIndex}-${i}`} event={event} index={startIndex + i} />
+            event.type === 'token'
+              ? <AgentTextBlock key={event.id || `sa-t-${startIndex}-${i}`} event={event} />
+              : <EventItem key={event.id || `sa-${startIndex}-${i}`} event={event} index={startIndex + i} />
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+const AgentTextBlock = ({ event }) => {
+  const [expanded, setExpanded] = useState(false)
+  const data = event.data || {}
+  const content = data.content || ''
+  const timestamp = event.timestamp || event.createdAt || event.created_at
+  const timeStr = timestamp
+    ? new Date(typeof timestamp === 'number' ? timestamp * (timestamp < 1e12 ? 1000 : 1) : timestamp).toLocaleTimeString()
+    : null
+
+  if (!content) return null
+
+  const preview = content.length > 200 ? content.slice(0, 197) + '...' : content
+  const needsExpand = content.length > 200
+
+  return (
+    <div className="py-1.5 border-b border-gray-100 last:border-0">
+      <div
+        className={`flex items-start gap-1.5 rounded px-1 -mx-1 py-0.5 ${needsExpand ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+        onClick={() => needsExpand && setExpanded(!expanded)}
+      >
+        <MessageCircle className="w-3 h-3 flex-shrink-0 text-blue-500 mt-0.5" />
+        <span className="text-xs px-1.5 py-0.5 rounded font-medium text-blue-700 bg-blue-50 flex-shrink-0">
+          agent
+        </span>
+        <span className="text-xs text-gray-600 whitespace-pre-wrap min-w-0 break-words flex-1">
+          {expanded ? content : preview}
+        </span>
+        {timeStr && <span className="text-[10px] text-gray-400 flex-shrink-0 ml-1">{timeStr}</span>}
+        {needsExpand && (
+          <span className="text-xs text-gray-400 flex-shrink-0">
+            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -519,6 +582,9 @@ const SandboxSessionSection = ({ result }) => {
         idx += g.events.length
         return <SubagentGroup key={g.taskId || `sg-${i}`} group={g} startIndex={startIdx} />
       }
+      if (g.event.type === 'token') {
+        return <AgentTextBlock key={g.event.id || `t-${i}`} event={g.event} />
+      }
       return <EventItem key={g.event.id || `e-${i}`} event={g.event} index={idx++} />
     })
   }
@@ -611,7 +677,9 @@ const SandboxSessionSection = ({ result }) => {
             renderGroupedEvents()
           ) : (
             filteredEvents.map((event, i) => (
-              <EventItem key={event.id || i} event={event} index={i} />
+              event.type === 'token'
+                ? <AgentTextBlock key={event.id || `t-${i}`} event={event} />
+                : <EventItem key={event.id || i} event={event} index={i} />
             ))
           )}
         </div>
