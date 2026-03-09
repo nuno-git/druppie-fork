@@ -638,7 +638,7 @@ class ExecutionRepository(BaseRepository):
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.sequence_number < before_sequence,
-                ToolCall.tool_name == "commit_and_push",
+                ToolCall.tool_name == "run_git",
                 ToolCall.status == "completed",
             )
             .order_by(ToolCall.created_at.desc())
@@ -649,13 +649,13 @@ class ExecutionRepository(BaseRepository):
         return ToolCallRecord(id=tc.id, tool_name=tc.tool_name, status=tc.status, result=tc.result)
 
     def get_first_commit_in_session(self, session_id: UUID) -> ToolCallRecord | None:
-        """Get the first completed commit_and_push tool call in a session."""
+        """Get the first completed run_git tool call with commit_sha in a session."""
         tc = (
             self.db.query(ToolCall)
             .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
             .filter(
                 AgentRun.session_id == session_id,
-                ToolCall.tool_name == "commit_and_push",
+                ToolCall.tool_name == "run_git",
                 ToolCall.status == "completed",
             )
             .order_by(ToolCall.created_at)
