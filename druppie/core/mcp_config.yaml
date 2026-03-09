@@ -29,14 +29,11 @@ mcps:
       repo_name:
         from: project.repo_name
         hidden: true
-        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
+        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, run_git, create_pull_request, merge_pull_request]
       repo_owner:
         from: project.repo_owner
         hidden: true
-        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
-      # NOTE: commit_and_push does NOT need branch injection.
-      # It pushes whatever branch the workspace is currently on (set by create_branch).
-      # The workspace tracks its own branch internally via ws["branch"].
+        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, run_git, create_pull_request, merge_pull_request]
     tools:
       - name: read_file
         description: "Read file from workspace"
@@ -85,7 +82,7 @@ mcps:
             - content
 
       - name: batch_write_files
-        description: "Write multiple files at once. Use commit_and_push to commit."
+        description: "Write multiple files at once. Use run_git to commit and push."
         # DEFAULT: No approval needed for batch writes
         # Agents can OVERRIDE this (e.g., architect requires architect approval)
         requires_approval: false
@@ -134,29 +131,18 @@ mcps:
           required:
             - path
 
-      - name: commit_and_push
-        description: "Commit and push changes to Gitea"
+      - name: run_git
+        description: "Execute a git command in the workspace. Allowed subcommands: add, commit, push, status, checkout, log, diff, branch. Destructive flags (--force, --hard) are blocked."
         requires_approval: false
         parameters:
           type: object
           properties:
-            message:
+            command:
               type: string
-              description: "Git commit message"
+              description: "Git command to execute (e.g. 'add .', 'commit -m \"feat: add login\"', 'push', 'status')"
           required:
-            - message
+            - command
 
-      - name: create_branch
-        description: "Create and switch to a git branch (creates new or switches to existing)"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            branch_name:
-              type: string
-              description: "Name of branch to create or switch to (e.g., feature/add-login)"
-            required:
-              - branch_name
       - name: run_tests
         description: "Run tests in workspace (auto-detects framework)"
         requires_approval: false
@@ -186,15 +172,6 @@ mcps:
             framework:
               type: string
               description: "Optional framework name (default: auto-detected)"
-          required: []
-
-      - name: merge_to_main
-        description: "Merge feature branch to main (direct git merge, no PR)"
-        requires_approval: true
-        required_role: architect
-        parameters:
-          type: object
-          properties: {}
           required: []
 
       - name: create_pull_request
@@ -227,14 +204,6 @@ mcps:
               description: "Delete source branch after merge (default: true)"
           required:
             - pr_number
-
-      - name: get_git_status
-        description: "Get git status for workspace including current branch, changed files, and unpushed commits"
-        requires_approval: false
-        parameters:
-          type: object
-          properties: {}
-          required: []
 
       - name: install_test_dependencies
         description: "Install missing test dependencies for project"
