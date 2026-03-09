@@ -976,7 +976,7 @@ async def _run_git(
 
     # Inject credentials for network commands
     if subcommand in CREDENTIAL_SUBCOMMANDS and repo_name and repo_owner:
-        gitea_url = get_gitea_clone_url(repo_owner, repo_name)
+        gitea_url = get_gitea_clone_url(repo_name, repo_owner)
         if gitea_url:
             try:
                 subprocess.run(
