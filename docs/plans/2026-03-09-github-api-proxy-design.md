@@ -9,32 +9,22 @@ Sandbox agents (druppie-builder) need GitHub API access to create PRs, read issu
 interact with the repository. The sandbox security model prevents direct credential exposure —
 all auth is injected server-side via proxies.
 
-The `gh` CLI requires HTTPS for enterprise hosts, making it impossible to redirect to our
-HTTP-only control plane proxy. A hybrid approach is needed.
-
 ## Solution
 
-Two-path credential injection:
+**GitHub API reverse proxy** (`/github-api-proxy/:proxyKey/*`) in the control plane. Same
+pattern as the git proxy and LLM proxy: the sandbox only knows a random proxy key, the control
+plane injects the real Bearer token server-side before forwarding to `api.github.com`.
 
-1. **GitHub API proxy** (`/github-api-proxy/:proxyKey/*`) — reverse proxy in the control plane
-   that forwards requests to `api.github.com` with Bearer auth injected. Used by `curl` and
-   programmatic HTTP access from inside the sandbox.
-
-2. **`GH_TOKEN` env var** — the short-lived GitHub App installation token passed directly to
-   the sandbox as `GH_TOKEN`. The `gh` CLI uses this automatically for github.com operations.
-   The token expires in 1 hour and is scoped to the GitHub App's installed repositories.
-
-### Why both paths?
-
-- `gh` CLI hardcodes `https://` for enterprise hosts and cannot be redirected to an HTTP proxy
-- `curl`-based access benefits from the proxy pattern (no token in sandbox env needed)
-- `GH_TOKEN` is NOT stripped by the entrypoint (unlike `GITHUB_TOKEN` and `GITHUB_APP_TOKEN`)
+No real tokens enter the sandbox. The agent uses:
+- `curl $GITHUB_API_PROXY_URL/...` for direct API calls
+- `create-pull-request` built-in tool for PR creation (calls control plane `/sessions/:id/pr`)
+- `gh` CLI is NOT used (it requires HTTPS and cannot be redirected to our HTTP proxy)
 
 ## Architecture
 
 ```
 Sandbox Agent
-  ├── gh pr create ...        → uses GH_TOKEN env var → github.com (direct HTTPS)
+  ├── create-pull-request tool  → control plane /sessions/:id/pr → GitHub API
   └── curl $GITHUB_API_PROXY_URL/repos/.../pulls
         → control plane proxy → injects Bearer token → api.github.com
 ```
@@ -46,7 +36,7 @@ Sandbox Agent
 - `src/credentials/credential-store.ts` — added `GithubApiCredentials`, proxy key index
 - `src/index.ts` — registered proxy route, skip JSON parser for proxy paths
 - `src/router.ts` — added `/github-api-proxy/` to `PUBLIC_ROUTES`
-- `src/session/session-instance.ts` — pass `GITHUB_API_PROXY_URL` and `GH_TOKEN` to sandbox
+- `src/session/session-instance.ts` — pass `GITHUB_API_PROXY_URL` to sandbox
 
 **Druppie backend:**
 - `druppie/sandbox/__init__.py` — send `githubApi` credentials for GitHub repos
@@ -57,15 +47,13 @@ Sandbox Agent
 1. Druppie backend obtains GitHub App installation token (1-hour TTL)
 2. Token sent to control plane as `credentials.githubApi.token` alongside git credentials
 3. Control plane generates random proxy key, stores token in credential store
-4. Sandbox receives:
-   - `GITHUB_API_PROXY_URL` — for curl/programmatic access via proxy
-   - `GH_TOKEN` — for `gh` CLI (direct github.com access)
+4. Sandbox receives only `GITHUB_API_PROXY_URL` (opaque proxy key in URL, no real token)
 5. On session destroy, all credentials and proxy keys are wiped
 
-### Security Considerations
+### Security
 
+- No real tokens in sandbox — only opaque proxy keys
 - Proxy key is 256-bit random hex — effectively unguessable
-- GitHub App tokens expire in 1 hour
+- GitHub App tokens expire in 1 hour (stored server-side in credential store)
 - Sandbox is ephemeral (destroyed after task completion)
-- `GH_TOKEN` exposure is acceptable given the token's short lifetime and sandbox isolation
-- Entrypoint strips `GITHUB_TOKEN` and `GITHUB_APP_TOKEN` but intentionally preserves `GH_TOKEN`
+- Same security model as git proxy and LLM proxy
