@@ -247,10 +247,21 @@ export const getAgents = async () => {
 export const getAgent = (agentId) => request(`/api/agents/${agentId}`)
 
 // ============ Sandbox ============
-export const getSandboxEvents = (sessionId, messageId) => {
-  let url = `/api/sandbox-sessions/${sessionId}/events?limit=500`
-  if (messageId) url += `&message_id=${messageId}`
-  return request(url)
+export const getSandboxEvents = async (sessionId, messageId) => {
+  const allEvents = []
+  let cursor = null
+  // Paginate through all events
+  while (true) {
+    let url = `/api/sandbox-sessions/${sessionId}/events?limit=500`
+    if (messageId) url += `&message_id=${messageId}`
+    if (cursor) url += `&cursor=${cursor}`
+    const data = await request(url)
+    const events = data.events || []
+    allEvents.push(...events)
+    if (!data.hasMore || !data.cursor) break
+    cursor = data.cursor
+  }
+  return { events: allEvents }
 }
 
 // ============ Health ============

@@ -76,7 +76,8 @@ async def register_sandbox_session(
 async def get_sandbox_events(
     session_id: str,
     message_id: str | None = Query(None),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(500, ge=1, le=2000),
+    cursor: str | None = Query(None),
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -97,6 +98,8 @@ async def get_sandbox_events(
     url = f"{base_url}/sessions/{session_id}/events?limit={limit}"
     if message_id:
         url += f"&message_id={message_id}"
+    if cursor:
+        url += f"&cursor={cursor}"
 
     token = generate_control_plane_token(SANDBOX_API_SECRET)
 
@@ -155,9 +158,10 @@ def _extract_changed_files(events: list[dict]) -> list[dict]:
         tool = data.get("tool", "")
         args = data.get("args", {})
         path = args.get("filePath") or args.get("path") or ""
-        if tool in ("write", "write_file", "batch_write_files") and path and path not in seen_paths:
+        tool_lower = tool.lower()
+        if tool_lower in ("write", "write_file", "batch_write_files", "edit") and path and path not in seen_paths:
             seen_paths.add(path)
-            files.append({"path": path, "action": tool})
+            files.append({"path": path, "action": tool_lower})
     return files
 
 
@@ -388,7 +392,7 @@ async def sandbox_complete_webhook(
         token = generate_control_plane_token(SANDBOX_API_SECRET)
         async with httpx.AsyncClient(timeout=30.0) as client:
             events_resp = await client.get(
-                f"{control_plane_url}/sessions/{sandbox_session_id}/events?limit=500",
+                f"{control_plane_url}/sessions/{sandbox_session_id}/events?limit=2000",
                 headers={"Authorization": f"Bearer {token}"},
             )
             if events_resp.status_code == 200:

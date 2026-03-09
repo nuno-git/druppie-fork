@@ -17,6 +17,11 @@ import {
   Wrench,
   User,
   Bot,
+  Pencil,
+  Eye,
+  Search,
+  TerminalSquare,
+  Filter,
 } from 'lucide-react'
 import { getSandboxEvents } from '../../services/api'
 
@@ -33,54 +38,138 @@ const parseSummary = (agentOutput) => {
   return match[1].trim()
 }
 
-/** Categorize an event by its type for display */
-const getEventCategory = (event) => {
-  const type = event.type || event.event_type || ''
-  if (type.includes('tool_call') || type.includes('tool_use')) return 'tool'
-  if (type.includes('text') || type.includes('message') || type.includes('output')) return 'output'
-  if (type.includes('file') || type.includes('write') || type.includes('edit')) return 'file'
-  if (type.includes('command') || type.includes('bash') || type.includes('exec')) return 'command'
+/** Tool categorization for colors and icons */
+const getToolCategory = (toolName) => {
+  const t = (toolName || '').toLowerCase()
+  if (t === 'write' || t === 'write_file' || t === 'batch_write_files') return 'write'
+  if (t === 'edit') return 'edit'
+  if (t === 'read') return 'read'
+  if (t === 'bash') return 'bash'
+  if (t === 'glob' || t === 'grep' || t === 'search') return 'search'
   return 'other'
 }
 
-const categoryColors = {
-  tool: 'text-blue-600 bg-blue-50',
-  output: 'text-gray-600 bg-gray-50',
-  file: 'text-emerald-600 bg-emerald-50',
-  command: 'text-amber-600 bg-amber-50',
-  other: 'text-gray-500 bg-gray-50',
+const toolCategoryConfig = {
+  write:  { colors: 'text-emerald-700 bg-emerald-50', Icon: FileCode },
+  edit:   { colors: 'text-amber-700 bg-amber-50', Icon: Pencil },
+  read:   { colors: 'text-sky-700 bg-sky-50', Icon: Eye },
+  bash:   { colors: 'text-purple-700 bg-purple-50', Icon: TerminalSquare },
+  search: { colors: 'text-indigo-700 bg-indigo-50', Icon: Search },
+  other:  { colors: 'text-gray-600 bg-gray-100', Icon: Wrench },
+}
+
+/** Get a short context hint for a tool call event */
+const getToolHint = (data) => {
+  if (!data) return null
+  const args = data.args || {}
+  const filePath = args.filePath || args.path || args.file_path || ''
+  if (filePath) return filePath.replace(/^\/workspace\/[^/]+\//, '')
+  const cmd = args.command || args.cmd || ''
+  if (cmd) return cmd.length > 80 ? cmd.slice(0, 77) + '...' : cmd
+  const pattern = args.pattern || args.glob || ''
+  if (pattern) return pattern
+  return null
+}
+
+/**
+ * Process raw events into a clean display list:
+ * - Filter out step_start/step_finish noise
+ * - Deduplicate tool_call pairs (invocation + result) into single entries
+ * - Merge result/output back into the invocation event
+ */
+const processEvents = (rawEvents) => {
+  const toolCalls = new Map() // callId -> merged event
+  const result = []
+
+  for (const event of rawEvents) {
+    const type = event.type || ''
+    // Skip step boundaries entirely
+    if (type === 'step_start' || type === 'step_finish') continue
+
+    if (type === 'tool_call') {
+      const data = event.data || {}
+      const callId = data.callId || data.call_id || data.id
+
+      if (callId && toolCalls.has(callId)) {
+        // This is the result half — merge output into existing entry
+        const existing = toolCalls.get(callId)
+        if (data.output && !existing.data.output) {
+          existing.data = { ...existing.data, output: data.output }
+        }
+        if (data.status) {
+          existing.data = { ...existing.data, status: data.status }
+        }
+        continue
+      }
+
+      // First occurrence — store and add to result
+      const entry = { ...event, data: { ...data } }
+      if (callId) toolCalls.set(callId, entry)
+      result.push(entry)
+    } else {
+      result.push(event)
+    }
+  }
+
+  return result
 }
 
 const EventItem = ({ event, index }) => {
   const [showDetail, setShowDetail] = useState(false)
-  const category = getEventCategory(event)
-  const colors = categoryColors[category]
   const type = event.type || event.event_type || 'event'
-  const timestamp = event.timestamp || event.created_at
-  const timeStr = timestamp ? new Date(timestamp).toLocaleTimeString() : null
-  const content = event.content || event.data || event.message || event.text
+  const timestamp = event.timestamp || event.createdAt || event.created_at
+  const timeStr = timestamp ? new Date(typeof timestamp === 'number' ? timestamp * (timestamp < 1e12 ? 1000 : 1) : timestamp).toLocaleTimeString() : null
+  const data = event.data || {}
+
+  const isToolCall = type === 'tool_call'
+  const toolName = isToolCall ? (data.tool || 'tool') : null
+  const category = isToolCall ? getToolCategory(toolName) : 'other'
+  const { colors, Icon } = toolCategoryConfig[category] || toolCategoryConfig.other
+  const toolHint = isToolCall ? getToolHint(data) : null
+  const displayLabel = toolName || type
+  const hasExpandable = isToolCall && !!(data.args || data.output)
 
   return (
-    <div className="py-1.5 border-b border-gray-100 last:border-0">
+    <div className="py-1 border-b border-gray-100 last:border-0">
       <div
-        className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 rounded px-1 -mx-1"
-        onClick={() => content && setShowDetail(!showDetail)}
+        className={`flex items-center gap-1.5 rounded px-1 -mx-1 py-0.5 ${hasExpandable ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+        onClick={() => hasExpandable && setShowDetail(!showDetail)}
       >
-        <span className="text-xs text-gray-300 w-6 text-right flex-shrink-0">{index + 1}</span>
+        <span className="text-[10px] text-gray-300 w-5 text-right flex-shrink-0">{index + 1}</span>
+        <Icon className={`w-3 h-3 flex-shrink-0 ${colors.split(' ')[0]}`} />
         <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${colors}`}>
-          {type}
+          {displayLabel}
         </span>
-        {timeStr && <span className="text-xs text-gray-400">{timeStr}</span>}
-        {content && (
-          <span className="text-xs text-gray-400 ml-auto">
+        {toolHint && (
+          <span className="text-xs text-gray-500 font-mono truncate min-w-0">{toolHint}</span>
+        )}
+        <span className="flex-1" />
+        {timeStr && <span className="text-[10px] text-gray-400 flex-shrink-0">{timeStr}</span>}
+        {hasExpandable && (
+          <span className="text-xs text-gray-400 flex-shrink-0">
             {showDetail ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
           </span>
         )}
       </div>
-      {showDetail && content && (
-        <pre className="mt-1 ml-8 p-2 bg-gray-900 rounded text-xs text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto max-h-48 overflow-y-auto">
-          {typeof content === 'string' ? content : JSON.stringify(content, null, 2)}
-        </pre>
+      {showDetail && (
+        <div className="mt-1 ml-7 space-y-1.5">
+          {data.args && (
+            <div>
+              <div className="text-[10px] font-medium text-gray-400 uppercase mb-0.5">Args</div>
+              <pre className="p-2 bg-gray-900 rounded text-xs text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto max-h-48 overflow-y-auto">
+                {JSON.stringify(data.args, null, 2)}
+              </pre>
+            </div>
+          )}
+          {data.output && (
+            <div>
+              <div className="text-[10px] font-medium text-gray-400 uppercase mb-0.5">Output</div>
+              <pre className="p-2 bg-gray-900 rounded text-xs text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto max-h-48 overflow-y-auto">
+                {typeof data.output === 'string' ? data.output : JSON.stringify(data.output, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
@@ -141,12 +230,7 @@ const ConversationPart = ({ part }) => {
   }
 
   if (type === 'step-start' || type === 'step-finish') {
-    return (
-      <div className="text-[10px] text-gray-400 italic">
-        {type === 'step-start' ? 'Step started' : 'Step finished'}
-        {part.cost != null && ` · $${part.cost.toFixed(4)}`}
-      </div>
-    )
+    return null // Hide in conversation view too
   }
 
   return null
@@ -231,6 +315,7 @@ const SandboxSessionSection = ({ result }) => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showEvents, setShowEvents] = useState(false)
+  const [filterTool, setFilterTool] = useState(null)
 
   const summary = parseSummary(result.agent_output)
   const changedFiles = result.changed_files || []
@@ -245,8 +330,8 @@ const SandboxSessionSection = ({ result }) => {
     try {
       const data = await getSandboxEvents(result.sandbox_session_id)
       const raw = Array.isArray(data) ? data : data.events || []
-      // API returns newest-first; reverse for chronological display
-      setEvents([...raw].reverse())
+      // API returns newest-first; reverse for chronological, then process
+      setEvents(processEvents([...raw].reverse()))
       setShowEvents(true)
     } catch (e) {
       setError(e.message || 'Failed to load events')
@@ -254,6 +339,19 @@ const SandboxSessionSection = ({ result }) => {
       setLoading(false)
     }
   }
+
+  // Compute tool stats for filter buttons
+  const toolCounts = events ? events.reduce((acc, e) => {
+    if (e.type === 'tool_call') {
+      const tool = (e.data?.tool || 'unknown').toLowerCase()
+      acc[tool] = (acc[tool] || 0) + 1
+    }
+    return acc
+  }, {}) : {}
+
+  const filteredEvents = events && filterTool
+    ? events.filter((e) => e.type === 'tool_call' && (e.data?.tool || '').toLowerCase() === filterTool)
+    : events
 
   return (
     <div className="py-2">
@@ -297,6 +395,7 @@ const SandboxSessionSection = ({ result }) => {
         )}
         <Terminal className="w-3 h-3" />
         {loading ? 'Loading events...' : showEvents ? 'Hide events' : 'Show sandbox events'}
+        {events && <span className="text-gray-300 ml-1">({events.length})</span>}
       </button>
 
       {error && (
@@ -306,14 +405,41 @@ const SandboxSessionSection = ({ result }) => {
       {/* Conversation timeline (from conversation_history event) */}
       {showEvents && events && <ConversationTimeline events={events} />}
 
+      {/* Tool filter bar */}
+      {showEvents && events && Object.keys(toolCounts).length > 1 && (
+        <div className="mt-2 flex flex-wrap gap-1 items-center">
+          <Filter className="w-3 h-3 text-gray-400" />
+          <button
+            onClick={() => setFilterTool(null)}
+            className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${!filterTool ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+          >
+            all ({events.length})
+          </button>
+          {Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).map(([tool, count]) => {
+            const cat = getToolCategory(tool)
+            const { colors } = toolCategoryConfig[cat]
+            const isActive = filterTool === tool
+            return (
+              <button
+                key={tool}
+                onClick={() => setFilterTool(isActive ? null : tool)}
+                className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${isActive ? 'bg-gray-700 text-white' : colors + ' hover:opacity-80'}`}
+              >
+                {tool} ({count})
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {/* Events timeline */}
-      {showEvents && events && (
-        <div className="mt-2 max-h-96 overflow-y-auto">
-          {events.length === 0 ? (
+      {showEvents && filteredEvents && (
+        <div className="mt-2 max-h-[500px] overflow-y-auto">
+          {filteredEvents.length === 0 ? (
             <div className="text-xs text-gray-400 italic">No events recorded</div>
           ) : (
-            events.map((event, i) => (
-              <EventItem key={i} event={event} index={i} />
+            filteredEvents.map((event, i) => (
+              <EventItem key={event.id || i} event={event} index={i} />
             ))
           )}
         </div>
