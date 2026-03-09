@@ -48,7 +48,7 @@ mcps:
             - path
 
       - name: write_file
-        description: "Write file to workspace (auto-commits)"
+        description: "Write file to workspace. Use run_git to commit and push."
         # DEFAULT: No approval needed for write_file
         # Agents can OVERRIDE this (e.g., architect requires architect approval)
         requires_approval: false
