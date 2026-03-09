@@ -18,7 +18,7 @@ plane injects the real Bearer token server-side before forwarding to `api.github
 No real tokens enter the sandbox. The agent uses:
 - `curl $GITHUB_API_PROXY_URL/...` for direct API calls
 - `create-pull-request` built-in tool for PR creation (calls control plane `/sessions/:id/pr`)
-- `gh` CLI is NOT used (it requires HTTPS and cannot be redirected to our HTTP proxy)
+- `gh` CLI is replaced with a wrapper that shows curl usage (it hardcodes HTTPS to api.github.com)
 
 ## Architecture
 
@@ -38,9 +38,12 @@ Sandbox Agent
 - `src/router.ts` — added `/github-api-proxy/` to `PUBLIC_ROUTES`
 - `src/session/session-instance.ts` — pass `GITHUB_API_PROXY_URL` to sandbox
 
+**Sandbox image (submodule: vendor/open-inspect/):**
+- `src/sandbox/entrypoint.py` — `gh` CLI wrapper with curl usage instructions
+
 **Druppie backend:**
 - `druppie/sandbox/__init__.py` — send `githubApi` credentials for GitHub repos
-- `druppie/sandbox-config/agents/druppie-builder.md` — updated agent instructions
+- `druppie/sandbox-config/agents/druppie-builder.md` — updated agent instructions with curl examples
 
 ### Credential Flow
 
