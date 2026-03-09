@@ -73,7 +73,7 @@ async def create_and_start_sandbox(
         db: SQLAlchemy session.
 
     Returns:
-        Dict with sandbox_session_id, message_id, and webhook_secret.
+        Dict with sandbox_session_id, message_id, webhook_secret, and git_user_id.
 
     Raises:
         SandboxCreateError: If creation, registration, or prompt fails.
@@ -90,7 +90,7 @@ async def create_and_start_sandbox(
     git_user_id = secrets.token_hex(6)  # 12-char hex, used for Gitea username
 
     # Create per-sandbox scoped git credentials
-    from druppie.sandbox.gitea_credentials import create_sandbox_git_user
+    from druppie.sandbox.gitea_credentials import create_sandbox_git_user, delete_sandbox_git_user
 
     scoped_git_creds = await create_sandbox_git_user(
         sandbox_session_id=git_user_id,
@@ -170,8 +170,6 @@ async def create_and_start_sandbox(
                     pass
                 # Clean up the per-sandbox Gitea user
                 try:
-                    from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-
                     await delete_sandbox_git_user(git_user_id)
                 except Exception:
                     pass
@@ -207,8 +205,6 @@ async def create_and_start_sandbox(
                     pass
                 # Clean up the per-sandbox Gitea user
                 try:
-                    from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-
                     await delete_sandbox_git_user(git_user_id)
                 except Exception:
                     pass
@@ -233,10 +229,23 @@ async def create_and_start_sandbox(
             }
 
     except SandboxCreateError:
+        # Clean up the per-sandbox Gitea user on any creation failure
+        try:
+            await delete_sandbox_git_user(git_user_id)
+        except Exception:
+            pass
         raise
     except httpx.TimeoutException as e:
+        try:
+            await delete_sandbox_git_user(git_user_id)
+        except Exception:
+            pass
         raise SandboxCreateError(
             f"Timeout connecting to sandbox control plane: {e}"
         ) from e
     except Exception as e:
+        try:
+            await delete_sandbox_git_user(git_user_id)
+        except Exception:
+            pass
         raise SandboxCreateError(f"Sandbox error: {e}") from e
