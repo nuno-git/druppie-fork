@@ -15,7 +15,7 @@ import httpx
 import structlog
 
 from druppie.core.sandbox_auth import generate_control_plane_token
-from druppie.sandbox.credentials import build_git_credentials, build_llm_credentials
+from druppie.sandbox.credentials import build_llm_credentials
 from druppie.sandbox.model_resolver import get_raw_model_chains, resolve_sandbox_models
 
 logger = structlog.get_logger()
@@ -87,6 +87,16 @@ async def create_and_start_sandbox(
 
     model_config = resolve_sandbox_models(agent_name)
     webhook_secret = secrets.token_urlsafe(32)
+    git_user_id = secrets.token_hex(6)  # 12-char hex, used for Gitea username
+
+    # Create per-sandbox scoped git credentials
+    from druppie.sandbox.gitea_credentials import create_sandbox_git_user
+
+    scoped_git_creds = await create_sandbox_git_user(
+        sandbox_session_id=git_user_id,
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+    )
 
     create_body = {
         "repoOwner": repo_owner,
@@ -97,7 +107,7 @@ async def create_and_start_sandbox(
         "modelChains": get_raw_model_chains(),
         "title": title,
         "credentials": {
-            "git": build_git_credentials(),
+            "git": scoped_git_creds,
             "llm": build_llm_credentials(),
         },
     }
@@ -158,6 +168,13 @@ async def create_and_start_sandbox(
                     )
                 except Exception:
                     pass
+                # Clean up the per-sandbox Gitea user
+                try:
+                    from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
+
+                    await delete_sandbox_git_user(git_user_id)
+                except Exception:
+                    pass
                 raise SandboxCreateError(f"Failed to register ownership: {e}") from e
 
             # Step 3: Send the task prompt with callback info
@@ -188,6 +205,13 @@ async def create_and_start_sandbox(
                     )
                 except Exception:
                     pass
+                # Clean up the per-sandbox Gitea user
+                try:
+                    from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
+
+                    await delete_sandbox_git_user(git_user_id)
+                except Exception:
+                    pass
                 raise SandboxCreateError(
                     f"Failed to send prompt: {prompt_resp.status_code}"
                 )
@@ -205,6 +229,7 @@ async def create_and_start_sandbox(
                 "sandbox_session_id": sandbox_session_id,
                 "message_id": message_id,
                 "webhook_secret": webhook_secret,
+                "git_user_id": git_user_id,
             }
 
     except SandboxCreateError:
