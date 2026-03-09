@@ -46,16 +46,17 @@ async def create_sandbox_git_user(
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         # 1. Create restricted user via admin API
+        user_payload = {
+            "username": username,
+            "password": password,
+            "email": email,
+            "must_change_password": False,
+            "restricted": True,
+            "visibility": "private",
+        }
         resp = await client.post(
             f"{base}/api/v1/admin/users",
-            json={
-                "username": username,
-                "password": password,
-                "email": email,
-                "must_change_password": False,
-                "restricted": True,
-                "visibility": "private",
-            },
+            json=user_payload,
             auth=_admin_auth(),
         )
 
@@ -64,14 +65,7 @@ async def create_sandbox_git_user(
             await _delete_user(client, base, username)
             resp = await client.post(
                 f"{base}/api/v1/admin/users",
-                json={
-                    "username": username,
-                    "password": password,
-                    "email": email,
-                    "must_change_password": False,
-                    "restricted": True,
-                    "visibility": "private",
-                },
+                json=user_payload,
                 auth=_admin_auth(),
             )
             if resp.status_code != 201:
