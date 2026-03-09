@@ -25,7 +25,7 @@ When making significant changes, remember to update the `/docs` folder:
 
 ## Project Overview
 
-Druppie is a governance platform for AI agents with MCP (Model Context Protocol) tool permissions and approval workflows. Agents can only act through MCP tools - no direct file output.
+Druppie is a governance platform for AI agents with MCP (Model Context Protocol) tool permissions and approval workflows. Agents operate exclusively through MCP tools - no direct file output allowed.
 
 ## Development Commands
 
