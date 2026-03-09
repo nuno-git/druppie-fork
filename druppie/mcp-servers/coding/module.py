@@ -75,14 +75,15 @@ class CodingModule:
                 return True, BLOCKED_COMMAND_PATTERNS[i]
         return False, None
 
-    def get_gitea_clone_url(self, repo_name: str) -> str:
+    def get_gitea_clone_url(self, repo_name: str, repo_owner: str | None = None) -> str:
         """Get Gitea clone URL with embedded credentials."""
+        owner = repo_owner or self.gitea_org
         if self.gitea_user and self.gitea_password:
             if "://" in self.gitea_url:
                 from urllib.parse import quote
                 protocol, rest = self.gitea_url.split("://", 1)
-                return f"{protocol}://{quote(self.gitea_user)}:{quote(self.gitea_password)}@{rest}/{self.gitea_org}/{repo_name}.git"
-        return f"{self.gitea_url}/{self.gitea_org}/{repo_name}.git"
+                return f"{protocol}://{quote(self.gitea_user)}:{quote(self.gitea_password)}@{rest}/{owner}/{repo_name}.git"
+        return f"{self.gitea_url}/{owner}/{repo_name}.git"
 
     def is_gitea_configured(self) -> bool:
         """Check if Gitea is configured with credentials."""
@@ -733,22 +734,8 @@ class CodingModule:
         work_dir = ws["path"]
 
         # Inject credentials for network commands
-        if subcommand in CREDENTIAL_SUBCOMMANDS and repo_name:
-            owner = repo_owner or self.gitea_org
-            gitea_url = self.get_gitea_clone_url(repo_name) if not repo_owner else None
-            # Build URL with owner if provided
-            if repo_owner:
-                if self.gitea_user and self.gitea_password and "://" in self.gitea_url:
-                    from urllib.parse import quote
-
-                    protocol, rest = self.gitea_url.split("://", 1)
-                    gitea_url = (
-                        f"{protocol}://{quote(self.gitea_user)}:{quote(self.gitea_password)}"
-                        f"@{rest}/{owner}/{repo_name}.git"
-                    )
-                else:
-                    gitea_url = f"{self.gitea_url}/{owner}/{repo_name}.git"
-
+        if subcommand in CREDENTIAL_SUBCOMMANDS and repo_name and repo_owner:
+            gitea_url = self.get_gitea_clone_url(repo_name, repo_owner)
             if gitea_url:
                 try:
                     subprocess.run(
