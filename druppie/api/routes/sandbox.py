@@ -226,15 +226,15 @@ async def _retry_sandbox_with_next_model(
         return False
 
     next_entry = chain[next_index]
-    next_model = next_entry["model"]
-    next_provider = next_entry["provider"]
     agent = sandbox_mapping.agent_name or "druppie-builder"
+    # Use profile-based model name — the proxy handles real model resolution
+    profile_model = f"sandbox/{agent}"
 
     logger.info(
         "sandbox_retry_with_next_model",
         sandbox_session_id=sandbox_mapping.sandbox_session_id,
-        next_model=next_model,
-        next_provider=next_provider,
+        profile=profile_model,
+        next_provider=next_entry["provider"],
         chain_index=next_index,
     )
 
@@ -263,7 +263,7 @@ async def _retry_sandbox_with_next_model(
     try:
         result = await create_and_start_sandbox(
             task_prompt=sandbox_mapping.task_prompt,
-            model=next_model,
+            model=profile_model,
             agent_name=agent,
             repo_owner=repo_owner,
             repo_name=repo_name,
@@ -286,7 +286,7 @@ async def _retry_sandbox_with_next_model(
             "sandbox_retry_initiated",
             old_sandbox=sandbox_mapping.sandbox_session_id,
             new_sandbox=result["sandbox_session_id"],
-            model=next_model,
+            profile=profile_model,
             chain_index=next_index,
         )
         return True

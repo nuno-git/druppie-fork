@@ -285,7 +285,7 @@ export const extractSandboxResults = (agentRun) => {
   const results = []
   agentRun?.llm_calls?.forEach((llm) => {
     llm.tool_calls?.forEach((tc) => {
-      if (tc.tool_name === 'execute_coding_task' && tc.status === 'completed' && tc.result) {
+      if (tc.tool_name === 'execute_coding_task' && tc.status !== 'waiting_sandbox' && tc.status !== 'pending' && tc.result) {
         let raw
         try {
           raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
