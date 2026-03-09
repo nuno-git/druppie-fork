@@ -169,11 +169,7 @@ async def create_and_start_sandbox(
                     )
                 except Exception:
                     pass
-                # Clean up the per-sandbox Gitea user
-                try:
-                    await delete_sandbox_git_user(git_user_id)
-                except Exception:
-                    pass
+                # Gitea user cleanup handled by outer except SandboxCreateError
                 raise SandboxCreateError(f"Failed to register ownership: {e}") from e
 
             # Step 3: Send the task prompt with callback info
@@ -204,11 +200,7 @@ async def create_and_start_sandbox(
                     )
                 except Exception:
                     pass
-                # Clean up the per-sandbox Gitea user
-                try:
-                    await delete_sandbox_git_user(git_user_id)
-                except Exception:
-                    pass
+                # Gitea user cleanup handled by outer except SandboxCreateError
                 raise SandboxCreateError(
                     f"Failed to send prompt: {prompt_resp.status_code}"
                 )
