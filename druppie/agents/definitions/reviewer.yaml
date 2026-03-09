@@ -52,7 +52,7 @@ mcps:
     - read_file
     - list_dir
     - write_file
-    - commit_and_push
+    - run_git
 
 llm_profile: standard
 temperature: 0.1

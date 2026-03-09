@@ -559,7 +559,7 @@ mcps:
     - read_file
     - make_design
     - list_dir
-    - commit_and_push
+    - run_git
   registry:
     - list_components
     - get_agent
