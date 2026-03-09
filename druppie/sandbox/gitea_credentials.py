@@ -59,13 +59,29 @@ async def create_sandbox_git_user(
             auth=_admin_auth(),
         )
 
-        if resp.status_code not in (201, 422):
+        if resp.status_code == 422 and "already exists" in resp.text.lower():
+            logger.warning("sandbox_gitea_user_exists_recreating", username=username)
+            await _delete_user(client, base, username)
+            resp = await client.post(
+                f"{base}/api/v1/admin/users",
+                json={
+                    "username": username,
+                    "password": password,
+                    "email": email,
+                    "must_change_password": False,
+                    "restricted": True,
+                    "visibility": "private",
+                },
+                auth=_admin_auth(),
+            )
+            if resp.status_code != 201:
+                raise RuntimeError(
+                    f"Failed to recreate sandbox Gitea user: {resp.status_code} {resp.text[:200]}"
+                )
+        elif resp.status_code != 201:
             raise RuntimeError(
                 f"Failed to create sandbox Gitea user: {resp.status_code} {resp.text[:200]}"
             )
-
-        if resp.status_code == 422 and "already exists" in resp.text.lower():
-            logger.warning("sandbox_gitea_user_exists", username=username)
 
         # 2. Add as collaborator on target repo (write access)
         resp = await client.put(
@@ -97,7 +113,11 @@ async def create_sandbox_git_user(
                 f"Failed to create token: {resp.status_code} {resp.text[:200]}"
             )
 
-        token = resp.json().get("sha1", "")
+        data = resp.json()
+        token = data.get("sha1") or data.get("token") or ""
+        if not token:
+            await _delete_user(client, base, username)
+            raise RuntimeError("Token creation returned no token value")
 
         logger.info(
             "sandbox_gitea_user_created",
@@ -128,6 +148,7 @@ async def _delete_user(client: httpx.AsyncClient, base: str, username: str) -> N
     try:
         resp = await client.delete(
             f"{base}/api/v1/admin/users/{username}",
+            params={"purge": "true"},
             auth=_admin_auth(),
         )
         if resp.status_code in (204, 404):
