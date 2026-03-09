@@ -22,6 +22,7 @@ import {
   Search,
   TerminalSquare,
   Filter,
+  GitBranch,
 } from 'lucide-react'
 import { getSandboxEvents } from '../../services/api'
 
@@ -46,6 +47,7 @@ const getToolCategory = (toolName) => {
   if (t === 'read') return 'read'
   if (t === 'bash') return 'bash'
   if (t === 'glob' || t === 'grep' || t === 'search') return 'search'
+  if (t === 'task') return 'task'
   return 'other'
 }
 
@@ -55,6 +57,7 @@ const toolCategoryConfig = {
   read:   { colors: 'text-sky-700 bg-sky-50', Icon: Eye },
   bash:   { colors: 'text-purple-700 bg-purple-50', Icon: TerminalSquare },
   search: { colors: 'text-indigo-700 bg-indigo-50', Icon: Search },
+  task:   { colors: 'text-violet-700 bg-violet-50', Icon: GitBranch },
   other:  { colors: 'text-gray-600 bg-gray-100', Icon: Wrench },
 }
 
@@ -62,6 +65,14 @@ const toolCategoryConfig = {
 const getToolHint = (data) => {
   if (!data) return null
   const args = data.args || {}
+  // For task (subagent) calls, show subagent type + description
+  if ((data.tool || '').toLowerCase() === 'task') {
+    const parts = []
+    if (args.subagent_type) parts.push(args.subagent_type)
+    if (args.description) parts.push(args.description)
+    const hint = parts.join(': ')
+    return hint.length > 80 ? hint.slice(0, 77) + '...' : hint || null
+  }
   const filePath = args.filePath || args.path || args.file_path || ''
   if (filePath) return filePath.replace(/^\/workspace\/[^/]+\//, '')
   const cmd = args.command || args.cmd || ''
@@ -112,6 +123,149 @@ const processEvents = (rawEvents) => {
   }
 
   return result
+}
+
+/**
+ * Group processed events by subagent boundaries.
+ * tool_call with tool="task" marks the start of a subagent's execution.
+ * All events until the next task call or session boundary belong to that subagent.
+ */
+const groupBySubagent = (events) => {
+  const groups = []
+  let currentSubagent = null
+  const boundaryTypes = new Set(['execution_complete', 'conversation_history', 'token', 'token_usage'])
+
+  for (const event of events) {
+    const type = event.type || ''
+    const toolName = (event.data?.tool || '').toLowerCase()
+    const isTaskCall = type === 'tool_call' && toolName === 'task'
+    const isBoundary = boundaryTypes.has(type)
+
+    if (isBoundary) {
+      if (currentSubagent) {
+        groups.push(currentSubagent)
+        currentSubagent = null
+      }
+      groups.push({ type: 'event', event })
+    } else if (isTaskCall) {
+      if (currentSubagent) {
+        groups.push(currentSubagent)
+      }
+      const args = event.data?.args || {}
+      currentSubagent = {
+        type: 'subagent',
+        event,
+        name: args.subagent_type || args.description || 'Subagent',
+        description: args.description || '',
+        prompt: args.prompt || '',
+        subagentType: args.subagent_type || '',
+        taskId: args.task_id,
+        status: event.data?.status,
+        output: event.data?.output,
+        events: [],
+      }
+    } else if (currentSubagent) {
+      currentSubagent.events.push(event)
+    } else {
+      groups.push({ type: 'event', event })
+    }
+  }
+
+  if (currentSubagent) {
+    groups.push(currentSubagent)
+  }
+
+  return groups
+}
+
+const SubagentGroup = ({ group, startIndex }) => {
+  const [expanded, setExpanded] = useState(true)
+  const [showResult, setShowResult] = useState(false)
+  const [showPrompt, setShowPrompt] = useState(false)
+  const { description, subagentType, events, output, status, prompt } = group
+  const isError = status === 'error'
+
+  // Compute tool stats within this subagent
+  const toolSummary = events.reduce((acc, e) => {
+    if (e.type === 'tool_call') {
+      const t = (e.data?.tool || 'other').toLowerCase()
+      acc[t] = (acc[t] || 0) + 1
+    }
+    return acc
+  }, {})
+  const summaryStr = Object.entries(toolSummary)
+    .sort((a, b) => b[1] - a[1])
+    .map(([t, n]) => `${n} ${t}`)
+    .join(', ')
+
+  return (
+    <div className={`border-l-2 ${isError ? 'border-red-300' : 'border-violet-300'} ml-1 pl-2 my-2`}>
+      {/* Subagent header */}
+      <div
+        className={`flex items-center gap-1.5 rounded px-2 py-1.5 cursor-pointer ${isError ? 'bg-red-50 hover:bg-red-100' : 'bg-violet-50 hover:bg-violet-100'} transition-colors`}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <GitBranch className={`w-3.5 h-3.5 flex-shrink-0 ${isError ? 'text-red-500' : 'text-violet-500'}`} />
+        <span className={`text-xs font-semibold ${isError ? 'text-red-700' : 'text-violet-700'}`}>
+          {subagentType || 'Subagent'}
+        </span>
+        {description && (
+          <span className="text-xs text-gray-500 truncate min-w-0">
+            {description.length > 60 ? description.slice(0, 57) + '...' : description}
+          </span>
+        )}
+        <span className="flex-1" />
+        {summaryStr && <span className="text-[10px] text-gray-400 flex-shrink-0">{summaryStr}</span>}
+        <span className="text-[10px] text-gray-400 flex-shrink-0 ml-1">{events.length} events</span>
+        {expanded ? <ChevronDown className="w-3 h-3 text-gray-400" /> : <ChevronRight className="w-3 h-3 text-gray-400" />}
+      </div>
+
+      {/* Subagent result (what it told the main agent) */}
+      {output && (
+        <div className="mt-1 ml-1">
+          <button
+            onClick={() => setShowResult(!showResult)}
+            className={`flex items-center gap-1 text-xs font-medium ${isError ? 'text-red-600 hover:text-red-800' : 'text-violet-600 hover:text-violet-800'}`}
+          >
+            {showResult ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            {isError ? 'Error' : 'Result'}
+          </button>
+          {showResult && (
+            <pre className={`mt-1 p-2 rounded text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-48 overflow-y-auto ${isError ? 'bg-red-900 text-red-200' : 'bg-gray-900 text-gray-300'}`}>
+              {typeof output === 'string' ? output : JSON.stringify(output, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* Subagent prompt (expandable) */}
+      {prompt && (
+        <div className="mt-0.5 ml-1">
+          <button
+            onClick={() => setShowPrompt(!showPrompt)}
+            className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600"
+          >
+            {showPrompt ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            Prompt
+          </button>
+          {showPrompt && (
+            <pre className="mt-1 p-2 bg-gray-900 rounded text-xs text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto max-h-32 overflow-y-auto">
+              {prompt}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* Subagent events */}
+      {expanded && events.length > 0 && (
+        <div className="mt-1">
+          {events.map((event, i) => (
+            <EventItem key={event.id || `sa-${startIndex}-${i}`} event={event} index={startIndex + i} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 const EventItem = ({ event, index }) => {
@@ -353,6 +507,22 @@ const SandboxSessionSection = ({ result }) => {
     ? events.filter((e) => e.type === 'tool_call' && (e.data?.tool || '').toLowerCase() === filterTool)
     : events
 
+  // Group events by subagent when not filtering
+  const grouped = events && !filterTool ? groupBySubagent(events) : null
+  const hasSubagents = grouped?.some((g) => g.type === 'subagent')
+
+  const renderGroupedEvents = () => {
+    let idx = 0
+    return grouped.map((g, i) => {
+      if (g.type === 'subagent') {
+        const startIdx = idx
+        idx += g.events.length
+        return <SubagentGroup key={g.taskId || `sg-${i}`} group={g} startIndex={startIdx} />
+      }
+      return <EventItem key={g.event.id || `e-${i}`} event={g.event} index={idx++} />
+    })
+  }
+
   return (
     <div className="py-2">
       {/* Changed files */}
@@ -437,6 +607,8 @@ const SandboxSessionSection = ({ result }) => {
         <div className="mt-2 max-h-[500px] overflow-y-auto">
           {filteredEvents.length === 0 ? (
             <div className="text-xs text-gray-400 italic">No events recorded</div>
+          ) : hasSubagents && !filterTool ? (
+            renderGroupedEvents()
           ) : (
             filteredEvents.map((event, i) => (
               <EventItem key={event.id || i} event={event} index={i} />
