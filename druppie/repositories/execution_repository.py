@@ -631,7 +631,7 @@ class ExecutionRepository(BaseRepository):
     def get_last_commit_before_sequence(
         self, session_id: UUID, before_sequence: int
     ) -> ToolCallRecord | None:
-        """Get the last completed commit_and_push tool call before a sequence number."""
+        """Get the last completed run_git tool call before a sequence number."""
         tc = (
             self.db.query(ToolCall)
             .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
