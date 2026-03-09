@@ -157,6 +157,7 @@ async def create_and_start_sandbox(
                     model_chain_index=model_chain_index,
                     task_prompt=task_prompt,
                     agent_name=agent_name,
+                    git_user_id=git_user_id,
                 )
                 db.flush()
             except Exception as e:

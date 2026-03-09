@@ -35,3 +35,6 @@ class SandboxSession(Base):
     model_chain_index = Column(Integer, default=0)
     task_prompt = Column(Text, nullable=True)
     agent_name = Column(String(100), nullable=True)
+
+    # Per-sandbox Gitea service account ID for cleanup
+    git_user_id = Column(String(50), nullable=True)
