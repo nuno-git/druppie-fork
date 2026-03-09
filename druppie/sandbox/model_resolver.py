@@ -15,6 +15,16 @@ import yaml
 logger = structlog.get_logger()
 
 _CONFIG_PATH = Path(__file__).parent.parent / "sandbox-config" / "sandbox_models.yaml"
+_cached_config: dict | None = None
+
+
+def _load_config() -> dict:
+    """Load and cache sandbox_models.yaml. The file is baked into the
+    Docker image and never changes at runtime."""
+    global _cached_config
+    if _cached_config is None:
+        _cached_config = yaml.safe_load(_CONFIG_PATH.read_text())
+    return _cached_config
 
 # Provider name -> env var mapping. Shared source of truth for which
 # API keys enable which providers. Imported by builtin_tools.py too.
@@ -63,7 +73,7 @@ def resolve_sandbox_models(requested_agent: str) -> SandboxModelConfig:
         SandboxModelConfig with resolved primary model, per-agent model map,
         and the set of all providers referenced.
     """
-    config = yaml.safe_load(_CONFIG_PATH.read_text())
+    config = _load_config()
 
     agents_section = config.get("agents", {})
     subagents_section = config.get("subagents", {})
@@ -130,7 +140,7 @@ def get_raw_model_chains() -> dict[str, list[dict[str, str]]]:
     Used by the proxy for failover — when a model's provider fails, the proxy
     tries the next model in the chain.
     """
-    config = yaml.safe_load(_CONFIG_PATH.read_text())
+    config = _load_config()
     chains: dict[str, list[dict[str, str]]] = {}
     for section in ("agents", "subagents"):
         for _name, chain in config.get(section, {}).items():
@@ -147,7 +157,7 @@ def get_raw_model_chains() -> dict[str, list[dict[str, str]]]:
 
 def get_agent_chain(agent_name: str) -> list[dict[str, str]]:
     """Return the raw model chain for an agent from sandbox_models.yaml."""
-    config = yaml.safe_load(_CONFIG_PATH.read_text())
+    config = _load_config()
     chain = config.get("agents", {}).get(agent_name)
     if not chain:
         chain = config.get("subagents", {}).get(agent_name, [])
