@@ -6,7 +6,7 @@ Druppie delegates coding tasks to isolated Docker sandboxes. Each sandbox is a f
 
 ## Architecture
 
-The sandbox infrastructure is based on [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`), integrated as a git submodule at `vendor/open-inspect/`. Sandbox containers run [OpenCode](https://github.com/opencode-ai/opencode) pinned to `v1.2.22`.
+The sandbox infrastructure is based on [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`), integrated as a git submodule at `vendor/open-inspect/`. Sandbox containers run [OpenCode](https://github.com/opencode-ai/opencode) (`latest`).
 
 Three Docker services power the infrastructure:
 
@@ -94,7 +94,7 @@ Sandbox agents are configured via files in `druppie/sandbox-config/`:
 - **`agents/druppie-builder.md`** — Coding agent system prompt
 - **`agents/druppie-tester.md`** — Testing agent system prompt
 
-Configuration is injected into sandbox containers via the `OPENCODE_CONFIG_CONTENT` environment variable. `OPENCODE_DISABLE_PROJECT_CONFIG=true` prevents user `.opencode/` overrides inside the sandbox.
+The sandbox provider uses `@ai-sdk/openai-compatible` to route all LLM requests through the proxy. Configuration is injected into sandbox containers via the `OPENCODE_CONFIG_CONTENT` environment variable and also written as `opencode.json` to both the global config directory and the project directory. `OPENCODE_DISABLE_PROJECT_CONFIG=true` prevents user `.opencode/` overrides inside the sandbox.
 
 ### Agent Parameter Threading
 
@@ -106,10 +106,11 @@ builtin_tools.py → control plane router → session instance → bridge → Op
 
 ### Key OpenCode Details
 
-- OpenCode is pinned to version `1.2.22` in `Dockerfile.sandbox` to prevent breaking changes
+- OpenCode uses `latest` (no longer pinned to a specific version)
 - OpenCode config uses `"agent"` (singular), not `"agents"` (plural)
 - OpenCode SDK sends paths WITHOUT `v1/` prefix (e.g., `chat/completions` not `v1/chat/completions`) when using a custom `baseURL`
 - The LLM proxy must handle both path patterns
+- `opencode.json` is written to both the global config directory and the project directory
 
 ---
 
@@ -119,15 +120,15 @@ Sandbox coding tasks survive provider outages with three independent layers of d
 
 ### Layer A: Proxy Failover (sub-second)
 
-The LLM proxy intercepts all sandbox LLM requests. When a provider returns 5xx, the proxy transparently retries with the next provider in the model chain, rewriting the model name in the request body.
+The LLM proxy intercepts all sandbox LLM requests. When a provider returns a non-2xx response, the proxy transparently retries with the next provider in the model chain, rewriting the model name in the request body.
 
 ```
-Provider A dies → 5xx
+Provider A fails → non-2xx
   → Proxy rewrites model to Provider B → 200 OK
   → Sandbox agent never notices the switch
 ```
 
-Failover only triggers on 5xx server errors. 4xx errors (including 429 rate limits) are passed through to the caller.
+Failover triggers on any non-2xx response (auth errors, rate limits, server errors, etc.).
 
 ### Layer B: Druppie Retry (30-60 seconds)
 
@@ -143,9 +144,11 @@ Three detection signals work in parallel:
 | **C2** | Bridge | Detects session errors → emits `provider_unhealthy` event |
 | **C3** | Session instance | Activity watchdog — no successful LLM call for N minutes |
 
-### Model Chains
+### Model Chains (Profile-Based Routing)
 
-Model chains are configured in `druppie/sandbox/sandbox_models.yaml`. Each agent has an ordered list of `{provider, model}` pairs. The chain is threaded from `builtin_tools.py` → credential store for proxy failover.
+Model chains are configured in `druppie/sandbox-config/sandbox_models.yaml`. Each agent/subagent name acts as a "profile" (e.g., `sandbox/druppie-builder`). OpenCode sees profile-based model names via a single `sandbox` provider using `@ai-sdk/openai-compatible`. The LLM proxy resolves profile names to real provider chains at request time.
+
+Each profile has an ordered list of `{provider, model}` pairs. Model names in the YAML use the raw API model name without a provider prefix. The chain is threaded from `builtin_tools.py` → credential store for proxy failover.
 
 ---
 
@@ -244,6 +247,8 @@ All webhooks are signed with HMAC-SHA256. The `callbackSecret` is set when creat
 | `SANDBOX_MEMORY_LIMIT` | `4g` | Docker memory limit per sandbox |
 | `SANDBOX_CPU_LIMIT` | `2` | Docker CPU limit per sandbox |
 | `SANDBOX_RUNTIME` | `docker` | Container runtime (`docker` or `kata`) |
+| `LLM_FORCE_PROVIDER` | — | Override: forces all sandbox profiles to use this provider (e.g., `deepinfra`). Must be set together with `LLM_FORCE_MODEL`. |
+| `LLM_FORCE_MODEL` | — | Override: forces all sandbox profiles to use this model (e.g., `Qwen/Qwen3-32B`). Must be set together with `LLM_FORCE_PROVIDER`. |
 
 ### Config Files
 
@@ -252,7 +257,7 @@ All webhooks are signed with HMAC-SHA256. The `callbackSecret` is set when creat
 | `druppie/sandbox-config/opencode-config.json` | OpenCode configuration injected into sandboxes |
 | `druppie/sandbox-config/agents/druppie-builder.md` | Builder agent system prompt |
 | `druppie/sandbox-config/agents/druppie-tester.md` | Tester agent system prompt |
-| `druppie/sandbox/sandbox_models.yaml` | Model chains for provider failover |
+| `druppie/sandbox-config/sandbox_models.yaml` | Model chains for provider failover (profile-based routing) |
 
 ### Troubleshooting
 
