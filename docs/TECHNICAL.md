@@ -701,7 +701,8 @@ The core loop (`AgentLoop.run()`):
    c. Execute via ToolExecutor
    d. If waiting_approval -> pause agent, return
    e. If waiting_answer -> pause agent, return
-   f. If "done" tool -> agent complete, return
+   f. If waiting_sandbox -> pause agent, return (webhook will resume)
+   g. If "done" tool -> agent complete, return
    g. If failed + break_on_failure -> stop batch, let LLM retry
    h. Otherwise -> add result to messages, loop to step 3
 6. If max_iterations reached -> raise AgentMaxIterationsError
@@ -960,116 +961,51 @@ Optional:
 
 ## 10. Sandbox Infrastructure (Open-Inspect)
 
-### 10.1 Architecture Overview
+> Full documentation: [docs/SANDBOX.md](SANDBOX.md) — covers architecture, OpenCode integration, provider resilience, Kata Containers, and security.
 
-Open-Inspect is integrated as a git submodule at `vendor/open-inspect/` (from `nuno-git/background-agents`, branch `feature/docker-compose-local-dev`). It provides isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace directly.
+Open-Inspect is integrated as a git submodule at `vendor/open-inspect/`. It provides isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace.
 
-Three Docker services power the sandbox infrastructure:
+### 10.1 Services
 
-- **sandbox-control-plane** (port 8787): HTTP API for session and event management, SQLite storage, coordinates sandbox lifecycle
-- **sandbox-manager** (port 8000): Creates and manages sandbox Docker containers, enforces resource limits, handles snapshots
-- **sandbox-image-builder** (one-shot): Builds the `open-inspect-sandbox:latest` image; Docker caches it so it only rebuilds when the Dockerfile changes
+| Service | Port | Role |
+|---------|------|------|
+| `sandbox-control-plane` | 8787 | Session/event management, SQLite storage, coordinates lifecycle |
+| `sandbox-manager` | 8000 | Creates/manages sandbox containers, enforces resource limits |
+| `sandbox-image-builder` | — | One-shot build producing `open-inspect-sandbox:latest` |
 
-Communication flow: Druppie backend (built-in tool) → control plane API → sandbox manager → Docker containers. On completion, the control plane sends a webhook back to the backend.
+### 10.2 `execute_coding_task` Built-in Tool
 
-### 10.2 Docker Compose Services
+Defined in `druppie/agents/builtin_tools.py`. Delegates a coding task to a sandbox using a **webhook + pause/resume** pattern:
 
-| Service | Build Context | Port | Key Env Vars | Volumes | Role |
-|---------|--------------|------|-------------|---------|------|
-| `sandbox-control-plane` | `vendor/open-inspect` (`packages/local-control-plane/Dockerfile`) | 8787 | `PORT`, `DATA_DIR`, `SANDBOX_MANAGER_URL`, `MODAL_API_SECRET`, `ZAI_API_KEY` | `sandbox_data:/data` | HTTP API for session/event management, SQLite storage |
-| `sandbox-manager` | `vendor/open-inspect` (`packages/local-sandbox-manager/Dockerfile`) | 8000 | `SANDBOX_RUNTIME=docker`, `SANDBOX_IMAGE`, `DOCKER_NETWORK`, `DOCKER_MEMORY_LIMIT`, `DOCKER_CPU_LIMIT` | `sandbox_snapshots:/data/snapshots`, Docker socket | Creates/manages sandbox containers, enforces limits |
-| `sandbox-image-builder` | `vendor/open-inspect` (`packages/local-sandbox-manager/Dockerfile.sandbox`) | — | — | — | One-shot build producing `open-inspect-sandbox:latest`; Docker caches the image |
+1. Creates sandbox session on control plane
+2. Sends task prompt with `callbackUrl` and `callbackSecret`
+3. Registers ownership in `sandbox_sessions` table
+4. Returns `WAITING_SANDBOX` — agent pauses, thread freed
+5. On completion, control plane POSTs webhook → handler fetches events, completes tool call, resumes agent
 
-### 10.3 `execute_coding_task` Built-in Tool
+**Auth:** HMAC-SHA256 tokens (`{unix_ms_timestamp}.{hmac_sha256_hex_signature}`), verified by Open-Inspect's `verifyInternalToken`.
 
-Defined in `druppie/agents/builtin_tools.py`. This is a **built-in tool** (not an MCP tool) — it runs inside the backend process. It delegates a coding task to an isolated sandbox and uses a **webhook + pause/resume** pattern instead of long-polling.
-
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `task` | str | (required) | Coding task description / prompt |
-| `agent` | str | `druppie-builder` | Sandbox agent (`druppie-builder` for coding, `druppie-tester` for testing) |
-| `repo_name`, `repo_owner`, `session_id`, `project_id`, `user_id` | str | (auto-injected) | Context parameters injected by parameter injection |
-
-Agents that can use this tool declare it via `extra_builtin_tools: [execute_coding_task]` in their YAML definition (currently: `builder`, `tester`).
-
-**Auth:** HMAC-SHA256 tokens in the format `{unix_ms_timestamp}.{hmac_sha256_hex_signature}`, matching Open-Inspect's `verifyInternalToken`. A fresh token is generated for every API request to the control plane. The secret is `SANDBOX_API_SECRET`.
-
-**Execution flow (fire-and-forget with webhook callback):**
-
-1. **Create session** — `POST /sessions` on the control plane with repo URL, agent config, and LLM model
-2. **Send prompt with callback** — `POST /sessions/{id}/message` with the task description plus `callbackUrl` and `callbackSecret`. The callback URL points to `POST /api/sandbox-sessions/{id}/complete` on the Druppie backend.
-3. **Register ownership** — `POST /api/sandbox-sessions/internal/register` on the Druppie backend to map the sandbox session ID to the requesting user
-4. **Return immediately** — The tool returns `{"status": "waiting_sandbox", "sandbox_session_id": "..."}`. The tool executor detects this status and sets the tool call to `WAITING_SANDBOX`, which pauses the agent (agent run → `PAUSED_SANDBOX`, session → `paused_sandbox`).
-5. **Webhook callback** — When the sandbox completes (or is cancelled), the control plane POSTs to the callback URL with an HMAC-signed payload. The webhook endpoint fetches final events, extracts changed files and agent output, completes the tool call, and resumes the agent via `Orchestrator.resume_after_sandbox()`.
-
-**Status model:**
+### 10.3 Status Model
 
 | Level | Status | Meaning |
 |-------|--------|---------|
-| ToolCallStatus | `WAITING_SANDBOX` | Tool call dispatched, waiting for webhook |
-| AgentRunStatus | `PAUSED_SANDBOX` | Agent paused while sandbox executes |
+| ToolCallStatus | `WAITING_SANDBOX` | Tool dispatched, waiting for webhook |
+| AgentRunStatus | `PAUSED_SANDBOX` | Agent paused while sandbox runs |
 | AgentRunStatus | `PAUSED_CRASHED` | Agent crashed, session paused for recovery |
-| SessionStatus | `paused_sandbox` | Session paused for sandbox, visible in UI |
-| SessionStatus | `paused_crashed` | Session paused due to crash, visible in UI |
+| SessionStatus | `paused_sandbox` | Visible in UI as paused |
+| SessionStatus | `paused_crashed` | Visible in UI as crashed |
 
-**Webhook endpoint:** `POST /api/sandbox-sessions/{sandbox_session_id}/complete` (in `druppie/api/routes/sandbox.py`). Verifies HMAC-SHA256 signature via `X-Signature` header, then:
+### 10.4 Sandbox Session Ownership
 
-1. Finds the `WAITING_SANDBOX` tool call via the `tool_call_id` FK on `sandbox_sessions` (direct lookup, no full table scan)
-2. Fetches final events from control plane (`GET /sessions/{id}/events?limit=500`)
-3. Extracts changed files and agent output from events
-4. Completes the tool call with result payload
-5. Resumes the agent asynchronously via Starlette `BackgroundTasks` (not `asyncio.create_task`)
-
-**Tool call result (after webhook):**
-
-```python
-{
-    "success": bool,
-    "sandbox_session_id": str,
-    "status": "completed" | "failed",
-    "event_count": int,
-    "changed_files": [{"path": str, "action": str}],
-    "agent_output": str,        # Last 5000 chars of agent output
-}
-```
-
-### 10.4 Agent Config Injection
-
-Sandbox agents are configured via files in `druppie/sandbox-config/`:
-
-- **`opencode-config.json`** — Sets `default_agent` to `druppie-builder` and grants broad tool permissions
-- **`agents/druppie-builder.md`** — Coding agent prompt: implements features, writes code, mandatory git workflow (`git add <files>` → `git commit` → `git push origin HEAD`), must output a structured `---SUMMARY---` block
-- **`agents/druppie-tester.md`** — Testing agent prompt: writes and runs tests, same mandatory git workflow, reports results in structured format
-
-Configuration is injected into sandbox containers via the `OPENCODE_CONFIG_CONTENT` environment variable. `OPENCODE_DISABLE_PROJECT_CONFIG=true` prevents user `.opencode/` overrides inside the sandbox.
-
-Agent parameter threading passes through 5 layers: MCP server → control plane router → session instance → bridge → OpenCode API.
-
-### 10.5 Sandbox Session Ownership
-
-The `sandbox_sessions` table (`druppie/db/models/sandbox_session.py`) maps control plane session IDs to Druppie user IDs:
+The `sandbox_sessions` table maps control plane session IDs to Druppie users:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | UUID | Primary key |
 | `sandbox_session_id` | str (unique, indexed) | Control plane session ID |
 | `session_id` | UUID (nullable, FK → sessions) | Druppie chat session |
 | `user_id` | UUID (FK → users) | Owning user |
-| `tool_call_id` | UUID (nullable, FK → tool_calls, indexed) | Linked tool call for direct webhook lookup |
-| `webhook_secret` | str (nullable) | Per-session HMAC secret for webhook verification |
-| `created_at` | datetime | Registration timestamp |
-| `updated_at` | datetime | Last update timestamp |
-| `completed_at` | datetime (nullable) | Completion timestamp |
+| `tool_call_id` | UUID (nullable, FK → tool_calls, indexed) | Direct webhook lookup |
+| `webhook_secret` | str (nullable) | Per-session HMAC secret |
 
-**Registration flow:** After creating a sandbox session, the built-in tool calls `POST /api/sandbox-sessions/internal/register` (authenticated via internal API key, not user tokens). The repository's `create()` method is idempotent — it returns the existing record if the sandbox session ID is already registered.
-
-**Tool call linkage:** The `tool_call_id` FK enables direct lookup from webhook handler → tool call without full table scans. This is set by `SandboxSessionRepository.update_tool_call_id()` after the tool executor stores the WAITING_SANDBOX status.
-
-**Events proxy:** `GET /api/sandbox-sessions/{session_id}/events` (in `druppie/api/routes/sandbox.py`) proxies events from the control plane. Before forwarding, it:
-
-1. Looks up ownership via `SandboxSessionRepository.get_by_sandbox_id()`
-2. Calls `check_resource_ownership(user, mapping.user_id)` — returns **403** for non-owners
-3. Admins bypass the ownership check
+The `tool_call_id` FK enables direct lookup from webhook → tool call without table scans. Events proxy (`GET /api/sandbox-sessions/{id}/events`) enforces ownership — non-owners get 403, admins bypass.
 
