@@ -47,8 +47,8 @@ def build_llm_credentials() -> list[dict[str, str]]:
     return credentials
 
 
-def build_git_credentials() -> dict[str, str]:
-    """Return the Git credential dict for the control plane."""
+def build_admin_git_credentials() -> dict[str, str]:
+    """Return the admin Git credential dict for the control plane (fallback only)."""
     return {
         "provider": "gitea",
         "url": os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000"),
