@@ -597,13 +597,15 @@ class CodingModule:
             "add",
             "commit",
             "push",
+            "pull",
+            "fetch",
             "status",
             "checkout",
             "log",
             "diff",
             "branch",
         }
-        CREDENTIAL_SUBCOMMANDS = {"push"}
+        CREDENTIAL_SUBCOMMANDS = {"push", "pull", "fetch"}
 
         try:
             parts = shlex.split(command)

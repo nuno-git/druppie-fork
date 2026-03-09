@@ -824,8 +824,8 @@ async def _run_git(
     workspace_id: str, command: str, repo_name: str = None, repo_owner: str = None
 ) -> dict:
     """Execute a whitelisted git command and return raw output."""
-    ALLOWED_SUBCOMMANDS = {"add", "commit", "push", "status", "checkout", "log", "diff", "branch"}
-    CREDENTIAL_SUBCOMMANDS = {"push"}
+    ALLOWED_SUBCOMMANDS = {"add", "commit", "push", "pull", "fetch", "status", "checkout", "log", "diff", "branch"}
+    CREDENTIAL_SUBCOMMANDS = {"push", "pull", "fetch"}
 
     try:
         parts = shlex.split(command)
@@ -1048,7 +1048,7 @@ async def run_git(
 ) -> dict:
     """Execute a git command in the workspace.
 
-    Allowed subcommands: add, commit, push, status, checkout, log, diff, branch.
+    Allowed subcommands: add, commit, push, pull, fetch, status, checkout, log, diff, branch.
     Destructive flags (--force, --hard) are blocked.
 
     Args:

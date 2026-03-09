@@ -132,7 +132,7 @@ mcps:
             - path
 
       - name: run_git
-        description: "Execute a git command in the workspace. Allowed subcommands: add, commit, push, status, checkout, log, diff, branch. Destructive flags (--force, --hard) are blocked."
+        description: "Execute a git command in the workspace. Allowed subcommands: add, commit, push, pull, fetch, status, checkout, log, diff, branch. Destructive flags (--force, --hard) are blocked."
         requires_approval: false
         parameters:
           type: object
