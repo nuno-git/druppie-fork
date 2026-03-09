@@ -217,6 +217,8 @@ async def create_and_start_sandbox(
                 "agent": agent_name,
                 "callbackUrl": callback_url,
                 "callbackSecret": webhook_secret,
+                "githubName": "druppie-core-bot",
+                "githubEmail": "druppie-core-bot@users.noreply.github.com",
             }
 
             prompt_resp = await client.post(
