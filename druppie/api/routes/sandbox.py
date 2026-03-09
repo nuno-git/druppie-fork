@@ -15,7 +15,6 @@ import hashlib
 import hmac
 import json
 import os
-import secrets
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -191,8 +190,8 @@ async def _retry_sandbox_with_next_model(
     registers ownership, and sends the prompt. Returns True if retry was
     initiated, False if no more models to try.
     """
-    from druppie.sandbox.credentials import build_git_credentials, build_llm_credentials
-    from druppie.sandbox.model_resolver import PROVIDER_API_KEYS, get_raw_model_chains
+    from druppie.sandbox import create_and_start_sandbox, SandboxCreateError
+    from druppie.sandbox.model_resolver import PROVIDER_API_KEYS
 
     if not sandbox_mapping.model_chain or not sandbox_mapping.task_prompt:
         return False
@@ -211,8 +210,6 @@ async def _retry_sandbox_with_next_model(
             provider=entry["provider"],
             model=entry["model"],
         )
-        sandbox_mapping.model_chain_index = next_index
-        db.flush()
         next_index += 1
 
     if next_index >= len(chain):
@@ -227,6 +224,7 @@ async def _retry_sandbox_with_next_model(
     next_entry = chain[next_index]
     next_model = next_entry["model"]
     next_provider = next_entry["provider"]
+    agent = sandbox_mapping.agent_name or "druppie-builder"
 
     logger.info(
         "sandbox_retry_with_next_model",
@@ -236,36 +234,9 @@ async def _retry_sandbox_with_next_model(
         chain_index=next_index,
     )
 
-    # Create a new sandbox session with the next model
-    control_plane_url = os.environ.get(
-        "SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787"
-    ).rstrip("/")
-
-    from druppie.core.sandbox_auth import generate_control_plane_token as _gen_token
-
-    webhook_secret = secrets.token_urlsafe(32)
-
-    from druppie.agents.builtin_tools import _load_agent_files
-    from druppie.sandbox.model_resolver import resolve_sandbox_models
-
-    agent = sandbox_mapping.agent_name or "druppie-builder"
-    model_config = resolve_sandbox_models(agent)
-
-    create_body = {
-        "repoOwner": os.getenv("GITEA_ORG", "druppie"),
-        "repoName": "",
-        "model": next_model,
-        "agentModels": model_config.agents,
-        "agentFiles": _load_agent_files(),
-        "modelChains": get_raw_model_chains(),
-        "title": f"Druppie sandbox (retry {next_index}): {sandbox_mapping.task_prompt[:80]}",
-        "credentials": {
-            "git": build_git_credentials(),
-            "llm": build_llm_credentials(),
-        },
-    }
-
     # Get repo info from the original session
+    repo_owner = os.getenv("GITEA_ORG", "druppie")
+    repo_name = ""
     if sandbox_mapping.session_id:
         from druppie.repositories import SessionRepository, ProjectRepository
         session_repo = SessionRepository(db)
@@ -274,84 +245,41 @@ async def _retry_sandbox_with_next_model(
             project_repo = ProjectRepository(db)
             project = project_repo.get_by_id(session.project_id)
             if project:
-                create_body["repoOwner"] = project.repo_owner or os.getenv("GITEA_ORG", "druppie")
-                create_body["repoName"] = project.repo_name or ""
+                repo_owner = project.repo_owner or repo_owner
+                repo_name = project.repo_name or ""
 
     try:
-        auth_token = _gen_token()
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            auth_headers = {
-                "Authorization": f"Bearer {auth_token}",
-                "Content-Type": "application/json",
-            }
+        result = await create_and_start_sandbox(
+            task_prompt=sandbox_mapping.task_prompt,
+            model=next_model,
+            agent_name=agent,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            user_id=sandbox_mapping.user_id,
+            session_id=sandbox_mapping.session_id,
+            model_chain=sandbox_mapping.model_chain,
+            model_chain_index=next_index,
+            title=f"Druppie sandbox (retry {next_index}): {sandbox_mapping.task_prompt[:80]}",
+            source="retry",
+            author_id=str(sandbox_mapping.user_id),
+            db=db,
+        )
 
-            resp = await client.post(
-                f"{control_plane_url}/sessions",
-                json=create_body,
-                headers=auth_headers,
-            )
+        # Link the new sandbox to the same tool call
+        sandbox_repo = SandboxSessionRepository(db)
+        sandbox_repo.update_tool_call_id(result["sandbox_session_id"], tool_call_id)
+        db.flush()
 
-            if resp.status_code not in (200, 201):
-                logger.error(
-                    "sandbox_retry_create_failed",
-                    status=resp.status_code,
-                    body=resp.text[:200],
-                )
-                return False
+        logger.info(
+            "sandbox_retry_initiated",
+            old_sandbox=sandbox_mapping.sandbox_session_id,
+            new_sandbox=result["sandbox_session_id"],
+            model=next_model,
+            chain_index=next_index,
+        )
+        return True
 
-            new_session_id = resp.json().get("sessionId")
-            if not new_session_id:
-                return False
-
-            # Register new ownership record
-            sandbox_repo = SandboxSessionRepository(db)
-            sandbox_repo.create(
-                sandbox_session_id=new_session_id,
-                user_id=sandbox_mapping.user_id,
-                session_id=sandbox_mapping.session_id,
-                webhook_secret=webhook_secret,
-                model_chain=sandbox_mapping.model_chain,
-                model_chain_index=next_index,
-                task_prompt=sandbox_mapping.task_prompt,
-                agent_name=agent,
-            )
-
-            # Link to the same tool call
-            sandbox_repo.update_tool_call_id(new_session_id, tool_call_id)
-            db.flush()
-
-            # Send the prompt to the new sandbox
-            prompt_resp = await client.post(
-                f"{control_plane_url}/sessions/{new_session_id}/prompt",
-                json={
-                    "content": sandbox_mapping.task_prompt,
-                    "authorId": str(sandbox_mapping.user_id),
-                    "source": "retry",
-                    "callbackContext": {
-                        "callbackUrl": f"{os.environ.get('BACKEND_URL', 'http://druppie-backend:8000')}/api/sandbox-sessions/{new_session_id}/complete",
-                        "callbackSecret": webhook_secret,
-                    },
-                },
-                headers=auth_headers,
-            )
-
-            if prompt_resp.status_code not in (200, 201):
-                logger.error(
-                    "sandbox_retry_prompt_failed",
-                    status=prompt_resp.status_code,
-                )
-                return False
-
-            logger.info(
-                "sandbox_retry_initiated",
-                old_sandbox=sandbox_mapping.sandbox_session_id,
-                new_sandbox=new_session_id,
-                model=next_model,
-                chain_index=next_index,
-            )
-            return True
-
-    except Exception as e:
+    except SandboxCreateError as e:
         logger.error("sandbox_retry_error", error=str(e))
         return False
 
@@ -370,7 +298,16 @@ async def sandbox_complete_webhook(
 
     Idempotent: returns 200 OK if the tool call was already processed.
     """
-    # Look up the sandbox session first to get the per-session webhook secret
+    # Read body and check signature header BEFORE any DB access to minimize
+    # unauthenticated attack surface. All auth failures return 403 with a
+    # generic message to prevent timing oracle on session existence.
+    raw_body = await request.body()
+    signature = request.headers.get("X-Signature")
+    if not signature:
+        logger.warning("sandbox_webhook_missing_signature", sandbox_session_id=sandbox_session_id)
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Look up sandbox session to get the per-session webhook secret
     sandbox_repo = SandboxSessionRepository(db)
     sandbox_mapping = sandbox_repo.get_by_sandbox_id(sandbox_session_id)
     if not sandbox_mapping or not sandbox_mapping.webhook_secret:
@@ -379,18 +316,12 @@ async def sandbox_complete_webhook(
             sandbox_session_id=sandbox_session_id,
             has_mapping=sandbox_mapping is not None,
         )
-        raise HTTPException(status_code=404, detail="Sandbox session not found or no webhook secret")
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     # Verify HMAC signature using the per-session secret
-    raw_body = await request.body()
-    signature = request.headers.get("X-Signature")
-    # Explicit check for missing signature header - don't default to empty string
-    if not signature:
-        logger.warning("sandbox_webhook_missing_signature", sandbox_session_id=sandbox_session_id)
-        raise HTTPException(status_code=403, detail="Missing signature header")
     if not _verify_webhook_signature(raw_body, signature, sandbox_mapping.webhook_secret):
         logger.warning("sandbox_webhook_invalid_signature", sandbox_session_id=sandbox_session_id)
-        raise HTTPException(status_code=403, detail="Invalid signature")
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     body = SandboxCompletePayload.model_validate_json(raw_body)
 
@@ -432,6 +363,10 @@ async def sandbox_complete_webhook(
             current_status=tool_call.status,
         )
         return {"status": "already_processed", "sandbox_session_id": sandbox_session_id}
+
+    # Refresh sandbox_mapping inside the FOR UPDATE critical section to get
+    # the latest completed_at value (prevents stale read from initial load).
+    db.refresh(sandbox_mapping)
 
     # Fetch final events from control plane
     control_plane_url = os.environ.get(
