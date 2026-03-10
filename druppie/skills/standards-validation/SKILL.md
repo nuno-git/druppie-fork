@@ -16,6 +16,17 @@ Use this checklist to validate generated code against Druppie's project
 coding standards and architecture patterns. Check each item and report
 findings in the structured output format below.
 
+**IMPORTANT: Druppie vs. User Projects**
+
+This checklist applies to **Druppie's own codebase** (Python/FastAPI backend,
+React frontend, MCP servers). When reviewing code for **user projects**
+(projects built by agents for end users), apply only the general code quality
+and security checks (sections 2.Code Style and 3.Critical Violations where
+universally applicable). Do NOT enforce Druppie-specific patterns
+(Summary/Detail, BaseRepository, deps.py wiring, etc.) on user projects —
+instead validate against the technology stack and conventions defined in that
+project's own specification or builder_plan.md.
+
 ---
 
 ## 1. Architecture Compliance
