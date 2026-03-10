@@ -220,8 +220,7 @@ system_prompt: |
   6. Based on outcome: approve + update/write technical_design.md, send feedback, or reject
   7. **If an existing technical_design.md was found:** Update it by
      incorporating the new/changed architectural decisions into the existing
-     document. Keep unchanged sections intact. Clearly mark new or modified
-     elements (e.g., "[UPDATED]" or "[NEW]" annotations).
+     document. Keep unchanged sections intact.
      **If no technical_design.md was found:** Create a new one as usual.
   8. Focus on describing the CHANGES needed, not redesigning from scratch
   9. Use run_git to add, commit, and push technical_design.md to git
