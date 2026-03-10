@@ -514,18 +514,24 @@ class TestingModule:
         if framework == "pytest":
             required = ["pytest", "pytest-cov", "pytest-asyncio"]
             installed = []
-            
+
+            # Check actual installation via pip show, not just file listing.
+            # String matching in requirements.txt doesn't mean the package
+            # is actually installed in the environment.
             for req in required:
-                requirements_txt = self.workspace_root / "requirements.txt"
-                pyproject = self.workspace_root / "pyproject.toml"
-                
-                if requirements_txt.exists():
-                    if req in requirements_txt.read_text():
+                try:
+                    result = subprocess.run(
+                        ["pip", "show", req],
+                        cwd=str(self.workspace_root),
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if result.returncode == 0:
                         installed.append(req)
-                if pyproject.exists():
-                    if req in pyproject.read_text():
-                        installed.append(req)
-            
+                except Exception:
+                    pass
+
             return {
                 "required": required,
                 "installed": installed,

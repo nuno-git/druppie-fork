@@ -299,6 +299,7 @@ class SessionRepository(BaseRepository):
         """Convert AgentRun model to AgentRunSummary domain model."""
         return AgentRunSummary(
             id=run.id,
+            session_id=run.session_id,
             agent_id=run.agent_id,
             status=AgentRunStatus(run.status),
             error_message=run.error_message,
@@ -319,6 +320,7 @@ class SessionRepository(BaseRepository):
 
         return AgentRunDetail(
             id=run.id,
+            session_id=run.session_id,
             agent_id=run.agent_id,
             status=AgentRunStatus(run.status),
             error_message=run.error_message,

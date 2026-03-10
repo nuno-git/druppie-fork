@@ -58,6 +58,31 @@ def revert_to_commit(
         previous_head, target_commit, branch,
     )
 
+    # Ensure remote is configured before fetch (workspace may have been
+    # created with git init and no remote, e.g. when repo info was missing)
+    if is_gitea_configured and gitea_clone_url:
+        # Use set-url in case origin already exists, fall back to add
+        set_url = subprocess.run(
+            ["git", "remote", "set-url", "origin", gitea_clone_url],
+            cwd=cwd, capture_output=True, text=True,
+        )
+        if set_url.returncode != 0:
+            subprocess.run(
+                ["git", "remote", "add", "origin", gitea_clone_url],
+                cwd=cwd, capture_output=True, text=True,
+            )
+
+    # Fetch latest from remote (commit may only exist on remote, e.g. pushed by sandbox)
+    fetch_result = subprocess.run(
+        ["git", "fetch", "origin"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if fetch_result.returncode != 0:
+        logger.warning("git fetch origin failed: %s", fetch_result.stderr)
+
     # Hard reset to target commit
     reset_result = subprocess.run(
         ["git", "reset", "--hard", target_commit],
@@ -80,14 +105,6 @@ def revert_to_commit(
     # Force push if Gitea is configured
     force_pushed = False
     if is_gitea_configured:
-        if gitea_clone_url:
-            subprocess.run(
-                ["git", "remote", "set-url", "origin", gitea_clone_url],
-                cwd=cwd,
-                check=True,
-                capture_output=True,
-            )
-
         push_result = subprocess.run(
             ["git", "push", "--force", "origin", branch],
             cwd=cwd,
