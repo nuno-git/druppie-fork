@@ -2,39 +2,51 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-02-11
+Last updated: 2026-03-09
 
 ---
 
 ## Summary
 
+- ~~Silent Push Failure in Git Tools~~ ✅ DONE
 - Per-Agent Model Selection Ignored
 - ~~Cancel/Resume Endpoint Missing on Backend~~ ✅ DONE
 - Token/Cost Tracking Half Implemented and Buggy
 - Database Schema Does Not Match Domain Models
 - JSON/JSONB Columns Still Present
-- Tester Agent Not Invoked
+- ~~Tester Agent Not Invoked~~ ✅ DONE (replaced by test_builder + test_executor)
 - Reviewer Agent Not Invoked
 - Workflows Directory Empty
 - Settings Page is Read-Only
-- Single LLM Provider at Runtime
-- No Session-Level Retry on LLM Failure
+- ~~Single LLM Provider at Runtime~~ ✅ DONE
+- ~~No Session-Level Retry on LLM Failure~~ ✅ DONE (sandbox resilience)
 - No Context Window Management
 - Unbounded Summary Accumulation Across Agents
 - No WebSocket Support
 - No API Rate Limiting
 - No Observability Infrastructure
 - Keycloak in Development Mode
-- Sandboxed Execution Environment for Agents
-- Test-Driven Development (TDD) Workflow
+- ~~Sandboxed Execution Environment for Agents~~ ✅ DONE
+- ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 - ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
 - Language Matching
 - Prompt Injection Protection
 - Compliance Agent for Input Validation
+- TDD Retry Counting in Python Runtime
+- Externalize HITL Escalation Text with Semantic Option IDs
+- Test Executor Python-Level Safety Net
+- Frontend Agent Config from API
+- General Pre-Validation System for Tool Arguments
 
 ---
+
+### ~~Silent Push Failure in Git Tools~~ (DONE)
+
+- **Resolved in:** `fix/commit-and-push-silent-failure` branch
+- **Bug:** `_do_commit_and_push()` returned `success: True` when `git push` failed, silently swallowing push errors. All agents that called `commit_and_push` could lose their work — changes were committed locally in the ephemeral workspace but never pushed to Gitea, with the timeline showing "completed."
+- **Fix:** Replaced four over-engineered git tools (`commit_and_push`, `create_branch`, `merge_to_main`, `get_git_status`) with a single `run_git` tool that executes whitelisted git subcommands and returns raw terminal output. Success is tied directly to git's exit code — push failures are now impossible to miss. Allowed subcommands: `add`, `commit`, `push`, `status`, `checkout`, `log`, `diff`, `branch`. Destructive flags (`--force`, `--hard`) are blocked. PR tools (`create_pull_request`, `merge_pull_request`) remain unchanged.
 
 ### ~~Per-Agent Model Selection Ignored~~ (DONE)
 
@@ -80,12 +92,12 @@ Last updated: 2026-02-11
 - **Exception:** Raw API requests are currently stored as JSON for debugging purposes.
 - There may be other violations — this needs to be checked and updated.
 
-### Tester Agent Not Invoked
+### ~~Tester Agent Not Invoked~~ ✅ DONE
 
-- **Location:** `druppie/agents/definitions/tester.yaml`
-- Agent YAML definition exists and references the `run_tests` tool (which does exist in the coding MCP server at `druppie/mcp-servers/coding/module.py:746`).
-- However, the planner agent never schedules the tester agent. It is not referenced in the planner's YAML definition.
-- The agent would need to be integrated into the planning workflow to be useful.
+- **Resolved in:** `feature/TDD-Loop` branch
+- The single `tester` agent has been replaced by two specialized agents: `test_builder` (TDD Red Phase — generates tests) and `test_executor` (TDD Green Phase — runs tests, diagnoses failures, fixes code). Both are integrated into the planner workflow.
+- A `builder_planner` agent was added to create implementation plans (`builder_plan.md`) between the architect and test_builder phases.
+- TDD retry mechanism: up to 3 builder → test_executor retry cycles on failure, with HITL escalation after 3 failures.
 
 ### Reviewer Agent Not Invoked
 
@@ -105,18 +117,16 @@ Last updated: 2026-02-11
 - The page displays user profile, system status, MCP servers, and agent configurations, but everything is read-only.
 - Despite being named "Settings," there are no configurable settings. It functions as a system information/status dashboard.
 
-### Single LLM Provider at Runtime
+### ~~Single LLM Provider at Runtime~~ (DONE)
 
-- Only one LLM provider can be active at a time, configured via the `LLM_PROVIDER` environment variable.
-- The singleton `LLMService` creates one client instance shared across all agents.
-- Cannot mix providers (e.g., use DeepInfra for one agent and Z.AI for another).
+- **Resolved in:** `feature/execute-coding-task` branch
+- Agents now reference shared LLM profiles with ordered provider chains. Sandbox coding uses model chains for automatic failover. See `docs/SANDBOX.md` for details.
 
-### No Session-Level Retry on LLM Failure
+### ~~No Session-Level Retry on LLM Failure~~ (DONE)
 
-- The LLM providers themselves have retry logic (max 3 retries with exponential backoff for transient errors like 500s and timeouts).
-- However, if all retries are exhausted, the agent loop raises an exception and the entire session fails. There is no higher-level retry or recovery mechanism.
-- A rate limit error or extended provider outage will fail the session permanently.
-- **Partial progress:** LLM retries now have an audit trail via the `llm_retries` database table, recording each attempt, error type, and delay. This supports debugging but does not change recovery behavior.
+- **Resolved in:** `feature/execute-coding-task` branch
+- Sandbox infrastructure has three-layer provider resilience: proxy failover (sub-second), failure detection signals, and Druppie-level retry with next model in chain. LLM retries have an audit trail via the `llm_retries` database table.
+- See `docs/SANDBOX.md` "Provider Resilience" for details.
 
 ### No Context Window Management
 
@@ -162,24 +172,21 @@ Last updated: 2026-02-11
 - No TLS configuration is present.
 - Suitable for development only.
 
-### Sandboxed Execution Environment for Agents
+### ~~Sandboxed Execution Environment for Agents~~ (DONE)
 
-- **Current state:** The MCP coding server (`mcp-coding`, port 9001) provides file and git operations but no command execution beyond git. Agents cannot build, run, or test the code they write within an isolated environment.
-- **Problem:** The Developer agent writes code but cannot verify it compiles or runs. The Tester agent (currently a stub) has no way to execute tests. The Deployer agent builds via Docker but has no pre-deploy validation step.
-- **Desired improvement:** Replace or extend the coding MCP server with a fully sandboxed environment per project/session where agents can safely execute shell commands (install dependencies, run builds, execute tests). This sandbox should:
-  - Be isolated and disposable (container-based or VM-based)
-  - Mirror the production environment that the Deployer agent will later deploy to, so agents can catch environment-specific issues early
-  - Be usable by both the Tester agent (for running test suites) and the Developer agent (for build verification)
-  - Support a TDD workflow: the Tester agent writes tests first, the Developer agent implements until tests pass
-- **Research needed:** Evaluate container-per-session vs shared sandbox approaches, security implications of command execution, and how to replicate the target production environment configuration inside the sandbox.
+- **Resolved in:** `feature/execute-coding-task` branch
+- Full sandbox infrastructure implemented using Open-Inspect (git submodule at `vendor/open-inspect/`). Docker sandboxes with OpenCode provide isolated execution per task. Webhook + pause/resume pattern replaces long-polling. Provider resilience with three-layer failover. Optional Kata Containers for VM-level isolation.
+- See `docs/SANDBOX.md` for full details.
 
-### Test-Driven Development (TDD) Workflow
+### ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
 
-- **Current state:** The Tester agent is defined but never invoked by the Planner. There is no testing phase in either the `create_project` or `update_project` workflows.
-- **Desired improvement:** Integrate a TDD workflow where the Tester agent writes tests based on the functional design and architecture before the Developer agent implements the code. The Developer should then implement until tests pass. This requires:
-  - The Planner to schedule: Tester (write tests) → Developer (implement) → Tester (verify)
-  - The sandboxed execution environment (see Sandboxed Execution Environment for Agents) for running tests
-  - A feedback loop: if tests fail after implementation, the Developer gets the failure output and iterates
+- **Resolved in:** `feature/TDD-Loop` branch
+- TDD workflow is fully integrated into both `create_project` and `update_project` flows:
+  - `builder_planner` → `test_builder` (Red Phase) → `builder` (Green Phase) → `test_executor` (Run & Fix)
+  - Up to 3 retry cycles (builder → test_executor) on failure
+  - HITL escalation after 3 failures with user choice: continue with guidance, deploy with warning, or abort
+- The Coding MCP server provides `run_tests`, `get_test_framework`, `get_coverage_report`, and `install_test_dependencies` tools.
+- The `test_report` builtin tool provides structured iteration tracking.
 
 ### Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 
@@ -232,3 +239,31 @@ Last updated: 2026-02-11
   - Could use a classification approach (is this input safe?) rather than generation
   - Failed validations should block the input and notify the user with a clear explanation
 - **Related to:** Prompt Injection Protection (this is the runtime enforcement mechanism for those defenses)
+
+### TDD Retry Counting in Python Runtime
+
+- **Current state:** The planner counts TDD retry attempts by pattern-matching `"Agent builder: TDD RETRY"` lines in the accumulated PREVIOUS AGENT SUMMARY. This relies on the LLM correctly counting string occurrences — LLMs are notoriously bad at counting.
+- **Desired improvement:** Move retry counting to the Python runtime layer. In `builtin_tools.py`, the `done()` function already collects previous summaries. It could count retry patterns deterministically and inject a structured `TDD_RETRY_COUNT: N` field into the planner's prompt, removing the need for LLM string-counting.
+
+### Externalize HITL Escalation Text with Semantic Option IDs
+
+- **Current state:** The TDD HITL escalation question and options are hardcoded as Dutch prose in `planner.yaml`. The planner pattern-matches on the exact Dutch option text to determine the user's choice.
+- **Desired improvement:** Define semantic option IDs (`CONTINUE_WITH_GUIDANCE`, `DEPLOY_WITH_WARNING`, `ABORT`) and externalize the display text to a localizable config. The planner should match on option IDs rather than prose strings. This also supports the Language Matching backlog item.
+
+### Test Executor Python-Level Safety Net
+
+- **Current state:** The test_executor's stopping conditions (e.g., "8+ iterations with no progress") are entirely in the system prompt — the LLM self-regulates. With `max_iterations: 100`, a misbehaving LLM could loop for dozens of expensive iterations.
+- **Desired improvement:** Track `test_report` tool calls per agent_run in the Python runtime and force a FAIL result after a configurable max (e.g., 10 test_report calls). This parallels the `MAX_PLANNER_ITERATIONS` safety net in `builtin_tools.py`.
+
+### Frontend Agent Config from API
+
+- **Current state:** Agent display properties (name, icon, color, description, thinkingLabel) are hardcoded in `frontend/src/utils/agentConfig.js` and must be manually kept in sync with backend YAML definitions. Each new agent requires updating both files.
+- **Desired improvement:** Expose UI properties via the `/api/agents` endpoint (add `color`, `icon`, `thinkingLabel` fields to `AgentResponse`). The frontend would then fetch agent config from the API instead of maintaining a local duplicate.
+
+### General Pre-Validation System for Tool Arguments
+
+- **Location:** `druppie/execution/tool_executor.py` (lines 332-367, 468-487)
+- **GitHub Issue:** [#79](https://github.com/nuno-git/druppie-fork/issues/79)
+- **Current state:** The tool executor has a hardcoded `if tool_call.tool_name == "make_design"` check that runs Mermaid validation before the approval gate. The mermaid validator is imported via a fragile `importlib.util.spec_from_file_location` hack because it lives in `mcp-servers/coding/` (hyphenated directory, not a proper Python package).
+- **Problem:** Adding content validation for any other tool requires adding more `if` statements to the tool executor and more fragile imports.
+- **Desired improvement:** Add an optional `pre_validate(self) -> str | None` method to Pydantic params models. The tool executor calls it generically after schema validation succeeds. This way adding a new validator = adding a method to a params model, with zero changes to `tool_executor.py`. The mermaid validator moves to `druppie/tools/validators/mermaid.py` (properly importable). See issue #79 for the full plan.

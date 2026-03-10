@@ -19,6 +19,7 @@ Example usage in a route:
         return service.get_detail(session_id, UUID(user["sub"]), get_user_roles(user))
 """
 
+import hmac
 import os
 from functools import wraps
 from typing import Callable, Generator
@@ -219,16 +220,21 @@ async def get_optional_user(
     return auth.validate_request(authorization)
 
 
-# Internal API key for MCP servers to call backend
-INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
-
-# Security warning for missing/default API key
-if not INTERNAL_API_KEY:
+# Internal API key for MCP servers to call backend.
+# Default matches docker-compose.yml and builtin_tools.py so local-dev works without .env.
+_DEFAULT_INTERNAL_KEY = "druppie-internal-secret-key"
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", _DEFAULT_INTERNAL_KEY)
+_environment = os.getenv("ENVIRONMENT", "development").lower()
+if INTERNAL_API_KEY == _DEFAULT_INTERNAL_KEY:
+    if _environment in ("production", "staging", "prod"):
+        raise RuntimeError(
+            "INTERNAL_API_KEY is using the insecure default value. "
+            "Set a unique INTERNAL_API_KEY in your .env file for production deployments."
+        )
     logger.warning(
-        "internal_api_key_not_configured",
-        message="INTERNAL_API_KEY not set - internal API authentication disabled",
+        "INTERNAL_API_KEY is using the default development value. "
+        "Set INTERNAL_API_KEY in .env for production."
     )
-    INTERNAL_API_KEY = "disabled"  # Prevent empty string matching
 
 
 async def verify_internal_api_key(
@@ -237,13 +243,15 @@ async def verify_internal_api_key(
     """Verify internal API key for MCP server requests.
 
     MCP servers use this to authenticate when calling backend endpoints.
+    Uses hmac.compare_digest for constant-time comparison to prevent timing attacks.
     """
     if not x_internal_api_key:
         raise HTTPException(
             status_code=401,
             detail="Missing internal API key",
         )
-    if x_internal_api_key != INTERNAL_API_KEY:
+    # Use constant-time comparison to prevent timing attacks
+    if not hmac.compare_digest(x_internal_api_key, INTERNAL_API_KEY):
         raise HTTPException(
             status_code=403,
             detail="Invalid internal API key",

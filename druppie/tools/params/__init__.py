@@ -27,16 +27,30 @@ from .builtin import (
 )
 from .coding import (
     BatchWriteFilesParams,
-    CommitAndPushParams,
-    CreateBranchParams,
     CreatePullRequestParams,
     DeleteFileParams,
-    GetGitStatusParams,
     ListDirParams,
+    MakeDesignParams,
     MergePullRequestParams,
-    MergeToMainParams,
     ReadFileParams,
+    RunGitParams,
     WriteFileParams,
+)
+from .archimate import (
+    GetElementParams,
+    GetImpactParams,
+    GetStatisticsParams,
+    GetViewParams,
+    ListElementsParams,
+    ListViewsParams,
+    SearchModelParams,
+)
+from .registry import (
+    GetAgentParams,
+    GetMcpServerParams,
+    GetSkillParams,
+    GetToolParams,
+    ListComponentsParams,
 )
 from .docker import (
     DockerBuildParams,
@@ -60,15 +74,21 @@ __all__ = [
     # Coding
     "ReadFileParams",
     "WriteFileParams",
+    "MakeDesignParams",
     "BatchWriteFilesParams",
     "ListDirParams",
     "DeleteFileParams",
-    "CommitAndPushParams",
-    "CreateBranchParams",
-    "MergeToMainParams",
+    "RunGitParams",
     "CreatePullRequestParams",
     "MergePullRequestParams",
-    "GetGitStatusParams",
+    # Archimate
+    "GetStatisticsParams",
+    "ListElementsParams",
+    "GetElementParams",
+    "ListViewsParams",
+    "GetViewParams",
+    "SearchModelParams",
+    "GetImpactParams",
     # Docker
     "DockerBuildParams",
     "DockerRunParams",
@@ -78,6 +98,12 @@ __all__ = [
     "DockerListContainersParams",
     "DockerInspectParams",
     "DockerExecCommandParams",
+    # Registry
+    "ListComponentsParams",
+    "GetAgentParams",
+    "GetSkillParams",
+    "GetMcpServerParams",
+    "GetToolParams",
     # Builtin
     "DoneParams",
     "HitlAskQuestionParams",

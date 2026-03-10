@@ -5,18 +5,24 @@ AI agent governance platform with MCP tool permissions and approval workflows.
 ## Quick Start
 
 ```bash
-# 1. Configure environment
+# 1. Clone (--recursive pulls in the sandbox submodule)
+git clone --recursive <repo-url>
+cd cleaner-druppie
+
+# 2. Configure environment
 cp .env.example .env
 # Edit .env and add your LLM API key (ZAI_API_KEY or DEEPINFRA_API_KEY)
 
-# 2. Start (first time includes --profile init)
+# 3. Start (first time includes --profile init)
 docker compose --profile dev --profile init up -d
 
-# 3. Open the app
+# 4. Open the app
 open http://localhost:5273
 ```
 
 First startup takes a few minutes to build images and initialize services.
+
+> **Already cloned without `--recursive`?** Run: `git submodule update --init`
 
 ## Daily Usage
 
@@ -87,6 +93,8 @@ docker compose logs -f                       # All services
 docker compose logs -f druppie-backend-dev   # Backend only
 docker compose logs -f druppie-frontend-dev  # Frontend only
 docker compose logs -f keycloak              # Keycloak only
+docker compose logs -f sandbox-control-plane # Sandbox control plane
+docker compose logs -f sandbox-manager       # Sandbox manager
 ```
 
 ### Reset
@@ -97,7 +105,7 @@ docker compose --profile reset-db run --rm reset-db
 
 # Hard reset - wipes EVERYTHING and re-initializes Keycloak & Gitea
 docker compose --profile reset-hard run --rm reset-hard
-docker compose --profile dev up -d   # Then start the app
+docker compose --profile dev up -d --build   # Rebuild + start (MCP servers need --build)
 ```
 
 **Soft reset keeps:** User accounts, Keycloak config, Gitea repos
@@ -178,6 +186,15 @@ KEYCLOAK_PORT=8181
 GITEA_PORT=3101
 ```
 
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/FEATURES.md](docs/FEATURES.md) | Functional features: agents, workflows, approvals, HITL, sandbox coding |
+| [docs/TECHNICAL.md](docs/TECHNICAL.md) | Technical architecture: backend, database, agent runtime, security |
+| [docs/SANDBOX.md](docs/SANDBOX.md) | Sandbox infrastructure: OpenCode integration, provider resilience, Kata Containers |
+| [docs/BACKLOG.md](docs/BACKLOG.md) | Bugs, technical debt, and improvement ideas |
+
 ## Troubleshooting
 
 **Check logs:**
@@ -188,7 +205,7 @@ docker compose logs -f
 **Fresh start:**
 ```bash
 docker compose --profile reset-hard run --rm reset-hard
-docker compose --profile dev up -d
+docker compose --profile dev up -d --build
 ```
 
 **Container won't start:**

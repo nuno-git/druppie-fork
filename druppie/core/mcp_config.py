@@ -29,7 +29,7 @@ Example mcp_config.yaml:
         tools:
           - name: write_file
             requires_approval: false
-          - name: commit_and_push
+          - name: run_git
             requires_approval: false
 """
 

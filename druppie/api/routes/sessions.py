@@ -259,16 +259,27 @@ async def retry_from_run(
         user_id=str(user_id),
     )
 
-    # Spawn background task
-    create_session_task(
-        session_id,
-        _run_retry_background(
-            session_id=session_id,
-            agent_run_id=agent_run_id,
-            planned_prompt=body.planned_prompt if body else None,
-        ),
-        name=f"retry-{session_id}",
-    )
+    # Spawn background task — if this fails, revert session status so it
+    # doesn't stay stuck as ACTIVE with no background task running.
+    try:
+        create_session_task(
+            session_id,
+            _run_retry_background(
+                session_id=session_id,
+                agent_run_id=agent_run_id,
+                planned_prompt=body.planned_prompt if body else None,
+            ),
+            name=f"retry-{session_id}",
+        )
+    except SessionTaskConflict:
+        service.mark_failed(session_id, "Failed to start retry: task conflict")
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
+        )
+    except Exception:
+        service.mark_failed(session_id, "Failed to start retry background task")
+        raise
 
     return {
         "success": True,
@@ -333,12 +344,23 @@ async def resume_session(
         user_id=str(user_id),
     )
 
-    # Spawn background task
-    create_session_task(
-        session_id,
-        _run_resume_background(session_id=session_id),
-        name=f"resume-{session_id}",
-    )
+    # Spawn background task — if this fails, revert session status so it
+    # doesn't stay stuck as ACTIVE with no background task running.
+    try:
+        create_session_task(
+            session_id,
+            _run_resume_background(session_id=session_id),
+            name=f"resume-{session_id}",
+        )
+    except SessionTaskConflict:
+        service.mark_failed(session_id, "Failed to resume: task conflict")
+        raise HTTPException(
+            status_code=409,
+            detail="A task is already running for this session",
+        )
+    except Exception:
+        service.mark_failed(session_id, "Failed to start resume background task")
+        raise
 
     return {
         "success": True,
