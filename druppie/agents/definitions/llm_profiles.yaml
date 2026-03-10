@@ -13,7 +13,7 @@ profiles:
     - provider: deepinfra
       model: moonshotai/Kimi-K2.5-Turbo
     - provider: zai
-      model: glm-4.7
+      model: glm-5
     - provider: ollama
       model: gpt-oss:120b
     - provider: azure_foundry
@@ -30,6 +30,8 @@ profiles:
       model: gpt-oss:20b
     - provider: azure_foundry
       model: GPT-5-MINI
+    - provider: zai
+      model: glm-5
 
 
   ollama:

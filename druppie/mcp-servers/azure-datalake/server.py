@@ -22,21 +22,26 @@ logger = logging.getLogger("azure-datalake-mcp")
 mcp = FastMCP("Azure Data Lake MCP Server")
 
 # Parse pre-configured lake configs from environment variables
-# Format: AZURE_DATA_LAKE_1=name:account_name:key, AZURE_DATA_LAKE_2=...
+# Format: AZURE_DATA_LAKE_1=account_name:key  (name defaults to account_name)
+#     or: AZURE_DATA_LAKE_1=name:account_name:key
 DATALAKE_CONFIGS = {}
 for i in range(1, 10):
     config = os.getenv(f"AZURE_DATA_LAKE_{i}")
     if config:
         parts = config.split(":", 2)  # Split into at most 3 parts (key may contain colons)
         if len(parts) >= 3:
-            DATALAKE_CONFIGS[parts[0]] = {
-                "name": parts[0],
-                "account_name": parts[1],
-                "key": parts[2],
-            }
-            logger.info(f"Loaded pre-configured lake: {parts[0]}")
+            name, account_name, key = parts[0], parts[1], parts[2]
+        elif len(parts) == 2:
+            name, account_name, key = parts[0], parts[0], parts[1]
         else:
-            logger.warning(f"Invalid AZURE_DATA_LAKE_{i} format. Expected name:account:key")
+            logger.warning(f"Invalid AZURE_DATA_LAKE_{i} format. Expected account_name:key")
+            continue
+        DATALAKE_CONFIGS[name] = {
+            "name": name,
+            "account_name": account_name,
+            "key": key,
+        }
+        logger.info(f"Loaded pre-configured lake: {name}")
 
 logger.info(f"Loaded {len(DATALAKE_CONFIGS)} pre-configured lakes")
 
@@ -48,9 +53,13 @@ module = AzureDataLakeModule(datalake_configs=DATALAKE_CONFIGS)
 async def list_datalakes() -> dict:
     """List all pre-configured Azure Data Lakes.
 
+    Call this FIRST to discover available lake names. Use the returned 'name'
+    field as the lake_name parameter in all other azure-datalake tools.
+    Authentication is handled automatically — never pass keys yourself.
+
     Returns:
         Dict with list of configured lakes (name, account_name).
-        Note: Public lakes can be accessed ad-hoc via account_url in other tools.
+        Public lakes can also be accessed ad-hoc via account_url in other tools.
     """
     return module.list_datalakes()
 
@@ -62,9 +71,14 @@ async def test_connection(
 ) -> dict:
     """Test connection to a Data Lake.
 
+    You MUST provide either lake_name or account_url.
+    For pre-configured lakes, pass lake_name (from list_datalakes) —
+    authentication is injected automatically.
+    For public lakes, pass account_url (e.g., https://account.blob.core.windows.net).
+
     Args:
-        lake_name: Name of a pre-configured lake (uses stored key)
-        account_url: Full URL to a public lake, e.g., https://account.dfs.core.windows.net
+        lake_name: Name from list_datalakes (authentication handled automatically)
+        account_url: Full URL to a public lake (anonymous access)
 
     Returns:
         Dict with connection status and container count if successful.
@@ -79,9 +93,13 @@ async def list_containers(
 ) -> dict:
     """List containers (file systems) in a Data Lake.
 
+    You MUST provide either lake_name or account_url.
+    For pre-configured lakes, pass lake_name (from list_datalakes) —
+    authentication is injected automatically.
+
     Args:
-        lake_name: Name of a pre-configured lake
-        account_url: Full URL to a public lake
+        lake_name: Name from list_datalakes (authentication handled automatically)
+        account_url: Full URL to a public lake (anonymous access)
 
     Returns:
         Dict with list of containers (name, last_modified).
@@ -99,10 +117,14 @@ async def list_paths(
 ) -> dict:
     """List files and directories in a container path.
 
+    You MUST provide either lake_name or account_url.
+    For pre-configured lakes, pass lake_name (from list_datalakes) —
+    authentication is injected automatically.
+
     Args:
         container: Container/file system name (required)
-        lake_name: Name of a pre-configured lake
-        account_url: Full URL to a public lake
+        lake_name: Name from list_datalakes (authentication handled automatically)
+        account_url: Full URL to a public lake (anonymous access)
         path: Path within container (default: root)
         recursive: List recursively (default: false)
 
@@ -128,11 +150,15 @@ async def read_file(
 ) -> dict:
     """Read a CSV or Parquet file from Data Lake.
 
+    You MUST provide either lake_name or account_url.
+    For pre-configured lakes, pass lake_name (from list_datalakes) —
+    authentication is injected automatically.
+
     Args:
         container: Container/file system name (required)
         path: Path to the file (required)
-        lake_name: Name of a pre-configured lake
-        account_url: Full URL to a public lake
+        lake_name: Name from list_datalakes (authentication handled automatically)
+        account_url: Full URL to a public lake (anonymous access)
         max_rows: Maximum rows to return (default: 1000)
 
     Returns:
@@ -156,11 +182,15 @@ async def read_file_schema(
 ) -> dict:
     """Read only the schema/structure of a CSV or Parquet file.
 
+    You MUST provide either lake_name or account_url.
+    For pre-configured lakes, pass lake_name (from list_datalakes) —
+    authentication is injected automatically.
+
     Args:
         container: Container/file system name (required)
         path: Path to the file (required)
-        lake_name: Name of a pre-configured lake
-        account_url: Full URL to a public lake
+        lake_name: Name from list_datalakes (authentication handled automatically)
+        account_url: Full URL to a public lake (anonymous access)
 
     Returns:
         Dict with schema (column names and types) only, no data rows.
