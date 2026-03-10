@@ -897,12 +897,7 @@ mcps:
     - make_design
     - list_dir
     - commit_and_push
-  registry:
-    - list_components
-    - get_agent
-    - get_skill
-    - get_mcp_server
-    - get_tool
+
 
 # LAYERED APPROVAL SYSTEM:
 # When business_analyst calls make_design (to create functional_design.md),
