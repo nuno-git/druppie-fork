@@ -81,17 +81,8 @@ def load_agent_definitions() -> list[AgentResponse]:
             else:
                 mcp_list = mcps
 
-            # Determine category based on agent ID
-            agent_id = data.get("id", "")
-            category = "system"
-            if agent_id in ["router", "planner"]:
-                category = "system"
-            elif agent_id in ["reviewer", "tester"]:
-                category = "quality"
-            elif agent_id in ["deployer"]:
-                category = "deployment"
-            else:
-                category = "execution"
+            # Read category from YAML definition (default: execution)
+            category = data.get("category", "execution")
 
             agent = AgentResponse(
                 id=data.get("id"),

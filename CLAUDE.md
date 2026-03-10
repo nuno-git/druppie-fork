@@ -49,9 +49,7 @@ docker compose --profile reset-db run --rm reset-db
 # Hard reset (wipe all data + re-initialize)
 docker compose --profile dev down
 docker compose --profile infra --profile reset-hard run --rm reset-hard
-
-# Rebuild after Dockerfile changes
-docker compose --profile dev up -d --build
+docker compose --profile dev up -d --build   # Always --build after reset (MCP servers have no volume mount)
 ```
 
 ### Backend (Python/FastAPI)
@@ -85,6 +83,9 @@ druppie/
 ├── agents/        # YAML agent definitions
 ├── core/          # MCP client, config loading
 └── mcp-servers/   # Coding (9001), Docker (9002) microservices
+
+vendor/
+└── open-inspect/  # Git submodule — sandbox infrastructure (background-agents)
 
 frontend/
 ├── src/pages/     # React pages

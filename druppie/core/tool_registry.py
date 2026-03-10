@@ -51,16 +51,32 @@ from druppie.tools.params.builtin import (
 )
 from druppie.tools.params.coding import (
     BatchWriteFilesParams,
-    CommitAndPushParams,
-    CreateBranchParams,
     CreatePullRequestParams,
     DeleteFileParams,
+    ExecuteCodingTaskParams,
     GetGitStatusParams,
     ListDirParams,
+    MakeDesignParams,
     MergePullRequestParams,
-    MergeToMainParams,
     ReadFileParams,
+    RunGitParams,
     WriteFileParams,
+)
+from druppie.tools.params.archimate import (
+    GetElementParams,
+    GetImpactParams,
+    GetStatisticsParams,
+    GetViewParams,
+    ListElementsParams,
+    ListViewsParams,
+    SearchModelParams,
+)
+from druppie.tools.params.registry import (
+    GetAgentParams,
+    GetMcpServerParams,
+    GetSkillParams,
+    GetToolParams,
+    ListComponentsParams,
 )
 from druppie.tools.params.docker import (
     DockerBuildParams,
@@ -88,15 +104,15 @@ PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
     # Coding tools
     ("coding", "read_file"): ReadFileParams,
     ("coding", "write_file"): WriteFileParams,
+    ("coding", "make_design"): MakeDesignParams,
     ("coding", "batch_write_files"): BatchWriteFilesParams,
     ("coding", "list_dir"): ListDirParams,
     ("coding", "delete_file"): DeleteFileParams,
-    ("coding", "commit_and_push"): CommitAndPushParams,
-    ("coding", "create_branch"): CreateBranchParams,
-    ("coding", "merge_to_main"): MergeToMainParams,
+    ("coding", "run_git"): RunGitParams,
     ("coding", "create_pull_request"): CreatePullRequestParams,
     ("coding", "merge_pull_request"): MergePullRequestParams,
     ("coding", "get_git_status"): GetGitStatusParams,
+    ("builtin", "execute_coding_task"): ExecuteCodingTaskParams,
     # Docker tools
     ("docker", "build"): DockerBuildParams,
     ("docker", "run"): DockerRunParams,
@@ -112,6 +128,20 @@ PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
     ("coding", "get_coverage_report"): GetCoverageReportParams,
     ("coding", "install_test_dependencies"): InstallTestDependenciesParams,
     ("coding", "validate_tdd"): ValidateTddParams,
+    # Archimate tools
+    ("archimate", "get_statistics"): GetStatisticsParams,
+    ("archimate", "list_elements"): ListElementsParams,
+    ("archimate", "get_element"): GetElementParams,
+    ("archimate", "list_views"): ListViewsParams,
+    ("archimate", "get_view"): GetViewParams,
+    ("archimate", "search_model"): SearchModelParams,
+    ("archimate", "get_impact"): GetImpactParams,
+    # Registry tools
+    ("registry", "list_components"): ListComponentsParams,
+    ("registry", "get_agent"): GetAgentParams,
+    ("registry", "get_skill"): GetSkillParams,
+    ("registry", "get_mcp_server"): GetMcpServerParams,
+    ("registry", "get_tool"): GetToolParams,
     # Builtin tools
     ("builtin", "done"): DoneParams,
     ("builtin", "hitl_ask_question"): HitlAskQuestionParams,

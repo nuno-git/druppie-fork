@@ -29,8 +29,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import structlog
 
-from druppie.api.deps import get_current_user, get_optional_user, get_session_repository, get_execution_repository
-from druppie.repositories import SessionRepository, ExecutionRepository
+from druppie.api.deps import get_current_user, get_optional_user, get_session_repository, get_user_roles
+from druppie.repositories import SessionRepository
 from druppie.domain.common import SessionStatus
 from druppie.api.errors import NotFoundError, AuthorizationError
 from druppie.core.background_tasks import create_session_task, SessionTaskConflict, run_session_task
@@ -160,6 +160,12 @@ async def chat(
                     status="error",
                     message=f"Session {session_id_param} not found",
                 )
+            # Only owner or admin can continue a session
+            user_roles = get_user_roles(user)
+            is_owner = existing.user_id == user_id
+            is_admin = "admin" in user_roles
+            if not is_owner and not is_admin:
+                raise AuthorizationError("Cannot continue this session")
             # Only allow continuing a completed session
             if existing.status != SessionStatus.COMPLETED.value:
                 return ChatResponse(

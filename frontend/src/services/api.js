@@ -39,7 +39,11 @@ const request = async (endpoint, options = {}) => {
       console.error('❌ Error Response:', { status: response.status, error })
       console.timeEnd('Duration')
       console.groupEnd()
-      throw new Error(error.detail || error.error || `Request failed: ${response.status}`)
+      const msg = [error.message, error.detail, error.error].find(v => typeof v === 'string' && v)
+        || `Request failed: ${response.status}`
+      const err = new Error(msg)
+      err.status = response.status
+      throw err
     }
 
     if (response.status === 204) {
@@ -47,14 +51,20 @@ const request = async (endpoint, options = {}) => {
     }
 
     const data = await response.json()
-    console.log('✅ Response:', data)
-    console.timeEnd('Duration')
-    console.groupEnd()
+    // Only log in development mode
+    if (import.meta.env.DEV) {
+      console.log('✅ Response:', data)
+      console.timeEnd('Duration')
+      console.groupEnd()
+    }
     return data
   } catch (err) {
-    console.error('❌ Request Failed:', err.message)
-    console.timeEnd('Duration')
-    console.groupEnd()
+    // Only log in development mode
+    if (import.meta.env.DEV) {
+      console.error('❌ Request Failed:', err.message)
+      console.timeEnd('Duration')
+      console.groupEnd()
+    }
     throw err
   }
 }
@@ -64,8 +74,8 @@ export const getUser = () => request('/api/user')
 
 // ============ Chat (Main Entry Point) ============
 export const sendChat = async (message, sessionId = null, conversationHistory = null) => {
-  const mcpServers = await getMCPServers()
-  console.log('MCP Servers:', mcpServers)
+  // Note: getMCPServers() was previously called here but the result was unused.
+  // The backend handles MCP server selection internally.
   return request('/api/chat', {
     method: 'POST',
     body: JSON.stringify({
@@ -235,6 +245,24 @@ export const getAgents = async () => {
   return response.agents || []
 }
 export const getAgent = (agentId) => request(`/api/agents/${agentId}`)
+
+// ============ Sandbox ============
+export const getSandboxEvents = async (sessionId, messageId) => {
+  const allEvents = []
+  let cursor = null
+  // Paginate through all events
+  while (true) {
+    let url = `/api/sandbox-sessions/${sessionId}/events?limit=500`
+    if (messageId) url += `&message_id=${messageId}`
+    if (cursor) url += `&cursor=${cursor}`
+    const data = await request(url)
+    const events = data.events || []
+    allEvents.push(...events)
+    if (!data.hasMore || !data.cursor) break
+    cursor = data.cursor
+  }
+  return { events: allEvents }
+}
 
 // ============ Health ============
 export const getHealth = () => request('/health')

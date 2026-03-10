@@ -12,6 +12,27 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Compiled regex patterns for test output parsing
+_RE_JEST = re.compile(
+    r"Tests:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(?:(\d+)\s+passed,\s*)?(\d+)\s+total"
+)
+_RE_VITEST = re.compile(
+    r"Tests\s+(?:(\d+)\s+failed\s*\|?\s*)?(?:(\d+)\s+skipped\s*\|?\s*)?(?:(\d+)\s+passed\s*)?\((\d+)\)"
+)
+_RE_GENERIC_PASSED = re.compile(r"(\d+)\s+(?:passing|passed)")
+_RE_GENERIC_FAILED = re.compile(r"(\d+)\s+(?:failing|failed)")
+_RE_GENERIC_SKIPPED = re.compile(r"(\d+)\s+(?:pending|skipped)")
+
+
+def _extract_counts(match):
+    """Convert a 4-group regex match (failed, skipped, passed, total) to a dict."""
+    return {
+        "failed": int(match.group(1)) if match.group(1) else 0,
+        "skipped": int(match.group(2)) if match.group(2) else 0,
+        "passed": int(match.group(3)) if match.group(3) else 0,
+        "total": int(match.group(4)),
+    }
+
 
 class TestingModule:
     """Testing operations module."""
@@ -82,26 +103,32 @@ class TestingModule:
         """
         config_info = {}
         
-        # Check for Vitest (Vite/React)
+        # Check for Vitest (works with or without vite.config)
         vite_config = workspace_path / "vite.config.js"
         vite_ts_config = workspace_path / "vite.config.ts"
+        vitest_config = workspace_path / "vitest.config.js"
+        vitest_ts_config = workspace_path / "vitest.config.ts"
         package_json = workspace_path / "package.json"
-        
-        if vite_config.exists() or vite_ts_config.exists():
-            if package_json.exists():
-                try:
-                    data = json.loads(package_json.read_text())
-                    deps = data.get("devDependencies", {})
-                    if "vitest" in deps:
-                        config_info = {
-                            "version": deps.get("vitest", "unknown"),
-                            "config_file": str(vite_config) if vite_config.exists() else str(vite_ts_config),
-                            "coverage_file": "coverage/coverage-final.json",
-                            "doc_url": self.FRAMEWORK_CONFIG["vitest"]["doc_url"],
-                        }
-                        return "vitest", "npm run test", config_info
-                except json.JSONDecodeError:
-                    pass
+
+        if package_json.exists():
+            try:
+                data = json.loads(package_json.read_text())
+                deps = data.get("devDependencies", {})
+                if "vitest" in deps:
+                    config_file = None
+                    for cfg in [vitest_config, vitest_ts_config, vite_config, vite_ts_config]:
+                        if cfg.exists():
+                            config_file = str(cfg)
+                            break
+                    config_info = {
+                        "version": deps.get("vitest", "unknown"),
+                        "config_file": config_file or "package.json",
+                        "coverage_file": "coverage/coverage-final.json",
+                        "doc_url": self.FRAMEWORK_CONFIG["vitest"]["doc_url"],
+                    }
+                    return "vitest", "npm run test", config_info
+            except json.JSONDecodeError:
+                pass
         
         # Check for Pytest (Python)
         pytest_ini = workspace_path / "pytest.ini"
@@ -274,7 +301,7 @@ class TestingModule:
         return (None, None)
 
     def _parse_test_output(self, stdout: str, stderr: str, framework: str) -> Dict[str, Any]:
-        """Parse test output to extract pass/fail counts (copied from coding MCP)."""
+        """Parse test output to extract pass/fail counts."""
         result = {
             "total": 0,
             "passed": 0,
@@ -286,30 +313,39 @@ class TestingModule:
         combined = stdout + "\n" + stderr
         
         if framework == "pytest":
-            match = re.search(
-                r"(\d+)\s+passed(?:,\s+(\d+)\s+failed)?(?:,\s+(\d+)\s+skipped)?",
-                combined,
-            )
-            if match:
-                result["passed"] = int(match.group(1))
-                result["failed"] = int(match.group(2)) if match.group(2) else 0
-                result["skipped"] = int(match.group(3)) if match.group(3) else 0
+            # Pytest summary line has components in any order: "1 failed, 3 passed, 1 skipped in 2.34s"
+            passed_m = re.search(r"(\d+)\s+passed", combined)
+            failed_m = re.search(r"(\d+)\s+failed", combined)
+            skipped_m = re.search(r"(\d+)\s+skipped", combined)
+            error_m = re.search(r"(\d+)\s+error", combined)
+            if passed_m or failed_m:
+                result["passed"] = int(passed_m.group(1)) if passed_m else 0
+                result["failed"] = int(failed_m.group(1)) if failed_m else 0
+                if error_m:
+                    result["failed"] += int(error_m.group(1))
+                result["skipped"] = int(skipped_m.group(1)) if skipped_m else 0
                 result["total"] = result["passed"] + result["failed"] + result["skipped"]
-            failed_matches = re.findall(r"FAILED\s+([\w:]+)", combined)
+            failed_matches = re.findall(r"FAILED\s+([\w:.\/\-]+)", combined)
             result["failed_tests"] = failed_matches
-        
+
         elif framework in ("jest", "vitest"):
-            match = re.search(
-                r"Tests:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(?:(\d+)\s+passed,\s*)?(\d+)\s+total",
-                combined,
-            )
-            if match:
-                result["failed"] = int(match.group(1)) if match.group(1) else 0
-                result["skipped"] = int(match.group(2)) if match.group(2) else 0
-                result["passed"] = int(match.group(3)) if match.group(3) else 0
-                result["total"] = int(match.group(4))
-            failed_matches = re.findall(r"FAIL\s+(.+)", combined)
-            result["failed_tests"] = failed_matches
+            jest_match = _RE_JEST.search(combined)
+            vitest_match = _RE_VITEST.search(combined)
+            if jest_match:
+                result.update(_extract_counts(jest_match))
+            elif vitest_match:
+                result.update(_extract_counts(vitest_match))
+            else:
+                passed_m = _RE_GENERIC_PASSED.search(combined)
+                failed_m = _RE_GENERIC_FAILED.search(combined)
+                skipped_m = _RE_GENERIC_SKIPPED.search(combined)
+                if passed_m or failed_m:
+                    result["passed"] = int(passed_m.group(1)) if passed_m else 0
+                    result["failed"] = int(failed_m.group(1)) if failed_m else 0
+                    result["skipped"] = int(skipped_m.group(1)) if skipped_m else 0
+                    result["total"] = result["passed"] + result["failed"] + result["skipped"]
+            failed_matches = re.findall(r"(?:FAIL|×|✗)\s+(.+)", combined)
+            result["failed_tests"] = [m.strip() for m in failed_matches]
         
         elif framework == "mocha":
             passing = re.search(r"(\d+)\s+passing", combined)
@@ -372,45 +408,57 @@ class TestingModule:
         
         elif framework == "shell":
             # Shell scripts (test.sh) - try to parse common patterns
-            # First try pytest/jest/vitest patterns in case test.sh wraps them
-            pytest_match = re.search(
-                r"(\d+)\s+passed(?:,\s+(\d+)\s+failed)?(?:,\s+(\d+)\s+skipped)?",
-                combined,
-            )
-            jest_match = re.search(
-                r"Tests:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(?:(\d+)\s+passed,\s*)?(\d+)\s+total",
-                combined,
-            )
-            if pytest_match:
-                result["passed"] = int(pytest_match.group(1))
-                result["failed"] = int(pytest_match.group(2)) if pytest_match.group(2) else 0
-                result["skipped"] = int(pytest_match.group(3)) if pytest_match.group(3) else 0
-                result["total"] = result["passed"] + result["failed"] + result["skipped"]
-            elif jest_match:
-                result["failed"] = int(jest_match.group(1)) if jest_match.group(1) else 0
-                result["skipped"] = int(jest_match.group(2)) if jest_match.group(2) else 0
-                result["passed"] = int(jest_match.group(3)) if jest_match.group(3) else 0
-                result["total"] = int(jest_match.group(4))
+            jest_match = _RE_JEST.search(combined)
+            vitest_match = _RE_VITEST.search(combined)
+            if jest_match:
+                result.update(_extract_counts(jest_match))
+            elif vitest_match:
+                result.update(_extract_counts(vitest_match))
             else:
-                # Count PASS/FAIL lines as a last resort
-                pass_count = len(re.findall(r"(?:PASS|OK|✓|pass)", combined, re.IGNORECASE))
-                fail_count = len(re.findall(r"(?:FAIL|ERROR|✗|fail)", combined, re.IGNORECASE))
-                result["passed"] = pass_count
-                result["failed"] = fail_count
-                result["total"] = pass_count + fail_count
+                passed_m = _RE_GENERIC_PASSED.search(combined)
+                failed_m = _RE_GENERIC_FAILED.search(combined)
+                skipped_m = _RE_GENERIC_SKIPPED.search(combined)
+                if passed_m or failed_m:
+                    result["passed"] = int(passed_m.group(1)) if passed_m else 0
+                    result["failed"] = int(failed_m.group(1)) if failed_m else 0
+                    result["skipped"] = int(skipped_m.group(1)) if skipped_m else 0
+                    result["total"] = result["passed"] + result["failed"] + result["skipped"]
+                else:
+                    # Count PASS/FAIL lines as a last resort
+                    pass_count = len(re.findall(r"(?:PASS|OK|✓|pass)", combined, re.IGNORECASE))
+                    fail_count = len(re.findall(r"(?:FAIL|ERROR|✗|fail)", combined, re.IGNORECASE))
+                    result["passed"] = pass_count
+                    result["failed"] = fail_count
+                    result["total"] = pass_count + fail_count
 
         else:
-            match = re.search(r"(\d+)\s+(?:passing|passed)", combined)
-            if match:
-                result["passed"] = int(match.group(1))
-            match = re.search(r"(\d+)\s+(?:failing|failed)", combined)
-            if match:
-                result["failed"] = int(match.group(1))
-            match = re.search(r"(\d+)\s+(?:pending|skipped)", combined)
-            if match:
-                result["skipped"] = int(match.group(1))
+            passed_m = _RE_GENERIC_PASSED.search(combined)
+            failed_m = _RE_GENERIC_FAILED.search(combined)
+            skipped_m = _RE_GENERIC_SKIPPED.search(combined)
+            if passed_m:
+                result["passed"] = int(passed_m.group(1))
+            if failed_m:
+                result["failed"] = int(failed_m.group(1))
+            if skipped_m:
+                result["skipped"] = int(skipped_m.group(1))
             result["total"] = result["passed"] + result["failed"] + result["skipped"]
-        
+
+        # Generic fallback: if framework-specific parsing returned nothing,
+        # try common patterns regardless of framework
+        if result["total"] == 0 and combined.strip():
+            vitest_m = _RE_VITEST.search(combined)
+            if vitest_m:
+                result.update(_extract_counts(vitest_m))
+            else:
+                passed_m = _RE_GENERIC_PASSED.search(combined)
+                failed_m = _RE_GENERIC_FAILED.search(combined)
+                skipped_m = _RE_GENERIC_SKIPPED.search(combined)
+                if passed_m or failed_m:
+                    result["passed"] = int(passed_m.group(1)) if passed_m else 0
+                    result["failed"] = int(failed_m.group(1)) if failed_m else 0
+                    result["skipped"] = int(skipped_m.group(1)) if skipped_m else 0
+                    result["total"] = result["passed"] + result["failed"] + result["skipped"]
+
         return result
 
     def parse_test_results(
@@ -487,18 +535,23 @@ class TestingModule:
         elif framework == "vitest":
             required = ["vitest", "@vitest/coverage-v8"]
             installed = []
-            
+
+            node_modules = self.workspace_root / "node_modules"
+            has_node_modules = node_modules.exists()
+
             package_json = self.workspace_root / "package.json"
-            if package_json.exists():
+            if package_json.exists() and has_node_modules:
                 try:
                     data = json.loads(package_json.read_text())
                     deps = data.get("devDependencies", {})
                     for req in required:
                         if req in deps:
-                            installed.append(f"{req}@{deps[req]}")
+                            # Verify the package is actually installed in node_modules
+                            if (node_modules / req).exists():
+                                installed.append(f"{req}@{deps[req]}")
                 except json.JSONDecodeError:
                     pass
-            
+
             return {
                 "required": required,
                 "installed": installed,
@@ -508,18 +561,22 @@ class TestingModule:
         elif framework == "jest":
             required = ["jest"]
             installed = []
-            
+
+            node_modules = self.workspace_root / "node_modules"
+            has_node_modules = node_modules.exists()
+
             package_json = self.workspace_root / "package.json"
-            if package_json.exists():
+            if package_json.exists() and has_node_modules:
                 try:
                     data = json.loads(package_json.read_text())
                     deps = data.get("devDependencies", {})
                     for req in required:
                         if req in deps:
-                            installed.append(f"{req}@{deps[req]}")
+                            if (node_modules / req).exists():
+                                installed.append(f"{req}@{deps[req]}")
                 except json.JSONDecodeError:
                     pass
-            
+
             return {
                 "required": required,
                 "installed": installed,
@@ -581,25 +638,42 @@ class TestingModule:
             with open(coverage_file_path) as f:
                 data = json.load(f)
             
-            # Vitest/Jest format (v8 coverage provider)
+            # Vitest/Jest istanbul coverage-final.json format
+            # Each file entry has: statementMap, s (hit counts), branchMap, b, fnMap, f
+            # "s": {"0": 1, "1": 3, "2": 0} — keys are indices, values are hit counts
             if framework in ["vitest", "jest"]:
-                total_lines = sum(f.get("l", {}).get("total", 0) for f in data.values())
-                covered_lines = sum(f.get("l", {}).get("covered", 0) for f in data.values())
+                total_statements = 0
+                covered_statements = 0
+                file_coverage = []
+
+                for file_path, stats in data.items():
+                    s = stats.get("s", {})
+                    f = stats.get("f", {})
+                    b = stats.get("b", {})
+
+                    file_total = len(s)
+                    file_covered = sum(1 for v in s.values() if v > 0)
+                    total_statements += file_total
+                    covered_statements += file_covered
+
+                    fn_total = len(f)
+                    fn_covered = sum(1 for v in f.values() if v > 0)
+                    br_total = sum(len(v) for v in b.values()) if b else 0
+                    br_covered = sum(sum(1 for c in v if c > 0) for v in b.values()) if b else 0
+
+                    file_coverage.append({
+                        "file": file_path,
+                        "statement_percent": (file_covered / file_total * 100) if file_total > 0 else 0,
+                        "branch_percent": (br_covered / br_total * 100) if br_total > 0 else 0,
+                        "function_percent": (fn_covered / fn_total * 100) if fn_total > 0 else 0,
+                        "statements_covered": file_covered,
+                        "statements_total": file_total,
+                    })
+
                 return {
-                    "overall_percent": (covered_lines / total_lines * 100) if total_lines > 0 else 0,
-                    "file_coverage": [
-                        {
-                            "file": file_path,
-                            "statement_percent": stats.get("s", {}).get("pct", 0),
-                            "branch_percent": stats.get("b", {}).get("pct", 0),
-                            "function_percent": stats.get("f", {}).get("pct", 0),
-                            "line_percent": stats.get("l", {}).get("pct", 0),
-                            "lines_covered": stats.get("l", {}).get("covered", 0),
-                            "lines_total": stats.get("l", {}).get("total", 0),
-                        }
-                        for file_path, stats in data.items()
-                    ],
-                    "format": "v8",
+                    "overall_percent": (covered_statements / total_statements * 100) if total_statements > 0 else 0,
+                    "file_coverage": file_coverage,
+                    "format": "istanbul",
                 }
             
             # Pytest format

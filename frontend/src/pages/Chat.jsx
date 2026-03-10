@@ -67,7 +67,7 @@ const ChatPage = () => {
           </button>
         )}
         {sessionId ? (
-          <SessionDetail sessionId={sessionId} initialViewMode={initialMode} />
+          <SessionDetail key={sessionId} sessionId={sessionId} initialViewMode={initialMode} />
         ) : (
           <NewSessionPanel onSessionCreated={selectSession} />
         )}

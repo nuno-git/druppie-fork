@@ -310,12 +310,30 @@ class ToolDefinition(BaseModel):
         - "[]" string instead of empty array []
         - "true"/"false" strings instead of booleans
 
+        Also strips unknown arguments that aren't in the tool's schema.
+        Some LLMs copy fields from tool responses into subsequent calls
+        (e.g., copying "size" from read_file response into write_file call).
+
         This is used as a fallback when initial validation fails.
         """
         import json
+        import structlog
+        _logger = structlog.get_logger()
+
+        # Strip unknown arguments not in the tool's schema
+        known_fields = set(self.params_model.model_fields.keys())
+        extra_keys = set(arguments.keys()) - known_fields
+        if extra_keys:
+            _logger.warning(
+                "stripping_unknown_tool_arguments",
+                tool=self.full_name,
+                extra_keys=sorted(extra_keys),
+            )
 
         normalized = {}
         for key, value in arguments.items():
+            if key in extra_keys:
+                continue  # Strip unknown arguments
             if isinstance(value, str):
                 # Handle string "null" -> None
                 if value.lower() == "null":
@@ -360,7 +378,13 @@ class ToolDefinition(BaseModel):
         # First try with original arguments
         try:
             validated = self.params_model.model_validate(arguments)
-            return True, None, validated, None  # No normalization needed
+            # Pydantic may coerce types (e.g. "600" -> 600). Return the
+            # coerced dict so the MCP server receives correct types.
+            coerced = validated.model_dump(exclude_unset=True)
+            coerced_diff = {k: coerced[k] for k in coerced if k in arguments and coerced[k] != arguments[k]}
+            if coerced_diff:
+                return True, None, validated, {**arguments, **coerced}
+            return True, None, validated, None  # No coercion needed
         except ValidationError as first_error:
             pass  # Try normalization fallback
 

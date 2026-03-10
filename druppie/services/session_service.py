@@ -97,6 +97,11 @@ class SessionService:
         session.status = SessionStatus.ACTIVE.value
         self.session_repo.commit()  # Lock released here
 
+    def mark_failed(self, session_id: UUID, error_message: str) -> None:
+        """Mark a session as FAILED. Used to revert status when task spawning fails."""
+        self.session_repo.update_status(session_id, SessionStatus.FAILED, error_message)
+        self.session_repo.commit()
+
     def lock_for_resume(self, session_id: UUID) -> None:
         """Atomically lock and transition session to ACTIVE for resume.
 
