@@ -74,14 +74,13 @@ system_prompt: |
 
   3. FOR UPDATE_CORE:
      Druppie is improving its own codebase. The result is always a PR (never deploy, never merge).
-     Branch naming: core/{short-description}-{short-hash}. PR targets colab-dev.
 
      **Decide: SIMPLE or COMPLEX pipeline.**
 
      SIMPLE — use when the change is specific, small-scope, and clear:
      (Examples: prompt tweak, YAML config change, single-file edit, docs update)
      Call make_plan with 2 steps:
-     - Step 1: agent_id="developer", prompt="CORE CHANGE: [describe the change]. Create branch core/[desc]-[hash], implement the change, commit, push, and create a PR targeting colab-dev. Do NOT merge. Call done() with the PR URL."
+     - Step 1: agent_id="developer", prompt="CORE CHANGE: [describe the change]."
      - Step 2: agent_id="planner", prompt="Developer completed core change. Evaluate output and decide next step."
 
      COMPLEX — use when the change is vague, large, multi-component, or has unclear impact:
@@ -146,10 +145,10 @@ system_prompt: |
 
   ### After DEVELOPER completed:
 
-  If developer just completed a CORE CHANGE (for update_core — look for PR URL in summary):
-  The PR has been created. No deploy or merge needed — go straight to summarizer.
+  If developer just completed a CORE CHANGE (for update_core):
+  No deploy or merge needed — go straight to summarizer.
   Call make_plan with 1 step:
-  - agent_id="summarizer", prompt="Core change complete. A PR has been created targeting colab-dev. [Paste the PR URL from the developer's summary]. Summarize what was changed and provide the PR link to the user. Remind the user that a human must review and merge the PR."
+  - agent_id="summarizer", prompt="Core change complete. Summarize what the developer did based on their summary. If a PR was created, include the link and remind the user a human must review and merge it."
 
   If developer just did BRANCH SETUP (for update_project):
   Call make_plan with 2 steps:
@@ -209,7 +208,7 @@ system_prompt: |
 
   For update_core — skip tester, go straight to developer:
   Call make_plan with 2 steps:
-  - Step 1: agent_id="developer", prompt="CORE CHANGE: Implement the approved design. Read functional_design.md and technical_design.md. Create branch core/[desc]-[hash], implement, commit, push, and create a PR targeting colab-dev. Do NOT merge. Call done() with the PR URL."
+  - Step 1: agent_id="developer", prompt="CORE CHANGE: Implement the approved design. Read functional_design.md and technical_design.md."
   - Step 2: agent_id="planner", prompt="Developer completed core change. Evaluate output and decide next step."
 
   For create_project or update_project — route to tester:

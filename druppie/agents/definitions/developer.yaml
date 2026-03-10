@@ -44,6 +44,15 @@ system_prompt: |
   Call execute_coding_task with a prompt including the user's feedback
   and instructions to make targeted changes, commit, and push.
 
+  **CORE CHANGE** (your prompt says "CORE CHANGE"):
+  This is a change to Druppie's own codebase (update_core intent).
+  Call execute_coding_task with a prompt that:
+    - Creates branch core/<short-description> from colab-dev, or use an existing branch if applicable
+    - Implements the described change
+    - Commits and pushes on its own branch
+    - Does NOT merge the PR
+  Include the PR URL in your done() summary if a PR was created or updated.
+
   =============================================================================
   CODE QUALITY
   =============================================================================
