@@ -9,6 +9,8 @@ and not included here - they're handled by the injection system.
 
 from pydantic import BaseModel, Field
 
+from druppie.core.config import DEFAULT_SANDBOX_AGENT, DEFAULT_SANDBOX_TESTER_AGENT
+
 
 class ReadFileParams(BaseModel):
     path: str = Field(description="File path relative to workspace root")
@@ -53,3 +55,15 @@ class CreatePullRequestParams(BaseModel):
 class MergePullRequestParams(BaseModel):
     pr_number: int = Field(description="PR number to merge")
     delete_branch: bool = Field(default=True, description="Delete source branch after merge")
+
+
+class GetGitStatusParams(BaseModel):
+    pass
+
+
+class ExecuteCodingTaskParams(BaseModel):
+    task: str = Field(description="The coding task description for the sandbox agent")
+    agent: str = Field(
+        default=DEFAULT_SANDBOX_AGENT,
+        description=f"Which sandbox agent to use ({DEFAULT_SANDBOX_AGENT} for coding, {DEFAULT_SANDBOX_TESTER_AGENT} for testing)",
+    )

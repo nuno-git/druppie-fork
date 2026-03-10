@@ -12,6 +12,7 @@ Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
 Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
 """
 
+import os
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
     from druppie.repositories import ExecutionRepository
 
 logger = structlog.get_logger()
+
+from druppie.sandbox.model_resolver import get_agent_chain, resolve_sandbox_models
 
 
 # =============================================================================
@@ -184,6 +187,40 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                 },
                 "required": ["skill_name"],
+            },
+        },
+    },
+    "execute_coding_task": {
+        "type": "function",
+        "function": {
+            "name": "execute_coding_task",
+            "description": (
+                "Execute a coding task in an isolated sandbox. "
+                "IMPORTANT: Each call spawns a FRESH container that clones the project repo from git. "
+                "The sandbox is DESTROYED after the task completes. "
+                "Any work NOT committed and pushed within the sandbox is LOST. "
+                "There is NO persistent workspace between calls — each call starts from the latest git state. "
+                "The sandbox agent will automatically commit and push its work. "
+                "To build on previous work, simply call again — the new sandbox clones the repo with all previous pushes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": (
+                            "The complete task prompt for the sandbox coding agent. "
+                            "This is the ONLY instruction it receives, so be self-contained: "
+                            "describe what to implement, reference files to read for context "
+                            "(e.g. SPEC.md, test files), and include any patterns to follow."
+                        ),
+                    },
+                    "agent": {
+                        "type": "string",
+                        "description": "Which sandbox agent to use",
+                    },
+                },
+                "required": ["task"],
             },
         },
     },
@@ -849,6 +886,93 @@ async def invoke_skill(
 
 
 # =============================================================================
+# SANDBOX CODING TASK IMPLEMENTATION
+# =============================================================================
+
+async def execute_sandbox_coding_task(
+    args: dict,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Create a sandbox session, send the prompt, register ownership, return immediately.
+
+    Does NOT poll for completion. The control plane will send a webhook
+    to /api/sandbox-sessions/{sandbox_session_id}/complete when done.
+
+    Returns:
+        Dict with status="waiting_sandbox" and sandbox_session_id on success.
+        The caller (tool_executor) should set ToolCallStatus.WAITING_SANDBOX.
+    """
+    import json as _json
+    from druppie.sandbox import create_and_start_sandbox, SandboxCreateError
+
+    task = args.get("task", "")
+    from druppie.core.config import DEFAULT_SANDBOX_AGENT
+    agent = args.get("agent", DEFAULT_SANDBOX_AGENT)
+
+    if not task:
+        return {"success": False, "error": "task is required"}
+
+    model_config = resolve_sandbox_models(agent)
+    model = model_config.primary_model
+
+    # Get project context from the session via repositories
+    from druppie.repositories import SessionRepository, ProjectRepository
+    db = execution_repo.db
+    session_repo = SessionRepository(db)
+    session = session_repo.get_by_id(session_id)
+    if not session:
+        return {"success": False, "error": f"Session {session_id} not found"}
+
+    if not session.user_id:
+        return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
+
+    repo_owner = os.getenv("GITEA_ORG", "druppie")
+    repo_name = ""
+    if session.project_id:
+        project_repo = ProjectRepository(db)
+        project = project_repo.get_by_id(session.project_id)
+        if project:
+            repo_owner = project.repo_owner or repo_owner
+            repo_name = project.repo_name or ""
+
+    try:
+        result = await create_and_start_sandbox(
+            task_prompt=task,
+            model=model,
+            agent_name=agent,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            user_id=session.user_id,
+            session_id=session_id,
+            model_chain=_json.dumps(get_agent_chain(agent)),
+            model_chain_index=0,
+            title=f"Druppie sandbox: {task[:80]}",
+            source="api",
+            author_id="druppie-agent",
+            db=db,
+        )
+
+        logger.info(
+            "execute_coding_task: prompt sent, pausing for webhook",
+            sandbox_session_id=result["sandbox_session_id"],
+            message_id=result["message_id"],
+        )
+
+        return {
+            "success": True,
+            "status": "waiting_sandbox",
+            "sandbox_session_id": result["sandbox_session_id"],
+            "message_id": result["message_id"],
+        }
+
+    except SandboxCreateError as e:
+        logger.error("execute_coding_task: failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
 # TEST REPORT TOOL IMPLEMENTATION
 # =============================================================================
 
@@ -973,6 +1097,13 @@ async def execute_builtin(
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
         )
+    elif tool_name == "execute_coding_task":
+        return await execute_sandbox_coding_task(
+            args=args,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+        )
     elif tool_name == "test_report":
         return await test_report(
             iteration=args.get("iteration", 0),
@@ -1005,6 +1136,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "set_intent",
         "create_message",
         "invoke_skill",
+        "execute_coding_task",
         "test_report",
     )
 

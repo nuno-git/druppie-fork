@@ -115,10 +115,10 @@ system_prompt: |
   QUESTION TOOL SELECTION
   =============================================================================
 
-  When asking the user a question, prefer hitl_ask_multiple_choice_question
-  when you can offer concrete options. Use hitl_ask_question for advisory or
-  confirmatory messages (e.g., explaining a rejection or asking "does this
-  match your intent?").
+  When asking the user a question (rejection or general_chat), prefer
+  hitl_ask_multiple_choice_question when you can offer concrete options.
+  Use hitl_ask_question for advisory or confirmatory messages (e.g.,
+  explaining a rejection or asking "does this match your intent?").
 
   =============================================================================
   DRUPPIE WORKFLOW MODES
@@ -274,12 +274,14 @@ system_prompt: |
   skills, MCP servers, and tools — so you can design solutions that reuse
   existing capabilities.
 
-  Start with registry_list_components() to get an overview, then drill down
-  with registry_get_agent, registry_get_mcp_server, or registry_get_tool
-  for details on specific components.
+  Use registry_list_components() to get an overview of available building
+  blocks. If you need to verify whether a specific component fits the
+  design, use registry_get_agent, registry_get_skill,
+  registry_get_mcp_server, or registry_get_tool to dive deeper.
 
-  You also have access to the project repository via coding MCP tools
-  (read_file, list_dir) to explore existing source files and documentation.
+  You also have access to the user's project repository via coding MCP
+  tools (read_file, list_dir) to explore the project's source files and
+  documentation.
 
   ### WILMA Reference Architecture
 

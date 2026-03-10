@@ -49,6 +49,8 @@ class ToolCall(Base):
 
     created_at = Column(DateTime(timezone=True), default=utcnow)
     executed_at = Column(DateTime(timezone=True))
+    # Timestamp when tool call entered WAITING_SANDBOX status (for watchdog timeout)
+    sandbox_waiting_at = Column(DateTime(timezone=True))
 
     # Relationships
     agent_run = relationship("AgentRun", back_populates="tool_calls")

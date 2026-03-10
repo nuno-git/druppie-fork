@@ -197,7 +197,7 @@ export const extractTestResults = (agentRun) => {
         try {
           const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
           if (raw) results.push(raw)
-        } catch { /* malformed JSON — skip */ }
+        } catch { /* malformed result JSON — skip */ }
       }
       // Also extract from test_report builtin tool calls
       if (tc.tool_name === 'test_report' && tc.status === 'completed' && tc.result) {
@@ -206,7 +206,6 @@ export const extractTestResults = (agentRun) => {
           // Convert test_report format to run_tests format for TestResultCard
           if (raw && tc.arguments) {
             const args = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments
-            // Convert to numbers to avoid string concatenation
             const passed = parseInt(args.passed_count) || 0
             const failed = parseInt(args.failed_count) || 0
             const testResult = {
@@ -310,6 +309,26 @@ export const extractTestErrors = (stdout, stderr, framework, failedTestNames) =>
   return errors
 }
 
+// --- Extract sandbox results from agent run's tool calls ---
+
+export const extractSandboxResults = (agentRun) => {
+  const results = []
+  agentRun?.llm_calls?.forEach((llm) => {
+    llm.tool_calls?.forEach((tc) => {
+      if (tc.tool_name === 'execute_coding_task' && tc.status !== 'waiting_sandbox' && tc.status !== 'pending' && tc.result) {
+        let raw
+        try {
+          raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+        } catch {
+          return
+        }
+        if (raw?.sandbox_session_id) results.push(raw)
+      }
+    })
+  })
+  return results
+}
+
 // --- Extract surfaced file writes from agent runs with surfaceFileWrites config ---
 
 export const extractSurfacedFileWrites = (agentRun) => {
@@ -319,7 +338,6 @@ export const extractSurfacedFileWrites = (agentRun) => {
   const files = []
   agentRun?.llm_calls?.forEach((llm) => {
     llm.tool_calls?.forEach((tc) => {
-      // Skip tool calls that have an approval (those render as InlineApproval)
       if (tc.approval) return
       if (tc.status !== 'completed') return
 
@@ -360,7 +378,43 @@ export const extractDependencyInstalls = (agentRun) => {
   return results
 }
 
+// --- Extract all notable items from an agent run in tool call order ---
+
+export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
+  const items = []
+  agentRun?.llm_calls?.forEach((llm) => {
+    llm.tool_calls?.forEach((tc) => {
+      // Approvals (only when no following message)
+      if (!hasFollowingMessage && tc.approval && tc.approval.status !== 'pending') {
+        items.push({ type: 'approval', tc })
+      }
+      // HITL questions
+      if (tc.tool_name?.includes('hitl_ask')) {
+        items.push({ type: 'question', tc, agentId: agentRun.agent_id })
+      }
+      // Test results
+      if (tc.tool_name === 'run_tests' && tc.status === 'completed' && tc.result) {
+        try {
+          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+          if (raw) items.push({ type: 'test', data: raw })
+        } catch { /* skip */ }
+      }
+      // Sandbox results
+      if (tc.tool_name === 'execute_coding_task' && tc.status !== 'waiting_sandbox' && tc.status !== 'pending' && tc.result) {
+        try {
+          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+          if (raw?.sandbox_session_id) items.push({ type: 'sandbox', data: raw })
+        } catch { /* skip */ }
+      }
+    })
+  })
+  return items
+}
+
+// Statuses that indicate a session is actively doing work or waiting for external input
+// Note: These are SessionStatus values. 'running' is an AgentRunStatus, not included here.
 export const ACTIVE_STATUSES = new Set([
-  'active', 'running', 'paused', 'paused_hitl', 'paused_tool',
-  'paused_approval', 'waiting_approval', 'waiting_answer',
+  'active', 'paused', 'paused_hitl', 'paused_tool',
+  'paused_approval', 'paused_sandbox', 'paused_crashed',
+  'waiting_approval', 'waiting_answer',
 ])
