@@ -420,12 +420,9 @@ File and git operations within workspace sandboxes.
 | `batch_write_files` | None (overridable per agent) | Write multiple files at once |
 | `list_dir` | None | List directory contents |
 | `delete_file` | None | Delete file from workspace |
-| `create_branch` | None | Create/switch git branch |
-| `commit_and_push` | None | Commit and push to Gitea |
-| `get_git_status` | None | Git status of workspace |
+| `run_git` | None | Execute whitelisted git commands (add, commit, push, status, checkout, log, diff, branch). Destructive flags blocked. Returns raw output. |
 | `create_pull_request` | None | Create PR on Gitea |
 | `merge_pull_request` | Developer | Merge PR and delete branch |
-| `merge_to_main` | Architect | Direct merge to main branch |
 | `execute_coding_task` | None | Execute coding task in isolated sandbox |
 | `make_design` | None (overridable per agent) | Write design document (FD/TD) with Mermaid syntax validation; file is rejected if Mermaid contains errors |
 | `revert_to_commit` | None (internal) | Hard reset + force push to a target commit |
@@ -765,7 +762,7 @@ Each tool is represented by a `ToolDefinition` (`druppie/domain/tool.py`) which 
 ```
 params/
   builtin.py   # DoneParams, MakePlanParams, HitlAskQuestionParams, ...
-  coding.py    # ReadFileParams, WriteFileParams, CommitAndPushParams, ...
+  coding.py    # ReadFileParams, WriteFileParams, RunGitParams, ...
   docker.py    # BuildImageParams, StartContainerParams, ...
 ```
 

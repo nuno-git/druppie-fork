@@ -51,16 +51,13 @@ from druppie.tools.params.builtin import (
 )
 from druppie.tools.params.coding import (
     BatchWriteFilesParams,
-    CommitAndPushParams,
-    CreateBranchParams,
     CreatePullRequestParams,
     DeleteFileParams,
-    GetGitStatusParams,
     ListDirParams,
     MakeDesignParams,
     MergePullRequestParams,
-    MergeToMainParams,
     ReadFileParams,
+    RunGitParams,
     WriteFileParams,
 )
 from druppie.tools.params.archimate import (
@@ -109,12 +106,9 @@ PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
     ("coding", "batch_write_files"): BatchWriteFilesParams,
     ("coding", "list_dir"): ListDirParams,
     ("coding", "delete_file"): DeleteFileParams,
-    ("coding", "commit_and_push"): CommitAndPushParams,
-    ("coding", "create_branch"): CreateBranchParams,
-    ("coding", "merge_to_main"): MergeToMainParams,
+    ("coding", "run_git"): RunGitParams,
     ("coding", "create_pull_request"): CreatePullRequestParams,
     ("coding", "merge_pull_request"): MergePullRequestParams,
-    ("coding", "get_git_status"): GetGitStatusParams,
     # Docker tools
     ("docker", "build"): DockerBuildParams,
     ("docker", "run"): DockerRunParams,

@@ -109,7 +109,7 @@ Authentication is handled by Keycloak via OAuth 2.0 / OIDC. Roles control what e
 | Role | Description |
 |------|-------------|
 | admin | Full platform access; can act on any approval regardless of required role |
-| architect | Can approve architecture designs and merge-to-main operations |
+| architect | Can approve architecture designs |
 | developer | Can approve Docker operations and pull request merges |
 | business_analyst | Can approve functional design writes |
 
@@ -148,7 +148,7 @@ When an agent calls a tool that requires approval, the workflow pauses until an 
 
 The **Tasks page** (`/tasks`) is the dedicated approval management interface. It serves as a centralized queue where users review and act on all pending approvals across all sessions.
 
-- **Role-filtered view**: Users only see approvals they are authorized to act on based on their roles. A developer sees Docker and PR merge approvals; an architect sees merge-to-main approvals; admins see everything.
+- **Role-filtered view**: Users only see approvals they are authorized to act on based on their roles. A developer sees Docker and PR merge approvals; admins see everything.
 - **Approval cards**: Each card shows the tool name, MCP server, full arguments (with expandable file content previews for write operations), the requesting agent, and a link to the parent session.
 - **Approve/reject actions**: Users approve or reject each item. Rejections require a reason that is passed back to the agent.
 - **Polling**: The Tasks page polls for new approvals every 1 second.
@@ -294,10 +294,10 @@ coding:
             description: "Path to the file"
         required: [path]
 
-    - name: merge_to_main
-      description: "Merge a branch into main"
+    - name: merge_pull_request
+      description: "Merge a pull request"
       requires_approval: true        # Approval gate
-      required_role: architect        # Only architects can approve
+      required_role: developer       # Only developers can approve
       parameters: ...
 ```
 

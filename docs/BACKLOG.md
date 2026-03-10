@@ -8,6 +8,7 @@ Last updated: 2026-03-03
 
 ## Summary
 
+- ~~Silent Push Failure in Git Tools~~ ✅ DONE
 - Per-Agent Model Selection Ignored
 - ~~Cancel/Resume Endpoint Missing on Backend~~ ✅ DONE
 - Token/Cost Tracking Half Implemented and Buggy
@@ -40,6 +41,12 @@ Last updated: 2026-03-03
 - General Pre-Validation System for Tool Arguments
 
 ---
+
+### ~~Silent Push Failure in Git Tools~~ (DONE)
+
+- **Resolved in:** `fix/commit-and-push-silent-failure` branch
+- **Bug:** `_do_commit_and_push()` returned `success: True` when `git push` failed, silently swallowing push errors. All agents that called `commit_and_push` could lose their work — changes were committed locally in the ephemeral workspace but never pushed to Gitea, with the timeline showing "completed."
+- **Fix:** Replaced four over-engineered git tools (`commit_and_push`, `create_branch`, `merge_to_main`, `get_git_status`) with a single `run_git` tool that executes whitelisted git subcommands and returns raw terminal output. Success is tied directly to git's exit code — push failures are now impossible to miss. Allowed subcommands: `add`, `commit`, `push`, `status`, `checkout`, `log`, `diff`, `branch`. Destructive flags (`--force`, `--hard`) are blocked. PR tools (`create_pull_request`, `merge_pull_request`) remain unchanged.
 
 ### ~~Per-Agent Model Selection Ignored~~ (DONE)
 
