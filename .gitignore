@@ -50,6 +50,7 @@ instance/
 .druppie/
 .playwright-mcp/
 .claude/
+.worktrees/
 
 # Docker volumes
 druppie-app/

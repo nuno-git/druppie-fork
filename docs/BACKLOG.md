@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-03-03
+Last updated: 2026-03-09
 
 ---
 
@@ -18,15 +18,15 @@ Last updated: 2026-03-03
 - Reviewer Agent Not Invoked
 - Workflows Directory Empty
 - Settings Page is Read-Only
-- Single LLM Provider at Runtime
-- No Session-Level Retry on LLM Failure
+- ~~Single LLM Provider at Runtime~~ ✅ DONE
+- ~~No Session-Level Retry on LLM Failure~~ ✅ DONE (sandbox resilience)
 - No Context Window Management
 - Unbounded Summary Accumulation Across Agents
 - No WebSocket Support
 - No API Rate Limiting
 - No Observability Infrastructure
 - Keycloak in Development Mode
-- Sandboxed Execution Environment for Agents
+- ~~Sandboxed Execution Environment for Agents~~ ✅ DONE
 - ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 - ~~Skills System~~ ✅ DONE
@@ -117,18 +117,16 @@ Last updated: 2026-03-03
 - The page displays user profile, system status, MCP servers, and agent configurations, but everything is read-only.
 - Despite being named "Settings," there are no configurable settings. It functions as a system information/status dashboard.
 
-### Single LLM Provider at Runtime
+### ~~Single LLM Provider at Runtime~~ (DONE)
 
-- Only one LLM provider can be active at a time, configured via the `LLM_PROVIDER` environment variable.
-- The singleton `LLMService` creates one client instance shared across all agents.
-- Cannot mix providers (e.g., use DeepInfra for one agent and Z.AI for another).
+- **Resolved in:** `feature/execute-coding-task` branch
+- Agents now reference shared LLM profiles with ordered provider chains. Sandbox coding uses model chains for automatic failover. See `docs/SANDBOX.md` for details.
 
-### No Session-Level Retry on LLM Failure
+### ~~No Session-Level Retry on LLM Failure~~ (DONE)
 
-- The LLM providers themselves have retry logic (max 3 retries with exponential backoff for transient errors like 500s and timeouts).
-- However, if all retries are exhausted, the agent loop raises an exception and the entire session fails. There is no higher-level retry or recovery mechanism.
-- A rate limit error or extended provider outage will fail the session permanently.
-- **Partial progress:** LLM retries now have an audit trail via the `llm_retries` database table, recording each attempt, error type, and delay. This supports debugging but does not change recovery behavior.
+- **Resolved in:** `feature/execute-coding-task` branch
+- Sandbox infrastructure has three-layer provider resilience: proxy failover (sub-second), failure detection signals, and Druppie-level retry with next model in chain. LLM retries have an audit trail via the `llm_retries` database table.
+- See `docs/SANDBOX.md` "Provider Resilience" for details.
 
 ### No Context Window Management
 
@@ -174,15 +172,11 @@ Last updated: 2026-03-03
 - No TLS configuration is present.
 - Suitable for development only.
 
-### Sandboxed Execution Environment for Agents
+### ~~Sandboxed Execution Environment for Agents~~ (DONE)
 
-- **Current state:** The MCP coding server (`mcp-coding`, port 9001) provides file and git operations but no command execution beyond git. Agents cannot build, run, or test the code they write within an isolated environment.
-- **Problem:** The Developer agent writes code but cannot verify it compiles or runs. The Deployer agent builds via Docker but has no pre-deploy validation step.
-- **Desired improvement:** Replace or extend the coding MCP server with a fully sandboxed environment per project/session where agents can safely execute shell commands (install dependencies, run builds, execute tests). This sandbox should:
-  - Be isolated and disposable (container-based or VM-based)
-  - Mirror the production environment that the Deployer agent will later deploy to, so agents can catch environment-specific issues early
-  - Be usable by both the test_executor agent (for running test suites) and the Developer agent (for build verification)
-- **Research needed:** Evaluate container-per-session vs shared sandbox approaches, security implications of command execution, and how to replicate the target production environment configuration inside the sandbox.
+- **Resolved in:** `feature/execute-coding-task` branch
+- Full sandbox infrastructure implemented using Open-Inspect (git submodule at `vendor/open-inspect/`). Docker sandboxes with OpenCode provide isolated execution per task. Webhook + pause/resume pattern replaces long-polling. Provider resilience with three-layer failover. Optional Kata Containers for VM-level isolation.
+- See `docs/SANDBOX.md` for full details.
 
 ### ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
 

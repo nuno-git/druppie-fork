@@ -84,6 +84,9 @@ druppie/
 ├── core/          # MCP client, config loading
 └── mcp-servers/   # Coding (9001), Docker (9002) microservices
 
+vendor/
+└── open-inspect/  # Git submodule — sandbox infrastructure (background-agents)
+
 frontend/
 ├── src/pages/     # React pages
 ├── src/services/  # API client, Keycloak, WebSocket
