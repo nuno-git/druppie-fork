@@ -11,6 +11,7 @@ from uuid import UUID
 
 import structlog
 
+from druppie.db.models.project import Project as ProjectModel
 from druppie.domain.common import SessionStatus
 from druppie.repositories.execution_repository import ExecutionRepository
 from druppie.repositories.session_repository import SessionRepository
@@ -139,9 +140,23 @@ class RevertService:
         )
 
         if git_analysis["pre_run_commit_sha"]:
+            # Look up repo info from the session's project so the MCP coding
+            # server can clone/fetch the right Gitea repo before resetting.
+            repo_name = None
+            repo_owner = None
+            if session.project_id:
+                project = self.session_repo.db.query(ProjectModel).filter_by(
+                    id=session.project_id
+                ).first()
+                if project:
+                    repo_name = project.repo_name
+                    repo_owner = project.repo_owner
+
             await self._revert_git_state(
                 session_id=session_id,
                 target_commit=git_analysis["pre_run_commit_sha"],
+                repo_name=repo_name,
+                repo_owner=repo_owner,
             )
 
         for pr_number in git_analysis["pr_numbers"]:
@@ -272,19 +287,31 @@ class RevertService:
         except (json.JSONDecodeError, TypeError):
             return None
 
-    async def _revert_git_state(self, session_id: UUID, target_commit: str) -> None:
+    async def _revert_git_state(
+        self,
+        session_id: UUID,
+        target_commit: str,
+        repo_name: str | None = None,
+        repo_owner: str | None = None,
+    ) -> None:
         """Call revert_to_commit MCP tool to reset git state.
 
         Raises RuntimeError if the revert fails — callers must not proceed
         with re-execution when git state hasn't been reverted.
         """
+        args: dict = {
+            "target_commit": target_commit,
+            "session_id": str(session_id),
+        }
+        if repo_name:
+            args["repo_name"] = repo_name
+        if repo_owner:
+            args["repo_owner"] = repo_owner
+
         result = await self.mcp_http.call(
             server="coding",
             tool="_internal_revert_to_commit",
-            args={
-                "target_commit": target_commit,
-                "session_id": str(session_id),
-            },
+            args=args,
             timeout_seconds=120.0,
         )
 

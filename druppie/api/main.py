@@ -11,12 +11,12 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agents, approvals, chat, deployments, mcp_bridge, mcps, projects, questions, sessions, workspace
+from druppie.api.routes import agents, approvals, chat, deployments, mcp_bridge, mcps, projects, questions, sandbox, sessions, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
 from druppie.agents import Agent
-from druppie.core.background_tasks import shutdown_background_tasks
+from druppie.core.background_tasks import create_tracked_task, shutdown_background_tasks
 
 logger = structlog.get_logger()
 
@@ -65,6 +65,14 @@ async def lifespan(app: FastAPI):
     # that were interrupted by server shutdown/crash)
     _recover_zombie_sessions()
 
+    # Clean up orphaned sandbox Gitea users from previous runs
+    from druppie.sandbox.gitea_cleanup import cleanup_orphaned_sandbox_users
+    await cleanup_orphaned_sandbox_users()
+
+    # Start sandbox watchdog (detects stuck WAITING_SANDBOX tool calls)
+    from druppie.api.routes.sandbox import sandbox_watchdog_loop
+    create_tracked_task(sandbox_watchdog_loop(), name="sandbox-watchdog")
+
     yield
 
     # Shutdown — wait for background tasks before exiting
@@ -108,6 +116,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.router, prefix="/api", tags=["Agents"])
     app.include_router(mcps.router, prefix="/api", tags=["MCPs"])
     app.include_router(mcp_bridge.router, prefix="/api/mcp", tags=["MCP Bridge"])
+    app.include_router(sandbox.router, prefix="/api", tags=["Sandbox"])
 
     @app.get("/health")
     async def health_check():

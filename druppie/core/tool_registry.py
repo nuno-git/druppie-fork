@@ -53,6 +53,8 @@ from druppie.tools.params.coding import (
     BatchWriteFilesParams,
     CreatePullRequestParams,
     DeleteFileParams,
+    ExecuteCodingTaskParams,
+    GetGitStatusParams,
     ListDirParams,
     MakeDesignParams,
     MergePullRequestParams,
@@ -109,6 +111,8 @@ PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
     ("coding", "run_git"): RunGitParams,
     ("coding", "create_pull_request"): CreatePullRequestParams,
     ("coding", "merge_pull_request"): MergePullRequestParams,
+    ("coding", "get_git_status"): GetGitStatusParams,
+    ("builtin", "execute_coding_task"): ExecuteCodingTaskParams,
     # Docker tools
     ("docker", "build"): DockerBuildParams,
     ("docker", "run"): DockerRunParams,

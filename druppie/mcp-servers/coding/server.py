@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from fastmcp import FastMCP
@@ -1210,7 +1211,6 @@ async def run_tests(
 
         logger.info("Running tests in workspace %s: %s", workspace_path, test_command)
 
-        import time
         start_time = time.time()
         try:
             # Use shlex.split + shell=False to prevent shell injection.
