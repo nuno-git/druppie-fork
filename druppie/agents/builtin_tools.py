@@ -187,6 +187,47 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
             },
         },
     },
+    "test_report": {
+        "type": "function",
+        "function": {
+            "name": "test_report",
+            "description": "Report structured test iteration results. Call this after each test run to log progress. The data is automatically stored as a ToolCall record for tracking.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "iteration": {
+                        "type": "integer",
+                        "description": "Current iteration number (1-based)",
+                    },
+                    "tests_passed": {
+                        "type": "boolean",
+                        "description": "Whether all tests passed in this iteration",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "Human-readable summary of this iteration's results",
+                    },
+                    "test_command": {
+                        "type": "string",
+                        "description": "The test command that was executed",
+                    },
+                    "failed_count": {
+                        "type": "integer",
+                        "description": "Number of failed tests",
+                    },
+                    "passed_count": {
+                        "type": "integer",
+                        "description": "Number of passed tests",
+                    },
+                    "error_classification": {
+                        "type": "string",
+                        "description": "Classification of the error: assertion_failure, missing_function, import_error, type_error, syntax_error, configuration_error, environment_error, test_error",
+                    },
+                },
+                "required": ["iteration", "tests_passed", "summary"],
+            },
+        },
+    },
 }
 
 
@@ -808,6 +849,67 @@ async def invoke_skill(
 
 
 # =============================================================================
+# TEST REPORT TOOL IMPLEMENTATION
+# =============================================================================
+
+async def test_report(
+    iteration: int,
+    tests_passed: bool,
+    summary: str,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+    changed_files: list[str] | None = None,
+    test_command: str | None = None,
+    failed_count: int | None = None,
+    passed_count: int | None = None,
+    error_classification: str | None = None,
+    strategy: str | None = None,
+) -> dict:
+    """Report structured test iteration results.
+
+    Called by test_executor agent to log each test iteration. The data is
+    automatically stored as a ToolCall record for tracking and analysis.
+
+    Args:
+        iteration: Current iteration number (1-based)
+        tests_passed: Whether all tests passed
+        summary: Human-readable summary
+        session_id: Session UUID
+        agent_run_id: Agent run UUID
+        execution_repo: Execution repository
+        changed_files: Files changed in this iteration
+        test_command: Test command executed
+        failed_count: Number of failed tests
+        passed_count: Number of passed tests
+        error_classification: Type of error encountered
+        strategy: Fix strategy used
+
+    Returns:
+        Acknowledgment with iteration data
+    """
+    logger.info(
+        "test_report",
+        session_id=str(session_id),
+        agent_run_id=str(agent_run_id),
+        iteration=iteration,
+        tests_passed=tests_passed,
+        failed_count=failed_count,
+        passed_count=passed_count,
+        error_classification=error_classification,
+        strategy=strategy,
+        summary=summary[:200] if summary else "",
+    )
+
+    return {
+        "status": "recorded",
+        "iteration": iteration,
+        "tests_passed": tests_passed,
+        "message": f"Test report for iteration {iteration} recorded. {'PASS' if tests_passed else 'FAIL'}",
+    }
+
+
+# =============================================================================
 # TOOL EXECUTION (called by ToolExecutor)
 # =============================================================================
 
@@ -871,6 +973,21 @@ async def execute_builtin(
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
         )
+    elif tool_name == "test_report":
+        return await test_report(
+            iteration=args.get("iteration", 0),
+            tests_passed=args.get("tests_passed", False),
+            summary=args.get("summary", ""),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+            changed_files=args.get("changed_files"),
+            test_command=args.get("test_command"),
+            failed_count=args.get("failed_count"),
+            passed_count=args.get("passed_count"),
+            error_classification=args.get("error_classification"),
+            strategy=args.get("strategy"),
+        )
     else:
         return {
             "success": False,
@@ -888,6 +1005,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "set_intent",
         "create_message",
         "invoke_skill",
+        "test_report",
     )
 
 

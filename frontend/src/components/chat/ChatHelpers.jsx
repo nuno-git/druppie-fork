@@ -8,6 +8,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import CodeBlock from '../CodeBlock'
 import MermaidBlock from '../MermaidBlock'
+import { getAgentConfig } from '../../utils/agentConfig'
 
 // --- Markdown components (code blocks with syntax highlighting + copy) ---
 
@@ -193,8 +194,40 @@ export const extractTestResults = (agentRun) => {
   agentRun?.llm_calls?.forEach((llm) => {
     llm.tool_calls?.forEach((tc) => {
       if (tc.tool_name === 'run_tests' && tc.status === 'completed' && tc.result) {
-        const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
-        if (raw) results.push(raw)
+        try {
+          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+          if (raw) results.push(raw)
+        } catch { /* malformed JSON — skip */ }
+      }
+      // Also extract from test_report builtin tool calls
+      if (tc.tool_name === 'test_report' && tc.status === 'completed' && tc.result) {
+        try {
+          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+          // Convert test_report format to run_tests format for TestResultCard
+          if (raw && tc.arguments) {
+            const args = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments
+            // Convert to numbers to avoid string concatenation
+            const passed = parseInt(args.passed_count) || 0
+            const failed = parseInt(args.failed_count) || 0
+            const testResult = {
+              success: args.tests_passed || false,
+              framework: 'unknown',
+              exit_code: args.tests_passed ? 0 : 1,
+              stdout: args.summary || '',
+              stderr: '',
+              elapsed_seconds: null,
+              results: {
+                total: passed + failed,
+                passed: passed,
+                failed: failed,
+                skipped: 0,
+                failed_tests: [],
+              },
+              coverage: null,
+            }
+            results.push(testResult)
+          }
+        } catch { /* malformed JSON — skip */ }
       }
     })
   })
@@ -275,6 +308,56 @@ export const extractTestErrors = (stdout, stderr, framework, failedTestNames) =>
   }
 
   return errors
+}
+
+// --- Extract surfaced file writes from agent runs with surfaceFileWrites config ---
+
+export const extractSurfacedFileWrites = (agentRun) => {
+  const config = getAgentConfig(agentRun?.agent_id)
+  if (!config.surfaceFileWrites) return []
+
+  const files = []
+  agentRun?.llm_calls?.forEach((llm) => {
+    llm.tool_calls?.forEach((tc) => {
+      // Skip tool calls that have an approval (those render as InlineApproval)
+      if (tc.approval) return
+      if (tc.status !== 'completed') return
+
+      const toolName = tc.tool_name || ''
+      const args = tc.arguments || {}
+
+      if (toolName.includes('write_file') && !toolName.includes('batch')) {
+        if (args.path && args.content) {
+          files.push({ path: args.path, content: args.content })
+        }
+      } else if (toolName.includes('batch_write_files')) {
+        const batchFiles = args.files
+        if (batchFiles && typeof batchFiles === 'object') {
+          Object.entries(batchFiles).forEach(([path, content]) => {
+            files.push({ path, content })
+          })
+        }
+      }
+    })
+  })
+  return files
+}
+
+// --- Extract dependency install results from agent run's tool calls ---
+
+export const extractDependencyInstalls = (agentRun) => {
+  const results = []
+  agentRun?.llm_calls?.forEach((llm) => {
+    llm.tool_calls?.forEach((tc) => {
+      if (tc.tool_name?.includes('install_test_dependencies') && tc.status === 'completed' && tc.result) {
+        try {
+          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
+          if (raw) results.push(raw)
+        } catch { /* malformed JSON — skip */ }
+      }
+    })
+  })
+  return results
 }
 
 export const ACTIVE_STATUSES = new Set([

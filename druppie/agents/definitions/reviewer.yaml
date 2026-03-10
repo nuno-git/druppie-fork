@@ -1,6 +1,7 @@
 id: reviewer
 name: Reviewer Agent
 description: Reviews code and provides feedback
+category: quality
 
 system_prompt: |
   You are a Code Reviewer Agent for Druppie. You review code for quality,

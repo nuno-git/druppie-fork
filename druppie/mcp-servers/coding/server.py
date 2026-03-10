@@ -37,8 +37,14 @@ GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
 GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 
-# Initialize testing module
-testing_module = TestingModule(str(WORKSPACE_ROOT))
+def _testing_module(workspace_path: str | Path) -> TestingModule:
+    """Create a TestingModule for the given workspace.
+
+    This creates a new instance per call to avoid concurrency issues —
+    a module-level singleton with mutated workspace_root would race
+    under concurrent requests.
+    """
+    return TestingModule(str(workspace_path))
 
 # In-memory workspace registry (in production, use DB)
 workspaces: dict[str, dict] = {}
@@ -1112,8 +1118,8 @@ async def get_test_framework(
         else:
             return {"success": False, "error": "Either session_id or workspace_id is required"}
 
-        testing_module.workspace_root = workspace_path
-        framework_info = testing_module.get_test_framework_info()
+        tm = _testing_module(workspace_path)
+        framework_info = tm.get_test_framework_info()
 
         if framework_info["framework"] == "unknown":
             return {
@@ -1171,12 +1177,12 @@ async def run_tests(
         else:
             return {"success": False, "error": "Either session_id or workspace_id is required"}
 
-        testing_module.workspace_root = workspace_path
+        tm = _testing_module(workspace_path)
 
         # Detect framework if command not provided
         if not test_command or test_command.strip().lower() in ("null", "none", ""):
             test_command = None
-            framework_info = testing_module.get_test_framework_info()
+            framework_info = tm.get_test_framework_info()
             if framework_info["framework"] == "unknown":
                 return {
                     "success": False,
@@ -1188,10 +1194,15 @@ async def run_tests(
             framework = "unknown"
             if "pytest" in test_command:
                 framework = "pytest"
-            elif "jest" in test_command or "npm test" in test_command:
-                framework = "jest"
             elif "vitest" in test_command:
                 framework = "vitest"
+            elif "jest" in test_command:
+                framework = "jest"
+            elif test_command.strip() in ("npm test", "npm run test"):
+                # Generic npm test — try to detect the actual framework
+                framework_info = tm.get_test_framework_info()
+                if framework_info["framework"] != "unknown":
+                    framework = framework_info["framework"]
             elif "go test" in test_command:
                 framework = "go"
             elif "cargo test" in test_command:
@@ -1202,9 +1213,11 @@ async def run_tests(
         import time
         start_time = time.time()
         try:
+            # Use shlex.split + shell=False to prevent shell injection.
+            # test_command can come from the LLM agent via prompt injection.
             result = subprocess.run(
-                test_command,
-                shell=True,
+                shlex.split(test_command),
+                shell=False,
                 cwd=str(workspace_path),
                 capture_output=True,
                 text=True,
@@ -1212,14 +1225,14 @@ async def run_tests(
             )
             elapsed = time.time() - start_time
 
-            parsed_results = testing_module.parse_test_results(
+            parsed_results = tm.parse_test_results(
                 result.stdout + "\n" + result.stderr,
                 framework,
             )
 
             coverage = None
             if framework in ["vitest", "jest", "pytest"]:
-                coverage = testing_module.parse_coverage_json(framework)
+                coverage = tm.parse_coverage_json(framework)
                 if coverage:
                     parsed_results["coverage"] = coverage
 
@@ -1288,15 +1301,15 @@ async def get_coverage_report(
         else:
             return {"success": False, "error": "Either session_id or workspace_id is required"}
 
-        testing_module.workspace_root = workspace_path
+        tm = _testing_module(workspace_path)
 
         if not framework:
-            framework_info = testing_module.get_test_framework_info()
+            framework_info = tm.get_test_framework_info()
             if framework_info["framework"] == "unknown":
                 return {"success": False, "error": "Could not auto-detect test framework."}
             framework = framework_info["framework"]
 
-        coverage = testing_module.parse_coverage_json(framework)
+        coverage = tm.parse_coverage_json(framework)
 
         if not coverage:
             return {
@@ -1352,15 +1365,15 @@ async def install_test_dependencies(
         else:
             return {"success": False, "error": "Either session_id or workspace_id is required"}
 
-        testing_module.workspace_root = workspace_path
+        tm = _testing_module(workspace_path)
 
         if not framework:
-            framework_info = testing_module.get_test_framework_info()
+            framework_info = tm.get_test_framework_info()
             if framework_info["framework"] == "unknown":
                 return {"success": False, "error": "Could not auto-detect test framework."}
             framework = framework_info["framework"]
 
-        deps_check = testing_module._check_framework_dependencies(framework)
+        deps_check = tm._check_framework_dependencies(framework)
         missing = deps_check.get("missing", [])
 
         if not missing:
@@ -1382,6 +1395,7 @@ async def install_test_dependencies(
                         cwd=str(workspace_path),
                         capture_output=True,
                         text=True,
+                        timeout=120,
                     )
                     results.append({
                         "dependency": dep,
@@ -1393,13 +1407,54 @@ async def install_test_dependencies(
                     results.append({"dependency": dep, "success": False, "error": str(e)})
 
         elif framework in ["vitest", "jest"]:
-            for dep in missing:
+            # Run npm install first if node_modules doesn't exist
+            node_modules = workspace_path / "node_modules"
+            if not node_modules.exists():
+                logger.info("node_modules missing, running npm install first in %s", workspace_path)
+                try:
+                    npm_result = subprocess.run(
+                        ["npm", "install"],
+                        cwd=str(workspace_path),
+                        capture_output=True,
+                        text=True,
+                        timeout=180,
+                    )
+                    results.append({
+                        "dependency": "npm install (all)",
+                        "success": npm_result.returncode == 0,
+                        "output": npm_result.stdout,
+                        "error": npm_result.stderr if npm_result.returncode != 0 else None,
+                    })
+                    if npm_result.returncode != 0:
+                        return {
+                            "success": False,
+                            "framework": framework,
+                            "error": f"npm install failed: {npm_result.stderr}",
+                            "results": results,
+                        }
+                except subprocess.TimeoutExpired:
+                    return {
+                        "success": False,
+                        "framework": framework,
+                        "error": "npm install timed out after 180 seconds",
+                        "results": results,
+                    }
+                except Exception as e:
+                    results.append({"dependency": "npm install (all)", "success": False, "error": str(e)})
+
+            # Install any still-missing individual packages
+            # Re-check after npm install
+            deps_recheck = _testing_module(workspace_path)._check_framework_dependencies(framework)
+            still_missing = deps_recheck.get("missing", [])
+
+            for dep in still_missing:
                 try:
                     result = subprocess.run(
                         ["npm", "install", "--save-dev", dep],
                         cwd=str(workspace_path),
                         capture_output=True,
                         text=True,
+                        timeout=120,
                     )
                     results.append({
                         "dependency": dep,
@@ -1467,7 +1522,7 @@ async def validate_tdd(
         else:
             return {"success": False, "error": "Either session_id or workspace_id is required"}
 
-        testing_module.workspace_root = workspace_path
+        tm = _testing_module(workspace_path)
 
         # Run tests first
         test_result = await run_tests(
@@ -1486,16 +1541,16 @@ async def validate_tdd(
                 "test_error": test_result.get("error"),
             }
 
-        framework_info = testing_module.get_test_framework_info()
+        framework_info = tm.get_test_framework_info()
         framework = framework_info["framework"]
 
-        coverage = testing_module.parse_coverage_json(framework)
+        coverage = tm.parse_coverage_json(framework)
         coverage_percent = coverage.get("overall_percent", 0) if coverage else 0
 
         test_results = test_result.get("results", {})
         config = {"coverage_threshold": coverage_threshold}
 
-        validation = testing_module.validate_tdd_workflow(test_results, config)
+        validation = tm.validate_tdd_workflow(test_results, config)
 
         return {
             "success": True,
