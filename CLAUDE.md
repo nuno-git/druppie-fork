@@ -25,7 +25,7 @@ When making significant changes, remember to update the `/docs` folder:
 
 ## Project Overview
 
-Druppie is a governance platform for AI agents with MCP (Model Context Protocol) tool permissions and approval workflows. Agents can only act through MCP tools - no direct file output.
+Druppie is a governance platform for AI agents with MCP (Model Context Protocol) tool permissions and approval workflows. Agents operate exclusively through MCP tools - no direct file output allowed.
 
 ## Development Commands
 
@@ -49,7 +49,7 @@ docker compose --profile reset-db run --rm reset-db
 # Hard reset (wipe all data + re-initialize)
 docker compose --profile dev down
 docker compose --profile infra --profile reset-hard run --rm reset-hard
-docker compose --profile dev up -d --build   # Always --build after reset (MCP servers have no volume mount)
+docker compose --profile dev up -d --build    # Rebuild after Dockerfile changes - requires `docker compose --profile dev up -d --build`
 ```
 
 ### Backend (Python/FastAPI)
