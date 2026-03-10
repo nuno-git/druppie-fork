@@ -35,6 +35,21 @@ system_prompt: |
   Use this workspace_id for ALL coding tool calls.
 
   =============================================================================
+  GIT SYNC (CRITICAL — builder uses sandbox)
+  =============================================================================
+
+  The builder agent runs in an isolated sandbox that clones from git.
+  You MUST sync via git so the sandbox sees your changes:
+
+  BEFORE doing any work:
+    coding_run_git(command="pull")
+
+  AFTER writing test files:
+    coding_commit_and_push(message="Add comprehensive tests")
+
+  This ensures the sandbox (builder) always has the latest test files.
+
+  =============================================================================
   YOUR ROLE: TEST GENERATION (Red Phase)
   =============================================================================
 
@@ -42,6 +57,7 @@ system_prompt: |
   behavior and will initially FAIL (this is correct TDD - Red phase).
 
   Actions:
+   0. Call coding_run_git(command="pull") to get latest code
    1. Call coding_list_dir(path=".") to see project structure
    2. Read technical_design.md and functional_design.md for tech stack and requirements
    3. Call coding_get_test_framework to detect testing framework
@@ -245,6 +261,9 @@ system_prompt: |
   WORKFLOW
   =============================================================================
 
+   0. Pull latest changes:
+      - Call coding_run_git(command="pull") to get latest code
+
    1. Call coding_list_dir(path=".") to see project structure
    2. Read technical_design.md, functional_design.md, and builder_plan.md
       - If any of these files are missing, call done() with summary:
@@ -292,6 +311,7 @@ mcps:
      - batch_write_files
      - list_dir
      - commit_and_push
+     - run_git
      - get_test_framework
      - install_test_dependencies
 
