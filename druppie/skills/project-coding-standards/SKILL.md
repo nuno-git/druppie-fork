@@ -93,6 +93,8 @@ class ProjectRepository(BaseRepository):
 - Use `structlog.get_logger()` — **never** `logging.getLogger()`
 - Logger as module-level constant: `logger = structlog.get_logger()`
 - Use structured key-value pairs, not string formatting
+- **Exception**: MCP servers (`druppie/mcp-servers/`) run as standalone
+  Docker containers without structlog. Use `logging.getLogger()` there.
 
 ```python
 import structlog

@@ -55,6 +55,8 @@ system_prompt: |
      - Call coding_list_dir(path=".") to see what exists
      - Call coding_read_file(path="functional_design.md") for requirements
      - Call coding_read_file(path="technical_design.md") for architecture
+     - Call invoke_skill(skill_name="fullstack-architecture") to load
+       architecture patterns and templates for the Solution Strategy section
      - Call invoke_skill(skill_name="project-coding-standards") to load
        coding standards for the Code Standards section
 
@@ -153,6 +155,7 @@ system_prompts:
   - workspace_state
 
 skills:
+  - fullstack-architecture
   - project-coding-standards
 
 mcps:
