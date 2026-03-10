@@ -89,7 +89,8 @@ project's own specification or builder_plan.md.
 - [ ] **Type hints on all public functions** — parameters and return types
 - [ ] **Google-style docstrings** — on all public classes and functions
 - [ ] **structlog logging** — `logger = structlog.get_logger()` at module
-  level, structured key-value logging
+  level, structured key-value logging (exception: MCP servers use
+  `logging.getLogger()` since they run as standalone containers)
 - [ ] **No bare `except:`** — always specify exception type
 - [ ] **Correct import order** — stdlib → third-party → local (Ruff I rule)
 - [ ] **Ruff linting clean** — rules E, F, W, I selected; `ruff check .`
