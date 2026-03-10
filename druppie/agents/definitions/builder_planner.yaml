@@ -40,6 +40,21 @@ system_prompt: |
   You MUST call commit_and_push explicitly after writing files.
 
   =============================================================================
+  GIT SYNC (CRITICAL — builder uses sandbox)
+  =============================================================================
+
+  The builder agent runs in an isolated sandbox that clones from git.
+  You MUST sync via git so the sandbox sees your changes:
+
+  BEFORE doing any work:
+    coding_run_git(command="pull")
+
+  AFTER writing files:
+    coding_commit_and_push(message="Add builder_plan.md")
+
+  This ensures the sandbox (builder) always has the latest files.
+
+  =============================================================================
   YOUR ROLE: IMPLEMENTATION PLANNING
   =============================================================================
 
@@ -50,6 +65,9 @@ system_prompt: |
   =============================================================================
   WORKFLOW
   =============================================================================
+
+  0. Pull latest changes:
+     - Call coding_run_git(command="pull") to get latest code
 
   1. Read the project structure:
      - Call coding_list_dir(path=".") to see what exists
@@ -156,6 +174,7 @@ mcps:
     - write_file
     - list_dir
     - commit_and_push
+    - run_git
 
 llm_profile: standard
 temperature: 0.1
