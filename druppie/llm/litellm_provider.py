@@ -440,12 +440,24 @@ class ChatLiteLLM(BaseLLM):
                     try:
                         args = json.loads(args)
                     except json.JSONDecodeError:
-                        logger.warning(
-                            "failed_to_parse_tool_args",
-                            tool_name=tc.function.name,
-                            args_preview=args[:100] if args else "",
+                        # LLMs sometimes emit unquoted keys — try to fix
+                        import re
+                        repaired = re.sub(
+                            r'(?<=[{,])\s*(\w+)\s*:', lambda m: f' "{m.group(1)}":', args
                         )
-                        args = {}
+                        try:
+                            args = json.loads(repaired)
+                            logger.info(
+                                "repaired_tool_args_json",
+                                tool_name=tc.function.name,
+                            )
+                        except json.JSONDecodeError:
+                            logger.warning(
+                                "failed_to_parse_tool_args",
+                                tool_name=tc.function.name,
+                                args_preview=args[:200] if args else "",
+                            )
+                            args = {}
 
                 tool_calls.append({
                     "id": tc.id,

@@ -289,3 +289,12 @@ def is_dev_mode() -> bool:
 def get_workspace_root() -> Path:
     """Get workspace root directory."""
     return get_settings().workspace.root
+
+
+# =============================================================================
+# SANDBOX AGENT CONSTANTS
+# =============================================================================
+
+# Default sandbox agent names - single source of truth
+DEFAULT_SANDBOX_AGENT = "druppie-builder"
+DEFAULT_SANDBOX_TESTER_AGENT = "druppie-tester"

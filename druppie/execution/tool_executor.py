@@ -41,6 +41,7 @@ class ToolCallStatus:
     EXECUTING = "executing"
     WAITING_APPROVAL = "waiting_approval"
     WAITING_ANSWER = "waiting_answer"
+    WAITING_SANDBOX = "waiting_sandbox"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -54,6 +55,8 @@ BUILTIN_TOOLS = {
     "hitl_ask_multiple_choice_question",
     "create_message",
     "invoke_skill",
+    "execute_coding_task",
+    "test_report",
 }
 
 # HITL tools require user answer (create Question record)
@@ -61,6 +64,16 @@ HITL_TOOLS = {
     "hitl_ask_question",
     "hitl_ask_multiple_choice_question",
 }
+
+# Tools that can take significantly longer than the default 60s timeout.
+# These get a generous but bounded timeout (20 min) instead of waiting
+# indefinitely, to prevent infinite hangs if the MCP server crashes or
+# the network drops.
+LONG_RUNNING_TOOLS = {
+    "run_tests",
+    "install_test_dependencies",
+}
+LONG_RUNNING_TIMEOUT = 1200.0  # 20 minutes
 
 
 class ToolExecutor:
@@ -236,6 +249,11 @@ class ToolExecutor:
             return Agent._load_definition(agent_run.agent_id)
 
         except Exception as e:
+            # Rollback in case the exception left the transaction poisoned
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
             logger.warning(
                 "failed_to_load_agent_definition",
                 agent_run_id=str(agent_run_id),
@@ -321,7 +339,13 @@ class ToolExecutor:
             return None
 
         except Exception as e:
-            # Log but don't fail - let the tool execution handle it
+            # Log but don't fail - let the tool execution handle it.
+            # Rollback in case the exception left the transaction poisoned
+            # (e.g. failed flush during normalization).
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
             logger.warning(
                 "tool_validation_exception",
                 tool_name=tool_call.tool_name,
@@ -520,6 +544,7 @@ class ToolExecutor:
                         status=ToolCallStatus.FAILED,
                         error=error_msg,
                     )
+                    self.db.commit()
                     return ToolCallStatus.FAILED
 
             needs_approval, required_role = self.mcp_config.needs_approval(
@@ -763,11 +788,39 @@ class ToolExecutor:
                 execution_repo=self.execution_repo,
             )
 
-            # Mark as completed with result
+            # Handle sandbox delegation — tool is waiting for external callback
+            if isinstance(result, dict) and result.get("status") == "waiting_sandbox":
+                from datetime import datetime, timezone
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.WAITING_SANDBOX,
+                    result=result,  # Store sandbox_session_id for resume
+                    sandbox_waiting_at=datetime.now(timezone.utc),  # For accurate watchdog timeout
+                )
+                # Link the SandboxSession record to this tool call for direct lookup
+                # (avoids full table scan + JSON parsing in the webhook handler)
+                sandbox_session_id = result.get("sandbox_session_id")
+                if sandbox_session_id:
+                    from druppie.repositories import SandboxSessionRepository
+                    sandbox_repo = SandboxSessionRepository(self.db)
+                    sandbox_repo.update_tool_call_id(sandbox_session_id, tool_call.id)
+                self.db.commit()
+                logger.info(
+                    "builtin_tool_waiting_sandbox",
+                    tool_call_id=str(tool_call.id),
+                    sandbox_session_id=sandbox_session_id,
+                )
+                return ToolCallStatus.WAITING_SANDBOX
+
+            # Check if the builtin tool reported failure via success field
+            is_success = result.get("success", True) if isinstance(result, dict) else True
+            status = ToolCallStatus.COMPLETED if is_success else ToolCallStatus.FAILED
+
             self.execution_repo.update_tool_call(
                 tool_call.id,
-                status=ToolCallStatus.COMPLETED,
-                result=result,
+                status=status,
+                result=result if is_success else None,
+                error=result.get("error") if not is_success else None,
             )
             self.db.commit()
 
@@ -776,9 +829,10 @@ class ToolExecutor:
                 tool_call_id=str(tool_call.id),
                 tool_name=tool_call.tool_name,
                 result_status=result.get("status"),
+                success=is_success,
             )
 
-            return ToolCallStatus.COMPLETED
+            return status
 
         except Exception as e:
             logger.error(
@@ -838,17 +892,28 @@ class ToolExecutor:
         )
 
         try:
-            # Mark as executing
+            # Mark as executing and commit so the session is clean
+            # before the HTTP call (avoids auto-flush issues later)
             self.execution_repo.update_tool_call(
                 tool_call.id,
                 status=ToolCallStatus.EXECUTING,
             )
+            self.db.commit()
+
+            # Long-running tools (run_tests, install_test_dependencies) get a
+            # generous 20-min client timeout. Server-side subprocess timeouts
+            # (300s/180s) should fire first, but this prevents infinite hangs
+            # if the MCP server crashes or the network drops.
+            timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
 
             # Execute via HTTP
+            timeout = 60.0
+
             result = await self.mcp_http.call(
                 tool_call.mcp_server,
                 tool_call.tool_name,
                 args,
+                timeout_seconds=timeout,
             )
 
             # Check if result indicates failure
