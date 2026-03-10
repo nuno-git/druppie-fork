@@ -349,6 +349,7 @@ services:
       - sandbox_data:/data
     networks:
       - druppie-new-network
+      - druppie-sandbox-network  # Dual-network: sandbox containers reach control plane here
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
@@ -368,7 +369,7 @@ services:
       SANDBOX_IMAGE: open-inspect-sandbox:latest
       KATA_RUNTIME: ${KATA_RUNTIME:-io.containerd.kata.v2}
       CONTAINERD_NAMESPACE: ${CONTAINERD_NAMESPACE:-default}
-      DOCKER_NETWORK: druppie-new-network
+      DOCKER_NETWORK: druppie-sandbox-network  # Isolated network — sandboxes can only reach control plane
       DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
       DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-2}
       # LLM API keys and proxy URLs no longer needed here.
@@ -775,3 +776,8 @@ networks:
   druppie-new-network:
     name: druppie-new-network
     driver: bridge
+  druppie-sandbox-network:
+    name: druppie-sandbox-network
+    driver: bridge
+    # Isolated network for sandbox containers — only the control plane bridges both networks.
+    # Prevents compromised sandboxes from reaching the database, Keycloak, Gitea, or backend directly.
