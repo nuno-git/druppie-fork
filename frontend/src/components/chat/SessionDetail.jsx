@@ -11,7 +11,7 @@ import remarkGfm from 'remark-gfm'
 import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion, getSandboxEvents } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
-import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
+import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
@@ -23,6 +23,8 @@ import {
   buildVisibleJson,
   extractSurfacedApprovals,
   extractOrderedItems,
+  extractSurfacedFileWrites,
+  extractDependencyInstalls,
   findPendingQuestion,
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
@@ -89,7 +91,7 @@ const InlineApproval = ({ tc, sessionId }) => {
   const isRejected = tc.approval.status === 'rejected'
   const isProcessing = approveMut.isPending || rejectMut.isPending
 
-  const toolLabel = getToolLabel(tc.tool_name)
+  const toolLabel = formatToolName(tc.tool_name)
   const args = tc.arguments || {}
   const contextLine = args.path || args.file_path || args.command || args.message || args.commit_message || null
 
@@ -654,6 +656,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       queryClient.refetchQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
+    onError: (err) => {
+      console.error('Cancel failed:', err)
+    },
   })
 
   const resumeMutation = useMutation({
@@ -661,6 +666,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     onSuccess: () => {
       queryClient.refetchQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
+    onError: (err) => {
+      console.error('Resume failed:', err)
     },
   })
 
@@ -796,7 +804,6 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
           queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
         })
         .catch((err) => {
-          // Log error for debugging; UI feedback is handled by the mutation's error state
           console.error('Failed to answer question:', err.message || err)
         })
       return
@@ -874,6 +881,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 )}
                 Stop
               </button>
+            )}
+            {(cancelMutation.isError || resumeMutation.isError) && (
+              <span className="text-xs text-red-600">
+                {cancelMutation.error?.message || resumeMutation.error?.message || 'Action failed'}
+              </span>
             )}
             {canDebug && (
               <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-xs">

@@ -8,7 +8,7 @@ Druppie is a governance platform where users describe what they want built in na
 
 Every action an agent takes goes through a **tool call** -- either an **MCP tool** provided by an external server, or a **builtin tool** provided by the platform itself.
 
-**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Additional builtins are restricted to specific agents: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access), and `execute_coding_task` (Developer/Tester -- delegates coding to an isolated sandbox).
+**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Additional builtins are restricted to specific agents: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), `test_report` (Test Executor only -- structured test iteration reporting), `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access), and `execute_coding_task` (Developer/Tester -- delegates coding to an isolated sandbox).
 
 **MCP tools** are provided by external MCP servers over HTTP (e.g., `read_file`, `write_file`, `docker:build`). Which tools each agent can call is configured in its YAML definition.
 
@@ -18,17 +18,35 @@ Because all actions are tool calls, every action can be logged, inspected, and g
 
 ## Agent Pipeline
 
+Twelve agents are defined. Eleven are functional; one is a stub.
+
+### Functional Agents
+
+
 | Agent | Purpose | Key Behavior |
 |-------|---------|--------------|
 | **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, or `general_chat`. Can ask clarifying questions. Has web search access. |
 | **Planner** | Orchestrates the pipeline | Creates execution plans as ordered sequences of agent steps. Re-evaluates after each major phase. Manages design loops (BA/Architect) and execution loops (Developer/Deployer). Max 15 iterations. |
 | **Business Analyst** | Gathers requirements | Engages the user in structured dialogue using a funnel approach (max 1 question at a time, almost always multiple choice). Produces `functional_design.md` via the `make_design` tool with built-in Mermaid validation. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Supports `NO_FD_CHANGE` pass-through for technical fixes. Max 50 iterations. |
 | **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Three outcomes: APPROVE (writes `technical_design.md` via `make_design`), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
+| **Builder Planner** | Creates implementation plans | Reads `functional_design.md` and `technical_design.md`, writes `builder_plan.md` with code standards, test framework, test strategy, solution strategy, and change approach. Guides downstream test_builder and builder agents. Max 30 iterations. |
+| **Test Builder** | Generates tests (TDD Red Phase) | Writes comprehensive test suites based on functional and technical design documents and builder_plan.md. Sets up test frameworks and dependencies. Does NOT run tests. Max 30 iterations. |
+| **Builder** | Implements code (TDD Green Phase) | Reads tests written by test_builder and implements source code to pass them. Follows TDD methodology. Max 100 iterations. |
+| **Test Executor** | Runs and fixes tests iteratively | Executes tests, diagnoses failures, applies fixes, and re-runs in an internal loop. Reports structured PASS/FAIL results via `test_report` builtin tool. Max 100 iterations. |
 | **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. Can delegate to sandbox agents via `execute_coding_task`. For `create_project`, works on main; for `update_project`, works on feature branches. Max 100 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
 | **Reviewer** | Code review | Reviews code for quality, security, and best practices. |
 | **Tester** | Testing | Writes and runs tests to validate implementations. |
 | **Summarizer** | Creates completion messages | Reads all previous agent summaries and produces a concise, user-friendly message. Always the final step. Max 5 iterations. |
+
+### Stub Agents (Not Yet Invoked)
+
+| Agent | Intended Purpose |
+|-------|-----------------|
+| **Reviewer** | Code review for quality, security, and best practices |
+
+This agent is defined with system prompts and MCP tool access but is never included in plans by the Planner.
+
 
 ---
 
@@ -43,14 +61,23 @@ A new project is created from scratch:
 3. **Business Analyst** gathers requirements via HITL dialogue, writes `functional_design.md`
 4. **Architect** reviews the functional design:
    - If feedback needed: sends items back to BA (design loop)
-   - If approved: writes `architecture.md`
-5. **Planner** re-evaluates: plans Developer and Deployer
-6. **Developer** implements the code on main, commits and pushes
-7. **Deployer** builds Docker image, runs container, asks user for preview feedback
-8. **Planner** re-evaluates based on user feedback:
-   - If approved: plans Summarizer
-   - If changes requested: loops back to Developer, then Deployer
-9. **Summarizer** creates the final user-facing summary
+   - If approved: writes `technical_design.md`
+5. **Planner** re-evaluates: plans Builder Planner
+6. **Builder Planner** reads design documents, writes `builder_plan.md` with implementation strategy
+7. **Test Builder** generates comprehensive tests based on design documents and builder_plan.md (TDD Red Phase)
+8. **Builder** implements source code to make the tests pass (TDD Green Phase)
+9. **Test Executor** runs tests, iteratively fixes code until tests pass (internal retry loop)
+   - If PASS: Planner plans Deployer
+   - If FAIL (retry < 3): Planner routes back to Builder with failure feedback (TDD retry)
+   - If FAIL (retry >= 3): Planner escalates to user via HITL with three choices:
+     - Continue with specific instructions: Builder retries with user guidance
+     - Deploy with warning: Deployer deploys despite failing tests
+     - Abort project: Summarizer ends the workflow
+10. **Deployer** builds Docker image, runs container, asks user for preview feedback
+11. **Planner** re-evaluates based on user feedback:
+    - If approved: plans Summarizer
+    - If changes requested: loops back to Developer, then Deployer
+12. **Summarizer** creates the final user-facing summary
 
 ### update_project
 
@@ -60,14 +87,16 @@ An existing project is modified via feature branches:
 2. **Planner** creates the initial plan
 3. **Developer** creates a feature branch (branch setup only)
 4. **Business Analyst** reads existing code, gathers change requirements
-5. **Architect** reviews the change design
-6. **Planner** re-evaluates designs (design loop if needed)
-7. **Developer** implements changes on the feature branch
-8. **Deployer** builds and deploys a preview container (keeps production running)
-9. **Planner** re-evaluates based on user feedback:
-   - If approved: Developer merges PR, Deployer does final deploy from main
-   - If changes requested: loops back to Developer on the feature branch
-10. **Summarizer** creates the final summary
+5. **Architect** reviews the change design (design loop with BA if needed)
+6. **Builder Planner** reads design documents, writes `builder_plan.md`
+7. **Test Builder** generates tests based on design documents and builder_plan.md (TDD Red Phase)
+8. **Builder** implements changes to make tests pass (TDD Green Phase)
+9. **Test Executor** runs tests, iteratively fixes code (same retry/HITL flow as create_project)
+10. **Deployer** builds and deploys a preview container (keeps production running)
+11. **Planner** re-evaluates based on user feedback:
+    - If approved: Developer merges PR, Deployer does final deploy from main
+    - If changes requested: loops back to Developer on the feature branch
+12. **Summarizer** creates the final summary
 
 ### general_chat
 
@@ -84,7 +113,7 @@ Authentication is handled by Keycloak via OAuth 2.0 / OIDC. Roles control what e
 | Role | Description |
 |------|-------------|
 | admin | Full platform access; can act on any approval regardless of required role |
-| architect | Can approve architecture designs and merge-to-main operations |
+| architect | Can approve architecture designs |
 | developer | Can approve Docker operations and pull request merges |
 | business_analyst | Can approve functional design writes |
 
@@ -123,7 +152,7 @@ When an agent calls a tool that requires approval, the workflow pauses until an 
 
 The **Tasks page** (`/tasks`) is the dedicated approval management interface. It serves as a centralized queue where users review and act on all pending approvals across all sessions.
 
-- **Role-filtered view**: Users only see approvals they are authorized to act on based on their roles. A developer sees Docker and PR merge approvals; an architect sees merge-to-main approvals; admins see everything.
+- **Role-filtered view**: Users only see approvals they are authorized to act on based on their roles. A developer sees Docker and PR merge approvals; admins see everything.
 - **Approval cards**: Each card shows the tool name, MCP server, full arguments (with expandable file content previews for write operations), the requesting agent, and a link to the parent session.
 - **Approve/reject actions**: Users approve or reject each item. Rejections require a reason that is passed back to the agent.
 - **Polling**: The Tasks page polls for new approvals every 1 second.
@@ -270,10 +299,10 @@ coding:
             description: "Path to the file"
         required: [path]
 
-    - name: merge_to_main
-      description: "Merge a branch into main"
+    - name: merge_pull_request
+      description: "Merge a pull request"
       requires_approval: true        # Approval gate
-      required_role: architect        # Only architects can approve
+      required_role: developer       # Only developers can approve
       parameters: ...
 ```
 
@@ -326,7 +355,7 @@ Available system prompts:
 | `workspace_state` | Shared workspace and git branch rules |
 | `tool_only_communication` | Reinforces that agents must never add "Other" to multiple choice options — the platform handles it automatically |
 
-Currently included by: Planner, Business Analyst, Architect, Developer, Deployer. Agents without a `system_prompts` list receive no system prompts.
+Currently included by: Planner, Business Analyst, Architect, Builder Planner, Test Builder, Builder, Test Executor, Developer, Deployer. Agents without a `system_prompts` list receive no system prompts.
 
 Key sections:
 

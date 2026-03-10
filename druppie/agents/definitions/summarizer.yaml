@@ -1,6 +1,7 @@
 id: summarizer
 name: Summarizer Agent
 description: Creates a user-friendly completion message from agent run summaries
+category: execution
 
 system_prompt: |
   You are the Summarizer Agent. Your ONLY job is to create a clear, friendly

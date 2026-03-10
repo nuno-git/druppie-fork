@@ -43,16 +43,8 @@ class DeleteFileParams(BaseModel):
     path: str = Field(description="File path to delete")
 
 
-class CommitAndPushParams(BaseModel):
-    message: str = Field(description="Git commit message")
-
-
-class CreateBranchParams(BaseModel):
-    branch_name: str = Field(description="Name of the branch to create or switch to (e.g., feature/add-login)")
-
-
-class MergeToMainParams(BaseModel):
-    pass
+class RunGitParams(BaseModel):
+    command: str = Field(description="Git command to execute (e.g. 'add .', 'commit -m \"message\"', 'push')")
 
 
 class CreatePullRequestParams(BaseModel):
