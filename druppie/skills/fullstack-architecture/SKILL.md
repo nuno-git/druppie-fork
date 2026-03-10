@@ -247,8 +247,25 @@ class <Entity>Repository(BaseRepository):
         limit: int = 20,
         offset: int = 0,
     ) -> tuple[list[<Entity>Summary], int]:
-        """List <entities> with pagination."""
+        """List all <entities> with pagination (admin use)."""
         query = self.db.query(<Entity>)
+        total = query.count()
+        items = (
+            query.order_by(<Entity>.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+            .all()
+        )
+        return [self._to_summary(item) for item in items], total
+
+    def list_for_user(
+        self,
+        user_id: UUID,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[<Entity>Summary], int]:
+        """List <entities> owned by a specific user."""
+        query = self.db.query(<Entity>).filter_by(owner_id=user_id)
         total = query.count()
         items = (
             query.order_by(<Entity>.created_at.desc())
@@ -311,7 +328,7 @@ import structlog
 
 from ..repositories import <Entity>Repository
 from ..domain import <Entity>Detail, <Entity>Summary
-from ..api.errors import NotFoundError
+from ..api.errors import AuthorizationError, NotFoundError
 
 logger = structlog.get_logger()
 
@@ -324,23 +341,34 @@ class <Entity>Service:
 
     def list_all(
         self,
+        user_id: UUID,
+        user_roles: list[str],
         page: int = 1,
         limit: int = 20,
     ) -> tuple[list[<Entity>Summary], int]:
-        """List <entities> with pagination."""
+        """List <entities> with pagination and access control."""
         offset = (page - 1) * limit
-        return self.<entity>_repo.list_all(limit, offset)
+        if "admin" in user_roles:
+            return self.<entity>_repo.list_all(limit, offset)
+        return self.<entity>_repo.list_for_user(user_id, limit, offset)
 
-    def get_detail(self, <entity>_id: UUID) -> <Entity>Detail:
-        """Get <entity> detail.
+    def get_detail(self, <entity>_id: UUID, user_id: UUID, user_roles: list[str]) -> <Entity>Detail:
+        """Get <entity> detail with access check.
 
         Raises:
             NotFoundError: If <entity> not found
+            AuthorizationError: If user lacks access
         """
-        detail = self.<entity>_repo.get_detail(<entity>_id)
-        if not detail:
+        item = self.<entity>_repo.get_by_id(<entity>_id)
+        if not item:
             raise NotFoundError("<entity>", str(<entity>_id))
-        return detail
+
+        is_owner = item.owner_id == user_id
+        is_admin = "admin" in user_roles
+        if not is_owner and not is_admin:
+            raise AuthorizationError("Only owner or admin can view this <entity>")
+
+        return self.<entity>_repo.get_detail(<entity>_id)
 ```
 
 After creating, add to `druppie/services/__init__.py`:
@@ -361,7 +389,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from druppie.api.deps import get_current_user, get_<entity>_service
+from druppie.api.deps import get_current_user, get_user_roles, get_<entity>_service
 from druppie.domain import <Entity>Summary, <Entity>Detail
 from druppie.services import <Entity>Service
 
@@ -370,11 +398,15 @@ router = APIRouter(prefix="/<entities>", tags=["<entities>"])
 
 @router.get("", response_model=list[<Entity>Summary])
 async def list_<entities>(
+    page: int = 1,
+    limit: int = 20,
     service: <Entity>Service = Depends(get_<entity>_service),
     user: dict = Depends(get_current_user),
 ) -> list[<Entity>Summary]:
     """List all <entities>."""
-    items, _ = service.list_all()
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+    items, _ = service.list_all(user_id, user_roles, page=page, limit=limit)
     return items
 
 
@@ -385,7 +417,9 @@ async def get_<entity>(
     user: dict = Depends(get_current_user),
 ) -> <Entity>Detail:
     """Get <entity> detail."""
-    return service.get_detail(<entity>_id)
+    user_id = UUID(user["sub"])
+    user_roles = get_user_roles(user)
+    return service.get_detail(<entity>_id, user_id, user_roles)
 ```
 
 After creating, register the router in `druppie/api/main.py`:
@@ -466,8 +500,8 @@ Add to `frontend/src/services/api.js`:
 
 ```javascript
 // <Entity> API
-export const get<Entities> = (params = {}) =>
-  request('/api/<entities>', { params })
+export const get<Entities> = (page = 1, limit = 20) =>
+  request(`/api/<entities>?page=${page}&limit=${limit}`)
 
 export const get<Entity> = (id) =>
   request(`/api/<entities>/${id}`)
@@ -478,6 +512,9 @@ export const create<Entity> = (data) =>
     body: JSON.stringify(data),
   })
 ```
+
+Note: The `request()` function does not support a `params` option —
+build query parameters directly into the URL string.
 
 ---
 

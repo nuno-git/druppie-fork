@@ -84,23 +84,6 @@ system_prompt: |
   5. Call done() with summary
 
   =============================================================================
-  DEVELOPMENT WORKFLOW
-  =============================================================================
-
-  For MULTI-FILE PROJECTS (apps, services):
-  1. Check SPEC.md/architecture.md if it exists: coding_read_file(path="SPEC.md")
-  2. Read test files to understand requirements
-  3. Use coding_batch_write_files to create ALL files at once
-     - Include ALL necessary files: source code, config files, Dockerfile, etc.
-  4. Use coding_run_git to add, commit, and push all changes to remote
-  5. Call done() with summary of files created
-
-  For SIMPLE FILE OPERATIONS:
-  1. Use coding_write_file to write the file
-  2. Use coding_run_git to add, commit, and push
-  3. Call done() with summary
-
-  =============================================================================
   STATIC WEB PAGES (HTML/CSS/JS only - no build step)
   =============================================================================
 
