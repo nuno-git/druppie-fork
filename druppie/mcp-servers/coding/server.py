@@ -1373,38 +1373,105 @@ async def install_test_dependencies(
                 return {"success": False, "error": "Could not auto-detect test framework."}
             framework = framework_info["framework"]
 
-        deps_check = tm._check_framework_dependencies(framework)
-        missing = deps_check.get("missing", [])
-
-        if not missing:
-            return {
-                "success": True,
-                "framework": framework,
-                "message": "All test dependencies are already installed.",
-                "installed": deps_check.get("installed", []),
-            }
-
-        logger.info("Installing missing dependencies for %s: %s", framework, missing)
         results = []
 
         if framework == "pytest":
-            for dep in missing:
+            # Install project dependencies first (mirrors npm install for Node.js).
+            # This must happen before checking what's missing because
+            # _check_framework_dependencies only checks if packages are listed
+            # in requirements.txt, not whether they're actually installed.
+            requirements_txt = workspace_path / "requirements.txt"
+            pyproject_toml = workspace_path / "pyproject.toml"
+
+            if requirements_txt.exists():
+                logger.info("Installing project dependencies from requirements.txt in %s", workspace_path)
                 try:
-                    result = subprocess.run(
-                        ["pip", "install", dep],
+                    req_result = subprocess.run(
+                        ["pip", "install", "-r", "requirements.txt"],
                         cwd=str(workspace_path),
                         capture_output=True,
                         text=True,
-                        timeout=120,
+                        timeout=300,
                     )
                     results.append({
-                        "dependency": dep,
-                        "success": result.returncode == 0,
-                        "output": result.stdout,
-                        "error": result.stderr if result.returncode != 0 else None,
+                        "dependency": "requirements.txt (all)",
+                        "success": req_result.returncode == 0,
+                        "output": req_result.stdout,
+                        "error": req_result.stderr if req_result.returncode != 0 else None,
                     })
+                    if req_result.returncode != 0:
+                        return {
+                            "success": False,
+                            "framework": framework,
+                            "error": f"Failed to install project dependencies: {req_result.stderr}",
+                            "results": results,
+                        }
+                except subprocess.TimeoutExpired:
+                    return {
+                        "success": False,
+                        "framework": framework,
+                        "error": "pip install -r requirements.txt timed out after 300 seconds",
+                        "results": results,
+                    }
                 except Exception as e:
-                    results.append({"dependency": dep, "success": False, "error": str(e)})
+                    results.append({"dependency": "requirements.txt (all)", "success": False, "error": str(e)})
+            elif pyproject_toml.exists():
+                logger.info("Installing project from pyproject.toml in %s", workspace_path)
+                try:
+                    pyp_result = subprocess.run(
+                        ["pip", "install", "."],
+                        cwd=str(workspace_path),
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                    )
+                    results.append({
+                        "dependency": "pyproject.toml (all)",
+                        "success": pyp_result.returncode == 0,
+                        "output": pyp_result.stdout,
+                        "error": pyp_result.stderr if pyp_result.returncode != 0 else None,
+                    })
+                    if pyp_result.returncode != 0:
+                        return {
+                            "success": False,
+                            "framework": framework,
+                            "error": f"Failed to install project: {pyp_result.stderr}",
+                            "results": results,
+                        }
+                except subprocess.TimeoutExpired:
+                    return {
+                        "success": False,
+                        "framework": framework,
+                        "error": "pip install . timed out after 300 seconds",
+                        "results": results,
+                    }
+                except Exception as e:
+                    results.append({"dependency": "pyproject.toml (all)", "success": False, "error": str(e)})
+
+            # After installing project deps, check which test frameworks are still missing.
+            # requirements.txt may include pytest, so re-check actual installation.
+            deps_check = tm._check_framework_dependencies(framework)
+            missing = deps_check.get("missing", [])
+
+            if missing:
+                logger.info("Installing missing test framework packages: %s", missing)
+                for dep in missing:
+                    try:
+                        result = subprocess.run(
+                            ["pip", "install", dep],
+                            cwd=str(workspace_path),
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        results.append({
+                            "dependency": dep,
+                            "success": result.returncode == 0,
+                            "output": result.stdout,
+                            "error": result.stderr if result.returncode != 0 else None,
+                        })
+                    except Exception as e:
+                        results.append({"dependency": dep, "success": False, "error": str(e)})
 
         elif framework in ["vitest", "jest"]:
             # Run npm install first if node_modules doesn't exist
