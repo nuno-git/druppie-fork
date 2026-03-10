@@ -260,7 +260,7 @@ SQLAlchemy ORM models live in `druppie/db/models/`. The schema:
 | `UserRole` | User role assignments (admin, architect, developer) |
 | `UserToken` | User API tokens |
 | `Project` | Projects with Gitea repo references |
-| `Session` | Chat sessions tied to a user and optionally a project |
+| `Session` | Chat sessions tied to a user and optionally a project. For `update_core` intent: stores repo context (`repo_url`, `repo_owner`, `repo_name`, `base_branch`) directly on the session instead of linking to a project. |
 | `AgentRun` | Individual agent execution records within a session |
 | `Message` | Conversation messages (user and assistant) in the timeline |
 | `ToolCall` | Tool invocations by agents, linked to LLM calls |
@@ -1024,5 +1024,26 @@ The `sandbox_sessions` table maps control plane session IDs to Druppie users:
 | `tool_call_id` | UUID (nullable, FK → tool_calls, indexed) | Direct webhook lookup |
 | `webhook_secret` | str (nullable) | Per-session HMAC secret |
 
+| `git_provider` | str (nullable, default "gitea") | "gitea" or "github" — controls cleanup behavior |
+
 The `tool_call_id` FK enables direct lookup from webhook → tool call without table scans. Events proxy (`GET /api/sandbox-sessions/{id}/events`) enforces ownership — non-owners get 403, admins bypass.
+
+### 10.5 Git Provider Routing (Gitea vs GitHub)
+
+The `execute_coding_task` builtin determines git provider based on session intent:
+
+| Intent | Git Provider | Credentials | Cleanup |
+|--------|-------------|-------------|---------|
+| `create_project` / `update_project` | Gitea | Per-sandbox Gitea service account (scoped to repo) | Service account deleted on completion |
+| `update_core` | GitHub | GitHub App installation token (short-lived, ~1 hour) | No cleanup needed — tokens expire automatically |
+
+### 10.6 GitHub App Token Service
+
+`druppie/services/github_app_service.py` — singleton service that generates GitHub App installation access tokens.
+
+- Reads `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_INSTALLATION_ID` from env
+- Generates RS256 JWT, exchanges for installation token via GitHub API
+- Caches token with 5-minute refresh margin (tokens last 1 hour)
+- Disabled when env vars are missing (no crash, `get_installation_token()` returns None)
+- GitHub API proxy in control plane (`/github-api-proxy/:proxyKey/*`) injects the token server-side — sandbox only sees an opaque proxy URL
 
