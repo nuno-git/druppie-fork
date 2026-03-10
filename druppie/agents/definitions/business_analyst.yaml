@@ -870,7 +870,6 @@ mcps:
     - list_dir
     - commit_and_push
 
-
 # LAYERED APPROVAL SYSTEM:
 # When business_analyst calls make_design (to create functional_design.md),
 # it requires approval from someone with the "business_analyst" role.
