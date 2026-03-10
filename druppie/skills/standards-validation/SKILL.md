@@ -219,13 +219,16 @@ Structure REVIEW.md as follows:
 
 ## Review Process
 
-1. **Invoke skills** — load `project-coding-standards` and this
-   `standards-validation` skill
+1. **Invoke skills** — load `fullstack-architecture`,
+   `project-coding-standards`, and this `standards-validation` skill
 2. **Read the code** — use `coding_read_file` and `coding_list_dir` to
    inspect all generated files
-3. **Apply checklists** — go through each section above
-4. **Check for critical violations** — any violation in section 3 means
+3. **Determine project type** — check if this is Druppie's own codebase
+   or a user project (see "Druppie vs. User Projects" note above)
+4. **Apply checklists** — go through each section above (skip
+   architecture/template sections for user projects)
+5. **Check for critical violations** — any violation in section 3 means
    automatic FAIL
-5. **Write REVIEW.md** — using the output format above
-6. **Commit and push** — save REVIEW.md to git
-7. **Call done()** — with summary including verdict and key findings
+6. **Write REVIEW.md** — using the output format above
+7. **Commit and push** — save REVIEW.md to git
+8. **Call done()** — with summary including verdict and key findings
