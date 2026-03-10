@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-03-09
+Last updated: 2026-03-10
 
 ---
 
@@ -39,6 +39,8 @@ Last updated: 2026-03-09
 - Test Executor Python-Level Safety Net
 - Frontend Agent Config from API
 - General Pre-Validation System for Tool Arguments
+- Update Core Flow — End-to-End Design
+- ~~Update Core — Technical Basis~~ ✅ DONE
 
 ---
 
@@ -267,3 +269,32 @@ Last updated: 2026-03-09
 - **Current state:** The tool executor has a hardcoded `if tool_call.tool_name == "make_design"` check that runs Mermaid validation before the approval gate. The mermaid validator is imported via a fragile `importlib.util.spec_from_file_location` hack because it lives in `mcp-servers/coding/` (hyphenated directory, not a proper Python package).
 - **Problem:** Adding content validation for any other tool requires adding more `if` statements to the tool executor and more fragile imports.
 - **Desired improvement:** Add an optional `pre_validate(self) -> str | None` method to Pydantic params models. The tool executor calls it generically after schema validation succeeds. This way adding a new validator = adding a method to a params model, with zero changes to `tool_executor.py`. The mermaid validator moves to `druppie/tools/validators/mermaid.py` (properly importable). See issue #79 for the full plan.
+
+### Update Core Flow — End-to-End Design
+
+- **Current state:** PR #77 levert de technische basis: GitHub App tokens, sandbox proxy, `update_core` intent op router-niveau, en PR-creatie via de sandbox agent. Maar het volledige end-to-end verhaal is nog niet uitgewerkt.
+- **Wat ontbreekt:**
+  - **Wanneer wordt update_core getriggerd?** Nu is het een expliciete intent via de router ("verbeter jezelf"). Maar het zou logischer zijn dat BA/Architect tijdens een regulier `create_project`/`update_project` traject constateren dat de core aangepast moet worden, en dit signaleren aan de planner. De planner schakelt dan over naar de update_core flow — geen sub-agents nodig, de planner orkestreert dit al.
+  - **PR/merge flow:** PR #77 heeft `create_pull_request` en `merge_pull_request` MCP tools van de Developer agent verwijderd. De oude `MERGE TASK` instructies in de developer prompt zijn weg. Wie maakt PRs aan, wie merged, en wanneer — per intent?
+  - **End-to-end flow diagram:** Documenteer de volledige agent pipeline voor elke intent (`create_project`, `update_project`, `update_core`) met welke agents draaien, wanneer PRs worden aangemaakt, en wanneer merges plaatsvinden.
+- **Voorbeeldflow (BA/Architect trigger):**
+  1. Gebruiker: "Bouw mij een app die X doet"
+  2. Router: `create_project`
+  3. BA verzamelt requirements → Architect ontwerpt → constateert: "Druppie mist capability Y"
+  4. Architect signaleert dit aan de planner → planner schakelt over naar update_core flow
+  5. Developer maakt PR op GitHub → human review + merge
+  6. Planner hervat het oorspronkelijke project met de nieuwe capabilities
+- **Priority:** Volgende sprint. Huidige implementatie werkt voor expliciet getriggerde `update_core` (altijd PR, nooit merge). Het complete verhaal inclusief trigger-logica en merge-flow moet uitgewerkt worden.
+
+### ~~Update Core — Technical Basis~~ (DONE)
+
+- **Resolved in:** `feature/update-core-flow` branch (PR #77)
+- **Doel:** Technische basis voor Druppie om de eigen codebase aan te passen via een PR-flow op GitHub.
+- **Klaar als:**
+  - GitHub App integratie: `GitHubAppService` genereert kort-levende installation tokens uit `GITHUB_APP_*` env vars. Cacht tot vlak voor expiry. Disabled wanneer niet geconfigureerd (geen crash).
+  - Router herkent `update_core` intent — `set_intent` slaat repo context (URL, owner, name, base branch) op de sessie op zonder project of Gitea-repo aan te maken.
+  - Planner volgt `UPDATE_CORE` workflow: simpel (developer → summarizer) of complex (BA → architect → developer → summarizer). Geen deploy, geen merge — eindigt altijd met een PR op `colab-dev`.
+  - Sandbox agents werken op GitHub via GitHub API proxy (credential isolatie — geen echte tokens in de sandbox).
+  - Session model uitgebreid met `repo_url`, `repo_owner`, `repo_name`, `base_branch` kolommen.
+  - `SandboxSession` model uitgebreid met `git_provider` kolom ("gitea" of "github") voor correcte cleanup.
+  - Bestaande `create_project`, `update_project`, en `general_chat` flows ongewijzigd.

@@ -25,7 +25,7 @@ Twelve agents are defined. Eleven are functional; one is a stub.
 
 | Agent | Purpose | Key Behavior |
 |-------|---------|--------------|
-| **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, or `general_chat`. Can ask clarifying questions. Has web search access. |
+| **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, `update_core`, or `general_chat`. Can ask clarifying questions. Has web search access. |
 | **Planner** | Orchestrates the pipeline | Creates execution plans as ordered sequences of agent steps. Re-evaluates after each major phase. Manages design loops (BA/Architect) and execution loops (Developer/Deployer). Max 15 iterations. |
 | **Business Analyst** | Gathers requirements | Engages the user in structured dialogue using a funnel approach (max 1 question at a time, almost always multiple choice). Produces `functional_design.md` via the `make_design` tool with built-in Mermaid validation. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Supports `NO_FD_CHANGE` pass-through for technical fixes. Max 50 iterations. |
 | **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Three outcomes: APPROVE (writes `technical_design.md` via `make_design`), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
@@ -97,6 +97,26 @@ An existing project is modified via feature branches:
     - If approved: Developer merges PR, Deployer does final deploy from main
     - If changes requested: loops back to Developer on the feature branch
 12. **Summarizer** creates the final summary
+
+### update_core
+
+Druppie modifies its own codebase via a PR flow on GitHub. No deploy, no merge — always ends with a PR targeting `colab-dev` for human review.
+
+1. **Router** classifies intent as `update_core` (keywords: "improve yourself", "fix the router", "change the planner", etc.)
+2. **Planner** decides pipeline complexity:
+   - **Simple** (prompt tweaks, YAML config, single-file edits): Developer → Summarizer
+   - **Complex** (new features, multi-file changes, architecture impact): BA → Architect → Developer → Summarizer
+3. **Developer** delegates to sandbox via `execute_coding_task`:
+   - Sandbox agent creates a `core/` branch from `colab-dev`
+   - Implements the change, commits, pushes
+   - Creates a PR on GitHub via the GitHub API proxy
+4. **Summarizer** reports the PR link to the user
+
+Key differences from `update_project`:
+- No project record or Gitea repo is created — repo context (URL, owner, base branch) is stored directly on the session
+- Authentication via GitHub App installation tokens (short-lived, ~1 hour, scoped to a single repo)
+- Sandbox uses GitHub API proxy for PR creation (`curl $GITHUB_API_PROXY_URL`) — no real tokens enter the sandbox
+- No deploy step, no merge step — PRs are always reviewed and merged by humans
 
 ### general_chat
 
