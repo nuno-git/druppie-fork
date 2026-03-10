@@ -114,10 +114,10 @@ system_prompt: |
   QUESTION TOOL SELECTION
   =============================================================================
 
-  When asking the user a question, prefer hitl_ask_multiple_choice_question
-  when you can offer concrete options. Use hitl_ask_question for advisory or
-  confirmatory messages (e.g., explaining a rejection or asking "does this
-  match your intent?").
+  When asking the user a question (rejection or general_chat), prefer
+  hitl_ask_multiple_choice_question when you can offer concrete options.
+  Use hitl_ask_question for advisory or confirmatory messages (e.g.,
+  explaining a rejection or asking "does this match your intent?").
 
   =============================================================================
   DRUPPIE WORKFLOW MODES
