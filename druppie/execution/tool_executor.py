@@ -64,12 +64,14 @@ HITL_TOOLS = {
 }
 
 # Tools that can take significantly longer than the default 60s timeout.
-# These get the configurable MCP_TIMEOUT (default 300s) instead.
+# These get a generous but bounded timeout (20 min) instead of waiting
+# indefinitely, to prevent infinite hangs if the MCP server crashes or
+# the network drops.
 LONG_RUNNING_TOOLS = {
     "run_tests",
     "install_test_dependencies",
-    "run_command",
 }
+LONG_RUNNING_TIMEOUT = 1200.0  # 20 minutes
 
 
 class ToolExecutor:
@@ -853,10 +855,11 @@ class ToolExecutor:
                 status=ToolCallStatus.EXECUTING,
             )
 
-            # Long-running tools (run_tests, install_test_dependencies, etc.)
-            # have their own server-side subprocess timeouts, so we wait
-            # indefinitely for the server to respond.
-            timeout = None if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
+            # Long-running tools (run_tests, install_test_dependencies) get a
+            # generous 20-min client timeout. Server-side subprocess timeouts
+            # (300s/180s) should fire first, but this prevents infinite hangs
+            # if the MCP server crashes or the network drops.
+            timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
 
             # Execute via HTTP
             result = await self.mcp_http.call(

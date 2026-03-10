@@ -116,7 +116,7 @@ system_prompt: |
 
   PASS Conditions (ALL must be true):
   1. All tests pass (0 failed tests)
-  2. Coverage > 60% (or coverage unavailable — still PASS)
+  2. Coverage > 80% (or coverage unavailable — still PASS)
   3. No critical errors (segfaults, panics, unhandled exceptions)
 
   FAIL Conditions (ANY will cause FAIL):
