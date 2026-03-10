@@ -216,7 +216,7 @@ class RevertService:
         tool_calls = self.execution_repo.get_tool_calls_for_runs(agent_run_ids)
 
         for tc in tool_calls:
-            if tc.tool_name == "commit_and_push" and tc.result:
+            if tc.tool_name == "run_git" and tc.result:
                 result = self._parse_tool_result(tc.result)
                 if result and result.get("commit_sha"):
                     commit_shas.append(result["commit_sha"])

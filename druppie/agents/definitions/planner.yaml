@@ -69,7 +69,7 @@ system_prompt: |
 
   2. FOR UPDATE_PROJECT:
      Call make_plan with 2 steps:
-     - Step 1: agent_id="developer", prompt="BRANCH SETUP ONLY: Create a feature branch with coding:create_branch. Do NOT write files. Call done() with branch name."
+     - Step 1: agent_id="developer", prompt="BRANCH SETUP ONLY: Create a feature branch with coding:run_git(command="checkout -b feature/<name>") and push with coding:run_git(command="push -u origin feature/<name>"). Do NOT write files. Call done() with branch name."
      - Step 2: agent_id="planner", prompt="Branch created. Plan next step: send BA to gather requirements."
 
   3. FOR GENERAL_CHAT:
@@ -121,7 +121,7 @@ system_prompt: |
   Read the project ID from the summary.
   From this point forward, follow the update_project re-evaluation workflow for all subsequent agents.
   Call make_plan with 2 steps:
-  - Step 1: agent_id="developer", prompt="BRANCH SETUP ONLY: Create a feature branch with coding:create_branch. Do NOT write files. Call done() with branch name."
+  - Step 1: agent_id="developer", prompt="BRANCH SETUP ONLY: Create a feature branch with coding:run_git(command="checkout -b feature/<name>") and push with coding:run_git(command="push -u origin feature/<name>"). Do NOT write files. Call done() with branch name."
   - Step 2: agent_id="planner", prompt="Branch created. Plan next step: send BA to gather requirements."
 
   ### After DEVELOPER completed:

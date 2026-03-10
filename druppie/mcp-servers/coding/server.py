@@ -7,6 +7,7 @@ Uses FastMCP framework for HTTP transport.
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -463,7 +464,7 @@ async def write_file(
 ) -> dict:
     """Write file to workspace.
 
-    Files are written to disk only. Use commit_and_push to commit and push.
+    Files are written to disk only. Use run_git to commit and push.
 
     Args:
         path: File path relative to workspace
@@ -753,7 +754,6 @@ async def delete_file(
     workspace_id: str | None = None,
     project_id: str | None = None,
     user_id: str | None = None,
-    auto_commit: bool = True,
     repo_name: str | None = None,
     repo_owner: str | None = None,
 ) -> dict:
@@ -765,7 +765,6 @@ async def delete_file(
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
-        auto_commit: Whether to auto-commit (default: True)
         repo_name: Gitea repository name (for cloning)
         repo_owner: Gitea repository owner (for cloning)
 
@@ -804,16 +803,10 @@ async def delete_file(
 
         logger.info("Successfully deleted file in workspace %s: %s", resolved_workspace_id, path)
 
-        result = {
+        return {
             "success": True,
             "deleted": str(file_path.relative_to(workspace_path)),
         }
-
-        if auto_commit:
-            commit_result = await _do_commit_and_push(resolved_workspace_id, f"Delete {path}")
-            result["committed"] = commit_result.get("success", False)
-
-        return result
 
     except ValueError as e:
         logger.warning(
@@ -833,117 +826,117 @@ async def delete_file(
         return {"success": False, "error": str(e)}
 
 
-async def _do_commit_and_push(workspace_id: str, message: str) -> dict:
-    """Internal function to commit all changes and push to Gitea.
+async def _run_git(
+    workspace_id: str, command: str, repo_name: str = None, repo_owner: str = None
+) -> dict:
+    """Execute a whitelisted git command and return raw output."""
+    ALLOWED_SUBCOMMANDS = {"add", "commit", "push", "pull", "fetch", "status", "checkout", "log", "diff", "branch"}
+    CREDENTIAL_SUBCOMMANDS = {"push", "pull", "fetch"}
 
-    This is separate from the MCP tool to allow internal calls.
-    """
     try:
-        ws = get_workspace(workspace_id)
-        cwd = ws["path"]
-        branch = ws["branch"]
+        parts = shlex.split(command)
+    except ValueError as e:
+        return {"success": False, "error": f"Invalid command syntax: {e}"}
 
-        # Configure git user
-        subprocess.run(
-            ["git", "config", "user.email", "agent@druppie.local"],
-            cwd=cwd,
-            check=False,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Druppie Agent"],
-            cwd=cwd,
-            check=False,
-        )
+    if not parts:
+        return {"success": False, "error": "Empty command"}
 
-        # Stage all changes
-        subprocess.run(["git", "add", "-A"], cwd=cwd, check=True)
+    # Strip leading "git" if provided
+    if parts[0] == "git":
+        parts = parts[1:]
 
-        # Check for changes
+    if not parts:
+        return {"success": False, "error": "No git subcommand provided"}
+
+    subcommand = parts[0]
+
+    if subcommand not in ALLOWED_SUBCOMMANDS:
+        return {
+            "success": False,
+            "error": f"Git subcommand '{subcommand}' is not allowed. "
+            f"Allowed: {', '.join(sorted(ALLOWED_SUBCOMMANDS))}",
+        }
+
+    # Block destructive flags (not -f as it means different things per subcommand)
+    BLOCKED_FLAGS = {"--force", "--hard"}
+    found = BLOCKED_FLAGS & set(parts)
+    if found:
+        return {
+            "success": False,
+            "error": f"Destructive flags are not allowed: {found}",
+        }
+
+    ws = get_workspace(workspace_id)
+    work_dir = ws["path"]
+
+    # Inject credentials for network commands
+    if subcommand in CREDENTIAL_SUBCOMMANDS and repo_name and repo_owner:
+        gitea_url = get_gitea_clone_url(repo_name, repo_owner)
+        if gitea_url:
+            try:
+                subprocess.run(
+                    ["git", "remote", "set-url", "origin", gitea_url],
+                    cwd=work_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            except Exception:
+                pass
+
+    # Build and run the git command
+    full_cmd = ["git"] + parts
+    logger.info("run_git: command=%s work_dir=%s", full_cmd, work_dir)
+
+    try:
         result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=cwd,
+            full_cmd,
+            cwd=work_dir,
             capture_output=True,
             text=True,
+            timeout=120,
         )
-
-        has_changes = bool(result.stdout.strip())
-
-        if has_changes:
-            # Commit staged changes
-            subprocess.run(["git", "commit", "-m", message], cwd=cwd, check=True)
-
-        # Capture commit SHA after commit
-        commit_sha = None
-        if has_changes:
-            sha_result = subprocess.run(
-                ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True
-            )
-            commit_sha = sha_result.stdout.strip() if sha_result.returncode == 0 else None
-
-        # Always attempt to push (there may be unpushed commits from auto-commits)
-        if is_gitea_configured():
-            try:
-                ws = get_workspace(workspace_id)
-                repo_name = ws.get("repo_name")
-                repo_owner = ws.get("repo_owner")
-
-                # Check if origin remote exists
-                remote_check = subprocess.run(
-                    ["git", "remote", "get-url", "origin"],
-                    cwd=cwd,
-                    capture_output=True,
-                    text=True,
-                )
-                has_origin = remote_check.returncode == 0
-
-                if repo_name and has_origin:
-                    # Update remote URL with credentials for push
-                    auth_url = get_gitea_clone_url(repo_name, repo_owner)
-                    subprocess.run(
-                        ["git", "remote", "set-url", "origin", auth_url],
-                        cwd=cwd,
-                        check=True,
-                        capture_output=True,
-                    )
-
-                push_result = subprocess.run(
-                    ["git", "push", "-u", "origin", branch],
-                    cwd=cwd,
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
-                if push_result.returncode == 0:
-                    msg = f"Committed and pushed: {message}" if has_changes else f"Pushed (no new changes to commit): {message}"
-                    result = {"success": True, "message": msg, "pushed": True, "committed": has_changes}
-                    if commit_sha:
-                        result["commit_sha"] = commit_sha
-                    return result
-                else:
-                    logger.warning("Push failed: %s", push_result.stderr)
-                    msg = f"Committed: {message}" if has_changes else "No changes to commit"
-                    result = {"success": True, "message": msg, "pushed": False, "committed": has_changes, "push_error": push_result.stderr}
-                    if commit_sha:
-                        result["commit_sha"] = commit_sha
-                    return result
-            except subprocess.CalledProcessError as e:
-                msg = f"Committed: {message}" if has_changes else "No changes to commit"
-                result = {"success": True, "message": msg, "pushed": False, "committed": has_changes, "push_error": str(e)}
-                if commit_sha:
-                    result["commit_sha"] = commit_sha
-                return result
-
-        if not has_changes:
-            return {"success": True, "message": "No changes to commit", "pushed": False, "committed": False}
-        result = {"success": True, "message": f"Committed: {message}", "pushed": False, "committed": True}
-        if commit_sha:
-            result["commit_sha"] = commit_sha
-        return result
-
-    except subprocess.CalledProcessError as e:
-        return {"success": False, "error": str(e)}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Command timed out after 120 seconds"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"Failed to execute command: {e}"}
+
+    output = result.stdout.strip()
+    error_output = result.stderr.strip()
+    combined = f"{output}\n{error_output}".strip() if error_output else output
+
+    response = {
+        "success": result.returncode == 0,
+        "output": combined,
+        "exit_code": result.returncode,
+    }
+
+    # Auto-capture commit SHA from git commit output
+    if subcommand == "commit" and result.returncode == 0:
+        sha_match = re.search(r'\[[\w/.-]+ ([a-f0-9]+)\]', output + " " + error_output)
+        if sha_match:
+            response["commit_sha"] = sha_match.group(1)
+
+    # Update workspace branch tracking on checkout
+    if subcommand == "checkout" and result.returncode == 0:
+        try:
+            branch_result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=work_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if branch_result.returncode == 0:
+                ws["branch"] = branch_result.stdout.strip()
+                _save_workspace_state(ws)
+        except Exception:
+            pass
+
+    if not response["success"]:
+        response["error"] = error_output or "Command failed"
+
+    return response
 
 
 @mcp.tool()
@@ -958,7 +951,7 @@ async def batch_write_files(
 ) -> dict:
     """Write multiple files to workspace in a single operation.
 
-    Files are written to disk only. Use commit_and_push to commit and push.
+    Files are written to disk only. Use run_git to commit and push.
 
     Args:
         files: List of file objects, each with 'path' and 'content' keys
@@ -1050,8 +1043,8 @@ async def batch_write_files(
 
 
 @mcp.tool()
-async def commit_and_push(
-    message: str,
+async def run_git(
+    command: str,
     session_id: str | None = None,
     workspace_id: str | None = None,
     project_id: str | None = None,
@@ -1059,19 +1052,22 @@ async def commit_and_push(
     repo_name: str | None = None,
     repo_owner: str | None = None,
 ) -> dict:
-    """Commit all changes and push to Gitea.
+    """Execute a git command in the workspace.
+
+    Allowed subcommands: add, commit, push, pull, fetch, status, checkout, log, diff, branch.
+    Destructive flags (--force, --hard) are blocked.
 
     Args:
-        message: Commit message
+        command: Git command to execute (e.g. "status", "git log --oneline -5")
         session_id: Session ID (auto-creates workspace if needed)
         workspace_id: Legacy workspace ID (optional)
         project_id: Project ID for workspace path (optional)
         user_id: User ID for workspace path (optional)
-        repo_name: Gitea repository name (for git remote setup)
-        repo_owner: Gitea repository owner (for git remote setup)
+        repo_name: Gitea repository name (for credential injection on push)
+        repo_owner: Gitea repository owner (for credential injection on push)
 
     Returns:
-        Dict with success, message
+        Dict with success, output, exit_code, and optionally commit_sha or error
     """
     # Resolve workspace
     if session_id:
@@ -1087,228 +1083,8 @@ async def commit_and_push(
         resolved_workspace_id = workspace_id
     else:
         return {"success": False, "error": "Either session_id or workspace_id is required"}
-    return await _do_commit_and_push(resolved_workspace_id, message)
 
-
-@mcp.tool()
-async def create_branch(
-    branch_name: str,
-    session_id: str | None = None,
-    workspace_id: str | None = None,
-    project_id: str | None = None,
-    user_id: str | None = None,
-    repo_name: str | None = None,
-    repo_owner: str | None = None,
-) -> dict:
-    """Create and switch to a git branch. If the branch already exists, switches to it.
-
-    Args:
-        branch_name: Name of the branch to create or switch to
-        session_id: Session ID (auto-creates workspace if needed)
-        workspace_id: Legacy workspace ID (optional)
-        project_id: Project ID for workspace path (optional)
-        user_id: User ID for workspace path (optional)
-        repo_name: Gitea repository name (for cloning)
-        repo_owner: Gitea repository owner (for cloning)
-
-    Returns:
-        Dict with success, branch name, created (True if new, False if existing)
-    """
-    try:
-        # Resolve workspace
-        if session_id:
-            resolved_workspace_id, workspace_path = get_or_create_workspace(
-                session_id=session_id,
-                project_id=project_id,
-                user_id=user_id,
-                workspace_id=workspace_id,
-                repo_name=repo_name,
-                repo_owner=repo_owner,
-            )
-            cwd = str(workspace_path)
-            ws = workspaces[resolved_workspace_id]
-        elif workspace_id:
-            ws = get_workspace(workspace_id)
-            cwd = ws["path"]
-        else:
-            return {"success": False, "error": "Either session_id or workspace_id is required"}
-
-        # Try to create a new branch
-        result = subprocess.run(
-            ["git", "checkout", "-b", branch_name],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-        )
-
-        if result.returncode == 0:
-            # New branch created successfully
-            ws["branch"] = branch_name
-            _save_workspace_state(ws)
-            logger.info("Created new branch: %s", branch_name)
-            return {"success": True, "branch": branch_name, "created": True}
-
-        # Branch already exists — switch to it
-        logger.info("Branch %s already exists, switching to it", branch_name)
-        switch_result = subprocess.run(
-            ["git", "checkout", branch_name],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-        )
-
-        if switch_result.returncode == 0:
-            ws["branch"] = branch_name
-            _save_workspace_state(ws)
-            return {"success": True, "branch": branch_name, "created": False, "message": "Switched to existing branch"}
-
-        return {"success": False, "error": f"Failed to create or switch to branch: {result.stderr} / {switch_result.stderr}"}
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-@mcp.tool()
-async def merge_to_main(
-    session_id: str | None = None,
-    workspace_id: str | None = None,
-    project_id: str | None = None,
-    user_id: str | None = None,
-    repo_name: str | None = None,
-    repo_owner: str | None = None,
-) -> dict:
-    """Merge current branch to main (requires approval).
-
-    Args:
-        session_id: Session ID (auto-creates workspace if needed)
-        workspace_id: Legacy workspace ID (optional)
-        project_id: Project ID for workspace path (optional)
-        user_id: User ID for workspace path (optional)
-        repo_name: Gitea repository name (for workspace resolution)
-        repo_owner: Gitea repository owner (for workspace resolution)
-
-    Returns:
-        Dict with success, merged branch
-    """
-    try:
-        # Resolve workspace
-        if session_id:
-            resolved_workspace_id, workspace_path = get_or_create_workspace(
-                session_id=session_id,
-                project_id=project_id,
-                user_id=user_id,
-                workspace_id=workspace_id,
-                repo_name=repo_name,
-                repo_owner=repo_owner,
-            )
-            cwd = str(workspace_path)
-            ws = workspaces[resolved_workspace_id]
-        elif workspace_id:
-            ws = get_workspace(workspace_id)
-            cwd = ws["path"]
-        else:
-            return {"success": False, "error": "Either session_id or workspace_id is required"}
-
-        current_branch = ws["branch"]
-
-        if current_branch == "main":
-            return {"success": False, "error": "Already on main branch"}
-
-        # Checkout main and merge
-        subprocess.run(["git", "checkout", "main"], cwd=cwd, check=True)
-        subprocess.run(["git", "merge", current_branch], cwd=cwd, check=True)
-
-        # Push if Gitea is configured
-        if GITEA_TOKEN:
-            subprocess.run(["git", "push", "origin", "main"], cwd=cwd, check=True)
-
-        # Update workspace
-        ws["branch"] = "main"
-        _save_workspace_state(ws)
-
-        return {"success": True, "merged": current_branch}
-
-    except subprocess.CalledProcessError as e:
-        return {"success": False, "error": str(e)}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-@mcp.tool()
-async def get_git_status(
-    session_id: str | None = None,
-    workspace_id: str | None = None,
-    project_id: str | None = None,
-    user_id: str | None = None,
-    repo_name: str | None = None,
-    repo_owner: str | None = None,
-) -> dict:
-    """Get git status for workspace.
-
-    Args:
-        session_id: Session ID (auto-creates workspace if needed)
-        workspace_id: Legacy workspace ID (optional)
-        project_id: Project ID for workspace path (optional)
-        user_id: User ID for workspace path (optional)
-        repo_name: Gitea repository name (for cloning)
-        repo_owner: Gitea repository owner (for cloning)
-
-    Returns:
-        Dict with branch, status, files
-    """
-    try:
-        # Resolve workspace
-        if session_id:
-            resolved_workspace_id, workspace_path = get_or_create_workspace(
-                session_id=session_id,
-                project_id=project_id,
-                user_id=user_id,
-                workspace_id=workspace_id,
-                repo_name=repo_name,
-                repo_owner=repo_owner,
-            )
-            cwd = str(workspace_path)
-            ws = workspaces[resolved_workspace_id]
-        elif workspace_id:
-            ws = get_workspace(workspace_id)
-            cwd = ws["path"]
-        else:
-            return {"success": False, "error": "Either session_id or workspace_id is required"}
-
-        # Get current branch
-        branch_result = subprocess.run(
-            ["git", "branch", "--show-current"],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-        )
-        branch = branch_result.stdout.strip() or ws["branch"]
-
-        # Get status
-        status_result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-        )
-
-        # Parse status
-        files = []
-        for line in status_result.stdout.strip().split("\n"):
-            if line:
-                status = line[:2].strip()
-                filename = line[3:]
-                files.append({"status": status, "file": filename})
-
-        return {
-            "success": True,
-            "branch": branch,
-            "files": files,
-            "has_changes": len(files) > 0,
-        }
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    return await _run_git(resolved_workspace_id, command, repo_name, repo_owner)
 
 
 # =============================================================================
