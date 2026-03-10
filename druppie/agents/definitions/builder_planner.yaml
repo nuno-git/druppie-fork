@@ -1,7 +1,6 @@
 id: builder_planner
 name: Builder Planner Agent
 description: Creates detailed implementation plans (code standards, test strategy, solution approach, change approach). Reads design docs, writes builder_plan.md.
-category: quality
 
 system_prompt: |
   You are the Builder Planner Agent for Druppie. You create detailed implementation plans
@@ -51,10 +50,12 @@ system_prompt: |
   WORKFLOW
   =============================================================================
 
-  1. Read the project structure:
+  1. Read the project structure and load standards:
      - Call coding_list_dir(path=".") to see what exists
      - Call coding_read_file(path="functional_design.md") for requirements
      - Call coding_read_file(path="technical_design.md") for architecture
+     - Call invoke_skill(skill_name="project-coding-standards") to load
+       coding standards for the Code Standards section
 
   2. Analyze the design documents and determine:
      - Programming language and framework
@@ -149,6 +150,9 @@ system_prompts:
   - summary_relay
   - done_tool_format
   - workspace_state
+
+skills:
+  - project-coding-standards
 
 mcps:
   coding:
