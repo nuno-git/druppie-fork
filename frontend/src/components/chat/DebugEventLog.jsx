@@ -212,7 +212,7 @@ const OutlineToolLine = ({ tc, selected, onClick }) => {
 
 // ─── Retry Confirmation Dialog ──────────────────────────────────────────────
 
-const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isPending }) => {
+const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isPending, error }) => {
   const [editedPrompt, setEditedPrompt] = useState(plannedPrompt || '')
 
   return (
@@ -237,6 +237,11 @@ const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isP
               rows={6}
               className="w-full text-xs font-mono bg-gray-50 border border-gray-200 rounded p-2.5 resize-y focus:outline-none focus:ring-1 focus:ring-amber-400 focus:border-amber-400 disabled:opacity-50"
             />
+          </div>
+        )}
+        {error && (
+          <div className="mb-3 bg-red-50 border border-red-200 rounded p-2 text-xs text-red-700">
+            Retry failed: {error}
           </div>
         )}
         <div className="flex justify-end gap-2">
@@ -283,6 +288,9 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
       queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
+    onError: () => {
+      // Keep dialog open so the error (rendered below) is visible
+    },
   })
 
   const canRetry = sessionStatus && sessionStatus !== 'active'
@@ -326,13 +334,8 @@ const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
           onConfirm={(editedPrompt) => retryMutation.mutate(editedPrompt)}
           onCancel={() => setShowRetryConfirm(false)}
           isPending={retryMutation.isPending}
+          error={retryMutation.isError ? retryMutation.error.message : null}
         />
-      )}
-
-      {retryMutation.isError && (
-        <div className="bg-red-50 border border-red-200 rounded p-2 text-xs text-red-700">
-          Retry failed: {retryMutation.error.message}
-        </div>
       )}
 
       {/* Planned prompt */}

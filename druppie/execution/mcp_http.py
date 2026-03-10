@@ -59,7 +59,7 @@ class MCPHttp:
         server: str,
         tool: str,
         args: dict[str, Any],
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float | None = 60.0,
     ) -> dict[str, Any]:
         """Call an MCP tool via HTTP.
 
@@ -67,7 +67,7 @@ class MCPHttp:
             server: MCP server name (coding, docker)
             tool: Tool name (read_file, write_file, build, etc.)
             args: Tool arguments
-            timeout_seconds: Request timeout
+            timeout_seconds: Request timeout (None = wait indefinitely)
 
         Returns:
             Tool result as dict
@@ -88,13 +88,14 @@ class MCPHttp:
         try:
             client = self._get_client(server)
 
-            # Use asyncio.wait_for for Python 3.10 compatibility
-            # (asyncio.timeout requires Python 3.11+)
             async def _do_call():
                 async with client:
                     return await client.call_tool(tool, args)
 
-            result = await asyncio.wait_for(_do_call(), timeout=timeout_seconds)
+            if timeout_seconds is not None:
+                result = await asyncio.wait_for(_do_call(), timeout=timeout_seconds)
+            else:
+                result = await _do_call()
 
             # Parse FastMCP response
             result_dict = self._parse_result(result)

@@ -14,7 +14,7 @@ Last updated: 2026-03-03
 - Token/Cost Tracking Half Implemented and Buggy
 - Database Schema Does Not Match Domain Models
 - JSON/JSONB Columns Still Present
-- Tester Agent Not Invoked
+- ~~Tester Agent Not Invoked~~ ✅ DONE (replaced by test_builder + test_executor)
 - Reviewer Agent Not Invoked
 - Workflows Directory Empty
 - Settings Page is Read-Only
@@ -27,13 +27,17 @@ Last updated: 2026-03-03
 - No Observability Infrastructure
 - Keycloak in Development Mode
 - Sandboxed Execution Environment for Agents
-- Test-Driven Development (TDD) Workflow
+- ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 - ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
 - Language Matching
 - Prompt Injection Protection
 - Compliance Agent for Input Validation
+- TDD Retry Counting in Python Runtime
+- Externalize HITL Escalation Text with Semantic Option IDs
+- Test Executor Python-Level Safety Net
+- Frontend Agent Config from API
 - General Pre-Validation System for Tool Arguments
 
 ---
@@ -88,12 +92,12 @@ Last updated: 2026-03-03
 - **Exception:** Raw API requests are currently stored as JSON for debugging purposes.
 - There may be other violations — this needs to be checked and updated.
 
-### Tester Agent Not Invoked
+### ~~Tester Agent Not Invoked~~ ✅ DONE
 
-- **Location:** `druppie/agents/definitions/tester.yaml`
-- Agent YAML definition exists and references the `run_tests` tool (which does exist in the coding MCP server at `druppie/mcp-servers/coding/module.py:746`).
-- However, the planner agent never schedules the tester agent. It is not referenced in the planner's YAML definition.
-- The agent would need to be integrated into the planning workflow to be useful.
+- **Resolved in:** `feature/TDD-Loop` branch
+- The single `tester` agent has been replaced by two specialized agents: `test_builder` (TDD Red Phase — generates tests) and `test_executor` (TDD Green Phase — runs tests, diagnoses failures, fixes code). Both are integrated into the planner workflow.
+- A `builder_planner` agent was added to create implementation plans (`builder_plan.md`) between the architect and test_builder phases.
+- TDD retry mechanism: up to 3 builder → test_executor retry cycles on failure, with HITL escalation after 3 failures.
 
 ### Reviewer Agent Not Invoked
 
@@ -173,21 +177,22 @@ Last updated: 2026-03-03
 ### Sandboxed Execution Environment for Agents
 
 - **Current state:** The MCP coding server (`mcp-coding`, port 9001) provides file and git operations but no command execution beyond git. Agents cannot build, run, or test the code they write within an isolated environment.
-- **Problem:** The Developer agent writes code but cannot verify it compiles or runs. The Tester agent (currently a stub) has no way to execute tests. The Deployer agent builds via Docker but has no pre-deploy validation step.
+- **Problem:** The Developer agent writes code but cannot verify it compiles or runs. The Deployer agent builds via Docker but has no pre-deploy validation step.
 - **Desired improvement:** Replace or extend the coding MCP server with a fully sandboxed environment per project/session where agents can safely execute shell commands (install dependencies, run builds, execute tests). This sandbox should:
   - Be isolated and disposable (container-based or VM-based)
   - Mirror the production environment that the Deployer agent will later deploy to, so agents can catch environment-specific issues early
-  - Be usable by both the Tester agent (for running test suites) and the Developer agent (for build verification)
-  - Support a TDD workflow: the Tester agent writes tests first, the Developer agent implements until tests pass
+  - Be usable by both the test_executor agent (for running test suites) and the Developer agent (for build verification)
 - **Research needed:** Evaluate container-per-session vs shared sandbox approaches, security implications of command execution, and how to replicate the target production environment configuration inside the sandbox.
 
-### Test-Driven Development (TDD) Workflow
+### ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
 
-- **Current state:** The Tester agent is defined but never invoked by the Planner. There is no testing phase in either the `create_project` or `update_project` workflows.
-- **Desired improvement:** Integrate a TDD workflow where the Tester agent writes tests based on the functional design and architecture before the Developer agent implements the code. The Developer should then implement until tests pass. This requires:
-  - The Planner to schedule: Tester (write tests) → Developer (implement) → Tester (verify)
-  - The sandboxed execution environment (see Sandboxed Execution Environment for Agents) for running tests
-  - A feedback loop: if tests fail after implementation, the Developer gets the failure output and iterates
+- **Resolved in:** `feature/TDD-Loop` branch
+- TDD workflow is fully integrated into both `create_project` and `update_project` flows:
+  - `builder_planner` → `test_builder` (Red Phase) → `builder` (Green Phase) → `test_executor` (Run & Fix)
+  - Up to 3 retry cycles (builder → test_executor) on failure
+  - HITL escalation after 3 failures with user choice: continue with guidance, deploy with warning, or abort
+- The Coding MCP server provides `run_tests`, `get_test_framework`, `get_coverage_report`, and `install_test_dependencies` tools.
+- The `test_report` builtin tool provides structured iteration tracking.
 
 ### Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 
@@ -240,6 +245,26 @@ Last updated: 2026-03-03
   - Could use a classification approach (is this input safe?) rather than generation
   - Failed validations should block the input and notify the user with a clear explanation
 - **Related to:** Prompt Injection Protection (this is the runtime enforcement mechanism for those defenses)
+
+### TDD Retry Counting in Python Runtime
+
+- **Current state:** The planner counts TDD retry attempts by pattern-matching `"Agent builder: TDD RETRY"` lines in the accumulated PREVIOUS AGENT SUMMARY. This relies on the LLM correctly counting string occurrences — LLMs are notoriously bad at counting.
+- **Desired improvement:** Move retry counting to the Python runtime layer. In `builtin_tools.py`, the `done()` function already collects previous summaries. It could count retry patterns deterministically and inject a structured `TDD_RETRY_COUNT: N` field into the planner's prompt, removing the need for LLM string-counting.
+
+### Externalize HITL Escalation Text with Semantic Option IDs
+
+- **Current state:** The TDD HITL escalation question and options are hardcoded as Dutch prose in `planner.yaml`. The planner pattern-matches on the exact Dutch option text to determine the user's choice.
+- **Desired improvement:** Define semantic option IDs (`CONTINUE_WITH_GUIDANCE`, `DEPLOY_WITH_WARNING`, `ABORT`) and externalize the display text to a localizable config. The planner should match on option IDs rather than prose strings. This also supports the Language Matching backlog item.
+
+### Test Executor Python-Level Safety Net
+
+- **Current state:** The test_executor's stopping conditions (e.g., "8+ iterations with no progress") are entirely in the system prompt — the LLM self-regulates. With `max_iterations: 100`, a misbehaving LLM could loop for dozens of expensive iterations.
+- **Desired improvement:** Track `test_report` tool calls per agent_run in the Python runtime and force a FAIL result after a configurable max (e.g., 10 test_report calls). This parallels the `MAX_PLANNER_ITERATIONS` safety net in `builtin_tools.py`.
+
+### Frontend Agent Config from API
+
+- **Current state:** Agent display properties (name, icon, color, description, thinkingLabel) are hardcoded in `frontend/src/utils/agentConfig.js` and must be manually kept in sync with backend YAML definitions. Each new agent requires updating both files.
+- **Desired improvement:** Expose UI properties via the `/api/agents` endpoint (add `color`, `icon`, `thinkingLabel` fields to `AgentResponse`). The frontend would then fetch agent config from the API instead of maintaining a local duplicate.
 
 ### General Pre-Validation System for Tool Arguments
 

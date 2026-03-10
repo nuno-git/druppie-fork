@@ -615,7 +615,7 @@ The Docker Compose setup works on Windows, macOS, and Linux. Shell scripts use L
 
 ### 8.1 Agent Definitions
 
-Nine agents are defined as YAML files in `druppie/agents/definitions/`:
+Twelve agents are defined as YAML files in `druppie/agents/definitions/`:
 
 | Agent | Role | Builtin Tools | MCP Access | Skills |
 |-------|------|---------------|------------|--------|
@@ -623,9 +623,12 @@ Nine agents are defined as YAML files in `druppie/agents/definitions/`:
 | `planner` | Creates execution plan (which agents to run) | `make_plan` | None | — |
 | `business_analyst` | Gathers requirements from user | Default | `coding` (read_file, make_design, list_dir) | `making-mermaid-diagrams` |
 | `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, make_design, list_dir), `archimate` | `making-mermaid-diagrams` |
+| `builder_planner` | Creates implementation plans, writes builder_plan.md | Default | `coding` | — |
+| `test_builder` | Generates tests (TDD Red Phase) | Default | `coding` | — |
+| `builder` | Implements code to pass tests (TDD Green Phase) | Default | `coding` | — |
+| `test_executor` | Runs tests, iteratively fixes code | `test_report` | `coding` | — |
 | `developer` | Writes code, commits, creates PRs | `invoke_skill` | `coding` | `code-review`, `git-workflow` |
 | `reviewer` | Reviews code quality | Default | `coding` | — |
-| `tester` | Writes and runs tests | Default | `coding`, `docker` | — |
 | `deployer` | Builds and deploys containers | Default | `coding`, `docker` | — |
 | `summarizer` | Creates conversation summary message | `create_message` | None | — |
 
@@ -663,13 +666,14 @@ Available system prompts:
 
 | System Prompt | Purpose |
 |----------|---------|
+| `tool_only_communication` | Enforces that agents communicate only through tool calls |
 | `summary_relay` | How to read previous agent summaries and format your own via `done()` |
 | `done_tool_format` | Mandatory `done()` output format rules |
 | `workspace_state` | Shared workspace and git branch rules |
 
 Agents declare which system prompts to include via the `system_prompts` list in their YAML definition. At runtime, the agent's `_build_system_prompt()` method loads each system prompt and appends it (in order) after the agent's own `system_prompt` text, before tool instructions are added.
 
-Agents without a `system_prompts` list (or with an empty list) receive no system prompts. Currently, 5 agents include all 3 system prompts: architect, business_analyst, deployer, developer, and planner. The router, summarizer, reviewer, and tester agents do not include system prompts.
+Agents without a `system_prompts` list (or with an empty list) receive no system prompts. Currently, 9 agents include all 4 system prompts: architect, builder, builder_planner, business_analyst, deployer, developer, planner, test_builder, and test_executor. The router, summarizer, and reviewer agents do not include system prompts.
 
 ### 8.3 Agent Runtime Architecture
 

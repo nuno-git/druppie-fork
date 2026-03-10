@@ -11,7 +11,7 @@ import remarkGfm from 'remark-gfm'
 import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
-import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
+import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
@@ -24,26 +24,13 @@ import {
   extractSurfacedApprovals,
   extractQuestions,
   extractTestResults,
+  extractSurfacedFileWrites,
+  extractDependencyInstalls,
   findPendingQuestion,
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
-
-// --- Tool label helper ---
-
-const getToolLabel = (toolName) => {
-  if (!toolName) return 'Unknown Tool'
-  const labels = {
-    'write_file': 'Write File',
-    'coding:write_file': 'Write File',
-    'batch_write_files': 'Write Files',
-    'coding:batch_write_files': 'Write Files',
-    'run_command': 'Run Command',
-    'coding:run_command': 'Run Command',
-    'commit_and_push': 'Git Commit & Push',
-    'coding:commit_and_push': 'Git Commit & Push',
-  }
-  return labels[toolName] || toolName?.split(':').pop() || 'Tool Action'
-}
+import FileReviewCard from './FileReviewCard'
+import DependencyInstallCard from './DependencyInstallCard'
 
 // --- Inline Approval (minimal chat card) ---
 
@@ -80,7 +67,7 @@ const InlineApproval = ({ tc, sessionId }) => {
   const isRejected = tc.approval.status === 'rejected'
   const isProcessing = approveMut.isPending || rejectMut.isPending
 
-  const toolLabel = getToolLabel(tc.tool_name)
+  const toolLabel = formatToolName(tc.tool_name)
   const args = tc.arguments || {}
   const contextLine = args.path || args.file_path || args.command || args.message || args.commit_message || null
 
@@ -294,11 +281,17 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
   const resolvedItems = hasFollowingMessage ? [] : extractSurfacedApprovals(run.llm_calls)
     .filter((item) => item.tc.approval.status !== 'pending')
   const testResults = extractTestResults(run)
+  const surfacedFiles = extractSurfacedFileWrites(run)
+  const depInstalls = extractDependencyInstalls(run)
 
   // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
 
-  if (!showAgentTrace && resolvedItems.length === 0) return null
+  // Show test card immediately when test_executor is running (even with no results yet)
+  const isTestExecutor = run.agent_id === 'test_executor'
+  const showTestCard = isTestExecutor && (run.status === 'running' || testResults.length > 0)
+
+  if (!showAgentTrace && resolvedItems.length === 0 && surfacedFiles.length === 0 && depInstalls.length === 0 && !showTestCard) return null
 
   const config = getAgentConfig(run.agent_id)
   const AgentIcon = config.icon
@@ -323,9 +316,22 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
           ))}
         </div>
       )}
-      {testResults.length > 0 && (
+      {surfacedFiles.length > 0 && (
         <div className="mt-2">
-          <TestResultCard testResults={testResults} />
+          <FileReviewCard files={surfacedFiles} />
+        </div>
+      )}
+      {depInstalls.length > 0 && (
+        <div className="mt-2">
+          <DependencyInstallCard installs={depInstalls} />
+        </div>
+      )}
+      {showTestCard && (
+        <div className="mt-2">
+          <TestResultCard
+            testResults={testResults}
+            isRunning={run.status === 'running' && testResults.length === 0}
+          />
         </div>
       )}
     </div>
@@ -472,6 +478,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       queryClient.refetchQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
+    onError: (err) => {
+      console.error('Cancel failed:', err)
+    },
   })
 
   const resumeMutation = useMutation({
@@ -479,6 +488,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     onSuccess: () => {
       queryClient.refetchQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
+    onError: (err) => {
+      console.error('Resume failed:', err)
     },
   })
 
@@ -608,10 +620,14 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     const trimmed = continueInput.trim()
     if (!trimmed) return
     if (pendingQuestion) {
-      answerQuestion(pendingQuestion.tc.question_id, trimmed).then(() => {
-        setContinueInput('')
-        queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
-      })
+      answerQuestion(pendingQuestion.tc.question_id, trimmed)
+        .then(() => {
+          setContinueInput('')
+          queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+        })
+        .catch((err) => {
+          console.error('Answer question failed:', err)
+        })
       return
     }
     continueMutation.mutate(trimmed)
@@ -679,6 +695,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 )}
                 Stop
               </button>
+            )}
+            {(cancelMutation.isError || resumeMutation.isError) && (
+              <span className="text-xs text-red-600">
+                {cancelMutation.error?.message || resumeMutation.error?.message || 'Action failed'}
+              </span>
             )}
             {canDebug && (
               <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-xs">
@@ -825,9 +846,15 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 const resolvedItems = hasFollowingMessage ? []
                   : extractSurfacedApprovals(entry.agent_run.llm_calls)
                       .filter((item) => item.tc.approval.status !== 'pending')
+                const surfacedFiles = extractSurfacedFileWrites(entry.agent_run)
+                const depInstalls = extractDependencyInstalls(entry.agent_run)
+                const testResults = extractTestResults(entry.agent_run)
                 // Show completed runs without a following message (e.g. architect)
                 const isCompletedWithoutMessage = !hasFollowingMessage && entry.agent_run.status !== 'running'
-                if (resolvedItems.length === 0 && questions.length === 0 && !isCompletedWithoutMessage) {
+                // Show test card immediately when test_executor is running
+                const isTestExecutor = entry.agent_run.agent_id === 'test_executor'
+                const showTestCard = isTestExecutor && (entry.agent_run.status === 'running' || testResults.length > 0)
+                if (resolvedItems.length === 0 && questions.length === 0 && surfacedFiles.length === 0 && depInstalls.length === 0 && !showTestCard && !isCompletedWithoutMessage) {
                   return null
                 }
                 return (

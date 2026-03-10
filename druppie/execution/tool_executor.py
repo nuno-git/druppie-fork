@@ -54,6 +54,7 @@ BUILTIN_TOOLS = {
     "hitl_ask_multiple_choice_question",
     "create_message",
     "invoke_skill",
+    "test_report",
 }
 
 # HITL tools require user answer (create Question record)
@@ -61,6 +62,16 @@ HITL_TOOLS = {
     "hitl_ask_question",
     "hitl_ask_multiple_choice_question",
 }
+
+# Tools that can take significantly longer than the default 60s timeout.
+# These get a generous but bounded timeout (20 min) instead of waiting
+# indefinitely, to prevent infinite hangs if the MCP server crashes or
+# the network drops.
+LONG_RUNNING_TOOLS = {
+    "run_tests",
+    "install_test_dependencies",
+}
+LONG_RUNNING_TIMEOUT = 1200.0  # 20 minutes
 
 
 class ToolExecutor:
@@ -844,11 +855,18 @@ class ToolExecutor:
                 status=ToolCallStatus.EXECUTING,
             )
 
+            # Long-running tools (run_tests, install_test_dependencies) get a
+            # generous 20-min client timeout. Server-side subprocess timeouts
+            # (300s/180s) should fire first, but this prevents infinite hangs
+            # if the MCP server crashes or the network drops.
+            timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
+
             # Execute via HTTP
             result = await self.mcp_http.call(
                 tool_call.mcp_server,
                 tool_call.tool_name,
                 args,
+                timeout_seconds=timeout,
             )
 
             # Check if result indicates failure
