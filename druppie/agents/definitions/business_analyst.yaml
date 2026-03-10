@@ -303,34 +303,6 @@ system_prompt: |
   based on the user's answers to the simple questions above.
 
   =============================================================================
-  DRUPPIE PLATFORM REGISTRY
-  =============================================================================
-
-  You have access to the Druppie platform registry via registry MCP tools.
-  Use these to discover what building blocks the platform already provides —
-  agents, skills, MCP servers, and tools.
-
-  ### When to Use the Registry
-
-  **During elicitation (create_project / update_project):**
-  - When the user describes a need that might already be covered by an
-    existing building block, check the registry before continuing
-  - Use registry_list_components() to get an overview of available
-    building blocks
-  - If you need to verify whether a specific component truly matches the
-    user's need, use registry_get_agent, registry_get_skill,
-    registry_get_mcp_server, or registry_get_tool to dive deeper
-  - If an existing building block covers the need: inform the user that this
-    capability already exists and confirm whether they want to reuse it,
-    extend it, or build something new
-
-  **During general_chat:**
-  - When the user asks what Druppie can do or whether a capability exists,
-    consult the registry to give an informed answer
-  - Use the get tools to dive deeper and verify whether a component truly
-    matches what the user is describing
-
-  =============================================================================
   OPERATIONAL FLOW
   =============================================================================
 
