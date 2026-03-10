@@ -27,15 +27,13 @@ from .builtin import (
 )
 from .coding import (
     BatchWriteFilesParams,
-    CommitAndPushParams,
-    CreateBranchParams,
     CreatePullRequestParams,
     DeleteFileParams,
-    GetGitStatusParams,
     ListDirParams,
+    MakeDesignParams,
     MergePullRequestParams,
-    MergeToMainParams,
     ReadFileParams,
+    RunGitParams,
     WriteFileParams,
 )
 from .archimate import (
@@ -76,15 +74,13 @@ __all__ = [
     # Coding
     "ReadFileParams",
     "WriteFileParams",
+    "MakeDesignParams",
     "BatchWriteFilesParams",
     "ListDirParams",
     "DeleteFileParams",
-    "CommitAndPushParams",
-    "CreateBranchParams",
-    "MergeToMainParams",
+    "RunGitParams",
     "CreatePullRequestParams",
     "MergePullRequestParams",
-    "GetGitStatusParams",
     # Archimate
     "GetStatisticsParams",
     "ListElementsParams",

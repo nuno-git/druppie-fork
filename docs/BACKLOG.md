@@ -8,12 +8,13 @@ Last updated: 2026-03-09
 
 ## Summary
 
+- ~~Silent Push Failure in Git Tools~~ ✅ DONE
 - Per-Agent Model Selection Ignored
 - ~~Cancel/Resume Endpoint Missing on Backend~~ ✅ DONE
 - Token/Cost Tracking Half Implemented and Buggy
 - Database Schema Does Not Match Domain Models
 - JSON/JSONB Columns Still Present
-- Tester Agent Not Invoked
+- ~~Tester Agent Not Invoked~~ ✅ DONE (replaced by test_builder + test_executor)
 - Reviewer Agent Not Invoked
 - Workflows Directory Empty
 - Settings Page is Read-Only
@@ -26,16 +27,26 @@ Last updated: 2026-03-09
 - No Observability Infrastructure
 - Keycloak in Development Mode
 - ~~Sandboxed Execution Environment for Agents~~ ✅ DONE
-- Test-Driven Development (TDD) Workflow (partially done)
+- ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
 - Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 - ~~Skills System~~ ✅ DONE
 - Skill: MCP Server Integration for Generated Applications
 - Language Matching
 - Prompt Injection Protection
 - Compliance Agent for Input Validation
+- TDD Retry Counting in Python Runtime
+- Externalize HITL Escalation Text with Semantic Option IDs
+- Test Executor Python-Level Safety Net
+- Frontend Agent Config from API
 - General Pre-Validation System for Tool Arguments
 
 ---
+
+### ~~Silent Push Failure in Git Tools~~ (DONE)
+
+- **Resolved in:** `fix/commit-and-push-silent-failure` branch
+- **Bug:** `_do_commit_and_push()` returned `success: True` when `git push` failed, silently swallowing push errors. All agents that called `commit_and_push` could lose their work — changes were committed locally in the ephemeral workspace but never pushed to Gitea, with the timeline showing "completed."
+- **Fix:** Replaced four over-engineered git tools (`commit_and_push`, `create_branch`, `merge_to_main`, `get_git_status`) with a single `run_git` tool that executes whitelisted git subcommands and returns raw terminal output. Success is tied directly to git's exit code — push failures are now impossible to miss. Allowed subcommands: `add`, `commit`, `push`, `status`, `checkout`, `log`, `diff`, `branch`. Destructive flags (`--force`, `--hard`) are blocked. PR tools (`create_pull_request`, `merge_pull_request`) remain unchanged.
 
 ### ~~Per-Agent Model Selection Ignored~~ (DONE)
 
@@ -81,12 +92,12 @@ Last updated: 2026-03-09
 - **Exception:** Raw API requests are currently stored as JSON for debugging purposes.
 - There may be other violations — this needs to be checked and updated.
 
-### Tester Agent Not Invoked
+### ~~Tester Agent Not Invoked~~ ✅ DONE
 
-- **Location:** `druppie/agents/definitions/tester.yaml`
-- Agent YAML definition exists and references the `run_tests` tool (which does exist in the coding MCP server at `druppie/mcp-servers/coding/module.py:746`).
-- However, the planner agent never schedules the tester agent. It is not referenced in the planner's YAML definition.
-- The agent would need to be integrated into the planning workflow to be useful.
+- **Resolved in:** `feature/TDD-Loop` branch
+- The single `tester` agent has been replaced by two specialized agents: `test_builder` (TDD Red Phase — generates tests) and `test_executor` (TDD Green Phase — runs tests, diagnoses failures, fixes code). Both are integrated into the planner workflow.
+- A `builder_planner` agent was added to create implementation plans (`builder_plan.md`) between the architect and test_builder phases.
+- TDD retry mechanism: up to 3 builder → test_executor retry cycles on failure, with HITL escalation after 3 failures.
 
 ### Reviewer Agent Not Invoked
 
@@ -167,13 +178,15 @@ Last updated: 2026-03-09
 - Full sandbox infrastructure implemented using Open-Inspect (git submodule at `vendor/open-inspect/`). Docker sandboxes with OpenCode provide isolated execution per task. Webhook + pause/resume pattern replaces long-polling. Provider resilience with three-layer failover. Optional Kata Containers for VM-level isolation.
 - See `docs/SANDBOX.md` for full details.
 
-### Test-Driven Development (TDD) Workflow (partially done)
+### ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
 
-- **Current state:** The Tester agent definition exists, sandbox infrastructure is live, and the Planner has TDD workflow instructions. However, the full TDD loop (Tester writes tests → Developer implements → Tester validates) is not yet wired end-to-end.
-- **Remaining work:**
-  - Wire the Planner to actually schedule Tester → Developer → Tester sequences
-  - Implement the feedback loop: if tests fail, Developer gets failure output and iterates
-  - See `docs/testing/tdd-implementation-plan.md` for the full roadmap
+- **Resolved in:** `feature/TDD-Loop` branch
+- TDD workflow is fully integrated into both `create_project` and `update_project` flows:
+  - `builder_planner` → `test_builder` (Red Phase) → `builder` (Green Phase) → `test_executor` (Run & Fix)
+  - Up to 3 retry cycles (builder → test_executor) on failure
+  - HITL escalation after 3 failures with user choice: continue with guidance, deploy with warning, or abort
+- The Coding MCP server provides `run_tests`, `get_test_framework`, `get_coverage_report`, and `install_test_dependencies` tools.
+- The `test_report` builtin tool provides structured iteration tracking.
 
 ### Agents Should Be Able to Spawn Sub-Agents and Inject Next Steps
 
@@ -226,6 +239,26 @@ Last updated: 2026-03-09
   - Could use a classification approach (is this input safe?) rather than generation
   - Failed validations should block the input and notify the user with a clear explanation
 - **Related to:** Prompt Injection Protection (this is the runtime enforcement mechanism for those defenses)
+
+### TDD Retry Counting in Python Runtime
+
+- **Current state:** The planner counts TDD retry attempts by pattern-matching `"Agent builder: TDD RETRY"` lines in the accumulated PREVIOUS AGENT SUMMARY. This relies on the LLM correctly counting string occurrences — LLMs are notoriously bad at counting.
+- **Desired improvement:** Move retry counting to the Python runtime layer. In `builtin_tools.py`, the `done()` function already collects previous summaries. It could count retry patterns deterministically and inject a structured `TDD_RETRY_COUNT: N` field into the planner's prompt, removing the need for LLM string-counting.
+
+### Externalize HITL Escalation Text with Semantic Option IDs
+
+- **Current state:** The TDD HITL escalation question and options are hardcoded as Dutch prose in `planner.yaml`. The planner pattern-matches on the exact Dutch option text to determine the user's choice.
+- **Desired improvement:** Define semantic option IDs (`CONTINUE_WITH_GUIDANCE`, `DEPLOY_WITH_WARNING`, `ABORT`) and externalize the display text to a localizable config. The planner should match on option IDs rather than prose strings. This also supports the Language Matching backlog item.
+
+### Test Executor Python-Level Safety Net
+
+- **Current state:** The test_executor's stopping conditions (e.g., "8+ iterations with no progress") are entirely in the system prompt — the LLM self-regulates. With `max_iterations: 100`, a misbehaving LLM could loop for dozens of expensive iterations.
+- **Desired improvement:** Track `test_report` tool calls per agent_run in the Python runtime and force a FAIL result after a configurable max (e.g., 10 test_report calls). This parallels the `MAX_PLANNER_ITERATIONS` safety net in `builtin_tools.py`.
+
+### Frontend Agent Config from API
+
+- **Current state:** Agent display properties (name, icon, color, description, thinkingLabel) are hardcoded in `frontend/src/utils/agentConfig.js` and must be manually kept in sync with backend YAML definitions. Each new agent requires updating both files.
+- **Desired improvement:** Expose UI properties via the `/api/agents` endpoint (add `color`, `icon`, `thinkingLabel` fields to `AgentResponse`). The frontend would then fetch agent config from the API instead of maintaining a local duplicate.
 
 ### General Pre-Validation System for Tool Arguments
 

@@ -1,6 +1,7 @@
 id: reviewer
 name: Reviewer Agent
 description: Reviews code and provides feedback
+category: quality
 
 system_prompt: |
   You are a Code Reviewer Agent for Druppie. You review code for quality,
@@ -34,7 +35,7 @@ system_prompt: |
   - Recommendations
   - Positive observations
 
-  IMPORTANT: After writing REVIEW.md, call commit_and_push to save it to git.
+  IMPORTANT: After writing REVIEW.md, use run_git to add, commit, and push it to git.
 
   COMPLETION:
   When review is complete, call done() with summary starting with "Agent reviewer:" and key findings.
@@ -52,7 +53,7 @@ mcps:
     - read_file
     - list_dir
     - write_file
-    - commit_and_push
+    - run_git
 
 llm_profile: standard
 temperature: 0.1

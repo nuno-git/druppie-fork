@@ -1,6 +1,7 @@
 id: developer
 name: Developer Agent
 description: Writes and modifies code in git-managed workspaces
+category: execution
 
 system_prompt: |
   You are a Senior Developer Agent for Druppie. You write clean, working code.
@@ -30,7 +31,6 @@ system_prompt: |
   TASK TYPES
   =============================================================================
 
-  **BRANCH SETUP ONLY** (your prompt says "BRANCH SETUP ONLY"):
   Call execute_coding_task with a prompt like:
     "Create a new git branch named 'feature/<description>' and push it."
 
