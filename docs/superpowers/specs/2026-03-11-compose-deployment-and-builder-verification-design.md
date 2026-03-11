@@ -20,12 +20,13 @@ Real example: FAQ app used `sqlalchemy.dialects.postgresql.UUID` with SQLite, fo
 
 ## Solution
 
-Four changes that work together:
+Five changes that work together:
 
 1. **Improve the project template** — add database setup with PostgreSQL, pre-wired models file
-2. **Update `druppie-builder.md`** — teach the sandbox agent about the template, test compliance, and verification (tests only — Docker is not available in the sandbox)
+2. **Update `druppie-builder.md`** — teach the sandbox agent about the template, test compliance, and Docker Compose verification (if DinD is available)
 3. **Add `compose_up` / `compose_down` to Docker MCP server** — deploy app + db together
 4. **Update deployer prompt** — switch from `build` + `run` to `compose_up`
+5. **Docker-in-Docker in sandbox** — install Docker CE in the sandbox image so the builder can verify builds
 
 ---
 
@@ -130,22 +131,9 @@ async def landing(request: Request):
     })
 ```
 
-### Updated: `app/config.py`
+### `app/config.py` — unchanged
 
-```python
-"""Application configuration from environment variables."""
-
-import os
-
-
-class Settings:
-    app_name: str = os.getenv("APP_NAME", "Druppie App")
-    database_url: str = os.getenv("DATABASE_URL", "postgresql://app:app@db:5432/app")
-    debug: bool = os.getenv("DEBUG", "false").lower() == "true"
-
-
-settings = Settings()
-```
+Already defaults to `postgresql://app:app@db:5432/app`. No changes needed.
 
 ### `docker-compose.yaml` — unchanged (already correct)
 
@@ -214,9 +202,15 @@ Tests written by the test agent are already in this repo. They are the source of
 3. **Never modify test files** — if a test fails, your implementation is wrong
 4. All tests must pass before proceeding to verification
 
-## Build Verification
+## Build Verification (if Docker is available)
 
-After tests pass, verify the app builds and starts correctly using Docker Compose.
+After tests pass, check if Docker is available in the sandbox:
+
+```bash
+docker info > /dev/null 2>&1
+```
+
+If Docker IS available, verify the app builds and starts correctly using Docker Compose.
 This is the same method used to deploy your app — if it works here, deployment will succeed.
 
 ```bash
@@ -246,9 +240,12 @@ If the build fails or health check doesn't pass:
 4. Re-run build verification
 5. Repeat until both tests and build verification pass
 
+If Docker is NOT available, skip build verification — tests alone are sufficient.
+The deployer will catch build issues during deployment.
+
 ## Git Workflow (MANDATORY)
 
-After BOTH tests pass AND build verification succeeds:
+After tests pass (and build verification succeeds, if Docker was available):
 1. Stage files explicitly: `git add <specific-files>` (avoid `git add -A`)
 2. Commit: `git commit -m "descriptive message"`
 3. Push: `git push origin HEAD`
@@ -263,7 +260,7 @@ Before your final git push, output a summary in this exact format:
 Files created: [list of new files]
 Files modified: [list of modified files]
 Tests: [pass/fail count]
-Build verification: [pass/fail]
+Build verification: [pass/fail/skipped (no Docker)]
 Key decisions: [any non-obvious implementation choices]
 ---END SUMMARY---
 ```
@@ -296,18 +293,8 @@ async def compose_up(
 1. Clone from Gitea (same as `build` tool — `git clone --branch {branch} --depth 1`)
 2. Verify `docker-compose.yaml` exists in repo root
 3. Allocate host port from 9100-9199 via existing `get_next_port()`
-4. Determine compose project name: `compose_project_name` param, or derive from `repo_name`
-5. Run:
-   ```
-   APP_PORT={port} docker compose -p {compose_project_name} up -d --build
-   ```
-   - `APP_PORT` env var overrides the port mapping in the compose file (`${APP_PORT:-8000}:8000`)
-   - `-p` sets the compose project name for isolation
-6. Add druppie labels to the app container after start:
-   ```
-   docker label set ... (or use docker compose labels in the override)
-   ```
-   Actually: inject labels via a temporary `docker-compose.override.yaml`:
+4. Determine compose project name: `compose_project_name` param, or derive as `{repo_name}-{session_id[:8]}` to guarantee uniqueness
+5. Write a temporary `docker-compose.override.yaml` in the cloned directory to inject labels:
    ```yaml
    services:
      app:
@@ -318,9 +305,17 @@ async def compose_up(
          druppie.branch: "{branch}"
          druppie.compose_project: "{compose_project_name}"
    ```
-7. Poll health endpoint: `GET http://localhost:{port}{health_path}` for up to `health_timeout` seconds
-8. Clean up cloned temp directory (compose containers run detached)
-9. Return:
+6. Run:
+   ```
+   APP_PORT={port} docker compose -p {compose_project_name} up -d --build
+   ```
+   - `APP_PORT` env var overrides the port mapping in the compose file (`${APP_PORT:-8000}:8000`)
+   - `-p` sets the compose project name for isolation
+   - The override file is automatically picked up by compose
+7. Store port mapping: `compose_port_registry[compose_project_name] = port` (module-level dict, alongside existing `used_ports`)
+8. Poll health endpoint: `GET http://localhost:{port}{health_path}` for up to `health_timeout` seconds
+9. Clean up cloned temp directory (compose containers run detached — compose tracks projects by name, not directory)
+10. Return:
    ```json
    {
      "success": true,
@@ -350,17 +345,108 @@ async def compose_down(
 ```
 
 **Steps:**
-1. Run `docker compose -p {compose_project_name} down` (add `-v` if `remove_volumes`)
-2. Release the port from `used_ports` tracking
-3. Return `{success: true, stopped: compose_project_name}`
+1. Look up port from `compose_port_registry[compose_project_name]`
+2. Run `docker compose -p {compose_project_name} down` (add `-v` if `remove_volumes`)
+3. Release the port via `release_port()` and remove from `compose_port_registry`
+4. Return `{success: true, stopped: compose_project_name}`
 
-**Port release:** To release the correct port, query `docker compose -p {name} ps` before stopping to find which host port was mapped, then call `release_port()`.
+### `mcp_config.yaml` entries
 
-### Compose project name for cloned temp dir
+Add to the `docker` section in `druppie/core/mcp_config.yaml`:
 
-`compose_up` needs to run `docker compose` from the cloned directory (where the `docker-compose.yaml` lives). But after `up -d`, the temp dir can be deleted — compose containers are independent of the source directory once built.
+```yaml
+    compose_up:
+      description: "Deploy application with docker compose (app + database)"
+      requires_approval: true
+      required_role: developer
+      parameters:
+        repo_name:
+          type: string
+          description: "Gitea repository name"
+          required: false
+        repo_owner:
+          type: string
+          description: "Gitea repository owner"
+          required: false
+        git_url:
+          type: string
+          description: "Full git URL (alternative to repo_name/repo_owner)"
+          required: false
+        branch:
+          type: string
+          description: "Git branch to deploy"
+          required: false
+        compose_project_name:
+          type: string
+          description: "Docker Compose project name"
+          required: false
+        health_path:
+          type: string
+          description: "Health check endpoint path"
+          required: false
+        health_timeout:
+          type: integer
+          description: "Health check timeout in seconds"
+          required: false
+      injection_rules:
+        - parameter: session_id
+          source: session.id
+          hidden: true
+          tools: [compose_up]
+        - parameter: repo_name
+          source: project.repo_name
+          hidden: true
+          tools: [compose_up]
+        - parameter: repo_owner
+          source: project.repo_owner
+          hidden: true
+          tools: [compose_up]
+        - parameter: user_id
+          source: session.user_id
+          hidden: true
+          tools: [compose_up]
+        - parameter: project_id
+          source: session.project_id
+          hidden: true
+          tools: [compose_up]
 
-However, to support `compose_down` later, we need the compose project name (not the directory). The `-p` flag handles this — compose tracks projects by name, not by directory.
+    compose_down:
+      description: "Stop and remove a docker compose deployment"
+      requires_approval: true
+      required_role: developer
+      parameters:
+        compose_project_name:
+          type: string
+          description: "Docker Compose project name to stop"
+          required: true
+        remove_volumes:
+          type: boolean
+          description: "Remove associated volumes"
+          required: false
+```
+
+### Parameter models
+
+Add to `druppie/tools/params/docker.py`:
+
+```python
+class DockerComposeUpParams(BaseModel):
+    repo_name: str | None = Field(None, description="Gitea repository name")
+    repo_owner: str | None = Field(None, description="Gitea repository owner")
+    git_url: str | None = Field(None, description="Full git URL")
+    branch: str = Field("main", description="Git branch to deploy")
+    compose_project_name: str | None = Field(None, description="Compose project name")
+    session_id: str | None = Field(None, description="Session ID (injected)")
+    project_id: str | None = Field(None, description="Project ID (injected)")
+    user_id: str | None = Field(None, description="User ID (injected)")
+    health_path: str = Field("/health", description="Health check endpoint path")
+    health_timeout: int = Field(30, description="Health check timeout in seconds")
+
+
+class DockerComposeDownParams(BaseModel):
+    compose_project_name: str = Field(..., description="Compose project name to stop")
+    remove_volumes: bool = Field(True, description="Remove associated volumes")
+```
 
 ---
 
@@ -373,7 +459,7 @@ However, to support `compose_down` later, we need the compose project name (not 
 **Old flow (8 steps):**
 ```
 list_containers → list_dir → read Dockerfile → create if missing →
-commit_and_push → docker:build → docker:run → docker:logs → done()
+run_git → docker:build → docker:run → docker:logs → done()
 ```
 
 **New flow (4 steps):**
@@ -383,7 +469,7 @@ commit_and_push → docker:build → docker:run → docker:logs → done()
    - branch: from PREVIOUS AGENT SUMMARY or "main"
    - compose_project_name: based on naming rules (project name or project-preview)
 3. Verify: if compose_up returns success with health_check "passed", deployment is good
-   - If it fails, read the error/logs, try to fix (write_file + commit_and_push + retry)
+   - If it fails, read the error/logs, try to fix (write_file + run_git to commit + retry)
 4. done() — include URL, compose project name, branch
 ```
 
@@ -408,8 +494,7 @@ mcps:
     - read_file         # keep
     - write_file        # keep
     - list_dir          # keep
-    - run_git           # keep (was get_git_status)
-    - commit_and_push   # keep
+    - run_git           # keep — used for git commit/push operations
 ```
 
 Remove `build`, `run`, `stop` from the deployer's tool list (they still exist in the MCP server but the deployer doesn't need them anymore).
@@ -439,7 +524,7 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && rm -rf /var/lib/apt/lists/*
 ```
 
-This adds ~150MB to the image. The Docker daemon (`dockerd`) runs inside the sandbox as a local service — completely isolated from the host Docker.
+This adds ~350-450MB to the image (Docker CE + containerd + compose plugin). The Docker daemon (`dockerd`) runs inside the sandbox as a local service — completely isolated from the host Docker.
 
 ### Entrypoint Changes
 
@@ -449,13 +534,29 @@ Add a new phase between Git Sync and OpenCode startup:
 
 ```
 Phase 2.7 — Start Docker Daemon (DinD)
-1. Start dockerd in background: `dockerd --storage-driver=overlay2 &`
-2. Wait for Docker socket: poll /var/run/docker.sock for up to 10s
-3. Verify: `docker info` succeeds
-4. Log: "Docker daemon ready (DinD)"
+1. Create tmpfs for Docker storage: mkdir -p /var/lib/docker
+   (avoids overlay-on-overlay issues when sandbox itself runs on overlay2)
+2. Start dockerd in background: `dockerd --storage-driver=overlay2 &`
+   Store PID: DOCKERD_PID=$!
+3. Wait for Docker socket: poll /var/run/docker.sock for up to 10s
+4. Verify: `docker info` succeeds
+5. Log: "Docker daemon ready (DinD)"
 ```
 
 If the daemon fails to start (e.g. missing capabilities), log a warning and continue — Docker verification becomes unavailable but the builder can still code and run tests. This makes it gracefully degrade.
+
+### Cleanup on Shutdown
+
+Add to the supervisor's `shutdown()` method in `entrypoint.py`:
+
+```python
+# Stop inner Docker containers and daemon
+if DOCKERD_PID:
+    subprocess.run(["docker", "compose", "down", "-v"], capture_output=True, timeout=10)
+    os.kill(DOCKERD_PID, signal.SIGTERM)
+```
+
+This ensures inner containers are cleaned up when the sandbox shuts down.
 
 ### Runtime-Specific Considerations
 
@@ -467,17 +568,27 @@ If the daemon fails to start (e.g. missing capabilities), log a warning and cont
 **Docker containers:**
 - Current security: `--cap-drop=ALL` + minimal cap-adds + `--security-opt=no-new-privileges`
 - DinD requires `SYS_ADMIN` capability for the Docker daemon to manage cgroups/namespaces
-- Add to `docker_manager.py`'s security_flags:
+- DinD also requires removing `--security-opt=no-new-privileges` — the inner `containerd-shim` needs to gain capabilities when spawning inner containers. With `no-new-privileges` set, inner container creation will fail.
+- Changes to `docker_manager.py`'s `create_sandbox()`:
   ```python
-  "--cap-add=SYS_ADMIN",      # Required for Docker-in-Docker
+  # Add capabilities for DinD
+  "--cap-add=SYS_ADMIN",      # Required for Docker-in-Docker (cgroups/namespaces)
   "--cap-add=MKNOD",          # Required for device nodes (DinD)
+
+  # Remove --security-opt=no-new-privileges (incompatible with DinD)
+  # The inner containerd-shim requires privilege escalation to spawn containers
   ```
-- **Mitigations** (already in place):
-  - `--security-opt=no-new-privileges` still active
+- **Resource limits** — DinD runs dockerd + containerd + inner containers (app + PostgreSQL) inside the sandbox. Minimum requirements:
+  - PID limit: increase from current default to at least **8192** (dockerd + containerd + shims + inner containers)
+  - Memory limit: keep at **4GB** (sufficient for app + PostgreSQL + overhead)
+  - CPU limit: keep at **2** CPUs
+  - Update `config.py`: `DOCKER_PIDS_LIMIT = 8192`
+- **Mitigations** (compensating for `no-new-privileges` removal):
+  - `--cap-drop=ALL` still active — only `SYS_ADMIN` and `MKNOD` are added back
   - Network isolation: sandbox is on `druppie-sandbox-network` — cannot reach Gitea, DB, backend, MCP servers
-  - Resource limits: memory, CPU, PID limits unchanged
-  - The inner Docker daemon can only create containers inside the sandbox's namespace
-- **Alternative**: Use `--security-opt seccomp=unconfined` instead of `SYS_ADMIN` if the host supports it, but `SYS_ADMIN` is more portable
+  - Memory, CPU limits still enforced
+  - Inner Docker daemon's containers share the outer sandbox's cgroup — all resource consumption counts toward the sandbox's limits
+  - Sandboxes are ephemeral — destroyed after the agent task completes
 
 **Modal sandboxes:**
 - Modal's `base.py` image builder needs the same Docker CE installation
@@ -520,12 +631,13 @@ docker compose down -v
 | `druppie/templates/project/app/database.py` | **New** — SQLAlchemy setup with `init_db()` |
 | `druppie/templates/project/app/models.py` | **New** — empty models file with correct imports |
 | `druppie/templates/project/app/main.py` | **Updated** — use lifespan, call `init_db()` |
-| `druppie/templates/project/app/config.py` | **Unchanged** — already defaults to PostgreSQL |
-| `druppie/opencode/config/agents/druppie-builder.md` | **Updated** — template awareness, test compliance, build verification |
-| `druppie/mcp-servers/docker/server.py` | **Updated** — add `compose_up` and `compose_down` tools |
-| `druppie/agents/definitions/deployer.yaml` | **Updated** — switch to `compose_up` flow |
+| `druppie/opencode/config/agents/druppie-builder.md` | **Updated** — template awareness, test compliance, conditional build verification |
+| `druppie/mcp-servers/docker/server.py` | **Updated** — add `compose_up` and `compose_down` tools, `compose_port_registry` |
+| `druppie/tools/params/docker.py` | **Updated** — add `DockerComposeUpParams` and `DockerComposeDownParams` |
+| `druppie/agents/definitions/deployer.yaml` | **Updated** — switch to `compose_up` flow, remove `build`/`run`/`stop` |
 | `druppie/core/mcp_config.yaml` | **Updated** — add `compose_up`/`compose_down` tool entries with injection + approval config |
-| `vendor/open-inspect/.../Dockerfile.sandbox` | **Updated** — add Docker CE + Compose plugin for DinD |
-| `vendor/open-inspect/.../entrypoint.py` | **Updated** — add Docker daemon startup phase (2.7) |
-| `vendor/open-inspect/.../docker_manager.py` | **Updated** — add `SYS_ADMIN` + `MKNOD` caps for DinD |
+| `vendor/open-inspect/.../Dockerfile.sandbox` | **Updated** — add Docker CE + Compose plugin for DinD (~350-450MB) |
+| `vendor/open-inspect/.../entrypoint.py` | **Updated** — add Docker daemon startup phase (2.7) + shutdown cleanup |
+| `vendor/open-inspect/.../docker_manager.py` | **Updated** — add `SYS_ADMIN` + `MKNOD` caps, remove `no-new-privileges`, increase PID limit |
+| `vendor/open-inspect/.../config.py` | **Updated** — increase `DOCKER_PIDS_LIMIT` to 8192 |
 | `vendor/open-inspect/.../base.py` | **Updated** — add Docker CE to Modal image (if Modal supports DinD) |
