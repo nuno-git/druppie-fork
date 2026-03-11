@@ -970,25 +970,36 @@ Every new Druppie project starts from a template at `druppie/templates/project/`
 
 ```
 druppie/templates/project/
-├── requirements.txt          # druppie-sdk already listed
+├── requirements.txt          # druppie-sdk, fastapi, uvicorn, etc.
 ├── druppie.config.yaml       # Module connections, app identity (populated at deploy)
 ├── Dockerfile                # SDK install baked in
-└── app/
-    └── main.py               # Skeleton with DruppieClient initialized
+├── app/
+│   ├── main.py               # FastAPI app with DruppieClient, auth, health
+│   ├── auth.py               # Keycloak login/logout, token refresh, session middleware
+│   └── static/
+│       └── ...               # Company-style landing page assets
+└── templates/
+    ├── base.html             # Base layout in company style
+    └── landing.html          # Default landing page
 ```
 
-**What the template provides:**
-- SDK pre-installed as a dependency — builder agent just imports it
-- `druppie.config.yaml` — module URLs and app identity, populated at deploy time
-- Standard Dockerfile — SDK install, health endpoint, env vars
-- Skeleton `main.py` — `DruppieClient` initialized, ready for the agent to add routes
+The template is a **working application out of the box** — authentication, a landing page, health endpoint, and SDK wiring are all done. The builder agent only adds business logic on top.
+
+**What the template handles (agent does NOT need to code these):**
+- **Keycloak authentication** — login, logout, token refresh, session middleware. Users log in with existing Druppie/Keycloak credentials. Already wired up.
+- **Landing page** — company-styled default page. Agent can replace or extend it.
+- **SDK** — `DruppieClient` initialized, module connections configured
+- **Health endpoint** — standard `/health` for deployer agent
+- **Dockerfile** — production-ready, SDK and dependencies pre-installed
+- **`druppie.config.yaml`** — module URLs and app identity, populated at deploy time
 
 **What the builder agent does:**
-- Writes application code that imports from `druppie_sdk`
-- Adds routes, business logic, frontend
-- Does NOT need to know how the SDK is installed or configured
+- Adds routes, pages, and business logic
+- Calls modules via `from druppie_sdk import DruppieClient`
+- Does NOT implement auth, SDK setup, or infrastructure
 
 > **Python only for now.** The project template and SDK are Python. Non-Python app support may be added later.
+> **Expandable.** The template will grow over time (e.g., WebSocket support, notification system, common UI components).
 
 ### Core Client
 
