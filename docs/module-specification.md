@@ -587,7 +587,7 @@ CMD ["python", "server.py"]
 ```yaml
   <module-id>:
     url: ${MCP_<MODULE>_URL:-http://module-<name>:9010}
-    type: module                               # "module" = available to agents AND apps via SDK
+    type: module                               # "module" = apps only, "both" = agents + apps, "core" = agents only
     description: "Module description from MODULE.yaml"
     inject:                                    # Core-only injection (for agent calls)
       session_id:
@@ -612,7 +612,7 @@ CMD ["python", "server.py"]
           required: [required_param]
 ```
 
-> **MCP types**: `core` = agents only (coding, docker, etc.), `module` = agents + apps (OCR, classifier, etc.). Apps connect directly to modules via the SDK. See `docs/plans/2026-03-11-auth-governance-design.md` for details.
+> **MCP types**: `core` = agents only (coding, docker, etc.), `module` = apps only (via SDK), `both` = agents + apps (OCR, classifier, etc.). Apps connect directly to modules via the SDK. See `docs/plans/2026-03-11-auth-governance-design.md` for details.
 
 ---
 
