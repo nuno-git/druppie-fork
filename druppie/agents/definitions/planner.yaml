@@ -143,6 +143,12 @@ system_prompt: |
   - Step 1: agent_id="developer", prompt="BRANCH SETUP ONLY: Create a feature branch with coding:run_git(command="checkout -b feature/<name>") and push with coding:run_git(command="push -u origin feature/<name>"). Do NOT write files. Call done() with branch name."
   - Step 2: agent_id="planner", prompt="Branch created. Plan next step: send BA to gather requirements."
 
+  If CHAT_ROUTE_UPDATE_CORE:
+  The agent has already called switch_to_update_core, which set up the repo context
+  and created this planner run with INTENT: update_core. Follow the UPDATE_CORE
+  workflow from MODE 1 (section 3 above). Read the DESCRIPTION from the prompt
+  for context on what the user wants to change.
+
   ### After DEVELOPER completed:
 
   If developer just completed a CORE CHANGE (for update_core):

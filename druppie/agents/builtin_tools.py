@@ -7,6 +7,7 @@ Default (all agents): done, hitl_ask_question, hitl_ask_multiple_choice_question
 Router adds: set_intent
 Planner adds: make_plan
 Agents with skills: invoke_skill (loads skill markdown prompts)
+Agents that can trigger update_core: switch_to_update_core
 
 Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
 Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
@@ -126,7 +127,7 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                 "properties": {
                     "intent": {
                         "type": "string",
-                        "enum": ["create_project", "update_project", "update_core", "general_chat"],
+                        "enum": ["create_project", "update_project", "general_chat"],
                         "description": "The type of user intent",
                     },
                     "project_id": {
@@ -187,6 +188,30 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                 },
                 "required": ["skill_name"],
+            },
+        },
+    },
+    "switch_to_update_core": {
+        "type": "function",
+        "function": {
+            "name": "switch_to_update_core",
+            "description": (
+                "Switch the current session to update_core mode. "
+                "Use this when the user wants to CHANGE or IMPROVE Druppie itself "
+                "(the platform, its agents, prompts, skills, or codebase). "
+                "This cancels the current plan and creates a new planner run "
+                "targeting Druppie's own GitHub repository. "
+                "After calling this, call done() with a summary of what the user wants to change."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string",
+                        "description": "Brief description of what the user wants to change in Druppie",
+                    },
+                },
+                "required": ["description"],
             },
         },
     },
@@ -336,8 +361,7 @@ async def set_intent(
         project_name=project_name,
     )
 
-    # Validate intent — update_core is a new intent for modifying Druppie's own codebase
-    valid_intents = ("create_project", "update_project", "update_core", "general_chat")
+    valid_intents = ("create_project", "update_project", "general_chat")
     if intent not in valid_intents:
         return {
             "success": False,
@@ -473,37 +497,6 @@ async def set_intent(
                 "error": f"Invalid project_id format: {project_id}",
             }
 
-    elif intent == "update_core":
-        # update_core: Druppie modifies its own codebase via a PR to GitHub.
-        # No project record or Gitea repo is created — we hardcode the repo context
-        # for nuno-git/druppie-fork and store it directly on the session.
-        repo_url = "https://github.com/nuno-git/druppie-fork.git"
-        repo_owner = "nuno-git"
-        repo_name = "druppie-fork"
-        base_branch = "colab-dev"
-
-        # Store the repo context on the session so execute_coding_task can read it later
-        session_repo.update_repo_context(
-            session_id=session_id,
-            repo_url=repo_url,
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            base_branch=base_branch,
-        )
-
-        result["repo_url"] = repo_url
-        result["repo_owner"] = repo_owner
-        result["repo_name"] = repo_name
-        result["base_branch"] = base_branch
-        result["message"] = f"Intent set to update_core — PR will target {repo_owner}/{repo_name}:{base_branch}"
-
-        logger.info(
-            "update_core_intent_set",
-            session_id=str(session_id),
-            repo_url=repo_url,
-            base_branch=base_branch,
-        )
-
     else:  # general_chat
         result["message"] = "Intent set to general_chat"
 
@@ -549,9 +542,7 @@ def _update_planner_prompt(
         return
 
     # Prepend intent context to the existing prompt
-    if intent == "update_core":
-        intent_context = f"INTENT: {intent}\n\n"
-    elif project_id:
+    if project_id:
         intent_context = f"INTENT: {intent}\nPROJECT_ID: {str(project_id)}\n\n"
     else:
         intent_context = f"INTENT: {intent}\nPROJECT_ID: new\n\n"
@@ -564,6 +555,87 @@ def _update_planner_prompt(
         agent_run_id=str(planner_run.id),
         intent=intent,
     )
+
+
+# =============================================================================
+# SWITCH TO UPDATE_CORE IMPLEMENTATION
+# =============================================================================
+
+async def switch_to_update_core(
+    description: str,
+    session_id: UUID,
+    agent_run_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Switch the current session to update_core mode.
+
+    Cancels the current plan and creates a new planner run targeting
+    Druppie's own GitHub repository. The calling agent should then
+    call done() to complete and relay context to the new planner.
+
+    Args:
+        description: Brief description of what the user wants to change
+        session_id: Session UUID
+        agent_run_id: Agent run UUID for tracking
+        execution_repo: Execution repository
+
+    Returns:
+        Success message with repo context
+    """
+    from druppie.repositories import SessionRepository
+    from druppie.domain.common import AgentRunStatus
+
+    db = execution_repo.db
+    session_repo = SessionRepository(db)
+
+    # 1. Update session intent to update_core
+    session_repo.update_intent(session_id, "update_core")
+
+    # 2. Store repo context for Druppie's own codebase
+    repo_url = "https://github.com/nuno-git/druppie-fork.git"
+    repo_owner = "nuno-git"
+    repo_name = "druppie-fork"
+    base_branch = "colab-dev"
+
+    session_repo.update_repo_context(
+        session_id=session_id,
+        repo_url=repo_url,
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+        base_branch=base_branch,
+    )
+
+    # 3. Cancel all pending runs from the current plan
+    cancelled = execution_repo.cancel_pending_runs(session_id)
+
+    # 4. Create a new planner run with INTENT: update_core
+    seq = execution_repo.get_next_sequence_number(session_id)
+    execution_repo.create_agent_run(
+        session_id=session_id,
+        agent_id="planner",
+        status=AgentRunStatus.PENDING,
+        planned_prompt=f"INTENT: update_core\nDESCRIPTION: {description}\n\n",
+        sequence_number=seq,
+    )
+
+    db.flush()
+
+    logger.info(
+        "switch_to_update_core",
+        session_id=str(session_id),
+        agent_run_id=str(agent_run_id),
+        description=description,
+        cancelled_runs=cancelled,
+    )
+
+    return {
+        "success": True,
+        "message": f"Switched to update_core flow. Cancelled {cancelled} pending run(s). "
+                   f"PR will target {repo_owner}/{repo_name}:{base_branch}. "
+                   "Call done() now to complete and hand off to the planner.",
+        "repo_url": repo_url,
+        "base_branch": base_branch,
+    }
 
 
 # =============================================================================
@@ -1140,6 +1212,13 @@ async def execute_builtin(
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
         )
+    elif tool_name == "switch_to_update_core":
+        return await switch_to_update_core(
+            description=args.get("description", ""),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            execution_repo=execution_repo,
+        )
     elif tool_name == "execute_coding_task":
         return await execute_sandbox_coding_task(
             args=args,
@@ -1181,6 +1260,7 @@ def is_builtin_tool(tool_name: str) -> bool:
         "invoke_skill",
         "execute_coding_task",
         "test_report",
+        "switch_to_update_core",
     )
 
 
