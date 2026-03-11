@@ -58,3 +58,18 @@ class DockerExecCommandParams(BaseModel):
     container_name: str = Field(description="Name of container")
     command: str = Field(description="Command to execute")
     workdir: str | None = Field(default=None, description="Working directory inside container")
+
+
+class DockerComposeUpParams(BaseModel):
+    # Note: repo_name, repo_owner, session_id, project_id, user_id are injected
+    # at runtime (same as DockerBuildParams/DockerRunParams) — not included here.
+    git_url: str | None = Field(default=None, description="Full git URL")
+    branch: str = Field(default="main", description="Git branch to deploy")
+    compose_project_name: str | None = Field(default=None, description="Compose project name")
+    health_path: str = Field(default="/health", description="Health check endpoint path")
+    health_timeout: int = Field(default=30, description="Health check timeout in seconds")
+
+
+class DockerComposeDownParams(BaseModel):
+    compose_project_name: str = Field(..., description="Compose project name to stop")
+    remove_volumes: bool = Field(default=True, description="Remove associated volumes")
