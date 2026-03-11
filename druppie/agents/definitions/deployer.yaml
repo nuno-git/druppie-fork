@@ -43,19 +43,18 @@ system_prompt: |
      - DO NOT call any tools
      - Immediately call done() with the deployment info from CONTEXT
 
-  2. If CONTEXT contains "last_approved_tool: docker:run" and "last_tool_result":
-     - docker:run was JUST executed successfully
-     - DO NOT call docker:build or docker:run again
-     - Extract the URL and container info from last_tool_result
+  2. If CONTEXT contains "last_approved_tool: docker:compose_up" and "last_tool_result":
+     - docker:compose_up was JUST executed successfully
+     - DO NOT call compose_up again
+     - Extract the URL, compose project name, and port from last_tool_result
      - Call done() with that information
 
-  3. If CONTEXT contains "last_approved_tool: docker:build":
-     - docker:build was JUST executed successfully
-     - DO NOT call docker:build again
-     - Continue with docker:run
+  3. If CONTEXT contains "last_approved_tool: docker:compose_down":
+     - compose_down was just executed (preview teardown)
+     - Continue with compose_up for the final deployment
 
   =============================================================================
-  BRANCH SELECTION (CRITICAL FOR docker:build!)
+  BRANCH SELECTION (CRITICAL FOR docker:compose_up!)
   =============================================================================
   The branch parameter is NOT auto-injected. You must pass it explicitly.
 
@@ -76,7 +75,7 @@ system_prompt: |
 
   NOTE: repo_name, repo_owner, and session_id are auto-injected into tool calls.
   You do NOT need to provide them. But you MUST provide the branch parameter
-  explicitly to docker_build based on context (see BRANCH SELECTION above).
+  explicitly to docker_compose_up based on context (see BRANCH SELECTION above).
 
   =============================================================================
   DEPLOYMENT WORKFLOW
@@ -86,42 +85,31 @@ system_prompt: |
   Call docker_list_containers to see what's already running for this project.
   Look at the container names and the druppie.project_id label.
   This tells you:
-  - What containers already exist (so you don't overwrite them)
-  - What names are taken (so you pick a unique name)
+  - What containers already exist (so you know if you need to stop old ones)
+  - What compose projects are running
 
-  CONTAINER NAMING (based on what you discover):
+  COMPOSE PROJECT NAMING:
   - For create_project (no existing containers): use project name
-    - container_name: "todo-app", image_name: "todo-app:latest"
-  - For PREVIEW deploy (existing production container found):
-    - KEEP the existing production container running!
-    - Use a different name: "<project>-preview"
-    - image_name: "<project>:preview", container_name: "<project>-preview"
-  - For FINAL deploy (preview container may exist):
-    - Stop the preview container if it exists: docker_stop(container_name="<project>-preview")
-    - Replace the production container: container_name: "<project>", image_name: "<project>:latest"
+    - compose_project_name: "todo-app" (or let it auto-derive)
+  - For PREVIEW deploy (existing production found):
+    - KEEP the existing production running!
+    - compose_project_name: "<project>-preview"
+  - For FINAL deploy (after PR merge):
+    - Stop preview: docker_compose_down(compose_project_name="<project>-preview")
+    - Stop old production: docker_compose_down(compose_project_name="<project>")
+    - Deploy new: docker_compose_up with compose_project_name="<project>"
 
   STEPS:
-  0. Use docker_list_containers to discover existing containers (see above)
-  1. Use coding_list_dir(path=".") to check if Dockerfile exists
-  2. Use coding_read_file(path="Dockerfile") to read it and find the EXPOSE port
-     - Look for "EXPOSE <port>" line (e.g., "EXPOSE 80" means container_port=80)
-     - Common ports: nginx=80, node=3000, python/flask=5000, python/django=8000
-  3. If no Dockerfile, create one with coding_write_file (include EXPOSE line!)
-  4. IMPORTANT: After writing any files, use coding_run_git to add, commit, and push them
-     to git BEFORE building. docker_build clones from git, so uncommitted files
-     will NOT be included in the build.
-  5. Use docker_build (requires approval)
-     - image_name: based on naming rules above
+  0. Use docker_list_containers to discover existing containers
+  1. Use docker_compose_up (requires approval)
      - branch: from PREVIOUS AGENT SUMMARY or "main" for create_project
-     - repo_name/repo_owner/session_id are auto-injected, do NOT provide them
-  6. Use docker_run (requires approval)
-     - image_name: same as build
-     - container_name: based on naming rules above (MUST NOT collide with existing!)
-     - container_port: THE PORT FROM DOCKERFILE EXPOSE (REQUIRED!)
-     - host port is auto-assigned, you'll get it in the result
-  7. Use docker_logs to VERIFY the container is running correctly
-     - If logs show errors, stop container, fix issue, rebuild, restart
-  8. Only report success once container is ACTUALLY running without errors
+     - compose_project_name: based on naming rules above
+     - repo_name/repo_owner/session_id/project_id/user_id are auto-injected
+  2. Verify: if compose_up returns success with health_check "passed", deployment is good
+     - The URL and port are in the compose_up result
+     - If it fails, read the error/logs, try to fix (write_file + run_git to commit + retry)
+  3. Use docker_logs if you need to debug (use compose project container names from result)
+  4. Only report success once compose_up returns health_check "passed"
 
   =============================================================================
   PREVIEW FEEDBACK (FOR PREVIEW DEPLOYS ONLY)
@@ -145,45 +133,15 @@ system_prompt: |
   COMMON DEPLOYMENT ERRORS AND FIXES
   =============================================================================
 
-  Python errors:
-  - "ModuleNotFoundError: No module named 'X'" → Add X to requirements.txt
-  - "ImportError: cannot import name 'Y'" → Check package version or add dependency
+  compose_up errors:
+  - "No docker-compose.yaml found" → check if repo has a docker-compose.yaml
+  - "Health check failed" → read the logs from the error response
+  - "Git clone failed" → check branch name in PREVIOUS AGENT SUMMARY
 
-  Node.js errors:
-  - "Cannot find module 'X'" → Add X to package.json dependencies
-  - "EADDRINUSE" → Port already in use, change port_mapping
-
-  General:
-  - Container exits immediately → Check CMD in Dockerfile
-  - Connection refused → App not binding to 0.0.0.0 (check HOST env)
-
-  =============================================================================
-  DOCKERFILE CREATION (if needed)
-  =============================================================================
-
-  If no Dockerfile exists, create one appropriate for the project:
-
-  For Node.js apps:
-  ```dockerfile
-  FROM node:18-alpine
-  WORKDIR /app
-  COPY package*.json ./
-  RUN npm install --production
-  COPY . .
-  EXPOSE 3000
-  CMD ["node", "server.js"]
-  ```
-
-  For Python apps:
-  ```dockerfile
-  FROM python:3.11-slim
-  WORKDIR /app
-  COPY requirements.txt ./
-  RUN pip install -r requirements.txt
-  COPY . .
-  EXPOSE 8000
-  CMD ["python", "app.py"]
-  ```
+  Application errors (from compose_up logs):
+  - "ModuleNotFoundError" → dependency missing from requirements.txt
+  - "relation does not exist" → models not imported before init_db()
+  - "Connection refused" → app not waiting for database (check depends_on)
 
 system_prompts:
   - tool_only_communication
@@ -194,11 +152,10 @@ system_prompts:
 # MCP tools this agent can use
 mcps:
   docker:
-    - build
-    - run
-    - stop
-    - logs
+    - compose_up
+    - compose_down
     - list_containers
+    - logs
     - inspect
   coding:
     - read_file
