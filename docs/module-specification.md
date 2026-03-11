@@ -1494,21 +1494,21 @@ This gives AR/BA full visibility into the module ecosystem without leaving the c
 
 ### Module Creation Flow
 
-Modules are created when the **Architect** determines that a new reusable capability is needed. The BA does not decide whether a module should be built — the BA provides the functional requirements in the FO (Functioneel Ontwerp), and the Architect decides how to fulfill them.
+Modules are created when the **Architect** determines that a new reusable capability is needed. The BA does not decide whether a module should be built — the BA provides the functional requirements in the FD (Functional Design), and the Architect decides how to fulfill them.
 
 ```
-BA writes FO               Functional requirements, acceptance criteria,
+BA writes FD               Functional requirements, acceptance criteria,
                             possible solution direction
         │
         ▼
-AR reads FO                 Determines: can existing modules cover this?
+AR reads FD                 Determines: can existing modules cover this?
         │                   Or is a new module needed?
         │
         ├─ Existing module  → Proceed with application development
         │   covers it
         │
         └─ New module       → AR writes MODULE_SPEC.md
-           needed              (functional reqs from FO + technical reqs from AR)
+           needed              (functional reqs from FD + technical reqs from AR)
                 │
                 ▼
         AR triggers          Uses the "update core" intent to create
@@ -1526,7 +1526,7 @@ AR reads FO                 Determines: can existing modules cover this?
 ```
 
 The **module specification** (`MODULE_SPEC.md`) is owned by the Architect and combines:
-- **Functional requirements** from the BA's FO (what the capability must do, acceptance criteria)
+- **Functional requirements** from the BA's FD (what the capability must do, acceptance criteria)
 - **Technical requirements** from the Architect (contract schema, version strategy, dependencies, performance constraints)
 
 This separation ensures the BA focuses on *what* the user needs without making platform-level decisions, while the Architect translates those needs into module-level technical design.
