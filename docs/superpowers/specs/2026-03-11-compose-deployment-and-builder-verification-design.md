@@ -23,7 +23,7 @@ Real example: FAQ app used `sqlalchemy.dialects.postgresql.UUID` with SQLite, fo
 Four changes that work together:
 
 1. **Improve the project template** — add database setup with PostgreSQL, pre-wired models file
-2. **Update `druppie-builder.md`** — teach the sandbox agent about the template, test compliance, and build verification via `docker compose`
+2. **Update `druppie-builder.md`** — teach the sandbox agent about the template, test compliance, and verification (tests only — Docker is not available in the sandbox)
 3. **Add `compose_up` / `compose_down` to Docker MCP server** — deploy app + db together
 4. **Update deployer prompt** — switch from `build` + `run` to `compose_up`
 
@@ -416,6 +416,91 @@ Remove `build`, `run`, `stop` from the deployer's tool list (they still exist in
 
 ---
 
+## 5. Docker-in-Docker in Sandbox
+
+**Goal:** The builder agent can run `docker compose up --build` inside the sandbox to verify its own output before pushing.
+
+### Sandbox Image Changes
+
+**Location:** `vendor/open-inspect/packages/local-sandbox-manager/Dockerfile.sandbox`
+
+Add Docker CE CLI + Docker Compose + dockerd to the sandbox image:
+
+```dockerfile
+# Install Docker CE (daemon + CLI + compose plugin)
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       docker-ce docker-ce-cli containerd.io docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+This adds ~150MB to the image. The Docker daemon (`dockerd`) runs inside the sandbox as a local service — completely isolated from the host Docker.
+
+### Entrypoint Changes
+
+**Location:** `vendor/open-inspect/packages/modal-infra/src/sandbox/entrypoint.py`
+
+Add a new phase between Git Sync and OpenCode startup:
+
+```
+Phase 2.7 — Start Docker Daemon (DinD)
+1. Start dockerd in background: `dockerd --storage-driver=overlay2 &`
+2. Wait for Docker socket: poll /var/run/docker.sock for up to 10s
+3. Verify: `docker info` succeeds
+4. Log: "Docker daemon ready (DinD)"
+```
+
+If the daemon fails to start (e.g. missing capabilities), log a warning and continue — Docker verification becomes unavailable but the builder can still code and run tests. This makes it gracefully degrade.
+
+### Runtime-Specific Considerations
+
+**Kata containers (VM isolation):**
+- DinD works out of the box — the sandbox has its own kernel inside a VM
+- No capability changes needed, `--net-host` already gives full network access within the VM
+- Docker daemon runs as root inside the VM — safe because VM is the isolation boundary
+
+**Docker containers:**
+- Current security: `--cap-drop=ALL` + minimal cap-adds + `--security-opt=no-new-privileges`
+- DinD requires `SYS_ADMIN` capability for the Docker daemon to manage cgroups/namespaces
+- Add to `docker_manager.py`'s security_flags:
+  ```python
+  "--cap-add=SYS_ADMIN",      # Required for Docker-in-Docker
+  "--cap-add=MKNOD",          # Required for device nodes (DinD)
+  ```
+- **Mitigations** (already in place):
+  - `--security-opt=no-new-privileges` still active
+  - Network isolation: sandbox is on `druppie-sandbox-network` — cannot reach Gitea, DB, backend, MCP servers
+  - Resource limits: memory, CPU, PID limits unchanged
+  - The inner Docker daemon can only create containers inside the sandbox's namespace
+- **Alternative**: Use `--security-opt seccomp=unconfined` instead of `SYS_ADMIN` if the host supports it, but `SYS_ADMIN` is more portable
+
+**Modal sandboxes:**
+- Modal's `base.py` image builder needs the same Docker CE installation
+- The Modal sandbox creation may need additional flags — check Modal docs for DinD support
+- If Modal doesn't support DinD, the entrypoint's graceful degradation means the builder just skips Docker verification
+
+### What the Builder Sees
+
+After DinD is running, the sandbox has:
+- `docker` CLI available
+- `docker compose` available (plugin installed with Docker CE)
+- A local Docker daemon that is completely isolated
+- No access to the host's Docker or any other containers outside the sandbox
+
+The builder's verification flow from section 2 works as-is:
+```bash
+docker compose up -d --build    # builds app + starts PostgreSQL inside sandbox
+curl -f http://localhost:8000/health
+docker compose down -v
+```
+
+---
+
 ## What Stays The Same
 
 - **Agent pipeline order** — router → planner → BA → architect → builder_planner → test_builder → builder → test_executor → deployer → summarizer
@@ -435,8 +520,12 @@ Remove `build`, `run`, `stop` from the deployer's tool list (they still exist in
 | `druppie/templates/project/app/database.py` | **New** — SQLAlchemy setup with `init_db()` |
 | `druppie/templates/project/app/models.py` | **New** — empty models file with correct imports |
 | `druppie/templates/project/app/main.py` | **Updated** — use lifespan, call `init_db()` |
-| `druppie/templates/project/app/config.py` | **Updated** — `database_url` defaults to PostgreSQL |
+| `druppie/templates/project/app/config.py` | **Unchanged** — already defaults to PostgreSQL |
 | `druppie/opencode/config/agents/druppie-builder.md` | **Updated** — template awareness, test compliance, build verification |
 | `druppie/mcp-servers/docker/server.py` | **Updated** — add `compose_up` and `compose_down` tools |
 | `druppie/agents/definitions/deployer.yaml` | **Updated** — switch to `compose_up` flow |
-| `druppie/core/mcp_config.yaml` | **Updated** — add `compose_up`/`compose_down` tool entries with approval config |
+| `druppie/core/mcp_config.yaml` | **Updated** — add `compose_up`/`compose_down` tool entries with injection + approval config |
+| `vendor/open-inspect/.../Dockerfile.sandbox` | **Updated** — add Docker CE + Compose plugin for DinD |
+| `vendor/open-inspect/.../entrypoint.py` | **Updated** — add Docker daemon startup phase (2.7) |
+| `vendor/open-inspect/.../docker_manager.py` | **Updated** — add `SYS_ADMIN` + `MKNOD` caps for DinD |
+| `vendor/open-inspect/.../base.py` | **Updated** — add Docker CE to Modal image (if Modal supports DinD) |
