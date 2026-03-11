@@ -3,13 +3,14 @@ services:
     build: .
     ports:
       - "${APP_PORT:-8000}:8000"
-    environment:
-      - APP_NAME=${APP_NAME:-Druppie App}
-      - DATABASE_URL=postgresql://app:app@db:5432/app
-      - DEBUG=${DEBUG:-false}
     depends_on:
       db:
         condition: service_healthy
+    environment:
+      - APP_NAME=${APP_NAME:-My App}
+      - DATABASE_URL=postgresql://app:app@db:5432/app
+      - DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY:-}
+      - DEBUG=${DEBUG:-false}
 
   db:
     image: postgres:15-alpine
