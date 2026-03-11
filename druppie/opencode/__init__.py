@@ -31,39 +31,28 @@ class SandboxCreateError(Exception):
     pass
 
 
-def _load_opencode_files(agent_name: str) -> dict[str, str]:
+def _load_opencode_files() -> dict[str, str]:
     """Load all OpenCode files (agents + skills) for a sandbox session.
 
     Agent files are keyed as 'agents/{name}' and skill files as
     'skills/{name}/SKILL'. The sandbox entrypoint writes each entry
     to .opencode/{key}.md.
+
+    All available skills are included; per-agent access is controlled
+    by the permission.skill block in each agent's markdown frontmatter.
     """
     files: dict[str, str] = {}
 
-    # Load agent markdown files (existing behavior, now with path prefix)
+    # Load agent markdown files
     if _AGENTS_DIR.is_dir():
         for f in _AGENTS_DIR.glob("*.md"):
             files[f"agents/{f.stem}"] = f.read_text()
 
-    # Load OpenCode skills for this agent from YAML definition
-    from druppie.agents.definition_loader import AgentDefinitionLoader
-
-    try:
-        agent_def = AgentDefinitionLoader.load(agent_name)
-    except Exception:
-        agent_def = None
-
-    if agent_def and agent_def.opencode_skills:
-        for skill_name in agent_def.opencode_skills:
-            skill_file = _OPENCODE_SKILLS_DIR / skill_name / "SKILL.md"
-            if skill_file.exists():
-                files[f"skills/{skill_name}/SKILL"] = skill_file.read_text()
-            else:
-                logger.warning(
-                    "opencode_skill_not_found",
-                    skill_name=skill_name,
-                    agent=agent_name,
-                )
+    # Load all OpenCode skills
+    if _OPENCODE_SKILLS_DIR.is_dir():
+        for skill_file in _OPENCODE_SKILLS_DIR.glob("*/SKILL.md"):
+            skill_name = skill_file.parent.name
+            files[f"skills/{skill_name}/SKILL"] = skill_file.read_text()
 
     return files
 
@@ -135,7 +124,7 @@ async def create_and_start_sandbox(
         "repoName": repo_name,
         "model": model,
         "agentModels": model_config.agents,
-        "opencodeFiles": _load_opencode_files(agent_name),
+        "opencodeFiles": _load_opencode_files(),
         "modelChains": get_raw_model_chains(),
         "title": title,
         "credentials": {

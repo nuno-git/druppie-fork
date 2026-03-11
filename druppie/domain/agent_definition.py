@@ -47,10 +47,6 @@ class AgentDefinition(BaseModel):
     # List of skill names that match directories in druppie/skills/
     skills: list[str] = Field(default_factory=list)
 
-    # OpenCode skills to deploy into sandbox for this agent
-    # List of skill names that match directories in druppie/opencode/skills/
-    opencode_skills: list[str] = Field(default_factory=list)
-
     # System prompt fragments to include (from system_prompts/*.yaml)
     system_prompts: list[str] = Field(default_factory=list)
 

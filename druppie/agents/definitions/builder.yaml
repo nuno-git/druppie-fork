@@ -223,11 +223,6 @@ system_prompts:
   - done_tool_format
   - workspace_state
 
-opencode_skills:
-  - fullstack-architecture
-  - project-coding-standards
-  - standards-validation
-
 # MCP tools — read-only for context gathering before crafting sandbox prompts
 mcps:
   coding:
