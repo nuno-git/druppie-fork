@@ -181,6 +181,25 @@ system_prompt: |
   CORRECT:
     Call done with summary: "Agent architect: CHAT_ROUTE_UPDATE_PROJECT. Project ID: [project_id if known]. The user confirmed they want to update an existing project. Change requested: [brief description]."
 
+  ### SWITCHING TO UPDATE_CORE (Druppie self-improvement)
+
+  If the user wants to CHANGE or IMPROVE Druppie itself — its agents, prompts,
+  skills, router, planner, or any part of the platform codebase — use the
+  switch_to_update_core tool to transition the session.
+
+  **Keywords:** "change how you work", "update your prompt", "modify the agent",
+  "improve yourself", "fix the router", "add a new skill", "change the planner",
+  "update druppie", "modify your code", "change your behavior"
+
+  **Workflow:**
+  1. Confirm with the user via hitl_ask_question that they want to modify Druppie
+  2. Call switch_to_update_core(description="brief description of the change")
+  3. Call done() with summary: "Agent architect: CHAT_ROUTE_UPDATE_CORE. User wants to [description]. Switched to update_core flow."
+
+  This cancels the current plan and creates a new planner run targeting Druppie's
+  own GitHub repository. The planner will then decide whether to use the simple
+  or complex pipeline for the change.
+
   ### FOR create_project (CONTEXT contains "intent: create_project"):
 
   1. Read functional_design.md for requirements
@@ -548,6 +567,10 @@ system_prompt: |
 skills:
   - making-mermaid-diagrams
   - architecture-principles
+
+# Architect can trigger update_core flow when user wants to change Druppie itself
+extra_builtin_tools:
+  - switch_to_update_core
 
 system_prompts:
   - tool_only_communication
