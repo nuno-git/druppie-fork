@@ -810,11 +810,9 @@ The SDK lives in the Druppie monorepo at `druppie/sdk/`. It is a pip-installable
 ```
 druppie/sdk/
 ├── druppie_sdk/
-│   ├── __init__.py          # DruppieClient, DruppieAuth
+│   ├── __init__.py          # DruppieClient
 │   ├── client.py            # Main client — MCP client wrapper
-│   ├── auth.py              # Keycloak JWT validation + app role checking
 │   ├── usage.py             # Usage reporting to Druppie backend
-│   ├── health.py            # Standard /health endpoint for generated apps
 │   └── py.typed             # PEP 561 marker
 ├── pyproject.toml
 └── README.md
@@ -854,6 +852,7 @@ The template is a **working application out of the box** — authentication, a l
 
 **What the template handles (agent does NOT need to code these):**
 - **Keycloak authentication** — login, logout, token refresh, session middleware. Users log in with existing Druppie/Keycloak credentials. Already wired up.
+- **RBAC** — role tables, user-role assignments, admin page for managing access. Each app owns its own roles in its own database.
 - **Landing page** — company-styled default page. Agent can replace or extend it.
 - **SDK** — `DruppieClient` initialized, module connections configured
 - **Health endpoint** — standard `/health` for deployer agent
@@ -901,7 +900,6 @@ class DruppieClient:
 
         self.module_versions = module_versions or {}
         self.modules = ModuleClient(self)
-        self.auth = AppAuth(self)
         self._usage = UsageReporter(self)
 
     @property
@@ -975,42 +973,11 @@ class ModuleClient:
 
 ### Authentication & App Access Control
 
-```python
-# druppie_sdk/auth.py
+Authentication (Keycloak login/logout) and RBAC (roles, user-role assignments) are provided by the **project template**, not the SDK. Each app manages its own roles in its own database.
 
-class AppAuth:
-    """App-level authentication and role-based access control.
+The SDK provides Keycloak token validation for module calls. The project template provides everything else: login pages, session middleware, role tables, admin page.
 
-    Authentication: Keycloak JWT (validated by modules themselves).
-    Authorization: App-specific roles managed in Druppie backend.
-    """
-
-    def __init__(self, client: DruppieClient):
-        self._client = client
-
-    async def get_user_roles(self, user_token: str | None = None) -> list[str]:
-        """Get the current user's roles for this app.
-
-        Calls Druppie backend: GET /api/applications/{app_id}/users/{user_id}/roles
-        Returns: ["editor", "admin"] or [] if no access.
-        """
-        token = user_token or self._client._token
-        user_id = self._extract_user_id(token)
-        async with httpx.AsyncClient() as http:
-            response = await http.get(
-                f"{self._client.druppie_url}/api/applications/{self._client.app_id}/users/{user_id}/roles",
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            if response.status_code == 200:
-                return response.json().get("roles", [])
-            return []
-
-    async def require_role(self, role: str, user_token: str | None = None):
-        """Raise 403 if user doesn't have the required role."""
-        roles = await self.get_user_roles(user_token)
-        if role not in roles:
-            raise PermissionError(f"Role '{role}' required")
-```
+See `docs/plans/2026-03-11-auth-governance-design.md` Section 7 for the full design.
 
 ### Usage Reporting
 
@@ -1131,26 +1098,7 @@ async def get_usage(
     ...
 ```
 
-```python
-# druppie/api/routes/applications.py
-
-router = APIRouter(prefix="/api/applications", tags=["applications"])
-
-@router.get("/{app_id}/users/{user_id}/roles")
-async def get_user_roles(app_id: str, user_id: str):
-    """Get a user's roles for an app (called by SDK for access control)."""
-    ...
-
-@router.post("/{app_id}/roles")
-async def create_role(app_id: str, role: RoleCreate):
-    """Create a role for an app (called by app owner via frontend)."""
-    ...
-
-@router.post("/{app_id}/users/{user_id}/roles")
-async def assign_role(app_id: str, user_id: str, role_assignment: RoleAssignment):
-    """Assign a role to a user for an app."""
-    ...
-```
+> Application access control (roles, user assignments) is managed by each app in its own database via the project template. No Druppie backend endpoints needed. See `docs/plans/2026-03-11-auth-governance-design.md` Section 7.
 
 ---
 

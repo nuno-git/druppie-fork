@@ -394,24 +394,34 @@ This means:
 
 ### Model
 
-Every Druppie-built app has role-based access control. The app owner defines roles for their app and assigns Keycloak users to those roles.
+Every Druppie-built app has its own role-based access control. Roles and user assignments live in the **app's own database**, not in Druppie's core DB. The project template provides RBAC tables, helpers, and an admin page out of the box.
 
-### Why roles live in Druppie, not Keycloak
+### Why roles live in the app, not in Druppie
 
-Keycloak supports client-level roles, but that would require creating a new Keycloak client per app and managing roles via the Keycloak Admin API. That's heavy for what we need. Instead:
+Access control is application-specific. Different apps need different roles, different permissions, and may need to extend with resource-level access later. Keeping it in the app:
 
-- Roles are stored in Druppie's database (simple relational tables)
-- The SDK checks access by calling a Druppie backend endpoint
-- The app owner manages access through the Druppie frontend (project → app settings → access control)
+- App is self-contained — works even if Druppie is down
+- Role checks are local (no network call to Druppie backend)
+- Apps can extend with custom permissions without touching Druppie
+- No coupling between Druppie's DB and app-specific data
 
 ### How it works
 
-1. Druppie builds an app → an `applications` record is created, linked to the project
-2. App owner defines roles (e.g., "viewer", "editor", "admin") via Druppie frontend
-3. App owner assigns Keycloak users to roles
+1. Druppie builds an app → project template includes RBAC tables and admin page
+2. App admin defines roles (e.g., "viewer", "editor", "admin") via the app's built-in admin page
+3. App admin assigns Keycloak users to roles (same Keycloak realm, same users)
 4. User logs into the app → gets a Keycloak JWT (standard flow, same realm)
-5. App calls `druppie.auth.get_user_roles()` → SDK calls Druppie backend → returns the user's roles for this app
+5. App checks roles locally against its own DB
 6. App uses roles to gate access to features
+
+### What the project template provides
+
+The RBAC system is part of the project template (`druppie/templates/project/`). Apps get it for free:
+
+- `roles` and `user_roles` tables (created by template migrations)
+- Admin page for managing roles and user assignments
+- Auth helpers for role checking in routes
+- Keycloak login/logout already wired up
 
 ### SDK usage in apps
 
@@ -420,8 +430,8 @@ from druppie_sdk import DruppieClient
 
 druppie = DruppieClient()
 
-# Check if current user has access and what roles they have
-user_roles = await druppie.auth.get_user_roles()
+# Check roles against the app's own database (local, no network call)
+user_roles = druppie.auth.get_user_roles(user_id)
 # Returns: ["editor"] or [] if no access
 
 # Guard a route
@@ -429,12 +439,9 @@ if "editor" not in user_roles:
     raise HTTPException(403, "No access")
 ```
 
-Behind the scenes, the SDK calls `GET /api/applications/{app_id}/users/{user_id}/roles` on the Druppie backend.
+### Future: central management
 
-### Who manages roles
-
-- **App owner** manages access through the Druppie frontend (project → app settings → access control)
-- **Agents** can set up default roles during app creation (e.g., always create "viewer" and "admin" roles)
+If we need Druppie to manage access across apps centrally, each app can expose a `/druppie/access` endpoint (added to the project template) that Druppie calls to list/modify roles. This keeps apps self-contained while enabling central oversight when needed.
 
 ---
 
@@ -494,31 +501,7 @@ CREATE TABLE applications (
 );
 ```
 
-#### application_roles
-
-```sql
-CREATE TABLE application_roles (
-    id UUID PRIMARY KEY,
-    application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
-    role_name VARCHAR(100) NOT NULL,
-    description TEXT,
-    UNIQUE(application_id, role_name)
-);
-```
-
-#### application_user_roles
-
-```sql
-CREATE TABLE application_user_roles (
-    id UUID PRIMARY KEY,
-    application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id),
-    role_id UUID NOT NULL REFERENCES application_roles(id) ON DELETE CASCADE,
-    assigned_by UUID NOT NULL REFERENCES users(id),
-    assigned_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(application_id, user_id, role_id)
-);
-```
+> `application_roles` and `application_user_roles` live in each app's own database (provided by the project template), not in Druppie's core DB. See Section 7.
 
 ---
 
@@ -535,9 +518,9 @@ CREATE TABLE application_user_roles (
 | `druppie/mcp-servers/docker/` | Migrate to FastMCP server | High |
 | `druppie/mcp-servers/filesearch/` | Migrate to FastMCP server | Medium |
 | `druppie/mcp-servers/archimate/` | Migrate to FastMCP server | Medium |
-| `druppie/db/models/` | Add module_usage, applications, application_roles, application_user_roles tables | Medium |
-| `druppie/services/` | Add UsageTrackingService, ApplicationService | Medium |
-| `druppie/api/routes/` | Add usage and application endpoints | Medium |
+| `druppie/db/models/` | Add module_usage, applications tables | Medium |
+| `druppie/services/` | Add UsageTrackingService | Medium |
+| `druppie/api/routes/` | Add usage endpoints | Medium |
 | `druppie-sdk/` | New package: MCP client + auth + usage reporting | High — new code |
 | `druppie/agents/builtin_tools.py` | Update sandbox launch to include short-lived module token | Low |
 | `iac/realm.yaml` | Add `druppie-modules` audience, configure token exchange | Low |
