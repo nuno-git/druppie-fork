@@ -221,7 +221,7 @@ SESSION = {
          "Analyze requirements for an FAQ page: categories, questions, search."),
         ("planner",          "completed", None, None),
         ("architect",        "completed", None,
-         "Design FastAPI app with Category/Question models and Jinja2 templates."),
+         "Design Flask app with Category/Question models, React + shadcn frontend."),
         ("planner",          "completed", None, None),
         ("tester",           "completed", None,
          "Generate test suite for FAQ models and route responses."),
