@@ -213,9 +213,10 @@ system_prompts:
   - done_tool_format
   - workspace_state
 
-skills:
+opencode_skills:
   - fullstack-architecture
   - project-coding-standards
+  - standards-validation
 
 # MCP tools this agent can use
 mcps:
