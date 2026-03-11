@@ -853,48 +853,70 @@ Modules are not just infrastructure for developers — **agents are the first co
 
 ## 9. Recommendation
 
-### The Layered Approach: C + E combined
+### The Layered Approach: C with direct MCP access (without shared DB, without gateway proxy)
 
-Based on the analysis, the strongest approach for Druppie is a **combination of Approach C (SDK + MCP Hybrid) and Approach E (Composable MCP with Shared DB + API Gateway)**, enhanced with templates from Approach D:
+Based on the analysis, the strongest approach for Druppie is **Approach C (SDK + MCP Hybrid)** enhanced with templates from Approach D. We reject Approach E's shared database (each module owns its own storage) and its gateway proxy (apps connect directly to modules via the SDK as an MCP client).
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Layer 3: Templates (build-time)                        │
+│  Layer 2: Templates (build-time)                        │
 │  AI agent uses templates to generate correct SDK calls  │
 ├─────────────────────────────────────────────────────────┤
-│  Layer 2: Druppie SDK (runtime client)                  │
+│  Layer 1: Druppie SDK (runtime MCP client)              │
 │  druppie-sdk package in every generated application     │
-│  Handles: auth, retries, cost tracking, typed methods   │
-├─────────────────────────────────────────────────────────┤
-│  Layer 1: API Gateway (infrastructure)                  │
-│  Single entry point for all module traffic              │
-│  Handles: routing, rate limiting, OBO validation        │
+│  Connects directly to module MCP servers                │
+│  Handles: auth, retries, usage reporting, typed methods │
 ├─────────────────────────────────────────────────────────┤
 │  Layer 0: MCP Module Servers (execution)                │
-│  Each module = MCP server + own DB schema               │
-│  Handles: business logic, data storage, events          │
+│  Each module = FastMCP server + own database (or none)  │
+│  Reports usage via MCP response _meta                   │
+│  Validates Keycloak tokens for auth                     │
 └─────────────────────────────────────────────────────────┘
+
+Supporting infrastructure (on Druppie backend, not in the call path):
+  - Usage recording API (POST /api/usage — called by SDK after each module call)
+  - App access control API (GET /api/applications/{id}/users/{id}/roles)
+  - Module registry API (GET /api/modules — for discovery)
 ```
+
+### Why NOT Shared DB (Approach E's Schema Isolation)
+
+The shared database with schema isolation from Approach E was rejected because:
+
+- **Hidden coupling**: Modules that `SELECT FROM public.sessions` break when Druppie renames a column
+- **Not portable**: Can't develop, test, or run a module without Druppie's full schema
+- **Reset fragility**: Druppie's "reset DB" workflow can break modules reading `public.*`
+- **Not self-contained**: Contradicts the core module principle of independence
+
+Instead, modules receive Druppie context (user_id, project_id, app_id) through **standard MCP tool arguments**. Cost tracking is recorded by the caller (core or SDK), not the module.
+
+### Why NOT a Gateway Proxy
+
+A separate gateway between apps and modules was rejected because:
+
+- **Extra hop**: Adds latency for every module call
+- **Single point of failure**: Gateway down = all module calls fail
+- **Unnecessary**: Auth is handled by Keycloak tokens (modules validate JWTs themselves), usage is reported by the SDK to the backend asynchronously
 
 ### Why This Combination
 
 | Requirement | How it's met |
 |------------|-------------|
-| **Generic** | MCP servers are protocol-standard; SDK provides uniform access |
+| **Generic** | All MCP servers use FastMCP (official protocol); SDK is an MCP client |
 | **Addable to core** | New module = new container + YAML config (additive only) |
 | **Usable by Druppie** | AI agent generates `druppie_sdk` calls using templates |
-| **Governed** | Gateway handles auth, rate limiting; schema isolation enables cost tracking per user; events provide audit trail |
-| **DB access** | Schema isolation: modules read public tables, write own schema |
+| **Governed** | Modules report usage via `_meta`; SDK reports to backend; Keycloak handles auth |
+| **Self-contained** | Each module owns its own database (or is stateless). Context comes via standard MCP arguments |
 | **Easy for agents** | 3 lines of code per integration via SDK |
 
 ### What to Build First
 
-1. **Druppie SDK** (Layer 2): `DruppieClient` + `ModuleClient` + `DruppieAuth` + `CostTracker`
-2. **First module** (Layer 0): Pick OCR or Document Classifier as the pilot module
-3. **Schema isolation** (Layer 0): `ModuleSchemaManager` for PostgreSQL schema management
-4. **API Gateway** (Layer 1): Lightweight FastAPI service that routes, authenticates, and meters
-5. **Templates** (Layer 3): 2-3 integration templates for the pilot module
-6. **Event bus** (optional, Layer 0): PostgreSQL LISTEN/NOTIFY for inter-module communication
+1. **MCP upgrade** (Layer 0): Migrate existing MCP servers (coding, docker, etc.) to FastMCP
+2. **Druppie SDK** (Layer 1): `DruppieClient` as MCP client + auth + usage reporting
+3. **First module** (Layer 0): Pick OCR or Document Classifier as the pilot module
+4. **Usage tracking** (backend): `module_usage` table + API routes
+5. **App access control** (backend): `applications`, `application_roles`, `application_user_roles` tables + API routes
+6. **Templates** (Layer 2): 2-3 integration templates for the pilot module
 
 ---
 
