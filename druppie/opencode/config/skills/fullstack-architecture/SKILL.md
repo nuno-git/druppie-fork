@@ -298,13 +298,21 @@ class <Entity>Repository(BaseRepository):
         )
 
     def _to_detail(self, item: <Entity>) -> <Entity>Detail:
-        """Convert ORM model to detail domain object."""
+        """Convert ORM model to detail domain object.
+
+        NOTE: In practice, _to_detail / get_detail often performs additional
+        queries (aggregations, related objects) beyond simple field mapping.
+        For example, ProjectRepository.get_detail() aggregates token stats
+        across sessions and fetches recent sessions. Design this method
+        based on what the Detail model needs.
+        """
         return <Entity>Detail(
             id=item.id,
             name=item.name,
             created_at=item.created_at,
             description=item.description,
             owner_id=item.owner_id,
+            # Add computed/aggregated fields here as needed
         )
 ```
 
@@ -388,6 +396,7 @@ File: `druppie/api/routes/<entities>.py`
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from druppie.api.deps import get_current_user, get_user_roles, get_<entity>_service
 from druppie.domain import <Entity>Summary, <Entity>Detail
@@ -396,18 +405,27 @@ from druppie.services import <Entity>Service
 router = APIRouter(prefix="/<entities>", tags=["<entities>"])
 
 
-@router.get("", response_model=list[<Entity>Summary])
+class <Entity>ListResponse(BaseModel):
+    """Paginated <entity> list response."""
+
+    items: list[<Entity>Summary]
+    total: int
+    page: int
+    limit: int
+
+
+@router.get("", response_model=<Entity>ListResponse)
 async def list_<entities>(
     page: int = 1,
     limit: int = 20,
     service: <Entity>Service = Depends(get_<entity>_service),
     user: dict = Depends(get_current_user),
-) -> list[<Entity>Summary]:
+) -> <Entity>ListResponse:
     """List all <entities>."""
     user_id = UUID(user["sub"])
     user_roles = get_user_roles(user)
-    items, _ = service.list_all(user_id, user_roles, page=page, limit=limit)
-    return items
+    items, total = service.list_all(user_id, user_roles, page=page, limit=limit)
+    return <Entity>ListResponse(items=items, total=total, page=page, limit=limit)
 
 
 @router.get("/{<entity>_id}", response_model=<Entity>Detail)

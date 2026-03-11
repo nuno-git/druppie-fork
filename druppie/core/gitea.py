@@ -356,13 +356,15 @@ class GiteaClient:
         content: str,
         message: str = "Add file",
         branch: str = "main",
+        owner: str | None = None,
     ) -> dict[str, Any]:
         """Create a file in a repository."""
+        repo_owner = owner or self.org
         encoded_content = base64.b64encode(content.encode()).decode()
 
         return await self._request(
             "POST",
-            f"/repos/{self.org}/{repo}/contents/{path}",
+            f"/repos/{repo_owner}/{repo}/contents/{path}",
             json_data={
                 "content": encoded_content,
                 "message": message,
@@ -480,6 +482,76 @@ class GiteaClient:
                 "branch": branch,
             },
         )
+
+    async def push_template(
+        self,
+        repo: str,
+        template_dir: str,
+        owner: str | None = None,
+        branch: str = "main",
+    ) -> dict[str, Any]:
+        """Push all files from a template directory into a repository.
+
+        Walks the template directory and creates each file via the API.
+        Skips __pycache__ and .pyc files.
+
+        Args:
+            repo: Repository name
+            template_dir: Absolute path to the template directory
+            owner: Repository owner (defaults to org)
+            branch: Target branch
+
+        Returns:
+            Dict with success, files_pushed count, and any errors
+        """
+        from pathlib import Path
+
+        template_path = Path(template_dir)
+        if not template_path.is_dir():
+            return {"success": False, "error": f"Template dir not found: {template_dir}"}
+
+        errors = []
+        pushed = 0
+
+        for file_path in sorted(template_path.rglob("*")):
+            if not file_path.is_file():
+                continue
+            if "__pycache__" in str(file_path) or file_path.suffix == ".pyc":
+                continue
+
+            relative = str(file_path.relative_to(template_path))
+            try:
+                content = file_path.read_text()
+            except UnicodeDecodeError:
+                continue  # skip binary files
+
+            result = await self.create_file(
+                repo=repo,
+                path=relative,
+                content=content,
+                message=f"feat: scaffold project template ({relative})",
+                branch=branch,
+                owner=owner,
+            )
+
+            if result.get("success"):
+                pushed += 1
+            else:
+                errors.append(f"{relative}: {result.get('error') or result.get('data')}")
+
+        logger.info(
+            "gitea_template_pushed",
+            repo=repo,
+            owner=owner or self.org,
+            files_pushed=pushed,
+            errors=len(errors),
+        )
+
+        return {
+            "success": len(errors) == 0,
+            "files_pushed": pushed,
+            "errors": errors if errors else None,
+        }
 
     # =========================================================================
     # Branch Operations

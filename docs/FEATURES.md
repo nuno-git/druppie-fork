@@ -453,6 +453,20 @@ Review the code for quality, security, and best practices...
 
 Tools granted via skills are checked in `ToolExecutor` alongside the agent's static MCP permissions. If a tool is not in the agent's YAML `mcps` list but is allowed by an active skill, the agent can still use it.
 
+### Coding Standards and Templates
+
+The Builder and Reviewer agents use skills to enforce project-specific coding standards and architecture patterns:
+
+| Skill | Used By | Purpose |
+|-------|---------|---------|
+| `project-coding-standards` | Builder, Reviewer | Python/React code style, naming conventions, formatting rules, import conventions, and critical project rules |
+| `fullstack-architecture` | Builder | Clean architecture patterns (Summary/Detail, Repository, Service, Route) and code templates for all component types |
+| `standards-validation` | Reviewer | Structured validation checklist for architecture compliance and standards compliance |
+
+**Builder behavior**: Before writing code for the Druppie codebase, the Builder invokes `fullstack-architecture` and `project-coding-standards` to load the architecture patterns and coding standards. New components are scaffolded from embedded templates (domain models with Summary/Detail pattern, repositories extending BaseRepository, services with constructor injection, thin API routes with Depends injection, and React pages with React Query).
+
+**Reviewer behavior**: Before reviewing code, the Reviewer invokes `project-coding-standards` and `standards-validation` to load the validation checklist. Reviews include explicit architecture compliance and standards compliance sections, with critical violations (e.g., JSON/JSONB columns, business logic in routes) resulting in an automatic FAIL verdict.
+
 ---
 
 ## Project Management
