@@ -23,9 +23,10 @@
 12. [Database Tables (Druppie Core)](#12-database-tables-druppie-core)
 13. [Druppie SDK](#13-druppie-sdk)
 14. [Backend API for Modules](#14-backend-api-for-modules)
-15. [Module Lifecycle](#15-module-lifecycle)
-16. [Complete Example: OCR Module v1.0→v2.0](#16-complete-example-ocr-module)
-17. [Impact on Existing Code](#17-impact-on-existing-code)
+15. [Agent Module Discovery](#15-agent-module-discovery)
+16. [Module Lifecycle](#16-module-lifecycle)
+17. [Complete Example: OCR Module v1.0→v2.0](#17-complete-example-ocr-module)
+18. [Impact on Existing Code](#18-impact-on-existing-code)
 
 ---
 
@@ -1387,7 +1388,86 @@ async def get_usage(
 
 ---
 
-## 15. Module Lifecycle
+## 15. Agent Module Discovery
+
+Agents (AR, BA) need to discover and inspect available modules during conversations — for example, to check if a capability already exists before proposing a new module, or to understand what tools a module exposes.
+
+### Builtin tool: `list_druppie_modules`
+
+Added to the **Architect (AR)** and **Business Analyst (BA)** agent tool sets. Not needed for Developer agents — they can read the code directly.
+
+```python
+# druppie/agents/builtin_tools.py
+
+@tool
+def list_druppie_modules(category: str = None, module_id: str = None) -> str:
+    """List available Druppie modules and their tools.
+
+    Without arguments: returns a summary of all modules (name, version, category, description).
+    With category: filters by MCP type (core, module, both).
+    With module_id: returns detailed info including all tool schemas for that module.
+
+    Args:
+        category: Filter by MCP type — "core", "module", or "both". Optional.
+        module_id: Get detailed tool schemas for a specific module. Optional.
+    """
+    ...
+```
+
+**How it works:**
+
+1. Reads `mcp_config.yaml` to get all registered modules and their endpoints
+2. Calls MCP `initialize` on each module to get name, version, instructions
+3. Calls MCP `tools/list` on each module to get tool names, descriptions, and input schemas
+4. Returns a formatted summary the agent can reason about
+
+**Summary mode** (no `module_id`):
+```
+Modules (3 found):
+
+  ocr (v2.1.0) — type: both
+    Tools: extract_text, extract_structured
+    "Extract text and structured data from images and PDFs"
+
+  document-classifier (v1.0.0) — type: both
+    Tools: classify_document, suggest_category
+    "Classify documents into categories using ML"
+
+  code-analysis (v1.2.0) — type: core
+    Tools: analyze_complexity, find_duplicates
+    "Static code analysis tools for quality checks"
+```
+
+**Detail mode** (`module_id="ocr"`):
+```
+Module: ocr (v2.1.0)
+Type: both
+Versions: v1 (/v1/mcp), v2 (/v2/mcp)
+
+Tool: extract_text
+  Extract text from an image or PDF file.
+  Args:
+    - file_path (string, required): Path to the file
+    - language (string, optional): OCR language hint (default: "auto")
+    - user_id (string, required): Druppie user ID
+    - project_id (string, optional): Druppie project ID
+    - session_id (string, optional): Build session ID
+    - app_id (string, optional): Application ID
+
+Tool: extract_structured
+  Extract structured key-value data from a document.
+  Args:
+    - file_path (string, required): Path to the file
+    - template (string, required): Extraction template name
+    - user_id (string, required): Druppie user ID
+    ...
+```
+
+This gives AR/BA full visibility into the module ecosystem without leaving the conversation. AR uses it during module proposal evaluation (step 0 of the lifecycle) to check for overlap. BA uses it to understand what capabilities are already available when gathering requirements.
+
+---
+
+## 16. Module Lifecycle
 
 ### From Proposal to Running
 
@@ -1437,7 +1517,7 @@ async def get_usage(
 
 ---
 
-## 16. Complete Example: OCR Module
+## 17. Complete Example: OCR Module
 
 ### v1.0.0 — Initial Release
 
@@ -1674,7 +1754,7 @@ result = await druppie.ocr.extract("invoice.png")
 
 ---
 
-## 17. Impact on Existing Code
+## 18. Impact on Existing Code
 
 ### What Changes
 
