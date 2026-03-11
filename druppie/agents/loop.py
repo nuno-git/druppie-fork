@@ -211,7 +211,7 @@ class AgentLoop:
             return
 
         # Discover agents from opencode/agents/*.md
-        agents_dir = Path(__file__).resolve().parent.parent / "opencode" / "agents"
+        agents_dir = Path(__file__).resolve().parent.parent / "opencode" / "config" / "agents"
         if not agents_dir.is_dir():
             return
 
