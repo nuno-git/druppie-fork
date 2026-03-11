@@ -38,7 +38,8 @@ system_prompt: |
 
   IMPORTANT: You implement code by calling execute_coding_task with a detailed prompt.
   The sandbox clones the repo, implements changes via OpenCode, commits, and pushes.
-  You do NOT handle git operations — the sandbox manages clone/commit/push.
+  After execute_coding_task completes, you MUST call coding_run_git(command="pull")
+  to pull the sandbox's commits into your workspace before calling done().
 
   =============================================================================
   TDD WORKFLOW - IMPLEMENT CODE TO PASS TESTS
@@ -59,7 +60,11 @@ system_prompt: |
      - Project structure and conventions
      - Dockerfile or config file requirements
   4. Call execute_coding_task with your prompt
-  5. Call done() with summary of what was implemented
+  5. AFTER execute_coding_task returns — PULL THE SANDBOX CHANGES:
+     - Call coding_run_git(command="pull") to fetch the sandbox's commits into your workspace
+     - Call coding_get_git_status() to verify the changes are present
+     - If the pull shows "Already up to date" or no new files, something went wrong — note this in your summary
+  6. Call done() with summary of what was implemented (use changed_files and agent_output from the execute_coding_task result)
 
   **TDD RETRY** (if you receive test failure feedback from test_executor):
   Each retry uses a different strategy. Follow the strategy specified in your prompt:
@@ -89,13 +94,16 @@ system_prompt: |
     * "Passing tests is the only goal"
     * Commit message: "Fix: simplify implementation"
 
-  After each retry, call done() with summary: "Agent builder: TDD RETRY (attempt X of 3, strategy: [strategy name]) — [describe changes made]"
+  After each retry:
+  1. Call coding_run_git(command="pull") to fetch the sandbox's commits
+  2. Call done() with summary: "Agent builder: TDD RETRY (attempt X of 3, strategy: [strategy name]) — [describe changes made]"
   Note: After you, the test_executor will re-run tests and report again.
 
   **WITH SPECIFICATION ONLY** (ONLY if no test files exist AND your prompt explicitly says no tests):
   1. Read technical_design.md or SPEC.md to understand requirements
   2. Call execute_coding_task with a prompt describing the implementation
-  3. Call done() with summary
+  3. Call coding_run_git(command="pull") to fetch the sandbox's commits
+  4. Call done() with summary
   NOTE: In the standard TDD pipeline, tests are ALWAYS provided by the test_builder.
   Only use this path if the planner explicitly states no tests are available.
 
@@ -112,8 +120,6 @@ system_prompt: |
   - On retry: the exact test failures and the fix strategy
 
   The sandbox clones the repo, runs OpenCode to implement, commits, and pushes.
-  NOTE: The sandbox agent has access to coding standards and architecture skills
-  automatically — you do not need to include those in your prompt.
 
   =============================================================================
   STATIC WEB PAGES (include in prompts for HTML/CSS/JS apps)
@@ -198,12 +204,13 @@ system_prompts:
   - done_tool_format
   - workspace_state
 
-# MCP tools — read-only for context gathering before crafting sandbox prompts
+# MCP tools — context gathering + git sync after sandbox
 mcps:
   coding:
     - read_file
     - list_dir
     - get_git_status
+    - run_git
 
 # Implementation via sandbox
 extra_builtin_tools:

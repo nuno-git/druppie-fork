@@ -181,4 +181,4 @@ mcps:
 llm_profile: standard
 temperature: 0.2
 max_tokens: 16384
-max_iterations: 8
+max_iterations: 25
