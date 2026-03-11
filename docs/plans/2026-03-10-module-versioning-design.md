@@ -1,6 +1,6 @@
 # Module Versioning Design
 
-> **Status**: Approved design
+> **Status**: **Integrated** — content has been merged into `docs/module-specification.md` (Sections 5-6). This file is kept as the original design record.
 > **Date**: 2026-03-10
 > **Context**: Replaces sections 5 and 6 of `docs/module-specification.md`
 
