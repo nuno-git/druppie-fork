@@ -337,7 +337,7 @@ GROUP BY u.username, mu.module_id;
 
 ### Resource metric definitions in FastMCP `meta`
 
-Modules declare what resource metrics they report in the `meta` field of their `@mcp.tool()` decorator. This allows the analytics UI to correctly label, format, and display module-specific resource data. The registry caches these definitions from MCP `tools/list`.
+Modules declare what resource metrics they report in the `meta` field of their `@mcp.tool()` decorator. This allows the analytics UI to correctly label, format, and display module-specific resource data. The definitions are discoverable via MCP `tools/list`.
 
 ```python
 # v1/tools.py
@@ -378,14 +378,13 @@ async def extract_text(...): ...
 
 1. **Module** returns `_meta` with `module_id`, `module_version`, and `usage` (including `resources`)
 2. **Caller** (core or SDK) copies `module_id`, `module_version`, `cost_cents`, and `resources` (as JSON string) into a `module_usage` record
-3. **Analytics layer** reads a `module_usage` record, joins with the **module registry** to find the `resource_metrics` definition for that module + version (cached from MCP `tools/list` `meta`)
-4. **Analytics UI** uses the metric definitions (name, type, unit, description) to correctly label and format the resource data
+3. **Analytics layer** reads a `module_usage` record, calls MCP `tools/list` on the module to get `resource_metrics` definitions for that version
+4. **Analytics UI** uses the metric definitions (name, type, unit) to correctly label and format the resource data
 
 This means:
 - The `resources` field in `module_usage` is a plain JSON string — never queried by sub-field (follows Druppie's NO JSONB rule)
-- The module registry provides the schema for interpreting it
-- If v2 adds `pages_scanned`, the registry knows that metric, and the analytics UI renders it correctly
-- If a metric is removed in v3, old records still have the data, and the registry can still look up the v2 definition for historical records
+- The MCP server provides the schema for interpreting it via `tools/list` `meta.resource_metrics`
+- If v2 adds `pages_scanned`, the MCP server reports that metric, and the analytics UI renders it correctly
 
 ---
 
@@ -477,23 +476,7 @@ CREATE TABLE module_usage (
 );
 ```
 
-> `resources` is stored as Text (JSON string), not JSONB — following Druppie's "NO JSON/JSONB columns" rule. It's never queried by sub-field, only displayed. The schema for interpreting it comes from the module registry's `resource_metrics` definitions.
-
-#### module_resource_metrics
-
-Stores the declared resource metrics per module version (populated from MCP `tools/list` `meta.resource_metrics` by the registry service):
-
-```sql
-CREATE TABLE module_resource_metrics (
-    id UUID PRIMARY KEY,
-    module_version_id UUID NOT NULL REFERENCES module_versions(id) ON DELETE CASCADE,
-    metric_name VARCHAR(100) NOT NULL,
-    metric_type VARCHAR(20) NOT NULL,    -- integer, float
-    unit VARCHAR(50) NOT NULL,           -- bytes, milliseconds, count
-    description TEXT,
-    UNIQUE(module_version_id, metric_name)
-);
-```
+> `resources` is stored as Text (JSON string), not JSONB — following Druppie's "NO JSON/JSONB columns" rule. It's never queried by sub-field, only displayed. The schema for interpreting it comes from the module's MCP `tools/list` `meta.resource_metrics`.
 
 #### applications
 
@@ -550,7 +533,7 @@ CREATE TABLE application_user_roles (
 | `druppie/mcp-servers/docker/` | Migrate to FastMCP server | High |
 | `druppie/mcp-servers/filesearch/` | Migrate to FastMCP server | Medium |
 | `druppie/mcp-servers/archimate/` | Migrate to FastMCP server | Medium |
-| `druppie/db/models/` | Add module_usage, applications, application_roles, application_user_roles, module_resource_metrics tables | Medium |
+| `druppie/db/models/` | Add module_usage, applications, application_roles, application_user_roles tables | Medium |
 | `druppie/services/` | Add UsageTrackingService, ApplicationService | Medium |
 | `druppie/api/routes/` | Add usage and application endpoints | Medium |
 | `druppie-sdk/` | New package: MCP client + auth + usage reporting | High — new code |
