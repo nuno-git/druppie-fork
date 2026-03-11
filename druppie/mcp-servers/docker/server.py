@@ -561,7 +561,11 @@ async def compose_up(
         if not git_url and not repo_name:
             return {"success": False, "error": "Must provide either git_url or repo_name"}
 
-        url = git_url or get_gitea_clone_url(repo_name, repo_owner)
+        # Prefer repo_name (uses internal Gitea URL) over git_url (may be external/localhost)
+        if repo_name:
+            url = get_gitea_clone_url(repo_name, repo_owner)
+        else:
+            url = git_url
 
         # Step 1: Clone repository
         build_id = str(uuid.uuid4())[:8]

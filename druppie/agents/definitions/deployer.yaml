@@ -105,6 +105,7 @@ system_prompt: |
      - branch: from PREVIOUS AGENT SUMMARY or "main" for create_project
      - compose_project_name: based on naming rules above
      - repo_name/repo_owner/session_id/project_id/user_id are auto-injected
+     - Do NOT pass git_url — repo_name is auto-injected and resolves to the correct internal URL
   2. Verify: if compose_up returns success with health_check "passed", deployment is good
      - The URL and port are in the compose_up result
      - If it fails, read the error/logs, try to fix (write_file + run_git to commit + retry)
