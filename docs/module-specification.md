@@ -1492,27 +1492,73 @@ This gives AR/BA full visibility into the module ecosystem without leaving the c
 
 ## 16. Module Lifecycle
 
+### Module Creation Flow
+
+Modules are created when the **Architect** determines that a new reusable capability is needed. The BA does not decide whether a module should be built — the BA provides the functional requirements in the FO (Functioneel Ontwerp), and the Architect decides how to fulfill them.
+
+```
+BA writes FO               Functional requirements, acceptance criteria,
+                            possible solution direction
+        │
+        ▼
+AR reads FO                 Determines: can existing modules cover this?
+        │                   Or is a new module needed?
+        │
+        ├─ Existing module  → Proceed with application development
+        │   covers it
+        │
+        └─ New module       → AR writes MODULE_SPEC.md
+           needed              (functional reqs from FO + technical reqs from AR)
+                │
+                ▼
+        AR triggers          Uses the "update core" intent to create
+        update core          a branch + PR on the Druppie core repo
+                │            (see update-core-flow design doc)
+                ▼
+        Module developed     DEV implements within the PR, following
+        & reviewed           the module convention
+                │
+                ▼
+        PR merged            Human reviews and merges into colab-dev
+                │
+                ▼
+        Module in core       Available for all applications
+```
+
+The **module specification** (`MODULE_SPEC.md`) is owned by the Architect and combines:
+- **Functional requirements** from the BA's FO (what the capability must do, acceptance criteria)
+- **Technical requirements** from the Architect (contract schema, version strategy, dependencies, performance constraints)
+
+This separation ensures the BA focuses on *what* the user needs without making platform-level decisions, while the Architect translates those needs into module-level technical design.
+
 ### From Proposal to Running
 
 ```
 0. ACCEPT      Module proposal evaluated against acceptance criteria
                 AR validates: reuse, genericity, no overlap, ownership
+                AR writes MODULE_SPEC.md (functional + technical reqs)
                 (See "Module Acceptance" in modules-research-and-decisions.md)
 
-1. DEVELOP     Create module directory with v1/ subdirectory:
+1. UPDATE CORE AR triggers update_core intent → creates branch + PR
+                on Druppie core repo (colab-dev)
+
+2. DEVELOP     Create module directory with v1/ subdirectory:
                 v1/module.py, v1/tools.py, v1/schema/
                 Root: MODULE.yaml, server.py, db.py, auth.py, Dockerfile, requirements.txt
                 Test locally: python server.py (no Docker needed)
 
-2. REGISTER    Add docker-compose service + mcp_config.yaml entry
+3. REGISTER    Add docker-compose service + mcp_config.yaml entry
 
-3. DEPLOY      docker compose --profile dev up -d module-<name>
+4. PR REVIEW   Human reviews module PR against convention
+                PR merged into colab-dev
+
+5. DEPLOY      docker compose --profile dev up -d module-<name>
                 Container starts, health check passes
 
-4. CONFIGURE   Agent YAML files updated to include module tools
+6. CONFIGURE   Agent YAML files updated to include module tools
                 Injection rules added to mcp_config.yaml
 
-5. AVAILABLE   Module tools appear in agent tool lists
+7. AVAILABLE   Module tools appear in agent tool lists
                 SDK can call module directly at /v1/mcp or /mcp
 ```
 

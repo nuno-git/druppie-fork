@@ -813,13 +813,26 @@ GROUP BY user_id, module_id;
 
 | Agent Role | Involvement | What they do |
 |-----------|-------------|-------------|
-| **Business Analyst (BA)** | Required | Defines module requirements, acceptance criteria, use cases |
-| **Architect (AR)** | Required | Designs module contract (input/output schema), validates against convention |
+| **Business Analyst (BA)** | Required | Defines functional requirements and acceptance criteria in the FO (Functioneel Ontwerp). Provides a possible solution direction — does NOT decide whether a module should be built |
+| **Architect (AR)** | Required | Determines whether a new module is needed. Creates the **module specification** by combining functional requirements (from the BA's FO) with technical requirements. Designs the module contract (input/output schema) and validates against the module convention |
 | **Developer (DEV)** | Required | Implements module logic, MCP server, tests |
 | **Reviewer** | Required | Reviews module code against convention, security, performance |
 | **Planner** | Optional | Orchestrates multi-agent workflow if module is complex |
 | **Tester** | Required | Validates module against contract, integration tests |
 | **Deployer** | Required | Deploys module container, registers in configuration |
+
+### BA vs. Architect: Responsibility Split
+
+The BA and Architect have distinct, sequential responsibilities:
+
+| Aspect | BA (Functioneel Ontwerp) | Architect (Module Specification) |
+|--------|--------------------------|----------------------------------|
+| **Focus** | What the user needs | How the platform delivers it |
+| **Output** | FO with functional requirements and acceptance criteria | MODULE_SPEC.md with functional + technical requirements |
+| **Module decision** | Suggests a possible solution direction | Decides whether a module is the right approach |
+| **Scope** | End-to-end problem description | Module-specific contract and constraints |
+
+The BA describes the problem and what a solution must achieve. The Architect reads the FO, decides whether an existing module covers it or a new module is needed, and if so, writes the module specification that combines the BA's functional requirements with the technical requirements needed for the module convention.
 
 ### Module Acceptance: Who Decides?
 
@@ -835,6 +848,41 @@ Not everything should become a module. Before development starts, a module propo
 
 The **Architect (AR)** is responsible for evaluating scope and overlap. Module proposals that pass these criteria proceed to development. Proposals that don't are either scoped differently or implemented as application-specific services instead.
 
+### When and How Modules Are Created
+
+Modules are created through the **update core** flow — the Architect adds new modules directly to the Druppie core codebase via a PR workflow.
+
+**The trigger**: During the design phase of any project, the Architect reviews the BA's FO and determines that a reusable capability is needed that doesn't exist yet (or that an existing module needs a new major version). This is the moment a module is born.
+
+**The flow**:
+
+```
+1. BA writes the FO          -> Functional requirements, acceptance criteria,
+                                possible solution direction
+
+2. AR reads the FO            -> Determines: can existing modules cover this,
+                                or is a new module needed?
+
+3. AR writes module spec      -> MODULE_SPEC.md combining:
+                                - Functional requirements (from FO)
+                                - Technical requirements (from AR)
+                                - Module contract (input/output schema)
+                                - Version strategy
+
+4. AR uses "update core"      -> Triggers the update_core intent, which:
+                                - Creates a feature branch on the Druppie repo
+                                - Implements the module following the convention
+                                - Creates a PR targeting colab-dev
+                                - PR is always reviewed and merged by humans
+
+5. Module lands in core       -> After PR merge, module is available to all
+                                future applications
+```
+
+**Why update core?** Modules live in the Druppie core (`druppie/mcp-servers/module-<name>/`). Adding a new module means modifying the core codebase — adding the module directory, updating `docker-compose.yaml`, updating `mcp_config.yaml`, etc. The update core flow (see `docs/plans/2026-03-02-update-core-flow-design.md`) provides the mechanism for agents to safely modify the core through PRs that require human review.
+
+**Timing**: Module creation happens *before* the application that needs it is built. The Architect first ensures the required modules exist in core, then the application development can proceed with those modules available.
+
 ### Agents as Primary Consumers
 
 Modules are not just infrastructure for developers — **agents are the first consumers**. The Architect agent needs to discover which modules exist and understand how to use them without manual system prompt updates. This means:
@@ -846,14 +894,15 @@ Modules are not just infrastructure for developers — **agents are the first co
 ### Module Development Workflow
 
 ```
-1. BA defines requirements  -> MODULE_SPEC.md
-2. AR evaluates fit         -> Check acceptance criteria, no overlap
-3. AR designs contract      -> tools.yaml (input/output schema)
-4. DEV implements           -> module.py + server.py + tests
-5. Reviewer validates       -> Code review against module convention
-6. Tester runs suite        -> Contract tests + integration tests
-7. Deployer deploys         -> Docker container + mcp_config.yaml update (+ registry)
-8. Module is discoverable   -> Available to all agents and applications (via registry)
+1. BA defines requirements    -> FO with functional reqs and acceptance criteria
+2. AR decides module needed   -> Evaluates acceptance criteria, checks for overlap
+3. AR writes module spec      -> MODULE_SPEC.md (functional + technical reqs)
+4. AR triggers update core    -> Creates branch + PR on Druppie core repo
+5. DEV implements             -> module.py + server.py + tests (within the PR)
+6. Reviewer validates         -> Code review against module convention
+7. Tester runs suite          -> Contract tests + integration tests
+8. PR merged by human         -> Module lands in core codebase
+9. Module is discoverable     -> Available to all agents and applications
 ```
 
 ---
