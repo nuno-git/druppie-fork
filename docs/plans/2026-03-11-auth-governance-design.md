@@ -125,7 +125,7 @@ mcps:
 
   ocr:
     url: http://module-ocr:9010
-    type: module                  # Available to agents AND apps
+    type: both                    # Available to agents AND apps
     tools:
       - name: extract_text
         requires_approval: false
@@ -138,14 +138,16 @@ mcps:
 | Type | Used by | Argument handling | Examples |
 |------|---------|-------------------|----------|
 | `core` | Agents only | Druppie core injects session_id, project_id, repo_name, etc. from session context | coding, docker, filesearch, archimate |
-| `module` | Agents + Apps | **Core**: injects standard args for agents. **SDK**: passes standard args explicitly for apps | OCR, classifier, future modules |
+| `module` | Apps only | SDK passes standard args explicitly | App-specific modules with no agent use case |
+| `both` | Agents + Apps | **Core**: injects standard args for agents. **SDK**: passes standard args explicitly for apps | OCR, classifier |
 
 ### How to decide
 
 - If the MCP only makes sense during an agent session (needs repo access, workspace, session state) → `core`
-- If the MCP provides a reusable capability that apps could also use → `module`
+- If the MCP is only used by generated apps, not by agents → `module`
+- If the MCP is used by both agents and apps → `both`
 
-Core MCPs are invisible to the SDK. Module MCPs are discoverable by both agents and apps.
+Core MCPs are invisible to the SDK. Module and both MCPs are discoverable by apps via the SDK.
 
 ---
 
@@ -528,7 +530,7 @@ CREATE TABLE application_user_roles (
 |-----------|--------|--------|
 | `druppie/core/mcp_client.py` | Replace with official MCP client library, keep injection wrapper | High — core rewrite |
 | `druppie/execution/tool_executor.py` | Add usage recording after MCP calls, read `_meta` | Medium |
-| `druppie/core/mcp_config.yaml` | Add `type: core\|module` to each MCP entry | Low |
+| `druppie/core/mcp_config.yaml` | Add `type: core\|module\|both` to each MCP entry | Low |
 | `druppie/mcp-servers/coding/` | Migrate to FastMCP server | High |
 | `druppie/mcp-servers/docker/` | Migrate to FastMCP server | High |
 | `druppie/mcp-servers/filesearch/` | Migrate to FastMCP server | Medium |
