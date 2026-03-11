@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-from druppie.sandbox.model_resolver import get_agent_chain, resolve_sandbox_models
+from druppie.opencode.model_resolver import get_agent_chain, resolve_sandbox_models
 
 
 # =============================================================================
@@ -431,6 +431,29 @@ async def set_intent(
                             repo_name=repo_name,
                             repo_owner=repo_owner,
                         )
+
+                        # Push project template into the new repo
+                        from pathlib import Path
+
+                        template_dir = Path(__file__).resolve().parent.parent / "templates" / "project"
+                        if template_dir.is_dir():
+                            template_result = await gitea.push_template(
+                                repo=repo_name,
+                                template_dir=str(template_dir),
+                                owner=repo_owner,
+                            )
+                            if template_result.get("success"):
+                                logger.info(
+                                    "project_template_pushed",
+                                    repo_name=repo_name,
+                                    files=template_result.get("files_pushed"),
+                                )
+                            else:
+                                logger.warning(
+                                    "project_template_push_failed",
+                                    repo_name=repo_name,
+                                    errors=template_result.get("errors"),
+                                )
                     else:
                         gitea_error = f"Gitea repo creation failed: {repo_result.get('error')}"
                 else:
@@ -905,7 +928,7 @@ async def execute_sandbox_coding_task(
         The caller (tool_executor) should set ToolCallStatus.WAITING_SANDBOX.
     """
     import json as _json
-    from druppie.sandbox import create_and_start_sandbox, SandboxCreateError
+    from druppie.opencode import create_and_start_sandbox, SandboxCreateError
 
     task = args.get("task", "")
     from druppie.core.config import DEFAULT_SANDBOX_AGENT

@@ -50,7 +50,9 @@ system_prompt: |
     coding_run_git(command="pull")
 
   AFTER writing files:
-    coding_commit_and_push(message="Add builder_plan.md")
+    coding_run_git(command="add builder_plan.md")
+    coding_run_git(command="commit -m 'Add builder_plan.md'")
+    coding_run_git(command="push")
 
   This ensures the sandbox (builder) always has the latest files.
 
