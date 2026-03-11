@@ -4,10 +4,6 @@ description: >
   Validation checklist for reviewing generated code against Druppie project
   coding standards and architecture patterns. Used by the Reviewer agent to
   ensure compliance.
-allowed-tools:
-  coding:
-    - read_file
-    - list_dir
 ---
 
 # Standards Validation Checklist
