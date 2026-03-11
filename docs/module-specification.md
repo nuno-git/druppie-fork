@@ -3,7 +3,7 @@
 > **Status**: Specification (ready for team review)
 > **Date**: 2026-03-10 (versioning redesign), original 2026-02-24
 > **Prerequisite**: Read `docs/modules.md` for the design research and approach selection
-> **Approach**: SDK + MCP Hybrid with Shared DB + API Gateway (Approaches C+E from design doc)
+> **Approach**: SDK + MCP Hybrid with direct module access (Approach C from design doc, without shared DB or gateway proxy from E)
 
 ---
 
@@ -11,13 +11,13 @@
 
 1. [Module Definition](#1-module-definition)
 2. [File Structure & Contract](#2-file-structure--contract)
-3. [MODULE.yaml & Version Manifests](#3-moduleyaml--version-manifests)
+3. [MODULE.yaml & MCP as Source of Truth](#3-moduleyaml--mcp-as-source-of-truth)
 4. [Module Code Contract](#4-module-code-contract)
 5. [Version System](#5-version-system)
-6. [Database Schema & Migrations](#6-database-schema--migrations)
+6. [Database & Storage](#6-database--storage)
 7. [Module Registry](#7-module-registry)
 8. [Druppie SDK](#8-druppie-sdk)
-9. [API Gateway](#9-api-gateway)
+9. [Backend API for Modules](#9-backend-api-for-modules)
 10. [Module Lifecycle](#10-module-lifecycle)
 11. [Complete Example: OCR Module v1.0→v2.0](#11-complete-example-ocr-module)
 
@@ -30,7 +30,7 @@ A **Druppie module** is a containerized MCP server that:
 1. Exposes tools via the MCP protocol (JSON-RPC over HTTP)
 2. Has a `MODULE.yaml` manifest declaring its identity and active versions
 3. Follows the versioned directory pattern: `server.py` (root router) + `vN/module.py` (business logic per major version)
-4. Can access the shared Druppie PostgreSQL database (via schema isolation)
+4. Manages its own data storage independently (own database or stateless). Receives Druppie context (user, session, project) through injected MCP parameters — never by querying Druppie's database directly
 5. Is callable by both Druppie agents (during build-time) and generated applications (at runtime via SDK)
 6. Supports multiple major versions running simultaneously via path-based routing (`/v1/mcp`, `/v2/mcp`)
 
@@ -54,19 +54,19 @@ druppie/mcp-servers/module-<name>/
 ├── Dockerfile               # One container serves all versions
 ├── requirements.txt         # Combined dependencies for all versions
 ├── server.py                # Entrypoint: routes /v1/mcp, /v2/mcp, /mcp → latest
+├── db.py                    # Shared DB connection (if module needs a database)
+├── auth.py                  # Shared Keycloak JWT validation
 ├── v1/
-│   ├── manifest.yaml        # v1 version metadata + tool schemas
 │   ├── module.py            # v1 business logic (fully independent)
-│   ├── tools.py             # v1 @mcp.tool() definitions
+│   ├── tools.py             # v1 FastMCP tool definitions (name, description, schema, meta)
 │   ├── schema/
 │   │   ├── 001_initial.sql  # First migration
 │   │   └── current.sql      # Full schema snapshot (for fresh installs)
 │   └── tests/
 │       └── test_module.py   # v1-specific tests
 ├── v2/
-│   ├── manifest.yaml        # v2 version metadata + tool schemas
 │   ├── module.py            # v2 business logic (fully independent)
-│   ├── tools.py             # v2 @mcp.tool() definitions
+│   ├── tools.py             # v2 FastMCP tool definitions (name, description, schema, meta)
 │   ├── schema/
 │   │   ├── 001_add_pages_table.sql
 │   │   ├── 002_add_source_column.sql
@@ -81,20 +81,21 @@ druppie/mcp-servers/module-<name>/
 
 | Location | Contains | Shared? |
 |----------|----------|---------|
-| Root `MODULE.yaml` | Module identity (id, name, author, description), list of active versions, latest version pointer | N/A — one file |
-| Root `server.py` | HTTP entrypoint, path-based routing to version dirs, DB connection setup, config loading | Yes — infrastructure only |
+| Root `MODULE.yaml` | Module ID, list of active versions, latest version pointer | N/A — one file |
+| Root `server.py` | HTTP entrypoint, path-based routing to version dirs, config loading | Yes — infrastructure only |
+| Root `db.py` | Database connection pool to the module's own database (if needed) | Yes — infrastructure only |
+| Root `auth.py` | Keycloak JWT validation middleware | Yes — infrastructure only |
 | Root `Dockerfile` | Container definition, installs all deps | Yes |
 | Root `requirements.txt` | Union of all version dependencies | Yes |
-| `vN/manifest.yaml` | Version number, tool schemas (input/output JSON Schema), per-tool metadata | No — owned by version |
 | `vN/module.py` | All business logic for this version | No — owned by version |
-| `vN/tools.py` | MCP tool definitions delegating to module.py | No — owned by version |
+| `vN/tools.py` | FastMCP tool definitions: name, description, input schema, `meta` (version, resource_metrics) — the **single source of truth** for the tool contract | No — owned by version |
 | `vN/schema/` | SQL migration files for this version's DB changes | No — owned by version |
 | `vN/tests/` | Tests for this version's contract | No — owned by version |
 | Root `tests/` | Cross-version tests (routing, coexistence) | N/A |
 
 ### Sharing Rule
 
-Infrastructure code (DB connection, config loading, logging, server setup) lives at the root and is shared. **Business logic is never shared** — each version owns its full implementation, even if some lines are identical across versions. If a bug exists in shared logic, fix it independently in each version directory.
+Infrastructure code lives at the root and is shared across all versions: `server.py` (routing), `db.py` (database connection pool), `auth.py` (JWT validation). **Business logic is never shared** — each version owns its full implementation in `vN/module.py`, even if some lines are identical across versions. If a bug exists in shared infrastructure, it is fixed once at the root. If a bug exists in business logic, fix it independently in each version directory.
 
 ### Naming Convention
 
@@ -106,158 +107,52 @@ Infrastructure code (DB connection, config loading, logging, server setup) lives
 | Container name | `druppie-module-<name>` | `druppie-module-ocr` |
 | Docker Compose service | `module-<name>` | `module-ocr` |
 | Port | 9010-9099 (9001-9009 reserved for core MCP servers) | `9010` |
-| DB schema | `module_<name>` (underscores, no hyphens) | `module_ocr` |
-| DB role | `druppie_module_<name>` | `druppie_module_ocr` |
+| DB container (if needed) | `druppie-module-<name>-db` | `druppie-module-ocr-db` |
+| DB name (if needed) | `module_<name>` | `module_ocr` |
 
 ---
 
-## 3. MODULE.yaml & Version Manifests
+## 3. MODULE.yaml & MCP as Source of Truth
 
-Module metadata is split across two levels: a root `MODULE.yaml` for identity and version listing, and per-version `manifest.yaml` files that own the tool schemas.
+### Design Principle: Define Once
 
-### Root MODULE.yaml
+Module metadata lives in exactly one place — no duplication between YAML files and code.
 
-The root manifest is small. It identifies the module and lists which major versions are active:
+- **MODULE.yaml** contains only what the MCP protocol cannot provide: module ID and version routing
+- **Everything else** — name, description, tool schemas, agent guidance, resource metrics — is defined in the FastMCP server code (`vN/tools.py`) and discoverable via the MCP protocol (`initialize`, `tools/list`)
+
+### MODULE.yaml
+
+The only YAML file in the module. Minimal — just version routing:
 
 ```yaml
-# =============================================================================
-# MODULE.yaml — Root Module Manifest
-# =============================================================================
-
-# --- Identity ---
 id: ocr                                    # Unique module identifier (required)
-name: OCR Module                           # Human-readable name (required)
-description: "Extract text from images and documents (PDF, JPG, PNG)"
-author: druppie-team
-license: MIT
-repository: https://gitea.local/druppie/module-ocr
-
-# --- Versions ---
 latest_version: "2.0.0"                   # The version served at /mcp (required)
 versions:                                  # All active major versions (required)
   - "1.0.0"                               # Served at /v1/mcp
   - "2.0.0"                               # Served at /v2/mcp
-
-# --- Infrastructure ---
-infrastructure:
-  port: 9010
-  health_endpoint: /health
-  info_endpoint: /module/info
-  db_schema: module_ocr                    # null if module doesn't need DB access
-
-# --- Metadata ---
-metadata:
-  category: document-processing
-  tags: [ocr, text-extraction, pdf, image]
-  icon: document-text
-
-# --- Agent Metadata (for LLM discovery and comprehension) ---
-agent_metadata:
-  summary: "Extracts text from images and documents using OCR"
-  when_to_use:
-    - "User needs text extracted from PDF, JPG, or PNG files"
-    - "Application processes scanned or photographed documents"
-  when_not_to_use:
-    - "Document is already digital text (use direct file reading instead)"
-    - "Only file metadata is needed, not content"
-  related_modules:
-    - module: classifier
-      pattern: "OCR output → classifier input for document categorization"
 ```
 
-### Per-Version manifest.yaml
+That's it. Three fields. Read by `server.py` for routing and by the registry for version tracking.
 
-Each version directory has its own `manifest.yaml` that defines the version's tool schemas. This file is the **contract** for that version:
+### What Comes From the MCP Server Instead
 
-```yaml
-# v1/manifest.yaml
-version: "1.2.0"                           # Current minor.patch within this major
-tools:
-  - name: extract_text
-    description: "Extract text from an image or document"
-    requires_approval: false
-    required_role: null
-    input_schema:
-      type: object
-      properties:
-        image_url:
-          type: string
-          description: "URL or path to the image"
-        language:
-          type: string
-          description: "OCR language hint (default: auto-detect)"
-          default: "auto"
-      required: [image_url]
-    output_schema:
-      type: object
-      properties:
-        text: { type: string }
-        confidence: { type: number }
-      required: [text, confidence]
-    usage_examples:
-      - description: "Extract Dutch text from a scanned invoice"
-        input: { image_url: "invoice.png", language: "nl" }
-        output: { text: "Factuurnummer: 1234...", confidence: 0.95 }
-```
+Everything else is defined in code via FastMCP and exposed through the MCP protocol:
 
-```yaml
-# v2/manifest.yaml
-version: "2.0.0"
-tools:
-  - name: extract_text
-    description: "Extract text from a document using URL, path, or base64 data"
-    requires_approval: false
-    required_role: null
-    input_schema:
-      type: object
-      properties:
-        source:
-          type: string
-          description: "URL, file path, or base64 data of the document"
-        language:
-          type: string
-          description: "OCR language hint (default: auto-detect)"
-          default: "auto"
-        output_format:
-          type: string
-          enum: ["plain", "markdown", "html"]
-          description: "Output text format"
-          default: "plain"
-      required: [source]
-    output_schema:
-      type: object
-      properties:
-        document:
-          type: object
-          properties:
-            text: { type: string }
-            format: { type: string }
-            language: { type: string }
-        confidence: { type: number }
-        pages:
-          type: array
-          items:
-            type: object
-            properties:
-              page_number: { type: integer }
-              text: { type: string }
-      required: [document, confidence]
-    usage_examples:
-      - description: "Extract Dutch text from a scanned invoice"
-        input: { source: "invoice.png", language: "nl" }
-        output: { document: { text: "Factuurnummer: 1234...", format: "plain", language: "nl" }, confidence: 0.95 }
-```
+| What | Where it's defined | How it's discovered |
+|------|-------------------|-------------------|
+| Server name | `FastMCP("OCR Module v1")` | MCP `initialize` → `serverInfo.name` |
+| Server version | `FastMCP(..., version="1.2.0")` | MCP `initialize` → `serverInfo.version` |
+| Agent guidance | `FastMCP(..., instructions="...")` | MCP `initialize` → `instructions` |
+| Tool name, description, input schema | `@mcp.tool(name=..., description=...)` | MCP `tools/list` |
+| Tool version, resource metrics | `@mcp.tool(meta={...})` | MCP `tools/list` → `meta` |
+| Approval rules, required roles | `mcp_config.yaml` | Druppie-specific, not in MCP |
 
-### What Each Section Controls
+### Why No manifest.yaml
 
-| Section | Read by | Purpose |
-|---------|---------|---------|
-| Root Identity | Registry, admin UI | Discovery and documentation |
-| Root Versions | `server.py`, registry | Which major versions are active, which is latest |
-| Root Infrastructure | Docker Compose, health checks | Deployment configuration |
-| Root Agent Metadata | Agent system prompts, registry | Module discovery and selection by AI agents |
-| Per-version Tools | `vN/tools.py`, SDK, agent YAML | Tool schema definition for this version |
-| Per-version Examples | Agents, SDK docs | Concrete usage patterns per version |
+Previous versions of this spec had a per-version `manifest.yaml` that duplicated tool schemas, descriptions, and metadata already defined in `tools.py`. This violated the "define once" principle — changing a tool meant updating both the code and the YAML.
+
+With FastMCP, `tools/list` returns the full tool contract (name, description, input schema, meta). The registry reads it directly from the running MCP server. No YAML duplication needed.
 
 ---
 
@@ -285,7 +180,6 @@ class <ModuleName>Module:
     """v1 business logic for <description>.
 
     All public methods correspond 1:1 to MCP tools defined in tools.py.
-    Method signatures match this version's manifest.yaml schemas.
     """
 
     def __init__(self, config_param: str = "default"):
@@ -300,7 +194,7 @@ class <ModuleName>Module:
         """Execute tool operation.
 
         Returns:
-            Dict matching the output_schema in this version's manifest.yaml
+            Dict matching the tool's documented output format.
         """
         result = self._internal_processing(required_param)
         return {
@@ -311,11 +205,10 @@ class <ModuleName>Module:
 
 **Rules**:
 - One public async method per MCP tool
-- Method names match tool names in `vN/manifest.yaml`
-- Parameter names match this version's `input_schema`
-- Return dicts match this version's `output_schema`
-- Raise exceptions on failure (don't return error dicts — let server.py handle formatting)
+- Method names match tool names in `vN/tools.py`
+- Raise exceptions on failure (don't return error dicts — let tools.py handle formatting)
 - No `SELECT *` in database queries — always select explicit columns so new columns from other versions don't break this version
+- Business logic does NOT handle standard arguments (`user_id`, `project_id`, `session_id`, `app_id`) — those are handled by `tools.py` for usage reporting
 
 ### vN/tools.py — MCP Tool Definitions (Per-Version)
 
@@ -325,29 +218,83 @@ Each version directory contains its own `tools.py` that wraps module methods as 
 """<Module Name> v1 — MCP Tool Definitions.
 
 Wraps v1/module.py business logic as MCP tools via FastMCP.
+This file is the SINGLE SOURCE OF TRUTH for the tool contract:
+- Tool name, description, input schema → via @mcp.tool() decorator
+- Version, resource metrics → via @mcp.tool(meta={...})
+- Agent guidance → via FastMCP(instructions=...)
+All discoverable by MCP clients via initialize + tools/list.
 """
 
 import os
+import time
 from fastmcp import FastMCP
 from .module import <ModuleName>Module
 
-mcp = FastMCP("<Module Name> v1")
+MODULE_ID = "<module-id>"
+MODULE_VERSION = "1.2.0"
+
+mcp = FastMCP(
+    "<Module Name> v1",
+    version=MODULE_VERSION,
+    instructions="""<Description of what this module does and when to use it.>
+
+Use when:
+- <scenario 1>
+- <scenario 2>
+
+Don't use when:
+- <scenario where this module is not appropriate>
+""",
+)
 
 module = <ModuleName>Module(
     config_param=os.getenv("CONFIG_PARAM", "default"),
 )
 
 
-@mcp.tool()
+@mcp.tool(
+    name="tool_name",
+    description="Tool description — this is what agents and SDK users see.",
+    meta={
+        "module_id": MODULE_ID,
+        "version": MODULE_VERSION,
+        "resource_metrics": {
+            "processing_ms": {"type": "integer", "unit": "milliseconds"},
+            # Add module-specific metrics here
+        },
+    },
+)
 async def tool_name(
     required_param: str,
     optional_param: str = "default",
+    # Standard arguments (injected by core, passed explicitly by SDK)
+    user_id: str = "",
+    project_id: str = "",
+    session_id: str = "",
+    app_id: str = "",
 ) -> dict:
-    """Tool description matching manifest.yaml."""
-    return await module.tool_name(
+    """Internal docstring (ignored since description is set above)."""
+    start = time.time()
+    result = await module.tool_name(
         required_param=required_param,
         optional_param=optional_param,
     )
+    elapsed_ms = int((time.time() - start) * 1000)
+
+    # Return result with usage metadata
+    return {
+        **result,
+        "_meta": {
+            "module_id": MODULE_ID,
+            "module_version": MODULE_VERSION,
+            "usage": {
+                "cost_cents": 0.0,  # Module calculates its own cost
+                "resources": {
+                    "processing_ms": elapsed_ms,
+                },
+            },
+        },
+    }
 ```
 
 ### server.py — Root Router
@@ -398,26 +345,31 @@ version_apps = {
 
 
 async def health(request):
+    """Aggregate health: reports status of all active versions."""
     return JSONResponse({
         "status": "healthy",
-        "service": f"module-{manifest['id']}",
+        "module_id": manifest["id"],
         "latest_version": latest_version,
         "active_versions": manifest["versions"],
     })
 
 
-async def module_info(request):
+async def version_health(request):
+    """Per-version health check."""
+    major = request.path_params["major"]
+    if major not in version_apps:
+        return JSONResponse({"status": "not_found"}, status_code=404)
     return JSONResponse({
+        "status": "healthy",
         "module_id": manifest["id"],
-        "latest_version": latest_version,
-        "versions": manifest["versions"],
+        "version": f"v{major}",
     })
 
 
-# Build routes: /v1/mcp, /v2/mcp, /mcp → latest
+# Build routes: /v1/mcp, /v1/health, /v2/mcp, /v2/health, /mcp → latest
 routes = [
     Route("/health", health, methods=["GET"]),
-    Route("/module/info", module_info, methods=["GET"]),
+    Route("/v{major}/health", version_health, methods=["GET"]),
 ]
 for major, app in version_apps.items():
     routes.append(Mount(f"/v{major}", app=app))
@@ -437,10 +389,102 @@ if __name__ == "__main__":
 | Request path | Routes to |
 |-------------|-----------|
 | `/v1/mcp` | `v1/tools.py` |
+| `/v1/health` | v1 health check |
 | `/v2/mcp` | `v2/tools.py` |
+| `/v2/health` | v2 health check |
 | `/mcp` | Latest version (from `MODULE.yaml` `latest_version`) |
-| `/health` | Health check (lists all active versions) |
-| `/module/info` | Module metadata |
+| `/health` | Aggregate health (all versions) |
+
+### db.py — Shared Database Connection (Optional)
+
+Modules that need a database define the connection at the root level. All versions share the same connection pool and the same database:
+
+```python
+"""<Module Name> — Shared Database Connection.
+
+Provides a connection pool to the module's OWN database.
+This is NOT Druppie's database — it's a separate PostgreSQL instance
+owned by this module (see docker-compose service module-<name>-db).
+
+All versions (v1, v2, ...) share this connection and the same database.
+"""
+
+import os
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+
+MODULE_DB_URL = os.getenv("MODULE_DB_URL")
+
+if MODULE_DB_URL:
+    engine = create_async_engine(MODULE_DB_URL, pool_size=5, max_overflow=10)
+    SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+else:
+    engine = None
+    SessionLocal = None
+```
+
+Version code imports it:
+
+```python
+# v1/module.py
+from db import SessionLocal
+
+class OCRModule:
+    async def extract_text(self, image_url: str, ...) -> dict:
+        async with SessionLocal() as session:
+            # Query the module's own database
+            ...
+```
+
+### auth.py — Shared JWT Validation
+
+All versions share the same Keycloak JWT validation logic:
+
+```python
+"""<Module Name> — Shared Keycloak JWT Validation.
+
+Validates incoming Keycloak tokens. Modules validate tokens themselves
+(no gateway proxy). The token proves user identity; context (project_id,
+app_id, session_id) comes via standard MCP tool arguments.
+"""
+
+import os
+from jose import jwt, JWTError
+from jose.backends import RSAKey
+import httpx
+
+KEYCLOAK_URL = os.getenv("KEYCLOAK_SERVER_URL", "http://keycloak:8080")
+KEYCLOAK_REALM = os.getenv("KEYCLOAK_REALM", "druppie")
+JWKS_URL = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/certs"
+
+_jwks_cache = None
+
+async def _get_jwks():
+    global _jwks_cache
+    if _jwks_cache is None:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(JWKS_URL)
+            _jwks_cache = response.json()
+    return _jwks_cache
+
+async def validate_token(token: str) -> dict:
+    """Validate Keycloak JWT and extract user identity.
+
+    Returns: {"user_id": "uuid", "username": "...", "roles": [...]}
+    Raises: JWTError if token is invalid.
+    """
+    jwks = await _get_jwks()
+    payload = jwt.decode(
+        token,
+        jwks,
+        algorithms=["RS256"],
+        issuer=f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}",
+    )
+    return {
+        "user_id": payload["sub"],
+        "username": payload.get("preferred_username"),
+        "roles": payload.get("realm_access", {}).get("roles", []),
+    }
+```
 
 ### Dockerfile Template
 
@@ -473,6 +517,25 @@ CMD ["python", "server.py"]
 ### Docker Compose Service Template
 
 ```yaml
+  # Module's own database (only if module needs persistent storage)
+  module-<name>-db:
+    image: postgres:16-alpine
+    container_name: druppie-module-<name>-db
+    profiles: [infra, dev, prod]
+    environment:
+      POSTGRES_DB: module_<name>
+      POSTGRES_USER: module_<name>
+      POSTGRES_PASSWORD: ${MODULE_<NAME>_DB_PASSWORD:-module_<name>_dev}
+    volumes:
+      - module-<name>-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U module_<name>"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - druppie-new-network
+
   module-<name>:
     build:
       context: ./druppie/mcp-servers/module-<name>
@@ -482,8 +545,8 @@ CMD ["python", "server.py"]
     environment:
       MCP_PORT: "9010"
       CONFIG_PARAM: ${MODULE_<NAME>_CONFIG:-default}
-      # If module needs DB access:
-      MODULE_DB_URL: postgresql://druppie_module_<name>:${MODULE_<NAME>_DB_PASSWORD}@druppie-db:5432/druppie
+      # Module's own database (not Druppie's):
+      MODULE_DB_URL: postgresql://module_<name>:${MODULE_<NAME>_DB_PASSWORD:-module_<name>_dev}@module-<name>-db:5432/module_<name>
     ports:
       - "${MODULE_<NAME>_PORT:-9010}:9010"
     healthcheck:
@@ -495,22 +558,28 @@ CMD ["python", "server.py"]
     networks:
       - druppie-new-network
     depends_on:
-      druppie-db:
+      module-<name>-db:
         condition: service_healthy
 ```
+
+> **Note**: Stateless modules (e.g., a module that wraps an external API) don't need a database container at all — omit the `module-<name>-db` service and the `MODULE_DB_URL` environment variable.
 
 ### mcp_config.yaml Entry Template
 
 ```yaml
   <module-id>:
     url: ${MCP_<MODULE>_URL:-http://module-<name>:9010}
+    type: module                               # "module" = available to agents AND apps via SDK
     description: "Module description from MODULE.yaml"
-    inject:
+    inject:                                    # Core-only injection (for agent calls)
       session_id:
         from: session.id
         hidden: true
       user_id:
         from: session.user_id
+        hidden: true
+      project_id:
+        from: project.id
         hidden: true
     tools:
       - name: tool_name
@@ -524,6 +593,8 @@ CMD ["python", "server.py"]
               description: "Description"
           required: [required_param]
 ```
+
+> **MCP types**: `core` = agents only (coding, docker, etc.), `module` = agents + apps (OCR, classifier, etc.). Apps connect directly to modules via the SDK. See `docs/plans/2026-03-11-auth-governance-design.md` for details.
 
 ---
 
@@ -577,7 +648,7 @@ When going from v1 to v2:
 1. Create `v2/` directory
 2. Copy `v1/` contents as starting point
 3. Make breaking changes in `v2/module.py`, `v2/tools.py`
-4. Write `v2/manifest.yaml` with new tool schemas
+4. Update version and meta in `v2/tools.py` (FastMCP constructor + `@mcp.tool(meta={...})`)
 5. Write `v2/schema/` migrations for any DB additions (additive-only)
 6. Write `v2/tests/`
 7. Update root `MODULE.yaml`: add `"2.0.0"` to `versions`, set `latest_version: "2.0.0"`
@@ -616,40 +687,45 @@ result = await druppie.ocr.extract("invoice.png")
 
 ---
 
-## 6. Database Schema & Migrations
+## 6. Database & Storage
 
-### Schema Isolation
+### Design Principle: Module-Owned Storage
 
-Modules that need persistent storage get their own PostgreSQL schema with controlled access:
+Each module manages its own data storage independently. Modules **never** connect to Druppie's PostgreSQL database. Instead:
 
-```sql
--- Create module schema
-CREATE SCHEMA module_ocr;
+- **Stateful modules** get their own database container (PostgreSQL, SQLite, or whatever fits)
+- **Stateless modules** don't need any database at all
+- **Druppie context** (user_id, session_id, project_id) is received through injected MCP parameters, not by querying Druppie's tables
+- **Cost tracking** is the caller's responsibility (core or SDK reports to Druppie backend), not the module's
 
--- Create dedicated role
-CREATE ROLE druppie_module_ocr LOGIN PASSWORD 'generated-password';
+### Why Not Shared DB?
 
--- Full access to own schema
-GRANT ALL ON SCHEMA module_ocr TO druppie_module_ocr;
-ALTER DEFAULT PRIVILEGES IN SCHEMA module_ocr
-    GRANT ALL ON TABLES TO druppie_module_ocr;
+Sharing Druppie's PostgreSQL (even with schema isolation) creates hidden coupling:
 
--- Read-only access to shared Druppie tables
-GRANT USAGE ON SCHEMA public TO druppie_module_ocr;
-GRANT SELECT ON public.sessions TO druppie_module_ocr;
-GRANT SELECT ON public.projects TO druppie_module_ocr;
-GRANT SELECT ON public.users TO druppie_module_ocr;
+| Problem | Impact |
+|---------|--------|
+| **Schema coupling** | Module does `SELECT * FROM public.sessions` → Druppie renames a column → module breaks |
+| **Not portable** | Can't develop, test, or run a module without a copy of Druppie's schema |
+| **Not self-contained** | Contradicts the core module principle of independence |
+| **Reset fragility** | Druppie's "reset DB" workflow can break modules that read from `public.*` |
+| **Permission complexity** | PostgreSQL role/grant management adds operational overhead |
 
--- Set default search path
-ALTER ROLE druppie_module_ocr SET search_path TO module_ocr, public;
-```
+### What Modules Need (and How They Get It)
+
+| Need | How | Example |
+|------|-----|---------|
+| Know which user called | Injected MCP parameter `user_id` | Already in `mcp_config.yaml` inject rules |
+| Know which session | Injected MCP parameter `session_id` | Already in `mcp_config.yaml` inject rules |
+| Project context | Passed as tool argument | `project_id` in tool input schema |
+| Persistent state | Module's own database | `module-ocr-db` PostgreSQL container |
+| Cost tracking | Caller (core/SDK) records usage | SDK reports to Druppie backend after each call |
 
 ### Database Rules for Versioned Modules
 
-Since multiple major versions run simultaneously against the same database schema, strict rules apply:
+Since multiple major versions of a module run simultaneously against the module's own database, strict rules apply:
 
-1. **One PostgreSQL schema per module** — `module_<name>` (e.g., `module_ocr`)
-2. **Shared across all major versions** — v1 and v2 read/write the same schema
+1. **One database per module** — `module_<name>` (e.g., `module_ocr`)
+2. **Shared across all major versions of that module** — v1 and v2 read/write the same database
 3. **Additive-only changes** — add columns (with defaults), add tables, add indexes
 4. **Never destructive** — no `DROP`, `RENAME`, or `ALTER TYPE` while any version uses the affected object
 5. **Every new column has a `DEFAULT`** — older version code can INSERT without specifying it
@@ -657,7 +733,7 @@ Since multiple major versions run simultaneously against the same database schem
 
 ### Why Additive-Only
 
-Both v1 and v2 run simultaneously against the same database schema. If v2 drops a column that v1 uses, v1 breaks. Additive-only guarantees that older versions keep working regardless of what newer versions add.
+Both v1 and v2 run simultaneously against the same module database. If v2 drops a column that v1 uses, v1 breaks. Additive-only guarantees that older versions keep working regardless of what newer versions add.
 
 ### Migration Files
 
@@ -665,14 +741,14 @@ Each version directory has a `schema/` folder with numbered SQL migration files:
 
 ```
 v1/schema/
-├── 001_initial.sql                # CREATE TABLE module_ocr.extractions (...)
+├── 001_initial.sql                # CREATE TABLE extractions (...)
 ├── 002_add_output_format.sql      # ALTER TABLE ... ADD COLUMN output_format VARCHAR DEFAULT 'plain'
 └── current.sql                    # Full schema snapshot (for fresh installs)
 ```
 
 ```
 v2/schema/
-├── 001_add_pages_table.sql        # CREATE TABLE module_ocr.extraction_pages (...)
+├── 001_add_pages_table.sql        # CREATE TABLE extraction_pages (...)
 ├── 002_add_source_column.sql      # ALTER TABLE ... ADD COLUMN source VARCHAR DEFAULT ''
 └── current.sql                    # Full schema = v1 final state + v2 additions
 ```
@@ -682,7 +758,7 @@ v2/schema/
 A tracking table records which migrations have been applied:
 
 ```sql
-CREATE TABLE module_<name>._migrations (
+CREATE TABLE _migrations (
     id SERIAL PRIMARY KEY,
     version_dir VARCHAR NOT NULL,     -- 'v1' or 'v2'
     filename VARCHAR NOT NULL,        -- '001_initial.sql'
@@ -713,16 +789,20 @@ File: `druppie/db/models/module_registry.py`
 """Module registry database models.
 
 Tables:
-  modules                    — Installed module instances
-  module_versions            — Every active major version of a module
-  module_tool_schemas        — Tool schemas per version (JSON Schema as Text)
-  application_module_bindings — Which app uses which module major version
+  modules              — Installed module instances (identity + container location)
+  module_versions      — Every active major version of a module
+  module_tool_schemas  — Cached tool schemas per version (from MCP tools/list)
+
+Design principle: the registry caches what MCP tells us. Module identity
+(name, description) comes from the MCP `initialize` response. Tool schemas
+come from `tools/list`. The registry stores these for offline discovery
+and UI display — the MCP server is always the source of truth.
 """
 
 from uuid import uuid4
 from sqlalchemy import (
     Column, DateTime, ForeignKey, Integer, String, Text,
-    Boolean, Float, UniqueConstraint,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -730,29 +810,32 @@ from .base import Base, utcnow
 
 
 class Module(Base):
-    """An installed Druppie module."""
+    """An installed Druppie module.
+
+    Only stores operational data: where is it, what version is latest,
+    is it active. Display fields (name, description) are cached from
+    the MCP `initialize` response and refreshed on registration.
+    """
     __tablename__ = "modules"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    module_id = Column(String(100), unique=True, nullable=False)
-    name = Column(String(255), nullable=False)
-    description = Column(Text)
-    author = Column(String(255))
-    category = Column(String(100))
+    module_id = Column(String(100), unique=True, nullable=False)  # matches MODULE.yaml id
+    display_name = Column(String(255))           # cached from MCP initialize response
+    description = Column(Text)                   # cached from MCP initialize response
     latest_version = Column(String(20), nullable=False)
     container_url = Column(String(500), nullable=False)
-    container_port = Column(Integer, default=9010)
-    status = Column(String(20), default="active")   # active, disabled
-    is_core = Column(Boolean, default=False)
+    status = Column(String(20), default="active")  # active, disabled
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     versions = relationship("ModuleVersion", back_populates="module", cascade="all, delete-orphan")
-    bindings = relationship("ApplicationModuleBinding", back_populates="module", cascade="all, delete-orphan")
 
 
 class ModuleVersion(Base):
-    """An active major version of a module (e.g., v1 at 1.2.0, v2 at 2.0.0)."""
+    """An active major version of a module (e.g., v1 at 1.2.0, v2 at 2.0.0).
+
+    Route path is derived: major_version=1 → /v1/mcp. No need to store it.
+    """
     __tablename__ = "module_versions"
     __table_args__ = (UniqueConstraint("module_id", "major_version", name="uq_module_major_version"),)
 
@@ -760,8 +843,7 @@ class ModuleVersion(Base):
     module_id = Column(UUID(as_uuid=True), ForeignKey("modules.id", ondelete="CASCADE"), nullable=False)
     major_version = Column(Integer, nullable=False)          # 1, 2, etc.
     current_version = Column(String(20), nullable=False)     # "1.2.0", "2.0.0"
-    route_path = Column(String(20), nullable=False)          # "/v1", "/v2"
-    release_notes = Column(Text)
+    instructions = Column(Text)                              # cached from MCP initialize
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -770,9 +852,13 @@ class ModuleVersion(Base):
 
 
 class ModuleToolSchema(Base):
-    """Tool input/output schema at a specific major version.
+    """Cached tool schema from MCP tools/list response.
 
-    Stores JSON Schema as Text (not JSONB) — read-only, never queried by sub-field.
+    Stores the input schema and meta (including resource_metrics) as Text.
+    Refreshed on module registration. The MCP server is the source of truth —
+    this is a cache for discovery UI and offline reference.
+
+    Approval rules and role requirements live in mcp_config.yaml, not here.
     """
     __tablename__ = "module_tool_schemas"
     __table_args__ = (
@@ -782,39 +868,17 @@ class ModuleToolSchema(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     module_version_id = Column(UUID(as_uuid=True), ForeignKey("module_versions.id", ondelete="CASCADE"), nullable=False)
     tool_name = Column(String(100), nullable=False)
-    description = Column(Text)
-    input_schema_json = Column(Text, nullable=False)
-    output_schema_json = Column(Text, nullable=False)
-    requires_approval = Column(Boolean, default=False)
-    required_role = Column(String(50))
+    description = Column(Text)                   # cached from tools/list
+    input_schema_json = Column(Text, nullable=False)  # cached from tools/list
+    meta_json = Column(Text)                     # cached from tools/list meta (resource_metrics, etc.)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     module_version = relationship("ModuleVersion", back_populates="tool_schemas")
-
-
-class ApplicationModuleBinding(Base):
-    """Tracks which application uses which module major version."""
-    __tablename__ = "application_module_bindings"
-    __table_args__ = (
-        UniqueConstraint("project_id", "module_id", name="uq_project_module"),
-    )
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
-    module_id = Column(UUID(as_uuid=True), ForeignKey("modules.id", ondelete="CASCADE"), nullable=False)
-    major_version = Column(Integer, nullable=False)          # 1 or 2
-    last_called_at = Column(DateTime(timezone=True))
-    total_calls = Column(Integer, default=0)
-    total_cost_cents = Column(Float, default=0.0)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    module = relationship("Module", back_populates="bindings")
 ```
 
 ### Registry Service
 
-The registry reads `MODULE.yaml` and per-version `manifest.yaml` files and populates the database:
+The registry reads `MODULE.yaml` for version info and queries the live MCP server for tool schemas and metadata. It acts as a **cache** — the MCP server is always the source of truth.
 
 ```python
 # druppie/services/module_registry_service.py
@@ -823,34 +887,25 @@ class ModuleRegistryService:
     """Manages module registration, version tracking, and discovery."""
 
     async def register_module(self, module_path: str) -> Module:
-        """Register a module from its directory.
+        """Register or refresh a module from its directory.
 
-        1. Parse root MODULE.yaml (identity, version list)
-        2. Parse each vN/manifest.yaml (tool schemas)
-        3. Create/update Module record
-        4. Create ModuleVersion records for each major version
-        5. Create ModuleToolSchema records for each tool per version
+        1. Parse root MODULE.yaml (id, version list, latest_version)
+        2. For each version, call MCP initialize → cache name, description, instructions
+        3. For each version, call MCP tools/list → cache tool schemas + meta
+        4. Create/update Module, ModuleVersion, ModuleToolSchema records
         """
+        ...
+
+    async def refresh_module(self, module_id: str) -> Module:
+        """Re-query MCP server and update cached schemas/metadata."""
         ...
 
     async def get_module(self, module_id: str) -> ModuleDetail:
         """Get module with all versions and tool schemas."""
         ...
 
-    async def list_modules(self, category: str = None) -> list[ModuleSummary]:
+    async def list_modules(self) -> list[ModuleSummary]:
         """List all installed modules (Summary pattern)."""
-        ...
-
-    async def bind_application(
-        self, project_id: UUID, module_id: str, major_version: int
-    ) -> ApplicationModuleBinding:
-        """Bind an application to a specific module major version."""
-        ...
-
-    async def get_binding(
-        self, project_id: UUID, module_id: str
-    ) -> ApplicationModuleBinding | None:
-        """Get which major version an application is bound to."""
         ...
 ```
 
@@ -858,16 +913,19 @@ class ModuleRegistryService:
 
 ## 8. Druppie SDK
 
-The SDK is a lightweight Python package (~50KB) included in every Druppie-generated application. It handles module calls, authentication, version routing, cost tracking, and retries.
+The SDK is a lightweight Python package included in every Druppie-generated application. It is an **MCP client** that connects directly to module MCP servers (no gateway proxy). It handles authentication, standard argument injection, usage reporting, version routing, and retries.
+
+> For the full auth, governance, and usage tracking design, see `docs/plans/2026-03-11-auth-governance-design.md`.
 
 ### Package Structure
 
 ```
 druppie-sdk/
 ├── druppie_sdk/
-│   ├── __init__.py          # DruppieClient, DruppieAuth, health_router
-│   ├── client.py            # Main client with module calling
-│   ├── auth.py              # OBO token exchange with Keycloak
+│   ├── __init__.py          # DruppieClient, DruppieAuth
+│   ├── client.py            # Main client — MCP client wrapper
+│   ├── auth.py              # Keycloak JWT validation + app role checking
+│   ├── usage.py             # Usage reporting to Druppie backend
 │   ├── health.py            # Standard /health endpoint for generated apps
 │   └── py.typed             # PEP 561 marker
 ├── pyproject.toml
@@ -880,45 +938,47 @@ druppie-sdk/
 # druppie_sdk/client.py
 
 class DruppieClient:
-    """Main SDK client for Druppie-generated applications.
+    """MCP client for Druppie-generated applications.
 
+    Connects directly to module MCP servers (no gateway proxy).
     Zero-config: reads DRUPPIE_* environment variables automatically.
-    Firebase pattern: auto-discovery.
-    Stripe pattern: thin client, remote logic, idempotency.
 
     Usage:
         druppie = DruppieClient()
-        text = await druppie.modules.call("ocr", "extract_text", {"source": "img.png"})
+        result = await druppie.modules.call("ocr", "extract_text", {"source": "img.png"})
     """
 
     def __init__(
         self,
-        gateway_url: str | None = None,
-        session_token: str | None = None,
+        druppie_url: str | None = None,
         module_versions: dict[str, str] | None = None,
     ):
-        self.gateway_url = gateway_url or os.environ.get(
-            "DRUPPIE_GATEWAY_URL", "http://druppie-gateway:8000"
+        # Druppie backend URL (for usage reporting + app role checks)
+        self.druppie_url = druppie_url or os.environ.get(
+            "DRUPPIE_URL", "http://druppie-backend:8000"
         )
-        self.session_token = session_token or os.environ.get("DRUPPIE_SESSION_TOKEN")
-        self.module_versions = module_versions or {}  # e.g., {"ocr": "v1", "classifier": "v2"}
+        # App identity (set at deploy time)
+        self.app_id = os.environ.get("DRUPPIE_APP_ID")
+        self.project_id = os.environ.get("DRUPPIE_PROJECT_ID")
+        # Auth token (Keycloak JWT or short-lived sandbox token)
+        self._token = os.environ.get("DRUPPIE_MODULE_TOKEN")
+
+        self.module_versions = module_versions or {}
         self.modules = ModuleClient(self)
-        self.costs = CostTracker()
-        self._auth = DruppieAuth()
+        self.auth = AppAuth(self)
+        self._usage = UsageReporter(self)
 
     @property
     def ocr(self) -> OCRAccessor:
-        """Typed OCR module accessor."""
         return OCRAccessor(self)
 
     @property
     def classifier(self) -> ClassifierAccessor:
-        """Typed classifier module accessor."""
         return ClassifierAccessor(self)
 
 
 class ModuleClient:
-    """Generic module caller — calls any module by name."""
+    """MCP client that calls module servers directly."""
 
     def __init__(self, client: DruppieClient):
         self._client = client
@@ -928,67 +988,146 @@ class ModuleClient:
         module: str,
         tool: str,
         args: dict,
-        idempotency_key: str | None = None,
     ) -> dict:
-        """Call an MCP module tool.
+        """Call a module MCP tool directly.
 
-        Handles: path-based version routing, OBO auth, retries, cost tracking.
+        1. Resolves module URL from config/registry
+        2. Adds standard arguments (user_id, project_id, app_id)
+        3. Makes MCP tool call (official protocol)
+        4. Extracts _meta.usage and reports to Druppie backend
+        5. Returns the business result (without _meta)
         """
-        headers = {"Content-Type": "application/json"}
+        # Add standard arguments
+        user_id = self._get_user_id_from_token()
+        args = {
+            **args,
+            "user_id": user_id,
+            "project_id": self._client.project_id or "",
+            "app_id": self._client.app_id or "",
+            "session_id": "",  # Always empty for app calls
+        }
 
-        # Auth
-        if self._client.session_token:
-            token = await self._client._auth.get_token(self._client.session_token)
-            headers["Authorization"] = f"Bearer {token}"
-
-        # Idempotency
-        if idempotency_key:
-            headers["Idempotency-Key"] = idempotency_key
-
-        # Build URL with version path
-        # e.g., {"ocr": "v1"} → /api/modules/ocr/v1/call
-        # No version specified → /api/modules/ocr/call (gateway routes to latest)
+        # Build MCP endpoint URL with version routing
+        module_url = self._resolve_module_url(module)
         pinned = self._client.module_versions.get(module)
         if pinned:
-            url = f"{self._client.gateway_url}/api/modules/{module}/{pinned}/call"
+            url = f"{module_url}/{pinned}/mcp"
         else:
-            url = f"{self._client.gateway_url}/api/modules/{module}/call"
+            url = f"{module_url}/mcp"
 
-        # Make request with retry
-        result = await self._request_with_retry(url, tool, args, headers)
+        # Make MCP tool call with retry
+        started_at = time.time()
+        result = await self._mcp_call_with_retry(url, tool, args)
+        duration_ms = int((time.time() - started_at) * 1000)
 
-        # Track costs
-        if result.get("cost_cents"):
-            self._client.costs.record(module, tool, result["cost_cents"])
+        # Extract and report usage
+        meta = result.pop("_meta", {})
+        if meta.get("usage"):
+            await self._client._usage.report(
+                module_id=meta.get("module_id", module),
+                module_version=meta.get("module_version"),
+                tool_name=tool,
+                user_id=user_id,
+                cost_cents=meta["usage"].get("cost_cents", 0.0),
+                resources=meta["usage"].get("resources"),
+                success=True,
+                duration_ms=duration_ms,
+            )
 
         return result
+```
 
-    async def _request_with_retry(self, url, tool, args, headers, max_retries=3):
-        """Exponential backoff with jitter (AWS SDK pattern)."""
-        import random, asyncio, httpx
+### Authentication & App Access Control
 
-        for attempt in range(max_retries + 1):
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as http:
-                    response = await http.post(
-                        url,
-                        json={"tool": tool, "arguments": args},
-                        headers=headers,
-                    )
-                    if response.status_code == 200:
-                        return response.json()
-                    if 400 <= response.status_code < 500 and response.status_code != 429:
-                        return {"success": False, "error": response.text}
-            except (httpx.ConnectError, httpx.TimeoutException):
-                pass
+```python
+# druppie_sdk/auth.py
 
-            if attempt < max_retries:
-                delay = min(2 ** attempt + random.random(), 20)
-                await asyncio.sleep(delay)
+class AppAuth:
+    """App-level authentication and role-based access control.
 
-        return {"success": False, "error": "Max retries exceeded"}
+    Authentication: Keycloak JWT (validated by modules themselves).
+    Authorization: App-specific roles managed in Druppie backend.
+    """
 
+    def __init__(self, client: DruppieClient):
+        self._client = client
 
+    async def get_user_roles(self, user_token: str | None = None) -> list[str]:
+        """Get the current user's roles for this app.
+
+        Calls Druppie backend: GET /api/applications/{app_id}/users/{user_id}/roles
+        Returns: ["editor", "admin"] or [] if no access.
+        """
+        token = user_token or self._client._token
+        user_id = self._extract_user_id(token)
+        async with httpx.AsyncClient() as http:
+            response = await http.get(
+                f"{self._client.druppie_url}/api/applications/{self._client.app_id}/users/{user_id}/roles",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if response.status_code == 200:
+                return response.json().get("roles", [])
+            return []
+
+    async def require_role(self, role: str, user_token: str | None = None):
+        """Raise 403 if user doesn't have the required role."""
+        roles = await self.get_user_roles(user_token)
+        if role not in roles:
+            raise PermissionError(f"Role '{role}' required")
+```
+
+### Usage Reporting
+
+```python
+# druppie_sdk/usage.py
+
+class UsageReporter:
+    """Reports module usage to Druppie backend asynchronously."""
+
+    def __init__(self, client: DruppieClient):
+        self._client = client
+
+    async def report(
+        self,
+        module_id: str,
+        module_version: str | None,
+        tool_name: str,
+        user_id: str,
+        cost_cents: float,
+        resources: dict | None,
+        success: bool,
+        duration_ms: int,
+    ):
+        """POST usage record to Druppie backend.
+
+        Fire-and-forget: failures are logged but don't affect the caller.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as http:
+                await http.post(
+                    f"{self._client.druppie_url}/api/usage",
+                    json={
+                        "user_id": user_id,
+                        "app_id": self._client.app_id,
+                        "project_id": self._client.project_id,
+                        "session_id": None,
+                        "module_id": module_id,
+                        "module_version": module_version,
+                        "tool_name": tool_name,
+                        "cost_cents": cost_cents,
+                        "resources": json.dumps(resources) if resources else None,
+                        "success": success,
+                        "duration_ms": duration_ms,
+                    },
+                    headers={"Authorization": f"Bearer {self._client._token}"},
+                )
+        except Exception:
+            logger.warning(f"Failed to report usage for {module_id}:{tool_name}")
+```
+
+### Typed Module Accessors
+
+```python
 class OCRAccessor:
     """Typed convenience accessor for OCR module."""
 
@@ -1013,135 +1152,68 @@ class ClassifierAccessor:
         })
 ```
 
-### OBO Authentication
-
-```python
-# druppie_sdk/auth.py
-
-class DruppieAuth:
-    """OBO token exchange with Keycloak (RFC 8693).
-
-    Exchanges the user's Keycloak token for a module-scoped token.
-    Keycloak 26.2+ supports Standard Token Exchange natively.
-    """
-
-    def __init__(self):
-        self.keycloak_url = os.environ.get("KEYCLOAK_SERVER_URL", "http://keycloak:8080")
-        self.realm = os.environ.get("KEYCLOAK_REALM", "druppie")
-        self.client_id = os.environ.get("DRUPPIE_CLIENT_ID", "druppie-sdk")
-        self.client_secret = os.environ.get("DRUPPIE_CLIENT_SECRET")
-        self._token: str | None = None
-        self._token_expiry: float = 0
-
-    @property
-    def token_endpoint(self) -> str:
-        return f"{self.keycloak_url}/realms/{self.realm}/protocol/openid-connect/token"
-
-    async def exchange_token(self, user_token: str) -> str:
-        """Exchange user token for module-scoped OBO token."""
-        async with httpx.AsyncClient() as client:
-            response = await client.post(self.token_endpoint, data={
-                "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-                "subject_token": user_token,
-                "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "audience": "druppie-modules",
-            })
-            data = response.json()
-            self._token = data["access_token"]
-            self._token_expiry = time.time() + data.get("expires_in", 300) - 30
-            return self._token
-
-    async def get_token(self, user_token: str) -> str:
-        """Get valid token, auto-refreshing if expired."""
-        if self._token and time.time() < self._token_expiry:
-            return self._token
-        return await self.exchange_token(user_token)
-```
-
 ---
 
-## 9. API Gateway
+## 9. Backend API for Modules
 
-The gateway is a lightweight FastAPI service that sits between applications and module servers. It handles routing, authentication, rate limiting, and cost tracking in one place. Version routing is path-based.
+Apps connect directly to module MCP servers (no gateway proxy). The Druppie backend provides supporting API routes for usage reporting, module discovery, and app access control.
 
-### Option: Extend the Existing Backend
-
-Instead of a separate gateway, add `/api/modules/` routes to the existing Druppie backend:
+### Routes on the existing Druppie backend
 
 ```python
 # druppie/api/routes/modules.py
 
-from fastapi import APIRouter, Request, Depends
-from druppie.services.module_registry_service import ModuleRegistryService
-from druppie.execution.mcp_http import MCPHttp
-
 router = APIRouter(prefix="/api/modules", tags=["modules"])
 
-
-@router.post("/{module_id}/call")
-@router.post("/{module_id}/{version}/call")
-async def call_module(
-    module_id: str,
-    request: Request,
-    version: str | None = None,
-    registry: ModuleRegistryService = Depends(),
-    mcp: MCPHttp = Depends(),
-):
-    """Route a module call through the gateway.
-
-    Path-based version routing:
-      POST /api/modules/ocr/call        → forwards to module at /mcp (latest)
-      POST /api/modules/ocr/v1/call     → forwards to module at /v1/mcp
-      POST /api/modules/ocr/v2/call     → forwards to module at /v2/mcp
-    """
-    body = await request.json()
-    tool = body["tool"]
-    args = body["arguments"]
-
-    # Get module info
-    module = await registry.get_module(module_id)
-    if not module:
-        return {"error": f"Module '{module_id}' not found"}, 404
-
-    # Build MCP endpoint path based on version
-    if version:
-        mcp_path = f"/{version}/mcp"
-    else:
-        mcp_path = "/mcp"  # Routes to latest at the module server
-
-    # Forward to module MCP server
-    result = await mcp.call(
-        server=module_id,
-        tool=tool,
-        args=args,
-        path=mcp_path,
-    )
-
-    # Record usage
-    user_id = request.state.user_id  # From auth middleware
-    await registry.record_usage(
-        user_id=user_id,
-        module_id=module_id,
-        tool=tool,
-        major_version=int(version[1:]) if version else None,
-        cost_cents=result.get("cost_cents", 0),
-    )
-
-    return result
-
+@router.get("/")
+async def list_modules(category: str = None):
+    """List all available modules (for discovery)."""
+    ...
 
 @router.get("/{module_id}/info")
-async def module_info(module_id: str, registry: ModuleRegistryService = Depends()):
+async def module_info(module_id: str):
     """Get module metadata including active versions and tools."""
-    return await registry.get_module(module_id)
+    ...
+```
 
+```python
+# druppie/api/routes/usage.py
+
+router = APIRouter(prefix="/api/usage", tags=["usage"])
+
+@router.post("/")
+async def record_usage(payload: UsageRecord, user: dict = Depends(get_current_user)):
+    """Record a module usage event (called by SDK after each module call)."""
+    ...
 
 @router.get("/")
-async def list_modules(category: str = None, registry: ModuleRegistryService = Depends()):
-    """List all available modules."""
-    return await registry.list_modules(category=category)
+async def get_usage(
+    module_id: str = None, app_id: str = None, user_id: str = None,
+    period: str = "month",
+):
+    """Query usage analytics with filters."""
+    ...
+```
+
+```python
+# druppie/api/routes/applications.py
+
+router = APIRouter(prefix="/api/applications", tags=["applications"])
+
+@router.get("/{app_id}/users/{user_id}/roles")
+async def get_user_roles(app_id: str, user_id: str):
+    """Get a user's roles for an app (called by SDK for access control)."""
+    ...
+
+@router.post("/{app_id}/roles")
+async def create_role(app_id: str, role: RoleCreate):
+    """Create a role for an app (called by app owner via frontend)."""
+    ...
+
+@router.post("/{app_id}/users/{user_id}/roles")
+async def assign_role(app_id: str, user_id: str, role_assignment: RoleAssignment):
+    """Assign a role to a user for an app."""
+    ...
 ```
 
 ---
@@ -1156,8 +1228,8 @@ async def list_modules(category: str = None, registry: ModuleRegistryService = D
                 (See "Module Acceptance" in modules.md)
 
 1. DEVELOP     Create module directory with v1/ subdirectory:
-                v1/module.py, v1/tools.py, v1/manifest.yaml, v1/schema/
-                Root: MODULE.yaml, server.py, Dockerfile, requirements.txt
+                v1/module.py, v1/tools.py, v1/schema/
+                Root: MODULE.yaml, server.py, db.py, auth.py, Dockerfile, requirements.txt
                 Test locally: python server.py (no Docker needed)
 
 2. REGISTER    Add docker-compose service + mcp_config.yaml entry
@@ -1171,25 +1243,25 @@ async def list_modules(category: str = None, registry: ModuleRegistryService = D
                 Injection rules added to mcp_config.yaml
 
 5. AVAILABLE   Module tools appear in agent tool lists
-                SDK can call module via gateway at /v1/mcp or /mcp
+                SDK can call module directly at /v1/mcp or /mcp
 ```
 
 ### Updating a Module
 
 **Non-breaking update (MINOR/PATCH)** — changes within `vN/`:
 1. Update `vN/module.py`, `vN/tools.py`
-2. Add migration file to `vN/schema/` if DB changes needed (additive-only, with defaults)
-3. Bump version in `vN/manifest.yaml`
+2. Bump version in `vN/tools.py` (FastMCP constructor + tool meta)
+3. Add migration file to `vN/schema/` if DB changes needed (additive-only, with defaults)
 4. Update `vN/tests/`
 5. Rebuild and restart container
-6. Run `register_module()` to update registry
+6. Run `register_module()` to update registry (re-reads from MCP `tools/list`)
 7. All applications continue working — no changes needed
 
 **Breaking update (MAJOR)** — create new `vN+1/` directory:
 1. Create `vN+1/` directory
 2. Copy `vN/` contents as starting point
 3. Make breaking changes in `vN+1/module.py`, `vN+1/tools.py`
-4. Write `vN+1/manifest.yaml` with new tool schemas
+4. Update version and meta in `vN+1/tools.py`
 5. Write `vN+1/schema/` migrations for any DB additions (additive-only)
 6. Write `vN+1/tests/`
 7. Update root `MODULE.yaml`: add new version to `versions`, update `latest_version`
@@ -1211,8 +1283,9 @@ druppie/mcp-servers/module-ocr/
 ├── Dockerfile
 ├── requirements.txt
 ├── server.py
+├── db.py
+├── auth.py
 ├── v1/
-│   ├── manifest.yaml
 │   ├── module.py
 │   ├── tools.py
 │   ├── schema/
@@ -1227,36 +1300,45 @@ druppie/mcp-servers/module-ocr/
 **MODULE.yaml**:
 ```yaml
 id: ocr
-name: OCR Module
-description: "Extract text from images and documents"
-author: druppie-team
 latest_version: "1.0.0"
 versions:
   - "1.0.0"
-infrastructure:
-  port: 9010
-  db_schema: module_ocr
 ```
 
-**v1/manifest.yaml**:
-```yaml
-version: "1.0.0"
-tools:
-  - name: extract_text
-    description: "Extract text from an image or document"
-    requires_approval: false
-    input_schema:
-      type: object
-      properties:
-        image_url: { type: string }
-        language: { type: string, default: "auto" }
-      required: [image_url]
-    output_schema:
-      type: object
-      properties:
-        text: { type: string }
-        confidence: { type: number }
-      required: [text, confidence]
+**v1/tools.py** (single source of truth for the tool contract):
+```python
+from fastmcp import FastMCP
+from .module import OCRModule
+
+mcp = FastMCP(
+    "OCR Module v1",
+    version="1.0.0",
+    instructions="Extract text from images and documents (PDF, JPG, PNG). Use when processing scanned or photographed documents.",
+)
+
+module = OCRModule()
+
+@mcp.tool(
+    name="extract_text",
+    description="Extract text from an image or document",
+    meta={
+        "module_id": "ocr",
+        "version": "1.0.0",
+        "resource_metrics": {
+            "bytes_processed": {"type": "integer", "unit": "bytes"},
+            "processing_ms": {"type": "integer", "unit": "milliseconds"},
+        },
+    },
+)
+async def extract_text(image_url: str, language: str = "auto", user_id: str = "", project_id: str = "", session_id: str = "", app_id: str = "") -> dict:
+    """Extract text from an image or document."""
+    start = time.time()
+    result = await module.extract_text(image_url=image_url, language=language)
+    elapsed_ms = int((time.time() - start) * 1000)
+    return {
+        **result,
+        "_meta": {"module_id": "ocr", "module_version": "1.0.0", "usage": {"cost_cents": 0.0, "resources": {"bytes_processed": 0, "processing_ms": elapsed_ms}}},
+    }
 ```
 
 **v1/module.py**:
@@ -1267,11 +1349,11 @@ class OCRModule:
         return {"text": result["text"], "confidence": result["confidence"]}
 ```
 
-**v1/schema/001_initial.sql**:
+**v1/schema/001_initial.sql** (runs against module's own database, not Druppie's):
 ```sql
-CREATE TABLE module_ocr.extractions (
+CREATE TABLE extractions (
     id UUID PRIMARY KEY,
-    session_id UUID NOT NULL,
+    session_id UUID NOT NULL,     -- Passed via injected MCP parameter
     image_url VARCHAR(500) NOT NULL,
     language VARCHAR(10) DEFAULT 'auto',
     extracted_text TEXT,
@@ -1292,13 +1374,13 @@ result = await druppie.ocr.extract("invoice.png")
 
 Changes happen inside `v1/` — no new directory.
 
-**v1/manifest.yaml**: Bump version to `"1.1.0"`, add `output_format` to input_schema.
+**v1/tools.py**: Bump version to `"1.1.0"` in FastMCP constructor and tool meta. Add `output_format` parameter to `@mcp.tool()`.
 
 **v1/module.py**: Add `output_format` parameter with default `"plain"`.
 
 **v1/schema/002_add_output_format.sql**:
 ```sql
-ALTER TABLE module_ocr.extractions
+ALTER TABLE extractions
     ADD COLUMN output_format VARCHAR(20) DEFAULT 'plain';
 ```
 
@@ -1308,7 +1390,7 @@ ALTER TABLE module_ocr.extractions
 
 Changes happen inside `v1/` — no new directory.
 
-**v1/manifest.yaml**: Bump version to `"1.2.0"`, add `bounding_boxes` to output_schema.
+**v1/tools.py**: Bump version to `"1.2.0"` in FastMCP constructor and tool meta.
 
 **v1/module.py**: Include `bounding_boxes` in return dict.
 
@@ -1323,19 +1405,19 @@ A new `v2/` directory is created. `v1/` is untouched.
 druppie/mcp-servers/module-ocr/
 ├── MODULE.yaml              # Updated: latest_version: "2.0.0", versions: ["1.0.0", "2.0.0"]
 ├── server.py                # Updated: imports and mounts v2/tools.py at /v2
+├── db.py                    # Shared DB connection (both versions use same database)
+├── auth.py                  # Shared JWT validation
 ├── v1/                      # UNTOUCHED — still serves at /v1/mcp
-│   ├── manifest.yaml        # Still at 1.2.0
 │   ├── module.py
-│   ├── tools.py
+│   ├── tools.py             # Still at 1.2.0 (version in FastMCP constructor)
 │   ├── schema/
 │   │   ├── 001_initial.sql
 │   │   ├── 002_add_output_format.sql
 │   │   └── current.sql
 │   └── tests/
 ├── v2/                      # NEW — serves at /v2/mcp
-│   ├── manifest.yaml        # version: "2.0.0", new tool schemas
 │   ├── module.py            # Breaking changes: source param, nested response
-│   ├── tools.py
+│   ├── tools.py             # version="2.0.0", new tool schemas in @mcp.tool()
 │   ├── schema/
 │   │   ├── 001_add_source_column.sql
 │   │   ├── 002_add_pages_table.sql
@@ -1366,15 +1448,15 @@ class OCRModule:
 
 **v2/schema/001_add_source_column.sql** (additive — v1 still works):
 ```sql
-ALTER TABLE module_ocr.extractions
+ALTER TABLE extractions
     ADD COLUMN source VARCHAR(500) DEFAULT '';
 ```
 
 **v2/schema/002_add_pages_table.sql**:
 ```sql
-CREATE TABLE module_ocr.extraction_pages (
+CREATE TABLE extraction_pages (
     id UUID PRIMARY KEY,
-    extraction_id UUID NOT NULL REFERENCES module_ocr.extractions(id),
+    extraction_id UUID NOT NULL REFERENCES extractions(id),
     page_number INTEGER NOT NULL,
     text TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -1423,5 +1505,4 @@ result = await druppie.ocr.extract("invoice.png")
 - [Keycloak Standard Token Exchange (RFC 8693)](https://www.keycloak.org/2025/05/standard-token-exchange-kc-26-2)
 
 ### Database Patterns
-- [PostgreSQL Schemas Documentation](https://www.postgresql.org/docs/current/ddl-schemas.html)
-- [Crunchy Data: PostgreSQL Multi-Tenancy](https://www.crunchydata.com/blog/designing-your-postgres-database-for-multi-tenancy)
+- [12-Factor App: Backing Services](https://12factor.net/backing-services) — treat databases as attached resources per service
