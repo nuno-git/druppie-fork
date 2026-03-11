@@ -1,0 +1,29 @@
+services:
+  app:
+    build: .
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      - APP_NAME=${APP_NAME:-Druppie App}
+      - DATABASE_URL=postgresql://app:app@db:5432/app
+      - DEBUG=${DEBUG:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
