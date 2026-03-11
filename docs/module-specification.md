@@ -148,12 +148,6 @@ Everything else is defined in code via FastMCP and exposed through the MCP proto
 | Tool version, resource metrics | `@mcp.tool(meta={...})` | MCP `tools/list` → `meta` |
 | Approval rules, required roles | `mcp_config.yaml` | Druppie-specific, not in MCP |
 
-### Why No manifest.yaml
-
-Previous versions of this spec had a per-version `manifest.yaml` that duplicated tool schemas, descriptions, and metadata already defined in `tools.py`. This violated the "define once" principle — changing a tool meant updating both the code and the YAML.
-
-With FastMCP, `tools/list` returns the full tool contract (name, description, input schema, meta). The registry reads it directly from the running MCP server. No YAML duplication needed.
-
 ---
 
 ## 4. Module Code Contract
@@ -208,11 +202,29 @@ class <ModuleName>Module:
 - Method names match tool names in `vN/tools.py`
 - Raise exceptions on failure (don't return error dicts — let tools.py handle formatting)
 - No `SELECT *` in database queries — always select explicit columns so new columns from other versions don't break this version
-- Business logic does NOT handle standard arguments (`user_id`, `project_id`, `session_id`, `app_id`) — those are handled by `tools.py` for usage reporting
 
 ### vN/tools.py — MCP Tool Definitions (Per-Version)
 
-Each version directory contains its own `tools.py` that wraps module methods as MCP tools:
+Each version directory contains its own `tools.py` that wraps module methods as MCP tools. `tools.py` has two responsibilities:
+
+1. **Adapter**: receives ALL arguments (business + standard), passes the right ones to `module.py`
+2. **Usage reporting**: measures timing, wraps the result with `_meta`
+
+#### Argument types
+
+Every MCP tool receives two kinds of arguments:
+
+| Type | Examples | Who provides them | Purpose |
+|------|----------|-------------------|---------|
+| **Business args** | `image_url`, `language` | The caller (agent prompt or app code) | What the tool actually does |
+| **Standard args** | `user_id`, `project_id`, `session_id`, `app_id` | Core injects them (agents), SDK passes them (apps) | Governance: who called, from where |
+
+`tools.py` always receives both. What it passes to `module.py` depends on whether the module needs them:
+
+- **Stateless module** (e.g., image processing, text classification): only pass business args. Standard args are used for `_meta` reporting only.
+- **Stateful module** (e.g., stores results per user/session in its own DB): pass business args AND the standard args the module needs.
+
+#### Template
 
 ```python
 """<Module Name> v1 — MCP Tool Definitions.
@@ -260,42 +272,64 @@ module = <ModuleName>Module(
         "version": MODULE_VERSION,
         "resource_metrics": {
             "processing_ms": {"type": "integer", "unit": "milliseconds"},
-            # Add module-specific metrics here
         },
     },
 )
 async def tool_name(
+    # --- Business arguments ---
     required_param: str,
     optional_param: str = "default",
-    # Standard arguments (injected by core, passed explicitly by SDK)
+    # --- Standard arguments (injected by core, passed by SDK) ---
     user_id: str = "",
     project_id: str = "",
     session_id: str = "",
     app_id: str = "",
 ) -> dict:
-    """Internal docstring (ignored since description is set above)."""
     start = time.time()
+
+    # Pass what module.py needs. Stateless modules get business args only.
+    # Stateful modules also get user_id/session_id/app_id for data partitioning.
     result = await module.tool_name(
         required_param=required_param,
         optional_param=optional_param,
     )
-    elapsed_ms = int((time.time() - start) * 1000)
 
-    # Return result with usage metadata
+    elapsed_ms = int((time.time() - start) * 1000)
     return {
         **result,
         "_meta": {
             "module_id": MODULE_ID,
             "module_version": MODULE_VERSION,
             "usage": {
-                "cost_cents": 0.0,  # Module calculates its own cost
-                "resources": {
-                    "processing_ms": elapsed_ms,
-                },
+                "cost_cents": 0.0,
+                "resources": {"processing_ms": elapsed_ms},
             },
         },
     }
 ```
+
+#### Stateful example — module that stores results per session
+
+When a module stores data in its own database, it needs to know who the call belongs to:
+
+```python
+# tools.py — passes session_id to module.py for storage
+result = await module.extract_text(
+    image_url=image_url,
+    language=language,
+    session_id=session_id,  # Module stores this in its own DB
+)
+```
+
+```python
+# module.py — receives session_id as a regular business argument
+async def extract_text(self, image_url: str, language: str, session_id: str) -> dict:
+    result = self._run_ocr(image_url, language)
+    await self._save_extraction(session_id, image_url, result)
+    return {"text": result["text"], "confidence": result["confidence"]}
+```
+
+The key insight: from `module.py`'s perspective, `session_id` is just another argument. It doesn't know or care that it's a "standard" governance argument — `tools.py` decides what to pass.
 
 ### server.py — Root Router
 
@@ -1330,22 +1364,41 @@ module = OCRModule()
         },
     },
 )
-async def extract_text(image_url: str, language: str = "auto", user_id: str = "", project_id: str = "", session_id: str = "", app_id: str = "") -> dict:
-    """Extract text from an image or document."""
+async def extract_text(
+    # Business args
+    image_url: str,
+    language: str = "auto",
+    # Standard args
+    user_id: str = "",
+    project_id: str = "",
+    session_id: str = "",
+    app_id: str = "",
+) -> dict:
     start = time.time()
-    result = await module.extract_text(image_url=image_url, language=language)
+    # OCR is stateful (stores extractions) → pass session_id for data partitioning
+    result = await module.extract_text(
+        image_url=image_url,
+        language=language,
+        session_id=session_id,
+    )
     elapsed_ms = int((time.time() - start) * 1000)
     return {
         **result,
-        "_meta": {"module_id": "ocr", "module_version": "1.0.0", "usage": {"cost_cents": 0.0, "resources": {"bytes_processed": 0, "processing_ms": elapsed_ms}}},
+        "_meta": {
+            "module_id": "ocr",
+            "module_version": "1.0.0",
+            "usage": {"cost_cents": 0.0, "resources": {"bytes_processed": 0, "processing_ms": elapsed_ms}},
+        },
     }
 ```
 
 **v1/module.py**:
 ```python
 class OCRModule:
-    async def extract_text(self, image_url: str, language: str = "auto") -> dict:
+    async def extract_text(self, image_url: str, language: str = "auto", session_id: str = "") -> dict:
         result = self._run_ocr(image_url, language)
+        if session_id:
+            await self._save_extraction(session_id, image_url, result)
         return {"text": result["text"], "confidence": result["confidence"]}
 ```
 
@@ -1353,7 +1406,7 @@ class OCRModule:
 ```sql
 CREATE TABLE extractions (
     id UUID PRIMARY KEY,
-    session_id UUID NOT NULL,     -- Passed via injected MCP parameter
+    session_id UUID NOT NULL,     -- Passed via standard MCP argument
     image_url VARCHAR(500) NOT NULL,
     language VARCHAR(10) DEFAULT 'auto',
     extracted_text TEXT,
@@ -1437,8 +1490,10 @@ versions:
 **v2/module.py**:
 ```python
 class OCRModule:
-    async def extract_text(self, source: str, language: str = "auto", output_format: str = "plain") -> dict:
+    async def extract_text(self, source: str, language: str = "auto", output_format: str = "plain", session_id: str = "") -> dict:
         result = self._run_ocr(source, language)
+        if session_id:
+            await self._save_extraction(session_id, source, result)
         return {
             "document": {"text": result["text"], "format": output_format, "language": result["detected_language"]},
             "confidence": result["confidence"],
