@@ -20,6 +20,9 @@ Druppie is a full-stack platform composed of the following services:
 | MCP File Search | Python / FastMCP | 9004 | Local file search within datasets |
 | MCP Web | Python / FastMCP | 9005 | Web browsing, URL fetching, web search |
 | MCP ArchiMate | Python / FastMCP | 9006 | ArchiMate model operations (list, read, search, export) |
+| Sandbox Control Plane | Node.js | 8787 | Sandbox session/event management, coordinates sandbox lifecycle |
+| Sandbox Manager | Node.js | 8000 | Creates/manages sandbox Docker containers, enforces resource limits |
+| Sandbox Image Builder | Docker | — | One-shot build producing `open-inspect-sandbox:latest` image |
 | Adminer | PHP | 8081 | Database admin UI |
 
 All services run in Docker containers on a shared bridge network (`druppie-new-network`). The backend communicates with MCP servers over HTTP using internal container hostnames.
@@ -101,6 +104,7 @@ druppie/
       agents.py          # Agent listing
       mcps.py            # MCP server status
       mcp_bridge.py      # Direct MCP tool invocation
+      sandbox.py         # Sandbox session registration, events proxy, completion webhook
   services/
     session_service.py
     approval_service.py
@@ -116,6 +120,7 @@ druppie/
     project_repository.py
     execution_repository.py
     user_repository.py
+    sandbox_session_repository.py
   domain/
     __init__.py          # Central exports for all domain models
     common.py            # Shared enums, base types
@@ -132,6 +137,11 @@ druppie/
       builtin.py         # Pydantic models for builtin tool params
       coding.py          # Pydantic models for coding MCP tool params
       docker.py          # Pydantic models for docker MCP tool params
+  sandbox-config/
+    opencode-config.json   # OpenCode default agent + permissions
+    agents/
+      druppie-builder.md   # Sandbox coding agent prompt
+      druppie-tester.md    # Sandbox testing agent prompt
   db/models/
     base.py              # SQLAlchemy base, mixins
     user.py
@@ -143,6 +153,7 @@ druppie/
     llm_call.py
     approval.py
     question.py
+    sandbox_session.py   # Sandbox session ownership mapping
   execution/
     orchestrator.py      # Main entry point: process_message()
     tool_executor.py     # Routes tool calls to MCP or builtins
@@ -258,6 +269,7 @@ SQLAlchemy ORM models live in `druppie/db/models/`. The schema:
 | `Question` | HITL questions requiring user answers |
 | `LlmRetry` | Audit trail for LLM retry attempts (error type, delay) |
 | `ToolCallNormalization` | Audit trail for argument normalization (original → normalized values) |
+| `SandboxSession` | Maps sandbox control plane session IDs to Druppie users for ownership verification |
 
 ### 4.3 Key Relationships
 
@@ -420,12 +432,9 @@ File and git operations within workspace sandboxes.
 | `batch_write_files` | None (overridable per agent) | Write multiple files at once |
 | `list_dir` | None | List directory contents |
 | `delete_file` | None | Delete file from workspace |
-| `create_branch` | None | Create/switch git branch |
-| `commit_and_push` | None | Commit and push to Gitea |
-| `get_git_status` | None | Git status of workspace |
+| `run_git` | None | Execute whitelisted git commands (add, commit, push, status, checkout, log, diff, branch). Destructive flags blocked. Returns raw output. |
 | `create_pull_request` | None | Create PR on Gitea |
 | `merge_pull_request` | Developer | Merge PR and delete branch |
-| `merge_to_main` | Architect | Direct merge to main branch |
 | `execute_coding_task` | None | Execute coding task in isolated sandbox |
 | `make_design` | None (overridable per agent) | Write design document (FD/TD) with Mermaid syntax validation; file is rejected if Mermaid contains errors |
 | `revert_to_commit` | None (internal) | Hard reset + force push to a target commit |
@@ -529,6 +538,9 @@ mcp-filesearch      FastMCP           :9004   File search
 mcp-web             FastMCP           :9005   Web browsing
 mcp-archimate       FastMCP           :9006   ArchiMate models
 adminer             Adminer           :8081   DB admin UI
+sandbox-control-plane  Node.js        :8787   Sandbox session/event management
+sandbox-manager     Node.js           :8000   Sandbox container lifecycle
+sandbox-image-builder  Docker         -       Builds open-inspect-sandbox:latest image
 ```
 
 ### 7.2 Network
@@ -544,6 +556,8 @@ All containers share a single bridge network: `druppie-new-network`. Internal co
 | `druppie_new_gitea_postgres` | Gitea PostgreSQL | Git database persistence |
 | `druppie_new_gitea` | Gitea data | Repository storage |
 | `druppie_new_workspace` | `/app/workspace` (backend), `/workspaces` (MCP) | Shared workspace for agent file operations |
+| `sandbox_data` | `/data` (control plane) | Sandbox session data (SQLite) |
+| `sandbox_snapshots` | `/data/snapshots` (manager) | Sandbox container snapshots |
 | Docker socket | `/var/run/docker.sock` | Allows backend and MCP Docker to manage containers |
 
 ### 7.4 Health Checks
@@ -618,7 +632,7 @@ The Docker Compose setup works on Windows, macOS, and Linux. Shell scripts use L
 
 ### 8.1 Agent Definitions
 
-Nine agents are defined as YAML files in `druppie/agents/definitions/`:
+Twelve agents are defined as YAML files in `druppie/agents/definitions/`:
 
 | Agent | Role | Builtin Tools | MCP Access | Skills |
 |-------|------|---------------|------------|--------|
@@ -626,13 +640,17 @@ Nine agents are defined as YAML files in `druppie/agents/definitions/`:
 | `planner` | Creates execution plan (which agents to run) | `make_plan` | None | — |
 | `business_analyst` | Gathers requirements from user | Default | `coding` (read_file, make_design, list_dir) | `making-mermaid-diagrams` |
 | `architect` | Designs system architecture, writes specs | Default | `coding` (read_file, make_design, list_dir), `archimate` | `making-mermaid-diagrams` |
-| `developer` | Writes code, commits, creates PRs | `invoke_skill` | `coding` | `code-review`, `git-workflow` |
+| `builder_planner` | Creates implementation plans, writes builder_plan.md | Default | `coding` | — |
+| `test_builder` | Generates tests (TDD Red Phase) | Default | `coding` | — |
+| `builder` | Implements code to pass tests (TDD Green Phase) | Default | `coding` | — |
+| `test_executor` | Runs tests, iteratively fixes code | `test_report` | `coding` | — |
+| `developer` | Writes code, commits, creates PRs | `invoke_skill`, `execute_coding_task` | `coding` | `code-review`, `git-workflow` |
 | `reviewer` | Reviews code quality | Default | `coding` | — |
-| `tester` | Writes and runs tests | Default | `coding`, `docker` | — |
+| `tester` | Writes and runs tests | `execute_coding_task` | `coding`, `docker` | — |
 | `deployer` | Builds and deploys containers | Default | `coding`, `docker` | — |
 | `summarizer` | Creates conversation summary message | `create_message` | None | — |
 
-Default builtin tools (all agents): `done`, `hitl_ask_question`, `hitl_ask_multiple_choice_question`.
+Default builtin tools (all agents): `done`, `hitl_ask_question`, `hitl_ask_multiple_choice_question`. Optional extra builtins: `execute_coding_task` (sandbox delegation, used by Developer/Tester).
 
 Each YAML file specifies:
 
@@ -666,13 +684,14 @@ Available system prompts:
 
 | System Prompt | Purpose |
 |----------|---------|
+| `tool_only_communication` | Enforces that agents communicate only through tool calls |
 | `summary_relay` | How to read previous agent summaries and format your own via `done()` |
 | `done_tool_format` | Mandatory `done()` output format rules |
 | `workspace_state` | Shared workspace and git branch rules |
 
 Agents declare which system prompts to include via the `system_prompts` list in their YAML definition. At runtime, the agent's `_build_system_prompt()` method loads each system prompt and appends it (in order) after the agent's own `system_prompt` text, before tool instructions are added.
 
-Agents without a `system_prompts` list (or with an empty list) receive no system prompts. Currently, 5 agents include all 3 system prompts: architect, business_analyst, deployer, developer, and planner. The router, summarizer, reviewer, and tester agents do not include system prompts.
+Agents without a `system_prompts` list (or with an empty list) receive no system prompts. Currently, 9 agents include all 4 system prompts: architect, builder, builder_planner, business_analyst, deployer, developer, planner, test_builder, and test_executor. The router, summarizer, and reviewer agents do not include system prompts.
 
 ### 8.3 Agent Runtime Architecture
 
@@ -699,7 +718,8 @@ The core loop (`AgentLoop.run()`):
    c. Execute via ToolExecutor
    d. If waiting_approval -> pause agent, return
    e. If waiting_answer -> pause agent, return
-   f. If "done" tool -> agent complete, return
+   f. If waiting_sandbox -> pause agent, return (webhook will resume)
+   g. If "done" tool -> agent complete, return
    g. If failed + break_on_failure -> stop batch, let LLM retry
    h. Otherwise -> add result to messages, loop to step 3
 6. If max_iterations reached -> raise AgentMaxIterationsError
@@ -761,7 +781,7 @@ Each tool is represented by a `ToolDefinition` (`druppie/domain/tool.py`) which 
 ```
 params/
   builtin.py   # DoneParams, MakePlanParams, HitlAskQuestionParams, ...
-  coding.py    # ReadFileParams, WriteFileParams, CommitAndPushParams, ...
+  coding.py    # ReadFileParams, WriteFileParams, RunGitParams, ...
   docker.py    # BuildImageParams, StartContainerParams, ...
 ```
 
@@ -937,6 +957,10 @@ Optional:
 | `CORS_ORIGINS` | `http://localhost:5273,http://localhost:5173` | Allowed CORS origins |
 | `VITE_API_URL` | `http://localhost:8100` | Frontend API base URL |
 | `VITE_KEYCLOAK_URL` | `http://localhost:8180` | Frontend Keycloak URL |
+| `SANDBOX_CONTROL_PLANE_URL` | `http://sandbox-control-plane:8787` | Sandbox control plane endpoint |
+| `SANDBOX_API_SECRET` | `sandbox-dev-secret` | HMAC-SHA256 secret for sandbox auth tokens |
+| `SANDBOX_MEMORY_LIMIT` | `4g` | Docker memory limit per sandbox container |
+| `SANDBOX_CPU_LIMIT` | `2` | Docker CPU limit per sandbox container |
 
 ### 9.2 Configuration Files
 
@@ -948,4 +972,57 @@ Optional:
 | `docker-compose.yml` | Infrastructure service definitions (at repository root) |
 | `.env` | Environment variable overrides |
 | `.env.example` | Documented template for environment variables |
+| `druppie/sandbox-config/` | OpenCode config and agent prompts injected into sandboxes |
+
+---
+
+## 10. Sandbox Infrastructure (Open-Inspect)
+
+> Full documentation: [docs/SANDBOX.md](SANDBOX.md) — covers architecture, OpenCode integration, provider resilience, Kata Containers, and security.
+
+[Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`) is integrated as a git submodule at `vendor/open-inspect/`. Sandbox containers run OpenCode `v1.2.22` (pinned in `Dockerfile.sandbox`). They provide isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace.
+
+### 10.1 Services
+
+| Service | Port | Role |
+|---------|------|------|
+| `sandbox-control-plane` | 8787 | Session/event management, SQLite storage, coordinates lifecycle |
+| `sandbox-manager` | 8000 | Creates/manages sandbox containers, enforces resource limits |
+| `sandbox-image-builder` | — | One-shot build producing `open-inspect-sandbox:latest` |
+
+### 10.2 `execute_coding_task` Built-in Tool
+
+Defined in `druppie/agents/builtin_tools.py`. Delegates a coding task to a sandbox using a **webhook + pause/resume** pattern:
+
+1. Creates sandbox session on control plane
+2. Sends task prompt with `callbackUrl` and `callbackSecret`
+3. Registers ownership in `sandbox_sessions` table
+4. Returns `WAITING_SANDBOX` — agent pauses, thread freed
+5. On completion, control plane POSTs webhook → handler fetches events, completes tool call, resumes agent
+
+**Auth:** HMAC-SHA256 tokens (`{unix_ms_timestamp}.{hmac_sha256_hex_signature}`), verified by Open-Inspect's `verifyInternalToken`.
+
+### 10.3 Status Model
+
+| Level | Status | Meaning |
+|-------|--------|---------|
+| ToolCallStatus | `WAITING_SANDBOX` | Tool dispatched, waiting for webhook |
+| AgentRunStatus | `PAUSED_SANDBOX` | Agent paused while sandbox runs |
+| AgentRunStatus | `PAUSED_CRASHED` | Agent crashed, session paused for recovery |
+| SessionStatus | `paused_sandbox` | Visible in UI as paused |
+| SessionStatus | `paused_crashed` | Visible in UI as crashed |
+
+### 10.4 Sandbox Session Ownership
+
+The `sandbox_sessions` table maps control plane session IDs to Druppie users:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `sandbox_session_id` | str (unique, indexed) | Control plane session ID |
+| `session_id` | UUID (nullable, FK → sessions) | Druppie chat session |
+| `user_id` | UUID (FK → users) | Owning user |
+| `tool_call_id` | UUID (nullable, FK → tool_calls, indexed) | Direct webhook lookup |
+| `webhook_secret` | str (nullable) | Per-session HMAC secret |
+
+The `tool_call_id` FK enables direct lookup from webhook → tool call without table scans. Events proxy (`GET /api/sandbox-sessions/{id}/events`) enforces ownership — non-owners get 403, admins bypass.
 

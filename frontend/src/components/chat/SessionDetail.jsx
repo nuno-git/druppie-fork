@@ -4,14 +4,14 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle } from 'lucide-react'
+import { Send, CheckCircle, XCircle, Shield, ShieldOff, Loader2, ExternalLink, MessageSquare, FileCode, FilePlus, StopCircle, PlayCircle, ArrowUp, AlertTriangle, Terminal, ChevronDown, ChevronRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion } from '../../services/api'
+import { getSession, sendChat, cancelChat, resumeSession, approveApproval, rejectApproval, answerQuestion, getSandboxEvents } from '../../services/api'
 import { getUserInfo } from '../../services/keycloak'
 import { useAuth } from '../../App'
-import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
+import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { FilePreviewModal } from './ApprovalCard'
 import HITLQuestionMessage from './HITLQuestionMessage'
 import WorkflowPipeline from './WorkflowPipeline'
@@ -22,11 +22,22 @@ import {
   CopyJsonButton,
   buildVisibleJson,
   extractSurfacedApprovals,
-  extractQuestions,
-  extractTestResults,
+  extractOrderedItems,
+  extractSurfacedFileWrites,
+  extractDependencyInstalls,
   findPendingQuestion,
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
+import SandboxEventCard, {
+  processEvents,
+  groupBySubagent,
+  SubagentGroup,
+  EventItem,
+  AgentTextBlock,
+  ConversationTimeline,
+  toolCategoryConfig,
+  getToolCategory,
+} from './SandboxEventCard'
 
 // --- Tool label helper ---
 
@@ -80,7 +91,7 @@ const InlineApproval = ({ tc, sessionId }) => {
   const isRejected = tc.approval.status === 'rejected'
   const isProcessing = approveMut.isPending || rejectMut.isPending
 
-  const toolLabel = getToolLabel(tc.tool_name)
+  const toolLabel = formatToolName(tc.tool_name)
   const args = tc.arguments || {}
   const contextLine = args.path || args.file_path || args.command || args.message || args.commit_message || null
 
@@ -291,14 +302,12 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
 // --- Agent Run ---
 
 const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) => {
-  const resolvedItems = hasFollowingMessage ? [] : extractSurfacedApprovals(run.llm_calls)
-    .filter((item) => item.tc.approval.status !== 'pending')
-  const testResults = extractTestResults(run)
+  const orderedItems = extractOrderedItems(run, hasFollowingMessage)
 
   // Show agent trace for completed runs that have no following message
   const showAgentTrace = !hasFollowingMessage && run.status !== 'running'
 
-  if (!showAgentTrace && resolvedItems.length === 0) return null
+  if (!showAgentTrace && orderedItems.length === 0) return null
 
   const config = getAgentConfig(run.agent_id)
   const AgentIcon = config.icon
@@ -316,18 +325,37 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
           </div>
         </div>
       )}
-      {resolvedItems.length > 0 && (
-        <div className="mt-2 space-y-3">
-          {resolvedItems.map((item, i) => (
-            <InlineApproval key={i} tc={item.tc} sessionId={sessionId} />
-          ))}
-        </div>
-      )}
-      {testResults.length > 0 && (
-        <div className="mt-2">
-          <TestResultCard testResults={testResults} />
-        </div>
-      )}
+      {orderedItems.map((item, i) => {
+        if (item.type === 'approval') {
+          return (
+            <div key={i} className="mt-2">
+              <InlineApproval tc={item.tc} sessionId={sessionId} />
+            </div>
+          )
+        }
+        if (item.type === 'question') {
+          return (
+            <div key={i} className="mt-3">
+              <TimelineQuestion tc={item.tc} agentId={item.agentId} sessionId={sessionId} />
+            </div>
+          )
+        }
+        if (item.type === 'test') {
+          return (
+            <div key={i} className="mt-2">
+              <TestResultCard testResults={[item.data]} />
+            </div>
+          )
+        }
+        if (item.type === 'sandbox') {
+          return (
+            <div key={i} className="mt-2">
+              <SandboxEventCard sandboxResult={item.data} />
+            </div>
+          )
+        }
+        return null
+      })}
     </div>
   )
 }
@@ -406,10 +434,165 @@ const MessageItem = ({ message, agentRun, sessionId }) => {
   )
 }
 
+// --- Sandbox Live Progress ---
+
+/** Extract sandbox_session_id from a waiting_sandbox tool call in the timeline */
+const findWaitingSandboxId = (timeline) => {
+  if (!timeline) return null
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const entry = timeline[i]
+    if (entry.type !== 'agent_run' || !entry.agent_run) continue
+    for (const llm of (entry.agent_run.llm_calls || [])) {
+      for (const tc of (llm.tool_calls || [])) {
+        if (tc.tool_name === 'execute_coding_task' && tc.status === 'waiting_sandbox') {
+          let result = tc.result
+          if (typeof result === 'string') {
+            try { result = JSON.parse(result) } catch { continue }
+          }
+          if (result?.sandbox_session_id) return result.sandbox_session_id
+        }
+      }
+    }
+  }
+  return null
+}
+
+const SandboxLiveProgress = ({ sandboxSessionId }) => {
+  const [expanded, setExpanded] = useState(true)
+  const [filterTool, setFilterTool] = useState(null)
+
+  const { data: eventsData } = useQuery({
+    queryKey: ['sandbox-events-live', sandboxSessionId],
+    queryFn: () => getSandboxEvents(sandboxSessionId),
+    refetchInterval: 3000,
+    enabled: !!sandboxSessionId,
+  })
+
+  const rawEvents = eventsData?.events || (Array.isArray(eventsData) ? eventsData : [])
+  // API returns newest-first; reverse for chronological display, then process
+  const events = processEvents([...rawEvents].reverse())
+
+  // Compute tool stats for filter buttons
+  const toolCounts = events.reduce((acc, e) => {
+    if (e.type === 'tool_call') {
+      const tool = (e.data?.tool || 'unknown').toLowerCase()
+      acc[tool] = (acc[tool] || 0) + 1
+    }
+    return acc
+  }, {})
+
+  const filteredEvents = filterTool
+    ? events.filter((e) => e.type === 'tool_call' && (e.data?.tool || '').toLowerCase() === filterTool)
+    : events
+
+  // Group events by subagent when not filtering
+  const grouped = !filterTool ? groupBySubagent(events) : null
+  const hasSubagents = grouped?.some((g) => g.type === 'subagent')
+
+  // Latest event for header summary
+  const lastToolEvent = [...events].reverse().find(e => e.type === 'tool_call')
+  const latestLabel = lastToolEvent?.data?.tool
+
+  if (!sandboxSessionId) return null
+
+  const renderGroupedEvents = () => {
+    let idx = 0
+    return grouped.map((g, i) => {
+      if (g.type === 'subagent') {
+        const startIdx = idx
+        idx += g.events.length
+        return <SubagentGroup key={g.taskId || `sg-${i}`} group={g} startIndex={startIdx} />
+      }
+      if (g.event.type === 'token') {
+        return <AgentTextBlock key={g.event.id || `t-${i}`} event={g.event} />
+      }
+      return <EventItem key={g.event.id || `e-${i}`} event={g.event} index={idx++} />
+    })
+  }
+
+  return (
+    <div className="pl-8 mt-1">
+      <div className="border border-blue-200 rounded-lg bg-blue-50/50 overflow-hidden">
+        {/* Header */}
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-blue-100/50 transition-colors"
+        >
+          <Terminal className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+          <Loader2 className="w-3 h-3 text-blue-400 animate-spin flex-shrink-0" />
+          <span className="text-blue-600 font-medium">Sandbox Agent</span>
+          {latestLabel && (
+            <span className="text-blue-400 truncate">— {latestLabel}</span>
+          )}
+          <span className="ml-auto text-blue-300 flex-shrink-0">
+            {events.length > 0 && <span className="mr-1">{events.length} events</span>}
+            {expanded ? <ChevronDown className="w-3 h-3 inline" /> : <ChevronRight className="w-3 h-3 inline" />}
+          </span>
+        </button>
+
+        {/* Expanded: full event timeline (same as completed view) */}
+        {expanded && (
+          <div className="border-t border-blue-200 px-3 py-1.5">
+            {events.length === 0 ? (
+              <span className="text-xs text-blue-400 italic">Starting up…</span>
+            ) : (
+              <>
+                {/* Conversation timeline */}
+                <ConversationTimeline events={events} />
+
+                {/* Tool filter bar */}
+                {Object.keys(toolCounts).length > 1 && (
+                  <div className="mt-1 mb-1 flex flex-wrap gap-1 items-center">
+                    <button
+                      onClick={() => setFilterTool(null)}
+                      className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${!filterTool ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                    >
+                      all ({events.length})
+                    </button>
+                    {Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).map(([tool, count]) => {
+                      const cat = getToolCategory(tool)
+                      const { colors } = toolCategoryConfig[cat]
+                      const isActive = filterTool === tool
+                      return (
+                        <button
+                          key={tool}
+                          onClick={() => setFilterTool(isActive ? null : tool)}
+                          className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${isActive ? 'bg-gray-700 text-white' : colors + ' hover:opacity-80'}`}
+                        >
+                          {tool} ({count})
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* Events timeline */}
+                <div className="max-h-[500px] overflow-y-auto">
+                  {hasSubagents && !filterTool ? (
+                    renderGroupedEvents()
+                  ) : (
+                    filteredEvents.map((event, i) => (
+                      event.type === 'token'
+                        ? <AgentTextBlock key={event.id || `t-${i}`} event={event} />
+                        : <EventItem key={event.id || i} event={event} index={i} />
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // --- Main SessionDetail ---
 
 const VALID_VIEW_MODES = new Set(['chat', 'annotated', 'inspect'])
-const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_user', 'waiting_approval', 'waiting_answer'])
+// AgentRunStatus values that indicate the agent has started processing (not pending)
+// Note: 'paused_user' was removed as it doesn't exist; 'paused_crashed' added
+const STARTED_STATUSES = new Set(['running', 'completed', 'failed', 'paused_hitl', 'paused_tool', 'paused_sandbox', 'paused_crashed', 'waiting_approval', 'waiting_answer'])
 
 const SessionDetail = ({ sessionId, initialViewMode }) => {
   const timelineEndRef = useRef(null)
@@ -445,6 +628,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       const status = query.state.data?.status
       if (status === 'completed' || status === 'failed') return false
       if (status === 'paused_crashed') return 2000
+      if (status === 'paused_sandbox') return 2000
       if (status === 'paused' || status === 'paused_approval' || status === 'paused_hitl') {
         // Fast poll while stopping (agent still finishing current op), slow poll when fully paused
         const hasRunning = query.state.data?.timeline?.some(
@@ -472,6 +656,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
       queryClient.refetchQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
+    onError: (err) => {
+      console.error('Cancel failed:', err)
+    },
   })
 
   const resumeMutation = useMutation({
@@ -479,6 +666,9 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     onSuccess: () => {
       queryClient.refetchQueries({ queryKey: ['session', sessionId] })
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
+    onError: (err) => {
+      console.error('Resume failed:', err)
     },
   })
 
@@ -608,10 +798,14 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
     const trimmed = continueInput.trim()
     if (!trimmed) return
     if (pendingQuestion) {
-      answerQuestion(pendingQuestion.tc.question_id, trimmed).then(() => {
-        setContinueInput('')
-        queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
-      })
+      answerQuestion(pendingQuestion.tc.question_id, trimmed)
+        .then(() => {
+          setContinueInput('')
+          queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+        })
+        .catch((err) => {
+          console.error('Failed to answer question:', err.message || err)
+        })
       return
     }
     continueMutation.mutate(trimmed)
@@ -629,6 +823,7 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         paused_crashed: 'bg-red-500',
         paused_hitl: 'bg-amber-500 animate-pulse',
         paused_tool: 'bg-amber-500 animate-pulse',
+        paused_sandbox: 'bg-blue-500 animate-pulse',
         paused_approval: 'bg-amber-500 animate-pulse',
         waiting_approval: 'bg-amber-500 animate-pulse',
         waiting_answer: 'bg-amber-500 animate-pulse',
@@ -649,6 +844,13 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-lg">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Stopping…
+              </span>
+            )}
+            {/* Sandbox running indicator */}
+            {data.status === 'paused_sandbox' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-lg">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Sandbox running…
               </span>
             )}
             {/* Continue button — when fully stopped, crashed, or failed */}
@@ -679,6 +881,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 )}
                 Stop
               </button>
+            )}
+            {(cancelMutation.isError || resumeMutation.isError) && (
+              <span className="text-xs text-red-600">
+                {cancelMutation.error?.message || resumeMutation.error?.message || 'Action failed'}
+              </span>
             )}
             {canDebug && (
               <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-xs">
@@ -820,14 +1027,11 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                 // Skip pending agents that haven't started yet — they show in the workflow bar
                 if (!STARTED_STATUSES.has(entry.agent_run.status)) return null
 
-                const questions = extractQuestions(entry.agent_run)
                 const hasFollowingMessage = runsWithMessages.has(i)
-                const resolvedItems = hasFollowingMessage ? []
-                  : extractSurfacedApprovals(entry.agent_run.llm_calls)
-                      .filter((item) => item.tc.approval.status !== 'pending')
+                const orderedItems = extractOrderedItems(entry.agent_run, hasFollowingMessage)
                 // Show completed runs without a following message (e.g. architect)
                 const isCompletedWithoutMessage = !hasFollowingMessage && entry.agent_run.status !== 'running'
-                if (resolvedItems.length === 0 && questions.length === 0 && !isCompletedWithoutMessage) {
+                if (orderedItems.length === 0 && !isCompletedWithoutMessage) {
                   return null
                 }
                 return (
@@ -836,13 +1040,8 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                       run={entry.agent_run}
                       timelineIndex={i}
                       sessionId={sessionId}
-                      hasFollowingMessage={runsWithMessages.has(i)}
+                      hasFollowingMessage={hasFollowingMessage}
                     />
-                    {questions.map((q, qi) => (
-                      <div key={qi} className="mt-3">
-                        <TimelineQuestion tc={q.tc} agentId={q.agentId} sessionId={sessionId} />
-                      </div>
-                    ))}
                     {renderAnnotation(i)}
                   </div>
                 )
@@ -851,15 +1050,16 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
               return null
             })
           })()}
-          {/* Trailing thinking indicator */}
+          {/* Trailing thinking / sandbox-waiting indicator */}
           {(() => {
             // Don't show thinking indicator if session itself has ended
             if (data.status === 'failed' || data.status === 'completed') return null
-            const runningEntry = data.timeline?.findLast(
-              (e) => e.type === 'agent_run' && e.agent_run?.status === 'running'
+            const activeEntry = data.timeline?.findLast(
+              (e) => e.type === 'agent_run' && (e.agent_run?.status === 'running' || e.agent_run?.status === 'paused_sandbox')
             )
-            if (!runningEntry) return null
-            const run = runningEntry.agent_run
+            if (!activeEntry) return null
+            const run = activeEntry.agent_run
+            const isSandboxWaiting = run.status === 'paused_sandbox'
             const config = getAgentConfig(run.agent_id)
             const AgentIcon = config.icon
             const colors = getAgentMessageColors(config.color)
@@ -871,11 +1071,15 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
                   </div>
                   <span className={`text-sm font-medium ${colors.accent}`}>{config.name}</span>
                 </div>
-                <div className="pl-8 flex items-center gap-1.5 py-1">
-                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
-                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
-                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
-                </div>
+                {isSandboxWaiting ? (
+                  <SandboxLiveProgress sandboxSessionId={findWaitingSandboxId(data.timeline)} />
+                ) : (
+                  <div className="pl-8 flex items-center gap-1.5 py-1">
+                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
+                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
+                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
+                  </div>
+                )}
               </div>
             )
           })()}
@@ -906,8 +1110,20 @@ const SessionDetail = ({ sessionId, initialViewMode }) => {
         </div>
       )}
 
-      {/* Floating input bar — hidden in inspect mode */}
-      {data.status !== 'failed' && viewMode !== 'inspect' && (
+      {/* Sandbox waiting bar — replaces input when sandbox is running */}
+      {data.status === 'paused_sandbox' && viewMode !== 'inspect' && (
+        <div className="px-4 pb-4 pt-2 flex-shrink-0">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-center justify-center gap-2 border border-blue-200 rounded-2xl shadow-sm px-4 py-3.5 bg-blue-50">
+              <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+              <span className="text-sm text-blue-600">Coding agent is running in sandbox…</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating input bar — hidden in inspect mode and during sandbox */}
+      {data.status !== 'failed' && data.status !== 'paused_sandbox' && viewMode !== 'inspect' && (
         <div className="px-4 pb-4 pt-2 flex-shrink-0">
           <div className="max-w-3xl mx-auto">
             <div className="flex items-end gap-2 border border-gray-200 rounded-2xl shadow-lg px-4 py-3 bg-white focus-within:border-gray-300 focus-within:shadow-xl transition-shadow">

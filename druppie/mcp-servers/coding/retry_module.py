@@ -5,12 +5,16 @@ PR closure, used by the backend during retry-from-run operations.
 """
 
 import logging
+import re
 import subprocess
 from pathlib import Path
 
 import httpx
 
 logger = logging.getLogger("coding-mcp")
+
+# Matches a valid git commit reference: 7-40 hex chars, optionally followed by ~N
+_COMMIT_REF_RE = re.compile(r"^[0-9a-f]{7,40}(~\d+)?$")
 
 
 def revert_to_commit(
@@ -36,6 +40,13 @@ def revert_to_commit(
     """
     cwd = str(workspace_path)
 
+    # Validate target_commit looks like a real commit reference
+    if not target_commit or not _COMMIT_REF_RE.match(target_commit):
+        return {
+            "success": False,
+            "error": f"Invalid target_commit: {target_commit!r}. Expected a hex SHA (7-40 chars), optionally with ~N suffix.",
+        }
+
     # Capture current HEAD
     head_result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True
@@ -46,6 +57,31 @@ def revert_to_commit(
         "revert_to_commit: %s -> %s (branch=%s)",
         previous_head, target_commit, branch,
     )
+
+    # Ensure remote is configured before fetch (workspace may have been
+    # created with git init and no remote, e.g. when repo info was missing)
+    if is_gitea_configured and gitea_clone_url:
+        # Use set-url in case origin already exists, fall back to add
+        set_url = subprocess.run(
+            ["git", "remote", "set-url", "origin", gitea_clone_url],
+            cwd=cwd, capture_output=True, text=True,
+        )
+        if set_url.returncode != 0:
+            subprocess.run(
+                ["git", "remote", "add", "origin", gitea_clone_url],
+                cwd=cwd, capture_output=True, text=True,
+            )
+
+    # Fetch latest from remote (commit may only exist on remote, e.g. pushed by sandbox)
+    fetch_result = subprocess.run(
+        ["git", "fetch", "origin"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if fetch_result.returncode != 0:
+        logger.warning("git fetch origin failed: %s", fetch_result.stderr)
 
     # Hard reset to target commit
     reset_result = subprocess.run(
@@ -69,14 +105,6 @@ def revert_to_commit(
     # Force push if Gitea is configured
     force_pushed = False
     if is_gitea_configured:
-        if gitea_clone_url:
-            subprocess.run(
-                ["git", "remote", "set-url", "origin", gitea_clone_url],
-                cwd=cwd,
-                check=True,
-                capture_output=True,
-            )
-
         push_result = subprocess.run(
             ["git", "push", "--force", "origin", branch],
             cwd=cwd,

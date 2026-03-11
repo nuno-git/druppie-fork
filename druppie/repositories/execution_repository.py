@@ -140,6 +140,7 @@ class ExecutionRepository(BaseRepository):
                 AgentRun.status.in_([
                     AgentRunStatus.PAUSED_TOOL.value,
                     AgentRunStatus.PAUSED_HITL.value,
+                    AgentRunStatus.PAUSED_SANDBOX.value,
                 ]),
             )
             .order_by(AgentRun.sequence_number)
@@ -271,6 +272,7 @@ class ExecutionRepository(BaseRepository):
         """Convert AgentRun model to AgentRunSummary domain model."""
         return AgentRunSummary(
             id=agent_run.id,
+            session_id=agent_run.session_id,
             agent_id=agent_run.agent_id,
             status=AgentRunStatus(agent_run.status),
             error_message=agent_run.error_message,
@@ -317,6 +319,19 @@ class ExecutionRepository(BaseRepository):
     def get_tool_call(self, tool_call_id: UUID) -> ToolCall | None:
         """Get tool call by ID (returns raw model for ToolExecutor)."""
         return self.db.query(ToolCall).filter(ToolCall.id == tool_call_id).first()
+
+    def get_tool_call_for_update(self, tool_call_id: UUID) -> ToolCall | None:
+        """Get tool call with row-level lock (SELECT ... FOR UPDATE).
+
+        Use when you need to read-then-update atomically, e.g. the webhook
+        handler checking status before completing the tool call.
+        """
+        return (
+            self.db.query(ToolCall)
+            .filter(ToolCall.id == tool_call_id)
+            .with_for_update()
+            .first()
+        )
 
     def get_tool_calls_for_run(self, agent_run_id: UUID) -> list[ToolCall]:
         """Get all tool calls for an agent run."""
@@ -377,6 +392,7 @@ class ExecutionRepository(BaseRepository):
         status: str | None = None,
         result: dict | str | None = None,
         error: str | None = None,
+        sandbox_waiting_at: datetime | None = None,
     ) -> None:
         """Update tool call with result.
 
@@ -385,6 +401,7 @@ class ExecutionRepository(BaseRepository):
             status: New status (pending, executing, waiting_approval, waiting_answer, completed, failed)
             result: Tool result (will be serialized to JSON if dict)
             error: Error message if failed
+            sandbox_waiting_at: Timestamp when tool entered WAITING_SANDBOX status (for watchdog timeout)
         """
         import json
 
@@ -400,6 +417,8 @@ class ExecutionRepository(BaseRepository):
                     tool_call.result = result
             if error is not None:
                 tool_call.error_message = error
+            if sandbox_waiting_at is not None:
+                tool_call.sandbox_waiting_at = sandbox_waiting_at
             if status in ("completed", "failed"):
                 tool_call.executed_at = datetime.now(timezone.utc)
 
@@ -631,14 +650,14 @@ class ExecutionRepository(BaseRepository):
     def get_last_commit_before_sequence(
         self, session_id: UUID, before_sequence: int
     ) -> ToolCallRecord | None:
-        """Get the last completed commit_and_push tool call before a sequence number."""
+        """Get the last completed run_git tool call before a sequence number."""
         tc = (
             self.db.query(ToolCall)
             .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
             .filter(
                 AgentRun.session_id == session_id,
                 AgentRun.sequence_number < before_sequence,
-                ToolCall.tool_name == "commit_and_push",
+                ToolCall.tool_name == "run_git",
                 ToolCall.status == "completed",
             )
             .order_by(ToolCall.created_at.desc())
@@ -649,13 +668,13 @@ class ExecutionRepository(BaseRepository):
         return ToolCallRecord(id=tc.id, tool_name=tc.tool_name, status=tc.status, result=tc.result)
 
     def get_first_commit_in_session(self, session_id: UUID) -> ToolCallRecord | None:
-        """Get the first completed commit_and_push tool call in a session."""
+        """Get the first completed run_git tool call with commit_sha in a session."""
         tc = (
             self.db.query(ToolCall)
             .join(AgentRun, ToolCall.agent_run_id == AgentRun.id)
             .filter(
                 AgentRun.session_id == session_id,
-                ToolCall.tool_name == "commit_and_push",
+                ToolCall.tool_name == "run_git",
                 ToolCall.status == "completed",
             )
             .order_by(ToolCall.created_at)
@@ -848,6 +867,24 @@ class ExecutionRepository(BaseRepository):
     # =========================================================================
     # ZOMBIE SESSION RECOVERY
     # =========================================================================
+
+    def get_stuck_sandbox_tool_calls(self, cutoff_dt: datetime) -> list:
+        """Find WAITING_SANDBOX tool calls older than cutoff_dt.
+        
+        Uses sandbox_waiting_at (when status changed to WAITING_SANDBOX) rather than
+        created_at to correctly measure sandbox duration.
+        """
+        from druppie.execution.tool_executor import ToolCallStatus
+        return (
+            self.db.query(ToolCall)
+            .filter(
+                ToolCall.status == ToolCallStatus.WAITING_SANDBOX,
+                # Use sandbox_waiting_at if available, fall back to created_at for legacy rows
+                (ToolCall.sandbox_waiting_at < cutoff_dt) |
+                ((ToolCall.sandbox_waiting_at.is_(None)) & (ToolCall.created_at < cutoff_dt)),
+            )
+            .all()
+        )
 
     def recover_zombie_sessions(self) -> list[UUID]:
         """Find and recover zombie sessions after a server restart.
