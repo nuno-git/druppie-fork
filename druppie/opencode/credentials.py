@@ -7,7 +7,7 @@ path (builtin_tools) and the retry path (sandbox routes) import from here.
 
 import os
 
-from druppie.sandbox.model_resolver import PROVIDER_API_KEYS
+from druppie.opencode.model_resolver import PROVIDER_API_KEYS
 
 # Provider name -> base URL. Must stay in sync with PROVIDER_API_KEYS.
 PROVIDER_BASE_URLS: dict[str, str] = {

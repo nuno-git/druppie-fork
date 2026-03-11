@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-from druppie.sandbox.model_resolver import get_agent_chain, resolve_sandbox_models
+from druppie.opencode.model_resolver import get_agent_chain, resolve_sandbox_models
 
 
 # =============================================================================
@@ -905,7 +905,7 @@ async def execute_sandbox_coding_task(
         The caller (tool_executor) should set ToolCallStatus.WAITING_SANDBOX.
     """
     import json as _json
-    from druppie.sandbox import create_and_start_sandbox, SandboxCreateError
+    from druppie.opencode import create_and_start_sandbox, SandboxCreateError
 
     task = args.get("task", "")
     from druppie.core.config import DEFAULT_SANDBOX_AGENT

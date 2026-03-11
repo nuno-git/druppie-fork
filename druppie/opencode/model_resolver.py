@@ -18,7 +18,7 @@ import yaml
 
 logger = structlog.get_logger()
 
-_CONFIG_PATH = Path(__file__).parent.parent / "opencode" / "config" / "sandbox_models.yaml"
+_CONFIG_PATH = Path(__file__).parent / "config" / "sandbox_models.yaml"
 _cached_config: dict | None = None
 
 
