@@ -1400,16 +1400,22 @@ Added to the **Architect (AR)** and **Business Analyst (BA)** agent tool sets. N
 # druppie/agents/builtin_tools.py
 
 @tool
-def list_druppie_modules(category: str = None, module_id: str = None) -> str:
-    """List available Druppie modules and their tools.
+def list_druppie_modules(
+    category: str = None,
+    module_id: str = None,
+    version: str = None,
+) -> str:
+    """List available Druppie modules or inspect a specific module version.
 
-    Without arguments: returns a summary of all modules (name, version, category, description).
+    Without arguments: returns a summary of all modules (name, available versions, category, description).
     With category: filters by MCP type (core, module, both).
-    With module_id: returns detailed info including all tool schemas for that module.
+    With module_id: returns detailed info for a specific module.
+    With module_id + version: returns full tool schemas for that specific version.
 
     Args:
         category: Filter by MCP type — "core", "module", or "both". Optional.
-        module_id: Get detailed tool schemas for a specific module. Optional.
+        module_id: Inspect a specific module. Optional.
+        version: Major version to inspect (e.g. "v1", "v2"). Requires module_id. Optional, defaults to latest.
     """
     ...
 ```
@@ -1417,32 +1423,33 @@ def list_druppie_modules(category: str = None, module_id: str = None) -> str:
 **How it works:**
 
 1. Reads `mcp_config.yaml` to get all registered modules and their endpoints
-2. Calls MCP `initialize` on each module to get name, version, instructions
-3. Calls MCP `tools/list` on each module to get tool names, descriptions, and input schemas
-4. Returns a formatted summary the agent can reason about
+2. Reads each module's `MODULE.yaml` to get available versions and latest version
+3. Calls MCP `initialize` on the latest version to get description
+4. When inspecting a specific version, calls MCP `tools/list` to get full tool schemas
 
 **Summary mode** (no `module_id`):
 ```
 Modules (3 found):
 
-  ocr (v2.1.0) — type: both
-    Tools: extract_text, extract_structured
+  ocr — type: both
+    Versions: v1, v2 (latest: v2)
     "Extract text and structured data from images and PDFs"
 
-  document-classifier (v1.0.0) — type: both
-    Tools: classify_document, suggest_category
+  document-classifier — type: both
+    Versions: v1 (latest: v1)
     "Classify documents into categories using ML"
 
-  code-analysis (v1.2.0) — type: core
-    Tools: analyze_complexity, find_duplicates
+  code-analysis — type: core
+    Versions: v1 (latest: v1)
     "Static code analysis tools for quality checks"
 ```
 
-**Detail mode** (`module_id="ocr"`):
+**Detail mode** (`module_id="ocr"`) — defaults to latest version:
 ```
-Module: ocr (v2.1.0)
+Module: ocr
 Type: both
-Versions: v1 (/v1/mcp), v2 (/v2/mcp)
+Versions: v1 (v1.4.2), v2 (v2.1.0)
+Showing: v2 (latest)
 
 Tool: extract_text
   Extract text from an image or PDF file.
@@ -1459,6 +1466,22 @@ Tool: extract_structured
   Args:
     - file_path (string, required): Path to the file
     - template (string, required): Extraction template name
+    - user_id (string, required): Druppie user ID
+    ...
+```
+
+**Specific version** (`module_id="ocr"`, `version="v1"`):
+```
+Module: ocr
+Type: both
+Versions: v1 (v1.4.2), v2 (v2.1.0)
+Showing: v1
+
+Tool: extract_text
+  Extract text from an image or PDF file.
+  Args:
+    - file_path (string, required): Path to the file
+    - language (string, optional): OCR language hint (default: "auto")
     - user_id (string, required): Druppie user ID
     ...
 ```
