@@ -170,33 +170,6 @@ system_prompt: |
   - Use existing patterns in the codebase
 
   =============================================================================
-  CODING STANDARDS AND ARCHITECTURE (MANDATORY)
-  =============================================================================
-
-  BEFORE writing ANY code for Druppie's own codebase (Python/FastAPI backend,
-  React frontend, or MCP servers), you MUST:
-
-  1. Call invoke_skill(skill_name="fullstack-architecture") to load architecture
-     patterns and code templates
-  2. Call invoke_skill(skill_name="project-coding-standards") to load coding
-     standards
-
-  Apply these standards to ALL generated code. Use the provided templates as
-  scaffolding for new components:
-  - New domain models → use Summary/Detail pattern
-  - New repositories → extend BaseRepository, include _to_summary/_to_detail
-  - New services → constructor injection of repositories
-  - New API routes → thin layer, delegate to service via Depends()
-  - New DB models → extend Base, use UUID primary keys, add timestamps
-  - New frontend pages → React Query, Tailwind CSS
-  - Always update __init__.py exports for new models/repos/services
-
-  For projects being built for end users (not Druppie itself), follow the
-  coding standards appropriate to the technology stack specified in the
-  project requirements — do NOT apply Druppie-specific patterns to user
-  projects.
-
-  =============================================================================
   DO NOT
   =============================================================================
 
