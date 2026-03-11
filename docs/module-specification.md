@@ -57,16 +57,20 @@ druppie/mcp-servers/module-<name>/
 ├── db.py                    # Shared DB connection (if module needs a database)
 ├── auth.py                  # Shared Keycloak JWT validation
 ├── v1/
-│   ├── module.py            # v1 business logic (fully independent)
+│   ├── __init__.py
+│   ├── module.py            # v1 public API: one method per MCP tool
 │   ├── tools.py             # v1 FastMCP tool definitions (name, description, schema, meta)
+│   ├── ...                  # Any internal modules (parsers, pipelines, models, etc.)
 │   ├── schema/
 │   │   ├── 001_initial.sql  # First migration
 │   │   └── current.sql      # Full schema snapshot (for fresh installs)
 │   └── tests/
 │       └── test_module.py   # v1-specific tests
 ├── v2/
-│   ├── module.py            # v2 business logic (fully independent)
+│   ├── __init__.py
+│   ├── module.py            # v2 public API: one method per MCP tool
 │   ├── tools.py             # v2 FastMCP tool definitions (name, description, schema, meta)
+│   ├── ...                  # Any internal modules
 │   ├── schema/
 │   │   ├── 001_add_pages_table.sql
 │   │   ├── 002_add_source_column.sql
@@ -87,7 +91,7 @@ druppie/mcp-servers/module-<name>/
 | Root `auth.py` | Keycloak JWT validation middleware | Yes — infrastructure only |
 | Root `Dockerfile` | Container definition, installs all deps | Yes |
 | Root `requirements.txt` | Union of all version dependencies | Yes |
-| `vN/module.py` | All business logic for this version | No — owned by version |
+| `vN/module.py` | Public API for this version (one method per tool). Imports from sibling files for complex modules | No — owned by version |
 | `vN/tools.py` | FastMCP tool definitions: name, description, input schema, `meta` (version, resource_metrics) — the **single source of truth** for the tool contract | No — owned by version |
 | `vN/schema/` | SQL migration files for this version's DB changes | No — owned by version |
 | `vN/tests/` | Tests for this version's contract | No — owned by version |
@@ -95,7 +99,7 @@ druppie/mcp-servers/module-<name>/
 
 ### Sharing Rule
 
-Infrastructure code lives at the root and is shared across all versions: `server.py` (routing), `db.py` (database connection pool), `auth.py` (JWT validation). **Business logic is never shared** — each version owns its full implementation in `vN/module.py`, even if some lines are identical across versions. If a bug exists in shared infrastructure, it is fixed once at the root. If a bug exists in business logic, fix it independently in each version directory.
+Infrastructure code lives at the root and is shared across all versions: `server.py` (routing), `db.py` (database connection pool), `auth.py` (JWT validation). **Business logic is never shared** — each version owns its full implementation in `vN/`, even if some code is identical across versions. If a bug exists in shared infrastructure, it is fixed once at the root. If a bug exists in business logic, fix it independently in each version directory.
 
 ### Naming Convention
 
@@ -152,16 +156,32 @@ Everything else is defined in code via FastMCP and exposed through the MCP proto
 
 ## 4. Module Code Contract
 
-### vN/module.py — Business Logic (Per-Version)
+### vN/module.py — Public API (Per-Version)
 
-Each version directory contains its own `module.py` with ALL business logic for that version. It MUST NOT depend on FastMCP, Starlette, or any HTTP framework.
+`module.py` is the **entry point** to the version's business logic — not necessarily the entire codebase. It exposes one public method per MCP tool, and `tools.py` only imports from `module.py`.
+
+For simple modules, all logic can live in `module.py`. For complex modules (document pipelines, ML models, multiple processing stages), `module.py` imports from sibling files:
+
+```
+v1/
+├── module.py          # Public API — tools.py imports from here
+├── tools.py           # FastMCP definitions
+├── parser.py          # Internal: document parsing logic
+├── pipeline.py        # Internal: processing pipeline
+├── models/
+│   └── classifier.py  # Internal: ML model wrapper
+├── schema/
+└── tests/
+```
+
+`module.py` and anything it imports MUST NOT depend on FastMCP, Starlette, or any HTTP framework — so it can be tested independently.
 
 ```python
-"""<Module Name> Module v1 — Business Logic.
+"""<Module Name> Module v1 — Public API.
 
-This file contains the pure business logic for v1 of the module.
-It is imported by v1/tools.py for MCP tool exposure.
-It can be tested independently without HTTP infrastructure.
+Entry point for v1 business logic. One public method per MCP tool.
+Imported by v1/tools.py for MCP exposure.
+Can import from sibling files for complex logic.
 """
 
 import logging
@@ -177,19 +197,18 @@ class <ModuleName>Module:
     """
 
     def __init__(self, config_param: str = "default"):
-        """Initialize with configuration from environment variables."""
         self.config_param = config_param
 
     async def tool_name(
         self,
         required_param: str,
         optional_param: str = "default",
+        user_id: str = "",
+        project_id: str = "",
+        session_id: str = "",
+        app_id: str = "",
     ) -> dict[str, Any]:
-        """Execute tool operation.
-
-        Returns:
-            Dict matching the tool's documented output format.
-        """
+        """Execute tool operation."""
         result = self._internal_processing(required_param)
         return {
             "field1": result["value"],
@@ -198,33 +217,24 @@ class <ModuleName>Module:
 ```
 
 **Rules**:
-- One public async method per MCP tool
+- One public async method per MCP tool, receiving all arguments (business + standard)
 - Method names match tool names in `vN/tools.py`
 - Raise exceptions on failure (don't return error dicts — let tools.py handle formatting)
 - No `SELECT *` in database queries — always select explicit columns so new columns from other versions don't break this version
 
 ### vN/tools.py — MCP Tool Definitions (Per-Version)
 
-Each version directory contains its own `tools.py` that wraps module methods as MCP tools. `tools.py` has two responsibilities:
+Each version directory contains its own `tools.py` that wraps module methods as MCP tools. `tools.py` is a thin layer with two responsibilities:
 
-1. **Adapter**: receives ALL arguments (business + standard), passes the right ones to `module.py`
-2. **Usage reporting**: measures timing, wraps the result with `_meta`
+1. **Pass all arguments** to `module.py` (business args + standard args)
+2. **Usage reporting**: measure timing, wrap the result with `_meta`
 
-#### Argument types
-
-Every MCP tool receives two kinds of arguments:
+Every MCP tool receives two kinds of arguments. `tools.py` passes all of them to `module.py` — the module uses what it needs and ignores the rest:
 
 | Type | Examples | Who provides them | Purpose |
 |------|----------|-------------------|---------|
 | **Business args** | `image_url`, `language` | The caller (agent prompt or app code) | What the tool actually does |
 | **Standard args** | `user_id`, `project_id`, `session_id`, `app_id` | Core injects them (agents), SDK passes them (apps) | Governance: who called, from where |
-
-`tools.py` always receives both. What it passes to `module.py` depends on whether the module needs them:
-
-- **Stateless module** (e.g., image processing, text classification): only pass business args. Standard args are used for `_meta` reporting only.
-- **Stateful module** (e.g., stores results per user/session in its own DB): pass business args AND the standard args the module needs.
-
-#### Template
 
 ```python
 """<Module Name> v1 — MCP Tool Definitions.
@@ -276,24 +286,22 @@ module = <ModuleName>Module(
     },
 )
 async def tool_name(
-    # --- Business arguments ---
     required_param: str,
     optional_param: str = "default",
-    # --- Standard arguments (injected by core, passed by SDK) ---
     user_id: str = "",
     project_id: str = "",
     session_id: str = "",
     app_id: str = "",
 ) -> dict:
     start = time.time()
-
-    # Pass what module.py needs. Stateless modules get business args only.
-    # Stateful modules also get user_id/session_id/app_id for data partitioning.
     result = await module.tool_name(
         required_param=required_param,
         optional_param=optional_param,
+        user_id=user_id,
+        project_id=project_id,
+        session_id=session_id,
+        app_id=app_id,
     )
-
     elapsed_ms = int((time.time() - start) * 1000)
     return {
         **result,
@@ -307,29 +315,6 @@ async def tool_name(
         },
     }
 ```
-
-#### Stateful example — module that stores results per session
-
-When a module stores data in its own database, it needs to know who the call belongs to:
-
-```python
-# tools.py — passes session_id to module.py for storage
-result = await module.extract_text(
-    image_url=image_url,
-    language=language,
-    session_id=session_id,  # Module stores this in its own DB
-)
-```
-
-```python
-# module.py — receives session_id as a regular business argument
-async def extract_text(self, image_url: str, language: str, session_id: str) -> dict:
-    result = self._run_ocr(image_url, language)
-    await self._save_extraction(session_id, image_url, result)
-    return {"text": result["text"], "confidence": result["confidence"]}
-```
-
-The key insight: from `module.py`'s perspective, `session_id` is just another argument. It doesn't know or care that it's a "standard" governance argument — `tools.py` decides what to pass.
 
 ### server.py — Root Router
 
@@ -951,10 +936,12 @@ The SDK is a lightweight Python package included in every Druppie-generated appl
 
 > For the full auth, governance, and usage tracking design, see `docs/plans/2026-03-11-auth-governance-design.md`.
 
-### Package Structure
+### Location
+
+The SDK lives in the Druppie monorepo at `druppie/sdk/`. It is a pip-installable Python package.
 
 ```
-druppie-sdk/
+druppie/sdk/
 ├── druppie_sdk/
 │   ├── __init__.py          # DruppieClient, DruppieAuth
 │   ├── client.py            # Main client — MCP client wrapper
@@ -965,6 +952,43 @@ druppie-sdk/
 ├── pyproject.toml
 └── README.md
 ```
+
+### How apps get the SDK
+
+Every Druppie-generated project starts from a **project template** (see [Project Template](#project-template) below) that already has the SDK installed. The builder agent doesn't install it — it just `from druppie_sdk import DruppieClient` in the code it writes.
+
+In Docker (deploy time), the SDK is copied from the Druppie repo and installed:
+
+```dockerfile
+COPY druppie/sdk/ /tmp/druppie-sdk/
+RUN pip install /tmp/druppie-sdk/
+```
+
+### Project Template
+
+Every new Druppie project starts from a template at `druppie/templates/project/`. This is copied into the project's repo at creation time, before the builder agent starts writing code.
+
+```
+druppie/templates/project/
+├── requirements.txt          # druppie-sdk already listed
+├── druppie.config.yaml       # Module connections, app identity (populated at deploy)
+├── Dockerfile                # SDK install baked in
+└── app/
+    └── main.py               # Skeleton with DruppieClient initialized
+```
+
+**What the template provides:**
+- SDK pre-installed as a dependency — builder agent just imports it
+- `druppie.config.yaml` — module URLs and app identity, populated at deploy time
+- Standard Dockerfile — SDK install, health endpoint, env vars
+- Skeleton `main.py` — `DruppieClient` initialized, ready for the agent to add routes
+
+**What the builder agent does:**
+- Writes application code that imports from `druppie_sdk`
+- Adds routes, business logic, frontend
+- Does NOT need to know how the SDK is installed or configured
+
+> **Python only for now.** The project template and SDK are Python. Non-Python app support may be added later.
 
 ### Core Client
 
@@ -1365,21 +1389,18 @@ module = OCRModule()
     },
 )
 async def extract_text(
-    # Business args
     image_url: str,
     language: str = "auto",
-    # Standard args
     user_id: str = "",
     project_id: str = "",
     session_id: str = "",
     app_id: str = "",
 ) -> dict:
     start = time.time()
-    # OCR is stateful (stores extractions) → pass session_id for data partitioning
     result = await module.extract_text(
-        image_url=image_url,
-        language=language,
-        session_id=session_id,
+        image_url=image_url, language=language,
+        user_id=user_id, project_id=project_id,
+        session_id=session_id, app_id=app_id,
     )
     elapsed_ms = int((time.time() - start) * 1000)
     return {
@@ -1395,10 +1416,11 @@ async def extract_text(
 **v1/module.py**:
 ```python
 class OCRModule:
-    async def extract_text(self, image_url: str, language: str = "auto", session_id: str = "") -> dict:
+    async def extract_text(self, image_url: str, language: str = "auto",
+                           user_id: str = "", project_id: str = "",
+                           session_id: str = "", app_id: str = "") -> dict:
         result = self._run_ocr(image_url, language)
-        if session_id:
-            await self._save_extraction(session_id, image_url, result)
+        await self._save_extraction(session_id, image_url, result)
         return {"text": result["text"], "confidence": result["confidence"]}
 ```
 
@@ -1490,10 +1512,11 @@ versions:
 **v2/module.py**:
 ```python
 class OCRModule:
-    async def extract_text(self, source: str, language: str = "auto", output_format: str = "plain", session_id: str = "") -> dict:
+    async def extract_text(self, source: str, language: str = "auto", output_format: str = "plain",
+                           user_id: str = "", project_id: str = "",
+                           session_id: str = "", app_id: str = "") -> dict:
         result = self._run_ocr(source, language)
-        if session_id:
-            await self._save_extraction(session_id, source, result)
+        await self._save_extraction(session_id, source, result)
         return {
             "document": {"text": result["text"], "format": output_format, "language": result["detected_language"]},
             "confidence": result["confidence"],
