@@ -187,15 +187,20 @@ services:
       MCP_PORT: "9001"
       GITEA_INTERNAL_URL: http://gitea:3000
       GITEA_ORG: druppie
-      GITEA_TOKEN: ${GITEA_TOKEN:-}
       GITEA_USER: ${GITEA_ADMIN_USER:-gitea_admin}
       GITEA_PASSWORD: ${GITEA_ADMIN_PASSWORD:-GiteaAdmin123}
+      SANDBOX_CONTROL_PLANE_URL: ${SANDBOX_CONTROL_PLANE_URL:-http://sandbox-control-plane:8787}
+      SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      BACKEND_URL: http://druppie-backend:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
     volumes:
       - druppie_new_workspace:/workspaces
     ports:
       - "${MCP_CODING_PORT:-9001}:9001"
     depends_on:
       gitea:
+        condition: service_healthy
+      sandbox-control-plane:
         condition: service_healthy
     networks:
       - druppie-new-network
@@ -322,6 +327,80 @@ services:
       start_period: 10s
 
   # ===========================================================================
+  # SANDBOX INFRASTRUCTURE (background-agents)
+  # ===========================================================================
+
+  sandbox-control-plane:
+    build:
+      context: ./vendor/open-inspect
+      dockerfile: packages/local-control-plane/Dockerfile
+    container_name: druppie-sandbox-control-plane
+    profiles: [infra, dev, prod]
+    environment:
+      PORT: 8787
+      DATA_DIR: /data
+      SANDBOX_MANAGER_URL: http://sandbox-manager:8000
+      WORKER_URL: http://sandbox-control-plane:8787
+      MODAL_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      INTERNAL_CALLBACK_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      # Credentials are now sent per-session from Druppie and proxied through the control plane.
+      # No LLM API keys or proxy URLs needed here.
+    volumes:
+      - sandbox_data:/data
+    networks:
+      - druppie-new-network
+      - druppie-sandbox-network  # Dual-network: sandbox containers reach control plane here
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  sandbox-manager:
+    build:
+      context: ./vendor/open-inspect
+      dockerfile: packages/local-sandbox-manager/Dockerfile
+    container_name: druppie-sandbox-manager
+    profiles: [infra, dev, prod]
+    environment:
+      MODAL_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-docker}
+      SANDBOX_IMAGE: open-inspect-sandbox:latest
+      KATA_RUNTIME: ${KATA_RUNTIME:-io.containerd.kata.v2}
+      CONTAINERD_NAMESPACE: ${CONTAINERD_NAMESPACE:-default}
+      DOCKER_NETWORK: druppie-sandbox-network  # Isolated network — sandboxes can only reach control plane
+      DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
+      DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-2}
+      # LLM API keys and proxy URLs no longer needed here.
+      # Credentials flow per-session from Druppie -> Control Plane -> Sandbox.
+    volumes:
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - sandbox_snapshots:/data/snapshots
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      sandbox-control-plane:
+        condition: service_healthy
+      sandbox-image-builder:
+        condition: service_completed_successfully
+
+  # Builds the sandbox base image, then exits. Docker caches it — only rebuilds when Dockerfile changes.
+  sandbox-image-builder:
+    build:
+      context: ./vendor/open-inspect
+      dockerfile: packages/local-sandbox-manager/Dockerfile.sandbox
+    image: open-inspect-sandbox:latest
+    profiles: [infra, dev, prod]
+    command: ["echo", "Sandbox image built successfully"]
+
+  # ===========================================================================
   # DATABASE ADMIN
   # ===========================================================================
 
@@ -415,7 +494,7 @@ services:
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
-      DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
+      DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1}
       FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
       FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
       FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
@@ -429,12 +508,16 @@ services:
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
       USE_MCP_MICROSERVICES: "true"
-      MCP_CODING_URL: http://mcp-coding:9001
-      MCP_DOCKER_URL: http://mcp-docker:9002
-      MCP_FILESEARCH_URL: http://mcp-filesearch:9004
-      MCP_WEB_URL: http://mcp-web:9005
-      MCP_ARCHIMATE_URL: http://mcp-archimate:9006
-      MCP_REGISTRY_URL: http://mcp-registry:9007
+      MCP_CODING_URL: ${MCP_CODING_URL:-http://mcp-coding:9001}
+      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
+      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
+      MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
+      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
+      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+      SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
+      SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      SANDBOX_MODEL: ${SANDBOX_MODEL:-}
+      BACKEND_URL: http://druppie-backend-dev:8000
     volumes:
       - ./druppie:/app/druppie
       - druppie_new_workspace:/app/workspace
@@ -470,6 +553,7 @@ services:
     container_name: druppie-new-backend
     profiles: [prod]
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
       DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
       DEV_MODE: ${DEV_MODE:-false}
       KEYCLOAK_SERVER_URL: http://keycloak:8080
@@ -484,7 +568,7 @@ services:
       ZAI_BASE_URL: ${ZAI_BASE_URL:-https://api.z.ai/api/coding/paas/v4}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-Qwen/Qwen3-32B}
-      DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1/openai}
+      DEEPINFRA_BASE_URL: ${DEEPINFRA_BASE_URL:-https://api.deepinfra.com/v1}
       FOUNDRY_API_KEY: ${FOUNDRY_API_KEY:-}
       FOUNDRY_MODEL: ${FOUNDRY_MODEL:-GPT-5-MINI}
       FOUNDRY_API_URL: ${FOUNDRY_API_URL:-}
@@ -504,6 +588,10 @@ services:
       MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+      SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
+      SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      SANDBOX_MODEL: ${SANDBOX_MODEL:-}
+      BACKEND_URL: http://druppie-backend:8000
     volumes:
       - druppie_new_workspace:/app/workspace
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
@@ -602,6 +690,9 @@ services:
         until docker exec druppie-new-db pg_isready -U druppie; do sleep 1; done
         echo "Dropping application tables..."
         docker exec druppie-new-db psql -U druppie -d druppie -c "
+          DROP TABLE IF EXISTS sandbox_sessions CASCADE;
+          DROP TABLE IF EXISTS tool_call_normalizations CASCADE;
+          DROP TABLE IF EXISTS llm_retries CASCADE;
           DROP TABLE IF EXISTS questions CASCADE;
           DROP TABLE IF EXISTS approvals CASCADE;
           DROP TABLE IF EXISTS llm_calls CASCADE;
@@ -672,6 +763,10 @@ volumes:
     name: druppie_new_dataset
   druppie_init_marker:
     name: druppie_init_marker
+  sandbox_data:
+    name: druppie_sandbox_data
+  sandbox_snapshots:
+    name: druppie_sandbox_snapshots
 
 # =============================================================================
 # NETWORKS
@@ -681,3 +776,8 @@ networks:
   druppie-new-network:
     name: druppie-new-network
     driver: bridge
+  druppie-sandbox-network:
+    name: druppie-sandbox-network
+    driver: bridge
+    # Isolated network for sandbox containers — only the control plane bridges both networks.
+    # Prevents compromised sandboxes from reaching the database, Keycloak, Gitea, or backend directly.

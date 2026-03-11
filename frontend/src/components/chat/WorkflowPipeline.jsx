@@ -14,6 +14,7 @@ import { getAgentConfig, getAgentColorClasses, formatToolName } from '../../util
 const WAITING_STATUSES = new Set([
   'paused_hitl',
   'paused_tool',
+  'paused_sandbox',
   'waiting_approval',
   'waiting_answer',
 ])

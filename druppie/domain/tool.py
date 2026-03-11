@@ -378,7 +378,13 @@ class ToolDefinition(BaseModel):
         # First try with original arguments
         try:
             validated = self.params_model.model_validate(arguments)
-            return True, None, validated, None  # No normalization needed
+            # Pydantic may coerce types (e.g. "600" -> 600). Return the
+            # coerced dict so the MCP server receives correct types.
+            coerced = validated.model_dump(exclude_unset=True)
+            coerced_diff = {k: coerced[k] for k in coerced if k in arguments and coerced[k] != arguments[k]}
+            if coerced_diff:
+                return True, None, validated, {**arguments, **coerced}
+            return True, None, validated, None  # No coercion needed
         except ValidationError as first_error:
             pass  # Try normalization fallback
 
