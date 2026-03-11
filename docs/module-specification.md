@@ -15,11 +15,10 @@
 4. [Module Code Contract](#4-module-code-contract)
 5. [Version System](#5-version-system)
 6. [Database & Storage](#6-database--storage)
-7. [Module Registry](#7-module-registry)
-8. [Druppie SDK](#8-druppie-sdk)
-9. [Backend API for Modules](#9-backend-api-for-modules)
-10. [Module Lifecycle](#10-module-lifecycle)
-11. [Complete Example: OCR Module v1.0→v2.0](#11-complete-example-ocr-module)
+7. [Druppie SDK](#7-druppie-sdk)
+8. [Backend API for Modules](#8-backend-api-for-modules)
+9. [Module Lifecycle](#9-module-lifecycle)
+10. [Complete Example: OCR Module v1.0→v2.0](#10-complete-example-ocr-module)
 
 ---
 
@@ -137,7 +136,7 @@ versions:                                  # All active major versions (required
   - "2.0.0"                               # Served at /v2/mcp
 ```
 
-That's it. Three fields. Read by `server.py` for routing and by the registry for version tracking.
+That's it. Three fields. Read by `server.py` for routing.
 
 ### What Comes From the MCP Server Instead
 
@@ -798,139 +797,7 @@ Migrations always run in order: all v1 migrations first, then v2 migrations. v2'
 
 ---
 
-## 7. Module Registry
-
-### Database Tables
-
-File: `druppie/db/models/module_registry.py`
-
-```python
-"""Module registry database models.
-
-Tables:
-  modules              — Installed module instances (identity + container location)
-  module_versions      — Every active major version of a module
-  module_tool_schemas  — Cached tool schemas per version (from MCP tools/list)
-
-Design principle: the registry caches what MCP tells us. Module identity
-(name, description) comes from the MCP `initialize` response. Tool schemas
-come from `tools/list`. The registry stores these for offline discovery
-and UI display — the MCP server is always the source of truth.
-"""
-
-from uuid import uuid4
-from sqlalchemy import (
-    Column, DateTime, ForeignKey, Integer, String, Text,
-    UniqueConstraint,
-)
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
-from .base import Base, utcnow
-
-
-class Module(Base):
-    """An installed Druppie module.
-
-    Only stores operational data: where is it, what version is latest,
-    is it active. Display fields (name, description) are cached from
-    the MCP `initialize` response and refreshed on registration.
-    """
-    __tablename__ = "modules"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    module_id = Column(String(100), unique=True, nullable=False)  # matches MODULE.yaml id
-    display_name = Column(String(255))           # cached from MCP initialize response
-    description = Column(Text)                   # cached from MCP initialize response
-    latest_version = Column(String(20), nullable=False)
-    container_url = Column(String(500), nullable=False)
-    status = Column(String(20), default="active")  # active, disabled
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    versions = relationship("ModuleVersion", back_populates="module", cascade="all, delete-orphan")
-
-
-class ModuleVersion(Base):
-    """An active major version of a module (e.g., v1 at 1.2.0, v2 at 2.0.0).
-
-    Route path is derived: major_version=1 → /v1/mcp. No need to store it.
-    """
-    __tablename__ = "module_versions"
-    __table_args__ = (UniqueConstraint("module_id", "major_version", name="uq_module_major_version"),)
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    module_id = Column(UUID(as_uuid=True), ForeignKey("modules.id", ondelete="CASCADE"), nullable=False)
-    major_version = Column(Integer, nullable=False)          # 1, 2, etc.
-    current_version = Column(String(20), nullable=False)     # "1.2.0", "2.0.0"
-    instructions = Column(Text)                              # cached from MCP initialize
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    module = relationship("Module", back_populates="versions")
-    tool_schemas = relationship("ModuleToolSchema", back_populates="module_version", cascade="all, delete-orphan")
-
-
-class ModuleToolSchema(Base):
-    """Cached tool schema from MCP tools/list response.
-
-    Stores the input schema and meta (including resource_metrics) as Text.
-    Refreshed on module registration. The MCP server is the source of truth —
-    this is a cache for discovery UI and offline reference.
-
-    Approval rules and role requirements live in mcp_config.yaml, not here.
-    """
-    __tablename__ = "module_tool_schemas"
-    __table_args__ = (
-        UniqueConstraint("module_version_id", "tool_name", name="uq_version_tool"),
-    )
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    module_version_id = Column(UUID(as_uuid=True), ForeignKey("module_versions.id", ondelete="CASCADE"), nullable=False)
-    tool_name = Column(String(100), nullable=False)
-    description = Column(Text)                   # cached from tools/list
-    input_schema_json = Column(Text, nullable=False)  # cached from tools/list
-    meta_json = Column(Text)                     # cached from tools/list meta (resource_metrics, etc.)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-    module_version = relationship("ModuleVersion", back_populates="tool_schemas")
-```
-
-### Registry Service
-
-The registry reads `MODULE.yaml` for version info and queries the live MCP server for tool schemas and metadata. It acts as a **cache** — the MCP server is always the source of truth.
-
-```python
-# druppie/services/module_registry_service.py
-
-class ModuleRegistryService:
-    """Manages module registration, version tracking, and discovery."""
-
-    async def register_module(self, module_path: str) -> Module:
-        """Register or refresh a module from its directory.
-
-        1. Parse root MODULE.yaml (id, version list, latest_version)
-        2. For each version, call MCP initialize → cache name, description, instructions
-        3. For each version, call MCP tools/list → cache tool schemas + meta
-        4. Create/update Module, ModuleVersion, ModuleToolSchema records
-        """
-        ...
-
-    async def refresh_module(self, module_id: str) -> Module:
-        """Re-query MCP server and update cached schemas/metadata."""
-        ...
-
-    async def get_module(self, module_id: str) -> ModuleDetail:
-        """Get module with all versions and tool schemas."""
-        ...
-
-    async def list_modules(self) -> list[ModuleSummary]:
-        """List all installed modules (Summary pattern)."""
-        ...
-```
-
----
-
-## 8. Druppie SDK
+## 7. Druppie SDK
 
 The SDK is a lightweight Python package included in every Druppie-generated application. It is an **MCP client** that connects directly to module MCP servers (no gateway proxy). It handles authentication, standard argument injection, usage reporting, version routing, and retries.
 
@@ -1060,7 +927,7 @@ class ModuleClient:
     ) -> dict:
         """Call a module MCP tool directly.
 
-        1. Resolves module URL from config/registry
+        1. Resolves module URL from config
         2. Adds standard arguments (user_id, project_id, app_id)
         3. Makes MCP tool call (official protocol)
         4. Extracts _meta.usage and reports to Druppie backend
@@ -1223,7 +1090,7 @@ class ClassifierAccessor:
 
 ---
 
-## 9. Backend API for Modules
+## 8. Backend API for Modules
 
 Apps connect directly to module MCP servers (no gateway proxy). The Druppie backend provides supporting API routes for usage reporting, module discovery, and app access control.
 
@@ -1287,7 +1154,7 @@ async def assign_role(app_id: str, user_id: str, role_assignment: RoleAssignment
 
 ---
 
-## 10. Module Lifecycle
+## 9. Module Lifecycle
 
 ### From Proposal to Running
 
@@ -1302,8 +1169,6 @@ async def assign_role(app_id: str, user_id: str, role_assignment: RoleAssignment
                 Test locally: python server.py (no Docker needed)
 
 2. REGISTER    Add docker-compose service + mcp_config.yaml entry
-                Run: ModuleRegistryService.register_module("path/to/module")
-                → Creates Module, ModuleVersion, ModuleToolSchema records
 
 3. DEPLOY      docker compose --profile dev up -d module-<name>
                 Container starts, health check passes
@@ -1323,8 +1188,7 @@ async def assign_role(app_id: str, user_id: str, role_assignment: RoleAssignment
 3. Add migration file to `vN/schema/` if DB changes needed (additive-only, with defaults)
 4. Update `vN/tests/`
 5. Rebuild and restart container
-6. Run `register_module()` to update registry (re-reads from MCP `tools/list`)
-7. All applications continue working — no changes needed
+6. All applications continue working — no changes needed
 
 **Breaking update (MAJOR)** — create new `vN+1/` directory:
 1. Create `vN+1/` directory
@@ -1336,12 +1200,11 @@ async def assign_role(app_id: str, user_id: str, role_assignment: RoleAssignment
 7. Update root `MODULE.yaml`: add new version to `versions`, update `latest_version`
 8. Update root `server.py` to import and mount `vN+1/tools.py`
 9. Rebuild and restart container
-10. Run `register_module()` to update registry
-11. `vN/` is untouched — all existing clients at `/vN/mcp` continue working
+10. `vN/` is untouched — all existing clients at `/vN/mcp` continue working
 
 ---
 
-## 11. Complete Example: OCR Module
+## 10. Complete Example: OCR Module
 
 ### v1.0.0 — Initial Release
 
