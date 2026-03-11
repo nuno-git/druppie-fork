@@ -195,7 +195,7 @@ class AgentLoop:
     def _enrich_execute_coding_task(self, openai_tools: list[dict]) -> None:
         """Dynamically enrich execute_coding_task with available sandbox agents.
 
-        Reads agent markdown files from druppie/sandbox-config/agents/ and
+        Reads agent markdown files from druppie/opencode/agents/ and
         injects their names as an enum + descriptions into the tool schema,
         following the same pattern as _enrich_invoke_skill.
         """
@@ -210,8 +210,8 @@ class AgentLoop:
         if target is None:
             return
 
-        # Discover agents from sandbox-config/agents/*.md
-        agents_dir = Path(__file__).resolve().parent.parent / "sandbox-config" / "agents"
+        # Discover agents from opencode/agents/*.md
+        agents_dir = Path(__file__).resolve().parent.parent / "opencode" / "agents"
         if not agents_dir.is_dir():
             return
 

@@ -20,8 +20,9 @@ from druppie.sandbox.model_resolver import get_raw_model_chains, resolve_sandbox
 
 logger = structlog.get_logger()
 
-_AGENTS_DIR = Path(__file__).parent.parent / "sandbox-config" / "agents"
-_OPENCODE_SKILLS_DIR = Path(__file__).parent.parent / "opencode" / "skills"
+_OPENCODE_DIR = Path(__file__).parent.parent / "opencode"
+_AGENTS_DIR = _OPENCODE_DIR / "agents"
+_OPENCODE_SKILLS_DIR = _OPENCODE_DIR / "skills"
 
 
 class SandboxCreateError(Exception):
