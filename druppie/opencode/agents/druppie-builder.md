@@ -1,6 +1,11 @@
 ---
 description: Druppie coding agent — implements code and pushes to git
 mode: primary
+permission:
+  skill:
+    "fullstack-architecture": "allow"
+    "project-coding-standards": "allow"
+    "standards-validation": "allow"
 ---
 
 ## Git Workflow (MANDATORY)
