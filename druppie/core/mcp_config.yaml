@@ -235,23 +235,23 @@ mcps:
       session_id:
         from: session.id
         hidden: true
-        tools: [build, run]  # Only these tools accept session_id
+        tools: [build, run, compose_up]  # Only these tools accept session_id
       repo_name:
         from: project.repo_name
         hidden: true
-        tools: [build]  # Only build needs repo info
+        tools: [build, compose_up]  # Only build needs repo info
       repo_owner:
         from: project.repo_owner
         hidden: true
-        tools: [build]
+        tools: [build, compose_up]
       user_id:
         from: session.user_id
         hidden: true
-        tools: [run]  # For ownership labels
+        tools: [run, compose_up]  # For ownership labels
       project_id:
         from: session.project_id
         hidden: true
-        tools: [run]  # For ownership labels
+        tools: [run, compose_up]  # For ownership labels
     tools:
       - name: build
         description: "Build Docker image by cloning from git repository"
@@ -416,6 +416,52 @@ mcps:
           required:
             - container_name
             - command
+
+      - name: compose_up
+        description: "Deploy application with docker compose (app + database)"
+        requires_approval: true
+        required_role: developer
+        parameters:
+          type: object
+          properties:
+            repo_name:
+              type: string
+              description: "Gitea repository name"
+            repo_owner:
+              type: string
+              description: "Gitea repository owner"
+            git_url:
+              type: string
+              description: "Full git URL (alternative to repo_name/repo_owner)"
+            branch:
+              type: string
+              description: "Git branch to deploy (default: main)"
+            compose_project_name:
+              type: string
+              description: "Docker Compose project name (auto-derived if omitted)"
+            health_path:
+              type: string
+              description: "Health check endpoint path (default: /health)"
+            health_timeout:
+              type: integer
+              description: "Health check timeout in seconds (default: 30)"
+          required: []
+
+      - name: compose_down
+        description: "Stop and remove a docker compose deployment"
+        requires_approval: true
+        required_role: developer
+        parameters:
+          type: object
+          properties:
+            compose_project_name:
+              type: string
+              description: "Docker Compose project name to stop"
+            remove_volumes:
+              type: boolean
+              description: "Remove associated volumes (default: true)"
+          required:
+            - compose_project_name
 
   # NOTE: HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question) are
   # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
