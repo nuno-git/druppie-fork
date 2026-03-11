@@ -36,7 +36,7 @@ All generated code MUST comply with these rules.
 ### Type Hints
 
 - **Required** on all function signatures (parameters and return types)
-- Use `X | None` syntax instead of `Optional[X]` (Python 3.11+)
+- Prefer `X | None` syntax for new code (Python 3.11+); `Optional[X]` is also acceptable
 - Use `list[X]` instead of `List[X]` (lowercase generics)
 - Use `dict[K, V]` instead of `Dict[K, V]`
 - Use `from __future__ import annotations` when forward references are needed
@@ -93,6 +93,8 @@ class ProjectRepository(BaseRepository):
 - Use `structlog.get_logger()` — **never** `logging.getLogger()`
 - Logger as module-level constant: `logger = structlog.get_logger()`
 - Use structured key-value pairs, not string formatting
+- **Exception**: MCP servers (`druppie/mcp-servers/`) run as standalone
+  Docker containers without structlog. Use `logging.getLogger()` there.
 
 ```python
 import structlog
@@ -176,7 +178,7 @@ import { getProjects } from '../services/api'
 
 These rules are **absolute** and override any other convention:
 
-1. **NO JSON/JSONB columns** in PostgreSQL — normalize everything into proper relational tables with foreign keys
+1. **NO JSON/JSONB columns** for structured domain data — normalize into proper relational tables with foreign keys. **Exception**: JSON columns are acceptable for dynamic external data with no fixed schema (e.g., LLM message arrays, tool call arguments, agent state snapshots, user-provided choices).
 2. **NO database migrations** (no Alembic) — update SQLAlchemy models directly, reset DB with `docker compose --profile reset-db run --rm reset-db`
 3. **NO legacy/fallback code** — clean architecture only, no backwards compatibility hacks
 4. **Config in YAML files** — agent definitions in `agents/definitions/*.yaml`, not in database

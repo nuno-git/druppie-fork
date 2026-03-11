@@ -12,6 +12,17 @@ Use this checklist to validate generated code against Druppie's project
 coding standards and architecture patterns. Check each item and report
 findings in the structured output format below.
 
+**IMPORTANT: Druppie vs. User Projects**
+
+This checklist applies to **Druppie's own codebase** (Python/FastAPI backend,
+React frontend, MCP servers). When reviewing code for **user projects**
+(projects built by agents for end users), apply only the general code quality
+and security checks (sections 2.Code Style and 3.Critical Violations where
+universally applicable). Do NOT enforce Druppie-specific patterns
+(Summary/Detail, BaseRepository, deps.py wiring, etc.) on user projects —
+instead validate against the technology stack and conventions defined in that
+project's own specification or builder_plan.md.
+
 ---
 
 ## 1. Architecture Compliance
@@ -74,15 +85,28 @@ findings in the structured output format below.
 - [ ] **Type hints on all public functions** — parameters and return types
 - [ ] **Google-style docstrings** — on all public classes and functions
 - [ ] **structlog logging** — `logger = structlog.get_logger()` at module
-  level, structured key-value logging
+  level, structured key-value logging (exception: MCP servers use
+  `logging.getLogger()` since they run as standalone containers)
 - [ ] **No bare `except:`** — always specify exception type
 - [ ] **Correct import order** — stdlib → third-party → local (Ruff I rule)
+- [ ] **Ruff linting clean** — rules E, F, W, I selected; `ruff check .`
+  with zero errors
+- [ ] **`X | None` preferred** — new code uses union syntax and lowercase
+  generics (`list[X]`, `dict[K, V]`)
+- [ ] **Async conventions** — route handlers use `async def`; repositories
+  use `def`; services use `def` unless calling async externals
+- [ ] **Error handling** — uses project errors from `druppie/api/errors.py`
+  (`NotFoundError`, `AuthorizationError`); lets framework errors propagate
 
 ### Frontend
 
 - [ ] **Functional components only** — no class components
 - [ ] **Tailwind CSS** — styling via utility classes, not CSS modules
 - [ ] **ESLint clean** — no warnings (enforced with `--max-warnings 0`)
+- [ ] **React Query for server state** — `useQuery` / `useMutation` from
+  `@tanstack/react-query`; Zustand for client-only state
+- [ ] **Lucide React icons** — no other icon libraries
+- [ ] **Import order** — React/third-party → components → services → styles
 
 ### Naming Conventions
 
@@ -92,6 +116,20 @@ findings in the structured output format below.
 - [ ] **React components** — `PascalCase` names, `PascalCase.jsx` files
 - [ ] **JavaScript variables/functions** — `camelCase`
 - [ ] **API route prefixes** — plural nouns (`/projects`, `/sessions`)
+- [ ] **Python constants** — `UPPER_SNAKE_CASE`
+- [ ] **Python packages/directories** — `snake_case`
+- [ ] **Component files** — `PascalCase.jsx`
+- [ ] **Service files** — `camelCase.js`
+
+### File Organization
+
+- [ ] **Domain models** in `druppie/domain/<entity>.py` — exported in `__init__.py`
+- [ ] **DB models** in `druppie/db/models/<entity>.py` — exported in `__init__.py`
+- [ ] **Repositories** in `druppie/repositories/<entity>_repository.py`
+- [ ] **Services** in `druppie/services/<entity>_service.py`
+- [ ] **API routes** in `druppie/api/routes/<entities>.py` — plural noun
+- [ ] **Frontend pages** in `frontend/src/pages/PascalCase.jsx`
+- [ ] **Skills** in `druppie/skills/<skill-name>/SKILL.md` — kebab-case dir
 
 ---
 
@@ -101,7 +139,7 @@ These issues automatically result in a **FAIL** verdict:
 
 | Violation | Why It Fails |
 |-----------|-------------|
-| **JSON/JSONB column** in any SQLAlchemy model | Project rule: normalize into relational tables |
+| **JSON/JSONB column** for structured domain data (settings, config, relationships) | Normalize into relational tables. Exception: dynamic external data (LLM messages, tool args, agent state) may use JSON |
 | **Database migration file** (Alembic, etc.) | Project rule: update models directly, reset DB |
 | **Legacy/fallback code** (backwards compat hacks, unused `_vars`) | Project rule: clean architecture only |
 | **Business logic in route handlers** (DB queries, complex conditionals) | Architecture: routes must be thin |
@@ -177,13 +215,16 @@ Structure REVIEW.md as follows:
 
 ## Review Process
 
-1. **Invoke skills** — load `project-coding-standards` and this
-   `standards-validation` skill
+1. **Invoke skills** — load `fullstack-architecture`,
+   `project-coding-standards`, and this `standards-validation` skill
 2. **Read the code** — use `coding_read_file` and `coding_list_dir` to
    inspect all generated files
-3. **Apply checklists** — go through each section above
-4. **Check for critical violations** — any violation in section 3 means
+3. **Determine project type** — check if this is Druppie's own codebase
+   or a user project (see "Druppie vs. User Projects" note above)
+4. **Apply checklists** — go through each section above (skip
+   architecture/template sections for user projects)
+5. **Check for critical violations** — any violation in section 3 means
    automatic FAIL
-5. **Write REVIEW.md** — using the output format above
-6. **Commit and push** — save REVIEW.md to git
-7. **Call done()** — with summary including verdict and key findings
+6. **Write REVIEW.md** — using the output format above
+7. **Commit and push** — save REVIEW.md to git
+8. **Call done()** — with summary including verdict and key findings
