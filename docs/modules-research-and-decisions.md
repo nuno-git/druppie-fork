@@ -813,8 +813,8 @@ GROUP BY user_id, module_id;
 
 | Agent Role | Involvement | What they do |
 |-----------|-------------|-------------|
-| **Business Analyst (BA)** | Required | Defines functional requirements and acceptance criteria in the FO (Functioneel Ontwerp). Provides a possible solution direction — does NOT decide whether a module should be built |
-| **Architect (AR)** | Required | Determines whether a new module is needed. Creates the **module specification** by combining functional requirements (from the BA's FO) with technical requirements. Designs the module contract (input/output schema) and validates against the module convention |
+| **Business Analyst (BA)** | Required | Defines functional requirements and acceptance criteria in the FD (Functional Design). Provides a possible solution direction — does NOT decide whether a module should be built |
+| **Architect (AR)** | Required | Determines whether a new module is needed. Creates the **module specification** by combining functional requirements (from the BA's FD) with technical requirements. Designs the module contract (input/output schema) and validates against the module convention |
 | **Developer (DEV)** | Required | Implements module logic, MCP server, tests |
 | **Reviewer** | Required | Reviews module code against convention, security, performance |
 | **Planner** | Optional | Orchestrates multi-agent workflow if module is complex |
@@ -825,14 +825,14 @@ GROUP BY user_id, module_id;
 
 The BA and Architect have distinct, sequential responsibilities:
 
-| Aspect | BA (Functioneel Ontwerp) | Architect (Module Specification) |
+| Aspect | BA (Functional Design) | Architect (Module Specification) |
 |--------|--------------------------|----------------------------------|
 | **Focus** | What the user needs | How the platform delivers it |
-| **Output** | FO with functional requirements and acceptance criteria | MODULE_SPEC.md with functional + technical requirements |
+| **Output** | FD with functional requirements and acceptance criteria | MODULE_SPEC.md with functional + technical requirements |
 | **Module decision** | Suggests a possible solution direction | Decides whether a module is the right approach |
 | **Scope** | End-to-end problem description | Module-specific contract and constraints |
 
-The BA describes the problem and what a solution must achieve. The Architect reads the FO, decides whether an existing module covers it or a new module is needed, and if so, writes the module specification that combines the BA's functional requirements with the technical requirements needed for the module convention.
+The BA describes the problem and what a solution must achieve. The Architect reads the FD, decides whether an existing module covers it or a new module is needed, and if so, writes the module specification that combines the BA's functional requirements with the technical requirements needed for the module convention.
 
 ### Module Acceptance: Who Decides?
 
@@ -852,19 +852,19 @@ The **Architect (AR)** is responsible for evaluating scope and overlap. Module p
 
 Modules are created through the **update core** flow — the Architect adds new modules directly to the Druppie core codebase via a PR workflow.
 
-**The trigger**: During the design phase of any project, the Architect reviews the BA's FO and determines that a reusable capability is needed that doesn't exist yet (or that an existing module needs a new major version). This is the moment a module is born.
+**The trigger**: During the design phase of any project, the Architect reviews the BA's FD and determines that a reusable capability is needed that doesn't exist yet (or that an existing module needs a new major version). This is the moment a module is born.
 
 **The flow**:
 
 ```
-1. BA writes the FO          -> Functional requirements, acceptance criteria,
+1. BA writes the FD          -> Functional requirements, acceptance criteria,
                                 possible solution direction
 
-2. AR reads the FO            -> Determines: can existing modules cover this,
+2. AR reads the FD            -> Determines: can existing modules cover this,
                                 or is a new module needed?
 
 3. AR writes module spec      -> MODULE_SPEC.md combining:
-                                - Functional requirements (from FO)
+                                - Functional requirements (from FD)
                                 - Technical requirements (from AR)
                                 - Module contract (input/output schema)
                                 - Version strategy
@@ -894,7 +894,7 @@ Modules are not just infrastructure for developers — **agents are the first co
 ### Module Development Workflow
 
 ```
-1. BA defines requirements    -> FO with functional reqs and acceptance criteria
+1. BA defines requirements    -> FD with functional reqs and acceptance criteria
 2. AR decides module needed   -> Evaluates acceptance criteria, checks for overlap
 3. AR writes module spec      -> MODULE_SPEC.md (functional + technical reqs)
 4. AR triggers update core    -> Creates branch + PR on Druppie core repo
