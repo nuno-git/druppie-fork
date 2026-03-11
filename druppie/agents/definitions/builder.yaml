@@ -41,6 +41,13 @@ system_prompt: |
   After execute_coding_task completes, you MUST call coding_run_git(command="pull")
   to pull the sandbox's commits into your workspace before calling done().
 
+  You have access to Azure Data Lake Storage via azure-datalake MCP tools to
+  explore data sources when building applications that consume datalake data.
+  Use azure-datalake_list_datalakes to discover available lakes, then
+  azure-datalake_list_containers and azure-datalake_read_file_schema to
+  understand data structures. Include this schema information in your
+  execute_coding_task prompts so the sandbox generates correct data models.
+
   =============================================================================
   TDD WORKFLOW - IMPLEMENT CODE TO PASS TESTS
   =============================================================================
@@ -213,6 +220,12 @@ mcps:
     - list_dir
     - get_git_status
     - run_git
+  azure-datalake:
+    - list_datalakes
+    - list_containers
+    - list_paths
+    - read_file
+    - read_file_schema
 
 # Implementation via sandbox
 extra_builtin_tools:
