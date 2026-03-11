@@ -2,7 +2,7 @@
 
 > **Status**: Specification (ready for team review)
 > **Date**: 2026-03-10 (versioning redesign), original 2026-02-24
-> **Prerequisite**: Read `docs/modules.md` for the design research and approach selection
+> **Prerequisite**: Read `docs/modules-research-and-decisions.md` for the design research and approach selection
 > **Approach**: SDK + MCP Hybrid with direct module access (Approach C from design doc, without shared DB or gateway proxy from E)
 
 ---
@@ -15,10 +15,17 @@
 4. [Module Code Contract](#4-module-code-contract)
 5. [Version System](#5-version-system)
 6. [Database & Storage](#6-database--storage)
-7. [Druppie SDK](#7-druppie-sdk)
-8. [Backend API for Modules](#8-backend-api-for-modules)
-9. [Module Lifecycle](#9-module-lifecycle)
-10. [Complete Example: OCR Module v1.0→v2.0](#10-complete-example-ocr-module)
+7. [MCP Protocol & Categories](#7-mcp-protocol--categories)
+8. [Standard Module Arguments](#8-standard-module-arguments)
+9. [Authentication](#9-authentication)
+10. [Usage Tracking & Analytics](#10-usage-tracking--analytics)
+11. [Application Access Control](#11-application-access-control)
+12. [Database Tables (Druppie Core)](#12-database-tables-druppie-core)
+13. [Druppie SDK](#13-druppie-sdk)
+14. [Backend API for Modules](#14-backend-api-for-modules)
+15. [Module Lifecycle](#15-module-lifecycle)
+16. [Complete Example: OCR Module v1.0→v2.0](#16-complete-example-ocr-module)
+17. [Impact on Existing Code](#17-impact-on-existing-code)
 
 ---
 
@@ -612,7 +619,7 @@ CMD ["python", "server.py"]
           required: [required_param]
 ```
 
-> **MCP types**: `core` = agents only (coding, docker, etc.), `module` = apps only (via SDK), `both` = agents + apps (OCR, classifier, etc.). Apps connect directly to modules via the SDK. See `docs/plans/2026-03-11-auth-governance-design.md` for details.
+> **MCP types**: `core` = agents only (coding, docker, etc.), `module` = apps only (via SDK), `both` = agents + apps (OCR, classifier, etc.). Apps connect directly to modules via the SDK. See [Section 7](#7-mcp-protocol--categories) for details.
 
 ---
 
@@ -797,11 +804,289 @@ Migrations always run in order: all v1 migrations first, then v2 migrations. v2'
 
 ---
 
-## 7. Druppie SDK
+## 7. MCP Protocol & Categories
+
+### MCP Protocol Upgrade
+
+All MCP servers use **FastMCP** (official Python MCP SDK). Both Druppie core and the Druppie SDK use the official MCP client library. This replaces the custom HTTP servers with hand-rolled JSON-RPC and the `MCPClient`/`MCPHttp` in `druppie/core/`.
+
+**Server side:** Every MCP server becomes a proper FastMCP server (see `tools.py` template in [Section 4](#4-module-code-contract)).
+
+**Client side — Druppie Core:** Replace `MCPHttp` with the official MCP client, wrapped with Druppie-specific features:
+
+```python
+class DruppieToolExecutor:
+    """Wraps official MCP client with Druppie-specific features.
+
+    1. Argument injection (core-only: session_id, project_id, etc.)
+    2. Approval checking (existing flow, unchanged)
+    3. Usage recording (reads _meta.usage, writes to module_usage table)
+    """
+```
+
+**Client side — Druppie SDK:** The SDK is also an MCP client, but without injection — apps pass arguments explicitly (see [Section 13](#13-druppie-sdk)).
+
+**What stays in `mcp_config.yaml`:** Tool lists, approval rules, injection mappings, and the `type` field (see template in [Section 2](#2-file-structure--contract)).
+
+### MCP Server Categories
+
+| Type | Used by | Argument handling | Examples |
+|------|---------|-------------------|----------|
+| `core` | Agents only | Druppie core injects session_id, project_id, repo_name, etc. from session context | coding, docker, filesearch, archimate |
+| `module` | Apps only | SDK passes standard args explicitly | App-specific modules with no agent use case |
+| `both` | Agents + Apps | **Core**: injects standard args for agents. **SDK**: passes standard args explicitly for apps | OCR, classifier |
+
+**How to decide:**
+- If the MCP only makes sense during an agent session (needs repo access, workspace, session state) → `core`
+- If the MCP is only used by generated apps, not by agents → `module`
+- If the MCP is used by both agents and apps → `both`
+
+Core MCPs are invisible to the SDK. Module and both MCPs are discoverable by apps via the SDK.
+
+---
+
+## 8. Standard Module Arguments
+
+Every `module` or `both` type MCP call includes these standard arguments. They enable usage tracking, cost attribution, and analytics without modules needing to know about Druppie's internal database.
+
+### Argument Definitions
+
+| Argument | Type | Core (agent) | App (SDK) | Purpose |
+|----------|------|-------------|-----------|---------|
+| `user_id` | UUID | **REQUIRED** — injected by core from session | **REQUIRED** — extracted from Keycloak token by SDK | Identifies who made the call |
+| `project_id` | UUID or null | **OPTIONAL** — injected by core, null for `general_chat` sessions | **REQUIRED** — from SDK config (`DRUPPIE_PROJECT_ID` env var) | Links usage to a project |
+| `session_id` | UUID or null | **REQUIRED** — injected by core from session | **MUST be null** | Identifies the agent session |
+| `app_id` | UUID or null | **MUST be null** | **REQUIRED** — from SDK config (`DRUPPIE_APP_ID` env var) | Identifies the calling application |
+
+### Validation Rules
+
+1. `user_id` is always required
+2. Exactly one of `session_id` or `app_id` must be set (never both, never neither)
+3. `project_id` is required for apps, optional for core (null when agent has no project, e.g., `general_chat` intent)
+
+### How Each Caller Provides Them
+
+**Core (agents):** Arguments are injected by `DruppieToolExecutor` before the MCP call, using the existing injection mechanism defined in `mcp_config.yaml`. The agent and module never see the injection — it happens transparently.
+
+**SDK (apps):** The SDK reads `user_id` from the Keycloak token and `project_id`/`app_id` from environment variables set at deploy time. It passes them as regular MCP tool arguments on every call.
+
+### Context Detection
+
+Modules don't need a separate `context` field. The presence of `session_id` vs `app_id` tells the calling context:
+
+| `session_id` | `app_id` | Context |
+|-------------|---------|---------|
+| set | null | Core / agent call |
+| null | set | App call |
+| set | set | **Invalid** — module should reject |
+| null | null | **Invalid** — module should reject |
+
+---
+
+## 9. Authentication
+
+### Single Identity Provider
+
+Keycloak is the sole identity provider for everything: Druppie core, apps built by Druppie, and module MCP servers. All users exist in the `druppie` realm.
+
+### How Each Component Authenticates
+
+| Component | How it gets a token | Token audience |
+|-----------|-------------------|----------------|
+| Druppie core (agents) | User logs into frontend → Keycloak JWT. For sandbox: short-lived OBO token | `druppie-backend` |
+| Druppie-built app | User logs into app → Keycloak JWT (same realm, app-specific client) | `druppie-modules` |
+| Module MCP server | Receives token in request → validates against Keycloak JWKS endpoint | Validates `druppie-modules` or `druppie-backend` |
+
+Module-side token validation uses the shared `auth.py` at the module root (see template in [Section 2](#2-file-structure--contract)).
+
+### Sandbox Security — Short-Lived Tokens
+
+Agents run in sandboxes that must not have long-lived credentials. The same pattern used for GitHub and LLM proxies applies here:
+
+1. Before sandbox launch, Druppie core requests a **short-lived OBO token** from Keycloak (`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, `audience=druppie-modules`, TTL: 15 minutes)
+2. Token is stored in the **credential store** (existing infrastructure)
+3. Token is injected into the sandbox as `DRUPPIE_MODULE_TOKEN` env var
+4. SDK inside the sandbox uses this token for module calls
+5. Modules validate it as a normal Keycloak JWT — no special handling
+
+The token carries the original user's identity (`sub` = user_id), so usage is attributed to the correct user even when an agent acts on their behalf.
+
+**Token for identity, arguments for context.** The token proves who the user is. The standard arguments (`session_id`, `project_id`, etc.) provide the calling context. These are separate concerns.
+
+---
+
+## 10. Usage Tracking & Analytics
+
+### End-to-End Flow
+
+```
+Module MCP Server                    Caller (Core or SDK)              Druppie DB
+       │                                      │                           │
+       │  MCP response with _meta.usage       │                           │
+       │─────────────────────────────────────►│                           │
+       │                                      │  INSERT module_usage      │
+       │                                      │──────────────────────────►│
+       │                                      │                           │
+       │                                      │  (SDK: POST /api/usage)   │
+       │                                      │──────────────────────────►│
+```
+
+### Step 1: Module Reports Usage in `_meta`
+
+Every module includes usage information in the MCP response `_meta` field (see `tools.py` template in [Section 4](#4-module-code-contract) for the code pattern).
+
+**Required `_meta` fields:**
+- `module_id` — the module's identifier from `MODULE.yaml`
+- `module_version` — the version string from `tools.py`
+- `usage.cost_cents` — the cost of this call in cents (`0.0` if free)
+
+**Optional `_meta` fields:**
+- `usage.resources` — module-specific resource usage (object with arbitrary keys, defined in the tool's `meta.resource_metrics`)
+
+### Step 2: Caller Records Usage
+
+The **caller** writes the usage record — not the module:
+
+- **Core** (`DruppieToolExecutor`): reads `_meta` from the MCP response, inserts a `module_usage` record directly into the Druppie database
+- **SDK** (`DruppieClient`): reads `_meta` from the MCP response, sends it to the Druppie backend via `POST /api/usage` (see [Section 13](#13-druppie-sdk) for the SDK implementation)
+
+Modules don't need to know about the Druppie database. They report usage in `_meta` and the caller handles storage.
+
+### Step 3: Analytics Queries
+
+Usage can be sliced by user, module, app, or context:
+
+```sql
+-- Per user, per module, this month
+SELECT user_id, module_id, SUM(cost_cents) as total_cost, COUNT(*) as calls
+FROM module_usage
+WHERE created_at >= date_trunc('month', NOW())
+GROUP BY user_id, module_id;
+
+-- Core (agent) vs app usage
+SELECT
+    CASE WHEN app_id IS NOT NULL THEN 'app' ELSE 'core' END as context,
+    module_id, SUM(cost_cents) as total_cost, COUNT(*) as calls
+FROM module_usage
+GROUP BY context, module_id;
+```
+
+### Resource Metric Definitions
+
+Modules declare what resource metrics they report in the `meta` field of their `@mcp.tool()` decorator. This allows the analytics UI to correctly label, format, and display module-specific resource data. The definitions are discoverable via MCP `tools/list` (see [Section 4](#4-module-code-contract) for the `resource_metrics` pattern).
+
+**The full chain:**
+1. **Module** returns `_meta` with `module_id`, `module_version`, and `usage` (including `resources`)
+2. **Caller** (core or SDK) copies the usage data into a `module_usage` record (see [Section 12](#12-database-tables-druppie-core))
+3. **Analytics layer** reads `module_usage`, calls MCP `tools/list` on the module to get `resource_metrics` definitions for that version
+4. **Analytics UI** uses the metric definitions (name, type, unit) to label and format the resource data
+
+The `resources` field in `module_usage` is a plain text string (JSON-serialized) — never queried by sub-field. The MCP server provides the schema for interpreting it via `tools/list` `meta.resource_metrics`.
+
+---
+
+## 11. Application Access Control
+
+Every Druppie-built app has its own role-based access control. Roles and user assignments live in the **app's own database**, not in Druppie's core DB. The project template provides RBAC tables, helpers, and an admin page out of the box.
+
+### Why Roles Live in the App
+
+Access control is application-specific. Different apps need different roles and permissions. Keeping it in the app:
+
+- App is self-contained — works even if Druppie is down
+- Role checks are local (no network call to Druppie backend)
+- Apps can extend with custom permissions without touching Druppie
+- No coupling between Druppie's DB and app-specific data
+
+### How It Works
+
+1. Druppie builds an app → project template includes RBAC tables and admin page
+2. App admin defines roles (e.g., "viewer", "editor", "admin") via the built-in admin page
+3. App admin assigns Keycloak users to roles (same Keycloak realm, same users)
+4. User logs into the app → gets a Keycloak JWT (standard flow, same realm)
+5. App checks roles locally against its own DB
+6. App uses roles to gate access to features
+
+### What the Project Template Provides
+
+The RBAC system is part of the project template (`druppie/templates/project/`). Apps get it for free:
+
+- `roles` and `user_roles` tables (created by template migrations)
+- Admin page for managing roles and user assignments
+- Auth helpers for role checking in routes
+- Keycloak login/logout already wired up
+
+### Future: Central Management
+
+If Druppie needs to manage access across apps centrally, each app can expose a `/druppie/access` endpoint (added to the project template) that Druppie calls to list/modify roles. This keeps apps self-contained while enabling central oversight.
+
+---
+
+## 12. Database Tables (Druppie Core)
+
+These tables live in Druppie's core database (not in module databases).
+
+### module_usage
+
+Records every module call with full context:
+
+```sql
+CREATE TABLE module_usage (
+    id UUID PRIMARY KEY,
+
+    -- Who
+    user_id UUID NOT NULL REFERENCES users(id),
+
+    -- Context (session XOR app)
+    session_id UUID REFERENCES sessions(id),
+    app_id UUID REFERENCES applications(id),
+    project_id UUID REFERENCES projects(id),
+
+    -- What
+    module_id VARCHAR(100) NOT NULL,
+    tool_name VARCHAR(100) NOT NULL,
+    module_version VARCHAR(20),
+
+    -- Result
+    success BOOLEAN NOT NULL,
+    error_message TEXT,
+
+    -- Cost & resources
+    cost_cents FLOAT NOT NULL DEFAULT 0.0,
+    resources TEXT,              -- JSON string (NOT JSONB), schema from MCP tools/list meta
+
+    -- When
+    started_at TIMESTAMPTZ NOT NULL,
+    duration_ms INTEGER,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+> `resources` is stored as Text (JSON string), not JSONB — following Druppie's "NO JSON/JSONB columns" rule. It's never queried by sub-field, only displayed. The schema for interpreting it comes from the module's MCP `tools/list` `meta.resource_metrics`.
+
+### applications
+
+```sql
+CREATE TABLE applications (
+    id UUID PRIMARY KEY,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    owner_id UUID NOT NULL REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+> `application_roles` and `application_user_roles` live in each app's own database (provided by the project template), not in Druppie's core DB. See [Section 11](#11-application-access-control).
+
+---
+
+## 13. Druppie SDK
 
 The SDK is a lightweight Python package included in every Druppie-generated application. It is an **MCP client** that connects directly to module MCP servers (no gateway proxy). It handles authentication, standard argument injection, usage reporting, version routing, and retries.
 
-> For the full auth, governance, and usage tracking design, see `docs/plans/2026-03-11-auth-governance-design.md`.
+> See [Section 7](#7-mcp-protocol--categories) for the MCP protocol upgrade, [Section 8](#8-standard-module-arguments) for standard arguments, and [Section 9](#9-authentication) for the auth model.
 
 ### Location
 
@@ -977,7 +1262,7 @@ Authentication (Keycloak login/logout) and RBAC (roles, user-role assignments) a
 
 The SDK provides Keycloak token validation for module calls. The project template provides everything else: login pages, session middleware, role tables, admin page.
 
-See `docs/plans/2026-03-11-auth-governance-design.md` Section 7 for the full design.
+See [Section 11](#11-application-access-control) for the full design.
 
 ### Usage Reporting
 
@@ -1057,7 +1342,7 @@ class ClassifierAccessor:
 
 ---
 
-## 8. Backend API for Modules
+## 14. Backend API for Modules
 
 Apps connect directly to module MCP servers (no gateway proxy). The Druppie backend provides supporting API routes for usage reporting, module discovery, and app access control.
 
@@ -1098,18 +1383,18 @@ async def get_usage(
     ...
 ```
 
-> Application access control (roles, user assignments) is managed by each app in its own database via the project template. No Druppie backend endpoints needed. See `docs/plans/2026-03-11-auth-governance-design.md` Section 7.
+> Application access control (roles, user assignments) is managed by each app in its own database via the project template. No Druppie backend endpoints needed. See [Section 11](#11-application-access-control).
 
 ---
 
-## 9. Module Lifecycle
+## 15. Module Lifecycle
 
 ### From Proposal to Running
 
 ```
 0. ACCEPT      Module proposal evaluated against acceptance criteria
                 AR validates: reuse, genericity, no overlap, ownership
-                (See "Module Acceptance" in modules.md)
+                (See "Module Acceptance" in modules-research-and-decisions.md)
 
 1. DEVELOP     Create module directory with v1/ subdirectory:
                 v1/module.py, v1/tools.py, v1/schema/
@@ -1152,7 +1437,7 @@ async def get_usage(
 
 ---
 
-## 10. Complete Example: OCR Module
+## 16. Complete Example: OCR Module
 
 ### v1.0.0 — Initial Release
 
@@ -1386,6 +1671,37 @@ druppie = DruppieClient()  # No version pinning
 result = await druppie.ocr.extract("invoice.png")
 # SDK calls: POST http://module-ocr:9010/mcp → routes to v2 (latest)
 ```
+
+---
+
+## 17. Impact on Existing Code
+
+### What Changes
+
+| Component | Change | Effort |
+|-----------|--------|--------|
+| `druppie/core/mcp_client.py` | Replace with official MCP client library, keep injection wrapper (`DruppieToolExecutor`) | High |
+| `druppie/execution/tool_executor.py` | Add usage recording after MCP calls, read `_meta` | Medium |
+| `druppie/core/mcp_config.yaml` | Add `type: core\|module\|both` to each MCP entry | Low |
+| `druppie/mcp-servers/coding/` | Migrate to FastMCP server | High |
+| `druppie/mcp-servers/docker/` | Migrate to FastMCP server | High |
+| `druppie/mcp-servers/filesearch/` | Migrate to FastMCP server | Medium |
+| `druppie/mcp-servers/archimate/` | Migrate to FastMCP server | Medium |
+| `druppie/db/models/` | Add `module_usage`, `applications` tables (see [Section 12](#12-database-tables-druppie-core)) | Medium |
+| `druppie/services/` | Add `UsageTrackingService` | Medium |
+| `druppie/api/routes/` | Add usage endpoints (see [Section 14](#14-backend-api-for-modules)) | Medium |
+| `druppie-sdk/` | New package: MCP client + auth + usage reporting (see [Section 13](#13-druppie-sdk)) | High |
+| `druppie/agents/builtin_tools.py` | Update sandbox launch to include short-lived module token | Low |
+| `iac/realm.yaml` | Add `druppie-modules` audience, configure token exchange | Low |
+| Module `tools.py` | Add `resource_metrics` to `@mcp.tool(meta={...})` | Low per module |
+
+### What Does NOT Change
+
+- Keycloak realm structure (users, roles) — unchanged, just adding a client/audience
+- Frontend auth flow — unchanged
+- Agent YAML definitions — unchanged
+- Approval system — unchanged (still works through the tool executor)
+- Database schema for existing core tables — unchanged
 
 ---
 

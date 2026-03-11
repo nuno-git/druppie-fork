@@ -1,8 +1,8 @@
 # Auth, Governance & MCP Upgrade — Design Document
 
-> **Status**: Design (approved via brainstorming)
+> **Status**: **Integrated** — content has been merged into `docs/module-specification.md` (Sections 7-12, 17). This file is kept as the original design record.
 > **Date**: 2026-03-11
-> **Prerequisite**: Read `docs/modules.md` and `docs/module-specification.md`
+> **Prerequisite**: Read `docs/modules-research-and-decisions.md` and `docs/module-specification.md`
 
 ---
 
