@@ -267,7 +267,24 @@ mcps:
 
   azure-datalake:
     url: ${MCP_AZURE_DATALAKE_URL:-http://module-azure-datalake:9008}
-    description: "Read-only Azure Data Lake Storage Gen2 operations"
+    description: "Azure Data Lake Storage Gen2 operations"
+    inject:
+      session_id:
+        from: session.id
+        hidden: true
+        tools: [download_file]
+      project_id:
+        from: project.id
+        hidden: true
+        tools: [download_file]
+      repo_name:
+        from: project.repo_name
+        hidden: true
+        tools: [download_file]
+      repo_owner:
+        from: project.repo_owner
+        hidden: true
+        tools: [download_file]
     tools:
       - name: list_datalakes
         description: "List all pre-configured Azure Data Lakes"
@@ -372,3 +389,29 @@ mcps:
           required:
             - container
             - path
+
+      - name: download_file
+        description: "Download a file from Data Lake to the project workspace"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            lake_name:
+              type: string
+              description: "Name of pre-configured lake (from list_datalakes)"
+            account_url:
+              type: string
+              description: "Full URL to public lake"
+            container:
+              type: string
+              description: "Container/file system name"
+            path:
+              type: string
+              description: "Source file path in the datalake"
+            destination:
+              type: string
+              description: "Destination path relative to workspace (e.g., data/myfile.parquet)"
+          required:
+            - container
+            - path
+            - destination

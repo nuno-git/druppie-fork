@@ -7,6 +7,7 @@ Uses FastMCP framework for HTTP transport.
 
 import logging
 import os
+from pathlib import Path
 
 from fastmcp import FastMCP
 from module import AzureDataLakeModule
@@ -44,6 +45,9 @@ for i in range(1, 10):
         logger.info(f"Loaded pre-configured lake: {name}")
 
 logger.info(f"Loaded {len(DATALAKE_CONFIGS)} pre-configured lakes")
+
+# Workspace root for file downloads (shared volume with coding MCP)
+WORKSPACE_ROOT = Path("/workspaces")
 
 # Initialize business logic module
 module = AzureDataLakeModule(datalake_configs=DATALAKE_CONFIGS)
@@ -198,6 +202,56 @@ async def read_file_schema(
     return await module.read_file_schema(
         container=container,
         path=path,
+        lake_name=lake_name,
+        account_url=account_url,
+    )
+
+
+@mcp.tool()
+async def download_file(
+    container: str,
+    path: str,
+    destination: str,
+    session_id: str = "",
+    project_id: str = "",
+    lake_name: str | None = None,
+    account_url: str | None = None,
+) -> dict:
+    """Download a file from Data Lake and save it to the project workspace.
+
+    You MUST provide either lake_name or account_url.
+    For pre-configured lakes, pass lake_name (from list_datalakes) —
+    authentication is injected automatically.
+
+    Args:
+        container: Container/file system name (required)
+        path: Source file path in the datalake (required)
+        destination: Destination path relative to workspace root, e.g. data/myfile.parquet (required)
+        session_id: Session ID (auto-injected by backend)
+        project_id: Project ID (auto-injected by backend)
+        lake_name: Name from list_datalakes (authentication handled automatically)
+        account_url: Full URL to a public lake (anonymous access)
+
+    Returns:
+        Dict with download result including destination path and file size.
+    """
+    # Build workspace path: /workspaces/default/{project_id}/{session_id}/{destination}
+    workspace_dir = WORKSPACE_ROOT / "default" / project_id / session_id
+    destination_path = (workspace_dir / destination).resolve()
+
+    # Path traversal guard: ensure resolved path stays under workspace directory
+    try:
+        destination_path.relative_to(workspace_dir.resolve())
+    except ValueError:
+        return {
+            "success": False,
+            "error": f"Invalid destination path: '{destination}' escapes the workspace directory",
+        }
+
+    return await module.download_file(
+        container=container,
+        path=path,
+        destination_path=destination_path,
         lake_name=lake_name,
         account_url=account_url,
     )

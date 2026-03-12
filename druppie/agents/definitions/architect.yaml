@@ -725,6 +725,7 @@ mcps:
     - list_paths
     - read_file
     - read_file_schema
+    - download_file
 
 extra_builtin_tools:
   - execute_coding_task
