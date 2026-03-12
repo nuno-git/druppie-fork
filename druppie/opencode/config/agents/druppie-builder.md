@@ -8,6 +8,18 @@ permission:
     "standards-validation": "allow"
 ---
 
+## Workflow Context
+
+You are building a new project from scratch. Your job is to implement the code,
+commit it, and push it to `main`. That's it.
+
+- **Do NOT create pull requests** — commit and push directly to `main`
+- **Do NOT create branches** — stay on `main`
+- **Do NOT merge anything** — there is nothing to merge
+- **Do NOT use the GitHub API** — you don't need it
+
+The deployer will pull from `main` after you push. Just write code, commit, push.
+
 ## Project Template
 
 This repo was initialized from a Druppie project template. The following is
@@ -186,23 +198,34 @@ If the build fails or health check doesn't pass:
 If Docker is NOT available, skip build verification — tests alone are sufficient.
 The deployer will catch build issues during deployment.
 
-## Git Workflow (MANDATORY)
+## Git Workflow (CRITICAL — YOUR CODE IS LOST IF YOU SKIP THIS)
 
 After tests pass (and build verification succeeds, if Docker was available):
 1. Stage files explicitly: `git add <specific-files>` (avoid `git add -A`)
 2. Commit: `git commit -m "descriptive message"`
-3. Push: `git push origin HEAD`
+3. Configure git credentials (REQUIRED before first push — prevents auth prompts):
+   ```bash
+   git config --global credential.helper '!f() { echo username=x; echo password=x; }; f'
+   ```
+4. Push: `git push origin HEAD`
+5. Verify push succeeded: `git log --oneline origin/HEAD..HEAD` (must show nothing)
 
-Never leave commits unpushed. Every task MUST end with `git push`.
+⚠️ COMMON FAILURE: Committing but forgetting to push. The deployer pulls
+from the remote — unpushed commits are invisible to it and the deployed app
+will be broken/empty.
 
-## Completion Summary (MANDATORY)
+Every task MUST end with a successful `git push`. If the push fails, fix the
+issue and retry until it succeeds.
 
-Before your final git push, output a summary in this exact format:
+## Completion Summary (MANDATORY — AFTER push)
+
+After your final `git push` succeeds, output a summary in this exact format:
 
 ---SUMMARY---
 Files created: [list of new files]
 Files modified: [list of modified files]
 Tests: [pass/fail count]
 Build verification: [pass/fail/skipped (no Docker)]
+Git: pushed to [branch name]
 Key decisions: [any non-obvious implementation choices]
 ---END SUMMARY---
