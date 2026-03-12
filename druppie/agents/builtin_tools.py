@@ -960,6 +960,19 @@ async def execute_sandbox_coding_task(
             repo_owner = project.repo_owner or repo_owner
             repo_name = project.repo_name or ""
 
+    # Append mandatory push instruction to the task prompt.
+    # The sandbox agent (OpenCode) must push after committing — the deployer
+    # pulls from the remote and unpushed commits are invisible.
+    task += (
+        "\n\n## MANDATORY: Git push after commit"
+        "\nAfter committing your changes, you MUST push to the remote:"
+        "\n```bash"
+        "\ngit push origin HEAD"
+        "\n```"
+        "\nVerify the push succeeded by running: git log --oneline origin/HEAD..HEAD"
+        "\n(should show nothing). Do NOT complete the task until push succeeds."
+    )
+
     try:
         result = await create_and_start_sandbox(
             task_prompt=task,
