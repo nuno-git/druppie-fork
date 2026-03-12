@@ -215,6 +215,7 @@ mcps:
     - list_paths
     - read_file
     - read_file_schema
+    - download_file
 
 # Implementation via sandbox
 extra_builtin_tools:

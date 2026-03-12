@@ -596,6 +596,7 @@ mcps:
     - list_paths
     - read_file
     - read_file_schema
+    - download_file
 
 # LAYERED APPROVAL SYSTEM:
 # Override the default (no approval) for make_design when used by architect.

@@ -248,6 +248,8 @@ services:
       AZURE_DATA_LAKE_1: ${AZURE_DATA_LAKE_1:-}
       AZURE_DATA_LAKE_2: ${AZURE_DATA_LAKE_2:-}
       AZURE_DATA_LAKE_3: ${AZURE_DATA_LAKE_3:-}
+    volumes:
+      - druppie_new_workspace:/workspaces
     ports:
       - "${MCP_AZURE_DATALAKE_PORT:-9008}:9008"
     networks:

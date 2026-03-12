@@ -6,6 +6,7 @@ Supports both pre-configured lakes (with keys) and ad-hoc public lakes.
 
 import io
 import logging
+from pathlib import Path
 from typing import Any
 
 from azure.storage.filedatalake import DataLakeServiceClient
@@ -333,5 +334,46 @@ class AzureDataLakeModule:
                     "success": False,
                     "error": f"Unsupported file type: {path}. Supported: .csv, .parquet",
                 }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def download_file(
+        self,
+        container: str,
+        path: str,
+        destination_path: Path,
+        lake_name: str | None = None,
+        account_url: str | None = None,
+    ) -> dict:
+        """Download a file from Data Lake and save it to a local path.
+
+        Args:
+            container: Container/file system name
+            path: Path to the file in the datalake
+            destination_path: Local path to save the file to
+            lake_name: Name of pre-configured lake
+            account_url: Full URL to public lake
+        """
+        try:
+            client, source = self._resolve_client(lake_name, account_url)
+            file_client = client.get_file_client(container, path)
+
+            # Download raw bytes
+            download = file_client.download_file()
+            content = download.readall()
+
+            # Ensure parent directory exists and write file
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            destination_path.write_bytes(content)
+
+            return {
+                "success": True,
+                "source": source,
+                "access_type": "pre-configured" if lake_name else "public",
+                "container": container,
+                "path": path,
+                "destination": str(destination_path),
+                "size_bytes": len(content),
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
