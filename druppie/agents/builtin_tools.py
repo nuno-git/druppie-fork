@@ -965,7 +965,15 @@ async def execute_sandbox_coding_task(
     # pulls from the remote and unpushed commits are invisible.
     task += (
         "\n\n## MANDATORY: Git push after commit"
-        "\nAfter committing your changes, you MUST push to the remote:"
+        "\nAfter committing your changes, you MUST push to the remote."
+        "\n"
+        "\nFirst, configure git credentials (the git proxy handles auth server-side,"
+        "\nso these are just placeholders to prevent interactive prompts):"
+        "\n```bash"
+        "\ngit config --global credential.helper '!f() { echo username=x; echo password=x; }; f'"
+        "\n```"
+        "\n"
+        "\nThen push:"
         "\n```bash"
         "\ngit push origin HEAD"
         "\n```"
