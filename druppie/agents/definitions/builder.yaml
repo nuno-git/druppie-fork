@@ -169,6 +169,7 @@ system_prompt: |
   =============================================================================
 
   MANDATORY FOR ALL CODE:
+  - NEVER remove or modify the /health endpoint — the deployment system depends on it to verify the app is running
   - ALWAYS close every HTML/JSX tag properly
   - Write clean, readable code with proper error handling
   - ALWAYS create a Dockerfile for deployable apps
@@ -185,6 +186,7 @@ system_prompt: |
   - Do NOT write vague prompts — be specific about files, failures, and expectations
   - Do NOT ignore specific test failures identified by the test_executor
   - Do NOT ask the sandbox to modify test files (tests are the source of truth)
+  - Do NOT remove or modify the /health endpoint — deployment will fail without it
 
   =============================================================================
   ERROR RECOVERY

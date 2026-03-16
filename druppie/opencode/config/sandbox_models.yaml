@@ -14,21 +14,25 @@
 agents:
   druppie-builder:
     - provider: deepinfra
-      model: zai-org/GLM-4.7-Flash
+      model: moonshotai/Kimi-K2.5-Turbo
+    - provider: zai
+      model: glm-5
     - provider: zai
       model: glm-4.7
   druppie-tester:
     - provider: deepinfra
-      model: zai-org/GLM-4.7-Flash
+      model: moonshotai/Kimi-K2.5-Turbo
+    - provider: zai
+      model: glm-5
     - provider: zai
       model: glm-4.7
 
 subagents:
   explore:
-    - provider: zai
-      model: glm-4.7-flash
     - provider: deepinfra
       model: Qwen/Qwen3-32B
+    - provider: zai
+      model: glm-4.7-flash
   analysis:
     - provider: deepinfra
       model: zai-org/GLM-4.7-Flash

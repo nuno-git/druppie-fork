@@ -54,13 +54,14 @@ already set up and working — extend it, don't replace it:
 
 ### Rules
 
+- **This is a Flask project** — do NOT use FastAPI, Django, or any other framework. The app factory is in `app/__init__.py`, routes go in `app/routes.py`. If you create a FastAPI app, it will NOT work with the Dockerfile or deployment system.
 - **Use the `app/` package** — do NOT create separate `backend/`, `src/`, or other top-level packages
-- **Extend existing files** — add models to `app/models.py`, add routes to `app/routes.py`
+- **Extend existing files** — add models to `app/models.py`, add routes to `app/routes.py`. Do NOT create `app/routers/`, `app/api/`, or other parallel route files.
 - **Add Python dependencies** to `requirements.txt` — do NOT rewrite the file from scratch
 - **Add npm dependencies** with `npm install <pkg>` in `frontend/` — or edit `package.json`
 - **Do NOT modify** `Dockerfile` or `docker-compose.yaml` unless you change the entrypoint or add services
 - **Use PostgreSQL types** — `sqlalchemy.dialects.postgresql.UUID` for UUIDs
-- **`/health` endpoint must stay** — the deployment system uses it to verify the app is running
+- **`/health` endpoint must NEVER be removed or modified** — the deployment system uses it to verify the app is running. If you remove it, deployment WILL fail.
 - **Frontend uses `@/` alias** — import components as `@/components/ui/button`, `@/lib/utils`, etc.
 - **shadcn components** — add new ones by creating files in `frontend/src/components/ui/`. Follow the pattern in `button.tsx` and `card.tsx`. Do NOT run `npx shadcn` — write the component files directly.
 
@@ -68,6 +69,40 @@ already set up and working — extend it, don't replace it:
 
 This project has DeepInfra AI built in. The API key is injected at deploy time
 via the `DEEPINFRA_API_KEY` environment variable — you never hardcode it.
+
+### CRITICAL — Common AI Mistakes to Avoid
+
+These mistakes have caused production failures. Read carefully:
+
+1. **ALWAYS import from `app.ai`** — never write your own OpenAI client, never
+   use `httpx`/`requests` to call DeepInfra directly. The helper functions
+   handle the API key, base URL, and error handling for you.
+   ```python
+   # CORRECT:
+   from app.ai import ai_chat, ocr_extract
+   answer = ai_chat("Hello")
+
+   # WRONG — will fail (no API key, wrong endpoint):
+   import httpx
+   response = httpx.post("https://api.deepinfra.com/v1/inference/...")
+   ```
+
+2. **DeepInfra uses the OpenAI-compatible endpoint** — the base URL is
+   `https://api.deepinfra.com/v1/openai` (already configured in `app/ai.py`).
+   Do NOT use `https://api.deepinfra.com/v1/inference/` — those are legacy
+   endpoints that don't exist for most models.
+
+3. **Use the models defined in `app/ai.py`** — do NOT invent model names.
+   The available models are `AI_MODEL` and `OCR_MODEL`. If you need a different
+   model, change the constant in `app/ai.py`, don't hardcode a model name
+   elsewhere.
+
+4. **Every route that calls AI MUST import from `app.ai`** — if you add a new
+   endpoint that uses AI, the import line must be:
+   ```python
+   from app.ai import ai_chat  # or ocr_extract, or both
+   ```
+   Forgetting this import is the #1 cause of `NameError` in production.
 
 ### Backend (Python) — `app/ai.py`
 
@@ -93,6 +128,20 @@ Models (defined in `app/ai.py`, change as needed):
 ```
 POST /api/ai/chat   {"prompt": "...", "system": "..."}  → {"answer": "..."}
 POST /api/ai/ocr    {"image_url": "https://..."}        → {"text": "..."}
+```
+
+These endpoints are already implemented. If you need a custom AI endpoint (e.g.
+`/api/classify`, `/api/summarize`), add it to `app/routes.py` following this
+pattern:
+
+```python
+@api.route("/ai/classify", methods=["POST"])
+def ai_classify_endpoint():
+    from app.ai import ai_chat  # MANDATORY import
+
+    data = request.get_json()
+    result = ai_chat(data["text"], system="Classify this text into categories...")
+    return jsonify(result=result)
 ```
 
 ### Frontend (TypeScript) — Vercel AI SDK + helper
@@ -145,6 +194,7 @@ const text = await aiOcr("https://example.com/receipt.png");
 - If the user's app needs OCR, document scanning, receipt reading → use `ocr_extract()` / `aiOcr()`
 - Always call AI through the backend API endpoints (keeps the key server-side)
 - Do NOT hardcode API keys anywhere
+- Do NOT create your own OpenAI/httpx client — use the existing `app/ai.py` functions
 
 ## Test Compliance
 
@@ -200,22 +250,24 @@ The deployer will catch build issues during deployment.
 
 ## Git Workflow (CRITICAL — YOUR CODE IS LOST IF YOU SKIP THIS)
 
+Git credentials are ALREADY configured by the sandbox. Do NOT touch git config, credential helpers, or remote URLs.
+
 After tests pass (and build verification succeeds, if Docker was available):
 1. Stage files explicitly: `git add <specific-files>` (avoid `git add -A`)
 2. Commit: `git commit -m "descriptive message"`
-3. Configure git credentials (REQUIRED before first push — prevents auth prompts):
-   ```bash
-   git config --global credential.helper '!f() { echo username=x; echo password=x; }; f'
-   ```
-4. Push: `git push origin HEAD`
-5. Verify push succeeded: `git log --oneline origin/HEAD..HEAD` (must show nothing)
+3. Push: `git push origin HEAD`
+4. Verify push succeeded: `git log --oneline origin/HEAD..HEAD` (must show nothing)
 
 ⚠️ COMMON FAILURE: Committing but forgetting to push. The deployer pulls
 from the remote — unpushed commits are invisible to it and the deployed app
 will be broken/empty.
 
-Every task MUST end with a successful `git push`. If the push fails, fix the
-issue and retry until it succeeds.
+⚠️ DO NOT modify git credentials, credential helpers, remote URLs, or .netrc.
+They are pre-configured and working. Changing them WILL break push.
+
+Every task MUST end with a successful `git push`. If the push fails, check
+`git remote -v` to verify the remote URL is intact, then retry. Do NOT
+reconfigure credentials — they are correct as-is.
 
 ## Completion Summary (MANDATORY — AFTER push)
 

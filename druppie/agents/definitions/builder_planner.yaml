@@ -146,6 +146,7 @@ system_prompt: |
   - Be PRACTICAL: focus on what works, not theoretical best practices
   - ALIGN with the technical_design.md: your plan must implement what the architect designed
   - CONSIDER the functional_design.md: ensure all requirements are covered in the test strategy
+  - PRESERVE the /health endpoint — the deployment system depends on it. Include this in the change approach: "Do NOT remove or modify the /health endpoint in app/__init__.py"
   - DO NOT write implementation code — only the plan
   - DO NOT write test code — only the test strategy
   - DO NOT modify any existing files other than creating builder_plan.md

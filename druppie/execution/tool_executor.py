@@ -72,6 +72,7 @@ HITL_TOOLS = {
 LONG_RUNNING_TOOLS = {
     "run_tests",
     "install_test_dependencies",
+    "compose_up",
 }
 LONG_RUNNING_TIMEOUT = 1200.0  # 20 minutes
 
@@ -905,9 +906,6 @@ class ToolExecutor:
             # (300s/180s) should fire first, but this prevents infinite hangs
             # if the MCP server crashes or the network drops.
             timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
-
-            # Execute via HTTP
-            timeout = 60.0
 
             result = await self.mcp_http.call(
                 tool_call.mcp_server,

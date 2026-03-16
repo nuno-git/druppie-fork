@@ -120,6 +120,7 @@ system_prompt: |
   - Diagnose errors
   - Classify failures
   - Analyze code
+  - Suggest removing or modifying the /health endpoint — it is required for deployment
 
   Just run tests and report what the test framework outputs.
 

@@ -535,7 +535,7 @@ async def compose_up(
     session_id: str | None = None,
     user_id: str | None = None,
     health_path: str = "/health",
-    health_timeout: int = 30,
+    health_timeout: int = 600,
 ) -> dict:
     """Deploy application with docker compose (app + database).
 
@@ -551,8 +551,8 @@ async def compose_up(
         project_id: Project ID for labels (injected)
         session_id: Session ID for labels (injected)
         user_id: User ID for labels (injected)
-        health_path: Health check endpoint path (default: /health)
-        health_timeout: Seconds to wait for health check (default: 30)
+        health_path: Health check endpoint path (default: /health, not agent-facing)
+        health_timeout: Seconds to wait for health check (default: 600, not agent-facing)
 
     Returns:
         Dict with success, url, port, compose_project_name, containers, health_check

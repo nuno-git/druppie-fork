@@ -66,8 +66,6 @@ class DockerComposeUpParams(BaseModel):
     git_url: str | None = Field(default=None, description="Full git URL")
     branch: str = Field(default="main", description="Git branch to deploy")
     compose_project_name: str | None = Field(default=None, description="Compose project name")
-    health_path: str = Field(default="/health", description="Health check endpoint path")
-    health_timeout: int = Field(default=30, description="Health check timeout in seconds")
 
 
 class DockerComposeDownParams(BaseModel):
