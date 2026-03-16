@@ -77,6 +77,7 @@ async def create_and_start_sandbox(
     author_id: str,
     db,
     git_provider: str = "gitea",
+    branch: str | None = None,
 ) -> dict:
     """Create a sandbox session on the control plane, register ownership, and send the prompt.
 
@@ -98,6 +99,7 @@ async def create_and_start_sandbox(
         author_id: Author identifier for the prompt.
         db: SQLAlchemy session.
         git_provider: "gitea" (default) or "github".
+        branch: Target branch for git sync (default: repo's default branch).
 
     Returns:
         Dict with sandbox_session_id, message_id, webhook_secret, git_user_id, and git_provider.
@@ -155,6 +157,8 @@ async def create_and_start_sandbox(
         "title": title,
         "credentials": credentials,
     }
+    if branch:
+        create_body["branch"] = branch
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:

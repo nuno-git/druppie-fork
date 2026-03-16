@@ -241,6 +241,7 @@ async def _retry_sandbox_with_next_model(
     # Get repo info from the original session
     repo_owner = os.getenv("GITEA_ORG", "druppie")
     repo_name = ""
+    branch = None
     if sandbox_mapping.session_id:
         from druppie.repositories import SessionRepository, ProjectRepository
         session_repo = SessionRepository(db)
@@ -250,6 +251,7 @@ async def _retry_sandbox_with_next_model(
             if session.repo_owner and session.repo_name:
                 repo_owner = session.repo_owner
                 repo_name = session.repo_name
+                branch = session.base_branch
             elif session.project_id:
                 project_repo = ProjectRepository(db)
                 project = project_repo.get_by_id(session.project_id)
@@ -282,6 +284,7 @@ async def _retry_sandbox_with_next_model(
             author_id=str(sandbox_mapping.user_id),
             db=db,
             git_provider=sandbox_mapping.git_provider or "gitea",
+            branch=branch,
         )
 
         # Link the new sandbox to the same tool call

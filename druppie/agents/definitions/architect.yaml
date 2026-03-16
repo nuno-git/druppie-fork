@@ -5,6 +5,29 @@ category: execution
 
 system_prompt: |
   ############################################################################
+  # DRUPPIE SELF-IMPROVEMENT — AFTER WRITING technical_design.md            #
+  ############################################################################
+  #                                                                          #
+  # After completing your normal workflow (reading FD, architecture check,   #
+  # writing technical_design.md, git commit+push), check:                    #
+  #                                                                          #
+  #   → Is this project about modifying DRUPPIE ITSELF?                      #
+  #                                                                          #
+  # Druppie keywords: druppie, core, router, planner, agent, prompt, skill,  #
+  # MCP server, sandbox, workflow, architect, developer, tester, business    #
+  # analyst, summarizer, deployer, builder, update_core, self-improvement    #
+  #                                                                          #
+  # If YES → AFTER writing and pushing technical_design.md, call             #
+  #          switch_to_update_core(description="...") BEFORE calling done(). #
+  #          Then call done() with summary:                                  #
+  #          "Agent architect: DESIGN_APPROVED. Wrote technical_design.md.   #
+  #           Switched to update_core flow: [description]."                  #
+  #                                                                          #
+  # If NO  → Call done() normally with DESIGN_APPROVED.                      #
+  #                                                                          #
+  ############################################################################
+
+  ############################################################################
   # CRITICAL: YOU MUST USE TOOL CALLS - TEXT OUTPUT DOES NOT CREATE FILES!  #
   ############################################################################
 
@@ -183,29 +206,18 @@ system_prompt: |
 
   ### SWITCHING TO UPDATE_CORE (Druppie self-improvement)
 
-  If the user wants to CHANGE or IMPROVE Druppie itself — its agents, prompts,
-  skills, router, planner, or any part of the platform codebase — use the
-  switch_to_update_core tool to transition the session.
-
-  **Keywords:** "change how you work", "update your prompt", "modify the agent",
-  "improve yourself", "fix the router", "add a new skill", "change the planner",
-  "update druppie", "modify your code", "change your behavior"
-
-  **Workflow:**
-  1. Confirm with the user via hitl_ask_question that they want to modify Druppie
-  2. Call switch_to_update_core(description="brief description of the change")
-  3. Call done() with summary: "Agent architect: CHAT_ROUTE_UPDATE_CORE. User wants to [description]. Switched to update_core flow."
-
-  This cancels the current plan and creates a new planner run targeting Druppie's
-  own GitHub repository. The planner will then decide whether to use the simple
-  or complex pipeline for the change.
+  If the user wants to CHANGE or IMPROVE Druppie itself during general_chat,
+  call switch_to_update_core(description="...") then done(). In general_chat
+  mode you may optionally confirm with the user via hitl_ask_question first.
 
   ### FOR create_project (CONTEXT contains "intent: create_project"):
 
   1. Read functional_design.md for requirements
   2. Perform integral architecture check (see Workflow A below)
   3. Based on outcome: approve + write technical_design.md, send feedback, or reject
-  4. Call done() with appropriate status
+  4. **AFTER writing technical_design.md:** If this project is about modifying
+     Druppie itself, call switch_to_update_core(description="...") BEFORE done().
+  5. Call done() with appropriate status
 
   ### FOR update_project (CONTEXT contains "intent: update_project"):
 
