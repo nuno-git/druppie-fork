@@ -4,12 +4,23 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (incl. Node.js, npm, Chromium for pre-approval
+# Mermaid validation via mmdc — mirrors mcp-servers/coding/Dockerfile)
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     docker.io \
+    nodejs \
+    npm \
+    chromium \
     && rm -rf /var/lib/apt/lists/*
+
+# Configure Puppeteer to use system Chromium (skip bundled download)
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+# Install Mermaid CLI for structural diagram validation
+RUN npm install -g @mermaid-js/mermaid-cli
 
 # Install Python dependencies
 COPY druppie/requirements.txt .

@@ -4,7 +4,7 @@ Uses LiteLLM for standardized tool calling across all providers.
 This is the only LLM implementation - all providers go through LiteLLM.
 
 Environment variables:
-    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry
+    LLM_PROVIDER: zai, deepinfra, deepseek, azure_foundry, ollama
 
     For ZAI:
         ZAI_API_KEY, ZAI_MODEL, ZAI_BASE_URL
@@ -17,6 +17,9 @@ Environment variables:
 
     For Azure Foundry:
         FOUNDRY_API_KEY, FOUNDRY_MODEL, FOUNDRY_API_URL
+
+    For Ollama:
+        OLLAMA_MODEL, OLLAMA_BASE_URL (API key optional)
 """
 
 import json
@@ -208,6 +211,16 @@ PROVIDER_CONFIGS = {
         "force_temperature": True,  # GPT-5-MINI only supports temperature=1.0
         "auth_type": "bearer",  # Use Bearer token instead of api-key header
     },
+    "ollama": {
+        "prefix": "openai",  # Ollama is OpenAI-compatible
+        "default_model": "gpt-oss:20b",
+        "api_key_env": "OLLAMA_API_KEY",
+        "api_key_optional": True,  # Ollama doesn't require auth by default
+        "model_env": "OLLAMA_MODEL",
+        "base_url_env": "OLLAMA_BASE_URL",
+        "default_base_url": "https://ollama.waterschap.org/v1",
+        "ssl_verify": False,  # Self-signed certificate
+    },
 }
 
 
@@ -251,6 +264,9 @@ class ChatLiteLLM(BaseLLM):
 
         # Load configuration from environment
         self.api_key = api_key or os.getenv(config["api_key_env"], "")
+        # Providers with optional keys (e.g. Ollama) need a dummy key for LiteLLM
+        if not self.api_key and config.get("api_key_optional"):
+            self.api_key = "no-key-required"
         self.api_base = api_base or os.getenv(config["base_url_env"], "") or config["default_base_url"]
         # Provider may force a specific temperature (e.g. GPT-5-MINI only supports 1.0)
         if config.get("force_temperature"):
@@ -268,6 +284,12 @@ class ChatLiteLLM(BaseLLM):
 
         # Some providers (e.g. Azure OpenAI) require max_completion_tokens instead of max_tokens
         self._use_max_completion_tokens = config.get("use_max_completion_tokens", False)
+
+        # SSL verification (disabled for self-signed certs, e.g. Ollama)
+        # Set globally on litellm — the per-call ssl_verify kwarg has known bugs
+        self._ssl_verify = config.get("ssl_verify", True)
+        if not self._ssl_verify and LITELLM_AVAILABLE:
+            litellm.ssl_verify = False
 
         # Bearer token auth (e.g. Azure Foundry) — send key as Authorization header
         self._auth_type = config.get("auth_type", "api_key")
@@ -351,6 +373,9 @@ class ChatLiteLLM(BaseLLM):
         if self.api_base:
             kwargs["api_base"] = self.api_base
 
+        if not self._ssl_verify:
+            kwargs["ssl_verify"] = False
+
         if self._extra_headers:
             kwargs["extra_headers"] = self._extra_headers
 
@@ -415,12 +440,24 @@ class ChatLiteLLM(BaseLLM):
                     try:
                         args = json.loads(args)
                     except json.JSONDecodeError:
-                        logger.warning(
-                            "failed_to_parse_tool_args",
-                            tool_name=tc.function.name,
-                            args_preview=args[:100] if args else "",
+                        # LLMs sometimes emit unquoted keys — try to fix
+                        import re
+                        repaired = re.sub(
+                            r'(?<=[{,])\s*(\w+)\s*:', lambda m: f' "{m.group(1)}":', args
                         )
-                        args = {}
+                        try:
+                            args = json.loads(repaired)
+                            logger.info(
+                                "repaired_tool_args_json",
+                                tool_name=tc.function.name,
+                            )
+                        except json.JSONDecodeError:
+                            logger.warning(
+                                "failed_to_parse_tool_args",
+                                tool_name=tc.function.name,
+                                args_preview=args[:200] if args else "",
+                            )
+                            args = {}
 
                 tool_calls.append({
                     "id": tc.id,

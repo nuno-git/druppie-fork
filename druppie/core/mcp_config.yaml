@@ -29,14 +29,11 @@ mcps:
       repo_name:
         from: project.repo_name
         hidden: true
-        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
+        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, run_git, create_pull_request, merge_pull_request]
       repo_owner:
         from: project.repo_owner
         hidden: true
-        tools: [read_file, write_file, batch_write_files, list_dir, delete_file, create_branch, commit_and_push, get_git_status, create_pull_request, merge_pull_request]
-      # NOTE: commit_and_push does NOT need branch injection.
-      # It pushes whatever branch the workspace is currently on (set by create_branch).
-      # The workspace tracks its own branch internally via ws["branch"].
+        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, run_git, create_pull_request, merge_pull_request]
     tools:
       - name: read_file
         description: "Read file from workspace"
@@ -51,7 +48,7 @@ mcps:
             - path
 
       - name: write_file
-        description: "Write file to workspace (auto-commits)"
+        description: "Write file to workspace. Use run_git to commit and push."
         # DEFAULT: No approval needed for write_file
         # Agents can OVERRIDE this (e.g., architect requires architect approval)
         requires_approval: false
@@ -68,8 +65,24 @@ mcps:
             - path
             - content
 
+      - name: make_design
+        description: "Write a design document (FD or TD) with Mermaid syntax validation. The file is NOT written if any Mermaid diagram contains syntax errors — fix the errors and retry."
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            path:
+              type: string
+              description: "File path (e.g. technical_design.md or functional_design.md)"
+            content:
+              type: string
+              description: "Full markdown content for the design document"
+          required:
+            - path
+            - content
+
       - name: batch_write_files
-        description: "Write multiple files at once. Use commit_and_push to commit."
+        description: "Write multiple files at once. Use run_git to commit and push."
         # DEFAULT: No approval needed for batch writes
         # Agents can OVERRIDE this (e.g., architect requires architect approval)
         requires_approval: false
@@ -118,29 +131,18 @@ mcps:
           required:
             - path
 
-      - name: commit_and_push
-        description: "Commit and push changes to Gitea"
+      - name: run_git
+        description: "Execute a git command in the workspace. Allowed subcommands: add, commit, push, pull, fetch, status, checkout, log, diff, branch. Destructive flags (--force, --hard) are blocked."
         requires_approval: false
         parameters:
           type: object
           properties:
-            message:
+            command:
               type: string
-              description: "Git commit message"
+              description: "Git command to execute (e.g. 'add .', 'commit -m \"feat: add login\"', 'push', 'status')"
           required:
-            - message
+            - command
 
-      - name: create_branch
-        description: "Create and switch to a git branch (creates new or switches to existing)"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            branch_name:
-              type: string
-              description: "Name of branch to create or switch to (e.g., feature/add-login)"
-            required:
-              - branch_name
       - name: run_tests
         description: "Run tests in workspace (auto-detects framework)"
         requires_approval: false
@@ -170,15 +172,6 @@ mcps:
             framework:
               type: string
               description: "Optional framework name (default: auto-detected)"
-          required: []
-
-      - name: merge_to_main
-        description: "Merge feature branch to main (direct git merge, no PR)"
-        requires_approval: true
-        required_role: architect
-        parameters:
-          type: object
-          properties: {}
           required: []
 
       - name: create_pull_request
@@ -211,14 +204,6 @@ mcps:
               description: "Delete source branch after merge (default: true)"
           required:
             - pr_number
-
-      - name: get_git_status
-        description: "Get git status for workspace including current branch, changed files, and unpushed commits"
-        requires_approval: false
-        parameters:
-          type: object
-          properties: {}
-          required: []
 
       - name: install_test_dependencies
         description: "Install missing test dependencies for project"
@@ -436,6 +421,134 @@ mcps:
   # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
   # Configure per-agent via `builtin_tools` in agent YAML files.
 
+  archimate:
+    url: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
+    description: "ArchiMate reference architecture models (read-only). Provides access to elements, relationships, views, and impact analysis for architecture context."
+    tools:
+      - name: list_models
+        description: "List all available ArchiMate models"
+        requires_approval: false
+
+      - name: get_statistics
+        description: "Get overview statistics for a model: element counts per layer/type, relationship counts"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+          required: []
+
+      - name: list_elements
+        description: "List elements, optionally filtered by layer (Strategy/Business/Application/Technology/Motivation) or type"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+            layer:
+              type: string
+              description: "Filter by layer: Strategy, Motivation, Business, Application, Technology, Physical"
+            element_type:
+              type: string
+              description: "Filter by type: BusinessProcess, ApplicationComponent, etc."
+            max_results:
+              type: integer
+              description: "Maximum results to return (default: 50)"
+            offset:
+              type: integer
+              description: "Offset for pagination (default: 0)"
+          required: []
+
+      - name: get_element
+        description: "Get full details of an element by name or ID, including relationships, views, and properties"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            element_name:
+              type: string
+              description: "Element name or ID"
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+          required:
+            - element_name
+
+      - name: list_views
+        description: "List all views/diagrams in the model"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+          required: []
+
+      - name: get_view
+        description: "Get all elements and relationships shown on a specific view/diagram"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            view_id:
+              type: string
+              description: "View name or ID"
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+          required:
+            - view_id
+
+      - name: search_model
+        description: "Search for elements by name, description, or property value"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            query:
+              type: string
+              description: "Search term (matches name, description, properties)"
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+            layer:
+              type: string
+              description: "Filter by layer"
+            element_type:
+              type: string
+              description: "Filter by element type"
+            max_results:
+              type: integer
+              description: "Maximum results (default: 20)"
+          required:
+            - query
+
+      - name: get_impact
+        description: "Analyze impact: traverse relationships from an element to find all connected elements"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            element_name:
+              type: string
+              description: "Element name or ID to start from"
+            model_name:
+              type: string
+              description: "Name of the ArchiMate model (optional, defaults to first model)"
+            direction:
+              type: string
+              description: "Direction: 'downstream' (what this serves), 'upstream' (what depends on this), or 'both' (default)"
+            max_depth:
+              type: integer
+              description: "Maximum traversal depth (default: 3)"
+          required:
+            - element_name
+
   bestand-zoeker:
     url: ${MCP_WEB_URL:-http://mcp-web:9005}
     description: "Local file search and web browsing"
@@ -463,3 +576,70 @@ mcps:
       - name: get_page_info
         description: "Get basic information about a web page"
         requires_approval: false
+
+  registry:
+    url: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+    description: "Druppie platform building block catalog (read-only)"
+    tools:
+      - name: list_components
+        description: "List all Druppie building blocks grouped by category (agents, skills, mcps, builtin_tools). Optional category filter."
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            category:
+              type: string
+              description: "Filter by category: agents, skills, mcps, builtin_tools (empty = all)"
+          required: []
+
+      - name: get_agent
+        description: "Get agent details: description, skills, MCP tools, config"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            agent_id:
+              type: string
+              description: "Agent identifier (e.g., architect, developer, planner)"
+          required:
+            - agent_id
+
+      - name: get_skill
+        description: "Get full skill content including instructions and allowed tools"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            skill_name:
+              type: string
+              description: "Skill name (e.g., code-review, architecture-principles)"
+          required:
+            - skill_name
+
+      - name: get_mcp_server
+        description: "Get MCP server details: description, tool list with descriptions, and which agents use it"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            server_name:
+              type: string
+              description: "MCP server name (e.g., coding, docker, archimate)"
+          required:
+            - server_name
+
+      - name: get_tool
+        description: "Get full tool definition: parameters, approval requirements, and per-agent overrides"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            server_name:
+              type: string
+              description: "MCP server name"
+            tool_name:
+              type: string
+              description: "Tool name within the server"
+          required:
+            - server_name
+            - tool_name

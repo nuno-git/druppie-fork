@@ -96,6 +96,7 @@ class LLMCallDetail(BaseModel):
 class AgentRunSummary(BaseModel):
     """Lightweight agent run for chat timeline."""
     id: UUID
+    session_id: UUID
     agent_id: str
     status: AgentRunStatus
     error_message: str | None = None

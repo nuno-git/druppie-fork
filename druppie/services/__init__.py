@@ -18,6 +18,7 @@ from .project_service import ProjectService
 from .deployment_service import DeploymentService
 from .workflow_service import WorkflowService
 from .skill_service import SkillService
+from .revert_service import RevertService
 
 __all__ = [
     "SessionService",
@@ -27,4 +28,5 @@ __all__ = [
     "DeploymentService",
     "WorkflowService",
     "SkillService",
+    "RevertService",
 ]
