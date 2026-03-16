@@ -4,7 +4,7 @@ Supports per-agent LLM profiles with ordered provider chains.
 Profiles are defined in agents/definitions/llm_profiles.yaml.
 
 Environment variables:
-    LLM_PROVIDER: Global default provider (zai, deepinfra, azure_foundry)
+    LLM_PROVIDER: Global default provider (zai, deepinfra, azure_foundry, ollama)
     LLM_FORCE_PROVIDER: Force all agents to use this provider (overrides profiles)
     LLM_FORCE_MODEL: Force all agents to use this model (requires LLM_FORCE_PROVIDER)
 """
@@ -16,7 +16,7 @@ import structlog
 
 from .base import BaseLLM
 from .fallback import FallbackLLM
-from .litellm_provider import ChatLiteLLM, LITELLM_AVAILABLE
+from .litellm_provider import ChatLiteLLM, LITELLM_AVAILABLE, PROVIDER_CONFIGS
 from .resolver import get_profiles, resolve_model
 
 if TYPE_CHECKING:
@@ -38,10 +38,12 @@ class LLMService:
     """
 
     # Supported providers and their required API key env vars
+    # None means the API key is optional (e.g. Ollama)
     PROVIDERS = {
         "zai": "ZAI_API_KEY",
         "deepinfra": "DEEPINFRA_API_KEY",
         "azure_foundry": "FOUNDRY_API_KEY",
+        "ollama": None,
     }
 
     def __init__(self):
@@ -68,9 +70,9 @@ class LLMService:
                 f"Valid options: {', '.join(self.PROVIDERS.keys())}"
             )
 
-        # Check API key
+        # Check API key (skip for providers with optional keys like Ollama)
         api_key_env = self.PROVIDERS[provider]
-        if not os.getenv(api_key_env):
+        if api_key_env and not os.getenv(api_key_env):
             raise LLMConfigurationError(
                 f"{api_key_env} environment variable is required for LLM_PROVIDER={provider}"
             )

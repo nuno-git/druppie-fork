@@ -9,6 +9,7 @@ from uuid import UUID
 import structlog
 
 from druppie.agents.builtin_tools import DEFAULT_BUILTIN_TOOLS, is_builtin_tool
+from druppie.domain.common import SessionStatus
 from druppie.execution.tool_executor import ToolCallStatus
 from druppie.llm.base import LLMError
 
@@ -69,6 +70,12 @@ class AgentLoop:
             )
 
         for iteration in range(start_iteration, max_iterations):
+            # Check for user-initiated pause between iterations (cooperative pause)
+            session_status = self._get_session_status(session_id)
+            if session_status == SessionStatus.PAUSED.value:
+                logger.info("agent_loop_paused_by_user", agent_id=self.agent_id, iteration=iteration)
+                return {"status": "paused", "reason": "user_paused"}
+
             response, llm_call_id = await self._call_llm(
                 messages, openai_tools, execution_repo,
                 session_id, agent_run_id, iteration,
@@ -102,6 +109,21 @@ class AgentLoop:
         )
 
     # ------------------------------------------------------------------
+    # Session status check (single DB poll for pause detection)
+    # ------------------------------------------------------------------
+
+    def _get_session_status(self, session_id: UUID) -> str | None:
+        """Get current session status from DB (single expire + query).
+
+        Used for cooperative pause checks between iterations.
+        """
+        from druppie.db.models import Session
+
+        self.db.expire_all()
+        session = self.db.query(Session).filter(Session.id == session_id).first()
+        return session.status if session else None
+
+    # ------------------------------------------------------------------
     # Tool preparation
     # ------------------------------------------------------------------
 
@@ -131,6 +153,9 @@ class AgentLoop:
         # Enrich invoke_skill with dynamic enum + descriptions from agent's skills
         if self.definition.skills:
             self._enrich_invoke_skill(openai_tools)
+
+        # Enrich execute_coding_task with available sandbox agents
+        self._enrich_execute_coding_task(openai_tools)
 
         return openai_tools, registry
 
@@ -166,6 +191,82 @@ class AgentLoop:
                     "description": "Skill to invoke",
                 }
                 break
+
+    def _enrich_execute_coding_task(self, openai_tools: list[dict]) -> None:
+        """Dynamically enrich execute_coding_task with available sandbox agents.
+
+        Reads agent markdown files from druppie/sandbox-config/agents/ and
+        injects their names as an enum + descriptions into the tool schema,
+        following the same pattern as _enrich_invoke_skill.
+        """
+        from pathlib import Path
+
+        # Only enrich if the tool is present in this agent's tools
+        target = None
+        for tool in openai_tools:
+            if tool.get("function", {}).get("name") == "execute_coding_task":
+                target = tool
+                break
+        if target is None:
+            return
+
+        # Discover agents from sandbox-config/agents/*.md
+        agents_dir = Path(__file__).resolve().parent.parent / "sandbox-config" / "agents"
+        if not agents_dir.is_dir():
+            return
+
+        agents = []
+        for agent_file in sorted(agents_dir.glob("*.md")):
+            try:
+                content = agent_file.read_text()
+                if content.startswith("---"):
+                    parts = content.split("---", 2)
+                    if len(parts) >= 3:
+                        import yaml
+                        frontmatter = yaml.safe_load(parts[1])
+                        if frontmatter and isinstance(frontmatter, dict):
+                            agents.append({
+                                "name": agent_file.stem,
+                                "description": frontmatter.get("description", ""),
+                            })
+            except Exception:
+                logger.warning("sandbox_agent_load_failed", file=str(agent_file))
+
+        if not agents:
+            return
+
+        # Build enum + enriched description
+        agent_names = [a["name"] for a in agents]
+        agent_list = ", ".join(
+            f"{a['name']} ({a['description']})" for a in agents
+        )
+
+        # Read default agent from opencode-config.json
+        from druppie.core.config import DEFAULT_SANDBOX_AGENT
+        config_file = agents_dir.parent / "opencode-config.json"
+        default_agent = DEFAULT_SANDBOX_AGENT
+        if config_file.is_file():
+            try:
+                import json as _json
+                config = _json.loads(config_file.read_text())
+                default_agent = config.get("default_agent", default_agent)
+            except Exception:
+                pass
+
+        base_desc = target["function"]["description"]
+        target["function"]["description"] = (
+            f"{base_desc} Available agents: {agent_list}. "
+            f"Default: {default_agent}."
+        )
+
+        # Replace the agent property with an enum-constrained version
+        props = target["function"]["parameters"]["properties"]
+        props["agent"] = {
+            "description": f"Sandbox agent to use. Available: {agent_list}",
+            "default": default_agent,
+            "enum": agent_names,
+            "type": "string",
+        }
 
     # ------------------------------------------------------------------
     # LLM call with DB record keeping
@@ -470,8 +571,14 @@ class AgentLoop:
             # Execute via ToolExecutor
             status = await self.tool_executor.execute(tool_call_id)
 
-            # Get updated tool call for result
-            tool_call_record = execution_repo.get_tool_call(tool_call_id)
+            # Get updated tool call for result.
+            # If a DB error inside tool execution poisoned the transaction,
+            # rollback first so we can still read the result.
+            try:
+                tool_call_record = execution_repo.get_tool_call(tool_call_id)
+            except Exception:
+                self.db.rollback()
+                tool_call_record = execution_repo.get_tool_call(tool_call_id)
 
             # Handle failed tool calls
             if status == ToolCallStatus.FAILED:
@@ -517,6 +624,17 @@ class AgentLoop:
                 return self._build_pause_state(
                     messages, prompt, context, iteration,
                     llm_tool_call_str_id, "waiting_approval", tool_call_id,
+                )
+
+            # Handle sandbox pause
+            if status == ToolCallStatus.WAITING_SANDBOX:
+                assistant_msg, _ = self._build_tool_messages(
+                    llm_tool_call_str_id, tool_name, tool_args, "",
+                )
+                messages.append(assistant_msg)
+                return self._build_pause_state(
+                    messages, prompt, context, iteration,
+                    llm_tool_call_str_id, "waiting_sandbox", tool_call_id,
                 )
 
             # Parse result

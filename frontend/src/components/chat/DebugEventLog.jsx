@@ -14,16 +14,18 @@ import {
   Download,
   Braces,
   Check,
+  Clock,
   Terminal,
   MessageSquare,
-  ChevronDown,
-  ChevronRight,
   Bot,
   Zap,
   Hash,
+  RotateCcw,
 } from 'lucide-react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { getAgentConfig, getAgentMessageColors, formatToolName } from '../../utils/agentConfig'
 import { formatDuration, formatTokens } from '../../utils/tokenUtils'
+import { retryFromRun, getSandboxEvents } from '../../services/api'
 import CopyButton from '../shared/CopyButton'
 import ContainerLogsModal from '../shared/ContainerLogsModal'
 
@@ -78,6 +80,17 @@ const getToolContextHint = (tc) => {
   return null
 }
 
+const extractAllToolCalls = (agentRun) =>
+  (agentRun.llm_calls || []).flatMap(llm =>
+    (llm.tool_calls || []).map(tc => ({
+      tool_name: tc.tool_name,
+      status: tc.status,
+      arguments: parseArgs(tc.arguments),
+      result: tc.result || undefined,
+      error: tc.error || undefined,
+    }))
+  )
+
 // ─── Small shared components ─────────────────────────────────────────────────
 
 const StatusBadge = ({ status }) => {
@@ -97,8 +110,6 @@ const copyBtnClass = 'inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded
 // ─── Inspect Summary ─────────────────────────────────────────────────────────
 
 const InspectSummary = ({ agentRuns, data }) => {
-  const [expanded, setExpanded] = useState(false)
-
   const stats = useMemo(() => {
     let llmCallCount = 0
     let toolCallCount = 0
@@ -116,23 +127,21 @@ const InspectSummary = ({ agentRuns, data }) => {
   }, [agentRuns, data])
 
   return (
-    <div className="border-b bg-gray-50 flex-shrink-0">
-      <button onClick={() => setExpanded(!expanded)} className="w-full flex items-center gap-3 px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 transition-colors">
-        {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-        <span className="flex items-center gap-1"><Hash className="w-3 h-3" />{stats.agentCount} agents</span>
-        <span className="flex items-center gap-1"><Bot className="w-3 h-3" />{stats.llmCallCount} LLM calls</span>
-        <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{stats.toolCallCount} tools</span>
-        {stats.totalTokens > 0 && <span>{formatTokens(stats.totalTokens)} tokens</span>}
-      </button>
-      {expanded && Object.keys(stats.agentTokens).length > 0 && (
-        <div className="px-3 pb-2 flex flex-wrap gap-2">
+    <div className="border-b bg-gray-50 flex-shrink-0 px-3 py-1.5 flex flex-wrap items-center gap-3 text-xs text-gray-500">
+      <span className="flex items-center gap-1"><Hash className="w-3 h-3" />{stats.agentCount} agents</span>
+      <span className="flex items-center gap-1"><Bot className="w-3 h-3" />{stats.llmCallCount} LLM calls</span>
+      <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{stats.toolCallCount} tools</span>
+      {stats.totalTokens > 0 && <span>{formatTokens(stats.totalTokens)} tokens</span>}
+      {Object.keys(stats.agentTokens).length > 0 && (
+        <>
+          <span className="text-gray-300">|</span>
           {Object.entries(stats.agentTokens).sort((a, b) => b[1] - a[1]).map(([agent, tokens]) => (
-            <span key={agent} className="inline-flex items-center gap-1.5 bg-white border border-gray-200 rounded px-2 py-1 text-xs">
-              <span className="font-medium text-gray-700">{agent}</span>
-              <span className="text-gray-400">{formatTokens(tokens)} tok</span>
+            <span key={agent} className="inline-flex items-center gap-1">
+              <span className="font-medium text-gray-600">{agent}</span>
+              <span className="text-gray-400">{formatTokens(tokens)}</span>
             </span>
           ))}
-        </div>
+        </>
       )}
     </div>
   )
@@ -153,9 +162,12 @@ const OutlineAgentHeader = ({ agentRun, selected, onClick }) => {
   }, [agentRun])
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors border-l-2 ${
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
+      className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors border-l-2 cursor-pointer select-text ${
         selected ? `${colors.bg} border-l-current ${colors.accent}` : 'border-l-transparent hover:bg-gray-50'
       }`}
     >
@@ -169,40 +181,119 @@ const OutlineAgentHeader = ({ agentRun, selected, onClick }) => {
         {agentRun.status === 'running' && <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />}
         {agentRun.status === 'failed' && <span className="w-1.5 h-1.5 bg-red-400 rounded-full" />}
       </span>
-    </button>
+    </div>
   )
 }
 
 const OutlineToolLine = ({ tc, selected, onClick }) => {
-  const statusIcon = tc.status === 'completed' ? '✓' : tc.status === 'failed' ? '✗' : '⏳'
+  const StatusIcon = tc.status === 'completed' ? Check : tc.status === 'failed' ? X : Clock
   const statusColor = tc.status === 'completed' ? 'text-green-500' : tc.status === 'failed' ? 'text-red-500' : 'text-amber-500'
   const hint = getToolContextHint(tc)
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className={`w-full text-left pl-9 pr-3 py-1 flex items-center gap-1.5 text-[11px] transition-colors ${
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
+      className={`w-full text-left pl-9 pr-3 py-1 flex items-center gap-1.5 text-[11px] transition-colors cursor-pointer select-text ${
         selected ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50 text-gray-500'
       }`}
     >
-      <span className={`flex-shrink-0 ${statusColor}`}>{statusIcon}</span>
+      <StatusIcon className={`w-3 h-3 flex-shrink-0 ${statusColor}`} />
       <span className={`font-medium truncate ${selected ? 'text-blue-700' : 'text-gray-600'}`}>
         {formatToolName(tc.tool_name)}
       </span>
       {tc.question_id && <span className="bg-amber-50 text-amber-600 text-[9px] font-medium px-1 py-0.5 rounded flex-shrink-0">HITL</span>}
       {hint && <span className="text-gray-400 font-mono truncate ml-auto text-[10px]" title={hint}>{hint}</span>}
-    </button>
+    </div>
+  )
+}
+
+// ─── Retry Confirmation Dialog ──────────────────────────────────────────────
+
+const RetryConfirmDialog = ({ agentName, plannedPrompt, onConfirm, onCancel, isPending, error }) => {
+  const [editedPrompt, setEditedPrompt] = useState(plannedPrompt || '')
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/30 z-30" onClick={onCancel} />
+      <div className={`fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 bg-white rounded-lg shadow-2xl border border-gray-200 p-5 ${plannedPrompt ? 'w-[32rem]' : 'w-96'}`}>
+        <div className="flex items-center gap-2 mb-3">
+          <RotateCcw className="w-5 h-5 text-amber-600" />
+          <h3 className="text-sm font-semibold text-gray-900">Retry from here</h3>
+        </div>
+        <div className="text-sm text-gray-600 space-y-2 mb-4">
+          <p>This will revert <strong>{agentName}</strong> and all subsequent agents.</p>
+          <p>Git commits will be reset and force-pushed.</p>
+        </div>
+        {plannedPrompt && (
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-gray-500 mb-1">Planned Prompt</label>
+            <textarea
+              value={editedPrompt}
+              onChange={(e) => setEditedPrompt(e.target.value)}
+              disabled={isPending}
+              rows={6}
+              className="w-full text-xs font-mono bg-gray-50 border border-gray-200 rounded p-2.5 resize-y focus:outline-none focus:ring-1 focus:ring-amber-400 focus:border-amber-400 disabled:opacity-50"
+            />
+          </div>
+        )}
+        {error && (
+          <div className="mb-3 bg-red-50 border border-red-200 rounded p-2 text-xs text-red-700">
+            Retry failed: {error}
+          </div>
+        )}
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={isPending}
+            className="px-3 py-1.5 text-sm text-gray-600 rounded-md hover:bg-gray-100 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(plannedPrompt ? editedPrompt : null)}
+            disabled={isPending}
+            className="px-3 py-1.5 text-sm font-medium bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+          >
+            {isPending ? (
+              <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <RotateCcw className="w-3.5 h-3.5" />
+            )}
+            Retry from here
+          </button>
+        </div>
+      </div>
+    </>
   )
 }
 
 // ─── RIGHT PANEL: Agent Detail ──────────────────────────────────────────────
 
-const AgentDetailPanel = ({ agentRun }) => {
+const AgentDetailPanel = ({ agentRun, sessionId, sessionStatus }) => {
   const config = getAgentConfig(agentRun.agent_id)
   const AgentIcon = config.icon
   const colors = getAgentMessageColors(config.color)
   const tokens = agentRun.token_usage?.total_tokens || 0
   const llmCalls = agentRun.llm_calls || []
+  const [showRetryConfirm, setShowRetryConfirm] = useState(false)
+  const queryClient = useQueryClient()
+
+  const retryMutation = useMutation({
+    mutationFn: (editedPrompt) => retryFromRun(sessionId, agentRun.id, editedPrompt),
+    onSuccess: () => {
+      setShowRetryConfirm(false)
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
+    onError: () => {
+      // Keep dialog open so the error (rendered below) is visible
+    },
+  })
+
+  const canRetry = sessionStatus && sessionStatus !== 'active'
 
   const duration = useMemo(() => {
     if (agentRun.started_at && agentRun.completed_at) return formatDuration(new Date(agentRun.completed_at) - new Date(agentRun.started_at))
@@ -220,8 +311,32 @@ const AgentDetailPanel = ({ agentRun }) => {
         {tokens > 0 && <span className="text-xs text-gray-500">{formatTokens(tokens)} tok</span>}
         {duration && <span className="text-xs text-gray-500">&middot; {duration}</span>}
         {agentRun.status === 'running' && <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />}
-        <CopyButton text={agentRun} label="Copy JSON" showLabel className={`ml-auto ${copyBtnClass}`} />
+        <span className="ml-auto flex items-center gap-1">
+          {canRetry && (
+            <button
+              onClick={() => setShowRetryConfirm(true)}
+              className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded hover:bg-amber-100 transition-colors text-amber-700"
+              title="Retry from this agent"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Retry</span>
+            </button>
+          )}
+          <CopyButton text={extractAllToolCalls(agentRun)} label="Copy Tools" showLabel className={copyBtnClass} />
+          <CopyButton text={agentRun} label="Copy JSON" showLabel className={copyBtnClass} />
+        </span>
       </div>
+
+      {showRetryConfirm && (
+        <RetryConfirmDialog
+          agentName={config.name}
+          plannedPrompt={agentRun.planned_prompt}
+          onConfirm={(editedPrompt) => retryMutation.mutate(editedPrompt)}
+          onCancel={() => setShowRetryConfirm(false)}
+          isPending={retryMutation.isPending}
+          error={retryMutation.isError ? retryMutation.error.message : null}
+        />
+      )}
 
       {/* Planned prompt */}
       {agentRun.planned_prompt && (
@@ -281,6 +396,10 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
       {/* Tool calls — all shown with full details */}
       {toolCount > 0 && (
         <div className="space-y-3">
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            <span>{toolCount} tool call{toolCount !== 1 ? 's' : ''}</span>
+            <CopyButton text={llm.tool_calls} label="Copy all" showLabel className={copyBtnClass} />
+          </div>
           {llm.tool_calls.map((tc, ti) => (
             <ToolCallDetail key={tc.id || ti} tc={tc} />
           ))}
@@ -338,20 +457,68 @@ const LlmCallSection = ({ llm, index, isOnly }) => {
   )
 }
 
+// ─── Sandbox Events Copy Button ─────────────────────────────────────────────
+
+const CopySandboxEventsButton = ({ sandboxSessionId }) => {
+  const [status, setStatus] = useState('idle') // idle | loading | copied | error
+
+  const handleCopy = async () => {
+    setStatus('loading')
+    try {
+      const data = await getSandboxEvents(sandboxSessionId)
+      await navigator.clipboard.writeText(JSON.stringify(data, null, 2))
+      setStatus('copied')
+      setTimeout(() => setStatus('idle'), 2000)
+    } catch (e) {
+      setStatus('error')
+      setTimeout(() => setStatus('idle'), 2000)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      disabled={status === 'loading'}
+      className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+        status === 'copied' ? 'bg-green-100 text-green-700' :
+        status === 'error' ? 'bg-red-100 text-red-700' :
+        'bg-blue-50 text-blue-600 hover:bg-blue-100'
+      }`}
+    >
+      {status === 'loading' ? <Clock className="w-3 h-3 animate-spin" /> :
+       status === 'copied' ? <Check className="w-3 h-3" /> :
+       <Copy className="w-3 h-3" />}
+      {status === 'copied' ? 'Copied!' : status === 'error' ? 'Failed' : 'Copy Sandbox Events'}
+    </button>
+  )
+}
+
+/** Extract sandbox_session_id from a tool call result */
+const getSandboxSessionId = (tc) => {
+  if (tc.tool_name !== 'execute_coding_task') return null
+  let result = tc.result
+  if (typeof result === 'string') {
+    try { result = JSON.parse(result) } catch { return null }
+  }
+  return result?.sandbox_session_id || null
+}
+
 // ─── RIGHT PANEL: Tool Detail ───────────────────────────────────────────────
 
 const ToolCallDetail = ({ tc }) => {
   const statusColor = tc.status === 'completed' ? 'text-green-600' : tc.status === 'failed' ? 'text-red-600' : 'text-amber-600'
-  const statusIcon = tc.status === 'completed' ? '✓' : tc.status === 'failed' ? '✗' : '⏳'
+  const StatusIcon = tc.status === 'completed' ? Check : tc.status === 'failed' ? X : Clock
+  const sandboxId = getSandboxSessionId(tc)
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
       {/* Tool header */}
       <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-200 text-xs">
-        <span className={statusColor}>{statusIcon}</span>
+        <StatusIcon className={`w-3.5 h-3.5 ${statusColor}`} />
         <span className="font-medium text-gray-700">{formatToolName(tc.tool_name)}</span>
         <StatusBadge status={tc.status} />
         {tc.question_id && <span className="bg-amber-50 text-amber-700 text-[10px] font-medium px-1.5 py-0.5 rounded">HITL</span>}
+        {sandboxId && <CopySandboxEventsButton sandboxSessionId={sandboxId} />}
         <CopyButton text={tc} label="Copy" className={`ml-auto ${copyBtnClass}`} />
       </div>
 
@@ -359,7 +526,10 @@ const ToolCallDetail = ({ tc }) => {
       <div className="px-3 py-2 space-y-2 text-xs">
         {tc.arguments && (
           <div>
-            <span className="font-medium text-gray-400">Arguments</span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-gray-400">Arguments</span>
+              <CopyButton text={tc.arguments} label="Copy" className={copyBtnClass} />
+            </div>
             <pre className="mt-0.5 bg-gray-50 border border-gray-200 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-700">
               {formatValue(tc.arguments)}
             </pre>
@@ -368,7 +538,10 @@ const ToolCallDetail = ({ tc }) => {
 
         {tc.result && (
           <div>
-            <span className="font-medium text-gray-400">Result</span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-gray-400">Result</span>
+              <CopyButton text={tc.result} label="Copy" className={copyBtnClass} />
+            </div>
             <pre className="mt-0.5 bg-gray-50 border border-gray-200 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all text-gray-700">
               {formatValue(tc.result)}
             </pre>
@@ -377,7 +550,10 @@ const ToolCallDetail = ({ tc }) => {
 
         {tc.error && (
           <div>
-            <span className="font-medium text-red-600">Error</span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-red-600">Error</span>
+              <CopyButton text={tc.error} label="Copy" className={copyBtnClass} />
+            </div>
             <pre className="mt-0.5 bg-red-50 border border-red-200 p-2 rounded overflow-auto max-h-32 whitespace-pre-wrap text-red-700">
               {tc.error}
             </pre>
@@ -421,6 +597,7 @@ const ToolCallDetail = ({ tc }) => {
 
 const ToolDetailPanel = ({ tc, agentRun }) => {
   const config = getAgentConfig(agentRun.agent_id)
+  const sandboxId = getSandboxSessionId(tc)
 
   return (
     <div className="space-y-3">
@@ -430,6 +607,7 @@ const ToolDetailPanel = ({ tc, agentRun }) => {
         <span className="font-medium text-gray-700">{formatToolName(tc.tool_name)}</span>
         <StatusBadge status={tc.status} />
         {tc.question_id && <span className="bg-amber-50 text-amber-700 text-[10px] font-medium px-1.5 py-0.5 rounded">HITL</span>}
+        {sandboxId && <CopySandboxEventsButton sandboxSessionId={sandboxId} />}
         <CopyButton text={tc} label="Copy JSON" showLabel className={`ml-auto ${copyBtnClass}`} />
       </div>
 
@@ -534,7 +712,7 @@ const JsonViewerModal = ({ data, title, onClose }) => {
 
 // ─── Main component ──────────────────────────────────────────────────────────
 
-const DebugEventLog = ({ data, sessionId }) => {
+const DebugEventLog = ({ data, sessionId, sessionStatus }) => {
   const [selection, setSelection] = useState(null) // { type: 'agent'|'tool', agentRun, toolCall? }
   const [showJson, setShowJson] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
@@ -680,7 +858,7 @@ const DebugEventLog = ({ data, sessionId }) => {
         <div ref={detailRef} className="flex-1 overflow-y-auto bg-white">
           {selection ? (
             <div className="p-4">
-              {selection.type === 'agent' && <AgentDetailPanel agentRun={selection.agentRun} />}
+              {selection.type === 'agent' && <AgentDetailPanel agentRun={selection.agentRun} sessionId={sessionId} sessionStatus={sessionStatus} />}
               {selection.type === 'tool' && <ToolDetailPanel tc={selection.toolCall} agentRun={selection.agentRun} />}
             </div>
           ) : (
