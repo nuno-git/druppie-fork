@@ -439,12 +439,6 @@ mcps:
             compose_project_name:
               type: string
               description: "Docker Compose project name (auto-derived if omitted)"
-            health_path:
-              type: string
-              description: "Health check endpoint path (default: /health)"
-            health_timeout:
-              type: integer
-              description: "Health check timeout in seconds (default: 30)"
           required: []
 
       - name: compose_down

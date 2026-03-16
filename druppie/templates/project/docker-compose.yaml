@@ -11,6 +11,12 @@ services:
       - DATABASE_URL=postgresql://app:app@db:5432/app
       - DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY:-}
       - DEBUG=${DEBUG:-false}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   db:
     image: postgres:15-alpine
