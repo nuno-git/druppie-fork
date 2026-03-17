@@ -6,7 +6,7 @@ Druppie delegates coding tasks to isolated Docker sandboxes. Each sandbox is a f
 
 ## Architecture
 
-The sandbox infrastructure is based on [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`), integrated as a git submodule at `vendor/open-inspect/`. Sandbox containers run [OpenCode](https://github.com/opencode-ai/opencode) (`latest`).
+The sandbox infrastructure is based on [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`), integrated as a git submodule at `background-agents/`. Sandbox containers run [OpenCode](https://github.com/opencode-ai/opencode) (`latest`).
 
 Three Docker services power the infrastructure:
 
@@ -171,10 +171,10 @@ For production or untrusted code, sandboxes can run inside lightweight VMs inste
 
 ```bash
 # 1. Install Kata Containers
-sudo vendor/open-inspect/packages/local-sandbox-manager/scripts/setup-kata.sh
+sudo background-agents/packages/local-sandbox-manager/scripts/setup-kata.sh
 
 # 2. Build the sandbox image for containerd
-vendor/open-inspect/packages/local-sandbox-manager/scripts/build-sandbox-image.sh --kata
+background-agents/packages/local-sandbox-manager/scripts/build-sandbox-image.sh --kata
 
 # 3. Configure .env
 echo "SANDBOX_RUNTIME=kata" >> .env
