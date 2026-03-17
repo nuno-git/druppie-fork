@@ -67,9 +67,15 @@ class SandboxSupervisor:
         session_config_json = os.environ.get("SESSION_CONFIG", "{}")
         self.session_config = json.loads(session_config_json)
 
+        # Fallback: derive repo_owner/repo_name from SESSION_CONFIG if env vars are empty
+        if not self.repo_owner:
+            self.repo_owner = self.session_config.get("repo_owner", "")
+        if not self.repo_name:
+            self.repo_name = self.session_config.get("repo_name", "")
+
         # Paths
         self.workspace_path = Path("/workspace")
-        self.repo_path = self.workspace_path / self.repo_name
+        self.repo_path = self.workspace_path / self.repo_name if self.repo_name else self.workspace_path
         self.session_id_file = Path("/tmp/opencode-session-id")
 
         # Logger
