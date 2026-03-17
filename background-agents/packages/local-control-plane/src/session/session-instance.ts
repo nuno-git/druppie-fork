@@ -1086,6 +1086,7 @@ export class SessionInstance {
 
       if (this.gitProxyKey) {
         gitUrl = `${controlPlaneUrl}/git-proxy/${this.gitProxyKey}/${session.repo_owner}/${session.repo_name}.git`;
+        userEnvVars["GIT_URL"] = gitUrl;
       }
       if (this.llmProxyKey) {
         userEnvVars["LLM_PROXY_URL"] = `${controlPlaneUrl}/llm-proxy/${this.llmProxyKey}`;
@@ -1177,6 +1178,9 @@ export class SessionInstance {
 
       // Build user env vars for proxy URLs
       const userEnvVars: Record<string, string> = {};
+      if (this.gitProxyKey) {
+        userEnvVars["GIT_URL"] = `${controlPlaneUrl}/git-proxy/${this.gitProxyKey}/${session.repo_owner}/${session.repo_name}.git`;
+      }
       if (this.llmProxyKey) {
         userEnvVars["LLM_PROXY_URL"] = `${controlPlaneUrl}/llm-proxy/${this.llmProxyKey}`;
       }
