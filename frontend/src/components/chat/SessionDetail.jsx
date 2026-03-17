@@ -28,6 +28,7 @@ import {
   findPendingQuestion,
 } from './ChatHelpers'
 import TestResultCard from './TestResultCard'
+import PlanCard from './PlanCard'
 import SandboxEventCard, {
   processEvents,
   groupBySubagent,
@@ -354,6 +355,13 @@ const AgentRunItem = ({ run, timelineIndex, sessionId, hasFollowingMessage }) =>
             </div>
           )
         }
+        if (item.type === 'plan') {
+          return (
+            <div key={i} className="mt-2">
+              <PlanCard content={item.data.content} />
+            </div>
+          )
+        }
         return null
       })}
     </div>
@@ -444,7 +452,7 @@ const findWaitingSandboxId = (timeline) => {
     if (entry.type !== 'agent_run' || !entry.agent_run) continue
     for (const llm of (entry.agent_run.llm_calls || [])) {
       for (const tc of (llm.tool_calls || [])) {
-        if (tc.tool_name === 'execute_coding_task' && tc.status === 'waiting_sandbox') {
+        if (tc.tool_name === 'execute_coding_task' && (tc.status === 'waiting_sandbox' || tc.status === 'retrying')) {
           let result = tc.result
           if (typeof result === 'string') {
             try { result = JSON.parse(result) } catch { continue }

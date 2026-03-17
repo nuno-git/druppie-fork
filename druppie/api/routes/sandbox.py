@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import json
 import os
+from collections import Counter
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -181,6 +182,29 @@ def _extract_agent_output(events: list[dict]) -> str:
                 parts.append((ts, content))
     parts.sort(key=lambda x: x[0])
     return "\n".join(c for _, c in parts).strip()
+
+
+def _extract_error_info(events: list[dict]) -> dict:
+    """Extract error details from error, execution_complete, and tool_result events."""
+    errors = []
+    for event in events:
+        event_type = event.get("type")
+        data = event.get("data") or {}
+        if event_type == "error":
+            err = data.get("error", "")
+            if err:
+                errors.append(err)
+        elif event_type == "execution_complete" and not data.get("success", True):
+            err = data.get("error", "")
+            if err and err not in errors:
+                errors.append(f"Execution failed: {err}")
+        elif event_type == "tool_result":
+            err = data.get("error", "")
+            if err:
+                call_id = data.get("callId", "unknown")
+                errors.append(f"Tool {call_id}: {err}")
+    summary = errors[0][:2000] if errors else ""
+    return {"errors": errors[:10], "summary": summary}
 
 
 async def _retry_sandbox_with_next_model(
@@ -387,6 +411,7 @@ async def sandbox_complete_webhook(
     changed_files = []
     agent_output = ""
     event_count = 0
+    error_info = {"errors": [], "summary": ""}
 
     try:
         token = generate_control_plane_token(SANDBOX_API_SECRET)
@@ -401,6 +426,15 @@ async def sandbox_complete_webhook(
                 event_count = len(events)
                 changed_files = _extract_changed_files(events)
                 agent_output = _extract_agent_output(events)
+                error_info = _extract_error_info(events)
+
+                type_counts = Counter(e.get("type") for e in events)
+                logger.info(
+                    "sandbox_webhook_events_fetched",
+                    sandbox_session_id=sandbox_session_id,
+                    event_count=event_count,
+                    type_distribution=dict(type_counts),
+                )
     except Exception as e:
         logger.warning("sandbox_webhook_event_fetch_failed", error=str(e))
 
@@ -426,9 +460,22 @@ async def sandbox_complete_webhook(
             sandbox_mapping, sandbox_mapping.tool_call_id, db
         )
         if retry_initiated:
+            # Update tool call result so the frontend can follow the new sandbox
+            new_sandbox = sandbox_repo.get_latest_by_tool_call_id(sandbox_mapping.tool_call_id)
+            if new_sandbox:
+                execution_repo.update_tool_call(
+                    tool_call.id,
+                    result={
+                        "sandbox_session_id": new_sandbox.sandbox_session_id,
+                        "status": "retrying",
+                        "retry_count": (sandbox_mapping.model_chain_index or 0) + 1,
+                    },
+                    sandbox_waiting_at=datetime.now(timezone.utc),
+                )
             logger.info(
                 "sandbox_webhook_retry_initiated",
                 sandbox_session_id=sandbox_session_id,
+                new_sandbox_session_id=new_sandbox.sandbox_session_id if new_sandbox else None,
                 tool_call_id=str(sandbox_mapping.tool_call_id),
             )
             # Don't complete the tool call — keep it in WAITING_SANDBOX state
@@ -444,6 +491,8 @@ async def sandbox_complete_webhook(
         "event_count": event_count,
         "changed_files": changed_files,
         "agent_output": agent_output[-5000:] if agent_output else "",
+        "error_details": error_info["errors"],
+        "error_summary": error_info["summary"],
     }
 
     # Complete the tool call
@@ -451,6 +500,7 @@ async def sandbox_complete_webhook(
         tool_call.id,
         status=ToolCallStatus.COMPLETED if body.success else ToolCallStatus.FAILED,
         result=result,
+        error=error_info["summary"] if not body.success else None,
     )
     db.commit()
 
@@ -612,11 +662,18 @@ async def sandbox_watchdog_loop() -> None:
                                     await delete_sandbox_git_user(sandbox_mapping.git_user_id)
                                 except Exception as e:
                                     logger.warning("sandbox_watchdog_gitea_cleanup_failed", error=str(e))
-                            # Reset sandbox_waiting_at so watchdog doesn't re-trigger immediately
-                            execution_repo.update_tool_call(
-                                tc.id,
-                                sandbox_waiting_at=datetime.now(timezone.utc),
-                            )
+                            # Update tool call with new sandbox ID + reset watchdog timer
+                            new_sandbox = sandbox_repo.get_latest_by_tool_call_id(tc.id)
+                            update_kwargs = {
+                                "sandbox_waiting_at": datetime.now(timezone.utc),
+                            }
+                            if new_sandbox:
+                                update_kwargs["result"] = {
+                                    "sandbox_session_id": new_sandbox.sandbox_session_id,
+                                    "status": "retrying",
+                                    "retry_count": (sandbox_mapping.model_chain_index or 0) + 1,
+                                }
+                            execution_repo.update_tool_call(tc.id, **update_kwargs)
                             db.commit()
                             logger.info(
                                 "sandbox_watchdog_retry_initiated",

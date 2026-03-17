@@ -75,6 +75,15 @@ class SandboxSessionRepository(BaseRepository):
             .first()
         )
 
+    def get_latest_by_tool_call_id(self, tool_call_id: UUID) -> SandboxSession | None:
+        """Look up the most recent sandbox session for a tool call (after retries)."""
+        return (
+            self.db.query(SandboxSession)
+            .filter_by(tool_call_id=tool_call_id)
+            .order_by(SandboxSession.created_at.desc())
+            .first()
+        )
+
     def mark_completed(self, sandbox_session_id: str) -> None:
         """Mark a sandbox session as completed."""
         session = self.get_by_sandbox_id(sandbox_session_id)
