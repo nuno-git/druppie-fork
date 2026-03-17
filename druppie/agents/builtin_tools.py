@@ -7,8 +7,6 @@ Default (all agents): done, hitl_ask_question, hitl_ask_multiple_choice_question
 Router adds: set_intent
 Planner adds: make_plan
 Agents with skills: invoke_skill (loads skill markdown prompts)
-Agents that can trigger update_core: switch_to_update_core
-
 Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
 Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
 """
@@ -188,30 +186,6 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                 },
                 "required": ["skill_name"],
-            },
-        },
-    },
-    "switch_to_update_core": {
-        "type": "function",
-        "function": {
-            "name": "switch_to_update_core",
-            "description": (
-                "Switch the current session to update_core mode. "
-                "Use this when the user wants to CHANGE or IMPROVE Druppie itself "
-                "(the platform, its agents, prompts, skills, or codebase). "
-                "This cancels the current plan and creates a new planner run "
-                "targeting Druppie's own GitHub repository. "
-                "After calling this, call done() with a summary of what the user wants to change."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "description": {
-                        "type": "string",
-                        "description": "Brief description of what the user wants to change in Druppie",
-                    },
-                },
-                "required": ["description"],
             },
         },
     },
@@ -555,81 +529,6 @@ def _update_planner_prompt(
         agent_run_id=str(planner_run.id),
         intent=intent,
     )
-
-
-# =============================================================================
-# SWITCH TO UPDATE_CORE IMPLEMENTATION
-# =============================================================================
-
-async def switch_to_update_core(
-    description: str,
-    session_id: UUID,
-    agent_run_id: UUID,
-    execution_repo: "ExecutionRepository",
-) -> dict:
-    """Switch the current session to update_core mode.
-
-    Cancels the current plan and creates a new planner run targeting
-    Druppie's own GitHub repository. The calling agent should then
-    call done() to complete and relay context to the new planner.
-
-    Args:
-        description: Brief description of what the user wants to change
-        session_id: Session UUID
-        agent_run_id: Agent run UUID for tracking
-        execution_repo: Execution repository
-
-    Returns:
-        Success message with repo context
-    """
-    from druppie.repositories import SessionRepository
-    from druppie.domain.common import AgentRunStatus
-
-    db = execution_repo.db
-    session_repo = SessionRepository(db)
-
-    # 1. Update session intent to update_core
-    session_repo.update_intent(session_id, "update_core")
-
-    # 2. Store repo context for Druppie's own codebase
-    repo_owner = "nuno-git"
-    repo_name = "druppie-fork"
-
-    session_repo.update_repo_context(
-        session_id=session_id,
-        repo_owner=repo_owner,
-        repo_name=repo_name,
-    )
-
-    # 3. Cancel all pending runs from the current plan
-    cancelled = execution_repo.cancel_pending_runs(session_id)
-
-    # 4. Create a new planner run with INTENT: update_core
-    seq = execution_repo.get_next_sequence_number(session_id)
-    execution_repo.create_agent_run(
-        session_id=session_id,
-        agent_id="planner",
-        status=AgentRunStatus.PENDING,
-        planned_prompt=f"INTENT: update_core\nDESCRIPTION: {description}\n\n",
-        sequence_number=seq,
-    )
-
-    db.flush()
-
-    logger.info(
-        "switch_to_update_core",
-        session_id=str(session_id),
-        agent_run_id=str(agent_run_id),
-        description=description,
-        cancelled_runs=cancelled,
-    )
-
-    return {
-        "success": True,
-        "message": f"Switched to update_core flow. Cancelled {cancelled} pending run(s). "
-                   f"Target repo: {repo_owner}/{repo_name}. "
-                   "Call done() now to complete and hand off to the planner.",
-    }
 
 
 # =============================================================================
@@ -1027,14 +926,17 @@ async def execute_sandbox_coding_task(
     if not session.user_id:
         return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
 
-    # Determine git provider and repo context based on session intent
-    if session.intent == "update_core":
-        # update_core: use GitHub App credentials for Druppie's own repo
-        repo_owner = session.repo_owner or "nuno-git"
-        repo_name = session.repo_name or "druppie-fork"
+    # Determine git provider and repo context based on calling agent
+    agent_run = execution_repo.get_by_id(agent_run_id)
+    calling_agent_id = agent_run.agent_id if agent_run else None
+
+    if calling_agent_id == "update_core_builder":
+        # update_core_builder: use GitHub App credentials for Druppie's own repo
+        repo_owner = os.getenv("DRUPPIE_REPO_OWNER", "nuno-git")
+        repo_name = os.getenv("DRUPPIE_REPO_NAME", "druppie-fork")
         git_provider = "github"
     else:
-        # create_project / update_project: use Gitea credentials
+        # All other agents: use Gitea credentials from the project
         repo_owner = os.getenv("GITEA_ORG", "druppie")
         repo_name = ""
         if session.project_id:
@@ -1206,13 +1108,6 @@ async def execute_builtin(
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
         )
-    elif tool_name == "switch_to_update_core":
-        return await switch_to_update_core(
-            description=args.get("description", ""),
-            session_id=session_id,
-            agent_run_id=agent_run_id,
-            execution_repo=execution_repo,
-        )
     elif tool_name == "execute_coding_task":
         return await execute_sandbox_coding_task(
             args=args,
@@ -1254,7 +1149,6 @@ def is_builtin_tool(tool_name: str) -> bool:
         "invoke_skill",
         "execute_coding_task",
         "test_report",
-        "switch_to_update_core",
     )
 
 

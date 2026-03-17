@@ -147,7 +147,7 @@ class LLMSettings(BaseSettings):
 
 
 class GitHubAppSettings(BaseSettings):
-    """GitHub App configuration for update_core flow.
+    """GitHub App configuration for update_core_builder agent.
 
     When all three values are set, the backend can generate short-lived
     installation tokens for pushing to GitHub repos. When any are missing,
@@ -283,7 +283,7 @@ class Settings(BaseSettings):
             workspace_root=str(self.workspace.root),
         )
 
-        # Log GitHub App status so operators know if update_core is available
+        # Log GitHub App status so operators know if update_core_builder is available
         logger.info(
             "github_app_config",
             configured=self.github_app.is_configured,

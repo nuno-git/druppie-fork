@@ -1,6 +1,6 @@
 """GitHub App token service — generates short-lived installation access tokens.
 
-Used by update_core to authenticate sandbox agents against GitHub repos.
+Used by update_core_builder agent to authenticate sandbox agents against GitHub repos.
 Disabled (returns None) when env vars are not set.
 """
 
