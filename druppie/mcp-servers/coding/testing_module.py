@@ -22,6 +22,11 @@ _RE_VITEST = re.compile(
 _RE_GENERIC_PASSED = re.compile(r"(\d+)\s+(?:passing|passed)")
 _RE_GENERIC_FAILED = re.compile(r"(\d+)\s+(?:failing|failed)")
 _RE_GENERIC_SKIPPED = re.compile(r"(\d+)\s+(?:pending|skipped)")
+_RE_ANSI = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+
+def _strip_ansi(text: str) -> str:
+    return _RE_ANSI.sub("", text)
 
 
 def _extract_counts(match):
@@ -110,31 +115,41 @@ class TestingModule:
         vitest_ts_config = workspace_path / "vitest.config.ts"
         package_json = workspace_path / "package.json"
 
+        # Parse package.json once and reuse across vitest/jest detection
+        pkg_data = None
         if package_json.exists():
             try:
-                data = json.loads(package_json.read_text())
-                deps = data.get("devDependencies", {})
-                if "vitest" in deps:
-                    config_file = None
-                    for cfg in [vitest_config, vitest_ts_config, vite_config, vite_ts_config]:
-                        if cfg.exists():
-                            config_file = str(cfg)
-                            break
-                    config_info = {
-                        "version": deps.get("vitest", "unknown"),
-                        "config_file": config_file or "package.json",
-                        "coverage_file": "coverage/coverage-final.json",
-                        "doc_url": self.FRAMEWORK_CONFIG["vitest"]["doc_url"],
-                    }
-                    return "vitest", "npm run test", config_info
+                pkg_data = json.loads(package_json.read_text())
             except json.JSONDecodeError:
                 pass
-        
+
+        if pkg_data is not None:
+            deps = pkg_data.get("devDependencies", {})
+            scripts = pkg_data.get("scripts", {})
+            _test_val = scripts.get("test", "").strip()
+            has_test_script = bool(_test_val) and "no test specified" not in _test_val
+
+            if "vitest" in deps:
+                config_file = None
+                for cfg in [vitest_config, vitest_ts_config, vite_config, vite_ts_config]:
+                    if cfg.exists():
+                        config_file = str(cfg)
+                        break
+                config_info = {
+                    "version": deps.get("vitest", "unknown"),
+                    "config_file": config_file or "package.json",
+                    "coverage_file": "coverage/coverage-final.json",
+                    "doc_url": self.FRAMEWORK_CONFIG["vitest"]["doc_url"],
+                }
+                # Use npm test if a test script exists, otherwise call vitest directly
+                test_cmd = "npm run test" if has_test_script else "npx vitest run"
+                return "vitest", test_cmd, config_info
+
         # Check for Pytest (Python)
         pytest_ini = workspace_path / "pytest.ini"
         pyproject = workspace_path / "pyproject.toml"
         requirements_txt = workspace_path / "requirements.txt"
-        
+
         if pytest_ini.exists():
             config_info = {
                 "version": "7.4.0+",
@@ -143,7 +158,7 @@ class TestingModule:
                 "doc_url": self.FRAMEWORK_CONFIG["pytest"]["doc_url"],
             }
             return "pytest", "pytest", config_info
-        
+
         if pyproject.exists():
             try:
                 content = pyproject.read_text()
@@ -157,7 +172,7 @@ class TestingModule:
                     return "pytest", "pytest", config_info
             except Exception:
                 pass
-        
+
         # Check for Jest (supports .js, .cjs, .mjs, .ts)
         jest_config = None
         for jest_ext in ["jest.config.js", "jest.config.cjs", "jest.config.mjs", "jest.config.ts"]:
@@ -165,28 +180,23 @@ class TestingModule:
             if candidate.exists():
                 jest_config = candidate
                 break
-        if jest_config:
+
+        if pkg_data is not None:
+            has_jest_dep = "jest" in pkg_data.get("devDependencies", {})
+        else:
+            has_jest_dep = False
+
+        if jest_config or has_jest_dep:
             config_info = {
                 "version": "29.x",
-                "config_file": str(jest_config),
+                "config_file": str(jest_config) if jest_config else "package.json",
                 "coverage_file": "coverage/coverage-final.json",
                 "doc_url": self.FRAMEWORK_CONFIG["jest"]["doc_url"],
             }
-            return "jest", "npm test", config_info
-        
-        if package_json.exists():
-            try:
-                data = json.loads(package_json.read_text())
-                if "jest" in data.get("devDependencies", {}):
-                    config_info = {
-                        "version": "29.x",
-                        "config_file": "package.json",
-                        "coverage_file": "coverage/coverage-final.json",
-                        "doc_url": self.FRAMEWORK_CONFIG["jest"]["doc_url"],
-                    }
-                    return "jest", "npm test", config_info
-            except json.JSONDecodeError:
-                pass
+            # Use npm test if a test script exists, otherwise call jest directly
+            # has_test_script was computed above from the single pkg_data parse
+            test_cmd = "npm test" if (pkg_data is not None and has_test_script) else "npx jest"
+            return "jest", test_cmd, config_info
         
         # Check for Playwright
         playwright_config = workspace_path / "playwright.config.js"
@@ -237,7 +247,9 @@ class TestingModule:
                 scripts = pkg.get("scripts", {})
                 if "test" in scripts:
                     test_script = scripts["test"]
-                    if "jest" in test_script:
+                    if "no test specified" in test_script:
+                        pass  # Skip npm default — not a real test script
+                    elif "jest" in test_script:
                         return ("jest", "npm test")
                     elif "mocha" in test_script:
                         return ("mocha", "npm test")
@@ -310,7 +322,7 @@ class TestingModule:
             "failed_tests": [],
         }
         
-        combined = stdout + "\n" + stderr
+        combined = _strip_ansi(stdout + "\n" + stderr)
         
         if framework == "pytest":
             # Pytest summary line has components in any order: "1 failed, 3 passed, 1 skipped in 2.34s"
@@ -325,7 +337,7 @@ class TestingModule:
                     result["failed"] += int(error_m.group(1))
                 result["skipped"] = int(skipped_m.group(1)) if skipped_m else 0
                 result["total"] = result["passed"] + result["failed"] + result["skipped"]
-            failed_matches = re.findall(r"FAILED\s+([\w:.\/\-]+)", combined)
+            failed_matches = re.findall(r"FAILED\s+(\S+?)(?:\s+-\s+|\s*$)", combined, re.MULTILINE)
             result["failed_tests"] = failed_matches
 
         elif framework in ("jest", "vitest"):
@@ -359,7 +371,7 @@ class TestingModule:
                 result["skipped"] = int(pending.group(1))
             result["total"] = result["passed"] + result["failed"] + result["skipped"]
         
-        elif framework == "go":
+        elif framework in ("go", "gotest"):
             ok_count = len(re.findall(r"^ok\s+", combined, re.MULTILINE))
             fail_count = len(re.findall(r"^FAIL\s+", combined, re.MULTILINE))
             skip_count = len(re.findall(r"^SKIP\s+", combined, re.MULTILINE))
@@ -541,6 +553,7 @@ class TestingModule:
         elif framework == "vitest":
             required = ["vitest", "@vitest/coverage-v8"]
             installed = []
+            installed_names = set()
 
             node_modules = self.workspace_root / "node_modules"
             has_node_modules = node_modules.exists()
@@ -555,18 +568,20 @@ class TestingModule:
                             # Verify the package is actually installed in node_modules
                             if (node_modules / req).exists():
                                 installed.append(f"{req}@{deps[req]}")
+                                installed_names.add(req)
                 except json.JSONDecodeError:
                     pass
 
             return {
                 "required": required,
                 "installed": installed,
-                "missing": [r for r in required if r not in installed],
+                "missing": [r for r in required if r not in installed_names],
             }
-        
+
         elif framework == "jest":
             required = ["jest"]
             installed = []
+            installed_names = set()
 
             node_modules = self.workspace_root / "node_modules"
             has_node_modules = node_modules.exists()
@@ -580,13 +595,14 @@ class TestingModule:
                         if req in deps:
                             if (node_modules / req).exists():
                                 installed.append(f"{req}@{deps[req]}")
+                                installed_names.add(req)
                 except json.JSONDecodeError:
                     pass
 
             return {
                 "required": required,
                 "installed": installed,
-                "missing": [r for r in required if r not in installed],
+                "missing": [r for r in required if r not in installed_names],
             }
         
         return {"required": [], "installed": [], "missing": []}
@@ -638,6 +654,7 @@ class TestingModule:
         
         coverage_file_path = self.workspace_root / coverage_files.get(framework, "")
         if not coverage_file_path.exists():
+            logger.info("coverage_file_not_found: %s (framework=%s)", coverage_file_path, framework)
             return None
         
         try:

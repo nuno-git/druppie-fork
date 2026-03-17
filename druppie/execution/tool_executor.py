@@ -906,9 +906,6 @@ class ToolExecutor:
             # if the MCP server crashes or the network drops.
             timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
 
-            # Execute via HTTP
-            timeout = 60.0
-
             result = await self.mcp_http.call(
                 tool_call.mcp_server,
                 tool_call.tool_name,

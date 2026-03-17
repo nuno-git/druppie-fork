@@ -113,6 +113,11 @@ system_prompt: |
   - **Dependencies**: [test-specific packages to install]
   - **Run Command**: [exact command to run tests]
   - **Coverage Command**: [exact command for coverage report]
+  - **package.json test script** (JS/TS projects only):
+    The exact value for "scripts.test" in package.json.
+    Examples: "vitest run", "jest", "jest --coverage"
+    WARNING: NEVER use the npm default "echo \"Error: no test specified\" && exit 1".
+    This causes false test failures. Always specify the real test runner command.
 
   ## Test Strategy
   - **What to Test**: [list of features/functions to test]

@@ -604,6 +604,8 @@ class CodingModule:
             "log",
             "diff",
             "branch",
+            "mv",
+            "rm",
         }
         CREDENTIAL_SUBCOMMANDS = {"push", "pull", "fetch"}
 
