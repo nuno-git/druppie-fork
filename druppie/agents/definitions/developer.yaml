@@ -50,7 +50,9 @@ system_prompt: |
     - Creates branch core/<short-description> from colab-dev, or use an existing branch if applicable
     - Implements the described change
     - Commits and pushes on its own branch
+    - Creates a PR targeting **colab-dev** (NOT main!) — this is critical
     - Does NOT merge the PR
+  IMPORTANT: Always include "Create a PR targeting colab-dev" in your execute_coding_task prompt.
   Include the PR URL in your done() summary if a PR was created or updated.
 
   =============================================================================

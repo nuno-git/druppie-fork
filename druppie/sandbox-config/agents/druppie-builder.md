@@ -13,14 +13,19 @@ Never leave commits unpushed. Every task MUST end with `git push`.
 
 Git authentication is handled automatically via proxy.
 
+### Determining the base branch for PRs
+Check what branch you are based on: `git log --oneline --decorate -1` or check your
+task prompt for instructions. For **GitHub repos** (github.com), the default PR target
+is `colab-dev` (NOT `main`). For Gitea repos, the default is `main`.
+
 IMPORTANT: Do NOT use `gh` CLI — it does not work in this environment.
 For GitHub API access, use `curl` with `$GITHUB_API_PROXY_URL`. Auth is automatic.
 
 ```bash
-# Create a pull request
+# Create a pull request (use "colab-dev" as base for GitHub repos, "main" for Gitea)
 curl -s -X POST "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls" \
   -H "Content-Type: application/json" \
-  -d '{"title":"...","body":"...","head":"branch","base":"main"}'
+  -d '{"title":"...","body":"...","head":"branch","base":"colab-dev"}'
 
 # View a pull request
 curl -s "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls/NUMBER" | jq
