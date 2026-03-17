@@ -8,7 +8,7 @@ Druppie is a governance platform where users describe what they want built in na
 
 Every action an agent takes goes through a **tool call** -- either an **MCP tool** provided by an external server, or a **builtin tool** provided by the platform itself.
 
-**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Additional builtins are restricted to specific agents: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), `test_report` (Test Executor only -- structured test iteration reporting), `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access), and `execute_coding_task` (Developer/Tester -- delegates coding to an isolated sandbox).
+**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Additional builtins are restricted to specific agents: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), `test_report` (Test Executor only -- structured test iteration reporting), `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access), `execute_coding_task` (Developer/Tester -- delegates coding to an isolated sandbox), and `switch_to_update_core` (Architect -- cancels the current plan and switches the session to `update_core` mode when a project is about modifying Druppie itself).
 
 **MCP tools** are provided by external MCP servers over HTTP (e.g., `read_file`, `write_file`, `docker:build`). Which tools each agent can call is configured in its YAML definition.
 
@@ -28,7 +28,7 @@ Twelve agents are defined. Eleven are functional; one is a stub.
 | **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, `update_core`, or `general_chat`. Can ask clarifying questions. Has web search access. |
 | **Planner** | Orchestrates the pipeline | Creates execution plans as ordered sequences of agent steps. Re-evaluates after each major phase. Manages design loops (BA/Architect) and execution loops (Developer/Deployer). Max 15 iterations. |
 | **Business Analyst** | Gathers requirements | Engages the user in structured dialogue using a funnel approach (max 1 question at a time, almost always multiple choice). Produces `functional_design.md` via the `make_design` tool with built-in Mermaid validation. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Supports `NO_FD_CHANGE` pass-through for technical fixes. Max 50 iterations. |
-| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Three outcomes: APPROVE (writes `technical_design.md` via `make_design`), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
+| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Three outcomes: APPROVE (writes `technical_design.md` via `make_design`), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Can detect Druppie self-improvement requests and trigger `switch_to_update_core` to redirect the flow. Max 50 iterations. |
 | **Builder Planner** | Creates implementation plans | Reads `functional_design.md` and `technical_design.md`, writes `builder_plan.md` with code standards, test framework, test strategy, solution strategy, and change approach. Guides downstream test_builder and builder agents. Max 30 iterations. |
 | **Test Builder** | Generates tests (TDD Red Phase) | Writes comprehensive test suites based on functional and technical design documents and builder_plan.md. Sets up test frameworks and dependencies. Does NOT run tests. Max 30 iterations. |
 | **Builder** | Implements code (TDD Green Phase) | Reads tests written by test_builder and implements source code to pass them. Follows TDD methodology. Max 100 iterations. |
@@ -102,21 +102,30 @@ An existing project is modified via feature branches:
 
 Druppie modifies its own codebase via a PR flow on GitHub. No deploy, no merge — always ends with a PR targeting `colab-dev` for human review.
 
-1. **Router** classifies intent as `update_core` (keywords: "improve yourself", "fix the router", "change the planner", etc.)
-2. **Planner** decides pipeline complexity:
+**Two entry paths:**
+
+- **Direct:** Router classifies intent as `update_core` (keywords: "improve yourself", "fix the router", "change the planner", etc.)
+- **Mid-flow redirect:** During a `create_project` or `general_chat` session, the Architect detects that the project is about modifying Druppie itself and calls `switch_to_update_core`. This cancels the current plan and creates a new planner run with `update_core` intent — the Architect writes `technical_design.md` first, then switches.
+
+**Pipeline:**
+
+1. **Planner** decides pipeline complexity:
    - **Simple** (prompt tweaks, YAML config, single-file edits): Developer → Summarizer
    - **Complex** (new features, multi-file changes, architecture impact): BA → Architect → Developer → Summarizer
-3. **Developer** delegates to sandbox via `execute_coding_task`:
+2. **Developer** delegates to sandbox via `execute_coding_task`:
    - Sandbox agent creates a `core/` branch from `colab-dev`
    - Implements the change, commits, pushes
-   - Creates a PR on GitHub via the GitHub API proxy
-4. **Summarizer** reports the PR link to the user
+   - Creates a PR on GitHub targeting `colab-dev` via the GitHub API proxy
+3. **Summarizer** reports the PR link to the user
 
 Key differences from `update_project`:
 - No project record or Gitea repo is created — repo context (URL, owner, base branch) is stored directly on the session
 - Authentication via GitHub App installation tokens (short-lived, ~1 hour, scoped to a single repo)
 - Sandbox uses GitHub API proxy for PR creation (`curl $GITHUB_API_PROXY_URL`) — no real tokens enter the sandbox
+- Sandbox clones the GitHub repo with the correct base branch (`colab-dev`) threaded through the entire pipeline
 - No deploy step, no merge step — PRs are always reviewed and merged by humans
+
+**Prerequisites:** Requires a GitHub App configured with Contents R/W, Pull Requests R/W, and Metadata R permissions. See the [GitHub App Setup](#github-app-setup-for-update_core) section in the README.
 
 ### general_chat
 
