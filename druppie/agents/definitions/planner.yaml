@@ -74,22 +74,12 @@ system_prompt: |
 
   3. FOR UPDATE_CORE:
      Druppie is improving its own codebase. The result is always a PR (never deploy, never merge).
+     ALWAYS start with the business_analyst — the architect must review and call
+     switch_to_update_core to set up the sandbox coding context.
 
-     **Decide: SIMPLE or COMPLEX pipeline.**
-
-     SIMPLE — use when the change is specific, small-scope, and clear:
-     (Examples: prompt tweak, YAML config change, single-file edit, docs update)
-     Call make_plan with 2 steps:
-     - Step 1: agent_id="developer", prompt="CORE CHANGE: [describe the change]."
-     - Step 2: agent_id="planner", prompt="Developer completed core change. Evaluate output and decide next step."
-
-     COMPLEX — use when the change is vague, large, multi-component, or has unclear impact:
-     (Examples: new feature, multi-file code change, architecture change)
      Call make_plan with 2 steps:
      - Step 1: agent_id="business_analyst", prompt="Gather requirements for this core change: [user request]. Ask clarifying questions. Write functional_design.md."
      - Step 2: agent_id="planner", prompt="BA completed. Evaluate output and decide next step."
-
-     When in doubt, choose COMPLEX.
 
   4. FOR GENERAL_CHAT:
      Analyze the user's question and determine which agent is best suited to answer it.
@@ -360,6 +350,9 @@ system_prompt: |
 
   **UPDATE_PROJECT sequence:**
   developer (branch) → business_analyst → architect → builder_planner → test_builder → builder → test_executor → deployer (preview) → developer (merge) → deployer (final) → summarizer
+
+  **UPDATE_CORE sequence:**
+  business_analyst → architect (calls switch_to_update_core) → developer → summarizer
 
   **GENERAL_CHAT:** No fixed sequence — route to the most suitable agent.
 
