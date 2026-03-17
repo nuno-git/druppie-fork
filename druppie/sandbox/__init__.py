@@ -77,6 +77,9 @@ async def create_and_start_sandbox(
     author_id: str,
     db,
     git_provider: str = "gitea",
+    context_repo_owner: str | None = None,
+    context_repo_name: str | None = None,
+    context_git_provider: str | None = None,
 ) -> dict:
     """Create a sandbox session on the control plane, register ownership, and send the prompt.
 
@@ -137,6 +140,21 @@ async def create_and_start_sandbox(
         "llm": build_llm_credentials(),
     }
 
+    # Build context repo credentials if provided (dual-repo mode for update_core_builder)
+    context_git_user_id = None
+    if context_repo_owner and context_repo_name and context_git_provider:
+        if context_git_provider == "github":
+            context_git_creds = await _build_github_git_credentials(context_repo_owner, context_repo_name)
+        else:
+            from druppie.sandbox.gitea_credentials import create_sandbox_git_user
+            context_git_user_id = secrets.token_hex(6)
+            context_git_creds = await create_sandbox_git_user(
+                sandbox_session_id=context_git_user_id,
+                repo_owner=context_repo_owner,
+                repo_name=context_repo_name,
+            )
+        credentials["contextGit"] = context_git_creds
+
     # For GitHub repos, also provide GitHub API credentials so the sandbox
     # can use gh CLI / curl to create PRs, read issues, etc. via the proxy.
     if git_provider == "github":
@@ -155,6 +173,11 @@ async def create_and_start_sandbox(
         "title": title,
         "credentials": credentials,
     }
+
+    # Pass context repo info for dual-repo sandbox
+    if context_repo_owner and context_repo_name:
+        create_body["contextRepoOwner"] = context_repo_owner
+        create_body["contextRepoName"] = context_repo_name
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
