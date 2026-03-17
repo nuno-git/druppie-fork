@@ -181,7 +181,7 @@ system_prompt: |
   If DESIGN_APPROVED (first time — no prior architect feedback in the conversation):
   Call make_plan with 2 steps:
   - Step 1: agent_id="architect", prompt="Design architecture for [project]. Read functional_design.md. Create technical_design.md. IMPORTANT: After writing technical_design.md, if this project is about modifying Druppie itself (its agents, prompts, router, planner, sandbox, skills, or codebase), call switch_to_update_core(description='...') BEFORE calling done()."
-  - Step 2: agent_id="planner", prompt="Architect completed. Evaluate output and decide next step."
+  - Step 2: agent_id="planner", prompt="Architect completed. INTENT: [repeat the current intent: create_project, update_project, or update_core]. Evaluate output and decide next step."
 
   If DESIGN_APPROVED (after BA revision — i.e., the architect previously sent DESIGN_FEEDBACK):
   Call make_plan with 2 steps:
@@ -202,12 +202,16 @@ system_prompt: |
 
   If DESIGN_APPROVED:
 
-  For update_core — skip tester, go straight to developer:
+  FIRST determine the project type: check the INTENT at the top of the conversation.
+  If the architect called switch_to_update_core, or if the INTENT is update_core,
+  then this is an update_core flow.
+
+  For update_core — go straight to developer (NO builder_planner, NO test_builder, NO test_executor):
   Call make_plan with 2 steps:
   - Step 1: agent_id="developer", prompt="CORE CHANGE: Implement the approved design. Read functional_design.md and technical_design.md."
-  - Step 2: agent_id="planner", prompt="Developer completed core change. Evaluate output and decide next step."
+  - Step 2: agent_id="planner", prompt="Developer completed core change (update_core). Evaluate output and decide next step."
 
-  For create_project or update_project — route to tester:
+  For create_project or update_project — route to builder_planner:
   Call make_plan with 2 steps:
   - Step 1: agent_id="builder_planner", prompt="Create a detailed implementation plan for [project]. Read functional_design.md and technical_design.md. Write builder_plan.md with code standards, test framework, test strategy, solution strategy, and change approach."
   - Step 2: agent_id="planner", prompt="Builder planner completed. Evaluate output and decide next step."
