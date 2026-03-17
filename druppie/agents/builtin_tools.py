@@ -930,11 +930,27 @@ async def execute_sandbox_coding_task(
     agent_run = execution_repo.get_by_id(agent_run_id)
     calling_agent_id = agent_run.agent_id if agent_run else None
 
+    # Context repo params (only for update_core_builder — dual-repo sandbox)
+    context_repo_owner: str | None = None
+    context_repo_name: str | None = None
+    context_git_provider: str | None = None
+
     if calling_agent_id == "update_core_builder":
         # update_core_builder: use GitHub App credentials for Druppie's own repo
         repo_owner = os.getenv("DRUPPIE_REPO_OWNER", "nuno-git")
         repo_name = os.getenv("DRUPPIE_REPO_NAME", "druppie-fork")
         git_provider = "github"
+
+        # Also pass the project repo as context (for FD/TD access)
+        context_git_provider = "gitea"
+        context_repo_owner = os.getenv("GITEA_ORG", "druppie")
+        context_repo_name = ""
+        if session.project_id:
+            project_repo = ProjectRepository(db)
+            project = project_repo.get_by_id(session.project_id)
+            if project:
+                context_repo_owner = project.repo_owner or context_repo_owner
+                context_repo_name = project.repo_name or ""
     else:
         # All other agents: use Gitea credentials from the project
         repo_owner = os.getenv("GITEA_ORG", "druppie")
@@ -963,6 +979,9 @@ async def execute_sandbox_coding_task(
             author_id="druppie-agent",
             db=db,
             git_provider=git_provider,
+            context_repo_owner=context_repo_owner,
+            context_repo_name=context_repo_name,
+            context_git_provider=context_git_provider,
         )
 
         logger.info(
