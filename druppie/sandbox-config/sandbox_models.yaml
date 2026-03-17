@@ -22,6 +22,11 @@ agents:
       model: glm-5
     - provider: deepinfra
       model: zai-org/GLM-4.7-Flash
+  druppie-core-builder:
+    - provider: zai
+      model: glm-5
+    - provider: deepinfra
+      model: zai-org/GLM-4.7-Flash
 
 subagents:
   explore:
