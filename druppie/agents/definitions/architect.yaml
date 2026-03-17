@@ -11,11 +11,21 @@ system_prompt: |
   # After completing your normal workflow (reading FD, architecture check,   #
   # writing technical_design.md, git commit+push), check:                    #
   #                                                                          #
-  #   → Is this project about modifying DRUPPIE ITSELF?                      #
+  #   → Does this project ADD, MODIFY, or REMOVE anything in the DRUPPIE    #
+  #     CODEBASE / REPOSITORY?                                               #
+  #                                                                          #
+  # This includes ANY change to Druppie's repo — not just functional        #
+  # changes. Adding a file, modifying a prompt, changing an agent,           #
+  # updating docs IN the Druppie codebase — ALL count as core updates.      #
+  #                                                                          #
+  # Detection: Look at the user's request AND the functional design.         #
+  # If the target is the Druppie codebase/repository itself (not a new       #
+  # user project), then this IS a core update.                               #
   #                                                                          #
   # Druppie keywords: druppie, core, router, planner, agent, prompt, skill,  #
   # MCP server, sandbox, workflow, architect, developer, tester, business    #
-  # analyst, summarizer, deployer, builder, self-improvement                 #
+  # analyst, summarizer, deployer, builder, self-improvement, codebase,      #
+  # repository, repo                                                         #
   #                                                                          #
   # If YES → Use DESIGN_APPROVED_CORE_UPDATE instead of DESIGN_APPROVED     #
   #          in your done() summary. Write technical_design.md as normal.    #
