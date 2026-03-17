@@ -175,7 +175,7 @@ Last updated: 2026-03-09
 ### ~~Sandboxed Execution Environment for Agents~~ (DONE)
 
 - **Resolved in:** `feature/execute-coding-task` branch
-- Full sandbox infrastructure implemented using Open-Inspect (git submodule at `vendor/open-inspect/`). Docker sandboxes with OpenCode provide isolated execution per task. Webhook + pause/resume pattern replaces long-polling. Provider resilience with three-layer failover. Optional Kata Containers for VM-level isolation.
+- Full sandbox infrastructure implemented using Open-Inspect (git submodule at `background-agents/`). Docker sandboxes with OpenCode provide isolated execution per task. Webhook + pause/resume pattern replaces long-polling. Provider resilience with three-layer failover. Optional Kata Containers for VM-level isolation.
 - See `docs/SANDBOX.md` for full details.
 
 ### ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
