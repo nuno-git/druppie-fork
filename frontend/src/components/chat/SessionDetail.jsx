@@ -243,7 +243,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
   const queryClient = useQueryClient()
 
   const answerMut = useMutation({
-    mutationFn: ({ questionId, answer }) => answerQuestion(questionId, answer),
+    mutationFn: ({ questionId, answer, selectedChoices = null }) => answerQuestion(questionId, answer, selectedChoices),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
   })
 
@@ -285,6 +285,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
       <HITLQuestionMessage
         question={questionData}
         onChoiceSelect={(answer) => answerMut.mutate({ questionId: tc.question_id, answer })}
+        onSubmitChoices={({ indices, answerText }) => answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices })}
         isAnswering={answerMut.isPending}
         answered={isAnswered}
       />
