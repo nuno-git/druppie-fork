@@ -185,6 +185,8 @@ export function setupRoutes(
       agentModels: body.agentModels ?? null,
       opencodeFiles: body.opencodeFiles ?? body.agentFiles ?? null,
       modelChains: body.modelChains ?? null,
+      contextRepoOwner: body.contextRepoOwner ?? null,
+      contextRepoName: body.contextRepoName ?? null,
     });
 
     if (!initResult) {

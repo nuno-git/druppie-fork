@@ -76,8 +76,9 @@ export function setupGitProxy(app: Express, credentialStore: CredentialStore): v
       // Express puts the wildcard capture in params[0]
       const gitPath = (req.params[0] as string) || "";
 
-      // 1. Validate proxy key
-      const creds = credentialStore.getByGitProxyKey(proxyKey);
+      // 1. Validate proxy key (check both primary and context git keys)
+      const creds = credentialStore.getByGitProxyKey(proxyKey)
+        ?? credentialStore.getByContextGitProxyKey(proxyKey);
       if (!creds) {
         console.warn("[git-proxy] Invalid proxy key");
         res.status(403).json({ error: "Invalid proxy key" });
