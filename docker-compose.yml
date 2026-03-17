@@ -332,7 +332,7 @@ services:
 
   sandbox-control-plane:
     build:
-      context: ./vendor/open-inspect
+      context: ./background-agents
       dockerfile: packages/local-control-plane/Dockerfile
     container_name: druppie-sandbox-control-plane
     profiles: [infra, dev, prod]
@@ -359,7 +359,7 @@ services:
 
   sandbox-manager:
     build:
-      context: ./vendor/open-inspect
+      context: ./background-agents
       dockerfile: packages/local-sandbox-manager/Dockerfile
     container_name: druppie-sandbox-manager
     profiles: [infra, dev, prod]
@@ -394,7 +394,7 @@ services:
   # Builds the sandbox base image, then exits. Docker caches it — only rebuilds when Dockerfile changes.
   sandbox-image-builder:
     build:
-      context: ./vendor/open-inspect
+      context: ./background-agents
       dockerfile: packages/local-sandbox-manager/Dockerfile.sandbox
     image: open-inspect-sandbox:latest
     profiles: [infra, dev, prod]
