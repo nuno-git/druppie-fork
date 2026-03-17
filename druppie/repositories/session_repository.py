@@ -185,18 +185,6 @@ class SessionRepository(BaseRepository):
         """Update session's project."""
         self.db.query(SessionModel).filter_by(id=session_id).update({"project_id": project_id})
 
-    def update_repo_context(
-        self,
-        session_id: UUID,
-        repo_owner: str,
-        repo_name: str,
-    ) -> None:
-        """Update session's repo context (used by update_core intent)."""
-        self.db.query(SessionModel).filter_by(id=session_id).update({
-            "repo_owner": repo_owner,
-            "repo_name": repo_name,
-        })
-
     def recalculate_token_totals(self, session_id: UUID) -> None:
         """Recalculate session token totals from remaining non-pending agent runs."""
         from sqlalchemy import func

@@ -238,25 +238,36 @@ async def _retry_sandbox_with_next_model(
         chain_index=next_index,
     )
 
-    # Get repo info and git provider from the original session
+    # Get repo info and git provider — trace back to the calling agent via tool_call
     repo_owner = os.getenv("GITEA_ORG", "druppie")
     repo_name = ""
     git_provider = "gitea"
-    if sandbox_mapping.session_id:
+
+    # Determine if this was a core update by checking the originating agent
+    calling_agent_id = None
+    if tool_call_id:
+        from druppie.repositories import ExecutionRepository
+        execution_repo = ExecutionRepository(db)
+        tool_call = execution_repo.get_tool_call(tool_call_id)
+        if tool_call and tool_call.agent_run_id:
+            agent_run = execution_repo.get_by_id(tool_call.agent_run_id)
+            if agent_run:
+                calling_agent_id = agent_run.agent_id
+
+    if calling_agent_id == "update_core_builder":
+        repo_owner = os.getenv("DRUPPIE_REPO_OWNER", "nuno-git")
+        repo_name = os.getenv("DRUPPIE_REPO_NAME", "druppie-fork")
+        git_provider = "github"
+    elif sandbox_mapping.session_id:
         from druppie.repositories import SessionRepository, ProjectRepository
         session_repo = SessionRepository(db)
         session = session_repo.get_by_id(sandbox_mapping.session_id)
-        if session:
-            if session.intent == "update_core" and session.repo_owner and session.repo_name:
-                repo_owner = session.repo_owner
-                repo_name = session.repo_name
-                git_provider = "github"
-            elif session.project_id:
-                project_repo = ProjectRepository(db)
-                project = project_repo.get_by_id(session.project_id)
-                if project:
-                    repo_owner = project.repo_owner or repo_owner
-                    repo_name = project.repo_name or ""
+        if session and session.project_id:
+            project_repo = ProjectRepository(db)
+            project = project_repo.get_by_id(session.project_id)
+            if project:
+                repo_owner = project.repo_owner or repo_owner
+                repo_name = project.repo_name or ""
 
     # Clean up old sandbox's Gitea service account before creating new one
     # (GitHub tokens expire automatically — git_user_id is None for GitHub)
