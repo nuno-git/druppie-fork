@@ -62,6 +62,7 @@ class SandboxSupervisor:
         self.repo_name = os.environ.get("REPO_NAME", "")
         self.github_app_token = os.environ.get("GITHUB_APP_TOKEN", "")
         self.git_url = os.environ.get("GIT_URL", "")
+        self.context_git_url = os.environ.get("CONTEXT_GIT_URL", "")
 
         # Parse session config if provided
         session_config_json = os.environ.get("SESSION_CONFIG", "{}")
@@ -75,7 +76,14 @@ class SandboxSupervisor:
 
         # Paths
         self.workspace_path = Path("/workspace")
-        self.repo_path = self.workspace_path / self.repo_name if self.repo_name else self.workspace_path
+        if self.context_git_url:
+            # Dual-repo mode: /workspace/core/ and /workspace/project/
+            self.repo_path = self.workspace_path / "core"
+            self.context_repo_path: Path | None = self.workspace_path / "project"
+        else:
+            # Single-repo mode: /workspace/<repo_name> (existing behavior)
+            self.repo_path = self.workspace_path / self.repo_name if self.repo_name else self.workspace_path
+            self.context_repo_path = None
         self.session_id_file = Path("/tmp/opencode-session-id")
 
         # Logger
@@ -144,6 +152,21 @@ class SandboxSupervisor:
                 return False
 
             self.log.info("git.clone_complete", repo_path=str(self.repo_path))
+
+        # Clone context repo if configured (dual-repo mode)
+        if self.context_git_url and self.context_repo_path and not self.context_repo_path.exists():
+            self.log.info("git.context_clone_start", context_url="[proxied]")
+            result = await asyncio.create_subprocess_exec(
+                "git", "clone", self.context_git_url, str(self.context_repo_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await result.communicate()
+            if result.returncode != 0:
+                self.log.error("git.context_clone_error", stderr=stderr.decode())
+                # Non-fatal — core repo is the priority
+            else:
+                self.log.info("git.context_clone_complete", path=str(self.context_repo_path))
 
         try:
             # Configure remote URL with auth token if available
@@ -504,7 +527,7 @@ exit 1
 
         # Strip credential-bearing env vars — the git remote URL in .git/config
         # already points to the proxy, so git operations still work without these.
-        for secret_var in ("GIT_URL", "GITHUB_APP_TOKEN", "GITHUB_TOKEN"):
+        for secret_var in ("GIT_URL", "CONTEXT_GIT_URL", "GITHUB_APP_TOKEN", "GITHUB_TOKEN"):
             env.pop(secret_var, None)
 
         # Start OpenCode server in the repo directory
