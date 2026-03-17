@@ -36,8 +36,5 @@ class SandboxSession(Base):
     task_prompt = Column(Text, nullable=True)
     agent_name = Column(String(100), nullable=True)
 
-    # Per-sandbox Gitea service account ID for cleanup
+    # Per-sandbox Gitea service account ID for cleanup (None for GitHub — tokens expire automatically)
     git_user_id = Column(String(50), nullable=True)
-
-    # Git provider: "gitea" or "github" — controls cleanup behavior
-    git_provider = Column(String(20), nullable=True, default="gitea")

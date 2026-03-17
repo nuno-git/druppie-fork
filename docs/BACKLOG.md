@@ -277,7 +277,7 @@ Last updated: 2026-03-17
 - **What works:**
   - Router can classify `update_core` directly
   - Architect detects Druppie self-improvement during `create_project` and calls `switch_to_update_core` after writing `technical_design.md`
-  - Sandbox correctly clones GitHub repo with `colab-dev` branch (branch threaded through entire pipeline)
+  - Sandbox agent determines PR target from git remote (GitHub → `colab-dev`, Gitea → `main`)
   - PRs created via GitHub API proxy, targeting `colab-dev`
   - GitHub App installation tokens (short-lived, scoped) — no real tokens in sandbox
 - **What's left:**
@@ -295,14 +295,14 @@ Last updated: 2026-03-17
   - Router herkent `update_core` intent — `set_intent` slaat repo context (URL, owner, name, base branch) op de sessie op zonder project of Gitea-repo aan te maken.
   - Planner volgt `UPDATE_CORE` workflow: simpel (developer → summarizer) of complex (BA → architect → developer → summarizer). Geen deploy, geen merge — eindigt altijd met een PR op `colab-dev`.
   - Sandbox agents werken op GitHub via GitHub API proxy (credential isolatie — geen echte tokens in de sandbox).
-  - Session model uitgebreid met `repo_url`, `repo_owner`, `repo_name`, `base_branch` kolommen.
-  - `SandboxSession` model uitgebreid met `git_provider` kolom ("gitea" of "github") voor correcte cleanup.
+  - Session model uitgebreid met `repo_owner`, `repo_name` kolommen.
+  - Gitea cleanup gebruikt `git_user_id` (None voor GitHub, hex string voor Gitea).
   - Bestaande `create_project`, `update_project`, en `general_chat` flows ongewijzigd.
 
 ### ~~Update Core — Architect Switch & Branch Threading~~ (DONE)
 
 - **Resolved in:** `feature/update-core-flow` branch (PR #77)
 - **Architect `switch_to_update_core`:** The Architect agent now detects when a project (even one started as `create_project`) is about modifying Druppie itself. After writing `technical_design.md`, it calls the `switch_to_update_core` builtin tool, which cancels the current plan and creates a new planner run with `update_core` intent. Detection is based on keywords in the functional design and project description.
-- **Branch threading:** The session's `base_branch` (e.g., `colab-dev`) is now threaded through the entire sandbox creation pipeline: `builtin_tools.py` → `sandbox/__init__.py` → control plane `router.ts` → `session-instance.ts` → `local-client.ts` → `web_api.py` → entrypoint `session_config.get("branch")`. Previously sandboxes always defaulted to `main`.
+- **Simplified branch targeting:** Instead of threading a `branch` parameter through 7 files, the sandbox agent now determines the PR base branch from its git remote (GitHub repos → `colab-dev`, Gitea repos → `main`). This is configured in the `druppie-builder.md` prompt.
 - **YAML auto-reload:** `AgentDefinitionLoader` now checks file mtime on each load and automatically reloads YAML definitions when they change on disk. No backend restart needed for prompt edits during development.
 - **Sandbox builder PR targeting:** The `druppie-builder` sandbox agent prompt now defaults to `colab-dev` as the PR base branch for GitHub repos. The developer agent explicitly includes "Create a PR targeting colab-dev" in `execute_coding_task` prompts for core changes.

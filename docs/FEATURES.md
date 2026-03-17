@@ -119,10 +119,10 @@ Druppie modifies its own codebase via a PR flow on GitHub. No deploy, no merge �
 3. **Summarizer** reports the PR link to the user
 
 Key differences from `update_project`:
-- No project record or Gitea repo is created — repo context (URL, owner, base branch) is stored directly on the session
+- No project record or Gitea repo is created — repo context (`repo_owner`, `repo_name`) is stored directly on the session
 - Authentication via GitHub App installation tokens (short-lived, ~1 hour, scoped to a single repo)
 - Sandbox uses GitHub API proxy for PR creation (`curl $GITHUB_API_PROXY_URL`) — no real tokens enter the sandbox
-- Sandbox clones the GitHub repo with the correct base branch (`colab-dev`) threaded through the entire pipeline
+- Sandbox agent determines PR base branch from its git remote (GitHub → `colab-dev`, Gitea → `main`)
 - No deploy step, no merge step — PRs are always reviewed and merged by humans
 
 **Prerequisites:** Requires a GitHub App configured with Contents R/W, Pull Requests R/W, and Metadata R permissions. See the [GitHub App Setup](#github-app-setup-for-update_core) section in the README.
