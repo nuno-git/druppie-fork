@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-03-10
+Last updated: 2026-03-17
 
 ---
 
@@ -39,8 +39,9 @@ Last updated: 2026-03-10
 - Test Executor Python-Level Safety Net
 - Frontend Agent Config from API
 - General Pre-Validation System for Tool Arguments
-- Update Core Flow — End-to-End Design
+- Update Core Flow — End-to-End Improvements
 - ~~Update Core — Technical Basis~~ ✅ DONE
+- ~~Update Core — Architect Switch & Branch Threading~~ ✅ DONE
 
 ---
 
@@ -270,21 +271,20 @@ Last updated: 2026-03-10
 - **Problem:** Adding content validation for any other tool requires adding more `if` statements to the tool executor and more fragile imports.
 - **Desired improvement:** Add an optional `pre_validate(self) -> str | None` method to Pydantic params models. The tool executor calls it generically after schema validation succeeds. This way adding a new validator = adding a method to a params model, with zero changes to `tool_executor.py`. The mermaid validator moves to `druppie/tools/validators/mermaid.py` (properly importable). See issue #79 for the full plan.
 
-### Update Core Flow — End-to-End Design
+### Update Core Flow — End-to-End Improvements
 
-- **Current state:** PR #77 levert de technische basis: GitHub App tokens, sandbox proxy, `update_core` intent op router-niveau, en PR-creatie via de sandbox agent. Maar het volledige end-to-end verhaal is nog niet uitgewerkt.
-- **Wat ontbreekt:**
-  - **Wanneer wordt update_core getriggerd?** Nu is het een expliciete intent via de router ("verbeter jezelf"). Maar het zou logischer zijn dat BA/Architect tijdens een regulier `create_project`/`update_project` traject constateren dat de core aangepast moet worden, en dit signaleren aan de planner. De planner schakelt dan over naar de update_core flow — geen sub-agents nodig, de planner orkestreert dit al.
-  - **PR/merge flow:** PR #77 heeft `create_pull_request` en `merge_pull_request` MCP tools van de Developer agent verwijderd. De oude `MERGE TASK` instructies in de developer prompt zijn weg. Wie maakt PRs aan, wie merged, en wanneer — per intent?
-  - **End-to-end flow diagram:** Documenteer de volledige agent pipeline voor elke intent (`create_project`, `update_project`, `update_core`) met welke agents draaien, wanneer PRs worden aangemaakt, en wanneer merges plaatsvinden.
-- **Voorbeeldflow (BA/Architect trigger):**
-  1. Gebruiker: "Bouw mij een app die X doet"
-  2. Router: `create_project`
-  3. BA verzamelt requirements → Architect ontwerpt → constateert: "Druppie mist capability Y"
-  4. Architect signaleert dit aan de planner → planner schakelt over naar update_core flow
-  5. Developer maakt PR op GitHub → human review + merge
-  6. Planner hervat het oorspronkelijke project met de nieuwe capabilities
-- **Priority:** Volgende sprint. Huidige implementatie werkt voor expliciet getriggerde `update_core` (altijd PR, nooit merge). Het complete verhaal inclusief trigger-logica en merge-flow moet uitgewerkt worden.
+- **Current state:** PR #77 delivers the full `update_core` flow: GitHub App tokens, sandbox proxy, PR creation, `switch_to_update_core` builtin tool, branch threading, and two entry paths (Router direct + Architect mid-flow redirect).
+- **What works:**
+  - Router can classify `update_core` directly
+  - Architect detects Druppie self-improvement during `create_project` and calls `switch_to_update_core` after writing `technical_design.md`
+  - Sandbox correctly clones GitHub repo with `colab-dev` branch (branch threaded through entire pipeline)
+  - PRs created via GitHub API proxy, targeting `colab-dev`
+  - GitHub App installation tokens (short-lived, scoped) — no real tokens in sandbox
+- **What's left:**
+  - **Resume original project:** After the `update_core` PR is merged, the planner does not yet resume the original `create_project` workflow. Currently the session ends with the PR.
+  - **Automated testing:** No automated tests for `GitHubAppService`, `switch_to_update_core`, or the GitHub credential path in `create_and_start_sandbox`.
+  - **Hardcoded repo coordinates:** `nuno-git/druppie-fork` is hardcoded in `builtin_tools.py`. Should be moved to configuration.
+- **Priority:** Low — the current flow works end-to-end. Improvements are quality-of-life.
 
 ### ~~Update Core — Technical Basis~~ (DONE)
 
@@ -298,3 +298,11 @@ Last updated: 2026-03-10
   - Session model uitgebreid met `repo_url`, `repo_owner`, `repo_name`, `base_branch` kolommen.
   - `SandboxSession` model uitgebreid met `git_provider` kolom ("gitea" of "github") voor correcte cleanup.
   - Bestaande `create_project`, `update_project`, en `general_chat` flows ongewijzigd.
+
+### ~~Update Core — Architect Switch & Branch Threading~~ (DONE)
+
+- **Resolved in:** `feature/update-core-flow` branch (PR #77)
+- **Architect `switch_to_update_core`:** The Architect agent now detects when a project (even one started as `create_project`) is about modifying Druppie itself. After writing `technical_design.md`, it calls the `switch_to_update_core` builtin tool, which cancels the current plan and creates a new planner run with `update_core` intent. Detection is based on keywords in the functional design and project description.
+- **Branch threading:** The session's `base_branch` (e.g., `colab-dev`) is now threaded through the entire sandbox creation pipeline: `builtin_tools.py` → `sandbox/__init__.py` → control plane `router.ts` → `session-instance.ts` → `local-client.ts` → `web_api.py` → entrypoint `session_config.get("branch")`. Previously sandboxes always defaulted to `main`.
+- **YAML auto-reload:** `AgentDefinitionLoader` now checks file mtime on each load and automatically reloads YAML definitions when they change on disk. No backend restart needed for prompt edits during development.
+- **Sandbox builder PR targeting:** The `druppie-builder` sandbox agent prompt now defaults to `colab-dev` as the PR base branch for GitHub repos. The developer agent explicitly includes "Create a PR targeting colab-dev" in `execute_coding_task` prompts for core changes.

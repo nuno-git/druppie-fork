@@ -1047,3 +1047,29 @@ The `execute_coding_task` builtin determines git provider based on session inten
 - Disabled when env vars are missing (no crash, `get_installation_token()` returns None)
 - GitHub API proxy in control plane (`/github-api-proxy/:proxyKey/*`) injects the token server-side — sandbox only sees an opaque proxy URL
 
+### 10.7 Branch Threading
+
+The `base_branch` from the session (e.g., `colab-dev` for `update_core`) is threaded through the entire sandbox creation pipeline:
+
+```
+session.base_branch → builtin_tools.py → sandbox/__init__.py (create_body)
+  → control plane router.ts → session-instance.ts (branch_name column)
+  → local-client.ts (createSandbox request) → web_api.py (SessionConfig.branch)
+  → entrypoint.py (session_config.get("branch", "main") → git rebase target)
+```
+
+Without this, sandboxes default to `main` for git sync. For `update_core`, the branch is always `colab-dev`.
+
+### 10.8 `switch_to_update_core` Builtin Tool
+
+`druppie/agents/builtin_tools.py` — available to the Architect agent via `extra_builtin_tools`.
+
+When the Architect detects that a project (even one started as `create_project`) is about modifying Druppie itself, it calls `switch_to_update_core(description="...")` after writing `technical_design.md`. This:
+
+1. Updates the session intent to `update_core`
+2. Stores GitHub repo context on the session (`repo_url`, `repo_owner`, `repo_name`, `base_branch`)
+3. Cancels all pending runs from the current plan
+4. Creates a new planner run with `INTENT: update_core`
+
+The Architect then calls `done()`, and the new planner picks up the `update_core` flow.
+

@@ -285,8 +285,8 @@ All webhooks are signed with HMAC-SHA256. The `callbackSecret` is set when creat
 | `SANDBOX_RUNTIME` | `docker` | Container runtime (`docker` or `kata`) |
 | `LLM_FORCE_PROVIDER` | — | Override: forces all sandbox profiles to use this provider (e.g., `deepinfra`). Must be set together with `LLM_FORCE_MODEL`. |
 | `LLM_FORCE_MODEL` | — | Override: forces all sandbox profiles to use this model (e.g., `Qwen/Qwen3-32B`). Must be set together with `LLM_FORCE_PROVIDER`. |
-| `GITHUB_APP_ID` | — | GitHub App ID (required for `update_core` flow) |
-| `GITHUB_APP_PRIVATE_KEY_PATH` | — | Path to `.pem` private key file |
+| `GITHUB_APP_ID` | — | GitHub App ID (required for `update_core` flow). See [GitHub App Setup](#github-app-setup) below. |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | `/app/secrets/github-app-private-key.pem` | Path to `.pem` private key file (mounted via `secrets/` directory) |
 | `GITHUB_APP_INSTALLATION_ID` | — | GitHub App installation ID on the target repo |
 
 ### Config Files
@@ -312,3 +312,66 @@ curl -s http://localhost:8787/sessions | jq .
 ```
 
 For Kata-specific troubleshooting, see the [Kata Containers section](#kata-containers-optional-vm-isolation).
+
+---
+
+## GitHub App Setup
+
+The `update_core` flow requires a GitHub App for authentication. This is how Druppie creates PRs on its own GitHub repository without exposing long-lived tokens to sandbox agents.
+
+### 1. Create the GitHub App
+
+Go to [github.com/settings/apps/new](https://github.com/settings/apps/new) and configure:
+
+| Setting | Value |
+|---------|-------|
+| **App name** | `druppie-core-bot` (or any unique name) |
+| **Homepage URL** | Your Druppie instance URL (e.g., `http://localhost:5273`) |
+| **Webhook** | Disable (uncheck "Active") |
+
+**Permissions (Repository):**
+
+| Permission | Access |
+|------------|--------|
+| Contents | Read & Write |
+| Pull requests | Read & Write |
+| Metadata | Read-only |
+
+No other permissions are needed. Click **Create GitHub App**.
+
+### 2. Generate a private key
+
+On the App settings page, scroll to **Private keys** and click **Generate a private key**. A `.pem` file will be downloaded. Save it as:
+
+```
+secrets/github-app-private-key.pem
+```
+
+This directory is mounted into the backend container at `/app/secrets/` (read-only).
+
+### 3. Install the App on your repo
+
+Go to the App's **Install App** tab. Install it on the repository Druppie will create PRs against (e.g., `nuno-git/druppie-fork`). Note the **Installation ID** from the URL after installing (it's the number at the end of the URL).
+
+### 4. Configure environment variables
+
+Add to your `.env`:
+
+```bash
+GITHUB_APP_ID=<app-id-from-step-1>
+GITHUB_APP_PRIVATE_KEY_PATH=/app/secrets/github-app-private-key.pem
+GITHUB_APP_INSTALLATION_ID=<installation-id-from-step-3>
+```
+
+The App ID is shown on the App's settings page (under "About").
+
+### 5. Verify
+
+Restart the backend and check the logs:
+
+```bash
+docker restart druppie-new-backend
+docker logs druppie-new-backend 2>&1 | grep github_app
+```
+
+If configured correctly, `GitHubAppService` logs `enabled=True`. If any env var is missing, it logs `disabled` and the `update_core` flow will return an error when triggered.
