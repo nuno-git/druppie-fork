@@ -592,17 +592,13 @@ async def switch_to_update_core(
     session_repo.update_intent(session_id, "update_core")
 
     # 2. Store repo context for Druppie's own codebase
-    repo_url = "https://github.com/nuno-git/druppie-fork.git"
     repo_owner = "nuno-git"
     repo_name = "druppie-fork"
-    base_branch = "colab-dev"
 
     session_repo.update_repo_context(
         session_id=session_id,
-        repo_url=repo_url,
         repo_owner=repo_owner,
         repo_name=repo_name,
-        base_branch=base_branch,
     )
 
     # 3. Cancel all pending runs from the current plan
@@ -631,10 +627,8 @@ async def switch_to_update_core(
     return {
         "success": True,
         "message": f"Switched to update_core flow. Cancelled {cancelled} pending run(s). "
-                   f"PR will target {repo_owner}/{repo_name}:{base_branch}. "
+                   f"Target repo: {repo_owner}/{repo_name}. "
                    "Call done() now to complete and hand off to the planner.",
-        "repo_url": repo_url,
-        "base_branch": base_branch,
     }
 
 
@@ -1034,13 +1028,11 @@ async def execute_sandbox_coding_task(
         return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
 
     # Determine git provider and repo context based on session intent
-    branch = None
     if session.intent == "update_core":
         # update_core: use GitHub App credentials for Druppie's own repo
         repo_owner = session.repo_owner or "nuno-git"
         repo_name = session.repo_name or "druppie-fork"
         git_provider = "github"
-        branch = session.base_branch  # e.g. "colab-dev"
     else:
         # create_project / update_project: use Gitea credentials
         repo_owner = os.getenv("GITEA_ORG", "druppie")
@@ -1069,7 +1061,6 @@ async def execute_sandbox_coding_task(
             author_id="druppie-agent",
             db=db,
             git_provider=git_provider,
-            branch=branch,
         )
 
         logger.info(

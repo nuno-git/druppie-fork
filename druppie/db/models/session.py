@@ -24,10 +24,8 @@ class Session(Base):
     branch_name = Column(String(255), nullable=True)  # Feature branch for update_project
 
     # Repo context for update_core (GitHub) — not linked to a project record
-    repo_url = Column(String(500), nullable=True)  # e.g. https://github.com/nuno-git/druppie-fork.git
     repo_owner = Column(String(255), nullable=True)  # e.g. nuno-git
     repo_name = Column(String(255), nullable=True)  # e.g. druppie-fork
-    base_branch = Column(String(255), nullable=True)  # e.g. colab-dev
 
     language = Column(String(10), nullable=True)  # Detected conversational language (e.g., "nl", "en")
 
@@ -49,10 +47,8 @@ class Session(Base):
             "error_message": self.error_message,
             "intent": self.intent,
             "branch_name": self.branch_name,
-            "repo_url": self.repo_url,
             "repo_owner": self.repo_owner,
             "repo_name": self.repo_name,
-            "base_branch": self.base_branch,
             "language": self.language,
             "prompt_tokens": self.prompt_tokens or 0,
             "completion_tokens": self.completion_tokens or 0,

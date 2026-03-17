@@ -260,7 +260,7 @@ SQLAlchemy ORM models live in `druppie/db/models/`. The schema:
 | `UserRole` | User role assignments (admin, architect, developer) |
 | `UserToken` | User API tokens |
 | `Project` | Projects with Gitea repo references |
-| `Session` | Chat sessions tied to a user and optionally a project. For `update_core` intent: stores repo context (`repo_url`, `repo_owner`, `repo_name`, `base_branch`) directly on the session instead of linking to a project. |
+| `Session` | Chat sessions tied to a user and optionally a project. For `update_core` intent: stores repo context (`repo_owner`, `repo_name`) directly on the session instead of linking to a project. |
 | `AgentRun` | Individual agent execution records within a session |
 | `Message` | Conversation messages (user and assistant) in the timeline |
 | `ToolCall` | Tool invocations by agents, linked to LLM calls |
@@ -1023,8 +1023,7 @@ The `sandbox_sessions` table maps control plane session IDs to Druppie users:
 | `user_id` | UUID (FK → users) | Owning user |
 | `tool_call_id` | UUID (nullable, FK → tool_calls, indexed) | Direct webhook lookup |
 | `webhook_secret` | str (nullable) | Per-session HMAC secret |
-
-| `git_provider` | str (nullable, default "gitea") | "gitea" or "github" — controls cleanup behavior |
+| `git_user_id` | str (nullable) | Gitea service account ID for cleanup (None for GitHub — tokens expire automatically) |
 
 The `tool_call_id` FK enables direct lookup from webhook → tool call without table scans. Events proxy (`GET /api/sandbox-sessions/{id}/events`) enforces ownership — non-owners get 403, admins bypass.
 
@@ -1047,18 +1046,9 @@ The `execute_coding_task` builtin determines git provider based on session inten
 - Disabled when env vars are missing (no crash, `get_installation_token()` returns None)
 - GitHub API proxy in control plane (`/github-api-proxy/:proxyKey/*`) injects the token server-side — sandbox only sees an opaque proxy URL
 
-### 10.7 Branch Threading
+### 10.7 Branch Targeting
 
-The `base_branch` from the session (e.g., `colab-dev` for `update_core`) is threaded through the entire sandbox creation pipeline:
-
-```
-session.base_branch → builtin_tools.py → sandbox/__init__.py (create_body)
-  → control plane router.ts → session-instance.ts (branch_name column)
-  → local-client.ts (createSandbox request) → web_api.py (SessionConfig.branch)
-  → entrypoint.py (session_config.get("branch", "main") → git rebase target)
-```
-
-Without this, sandboxes default to `main` for git sync. For `update_core`, the branch is always `colab-dev`.
+The sandbox agent determines PR target branch from its git remote: GitHub repos target `colab-dev`, Gitea repos target `main`. This is configured in the `druppie-builder.md` agent prompt — no branch parameter is threaded through the infrastructure.
 
 ### 10.8 `switch_to_update_core` Builtin Tool
 
@@ -1067,7 +1057,7 @@ Without this, sandboxes default to `main` for git sync. For `update_core`, the b
 When the Architect detects that a project (even one started as `create_project`) is about modifying Druppie itself, it calls `switch_to_update_core(description="...")` after writing `technical_design.md`. This:
 
 1. Updates the session intent to `update_core`
-2. Stores GitHub repo context on the session (`repo_url`, `repo_owner`, `repo_name`, `base_branch`)
+2. Stores GitHub repo context on the session (`repo_owner`, `repo_name`)
 3. Cancels all pending runs from the current plan
 4. Creates a new planner run with `INTENT: update_core`
 

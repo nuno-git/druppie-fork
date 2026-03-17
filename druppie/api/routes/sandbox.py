@@ -238,20 +238,19 @@ async def _retry_sandbox_with_next_model(
         chain_index=next_index,
     )
 
-    # Get repo info from the original session
+    # Get repo info and git provider from the original session
     repo_owner = os.getenv("GITEA_ORG", "druppie")
     repo_name = ""
-    branch = None
+    git_provider = "gitea"
     if sandbox_mapping.session_id:
         from druppie.repositories import SessionRepository, ProjectRepository
         session_repo = SessionRepository(db)
         session = session_repo.get_by_id(sandbox_mapping.session_id)
         if session:
-            # update_core sessions store repo context directly on the session
-            if session.repo_owner and session.repo_name:
+            if session.intent == "update_core" and session.repo_owner and session.repo_name:
                 repo_owner = session.repo_owner
                 repo_name = session.repo_name
-                branch = session.base_branch
+                git_provider = "github"
             elif session.project_id:
                 project_repo = ProjectRepository(db)
                 project = project_repo.get_by_id(session.project_id)
@@ -260,8 +259,8 @@ async def _retry_sandbox_with_next_model(
                     repo_name = project.repo_name or ""
 
     # Clean up old sandbox's Gitea service account before creating new one
-    # (GitHub tokens expire automatically — no cleanup needed)
-    if sandbox_mapping.git_provider != "github" and sandbox_mapping.git_user_id:
+    # (GitHub tokens expire automatically — git_user_id is None for GitHub)
+    if sandbox_mapping.git_user_id:
         try:
             from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
             await delete_sandbox_git_user(sandbox_mapping.git_user_id)
@@ -283,8 +282,7 @@ async def _retry_sandbox_with_next_model(
             source="retry",
             author_id=str(sandbox_mapping.user_id),
             db=db,
-            git_provider=sandbox_mapping.git_provider or "gitea",
-            branch=branch,
+            git_provider=git_provider,
         )
 
         # Link the new sandbox to the same tool call
@@ -423,8 +421,8 @@ async def sandbox_complete_webhook(
     sandbox_repo.mark_completed(sandbox_session_id)
 
     # Clean up the per-sandbox Gitea service account
-    # (GitHub tokens expire automatically — no cleanup needed)
-    if sandbox_mapping.git_provider != "github" and sandbox_mapping.git_user_id:
+    # (GitHub tokens expire automatically — git_user_id is None for GitHub)
+    if sandbox_mapping.git_user_id:
         try:
             from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
             await delete_sandbox_git_user(sandbox_mapping.git_user_id)
@@ -617,7 +615,7 @@ async def sandbox_watchdog_loop() -> None:
                             # Mark old sandbox as completed but keep tool call waiting
                             sandbox_repo.mark_completed(sandbox_mapping.sandbox_session_id)
                             # Clean up old sandbox's Gitea service account
-                            if sandbox_mapping.git_provider != "github" and sandbox_mapping.git_user_id:
+                            if sandbox_mapping.git_user_id:
                                 try:
                                     from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
                                     await delete_sandbox_git_user(sandbox_mapping.git_user_id)
