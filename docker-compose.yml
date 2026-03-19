@@ -531,10 +531,10 @@ services:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
-      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
-      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
-      MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
-      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
+      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
+      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://module-filesearch:9004}
+      MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
+      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
@@ -605,10 +605,10 @@ services:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
       USE_MCP_MICROSERVICES: "true"
       MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
-      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
-      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
-      MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
-      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
+      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
+      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://module-filesearch:9004}
+      MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
+      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
