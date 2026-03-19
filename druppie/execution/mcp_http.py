@@ -19,6 +19,121 @@ from druppie.core.mcp_config import MCPConfig
 logger = structlog.get_logger()
 
 
+# =============================================================================
+# ERROR CLASSIFICATION
+# =============================================================================
+
+
+class MCPErrorType:
+    """Error type constants for MCP tool execution."""
+    TRANSIENT = "transient"  # Connection issues, timeouts - should retry
+    PERMISSION = "permission"  # 403, approval needed - don't retry
+    FATAL = "fatal"  # Invalid args, tool not found - don't retry
+    VALIDATION = "validation"  # Argument validation errors - recoverable by LLM
+
+
+def classify_error(error: Exception) -> tuple[str, bool, bool]:
+    """Classify an error and determine if it's retryable or recoverable.
+
+    Args:
+        error: The exception to classify
+
+    Returns:
+        Tuple of (error_type, retryable, recoverable)
+        - retryable: System should auto-retry (for transient errors)
+        - recoverable: LLM can fix and retry (for validation errors)
+    """
+    error_str = str(error).lower()
+
+    # Transient errors - connection/network issues that may resolve on retry
+    transient_indicators = [
+        "connection refused",
+        "connection reset",
+        "connection error",
+        "timeout",
+        "timed out",
+        "temporary failure",
+        "service unavailable",
+        "503",
+        "502",
+        "504",
+        "network unreachable",
+        "name resolution",
+        "dns",
+        "econnrefused",
+        "econnreset",
+        "etimedout",
+        "ehostunreach",
+    ]
+
+    if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
+        return MCPErrorType.TRANSIENT, True, False
+
+    if isinstance(error, (ConnectionError, OSError)):
+        return MCPErrorType.TRANSIENT, True, False
+
+    for indicator in transient_indicators:
+        if indicator in error_str:
+            return MCPErrorType.TRANSIENT, True, False
+
+    # Permission errors - authorization/approval issues
+    permission_indicators = [
+        "403",
+        "forbidden",
+        "permission denied",
+        "access denied",
+        "unauthorized",
+        "401",
+        "approval required",
+        "not authorized",
+        "insufficient permissions",
+    ]
+
+    for indicator in permission_indicators:
+        if indicator in error_str:
+            return MCPErrorType.PERMISSION, False, False
+
+    # Validation errors - argument/parameter issues that LLM can fix
+    validation_indicators = [
+        "missing required",
+        "validation error",
+        "required argument",
+        "invalid argument format",
+        "required field",
+        "missing field",
+        "invalid value for",
+        "expected type",
+        "argument must be",
+        "parameter must be",
+    ]
+
+    for indicator in validation_indicators:
+        if indicator in error_str:
+            return MCPErrorType.VALIDATION, False, True
+
+    # Fatal errors - invalid requests that won't succeed on retry
+    fatal_indicators = [
+        "invalid argument",
+        "invalid parameter",
+        "tool not found",
+        "method not found",
+        "not found",
+        "404",
+        "400",
+        "bad request",
+        "schema",
+        "type error",
+        "value error",
+    ]
+
+    for indicator in fatal_indicators:
+        if indicator in error_str:
+            return MCPErrorType.FATAL, False, False
+
+    # Default to fatal for unknown errors (safer to not retry)
+    return MCPErrorType.FATAL, False, False
+
+
 class MCPHttpError(Exception):
     """Error communicating with MCP server."""
 
@@ -186,6 +301,8 @@ class MCPHttp:
                         "name": tool.name,
                         "description": tool.description or f"Execute {tool.name}",
                         "parameters": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                        "meta": dict(tool.meta) if hasattr(tool, "meta") and tool.meta else
+                                (dict(tool.annotations) if hasattr(tool, "annotations") and tool.annotations else {}),
                     }
                     for tool in tools
                 ]
