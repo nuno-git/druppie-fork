@@ -427,11 +427,15 @@ Agents can delegate coding tasks to isolated Docker sandboxes. Each sandbox is a
 3. When the sandbox completes, a webhook callback resumes the agent automatically
 4. The chat timeline shows a **Sandbox Session card** with files changed, elapsed time, expandable events timeline, and full conversation history
 
-**Sandbox agents:** Two preconfigured agents run inside sandboxes -- `druppie-builder` (implements features) and `druppie-tester` (writes and runs tests). Both enforce a mandatory git workflow: add, commit, push. No unpushed commits allowed.
+**Sandbox agents:** Three preconfigured agents run inside sandboxes -- `druppie-builder` (implements features), `druppie-tester` (writes and runs tests), and `druppie-core-builder` (implements changes to Druppie's own codebase in a dual-repo sandbox). All enforce a mandatory git workflow: add, commit, push. No unpushed commits allowed.
 
 **Profile-based LLM routing:** Each sandbox agent/subagent has its own model profile (e.g., `sandbox/druppie-builder`). The LLM proxy resolves profiles to real provider chains at request time, allowing different agents to use different models. Profiles are configured in `sandbox_models.yaml`.
 
 **Provider resilience:** If an LLM provider fails mid-sandbox (any non-2xx response), a three-layer defense handles it: transparent proxy failover (sub-second, tries next provider in chain), failure detection signals, and Druppie-level retry with a new sandbox session. Set `LLM_FORCE_PROVIDER` and `LLM_FORCE_MODEL` to override all profiles with a single provider.
+
+**`create-pull-request` tool:** Sandbox agents create PRs via the `create-pull-request` OpenCode tool, which calls the control plane `/sessions/:id/pr` endpoint. The tool auto-detects the current branch and defaults to `main` if no base branch is specified. For GitHub repos, agents specify `baseBranch="colab-dev"`.
+
+**`repo_target` parameter:** `execute_coding_task` accepts a `repo_target` parameter: `"project"` (default) for single-repo sandboxes using the session's Gitea project, or `"druppie_core"` for dual-repo sandboxes that clone both Druppie's GitHub repo and the project repo (see Core Update workflow).
 
 **Security:** Sandbox events are only visible to the owning user (admins can view any). Git and LLM credentials are proxied -- never exposed to sandbox code. Webhooks are HMAC-signed.
 
