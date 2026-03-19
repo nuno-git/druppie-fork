@@ -7,10 +7,13 @@ Provides read-only catalog access via list/get pattern.
 
 import ast
 import logging
+import time
 from collections import defaultdict
 from pathlib import Path
 
 import yaml
+from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
 
 logger = logging.getLogger("registry-mcp")
 
@@ -25,6 +28,9 @@ class RegistryModule:
         self.mcp_servers: dict[str, dict] = {}
         self.builtin_tools: dict[str, dict] = {}
         self.default_builtin_tools: list[str] = []
+        self._tool_cache: dict[str, list[dict]] = {}
+        self._cache_ttl = 60  # seconds
+        self._cache_timestamps: dict[str, float] = {}
         self._load_all()
 
     def _load_all(self):
@@ -141,6 +147,7 @@ class RegistryModule:
                 self.mcp_servers[server_name] = {
                     "name": server_name,
                     "description": server_data.get("description", ""),
+                    "url": server_data.get("url", ""),
                     "tools": tools,
                     "tool_count": len(tools),
                 }
@@ -206,6 +213,48 @@ class RegistryModule:
                     if key in agent.get("approval_overrides", {}):
                         overrides[agent_id] = agent["approval_overrides"][key]
                 tool["agent_overrides"] = overrides
+
+    # --- Live Tool Discovery ---
+
+    def _get_server_url(self, server_name: str) -> str | None:
+        """Get server URL from loaded mcp_config.yaml."""
+        server_config = self.mcp_servers.get(server_name, {})
+        return server_config.get("url") or None
+
+    async def _get_live_tools(self, server_name: str) -> list[dict] | None:
+        """Fetch tools from a live MCP server via tools/list.
+
+        Returns cached results if within TTL. Returns None on failure
+        (caller should fall back to config-based tools).
+        """
+        now = time.time()
+        if server_name in self._tool_cache:
+            if now - self._cache_timestamps.get(server_name, 0) < self._cache_ttl:
+                return self._tool_cache[server_name]
+
+        url = self._get_server_url(server_name)
+        if not url:
+            return None
+
+        try:
+            transport = StreamableHttpTransport(url=f"{url}/mcp")
+            async with Client(transport) as client:
+                tools = await client.list_tools()
+                result = [
+                    {
+                        "name": t.name,
+                        "description": t.description or "",
+                        "parameters": t.inputSchema if hasattr(t, "inputSchema") else {},
+                        "meta": dict(t.meta) if hasattr(t, "meta") and t.meta else {},
+                    }
+                    for t in tools
+                ]
+                self._tool_cache[server_name] = result
+                self._cache_timestamps[server_name] = now
+                return result
+        except Exception as e:
+            logger.warning("Failed to fetch tools from %s: %s", server_name, e)
+            return None
 
     # --- Public API ---
 
@@ -302,18 +351,42 @@ class RegistryModule:
             }
         return {"success": True, "skill": skill}
 
-    def get_mcp_server(self, server_name: str) -> dict:
-        """Get MCP server details with full tool list."""
+    async def get_mcp_server(self, server_name: str) -> dict:
+        """Get MCP server details with full tool list.
+
+        Tries live tools/list discovery first; falls back to config-based tools.
+        """
         server = self.mcp_servers.get(server_name)
         if not server:
             return {
                 "success": False,
                 "error": f"MCP server '{server_name}' not found. Use list_components(category='mcps') to see available servers.",
             }
-        return {"success": True, "server": server}
 
-    def get_tool(self, server_name: str, tool_name: str) -> dict:
-        """Get full tool definition with parameters and approval info."""
+        live_tools = await self._get_live_tools(server_name)
+        if live_tools is not None:
+            # Merge live tool metadata with approval info from config
+            config_tools_by_name = {t["name"]: t for t in server["tools"]}
+            merged_tools = []
+            for live_tool in live_tools:
+                config_tool = config_tools_by_name.get(live_tool["name"], {})
+                merged_tools.append({
+                    **live_tool,
+                    "requires_approval": config_tool.get("requires_approval", False),
+                    "required_role": config_tool.get("required_role"),
+                    "agent_overrides": config_tool.get("agent_overrides", {}),
+                })
+            result_server = {**server, "tools": merged_tools, "tool_count": len(merged_tools)}
+        else:
+            result_server = server
+
+        return {"success": True, "server": result_server}
+
+    async def get_tool(self, server_name: str, tool_name: str) -> dict:
+        """Get full tool definition with parameters and approval info.
+
+        Tries live tools/list discovery first; falls back to config-based tools.
+        """
         if server_name == "builtin":
             tool = self.builtin_tools.get(tool_name)
             if not tool:
@@ -336,6 +409,39 @@ class RegistryModule:
                 "error": f"MCP server '{server_name}' not found.",
             }
 
+        used_by_agents = [
+            agent_id
+            for agent_id, agent in self.agents.items()
+            if server_name in agent.get("mcps", {})
+            and tool_name in agent["mcps"].get(server_name, [])
+        ]
+
+        # Try live discovery first
+        live_tools = await self._get_live_tools(server_name)
+        if live_tools is not None:
+            config_tools_by_name = {t["name"]: t for t in server["tools"]}
+            for live_tool in live_tools:
+                if live_tool["name"] == tool_name:
+                    config_tool = config_tools_by_name.get(tool_name, {})
+                    return {
+                        "success": True,
+                        "tool": {
+                            **live_tool,
+                            "server": server_name,
+                            "requires_approval": config_tool.get("requires_approval", False),
+                            "required_role": config_tool.get("required_role"),
+                            "agent_overrides": config_tool.get("agent_overrides", {}),
+                            "used_by_agents": used_by_agents,
+                        },
+                    }
+            # Tool not found in live results — fall through to config lookup
+            logger.warning(
+                "Tool '%s' not found in live tools/list for '%s', falling back to config",
+                tool_name,
+                server_name,
+            )
+
+        # Fall back to config-based tools
         for tool in server["tools"]:
             if tool["name"] == tool_name:
                 return {
@@ -343,12 +449,7 @@ class RegistryModule:
                     "tool": {
                         **tool,
                         "server": server_name,
-                        "used_by_agents": [
-                            agent_id
-                            for agent_id, agent in self.agents.items()
-                            if server_name in agent.get("mcps", {})
-                            and tool_name in agent["mcps"].get(server_name, [])
-                        ],
+                        "used_by_agents": used_by_agents,
                     },
                 }
 
