@@ -133,10 +133,7 @@ druppie/
     user.py
     agent_definition.py
   tools/
-    params/
-      builtin.py         # Pydantic models for builtin tool params
-      coding.py          # Pydantic models for coding MCP tool params
-      docker.py          # Pydantic models for docker MCP tool params
+    # (params/ removed — tool schemas now live in each module's v1/tools.py)
   sandbox-config/
     opencode-config.json   # OpenCode default agent + permissions
     agents/
@@ -180,15 +177,21 @@ druppie/
     config.py            # Settings from env vars
     auth.py              # Keycloak JWT validation
     gitea.py             # Gitea API client
-    mcp_client.py        # MCP tool fetching
-    mcp_config.yaml      # MCP server + tool + approval definitions
-    tool_registry.py     # Unified tool registry with Pydantic models
+    mcp_config.yaml      # MCP server URLs, approval rules, injection — NOT tool schemas
+    mcp_config.py        # Loader for mcp_config.yaml
+    tool_registry.py     # Discovers tools via tools/list at startup; MCPHttp consolidated here
   mcp-servers/
-    coding/              # Port 9001 (includes mermaid_validator.py)
-    docker/              # Port 9002
-    filesearch/          # Port 9004
-    web/                 # Port 9005
-    archimate/           # Port 9006
+    module-coding/       # Port 9001 — file/git ops
+      MODULE.yaml
+      server.py
+      v1/tools.py        # @mcp.tool() definitions (single source of truth for schemas)
+      v1/module.py
+    module-docker/       # Port 9002 — container lifecycle
+    module-filesearch/   # Port 9004 — local file search
+    module-web/          # Port 9005 — web browsing/search
+    module-archimate/    # Port 9006 — ArchiMate model ops
+    module-hitl/         # HITL helpers
+    module-registry/     # Tool registry/discovery helpers
 ```
 
 ---
@@ -412,16 +415,34 @@ All resolution decisions are logged as structured `model_resolved` events, and t
 
 MCP (Model Context Protocol) servers are HTTP microservices built with the FastMCP framework. Each exposes a `/health` endpoint and tool endpoints.
 
-### 6.1 Configuration
+### 6.1 Module Convention
 
-MCP servers, their tools, and approval requirements are defined in `druppie/core/mcp_config.yaml`. This is the single source of truth for:
+Each MCP server follows the **module convention**: it lives under `druppie/mcp-servers/module-<name>/` and has a standard layout:
 
-- Server URLs (with environment variable substitution)
-- Tool names, descriptions, and parameter schemas
-- Approval requirements per tool (which role can approve)
-- Parameter injection rules (what context values get auto-injected)
+```
+module-<name>/
+  MODULE.yaml       # Module metadata (name, version, description)
+  server.py         # FastMCP app + versioned router mounting (/v1, /v2, ...)
+  requirements.txt
+  Dockerfile
+  v1/
+    tools.py        # @mcp.tool() definitions — single source of truth for tool schemas
+    module.py       # Business logic
+```
 
-### 6.2 Coding Server (port 9001)
+`v1/tools.py` is where tool names, descriptions, parameters, and pre-validation (`meta.pre_validate`) are declared via `@mcp.tool()` decorators. `server.py` mounts versioned sub-routers so multiple API versions can coexist on one port.
+
+### 6.2 Configuration
+
+`druppie/core/mcp_config.yaml` defines:
+
+- **Server URLs** (with environment variable substitution)
+- **Approval requirements** per tool (which role can approve)
+- **Parameter injection rules** (what context values get auto-injected)
+
+Tool schemas are **not** stored here. At startup, `ToolRegistry` calls each server's `tools/list` endpoint to discover live schemas. This ensures there is one source of truth (the `@mcp.tool()` decorator) rather than two (config file + decorator).
+
+### 6.3 Coding Server (port 9001)
 
 File and git operations within workspace sandboxes.
 
@@ -440,7 +461,7 @@ File and git operations within workspace sandboxes.
 | `revert_to_commit` | None (internal) | Hard reset + force push to a target commit |
 | `close_pull_request` | None (internal) | Close a PR on Gitea without merging |
 
-### 6.3 Docker Server (port 9002)
+### 6.4 Docker Server (port 9002)
 
 Container lifecycle management.
 
@@ -455,7 +476,7 @@ Container lifecycle management.
 | `inspect` | None | Inspect container details |
 | `exec_command` | Developer | Execute command in container |
 
-### 6.4 Web / Bestand-Zoeker Server (port 9005)
+### 6.5 Web / Bestand-Zoeker Server (port 9005)
 
 Web browsing and local file search within datasets.
 
@@ -468,11 +489,11 @@ Web browsing and local file search within datasets.
 | `search_web` | None | Web search |
 | `get_page_info` | None | Get web page metadata |
 
-### 6.5 File Search Server (port 9004)
+### 6.6 File Search Server (port 9004)
 
 Local file search capability over mounted dataset volumes.
 
-### 6.6 ArchiMate Server (port 9006)
+### 6.7 ArchiMate Server (port 9006)
 
 ArchiMate model operations. Reads `.archimate` files from a mounted models directory.
 
@@ -483,7 +504,7 @@ ArchiMate model operations. Reads `.archimate` files from a mounted models direc
 | `search_model` | None | Search for elements by query |
 | `export_view` | None | Export an ArchiMate view |
 
-### 6.7 Declarative Parameter Injection
+### 6.8 Declarative Parameter Injection
 
 MCP tools can have parameters auto-injected from the session/project context. Injected parameters are marked `hidden: true` and are removed from the LLM-visible tool schema. This prevents the LLM from needing to know internal IDs.
 
@@ -500,7 +521,7 @@ inject:
     tools: [read_file, write_file, list_dir, ...]
 ```
 
-### 6.8 Layered Approval System
+### 6.9 Layered Approval System
 
 Approvals have two layers:
 
@@ -768,22 +789,16 @@ execution_repo.update_planned_prompt(next_run.id, new_prompt)
 
 ### 8.5 Tool Registry
 
-`druppie/core/tool_registry.py` is the single source of truth for all tool definitions. It combines:
-- **MCP tools** fetched from MCP servers with Pydantic parameter models
+`druppie/core/tool_registry.py` is the single source of truth for all tool definitions at runtime. It combines:
+- **MCP tools** — discovered at startup by calling each server's `tools/list` endpoint (live schema, no duplication with config files)
 - **Builtin tools** (done, make_plan, hitl_ask_question, etc.)
 
 Each tool is represented by a `ToolDefinition` (`druppie/domain/tool.py`) which contains:
 - Tool metadata (name, description, server)
-- A Pydantic model class for type-safe parameters
-- Approval requirements
+- JSON schema for parameters (fetched from the module's `@mcp.tool()` decorator)
+- Approval requirements (from `mcp_config.yaml`)
 
-**Pydantic Parameter Models** (`druppie/tools/params/`):
-```
-params/
-  builtin.py   # DoneParams, MakePlanParams, HitlAskQuestionParams, ...
-  coding.py    # ReadFileParams, WriteFileParams, RunGitParams, ...
-  docker.py    # BuildImageParams, StartContainerParams, ...
-```
+`druppie/tools/params/` (previously hand-maintained Pydantic models per tool) no longer exists. Schemas come exclusively from the modules.
 
 **OpenAI Strict Mode**: Tool schemas follow OpenAI strict mode requirements:
 - `strict: true` on all function definitions
@@ -966,7 +981,7 @@ Optional:
 
 | File | Purpose |
 |------|---------|
-| `druppie/core/mcp_config.yaml` | MCP server URLs, tool schemas, approval rules, parameter injection |
+| `druppie/core/mcp_config.yaml` | MCP server URLs, approval rules, parameter injection (tool schemas live in each module's `v1/tools.py`) |
 | `druppie/agents/definitions/*.yaml` | Agent definitions (prompt, tools, model config) |
 | `druppie/agents/definitions/system_prompts/*.yaml` | Composable system prompts (see Section 8.2) |
 | `docker-compose.yml` | Infrastructure service definitions (at repository root) |
