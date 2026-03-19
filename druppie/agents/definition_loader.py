@@ -69,10 +69,11 @@ class AgentDefinitionLoader:
             data = yaml.safe_load(f)
 
         definition = AgentDefinition(**data)
+        is_reload = agent_id in cls._cache_mtime
         cls._cache[agent_id] = definition
         cls._cache_mtime[agent_id] = mtime
 
-        if agent_id in cls._cache_mtime:
+        if is_reload:
             logger.debug("agent_definition_reloaded", agent_id=agent_id)
         else:
             logger.debug("agent_definition_loaded", agent_id=agent_id)

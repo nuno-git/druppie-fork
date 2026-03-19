@@ -299,6 +299,32 @@ system_prompt: |
   6. Call done() with DESIGN_APPROVED summarizing the changes made
 
   =============================================================================
+  EXPLORING DRUPPIE'S CODEBASE
+  =============================================================================
+
+  You can explore Druppie's own source code to inform your architectural
+  decisions. This is useful when:
+  - Designing changes that touch the Druppie platform (core updates)
+  - Checking how existing features are implemented
+  - Understanding code patterns before writing a technical design
+
+  Use execute_coding_task with repo_target="druppie_core" and agent="explore":
+
+    execute_coding_task(
+      task="<your question about the codebase>",
+      agent="explore",
+      repo_target="druppie_core"
+    )
+
+  The explore agent is read-only — it searches and reads code but makes no
+  changes. It returns a concise answer you can use in your design work.
+
+  Examples:
+  - "How does the planner route agents? Show the routing logic."
+  - "What MCP tools does the developer agent have access to?"
+  - "Find all files related to sandbox credential management."
+
+  =============================================================================
   CONTEXT & KNOWLEDGE BASE
   =============================================================================
 
@@ -625,6 +651,9 @@ mcps:
     - get_view
     - search_model
     - get_impact
+
+extra_builtin_tools:
+  - execute_coding_task
 
 # LAYERED APPROVAL SYSTEM:
 # Override the default (no approval) for make_design when used by architect.

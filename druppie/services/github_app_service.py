@@ -4,6 +4,7 @@ Used by update_core_builder agent to authenticate sandbox agents against GitHub 
 Disabled (returns None) when env vars are not set.
 """
 
+import asyncio
 import time
 from datetime import datetime
 
@@ -30,6 +31,7 @@ class GitHubAppService:
         self._installation_id: str = config.installation_id
         self._cached_token: str | None = None
         self._token_expires_at: float = 0.0
+        self._refresh_lock = asyncio.Lock()
 
         self._private_key: str | None = None
         if config.private_key_path:
@@ -91,14 +93,19 @@ class GitHubAppService:
         if self._cached_token and time.time() < (self._token_expires_at - 300):
             return self._cached_token
 
-        try:
-            token, expires_at = await self._request_installation_token()
-            self._cached_token = token
-            self._token_expires_at = expires_at
-            return token
-        except Exception as e:
-            logger.error("github_installation_token_failed", error=str(e))
-            return None
+        async with self._refresh_lock:
+            # Re-check after acquiring lock (another coroutine may have refreshed)
+            if self._cached_token and time.time() < (self._token_expires_at - 300):
+                return self._cached_token
+
+            try:
+                token, expires_at = await self._request_installation_token()
+                self._cached_token = token
+                self._token_expires_at = expires_at
+                return token
+            except Exception as e:
+                logger.error("github_installation_token_failed", error=str(e))
+                return None
 
 
 _instance: GitHubAppService | None = None

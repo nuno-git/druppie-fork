@@ -238,26 +238,37 @@ async def _retry_sandbox_with_next_model(
         chain_index=next_index,
     )
 
-    # Get repo info and git provider — trace back to the calling agent via tool_call
+    # Reconstruct repo context from the stored repo_target (no agent-id guessing)
+    repo_target = getattr(sandbox_mapping, "repo_target", "project") or "project"
     repo_owner = os.getenv("GITEA_ORG", "druppie")
     repo_name = ""
     git_provider = "gitea"
+    context_repo_owner: str | None = None
+    context_repo_name: str | None = None
+    context_git_provider: str | None = None
 
-    # Determine if this was a core update by checking the originating agent
-    calling_agent_id = None
-    if tool_call_id:
-        from druppie.repositories import ExecutionRepository
-        execution_repo = ExecutionRepository(db)
-        tool_call = execution_repo.get_tool_call(tool_call_id)
-        if tool_call and tool_call.agent_run_id:
-            agent_run = execution_repo.get_by_id(tool_call.agent_run_id)
-            if agent_run:
-                calling_agent_id = agent_run.agent_id
-
-    if calling_agent_id == "update_core_builder":
-        repo_owner = os.getenv("DRUPPIE_REPO_OWNER", "nuno-git")
-        repo_name = os.getenv("DRUPPIE_REPO_NAME", "druppie-fork")
+    if repo_target == "druppie_core":
+        druppie_owner = os.getenv("DRUPPIE_REPO_OWNER")
+        druppie_name = os.getenv("DRUPPIE_REPO_NAME")
+        if not druppie_owner or not druppie_name:
+            logger.error("sandbox_retry_missing_druppie_repo_config")
+            return False
+        repo_owner = druppie_owner
+        repo_name = druppie_name
         git_provider = "github"
+
+        # Restore context repo (project with FD/TD) for dual-repo sandbox
+        if sandbox_mapping.session_id:
+            from druppie.repositories import SessionRepository, ProjectRepository
+            session_repo = SessionRepository(db)
+            session = session_repo.get_by_id(sandbox_mapping.session_id)
+            if session and session.project_id:
+                project_repo = ProjectRepository(db)
+                project = project_repo.get_by_id(session.project_id)
+                if project:
+                    context_git_provider = "gitea"
+                    context_repo_owner = project.repo_owner or os.getenv("GITEA_ORG", "druppie")
+                    context_repo_name = project.repo_name or ""
     elif sandbox_mapping.session_id:
         from druppie.repositories import SessionRepository, ProjectRepository
         session_repo = SessionRepository(db)
@@ -294,6 +305,10 @@ async def _retry_sandbox_with_next_model(
             author_id=str(sandbox_mapping.user_id),
             db=db,
             git_provider=git_provider,
+            context_repo_owner=context_repo_owner,
+            context_repo_name=context_repo_name,
+            context_git_provider=context_git_provider,
+            repo_target=repo_target,
         )
 
         # Link the new sandbox to the same tool call

@@ -80,6 +80,7 @@ async def create_and_start_sandbox(
     context_repo_owner: str | None = None,
     context_repo_name: str | None = None,
     context_git_provider: str | None = None,
+    repo_target: str = "project",
 ) -> dict:
     """Create a sandbox session on the control plane, register ownership, and send the prompt.
 
@@ -142,17 +143,19 @@ async def create_and_start_sandbox(
 
     # Build context repo credentials if provided (dual-repo mode for update_core_builder)
     context_git_user_id = None
+    delete_context_git_user = None  # cleanup function, only set for Gitea context repos
     if context_repo_owner and context_repo_name and context_git_provider:
         if context_git_provider == "github":
             context_git_creds = await _build_github_git_credentials(context_repo_owner, context_repo_name)
         else:
-            from druppie.sandbox.gitea_credentials import create_sandbox_git_user
+            from druppie.sandbox.gitea_credentials import create_sandbox_git_user, delete_sandbox_git_user
             context_git_user_id = secrets.token_hex(6)
             context_git_creds = await create_sandbox_git_user(
                 sandbox_session_id=context_git_user_id,
                 repo_owner=context_repo_owner,
                 repo_name=context_repo_name,
             )
+            delete_context_git_user = lambda: delete_sandbox_git_user(context_git_user_id)
         credentials["contextGit"] = context_git_creds
 
     # For GitHub repos, also provide GitHub API credentials so the sandbox
@@ -226,6 +229,7 @@ async def create_and_start_sandbox(
                     task_prompt=task_prompt,
                     agent_name=agent_name,
                     git_user_id=git_user_id,
+                    repo_target=repo_target,
                 )
                 db.flush()
             except Exception as e:
@@ -250,9 +254,10 @@ async def create_and_start_sandbox(
                 "agent": agent_name,
                 "callbackUrl": callback_url,
                 "callbackSecret": webhook_secret,
-                "githubName": "druppie-core-bot",
-                "githubEmail": "druppie-core-bot@users.noreply.github.com",
             }
+            if git_provider == "github":
+                prompt_body["githubName"] = "druppie-core-bot"
+                prompt_body["githubEmail"] = "druppie-core-bot@users.noreply.github.com"
 
             prompt_resp = await client.post(
                 f"{control_plane_url}/sessions/{sandbox_session_id}/prompt",
@@ -290,26 +295,29 @@ async def create_and_start_sandbox(
             }
 
     except SandboxCreateError:
-        # Clean up the per-sandbox Gitea user on any creation failure
-        if delete_git_user:
-            try:
-                await delete_git_user()
-            except Exception:
-                pass
+        # Clean up the per-sandbox Gitea users on any creation failure
+        for cleanup_fn in (delete_git_user, delete_context_git_user):
+            if cleanup_fn:
+                try:
+                    await cleanup_fn()
+                except Exception:
+                    pass
         raise
     except httpx.TimeoutException as e:
-        if delete_git_user:
-            try:
-                await delete_git_user()
-            except Exception:
-                pass
+        for cleanup_fn in (delete_git_user, delete_context_git_user):
+            if cleanup_fn:
+                try:
+                    await cleanup_fn()
+                except Exception:
+                    pass
         raise SandboxCreateError(
             f"Timeout connecting to sandbox control plane: {e}"
         ) from e
     except Exception as e:
-        if delete_git_user:
-            try:
-                await delete_git_user()
-            except Exception:
-                pass
+        for cleanup_fn in (delete_git_user, delete_context_git_user):
+            if cleanup_fn:
+                try:
+                    await cleanup_fn()
+                except Exception:
+                    pass
         raise SandboxCreateError(f"Sandbox error: {e}") from e
