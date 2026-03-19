@@ -257,17 +257,17 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-archimate:
+  module-archimate:
     build:
-      context: ./druppie/mcp-servers/archimate
+      context: ./druppie/mcp-servers/module-archimate
       dockerfile: Dockerfile
-    container_name: druppie-mcp-archimate
+    container_name: druppie-module-archimate
     profiles: [infra, dev, prod]
     environment:
       MODELS_DIR: /models
       MCP_PORT: "9006"
     volumes:
-      - ./druppie/mcp-servers/archimate/models:/models:ro
+      - ./druppie/mcp-servers/module-archimate/models:/models:ro
     ports:
       - "${MCP_ARCHIMATE_PORT:-9006}:9006"
     networks:
@@ -296,6 +296,28 @@ services:
       - druppie-new-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-hitl:
+    build:
+      context: ./druppie/mcp-servers/module-hitl
+      dockerfile: Dockerfile
+    container_name: druppie-module-hitl
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9003"
+      BACKEND_URL: http://druppie-backend:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      HITL_TIMEOUT: "300"
+    ports:
+      - "${MCP_HITL_PORT:-9003}:9003"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9003/health"]
       interval: 10s
       timeout: 5s
       retries: 5
