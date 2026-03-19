@@ -211,11 +211,11 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-docker:
+  module-docker:
     build:
-      context: ./druppie/mcp-servers/docker
+      context: ./druppie/mcp-servers/module-docker
       dockerfile: Dockerfile
-    container_name: druppie-mcp-docker
+    container_name: druppie-module-docker
     profiles: [infra, dev, prod]
     environment:
       MCP_PORT: "9002"
