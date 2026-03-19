@@ -1,7 +1,7 @@
 """MCPs API routes.
 
 Endpoints for listing and managing MCP servers and tools.
-Now reads from mcp_config.yaml via MCPClient.
+Now reads from mcp_config.yaml via MCPConfig.
 """
 
 import httpx
@@ -9,10 +9,9 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 import structlog
 
-from druppie.api.deps import get_current_user, get_db
+from druppie.api.deps import get_current_user
 from druppie.api.errors import NotFoundError, ValidationError
-from druppie.core.mcp_client import get_mcp_client
-from sqlalchemy.orm import Session
+from druppie.core.mcp_config import get_mcp_config
 
 logger = structlog.get_logger()
 
@@ -126,14 +125,13 @@ class ToolsListResponse(BaseModel):
 @router.get("/mcps", response_model=MCPListResponse)
 async def list_mcps(
     user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """List available MCP servers and tools.
 
     Returns tools accessible to the current user based on their roles.
     """
-    mcp_client = get_mcp_client(db)
-    config = mcp_client.config
+    mcp_config = get_mcp_config()
+    config = mcp_config.config
     user_roles = user.get("realm_access", {}).get("roles", [])
 
     servers = []
@@ -166,7 +164,7 @@ async def list_mcps(
                     id=server_id,
                     name=server_id.title(),
                     description=server_config.get("description", ""),
-                    url=mcp_client.get_mcp_url(server_id),
+                    url=mcp_config.get_server_url(server_id),
                     tools=tools,
                 )
             )
@@ -178,21 +176,20 @@ async def list_mcps(
 @router.get("/mcps/servers", response_model=ServersListResponse)
 async def list_mcp_servers(
     user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """List MCP servers with their status.
 
     Returns all configured MCP servers with health status checks.
     Built-in MCPs (like HITL) are always shown as healthy.
     """
-    mcp_client = get_mcp_client(db)
-    config = mcp_client.config
+    mcp_config = get_mcp_config()
+    config = mcp_config.config
 
     logger.info("mcp_servers_list_requested", user_id=user.get("sub"), config_mcps=list(config.get("mcps", {}).keys()))
 
     servers = []
     for server_id, server_config in config.get("mcps", {}).items():
-        url = mcp_client.get_mcp_url(server_id)
+        url = mcp_config.get_server_url(server_id)
 
         # Built-in MCPs are always healthy (no external server to check)
         if server_config.get("builtin", False):
@@ -219,14 +216,13 @@ async def list_mcp_servers(
 @router.get("/mcps/tools", response_model=ToolsListResponse)
 async def list_mcp_tools(
     user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """List all tools across all MCP servers.
 
     Returns a flat list of all tools with their server info.
     """
-    mcp_client = get_mcp_client(db)
-    config = mcp_client.config
+    mcp_config = get_mcp_config()
+    config = mcp_config.config
 
     tools = []
     for server_id, server_config in config.get("mcps", {}).items():
@@ -247,17 +243,16 @@ async def list_mcp_tools(
 async def get_tool(
     tool_id: str,
     user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """Get details of a specific tool."""
-    mcp_client = get_mcp_client(db)
+    mcp_config = get_mcp_config()
 
     # Parse tool_id (format: server:tool_name)
     if ":" not in tool_id:
         raise ValidationError("Invalid tool ID format. Use server:tool_name", field="tool_id")
 
     server_id, tool_name = tool_id.split(":", 1)
-    tool_config = mcp_client.get_tool_config(server_id, tool_name)
+    tool_config = mcp_config.get_tool_config(server_id, tool_name)
 
     if not tool_config:
         raise NotFoundError("tool", tool_id)
@@ -291,11 +286,10 @@ async def get_tool(
 async def get_mcp_server(
     server_id: str,
     user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """Get details of a specific MCP server."""
-    mcp_client = get_mcp_client(db)
-    config = mcp_client.config
+    mcp_config = get_mcp_config()
+    config = mcp_config.config
 
     server_config = config.get("mcps", {}).get(server_id)
     if not server_config:
@@ -323,6 +317,6 @@ async def get_mcp_server(
         "id": server_id,
         "name": server_id.title(),
         "description": server_config.get("description", ""),
-        "url": mcp_client.get_mcp_url(server_id),
+        "url": mcp_config.get_server_url(server_id),
         "tools": tools,
     }
