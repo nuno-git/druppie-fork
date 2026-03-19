@@ -21,6 +21,7 @@ class SandboxSessionRepository(BaseRepository):
         task_prompt: str | None = None,
         agent_name: str | None = None,
         git_user_id: str | None = None,
+        context_git_user_id: str | None = None,
         repo_target: str = "project",
     ) -> SandboxSession:
         """Register a sandbox session ownership mapping.
@@ -41,6 +42,7 @@ class SandboxSessionRepository(BaseRepository):
             task_prompt=task_prompt,
             agent_name=agent_name,
             git_user_id=git_user_id,
+            context_git_user_id=context_git_user_id,
             repo_target=repo_target,
         )
         self.db.add(mapping)
