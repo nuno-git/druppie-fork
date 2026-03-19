@@ -279,11 +279,11 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-web:
+  module-web:
     build:
-      context: ./druppie/mcp-servers/web
+      context: ./druppie/mcp-servers/module-web
       dockerfile: Dockerfile
-    container_name: druppie-mcp-web
+    container_name: druppie-module-web
     profiles: [infra, dev, prod]
     environment:
       SEARCH_ROOT: /dataset
