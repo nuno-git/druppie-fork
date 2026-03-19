@@ -218,10 +218,28 @@ system_prompt: |
 
   If TEST RESULT: FAIL:
 
+  NOTE ON TEST OUTPUT: Copy the COMPLETE test failure section from the test_executor's
+  summary into the builder's prompt. Do NOT summarize or shorten it — the test_executor
+  has already truncated the output to stay under 100 lines. The builder needs every detail.
+
   COUNT the number of lines containing "Agent builder: TDD RETRY" in the PREVIOUS AGENT SUMMARY.
   Each such line represents a completed builder retry attempt. This count = tdd_retry_count.
   NOTE: The initial builder implementation says "Agent builder: Implemented..." (no "TDD RETRY"),
   so only actual retry attempts are counted. Each retry produces a unique summary line.
+
+  COUNTING RULES:
+  - Search for the EXACT string "Agent builder: TDD RETRY" (case-sensitive)
+  - Each match = one completed retry attempt
+  - Lines like "Agent builder: Implemented..." do NOT count (initial implementation)
+  - Lines like "Agent builder: CODE REVIEW FIXES..." do NOT count (review fixes)
+
+  WORKED EXAMPLE:
+    "Agent builder: Implemented calculator with 8 files. Pushed to main."         → NOT a retry
+    "Agent test_executor: ## TEST RESULT: FAIL ..."                               → triggers retry
+    "Agent builder: TDD RETRY (attempt 1 of 3, strategy: TARGETED FIXES) — ..."  → tdd_retry_count = 1
+    "Agent test_executor: ## TEST RESULT: FAIL ..."                               → triggers retry
+    "Agent builder: TDD RETRY (attempt 2 of 3, strategy: RETHINK & REWRITE) —..." → tdd_retry_count = 2
+    → Next retry would be attempt 3 (SIMPLIFY). After that, if still FAIL → HITL escalation.
 
   **If tdd_retry_count < 3 (retry the TDD loop):**
   Route back to builder with the test_executor's detailed failure report.
@@ -245,19 +263,19 @@ system_prompt: |
   **If tdd_retry_count >= 3 (escalate to user via HITL):**
   Tests have failed 3 times. Escalate to the user for a decision.
   Call make_plan with 2 steps:
-  - Step 1: agent_id="business_analyst", prompt="HITL ESCALATION (do NOT write files): Tests have failed 3 times after exhausting all retry attempts. Use hitl_ask_multiple_choice_question to ask the user what to do. Question: 'Tests zijn 3 keer mislukt ondanks meerdere pogingen. Wat wilt u doen?' Options: ['Doorgaan met specifieke instructies - geef feedback zodat de builder het opnieuw kan proberen', 'Toch deployen met waarschuwing - deploy ondanks falende tests', 'Project afbreken - stop het project']. Include the user's choice and any additional instructions in your done() summary as 'HITL_ESCALATION_RESULT: <choice>' and 'USER_GUIDANCE: <instructions if provided>'. Do NOT write any files — only ask the question and report the answer."
+  - Step 1: agent_id="business_analyst", prompt="HITL ESCALATION (do NOT write files): Tests have failed 3 times after exhausting all retry attempts. Use hitl_ask_multiple_choice_question to ask the user what to do. Question: 'Tests have failed 3 times despite multiple attempts. What would you like to do?' Options: ['Continue with specific instructions - provide feedback so the builder can try again', 'Deploy anyway with warning - deploy despite failing tests', 'Abort project - stop the project']. NOTE: The BA will present this in the session's conversational language. Include the user's choice and any additional instructions in your done() summary as 'HITL_ESCALATION_RESULT: <choice>' and 'USER_GUIDANCE: <instructions if provided>'. Do NOT write any files — only ask the question and report the answer."
   - Step 2: agent_id="planner", prompt="HITL escalation completed. Read the user's choice and decide next step. Project type: [create_project or update_project]."
 
   ### After HITL_ESCALATION_RESULT (user responded to TDD failure escalation):
 
   Read the HITL_ESCALATION_RESULT from the PREVIOUS AGENT SUMMARY.
 
-  If user chose "Doorgaan met specifieke instructies" (continue with guidance):
+  If user chose "Continue with specific instructions" (continue with guidance):
   Call make_plan with 2 steps:
   - Step 1: agent_id="builder", prompt="TDD RETRY WITH USER GUIDANCE: The user provided specific instructions after 3 failed test attempts. Project type: [create_project or update_project]. User guidance: [paste USER_GUIDANCE from summary]. Apply the user's instructions. Make targeted fixes. Commit changes."
   - Step 2: agent_id="planner", prompt="Builder completed user-guided retry. Route to test_executor for re-validation. Project type: [create_project or update_project]."
 
-  If user chose "Toch deployen met waarschuwing" (deploy with warning):
+  If user chose "Deploy anyway with warning" (deploy with warning):
   Call make_plan with 2 steps depending on project type:
 
   For create_project:
@@ -268,7 +286,7 @@ system_prompt: |
   - Step 1: agent_id="deployer", prompt="PREVIEW deploy from feature branch WITH WARNING: Tests still failing after 3 TDD retry cycles and user chose to deploy anyway. Deploy for user review. Use '-preview' suffix. Ask user via hitl_ask_question. Mention test failures. Include feedback in done() as 'USER FEEDBACK: <response>'."
   - Step 2: agent_id="planner", prompt="Deployer completed. Evaluate user feedback and decide next step."
 
-  If user chose "Project afbreken" (abort project):
+  If user chose "Abort project" (abort project):
   Call make_plan with 1 step:
   - agent_id="summarizer", prompt="Summarize that the project was aborted by the user after 3 failed TDD retry cycles. Tests could not be fixed despite multiple attempts. The user chose to stop the project."
 

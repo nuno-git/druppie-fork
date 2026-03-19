@@ -343,6 +343,7 @@ services:
       WORKER_URL: http://sandbox-control-plane:8787
       MODAL_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       INTERNAL_CALLBACK_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
+      LLM_FAILURE_TIMEOUT_MS: "600000"
       # Credentials are now sent per-session from Druppie and proxied through the control plane.
       # No LLM API keys or proxy URLs needed here.
     volumes:

@@ -876,7 +876,7 @@ class Orchestrator:
 
         return session_id
 
-    def _sync_workspace(self, session_id: UUID) -> None:
+    def _sync_workspace(self, session_id: UUID) -> bool:
         """Git pull in the workspace so it picks up sandbox commits.
 
         The sandbox pushed to Gitea, but the MCP coding server's workspace
@@ -884,6 +884,9 @@ class Orchestrator:
         the next tool call (read_file, write_file) would see stale code.
 
         Best-effort: logs warnings on failure but never blocks the resume.
+
+        Returns:
+            True if sync succeeded, False if all retries failed.
         """
         import subprocess
         from pathlib import Path
@@ -892,7 +895,7 @@ class Orchestrator:
         db = self.execution_repo.db
         session = db.query(DBSession).filter(DBSession.id == session_id).first()
         if not session or not session.project_id:
-            return
+            return True
 
         workspace_root = Path(os.getenv("WORKSPACE_ROOT", "/app/workspace"))
         user_part = str(session.user_id) if session.user_id else "default"
@@ -900,22 +903,31 @@ class Orchestrator:
 
         if not (workspace_path / ".git").exists():
             logger.debug("sync_workspace_no_git_dir", workspace=str(workspace_path))
-            return
+            return True
 
-        try:
-            result = subprocess.run(
-                ["git", "pull", "--ff-only"],
-                cwd=str(workspace_path),
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode == 0:
-                logger.info("sync_workspace_pulled", workspace=str(workspace_path), output=result.stdout.strip())
-            else:
-                logger.warning("sync_workspace_pull_failed", workspace=str(workspace_path), stderr=result.stderr.strip())
-        except Exception as e:
-            logger.warning("sync_workspace_error", workspace=str(workspace_path), error=str(e))
+        import time as _time
+
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = subprocess.run(
+                    ["git", "pull", "--ff-only"],
+                    cwd=str(workspace_path),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0:
+                    logger.info("sync_workspace_pulled", workspace=str(workspace_path))
+                    return True
+                logger.warning("sync_workspace_pull_failed", attempt=attempt, stderr=result.stderr.strip())
+            except Exception as e:
+                logger.warning("sync_workspace_error", attempt=attempt, error=str(e))
+            if attempt < max_attempts:
+                _time.sleep(2 ** (attempt - 1))
+
+        logger.error("sync_workspace_all_retries_failed", workspace=str(workspace_path))
+        return False
 
     async def resume_after_sandbox(self, tool_call_id: UUID) -> UUID | None:
         """Resume execution after a sandbox task completes.
@@ -955,7 +967,9 @@ class Orchestrator:
         # Pull sandbox commits into the workspace before resuming.
         # The sandbox pushed to Gitea but the shared workspace volume
         # still has the old HEAD.
-        self._sync_workspace(session_id)
+        synced = self._sync_workspace(session_id)
+        if not synced:
+            logger.error("resume_after_sandbox_stale_workspace", session_id=str(session_id))
 
         # Set statuses back to running
         self.execution_repo.update_status(agent_run.id, AgentRunStatus.RUNNING)
