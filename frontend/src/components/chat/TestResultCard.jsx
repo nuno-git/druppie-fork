@@ -17,7 +17,12 @@ import {
 import { extractTestErrors } from './ChatHelpers'
 
 const formatFramework = (fw) => {
-  const map = { pytest: 'Pytest', vitest: 'Vitest', jest: 'Jest', playwright: 'Playwright', gotest: 'Go Test', shell: 'Shell' }
+  const map = {
+    pytest: 'Pytest', vitest: 'Vitest', jest: 'Jest', playwright: 'Playwright',
+    gotest: 'Go Test', go: 'Go Test', shell: 'Shell',
+    mocha: 'Mocha', cargo: 'Cargo Test', rspec: 'RSpec',
+    maven: 'Maven', gradle: 'Gradle',
+  }
   return map[fw?.toLowerCase()] || fw || 'Tests'
 }
 
@@ -26,12 +31,18 @@ const formatTime = (sec) => {
   return sec >= 60 ? `${(sec / 60).toFixed(1)}m` : `${sec.toFixed(1)}s`
 }
 
+/** Strip ANSI escape codes from text (raw stdout/stderr may contain color codes) */
+const stripAnsi = (text) => text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+
 /** Client-side fallback: parse test counts from stdout/stderr when server-side parsing returned zeros */
 const parseResultsFallback = (result) => {
   const res = result.results || {}
   if ((res.total || 0) > 0) return res // Server-side parsing worked
 
-  const output = (result.stdout || '') + '\n' + (result.stderr || '')
+  // If server detected a config error, trust its zero counts — tests didn't actually run
+  if (result.config_error) return res
+
+  const output = stripAnsi((result.stdout || '') + '\n' + (result.stderr || ''))
   if (!output.trim()) return res
 
   let passed = 0, failed = 0, skipped = 0
@@ -60,9 +71,27 @@ const parseResultsFallback = (result) => {
     }
   }
 
+  // Pytest: "1 failed, 3 passed in 0.42s" with === border
+  const hasPytestFooter = output.match(/in \d[\d.]*s\s*={3,}/)
+  if (hasPytestFooter) {
+    const pm = output.match(/(\d+)\s+passed/)
+    const fm = output.match(/(\d+)\s+failed/)
+    const sm = output.match(/(\d+)\s+skipped/)
+    const em = output.match(/(\d+)\s+error/)
+    if (pm || fm) {
+      const p = parseInt(pm?.[1] || '0')
+      const f = parseInt(fm?.[1] || '0') + parseInt(em?.[1] || '0')
+      const s = parseInt(sm?.[1] || '0')
+      return { ...res, passed: p, failed: f, skipped: s, total: p + f + s }
+    }
+  }
+
   // Generic: "N passed", "N failed"
-  const passedM = output.match(/(\d+)\s+(?:passing|passed)/)
-  const failedM = output.match(/(\d+)\s+(?:failing|failed)/)
+  // Use multiline per-line matching to skip "Test Suites:" lines (those count suites, not tests)
+  const lines = output.split('\n').filter(l => !l.match(/Test Suites:/))
+  const filteredOutput = lines.join('\n')
+  const passedM = filteredOutput.match(/(\d+)\s+(?:passing|passed)/)
+  const failedM = filteredOutput.match(/(\d+)\s+(?:failing|failed)/)
   const skippedM = output.match(/(\d+)\s+(?:pending|skipped)/)
   if (passedM || failedM) {
     passed = parseInt(passedM?.[1] || '0')
@@ -83,7 +112,7 @@ const TestRunSection = ({ result }) => {
   const failed = r.failed || 0
   const total = r.total || 0
   const failedNames = r.failed_tests || []
-  const isPass = result.success && result.exit_code === 0 && failed === 0
+  const isPass = result.exit_code === 0 && failed === 0
   const errors = extractTestErrors(result.stdout, result.stderr, result.framework, failedNames)
 
   // Detect if we couldn't parse any test data
@@ -107,10 +136,12 @@ const TestRunSection = ({ result }) => {
         )}
         {noCounts ? (
           <span className="text-amber-600 italic">
-            {hasOutput ? 'Unable to parse results' : 'No test output'}
-            {result.exit_code && result.exit_code !== 0 && (
-              <span className="text-gray-500"> (exit {result.exit_code})</span>
-            )}
+            {result.config_error ? result.config_error
+              : !hasOutput ? 'No test output'
+              : result.exit_code === 5 && result.framework === 'pytest' ? 'No tests collected'
+              : result.exit_code > 1 ? `Framework error (exit ${result.exit_code})`
+              : result.exit_code === 1 ? 'Tests failed (counts unavailable)'
+              : 'Unable to parse results'}
           </span>
         ) : (
           <span className="text-gray-500">{passed}/{total} passed</span>
@@ -188,23 +219,29 @@ const TestResultCard = ({ testResults, isRunning }) => {
 
   // Detect various failure modes
   const noCounts = totalTests === 0 && totalPassed === 0 && totalFailed === 0
-  const testRunFailed = noCounts && !lastRun.success
-  const allPass = lastRun.success && lastRun.exit_code === 0 && totalFailed === 0 && !testRunFailed
+  const testRunFailed = noCounts && lastRun.exit_code !== 0
+  const allPass = lastRun.exit_code === 0 && totalFailed === 0 && !testRunFailed
 
   const iterations = testResults.length
   const hasOutput = lastRun.stdout || lastRun.stderr
 
   // Build inline summary parts
   const summaryParts = []
-  if (testRunFailed) {
+  if (testRunFailed && lastRun.config_error) {
+    summaryParts.push(lastRun.config_error)
+  } else if (testRunFailed && !hasOutput) {
+    summaryParts.push('No test output')
+  } else if (testRunFailed && lastRun.exit_code === 5 && lastRun.framework === 'pytest') {
+    summaryParts.push('No tests collected')
+  } else if (testRunFailed && lastRun.exit_code > 1) {
+    summaryParts.push(`Framework error (exit ${lastRun.exit_code})`)
+  } else if (testRunFailed) {
     summaryParts.push('Test run failed')
-    if (lastRun.exit_code) summaryParts.push(`exit ${lastRun.exit_code}`)
+  } else if (noCounts && hasOutput && lastRun.exit_code === 0) {
+    summaryParts.push('Unable to parse counts (likely passed)')
   } else if (noCounts && hasOutput) {
-    // We have output but couldn't parse counts
-    summaryParts.push('Results parsing failed')
-    if (lastRun.exit_code && lastRun.exit_code !== 0) summaryParts.push(`exit ${lastRun.exit_code}`)
+    summaryParts.push('Unable to parse counts')
   } else if (noCounts) {
-    // No output at all
     summaryParts.push('No test output')
   } else {
     // Normal case: we have counts

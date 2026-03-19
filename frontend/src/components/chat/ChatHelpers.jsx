@@ -187,52 +187,6 @@ export const findPendingQuestion = (timeline) => {
   return null
 }
 
-// --- Extract test results from agent run's tool calls ---
-
-export const extractTestResults = (agentRun) => {
-  const results = []
-  agentRun?.llm_calls?.forEach((llm) => {
-    llm.tool_calls?.forEach((tc) => {
-      if (tc.tool_name === 'run_tests' && tc.status === 'completed' && tc.result) {
-        try {
-          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
-          if (raw) results.push(raw)
-        } catch { /* malformed result JSON — skip */ }
-      }
-      // Also extract from test_report builtin tool calls
-      if (tc.tool_name === 'test_report' && tc.status === 'completed' && tc.result) {
-        try {
-          const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
-          // Convert test_report format to run_tests format for TestResultCard
-          if (raw && tc.arguments) {
-            const args = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments
-            const passed = parseInt(args.passed_count) || 0
-            const failed = parseInt(args.failed_count) || 0
-            const testResult = {
-              success: args.tests_passed || false,
-              framework: 'unknown',
-              exit_code: args.tests_passed ? 0 : 1,
-              stdout: args.summary || '',
-              stderr: '',
-              elapsed_seconds: null,
-              results: {
-                total: passed + failed,
-                passed: passed,
-                failed: failed,
-                skipped: 0,
-                failed_tests: [],
-              },
-              coverage: null,
-            }
-            results.push(testResult)
-          }
-        } catch { /* malformed JSON — skip */ }
-      }
-    })
-  })
-  return results
-}
-
 // --- Extract per-test error messages from test output ---
 
 export const extractTestErrors = (stdout, stderr, framework, failedTestNames) => {
@@ -265,7 +219,7 @@ export const extractTestErrors = (stdout, stderr, framework, failedTestNames) =>
           }
         }
         // Fallback: scan for FAILED lines
-        const failedLine = output.match(new RegExp(`FAILED.*${shortName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*?-\\s*(.+)$`, 'm'))
+        const failedLine = output.match(new RegExp(`FAILED.*${shortName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*?\\s-\\s(.+)$`, 'm'))
         if (failedLine) {
           errors[testName] = failedLine[1].trim()
         }
@@ -274,7 +228,7 @@ export const extractTestErrors = (stdout, stderr, framework, failedTestNames) =>
       // No FAILURES section, try FAILED summary lines
       for (const testName of failedTestNames) {
         const shortName = testName.split('::').pop()
-        const failedLine = output.match(new RegExp(`FAILED.*${shortName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*?-\\s*(.+)$`, 'm'))
+        const failedLine = output.match(new RegExp(`FAILED.*${shortName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*?\\s-\\s(.+)$`, 'm'))
         if (failedLine) {
           errors[testName] = failedLine[1].trim()
         }
@@ -315,7 +269,7 @@ export const extractSandboxResults = (agentRun) => {
   const results = []
   agentRun?.llm_calls?.forEach((llm) => {
     llm.tool_calls?.forEach((tc) => {
-      if (tc.tool_name === 'execute_coding_task' && tc.status !== 'waiting_sandbox' && tc.status !== 'pending' && tc.result) {
+      if (tc.tool_name === 'execute_coding_task' && tc.status !== 'waiting_sandbox' && tc.status !== 'retrying' && tc.status !== 'pending' && tc.result) {
         let raw
         try {
           raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
@@ -345,7 +299,7 @@ export const extractSurfacedFileWrites = (agentRun) => {
       const args = tc.arguments || {}
 
       if (toolName.includes('write_file') && !toolName.includes('batch')) {
-        if (args.path && args.content) {
+        if (args.path && args.content && !args.path.endsWith('builder_plan.md')) {
           files.push({ path: args.path, content: args.content })
         }
       } else if (toolName.includes('batch_write_files')) {
@@ -400,11 +354,18 @@ export const extractOrderedItems = (agentRun, hasFollowingMessage) => {
         } catch { /* skip */ }
       }
       // Sandbox results
-      if (tc.tool_name === 'execute_coding_task' && tc.status !== 'waiting_sandbox' && tc.status !== 'pending' && tc.result) {
+      if (tc.tool_name === 'execute_coding_task' && tc.status !== 'waiting_sandbox' && tc.status !== 'retrying' && tc.status !== 'pending' && tc.result) {
         try {
           const raw = typeof tc.result === 'string' ? JSON.parse(tc.result) : tc.result
           if (raw?.sandbox_session_id) items.push({ type: 'sandbox', data: raw })
         } catch { /* skip */ }
+      }
+      // Builder plan (builder_planner writing builder_plan.md)
+      if (tc.tool_name?.includes('write_file') && !tc.tool_name?.includes('batch') && tc.status === 'completed') {
+        const args = tc.arguments || {}
+        if (args.path?.endsWith('builder_plan.md') && args.content) {
+          items.push({ type: 'plan', data: { content: args.content } })
+        }
       }
     })
   })
