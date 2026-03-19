@@ -56,7 +56,7 @@ async def get_skill(skill_name: str) -> dict:
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def get_mcp_server(server_name: str) -> dict:
-    return module.get_mcp_server(server_name=server_name)
+    return await module.get_mcp_server(server_name=server_name)
 
 
 @mcp.tool(
@@ -65,4 +65,4 @@ async def get_mcp_server(server_name: str) -> dict:
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def get_tool(server_name: str, tool_name: str) -> dict:
-    return module.get_tool(server_name=server_name, tool_name=tool_name)
+    return await module.get_tool(server_name=server_name, tool_name=tool_name)
