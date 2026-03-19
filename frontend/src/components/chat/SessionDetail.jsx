@@ -250,9 +250,9 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
   const isAnswered = tc.status === 'completed'
 
   const rawChoices = tc.arguments?.choices || tc.arguments?.options || []
-  const choices = rawChoices.map(c =>
-    typeof c === 'string' ? c : c.text || c.label || String(c)
-  )
+  const choices = rawChoices
+    .map(c => (typeof c === 'string' ? c : c.text || c.label || String(c)))
+    .filter(c => !/^other\b/i.test(c.trim()))
 
   let displayAnswer = null
   if (isAnswered && tc.result) {
