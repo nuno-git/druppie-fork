@@ -42,6 +42,7 @@ class LLMService:
     PROVIDERS = {
         "zai": "ZAI_API_KEY",
         "deepinfra": "DEEPINFRA_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
         "azure_foundry": "FOUNDRY_API_KEY",
         "ollama": None,
     }
@@ -136,7 +137,8 @@ class LLMService:
 
         if resolved.fallback_provider:
             fallback_key_env = self.PROVIDERS.get(resolved.fallback_provider)
-            if fallback_key_env and os.getenv(fallback_key_env):
+            # Allow fallback if: key env is None (optional, e.g. Ollama) or key is set
+            if fallback_key_env is None or os.getenv(fallback_key_env):
                 fallback = ChatLiteLLM(
                     provider=resolved.fallback_provider,
                     model=resolved.fallback_model,

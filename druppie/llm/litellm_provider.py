@@ -198,6 +198,7 @@ PROVIDER_CONFIGS = {
         "model_env": "DEEPSEEK_MODEL",
         "base_url_env": "DEEPSEEK_BASE_URL",
         "default_base_url": "https://api.deepseek.com/v1",
+        "max_tokens_limit": 8192,
     },
     "azure_foundry": {
         "prefix": "openai",  # OpenAI-compatible API
@@ -285,6 +286,9 @@ class ChatLiteLLM(BaseLLM):
         # Some providers (e.g. Azure OpenAI) require max_completion_tokens instead of max_tokens
         self._use_max_completion_tokens = config.get("use_max_completion_tokens", False)
 
+        # Provider-specific max_tokens ceiling (e.g. Deepseek caps at 8192)
+        self._max_tokens_limit = config.get("max_tokens_limit", 16384)
+
         # SSL verification (disabled for self-signed certs, e.g. Ollama)
         # Set globally on litellm — the per-call ssl_verify kwarg has known bugs
         self._ssl_verify = config.get("ssl_verify", True)
@@ -355,7 +359,7 @@ class ChatLiteLLM(BaseLLM):
     def _build_kwargs(self, messages, tools, max_tokens_override=None):
         """Build common kwargs for LiteLLM completion calls."""
         effective_tools = tools or self._bound_tools
-        effective_max_tokens = min(max_tokens_override or self.max_tokens, 16384)
+        effective_max_tokens = min(max_tokens_override or self.max_tokens, self._max_tokens_limit)
 
         token_param = "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
         kwargs = {
