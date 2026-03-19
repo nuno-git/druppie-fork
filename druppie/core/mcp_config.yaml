@@ -15,8 +15,8 @@
 
 mcps:
   coding:
-    url: ${MCP_CODING_URL:-http://mcp-coding:9001}
-    description: "File operations and git within workspace sandbox"
+    url: ${MCP_CODING_URL:-http://module-coding:9001}
+    type: core
     # Declarative injection rules - auto-inject these params from context
     # Parameters marked hidden: true are removed from LLM-visible schemas
     inject:
@@ -36,200 +36,55 @@ mcps:
         tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, run_git, create_pull_request, merge_pull_request]
     tools:
       - name: read_file
-        description: "Read file from workspace"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            path:
-              type: string
-              description: "File path relative to workspace root"
-          required:
-            - path
 
       - name: write_file
-        description: "Write file to workspace. Use run_git to commit and push."
         # DEFAULT: No approval needed for write_file
         # Agents can OVERRIDE this (e.g., architect requires architect approval)
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            path:
-              type: string
-              description: "File path relative to workspace root"
-            content:
-              type: string
-              description: "File content to write"
-          required:
-            - path
-            - content
 
       - name: make_design
-        description: "Write a design document (FD or TD) with Mermaid syntax validation. The file is NOT written if any Mermaid diagram contains syntax errors — fix the errors and retry."
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            path:
-              type: string
-              description: "File path (e.g. technical_design.md or functional_design.md)"
-            content:
-              type: string
-              description: "Full markdown content for the design document"
-          required:
-            - path
-            - content
 
       - name: batch_write_files
-        description: "Write multiple files at once. Use run_git to commit and push."
         # DEFAULT: No approval needed for batch writes
         # Agents can OVERRIDE this (e.g., architect requires architect approval)
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            files:
-              type: array
-              description: "List of files to write, each with path and content"
-              items:
-                type: object
-                properties:
-                  path:
-                    type: string
-                    description: "File path relative to workspace root"
-                  content:
-                    type: string
-                    description: "File content to write"
-                required:
-                  - path
-                  - content
-          required:
-            - files
 
       - name: list_dir
-        description: "List directory contents"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            path:
-              type: string
-              description: "Directory path relative to workspace root (use '.' for root)"
-          required:
-            - path
 
       - name: delete_file
-        description: "Delete file from workspace"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            path:
-              type: string
-              description: "File path to delete"
-          required:
-            - path
 
       - name: run_git
-        description: "Execute a git command in the workspace. Allowed subcommands: add, commit, push, pull, fetch, status, checkout, log, diff, branch. Destructive flags (--force, --hard) are blocked."
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            command:
-              type: string
-              description: "Git command to execute (e.g. 'add .', 'commit -m \"feat: add login\"', 'push', 'status')"
-          required:
-            - command
 
       - name: run_tests
-        description: "Run tests in workspace (auto-detects framework)"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            test_command:
-              type: string
-              description: "Optional custom test command (default: auto-detected)"
-            timeout:
-              type: integer
-              description: "Timeout in seconds (default: 300)"
-          required: []
+
       - name: get_test_framework
-        description: "Auto-detect test framework in workspace"
         requires_approval: false
-        parameters:
-          type: object
-          properties: {}
-          required: []
+
       - name: get_coverage_report
-        description: "Get detailed test coverage report"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            framework:
-              type: string
-              description: "Optional framework name (default: auto-detected)"
-          required: []
 
       - name: create_pull_request
-        description: "Create a pull request from current branch to main on Gitea"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            title:
-              type: string
-              description: "PR title"
-            body:
-              type: string
-              description: "PR description"
-          required:
-            - title
 
       - name: merge_pull_request
-        description: "Merge a pull request on Gitea and delete the source branch"
         requires_approval: true
         required_role: developer
-        parameters:
-          type: object
-          properties:
-            pr_number:
-              type: integer
-              description: "PR number to merge"
-            delete_branch:
-              type: boolean
-              description: "Delete source branch after merge (default: true)"
-          required:
-            - pr_number
 
       - name: install_test_dependencies
-        description: "Install missing test dependencies for project"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            framework:
-              type: string
-              description: "Optional framework name (default: auto-detected). Valid values: pytest, vitest, jest, playwright, go, shell"
-          required: []
 
       - name: validate_tdd
-        description: "Run full TDD validation (tests + coverage + threshold check)"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            coverage_threshold:
-              type: number
-              description: "Minimum coverage percentage (default: 80.0)"
-          required: []
 
   docker:
-    url: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
-    description: "Docker container operations"
+    url: ${MCP_DOCKER_URL:-http://module-docker:9002}
+    type: core
     # Declarative injection rules for docker MCP
     inject:
       session_id:
@@ -254,392 +109,128 @@ mcps:
         tools: [run]  # For ownership labels
     tools:
       - name: build
-        description: "Build Docker image by cloning from git repository"
         # GLOBAL: docker:build ALWAYS needs developer approval (per goal.md)
         requires_approval: true
         required_role: developer
-        parameters:
-          type: object
-          properties:
-            image_name:
-              type: string
-              description: "Name for the built image (e.g., myapp:latest)"
-            git_url:
-              type: string
-              description: "Full git URL to clone (alternative to repo_name)"
-            repo_name:
-              type: string
-              description: "Gitea repo name - will construct URL using Gitea config (alternative to git_url)"
-            repo_owner:
-              type: string
-              description: "Gitea repo owner/username (defaults to 'druppie' org)"
-            branch:
-              type: string
-              description: "Git branch (default: main)"
-            dockerfile:
-              type: string
-              description: "Dockerfile name (default: Dockerfile)"
-            build_args:
-              type: object
-              description: "Docker build arguments as key-value pairs"
-          required:
-            - image_name
 
       - name: run
-        description: "Run Docker container - host port auto-assigned, you provide the container port from Dockerfile EXPOSE"
         # GLOBAL: docker:run ALWAYS needs developer approval (per goal.md)
         requires_approval: true
         required_role: developer
-        parameters:
-          type: object
-          properties:
-            image_name:
-              type: string
-              description: "Docker image to run"
-            container_name:
-              type: string
-              description: "Name for the container"
-            container_port:
-              type: integer
-              description: "Container port from Dockerfile EXPOSE (e.g., 80 for nginx, 3000 for node)"
-            port:
-              type: integer
-              description: "Host port (auto-assigned from 9100-9199 if not provided)"
-            env_vars:
-              type: object
-              description: "Environment variables as key-value pairs"
-            volumes:
-              type: array
-              description: "Volume mounts (format: 'host:container')"
-            command:
-              type: string
-              description: "Override command"
-          required:
-            - image_name
-            - container_name
-            - container_port
 
       - name: stop
-        description: "Stop a running container"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            container_name:
-              type: string
-              description: "Name of container to stop"
-            remove:
-              type: boolean
-              description: "Whether to remove container after stopping (default: true)"
-          required:
-            - container_name
 
       - name: logs
-        description: "Get container logs"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            container_name:
-              type: string
-              description: "Name of container to get logs from"
-            tail:
-              type: integer
-              description: "Number of lines to show (default: 100)"
-          required:
-            - container_name
 
       - name: remove
-        description: "Remove a container"
         requires_approval: true
         required_role: developer
-        parameters:
-          type: object
-          properties:
-            container_name:
-              type: string
-              description: "Name of container to remove"
-            force:
-              type: boolean
-              description: "Force remove running container (default: false)"
-          required:
-            - container_name
 
       - name: list_containers
-        description: "List Docker containers with optional filtering by ownership labels"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            all:
-              type: boolean
-              description: "Include stopped containers (default: false)"
-            project_id:
-              type: string
-              description: "Filter by druppie.project_id label"
-            session_id:
-              type: string
-              description: "Filter by druppie.session_id label"
-            user_id:
-              type: string
-              description: "Filter by druppie.user_id label"
-          required: []
 
       - name: inspect
-        description: "Inspect container details"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            container_name:
-              type: string
-              description: "Name of container to inspect"
-          required:
-            - container_name
 
       - name: exec_command
-        description: "Execute command in running container"
         requires_approval: true
         required_role: developer
-        parameters:
-          type: object
-          properties:
-            container_name:
-              type: string
-              description: "Name of container"
-            command:
-              type: string
-              description: "Command to execute"
-            workdir:
-              type: string
-              description: "Working directory inside container"
-          required:
-            - container_name
-            - command
 
   # NOTE: HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question) are
   # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
   # Configure per-agent via `builtin_tools` in agent YAML files.
 
-  archimate:
-    url: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
-    description: "ArchiMate reference architecture models (read-only). Provides access to elements, relationships, views, and impact analysis for architecture context."
+  hitl:
+    url: ${MCP_HITL_URL:-http://module-hitl:9003}
+    type: core
     tools:
-      - name: list_models
-        description: "List all available ArchiMate models"
+      - name: ask_question
+        requires_approval: false
+      - name: ask_choice
+        requires_approval: false
+      - name: submit_response
         requires_approval: false
 
-      - name: get_statistics
-        description: "Get overview statistics for a model: element counts per layer/type, relationship counts"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            model_name:
-              type: string
-              description: "Name of the ArchiMate model (optional, defaults to first model)"
-          required: []
-
-      - name: list_elements
-        description: "List elements, optionally filtered by layer (Strategy/Business/Application/Technology/Motivation) or type"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            model_name:
-              type: string
-              description: "Name of the ArchiMate model (optional, defaults to first model)"
-            layer:
-              type: string
-              description: "Filter by layer: Strategy, Motivation, Business, Application, Technology, Physical"
-            element_type:
-              type: string
-              description: "Filter by type: BusinessProcess, ApplicationComponent, etc."
-            max_results:
-              type: integer
-              description: "Maximum results to return (default: 50)"
-            offset:
-              type: integer
-              description: "Offset for pagination (default: 0)"
-          required: []
-
-      - name: get_element
-        description: "Get full details of an element by name or ID, including relationships, views, and properties"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            element_name:
-              type: string
-              description: "Element name or ID"
-            model_name:
-              type: string
-              description: "Name of the ArchiMate model (optional, defaults to first model)"
-          required:
-            - element_name
-
-      - name: list_views
-        description: "List all views/diagrams in the model"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            model_name:
-              type: string
-              description: "Name of the ArchiMate model (optional, defaults to first model)"
-          required: []
-
-      - name: get_view
-        description: "Get all elements and relationships shown on a specific view/diagram"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            view_id:
-              type: string
-              description: "View name or ID"
-            model_name:
-              type: string
-              description: "Name of the ArchiMate model (optional, defaults to first model)"
-          required:
-            - view_id
-
-      - name: search_model
-        description: "Search for elements by name, description, or property value"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            query:
-              type: string
-              description: "Search term (matches name, description, properties)"
-            model_name:
-              type: string
-              description: "Name of the ArchiMate model (optional, defaults to first model)"
-            layer:
-              type: string
-              description: "Filter by layer"
-            element_type:
-              type: string
-              description: "Filter by element type"
-            max_results:
-              type: integer
-              description: "Maximum results (default: 20)"
-          required:
-            - query
-
-      - name: get_impact
-        description: "Analyze impact: traverse relationships from an element to find all connected elements"
-        requires_approval: false
-        parameters:
-          type: object
-          properties:
-            element_name:
-              type: string
-              description: "Element name or ID to start from"
-            model_name:
-              type: string
-              description: "Name of the ArchiMate model (optional, defaults to first model)"
-            direction:
-              type: string
-              description: "Direction: 'downstream' (what this serves), 'upstream' (what depends on this), or 'both' (default)"
-            max_depth:
-              type: integer
-              description: "Maximum traversal depth (default: 3)"
-          required:
-            - element_name
-
-  bestand-zoeker:
-    url: ${MCP_WEB_URL:-http://mcp-web:9005}
-    description: "Local file search and web browsing"
+  filesearch:
+    url: ${MCP_FILESEARCH_URL:-http://module-filesearch:9004}
+    type: core
     tools:
       - name: search_files
-        description: "Search for text content in local files within dataset"
+        requires_approval: false
+      - name: list_directory
+        requires_approval: false
+      - name: read_file
+        requires_approval: false
+      - name: get_search_stats
+        requires_approval: false
+
+  web:
+    url: ${MCP_WEB_URL:-http://module-web:9005}
+    type: core
+    tools:
+      - name: search_files
         requires_approval: false
 
       - name: list_directory
-        description: "List files and directories in dataset"
         requires_approval: false
 
       - name: read_file
-        description: "Read file content from dataset"
         requires_approval: false
 
       - name: fetch_url
-        description: "Fetch and return content from a URL"
         requires_approval: false
 
       - name: search_web
-        description: "Search web for information"
         requires_approval: false
 
       - name: get_page_info
-        description: "Get basic information about a web page"
+        requires_approval: false
+
+  archimate:
+    url: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
+    type: core
+    tools:
+      - name: list_models
+        requires_approval: false
+
+      - name: get_statistics
+        requires_approval: false
+
+      - name: list_elements
+        requires_approval: false
+
+      - name: get_element
+        requires_approval: false
+
+      - name: list_views
+        requires_approval: false
+
+      - name: get_view
+        requires_approval: false
+
+      - name: search_model
+        requires_approval: false
+
+      - name: get_impact
         requires_approval: false
 
   registry:
-    url: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
-    description: "Druppie platform building block catalog (read-only)"
+    url: ${MCP_REGISTRY_URL:-http://module-registry:9007}
+    type: core
     tools:
       - name: list_components
-        description: "List all Druppie building blocks grouped by category (agents, skills, mcps, builtin_tools). Optional category filter."
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            category:
-              type: string
-              description: "Filter by category: agents, skills, mcps, builtin_tools (empty = all)"
-          required: []
 
       - name: get_agent
-        description: "Get agent details: description, skills, MCP tools, config"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            agent_id:
-              type: string
-              description: "Agent identifier (e.g., architect, developer, planner)"
-          required:
-            - agent_id
 
       - name: get_skill
-        description: "Get full skill content including instructions and allowed tools"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            skill_name:
-              type: string
-              description: "Skill name (e.g., code-review, architecture-principles)"
-          required:
-            - skill_name
 
       - name: get_mcp_server
-        description: "Get MCP server details: description, tool list with descriptions, and which agents use it"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            server_name:
-              type: string
-              description: "MCP server name (e.g., coding, docker, archimate)"
-          required:
-            - server_name
 
       - name: get_tool
-        description: "Get full tool definition: parameters, approval requirements, and per-agent overrides"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            server_name:
-              type: string
-              description: "MCP server name"
-            tool_name:
-              type: string
-              description: "Tool name within the server"
-          required:
-            - server_name
-            - tool_name
