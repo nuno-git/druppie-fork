@@ -937,6 +937,8 @@ async def execute_sandbox_coding_task(
 
     # Determine git provider and repo context based on repo_target param
     repo_target = args.get("repo_target", "project")
+    if repo_target not in ("project", "druppie_core"):
+        return {"success": False, "error": f"Invalid repo_target '{repo_target}'. Must be 'project' or 'druppie_core'."}
 
     context_repo_owner: str | None = None
     context_repo_name: str | None = None
