@@ -15,8 +15,7 @@ Git authentication is handled automatically via proxy.
 
 ### Determining the base branch for PRs
 Check what branch you are based on: `git log --oneline --decorate -1` or check your
-task prompt for instructions. For **GitHub repos** (github.com), the default PR target
-is `colab-dev` (NOT `main`). For Gitea repos, the default is `main`.
+task prompt for instructions. The default PR target is `main`.
 
 IMPORTANT: Do NOT use `gh` CLI — it does not work in this environment.
 
@@ -24,42 +23,9 @@ IMPORTANT: Do NOT use `gh` CLI — it does not work in this environment.
 
 Use the `create-pull-request` tool (preferred). Auth is automatic:
 ```
-create-pull-request(title="...", body="...", baseBranch="colab-dev")
+create-pull-request(title="...", body="...", baseBranch="main")
 ```
-The tool auto-detects the current branch. Set `baseBranch` to `colab-dev` for GitHub repos or `main` for Gitea repos.
-
-**Alternative:** Use `curl` with `$GITHUB_API_PROXY_URL`:
-```bash
-curl -s -X POST "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls" \
-  -H "Content-Type: application/json" \
-  -d '{"title":"...","body":"...","head":"branch","base":"colab-dev"}'
-```
-
-### Other GitHub API calls
-
-```bash
-# View a pull request
-curl -s "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls/NUMBER" | jq
-
-# List open pull requests
-curl -s "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls" | jq
-
-# View PR diff
-curl -s -H "Accept: application/vnd.github.diff" \
-  "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls/NUMBER"
-
-# View PR/issue comments
-curl -s "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/issues/NUMBER/comments" | jq
-
-# List issues
-curl -s "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/issues" | jq
-
-# View repo info
-curl -s "$GITHUB_API_PROXY_URL/repos/OWNER/REPO" | jq
-```
-
-Replace OWNER/REPO with actual values and NUMBER with the PR/issue number.
-Any GitHub REST API endpoint works: `curl -s "$GITHUB_API_PROXY_URL/<endpoint>" | jq`
+The tool auto-detects the current branch.
 
 ## Coding Standards
 - Write clean, working code
