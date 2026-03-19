@@ -8,6 +8,7 @@ Routes requests to the correct version:
 
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import yaml
@@ -57,7 +58,14 @@ for major, app in version_apps.items():
 # /mcp → latest version
 routes.append(Mount("/", app=version_apps[major_latest]))
 
-app = Starlette(routes=routes)
+
+@asynccontextmanager
+async def lifespan(app):
+    async with version_apps[major_latest].router.lifespan_context(version_apps[major_latest]):
+        yield
+
+
+app = Starlette(routes=routes, lifespan=lifespan)
 
 if __name__ == "__main__":
     port = int(os.getenv("MCP_PORT", "9004"))
