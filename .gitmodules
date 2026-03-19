@@ -1,0 +1,4 @@
+[submodule "vendor/open-inspect"]
+	path = vendor/open-inspect
+	url = https://github.com/rd7581/background-agents.git
+	branch = druppie
