@@ -140,8 +140,9 @@ druppie/
   sandbox-config/
     opencode-config.json   # OpenCode default agent + permissions
     agents/
-      druppie-builder.md   # Sandbox coding agent prompt
-      druppie-tester.md    # Sandbox testing agent prompt
+      druppie-builder.md        # Sandbox coding agent prompt
+      druppie-core-builder.md   # Sandbox core update agent prompt (dual-repo)
+      druppie-tester.md         # Sandbox testing agent prompt
   db/models/
     base.py              # SQLAlchemy base, mixins
     user.py
@@ -644,6 +645,7 @@ Twelve agents are defined as YAML files in `druppie/agents/definitions/`:
 | `test_builder` | Generates tests (TDD Red Phase) | Default | `coding` | — |
 | `builder` | Implements code to pass tests (TDD Green Phase) | Default | `coding` | — |
 | `test_executor` | Runs tests, iteratively fixes code | `test_report` | `coding` | — |
+| `update_core_builder` | Delegates core changes to dual-repo sandbox | `execute_coding_task` | None | — |
 | `developer` | Writes code, commits, creates PRs | `invoke_skill`, `execute_coding_task` | `coding` | `code-review`, `git-workflow` |
 | `reviewer` | Reviews code quality | Default | `coding` | — |
 | `tester` | Writes and runs tests | `execute_coding_task` | `coding`, `docker` | — |
@@ -980,7 +982,7 @@ Optional:
 
 > Full documentation: [docs/SANDBOX.md](SANDBOX.md) — covers architecture, OpenCode integration, provider resilience, Kata Containers, and security.
 
-[Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`) is integrated as a git submodule at `background-agents/`. Sandbox containers run OpenCode `v1.2.22` (pinned in `Dockerfile.sandbox`). They provide isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace.
+[Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`) is integrated as a direct directory at `background-agents/` (previously a git submodule, now tracked directly in the Druppie repo). Sandbox containers run OpenCode `v1.2.22` (pinned in `Dockerfile.sandbox`). They provide isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace.
 
 ### 10.1 Services
 
@@ -999,6 +1001,14 @@ Defined in `druppie/agents/builtin_tools.py`. Delegates a coding task to a sandb
 3. Registers ownership in `sandbox_sessions` table
 4. Returns `WAITING_SANDBOX` — agent pauses, thread freed
 5. On completion, control plane POSTs webhook → handler fetches events, completes tool call, resumes agent
+
+**Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `task` | Yes | Task description for the sandbox agent |
+| `agent` | No | Sandbox agent name (default: `druppie-builder`). Determines which OpenCode agent prompt is used. |
+| `repo_target` | No | Enum: `"project"` (default) or `"druppie_core"`. Controls git provider and credential routing. `"project"` clones the session's Gitea project repo (single-repo sandbox). `"druppie_core"` clones both Druppie's GitHub repo and the project repo (dual-repo sandbox — see Section 10.9). |
 
 **Auth:** HMAC-SHA256 tokens (`{unix_ms_timestamp}.{hmac_sha256_hex_signature}`), verified by Open-Inspect's `verifyInternalToken`.
 

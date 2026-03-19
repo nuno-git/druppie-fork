@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-03-17
+Last updated: 2026-03-19
 
 ---
 
@@ -41,7 +41,7 @@ Last updated: 2026-03-17
 - General Pre-Validation System for Tool Arguments
 - Update Core Flow — End-to-End Improvements
 - ~~Update Core — Technical Basis~~ ✅ DONE
-- ~~Update Core — Architect Switch & Branch Threading~~ ✅ DONE
+- ~~Update Core — Architect Signal & Dual-Repo Sandbox~~ ✅ DONE
 
 ---
 
@@ -273,36 +273,39 @@ Last updated: 2026-03-17
 
 ### Update Core Flow — End-to-End Improvements
 
-- **Current state:** PR #77 delivers the full `update_core` flow: GitHub App tokens, sandbox proxy, PR creation, `switch_to_update_core` builtin tool, branch threading, and two entry paths (Router direct + Architect mid-flow redirect).
+- **Current state:** PR #77 delivers the full `update_core` flow: signal-based routing (Architect signals `DESIGN_APPROVED_CORE_UPDATE`), dedicated `update_core_builder` agent, dual-repo sandbox, GitHub App tokens, GitHub API proxy, `create-pull-request` sandbox tool, and profile-based LLM routing.
 - **What works:**
-  - Router can classify `update_core` directly
-  - Architect detects Druppie self-improvement during `create_project` and calls `switch_to_update_core` after writing `technical_design.md`
-  - Sandbox agent determines PR target from git remote (GitHub → `colab-dev`, Gitea → `main`)
-  - PRs created via GitHub API proxy, targeting `colab-dev`
-  - GitHub App installation tokens (short-lived, scoped) — no real tokens in sandbox
+  - Architect detects core-change requests via keyword matching in the functional design
+  - Planner routes `DESIGN_APPROVED_CORE_UPDATE` signal to `update_core_builder` (no new intent — session stays `create_project`/`update_project`)
+  - `update_core_builder` calls `execute_coding_task` with `repo_target="druppie_core"` — dual-repo sandbox clones `/workspace/core/` (GitHub) + `/workspace/project/` (Gitea)
+  - `create-pull-request` sandbox tool creates PRs via control plane endpoint
+  - GitHub API proxy injects GitHub App installation tokens (short-lived, scoped) — sandbox never sees real tokens
+  - `done()` on `update_core_builder` requires developer approval (reviewer merges PR first)
+  - After core builder completes, Planner routes back to Architect (run 2) for project-specific design
+  - Repo coordinates configurable via `DRUPPIE_REPO_OWNER`/`DRUPPIE_REPO_NAME` env vars
 - **What's left:**
-  - **Resume original project:** After the `update_core` PR is merged, the planner does not yet resume the original `create_project` workflow. Currently the session ends with the PR.
-  - **Automated testing:** No automated tests for `GitHubAppService`, `switch_to_update_core`, or the GitHub credential path in `create_and_start_sandbox`.
-  - **Hardcoded repo coordinates:** `nuno-git/druppie-fork` is hardcoded in `builtin_tools.py`. Should be moved to configuration.
-- **Priority:** Low — the current flow works end-to-end. Improvements are quality-of-life.
+  - **Automated testing:** No automated tests for `GitHubAppService`, dual-repo credential path, or the `update_core_builder` routing logic.
+  - **Full E2E validation:** Dual-repo sandbox tested manually but needs a full end-to-end run with a real core change request.
+- **Priority:** Low — the architecture is in place. Remaining work is testing and hardening.
 
 ### ~~Update Core — Technical Basis~~ (DONE)
 
 - **Resolved in:** `feature/update-core-flow` branch (PR #77)
-- **Doel:** Technische basis voor Druppie om de eigen codebase aan te passen via een PR-flow op GitHub.
-- **Klaar als:**
-  - GitHub App integratie: `GitHubAppService` genereert kort-levende installation tokens uit `GITHUB_APP_*` env vars. Cacht tot vlak voor expiry. Disabled wanneer niet geconfigureerd (geen crash).
-  - Router herkent `update_core` intent — `set_intent` slaat repo context (URL, owner, name, base branch) op de sessie op zonder project of Gitea-repo aan te maken.
-  - Planner volgt `UPDATE_CORE` workflow: simpel (developer → summarizer) of complex (BA → architect → developer → summarizer). Geen deploy, geen merge — eindigt altijd met een PR op `colab-dev`.
-  - Sandbox agents werken op GitHub via GitHub API proxy (credential isolatie — geen echte tokens in de sandbox).
-  - Session model uitgebreid met `repo_owner`, `repo_name` kolommen.
-  - Gitea cleanup gebruikt `git_user_id` (None voor GitHub, hex string voor Gitea).
-  - Bestaande `create_project`, `update_project`, en `general_chat` flows ongewijzigd.
+- GitHub App integration: `GitHubAppService` generates short-lived installation tokens from `GITHUB_APP_*` env vars. Caches until near-expiry. Disabled when not configured (no crash).
+- Signal-based routing: Architect detects core-change requests and signals `DESIGN_APPROVED_CORE_UPDATE` in its `done()` summary. Planner reads the signal and routes to `update_core_builder`. No separate `update_core` intent — session intent stays `create_project`/`update_project`.
+- `update_core_builder` agent: calls `execute_coding_task` with `repo_target="druppie_core"` and `agent="druppie-core-builder"`. `done()` requires developer role approval.
+- Dual-repo sandbox: `/workspace/core/` (GitHub, read+write) + `/workspace/project/` (Gitea, read-only context with FD/TD). Credential store manages dual git proxy keys per session.
+- GitHub API proxy in control plane: reverse proxy at `/github-api-proxy/:proxyKey/*` → `api.github.com`. Injects GitHub App token server-side.
+- Git proxy fix: `express.raw()` for binary git protocol data. Validates both primary and context git proxy keys.
+- `create-pull-request` sandbox tool: OpenCode inspect tool that calls control plane `/sessions/:id/pr` endpoint. Auto-detects current branch, defaults base to `main`.
+- Profile-based LLM routing: each sandbox agent gets a virtual `sandbox/{agent_name}` profile. `druppie-core-builder` has its own chain in `sandbox_models.yaml`.
+- Existing `create_project`, `update_project`, and `general_chat` flows unchanged.
 
-### ~~Update Core — Architect Switch & Branch Threading~~ (DONE)
+### ~~Update Core — Architect Signal & Dual-Repo Sandbox~~ (DONE)
 
 - **Resolved in:** `feature/update-core-flow` branch (PR #77)
-- **Architect `switch_to_update_core`:** The Architect agent now detects when a project (even one started as `create_project`) is about modifying Druppie itself. After writing `technical_design.md`, it calls the `switch_to_update_core` builtin tool, which cancels the current plan and creates a new planner run with `update_core` intent. Detection is based on keywords in the functional design and project description.
-- **Simplified branch targeting:** Instead of threading a `branch` parameter through 7 files, the sandbox agent now determines the PR base branch from its git remote (GitHub repos → `colab-dev`, Gitea repos → `main`). This is configured in the `druppie-builder.md` prompt.
-- **YAML auto-reload:** `AgentDefinitionLoader` now checks file mtime on each load and automatically reloads YAML definitions when they change on disk. No backend restart needed for prompt edits during development.
-- **Sandbox builder PR targeting:** The `druppie-builder` sandbox agent prompt now defaults to `colab-dev` as the PR base branch for GitHub repos. The developer agent explicitly includes "Create a PR targeting colab-dev" in `execute_coding_task` prompts for core changes.
+- **Architect signal:** The Architect agent detects when a project involves modifying Druppie itself. After writing `technical_design.md`, it signals `DESIGN_APPROVED_CORE_UPDATE` in its `done()` summary (plain text signal, not a tool call). Detection is based on keywords in the functional design and project description.
+- **Planner routing:** The Planner checks for `CORE_UPDATE` in the Architect's summary *before* checking for `DESIGN_APPROVED`. Routes to `update_core_builder` (2-step plan: update_core_builder → planner re-evaluation), then Architect runs again for the actual project design.
+- **`repo_target` parameter:** `execute_coding_task` accepts `repo_target` enum (`"project"` default, `"druppie_core"`). Controls whether the sandbox gets single-repo or dual-repo credentials.
+- **Simplified branch targeting:** The sandbox agent determines PR base branch from its git remote (GitHub repos → `colab-dev`, Gitea repos → `main`). Configured in sandbox agent prompts — no branch parameter threaded through infrastructure.
+- **YAML auto-reload:** `AgentDefinitionLoader` checks file mtime on each load and automatically reloads YAML definitions when they change on disk. No backend restart needed for prompt edits during development.
