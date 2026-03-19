@@ -1,13 +1,17 @@
 """Tool Registry - single source of truth for all tool definitions.
 
 Combines:
-- MCP tools with their Pydantic parameter models
-- Builtin tools with their Pydantic parameter models
+- MCP tools with JSON schemas (from Pydantic models, transitionally)
+- Builtin tools with JSON schemas
 
 The registry maps tool names to ToolDefinition objects, which contain:
 - Tool metadata (name, description, server)
-- A Pydantic model class for type-safe parameters
+- A JSON schema dict for parameter validation
 - Approval requirements
+
+Note: This registry currently converts Pydantic param models to JSON schemas
+at registration time. Task 12 will replace this with direct tools/list discovery,
+at which point the PARAMS_MODEL_MAP and Pydantic imports can be removed.
 
 Usage:
     registry = get_tool_registry()
@@ -16,10 +20,8 @@ Usage:
     tool = registry.get("coding_write_file")
     tool = registry.get_by_server_and_name("coding", "write_file")
 
-    # Validate arguments (returns typed model)
-    is_valid, error, params = tool.validate_arguments({"path": "test.txt", "content": "hello"})
-    if is_valid:
-        print(params.path)  # Type-safe access!
+    # Validate arguments (returns validated dict)
+    is_valid, error, args, normalized = tool.validate_arguments({"path": "test.txt", "content": "hello"})
 
     # Get tools for an agent
     tools = registry.get_tools_for_agent(
@@ -37,9 +39,9 @@ import structlog
 from pydantic import BaseModel
 
 from druppie.core.mcp_config import MCPConfig, get_mcp_config
-from druppie.domain.tool import EmptyParams, ToolDefinition, ToolType
+from druppie.domain.tool import ToolDefinition, ToolType
 
-# Import all parameter models
+# Import all parameter models (transitional - removed in Task 12)
 from druppie.tools.params.builtin import (
     CreateMessageParams,
     DoneParams,
@@ -100,6 +102,7 @@ logger = structlog.get_logger()
 
 
 # Mapping from (server, tool_name) to Pydantic params model
+# Transitional: will be removed in Task 12 when tools/list provides JSON schemas directly
 PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
     # Coding tools
     ("coding", "read_file"): ReadFileParams,
@@ -153,11 +156,20 @@ PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
 }
 
 
+def _pydantic_to_json_schema(model: Type[BaseModel]) -> dict:
+    """Convert a Pydantic model class to a JSON schema dict.
+
+    Transitional helper - will be removed in Task 12 when tools/list
+    provides JSON schemas directly.
+    """
+    return model.model_json_schema()
+
+
 class ToolRegistry:
     """Central registry for all tool definitions.
 
-    Loads tools from MCP config and builtin tools, mapping each to its
-    corresponding Pydantic parameter model for type-safe validation.
+    Loads tools from MCP config and builtin tools, converting Pydantic
+    parameter models to JSON schemas for validation.
     """
 
     def __init__(self, mcp_config: MCPConfig | None = None):
@@ -185,14 +197,15 @@ class ToolRegistry:
         # Load builtin tools
         for name, openai_def in BUILTIN_TOOL_DEFS.items():
             func = openai_def.get("function", {})
-            params_model = PARAMS_MODEL_MAP.get(("builtin", name), EmptyParams)
+            params_model = PARAMS_MODEL_MAP.get(("builtin", name))
+            json_schema = _pydantic_to_json_schema(params_model) if params_model else {}
 
             self._tools[name] = ToolDefinition(
                 name=name,
                 tool_type=ToolType.BUILTIN,
                 server=None,
                 description=func.get("description", ""),
-                params_model=params_model,
+                json_schema=json_schema,
                 requires_approval=False,
             )
 
@@ -204,14 +217,15 @@ class ToolRegistry:
             for tool_config in self._mcp_config.get_tools(server):
                 name = tool_config["name"]
                 full_name = f"{server}_{name}"
-                params_model = PARAMS_MODEL_MAP.get((server, name), EmptyParams)
+                params_model = PARAMS_MODEL_MAP.get((server, name))
+                json_schema = _pydantic_to_json_schema(params_model) if params_model else {}
 
                 self._tools[full_name] = ToolDefinition(
                     name=name,
                     tool_type=ToolType.MCP,
                     server=server,
                     description=tool_config.get("description", ""),
-                    params_model=params_model,
+                    json_schema=json_schema,
                     requires_approval=tool_config.get("requires_approval", False),
                     required_role=tool_config.get("required_role"),
                 )
@@ -351,7 +365,7 @@ class ToolRegistry:
         server: str,
         tool_name: str,
         arguments: dict,
-    ) -> tuple[bool, str | None, BaseModel | None]:
+    ) -> tuple[bool, str | None, dict | None, dict | None]:
         """Validate a tool call's arguments.
 
         Args:
@@ -360,11 +374,11 @@ class ToolRegistry:
             arguments: Arguments to validate
 
         Returns:
-            Tuple of (is_valid, error_message, validated_params)
+            Tuple of (is_valid, error_message, validated_args, normalized_args)
         """
         tool = self.get_by_server_and_name(server, tool_name)
         if not tool:
-            return False, f"Unknown tool: {server}:{tool_name}", None
+            return False, f"Unknown tool: {server}:{tool_name}", None, None
         return tool.validate_arguments(arguments)
 
 
