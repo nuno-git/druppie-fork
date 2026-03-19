@@ -73,8 +73,8 @@ from .session import (
 # Skill models
 from .skill import SkillDetail, SkillSummary
 
-# Tool definition (unified tool metadata with Pydantic params models)
-from .tool import EmptyParams, ToolDefinition, ToolDefinitionSummary, ToolType
+# Tool definition (unified tool metadata with JSON schema validation)
+from .tool import ToolDefinition, ToolDefinitionSummary, ToolType
 
 # User models
 from .user import UserInfo
@@ -134,7 +134,6 @@ __all__ = [
     "ToolDefinition",
     "ToolDefinitionSummary",
     "ToolType",
-    "EmptyParams",
 ]
 
 # Rebuild models to resolve forward references (circular imports between session/project)
