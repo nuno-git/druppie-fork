@@ -222,51 +222,17 @@ class MCPConfig:
 
         return (requires, required_role)
 
-    def get_all_tools_for_agent(self, agent_mcps: list[str] | dict, filter_hidden: bool = True) -> list[dict]:
-        """Get all tool definitions for an agent's configured MCPs.
+    def get_server_type(self, server: str) -> str:
+        """Get MCP server type (core, module, both).
 
         Args:
-            agent_mcps: Either a list of MCP names or dict mapping MCP to tools
-            filter_hidden: If True, remove hidden params from parameter schemas
+            server: Server name
 
         Returns:
-            List of tool definitions with full info
+            Server type string, defaults to "core" if not specified
         """
-        tools = []
-
-        if isinstance(agent_mcps, list):
-            # List format - all tools from each MCP
-            for server in agent_mcps:
-                hidden_params = self.get_hidden_params(server) if filter_hidden else set()
-                for tool in self.get_tools(server):
-                    tool_hidden = hidden_params.get(tool["name"], set()) if isinstance(hidden_params, dict) else hidden_params
-                    params = self._filter_parameters(tool.get("parameters", {}), tool_hidden) if filter_hidden else tool.get("parameters", {})
-                    tools.append({
-                        "server": server,
-                        "name": tool["name"],
-                        "full_name": f"{server}:{tool['name']}",
-                        "description": tool.get("description", ""),
-                        "requires_approval": tool.get("requires_approval", False),
-                        "parameters": params,
-                    })
-        else:
-            # Dict format - specific tools per MCP
-            for server, tool_names in agent_mcps.items():
-                hidden_params = self.get_hidden_params(server) if filter_hidden else set()
-                for tool in self.get_tools(server):
-                    if not tool_names or tool["name"] in tool_names:
-                        tool_hidden = hidden_params.get(tool["name"], set()) if isinstance(hidden_params, dict) else hidden_params
-                        params = self._filter_parameters(tool.get("parameters", {}), tool_hidden) if filter_hidden else tool.get("parameters", {})
-                        tools.append({
-                            "server": server,
-                            "name": tool["name"],
-                            "full_name": f"{server}:{tool['name']}",
-                            "description": tool.get("description", ""),
-                            "requires_approval": tool.get("requires_approval", False),
-                            "parameters": params,
-                        })
-
-        return tools
+        mcp = self.config.get("mcps", {}).get(server, {})
+        return mcp.get("type", "core")
 
     def get_injection_rules(self, server: str, tool_name: str | None = None) -> list[InjectionRule]:
         """Get injection rules for a server, optionally filtered by tool.
@@ -341,38 +307,6 @@ class MCPConfig:
             return {tool_name: result.get(tool_name, set())}
 
         return result
-
-    def _filter_parameters(self, params: dict, hidden_params: set[str]) -> dict:
-        """Filter hidden parameters from a parameter schema.
-
-        Args:
-            params: JSON Schema parameter definition
-            hidden_params: Set of parameter names to hide
-
-        Returns:
-            Filtered parameter schema with hidden params removed
-        """
-        if not hidden_params or not params:
-            return params
-
-        # Deep copy to avoid modifying original
-        filtered = dict(params)
-
-        # Filter properties
-        if "properties" in filtered:
-            filtered["properties"] = {
-                k: v for k, v in filtered["properties"].items()
-                if k not in hidden_params
-            }
-
-        # Filter required list
-        if "required" in filtered:
-            filtered["required"] = [
-                r for r in filtered["required"]
-                if r not in hidden_params
-            ]
-
-        return filtered
 
 
 # Singleton instance
