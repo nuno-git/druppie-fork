@@ -235,11 +235,11 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-filesearch:
+  module-filesearch:
     build:
-      context: ./druppie/mcp-servers/filesearch
+      context: ./druppie/mcp-servers/module-filesearch
       dockerfile: Dockerfile
-    container_name: druppie-mcp-filesearch
+    container_name: druppie-module-filesearch
     profiles: [infra, dev, prod]
     environment:
       SEARCH_ROOT: /dataset
