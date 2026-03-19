@@ -5,6 +5,7 @@ Disabled (returns None) when env vars are not set.
 """
 
 import asyncio
+import functools
 import time
 from datetime import datetime
 
@@ -108,12 +109,7 @@ class GitHubAppService:
                 return None
 
 
-_instance: GitHubAppService | None = None
-
-
+@functools.lru_cache(maxsize=1)
 def get_github_app_service() -> GitHubAppService:
     """Get or create the singleton GitHubAppService."""
-    global _instance
-    if _instance is None:
-        _instance = GitHubAppService()
-    return _instance
+    return GitHubAppService()

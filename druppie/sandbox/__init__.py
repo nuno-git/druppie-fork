@@ -61,6 +61,16 @@ async def _build_github_git_credentials(repo_owner: str, repo_name: str) -> dict
     }
 
 
+async def _cleanup_git_users(*cleanup_fns) -> None:
+    """Run cleanup functions for per-sandbox Gitea users, ignoring errors."""
+    for fn in cleanup_fns:
+        if fn:
+            try:
+                await fn()
+            except Exception:
+                pass
+
+
 async def create_and_start_sandbox(
     *,
     task_prompt: str,
@@ -102,6 +112,10 @@ async def create_and_start_sandbox(
         author_id: Author identifier for the prompt.
         db: SQLAlchemy session.
         git_provider: "gitea" (default) or "github".
+        context_repo_owner: Owner of the context repo for dual-repo mode (e.g. Gitea org).
+        context_repo_name: Name of the context repo for dual-repo mode.
+        context_git_provider: Git provider for the context repo ("gitea" or "github").
+        repo_target: Which repo the sandbox targets — "project" (default) or "druppie_core".
 
     Returns:
         Dict with sandbox_session_id, message_id, webhook_secret, and git_user_id.
@@ -296,29 +310,13 @@ async def create_and_start_sandbox(
             }
 
     except SandboxCreateError:
-        # Clean up the per-sandbox Gitea users on any creation failure
-        for cleanup_fn in (delete_git_user, delete_context_git_user):
-            if cleanup_fn:
-                try:
-                    await cleanup_fn()
-                except Exception:
-                    pass
+        await _cleanup_git_users(delete_git_user, delete_context_git_user)
         raise
     except httpx.TimeoutException as e:
-        for cleanup_fn in (delete_git_user, delete_context_git_user):
-            if cleanup_fn:
-                try:
-                    await cleanup_fn()
-                except Exception:
-                    pass
+        await _cleanup_git_users(delete_git_user, delete_context_git_user)
         raise SandboxCreateError(
             f"Timeout connecting to sandbox control plane: {e}"
         ) from e
     except Exception as e:
-        for cleanup_fn in (delete_git_user, delete_context_git_user):
-            if cleanup_fn:
-                try:
-                    await cleanup_fn()
-                except Exception:
-                    pass
+        await _cleanup_git_users(delete_git_user, delete_context_git_user)
         raise SandboxCreateError(f"Sandbox error: {e}") from e

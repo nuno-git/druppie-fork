@@ -284,6 +284,7 @@ Last updated: 2026-03-19
   - After core builder completes, Planner routes back to Architect (run 2) for project-specific design
   - Repo coordinates configurable via `DRUPPIE_REPO_OWNER`/`DRUPPIE_REPO_NAME` env vars
 - **What's left:**
+  - **GitHub App token expiry:** Installation tokens expire after 1 hour. Tokens are baked into the git remote URL and credential store at clone time. Sandboxes running longer than 1 hour will get auth failures on `git push` and GitHub API calls via the proxy. Mitigation: add token refresh on 401 responses in the git/github-api proxy, or ensure the agent pushes early and often. See `druppie/services/github_app_service.py`.
   - **Automated testing:** No automated tests for `GitHubAppService`, dual-repo credential path, or the `update_core_builder` routing logic.
   - **Full E2E validation:** Dual-repo sandbox tested manually but needs a full end-to-end run with a real core change request.
 - **Priority:** Low — the architecture is in place. Remaining work is testing and hardening.
