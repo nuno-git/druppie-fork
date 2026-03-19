@@ -1039,14 +1039,14 @@ The `tool_call_id` FK enables direct lookup from webhook → tool call without t
 
 ### 10.5 Git Provider Routing (Gitea vs GitHub)
 
-The `execute_coding_task` builtin determines git provider based on the calling agent:
+The `execute_coding_task` builtin determines git provider based on the `repo_target` parameter:
 
-| Calling Agent | Git Provider | Credentials | Cleanup |
+| `repo_target` | Git Provider | Credentials | Cleanup |
 |---------------|-------------|-------------|---------|
-| All agents except `update_core_builder` | Gitea | Per-sandbox Gitea service account (scoped to repo) | Service account deleted on completion |
-| `update_core_builder` | GitHub | GitHub App installation token (short-lived, ~1 hour) | No cleanup needed — tokens expire automatically |
+| `"project"` (default) | Gitea | Per-sandbox Gitea service account (scoped to repo) | Service account deleted on completion |
+| `"druppie_core"` | GitHub | GitHub App installation token (short-lived, ~1 hour) | No cleanup needed — tokens expire automatically |
 
-When `update_core_builder` calls `execute_coding_task`, the sandbox receives dual git credentials: GitHub for the core repo (`DRUPPIE_REPO_OWNER`/`DRUPPIE_REPO_NAME`) and Gitea for the project repo (from the session's linked project). The credential store generates separate proxy keys for each, and the sandbox entrypoint clones both repos into `/workspace/core/` and `/workspace/project/`.
+Any agent with `execute_coding_task` can pass `repo_target="druppie_core"` (e.g., `update_core_builder` for implementation, Architect for read-only exploration via `agent="explore"`). When `repo_target="druppie_core"`, the sandbox receives dual git credentials: GitHub for the core repo (`DRUPPIE_REPO_OWNER`/`DRUPPIE_REPO_NAME`) and Gitea for the project repo (from the session's linked project). The credential store generates separate proxy keys for each, and the sandbox entrypoint clones both repos into `/workspace/core/` and `/workspace/project/`.
 
 ### 10.6 GitHub App Token Service
 

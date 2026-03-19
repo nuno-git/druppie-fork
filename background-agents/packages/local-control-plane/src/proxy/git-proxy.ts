@@ -112,13 +112,9 @@ export function setupGitProxy(app: Express, credentialStore: CredentialStore): v
         // express.raw() puts the body in req.body as a Buffer
         if (req.method !== "GET" && req.method !== "HEAD" && Buffer.isBuffer(req.body) && req.body.length > 0) {
           fetchOptions.body = req.body;
-          console.log(`[git-proxy] ${req.method} ${gitPath} body=${req.body.length}bytes -> ${baseUrl}`);
-        } else {
-          console.log(`[git-proxy] ${req.method} ${gitPath} -> ${baseUrl}`);
         }
 
         const upstream = await fetch(fullUrl, fetchOptions);
-        console.log(`[git-proxy] upstream status=${upstream.status} ${req.method} ${gitPath}`);
 
         // Forward status and headers
         res.status(upstream.status);

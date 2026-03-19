@@ -147,7 +147,7 @@ async def create_and_start_sandbox(
             repo_owner=repo_owner,
             repo_name=repo_name,
         )
-        delete_git_user = lambda: delete_sandbox_git_user(git_user_id)
+        delete_git_user = lambda uid=git_user_id: delete_sandbox_git_user(uid)
 
     # Build credentials payload
     credentials: dict = {
@@ -169,7 +169,7 @@ async def create_and_start_sandbox(
                 repo_owner=context_repo_owner,
                 repo_name=context_repo_name,
             )
-            delete_context_git_user = lambda: delete_sandbox_git_user(context_git_user_id)
+            delete_context_git_user = lambda uid=context_git_user_id: delete_sandbox_git_user(uid)
         credentials["contextGit"] = context_git_creds
 
     # For GitHub repos, also provide GitHub API credentials so the sandbox
