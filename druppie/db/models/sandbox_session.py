@@ -36,8 +36,9 @@ class SandboxSession(Base):
     task_prompt = Column(Text, nullable=True)
     agent_name = Column(String(100), nullable=True)
 
-    # Per-sandbox Gitea service account ID for cleanup (None for GitHub — tokens expire automatically)
+    # Per-sandbox Gitea service account IDs for cleanup (None for GitHub — tokens expire automatically)
     git_user_id = Column(String(50), nullable=True)
+    context_git_user_id = Column(String(50), nullable=True)  # Second Gitea account for dual-repo sandboxes
 
     # Repo target for retry reconstruction: "project" (default) or "druppie_core"
     repo_target = Column(String(20), default="project", nullable=False, server_default="project")

@@ -280,14 +280,16 @@ async def _retry_sandbox_with_next_model(
                 repo_owner = project.repo_owner or repo_owner
                 repo_name = project.repo_name or ""
 
-    # Clean up old sandbox's Gitea service account before creating new one
+    # Clean up old sandbox's Gitea service accounts before creating new one
     # (GitHub tokens expire automatically — git_user_id is None for GitHub)
-    if sandbox_mapping.git_user_id:
-        try:
-            from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-            await delete_sandbox_git_user(sandbox_mapping.git_user_id)
-        except Exception as e:
-            logger.warning("sandbox_retry_gitea_cleanup_failed", error=str(e))
+    for uid_attr in ("git_user_id", "context_git_user_id"):
+        uid = getattr(sandbox_mapping, uid_attr, None)
+        if uid:
+            try:
+                from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
+                await delete_sandbox_git_user(uid)
+            except Exception as e:
+                logger.warning("sandbox_retry_gitea_cleanup_failed", attr=uid_attr, error=str(e))
 
     try:
         result = await create_and_start_sandbox(
@@ -446,14 +448,16 @@ async def sandbox_complete_webhook(
     # Mark the sandbox session as completed (proxy key lifecycle managed by control plane)
     sandbox_repo.mark_completed(sandbox_session_id)
 
-    # Clean up the per-sandbox Gitea service account
+    # Clean up the per-sandbox Gitea service accounts
     # (GitHub tokens expire automatically — git_user_id is None for GitHub)
-    if sandbox_mapping.git_user_id:
-        try:
-            from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-            await delete_sandbox_git_user(sandbox_mapping.git_user_id)
-        except Exception as e:
-            logger.warning("sandbox_gitea_cleanup_failed", error=str(e))
+    for uid_attr in ("git_user_id", "context_git_user_id"):
+        uid = getattr(sandbox_mapping, uid_attr, None)
+        if uid:
+            try:
+                from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
+                await delete_sandbox_git_user(uid)
+            except Exception as e:
+                logger.warning("sandbox_gitea_cleanup_failed", attr=uid_attr, error=str(e))
 
     # On failure, attempt retry with next model in chain
     if not body.success:
@@ -640,13 +644,15 @@ async def sandbox_watchdog_loop() -> None:
                         if retry_initiated:
                             # Mark old sandbox as completed but keep tool call waiting
                             sandbox_repo.mark_completed(sandbox_mapping.sandbox_session_id)
-                            # Clean up old sandbox's Gitea service account
-                            if sandbox_mapping.git_user_id:
-                                try:
-                                    from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-                                    await delete_sandbox_git_user(sandbox_mapping.git_user_id)
-                                except Exception as e:
-                                    logger.warning("sandbox_watchdog_gitea_cleanup_failed", error=str(e))
+                            # Clean up old sandbox's Gitea service accounts
+                            for uid_attr in ("git_user_id", "context_git_user_id"):
+                                uid = getattr(sandbox_mapping, uid_attr, None)
+                                if uid:
+                                    try:
+                                        from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
+                                        await delete_sandbox_git_user(uid)
+                                    except Exception as e:
+                                        logger.warning("sandbox_watchdog_gitea_cleanup_failed", attr=uid_attr, error=str(e))
                             # Reset sandbox_waiting_at so watchdog doesn't re-trigger immediately
                             execution_repo.update_tool_call(
                                 tc.id,
@@ -700,13 +706,15 @@ async def sandbox_watchdog_loop() -> None:
                     # Mark completed and cancel the sandbox container
                     if sandbox_mapping:
                         sandbox_repo.mark_completed(sandbox_mapping.sandbox_session_id)
-                        # Clean up the per-sandbox Gitea service account
-                        if sandbox_mapping.git_user_id:
-                            try:
-                                from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-                                await delete_sandbox_git_user(sandbox_mapping.git_user_id)
-                            except Exception as e:
-                                logger.warning("sandbox_watchdog_gitea_cleanup_failed", error=str(e))
+                        # Clean up the per-sandbox Gitea service accounts
+                        for uid_attr in ("git_user_id", "context_git_user_id"):
+                            uid = getattr(sandbox_mapping, uid_attr, None)
+                            if uid:
+                                try:
+                                    from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
+                                    await delete_sandbox_git_user(uid)
+                                except Exception as e:
+                                    logger.warning("sandbox_watchdog_gitea_cleanup_failed", attr=uid_attr, error=str(e))
                         try:
                             control_plane_url = os.environ.get(
                                 "SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787"

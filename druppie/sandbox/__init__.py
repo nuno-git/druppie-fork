@@ -229,6 +229,7 @@ async def create_and_start_sandbox(
                     task_prompt=task_prompt,
                     agent_name=agent_name,
                     git_user_id=git_user_id,
+                    context_git_user_id=context_git_user_id,
                     repo_target=repo_target,
                 )
                 db.flush()
