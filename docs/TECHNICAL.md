@@ -260,7 +260,7 @@ SQLAlchemy ORM models live in `druppie/db/models/`. The schema:
 | `UserRole` | User role assignments (admin, architect, developer) |
 | `UserToken` | User API tokens |
 | `Project` | Projects with Gitea repo references |
-| `Session` | Chat sessions tied to a user and optionally a project. For `update_core` intent: stores repo context (`repo_owner`, `repo_name`) directly on the session instead of linking to a project. |
+| `Session` | Chat sessions tied to a user and optionally a project. Intent is `create_project`, `update_project`, or `general_chat`. |
 | `AgentRun` | Individual agent execution records within a session |
 | `Message` | Conversation messages (user and assistant) in the timeline |
 | `ToolCall` | Tool invocations by agents, linked to LLM calls |
@@ -1029,12 +1029,14 @@ The `tool_call_id` FK enables direct lookup from webhook → tool call without t
 
 ### 10.5 Git Provider Routing (Gitea vs GitHub)
 
-The `execute_coding_task` builtin determines git provider based on session intent:
+The `execute_coding_task` builtin determines git provider based on the calling agent:
 
-| Intent | Git Provider | Credentials | Cleanup |
-|--------|-------------|-------------|---------|
-| `create_project` / `update_project` | Gitea | Per-sandbox Gitea service account (scoped to repo) | Service account deleted on completion |
-| `update_core` | GitHub | GitHub App installation token (short-lived, ~1 hour) | No cleanup needed — tokens expire automatically |
+| Calling Agent | Git Provider | Credentials | Cleanup |
+|---------------|-------------|-------------|---------|
+| All agents except `update_core_builder` | Gitea | Per-sandbox Gitea service account (scoped to repo) | Service account deleted on completion |
+| `update_core_builder` | GitHub | GitHub App installation token (short-lived, ~1 hour) | No cleanup needed — tokens expire automatically |
+
+When `update_core_builder` calls `execute_coding_task`, the sandbox receives dual git credentials: GitHub for the core repo (`DRUPPIE_REPO_OWNER`/`DRUPPIE_REPO_NAME`) and Gitea for the project repo (from the session's linked project). The credential store generates separate proxy keys for each, and the sandbox entrypoint clones both repos into `/workspace/core/` and `/workspace/project/`.
 
 ### 10.6 GitHub App Token Service
 
@@ -1050,16 +1052,34 @@ The `execute_coding_task` builtin determines git provider based on session inten
 
 The sandbox agent determines PR target branch from its git remote: GitHub repos target `colab-dev`, Gitea repos target `main`. This is configured in the `druppie-builder.md` agent prompt — no branch parameter is threaded through the infrastructure.
 
-### 10.8 `switch_to_update_core` Builtin Tool
+### 10.8 Core Update Detection (DESIGN_APPROVED_CORE_UPDATE)
 
-`druppie/agents/builtin_tools.py` — available to the Architect agent via `extra_builtin_tools`.
+When the Architect detects that a project involves modifying Druppie's own codebase, it signals `DESIGN_APPROVED_CORE_UPDATE` in its `done()` summary instead of `DESIGN_APPROVED`. The Planner reads this signal and routes to the `update_core_builder` agent.
 
-When the Architect detects that a project (even one started as `create_project`) is about modifying Druppie itself, it calls `switch_to_update_core(description="...")` after writing `technical_design.md`. This:
+The detection is prompt-based: the Architect checks if the project adds, modifies, or removes anything in the Druppie codebase/repository itself (as opposed to a separate user project). Keywords include: druppie, core, router, planner, agent, prompt, skill, MCP server, sandbox, workflow, codebase, repository.
 
-1. Updates the session intent to `update_core`
-2. Stores GitHub repo context on the session (`repo_owner`, `repo_name`)
-3. Cancels all pending runs from the current plan
-4. Creates a new planner run with `INTENT: update_core`
+The session intent is never changed — it stays `create_project` or `update_project` throughout. No session state is mutated for core updates.
 
-The Architect then calls `done()`, and the new planner picks up the `update_core` flow.
+### 10.9 Dual-Repo Sandbox
+
+When `update_core_builder` calls `execute_coding_task`, the backend passes both core and project repo credentials to the control plane. The credential store generates two git proxy keys, and the session-instance constructs two env vars: `GIT_URL` (core repo) and `CONTEXT_GIT_URL` (project repo).
+
+The sandbox entrypoint detects `CONTEXT_GIT_URL` and switches to dual-repo mode:
+- `/workspace/core/` — Druppie's GitHub repo (cloned via git proxy, read+write)
+- `/workspace/project/` — Project Gitea repo (cloned via git proxy, contains FD/TD)
+
+The `druppie-core-builder` OpenCode agent (`druppie/sandbox-config/agents/druppie-core-builder.md`) instructs the sandbox LLM to read design docs from `/workspace/project/` and implement changes in `/workspace/core/`. Both `GIT_URL` and `CONTEXT_GIT_URL` are stripped from the OpenCode environment after clone — the sandbox agent never sees raw proxy keys or tokens.
+
+### 10.10 Builtin Tool Approval Overrides
+
+Agent YAML definitions can specify `approval_overrides` for builtin tools using the `"builtin:<tool_name>"` key format. The `update_core_builder` agent uses this to require developer approval for `done()`:
+
+```yaml
+approval_overrides:
+  "builtin:done":
+    requires_approval: true
+    required_role: developer
+```
+
+The tool executor checks these overrides before executing builtin tools, using the same layered approval system as MCP tools (agent override > global default).
 
