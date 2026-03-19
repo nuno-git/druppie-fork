@@ -372,6 +372,7 @@ services:
       DOCKER_NETWORK: druppie-sandbox-network  # Isolated network — sandboxes can only reach control plane
       DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
       DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-2}
+      SANDBOX_CACHE_VOLUME: druppie_sandbox_dep_cache
       # LLM API keys and proxy URLs no longer needed here.
       # Credentials flow per-session from Druppie -> Control Plane -> Sandbox.
     volumes:
@@ -744,6 +745,55 @@ services:
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - .:/project
 
+  # Emergency purge of the shared sandbox dependency cache
+  # Usage: docker compose --profile reset-cache run --rm reset-cache
+  # With reason: PURGE_REASON="suspected compromise" docker compose --profile reset-cache run --rm reset-cache
+  reset-cache:
+    image: docker:cli
+    container_name: druppie-reset-cache
+    profiles: [reset-cache]
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "=== Emergency Cache Purge ==="
+        echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "Reason: ${PURGE_REASON:-manual}"
+        echo ""
+        echo "Step 1: Stopping running sandbox containers..."
+        sandbox_ids=$(docker ps --filter "network=druppie-sandbox-network" -q)
+        if [ -n "$sandbox_ids" ]; then
+          docker stop -t 5 $sandbox_ids 2>/dev/null || true
+          docker rm -f $sandbox_ids 2>/dev/null || true
+          echo "  Stopped."
+        else
+          echo "  None running."
+        fi
+        echo ""
+        echo "Step 2: Removing cache volume..."
+        docker volume rm druppie_sandbox_dep_cache 2>/dev/null \
+          && echo "  Removed." \
+          || echo "  Not found."
+        echo ""
+        echo "Step 3: Recreating empty volume..."
+        docker volume create druppie_sandbox_dep_cache
+        echo "  Created."
+        echo ""
+        echo "=== Purge Complete ==="
+    volumes:
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+
+  # OSV vulnerability scanner for the shared dependency cache
+  # Usage: docker compose --profile scan-cache run --rm cache-scanner
+  cache-scanner:
+    build:
+      context: ./vendor/open-inspect
+      dockerfile: packages/local-sandbox-manager/Dockerfile.cache-scanner
+    container_name: druppie-cache-scanner
+    profiles: [scan-cache]
+    volumes:
+      - sandbox_dep_cache:/cache:ro
+      - cache_scan_results:/scan-results
+
 # =============================================================================
 # VOLUMES
 # =============================================================================
@@ -767,6 +817,10 @@ volumes:
     name: druppie_sandbox_data
   sandbox_snapshots:
     name: druppie_sandbox_snapshots
+  sandbox_dep_cache:
+    name: druppie_sandbox_dep_cache
+  cache_scan_results:
+    name: druppie_cache_scan_results
 
 # =============================================================================
 # NETWORKS
