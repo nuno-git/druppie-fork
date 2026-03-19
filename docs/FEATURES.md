@@ -263,12 +263,13 @@ This section covers how tools, approvals, and agents are configured. The concept
 
 ### MCP Configuration (`mcp_config.yaml`)
 
-The central `mcp_config.yaml` file is the single source of truth for all MCP tool definitions, approval rules, and parameter injection. It defines:
+`mcp_config.yaml` defines:
 
 1. **Which MCP servers exist** and how to reach them (URL from environment variables)
-2. **Every tool's schema** -- name, description, parameters, and required/optional fields
-3. **Global approval rules** -- which tools require approval and from which role
-4. **Parameter injection rules** -- which parameters are auto-injected from session context and hidden from the agent. This can be used later for authentication.
+2. **Global approval rules** -- which tools require approval and from which role
+3. **Parameter injection rules** -- which parameters are auto-injected from session context and hidden from the agent
+
+Tool schemas (names, descriptions, parameters) are **not** defined here. They are the sole responsibility of each MCP module's `@mcp.tool()` decorators (see MCP Module Convention below). At startup, the `ToolRegistry` fetches live schemas from each server via `tools/list`.
 
 Each MCP server is declared as a top-level block:
 
@@ -286,27 +287,35 @@ coding:
       hidden: true
       tools: [read_file, write_file, ...]
 
-  # Tool definitions with schemas and approval rules
+  # Approval rules per tool (no schema — schema comes from the module)
   tools:
-    - name: read_file
-      description: "Read the contents of a file"
-      requires_approval: false
-      parameters:
-        type: object
-        properties:
-          path:
-            type: string
-            description: "Path to the file"
-        required: [path]
-
-    - name: merge_pull_request
-      description: "Merge a pull request"
+    merge_pull_request:
       requires_approval: true        # Approval gate
       required_role: developer       # Only developers can approve
-      parameters: ...
 ```
 
 The approval rules defined here are the **global defaults**. They apply to all agents unless an agent's YAML definition overrides them via `approval_overrides`. This creates a two-layer approval system: `mcp_config.yaml` sets the baseline, agent YAML files can tighten it for specific agents.
+
+### MCP Module Convention
+
+Each MCP server lives in `druppie/mcp-servers/module-<name>/` and follows a standard layout:
+
+```
+module-<name>/
+  MODULE.yaml       # Module metadata (name, version, description)
+  server.py         # FastMCP app factory + versioned router mounting
+  requirements.txt
+  Dockerfile
+  v1/
+    tools.py        # @mcp.tool() definitions — single source of truth for schemas
+    module.py       # Business logic called by tools
+```
+
+Key conventions:
+- **`v1/tools.py` is the single source of truth** for tool names, descriptions, and parameter schemas. The `@mcp.tool()` decorator generates the JSON schema that `ToolRegistry` fetches at startup.
+- **`server.py`** mounts versioned routers (e.g., `/v1`). Path-based routing allows `v2/`, `v3/`, ... to coexist without breaking existing clients.
+- **`MODULE.yaml`** declares module metadata (name, current version, description).
+- **Pre-validation** is declared via `meta.pre_validate` in tool decorators, replacing any hardcoded validation logic in the platform core.
 
 ### Agent Definitions (YAML)
 
