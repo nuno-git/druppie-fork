@@ -7,9 +7,13 @@ Hidden parameters (session_id, repo_name, repo_owner) are injected at runtime
 and not included here - they're handled by the injection system.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from druppie.core.config import DEFAULT_SANDBOX_AGENT, DEFAULT_SANDBOX_TESTER_AGENT
+
+VALID_REPO_TARGETS = ("project", "druppie_core")
 
 
 class ReadFileParams(BaseModel):
@@ -67,7 +71,7 @@ class ExecuteCodingTaskParams(BaseModel):
         default=DEFAULT_SANDBOX_AGENT,
         description=f"Which sandbox agent to use ({DEFAULT_SANDBOX_AGENT} for coding, {DEFAULT_SANDBOX_TESTER_AGENT} for testing)",
     )
-    repo_target: str = Field(
+    repo_target: Literal["project", "druppie_core"] = Field(
         default="project",
         description="Which repo the sandbox works on: 'project' (default) or 'druppie_core'",
     )
