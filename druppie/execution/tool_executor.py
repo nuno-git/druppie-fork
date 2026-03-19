@@ -629,7 +629,9 @@ class ToolExecutor:
             tool_call_id=str(tool_call.id),
         )
 
-        # Execute the MCP tool (skip approval check since already approved)
+        # Execute the tool (skip approval check since already approved)
+        if tool_call.mcp_server == "builtin" or tool_call.tool_name in BUILTIN_TOOLS:
+            return await self._execute_builtin_tool(tool_call)
         return await self._execute_mcp_tool(tool_call)
 
     async def complete_after_answer(self, question_id: UUID, answer: str) -> str:
@@ -919,9 +921,6 @@ class ToolExecutor:
             # (300s/180s) should fire first, but this prevents infinite hangs
             # if the MCP server crashes or the network drops.
             timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
-
-            # Execute via HTTP
-            timeout = 60.0
 
             result = await self.mcp_http.call(
                 tool_call.mcp_server,

@@ -256,8 +256,8 @@ async def create_and_start_sandbox(
                 "callbackSecret": webhook_secret,
             }
             if git_provider == "github":
-                prompt_body["githubName"] = "druppie-core-bot"
-                prompt_body["githubEmail"] = "druppie-core-bot@users.noreply.github.com"
+                prompt_body["githubName"] = os.getenv("GITHUB_BOT_NAME", "druppie-core-bot")
+                prompt_body["githubEmail"] = os.getenv("GITHUB_BOT_EMAIL", "druppie-core-bot@users.noreply.github.com")
 
             prompt_resp = await client.post(
                 f"{control_plane_url}/sessions/{sandbox_session_id}/prompt",
