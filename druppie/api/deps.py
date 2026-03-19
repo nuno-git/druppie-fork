@@ -118,6 +118,20 @@ def get_project_service(
     return ProjectService(project_repo)
 
 
+def get_atk_agent_repository(db: Session = Depends(get_db)) -> "AtkAgentRepository":
+    """Get AtkAgentRepository with DB session injected."""
+    from druppie.repositories import AtkAgentRepository
+    return AtkAgentRepository(db)
+
+
+def get_atk_service(
+    atk_repo: "AtkAgentRepository" = Depends(get_atk_agent_repository),
+) -> "AtkService":
+    """Get AtkService with repositories injected."""
+    from druppie.services import AtkService
+    return AtkService(atk_repo)
+
+
 def get_execution_repository(db: Session = Depends(get_db)) -> "ExecutionRepository":
     """Get ExecutionRepository with DB session injected."""
     from druppie.repositories import ExecutionRepository

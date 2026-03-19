@@ -38,6 +38,9 @@ from .project import Project
 # Question model (HITL questions from agents)
 from .question import Question
 
+# ATK agent models
+from .atk_agent import AtkAgent, AtkAgentShare, AtkDeploymentLog
+
 # Sandbox session ownership mapping
 from .sandbox_session import SandboxSession
 
@@ -75,4 +78,8 @@ __all__ = [
     "Question",
     # Sandbox session ownership
     "SandboxSession",
+    # ATK agents
+    "AtkAgent",
+    "AtkAgentShare",
+    "AtkDeploymentLog",
 ]

@@ -21,6 +21,7 @@ import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import Settings from './pages/Settings'
 import AdminDatabase from './pages/AdminDatabase'
+import CopilotAgents from './pages/CopilotAgents'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -221,6 +222,14 @@ function App() {
                           <Route
                             path="/debug/:sessionId"
                             element={<DebugRedirect />}
+                          />
+                          <Route
+                            path="/copilot-agents"
+                            element={
+                              <ProtectedRoute>
+                                <CopilotAgents />
+                              </ProtectedRoute>
+                            }
                           />
                           <Route
                             path="/settings"

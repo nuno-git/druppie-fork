@@ -26,6 +26,7 @@
 #   MCP File Search:9004
 #   MCP Web:        9005
 #   MCP Registry:   9007
+#   MCP ATK:        9010
 #   Adminer:        8081
 
 services:
@@ -301,6 +302,31 @@ services:
       retries: 5
       start_period: 10s
 
+  mcp-atk:
+    build:
+      context: ./druppie/mcp-servers/atk
+      dockerfile: Dockerfile
+    container_name: druppie-mcp-atk
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9010"
+      ATK_PROJECTS_DIR: /atk-projects
+      M365_TENANT_ID: ${M365_TENANT_ID:-}
+      M365_CLIENT_ID: ${M365_CLIENT_ID:-}
+      M365_CLIENT_SECRET: ${M365_CLIENT_SECRET:-}
+    volumes:
+      - druppie_atk_projects:/atk-projects
+    ports:
+      - "${MCP_ATK_PORT:-9010}:9010"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9010/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   mcp-registry:
     build:
       context: ./druppie/mcp-servers/registry
@@ -514,6 +540,7 @@ services:
       MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+      MCP_ATK_URL: ${MCP_ATK_URL:-http://mcp-atk:9010}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
@@ -594,6 +621,7 @@ services:
       MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+      MCP_ATK_URL: ${MCP_ATK_URL:-http://mcp-atk:9010}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
@@ -702,6 +730,9 @@ services:
         until docker exec druppie-new-db pg_isready -U druppie; do sleep 1; done
         echo "Dropping application tables..."
         docker exec druppie-new-db psql -U druppie -d druppie -c "
+          DROP TABLE IF EXISTS atk_deployment_logs CASCADE;
+          DROP TABLE IF EXISTS atk_agent_shares CASCADE;
+          DROP TABLE IF EXISTS atk_agents CASCADE;
           DROP TABLE IF EXISTS sandbox_sessions CASCADE;
           DROP TABLE IF EXISTS tool_call_normalizations CASCADE;
           DROP TABLE IF EXISTS llm_retries CASCADE;
@@ -775,6 +806,8 @@ volumes:
     name: druppie_new_dataset
   druppie_init_marker:
     name: druppie_init_marker
+  druppie_atk_projects:
+    name: druppie_atk_projects
   sandbox_data:
     name: druppie_sandbox_data
   sandbox_snapshots:

@@ -38,6 +38,7 @@ Thirteen agents are defined. Twelve are functional; one is a stub.
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
 | **Reviewer** | Code review | Reviews code for quality, security, and best practices. |
 | **Tester** | Testing | Writes and runs tests to validate implementations. |
+| **ATK Deployer** | Deploys Copilot agents | Manages the lifecycle of declarative agents in M365 Copilot via ATK CLI: scaffold, configure, provision, share, update, uninstall. Max 50 iterations. |
 | **Summarizer** | Creates completion messages | Reads all previous agent summaries and produces a concise, user-friendly message. Always the final step. Max 5 iterations. |
 
 ### Stub Agents (Not Yet Invoked)
@@ -512,6 +513,39 @@ The dashboards goal is to provide an overview of platform activity. This page is
 - **Recent approvals**: Last 5 pending approval items
 - **User roles**: Current user's assigned roles
 - **System status**: Health indicators for Keycloak, Database, LLM provider, and Gitea
+
+---
+
+## ATK Copilot Integration
+
+Druppie can deploy **declarative agents** to Microsoft 365 Copilot via the ATK CLI (M365 Agents Toolkit). This enables agents built in Druppie to be published and shared with end-users through Copilot Studio.
+
+### How It Works
+
+1. A user requests an agent deployment via Chat (e.g., "Deploy a Vergunning Zoeker agent to Copilot")
+2. The **ATK Deployer** agent handles the lifecycle:
+   - **Scaffold**: Creates a new declarative agent project from the ATK template
+   - **Configure**: Sets the agent's instructions, description, and capabilities in the manifest
+   - **Provision**: Deploys the agent package to the target M365 environment (requires architect approval)
+   - **Share**: Shares the agent with specific users by email (requires architect approval)
+3. All actions are tracked in the database with an audit trail
+4. The **Copilot Agents** page (`/copilot-agents`) shows deployed agents, their status, shares, and deployment history
+
+### Approval Gates
+
+| Action | Required Role |
+|--------|---------------|
+| Scaffold | None |
+| Configure manifest | None |
+| Provision | Architect |
+| Share with users | Architect |
+| Update manifest | Developer |
+| Uninstall | Admin |
+
+### Prerequisites
+
+- Service principal credentials: `M365_TENANT_ID`, `M365_CLIENT_ID`, `M365_CLIENT_SECRET`
+- The `mcp-atk` Docker service must be running (included in infra/dev/prod profiles)
 
 ---
 

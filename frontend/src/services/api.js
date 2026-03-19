@@ -267,6 +267,11 @@ export const getSandboxEvents = async (sessionId, messageId) => {
   return { events: allEvents }
 }
 
+// ============ ATK Copilot Agents ============
+export const getAtkAgents = (page = 1, limit = 20) =>
+  request(`/api/atk-agents?page=${page}&limit=${limit}`)
+export const getAtkAgent = (agentId) => request(`/api/atk-agents/${agentId}`)
+
 // ============ Health ============
 export const getHealth = () => request('/health')
 export const getStatus = () => request('/api/status')

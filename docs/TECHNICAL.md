@@ -20,6 +20,7 @@ Druppie is a full-stack platform composed of the following services:
 | MCP File Search | Python / FastMCP | 9004 | Local file search within datasets |
 | MCP Web | Python / FastMCP | 9005 | Web browsing, URL fetching, web search |
 | MCP ArchiMate | Python / FastMCP | 9006 | ArchiMate model operations (list, read, search, export) |
+| MCP ATK | Python / FastMCP | 9010 | ATK CLI wrapper for M365 Copilot agent deployment |
 | Sandbox Control Plane | Node.js | 8787 | Sandbox session/event management, coordinates sandbox lifecycle |
 | Sandbox Manager | Node.js | 8000 | Creates/manages sandbox Docker containers, enforces resource limits |
 | Sandbox Image Builder | Docker | — | One-shot build producing `open-inspect-sandbox:latest` image |
@@ -271,6 +272,9 @@ SQLAlchemy ORM models live in `druppie/db/models/`. The schema:
 | `LlmRetry` | Audit trail for LLM retry attempts (error type, delay) |
 | `ToolCallNormalization` | Audit trail for argument normalization (original → normalized values) |
 | `SandboxSession` | Maps sandbox control plane session IDs to Druppie users for ownership verification |
+| `AtkAgent` | Declarative agents deployed to M365 Copilot via ATK CLI |
+| `AtkAgentShare` | Records of agents shared with specific users |
+| `AtkDeploymentLog` | Audit trail for ATK agent lifecycle actions |
 
 ### 4.3 Key Relationships
 
@@ -484,7 +488,28 @@ ArchiMate model operations. Reads `.archimate` files from a mounted models direc
 | `search_model` | None | Search for elements by query |
 | `export_view` | None | Export an ArchiMate view |
 
-### 6.7 Declarative Parameter Injection
+### 6.7 ATK Server (port 9010)
+
+ATK CLI wrapper for M365 Copilot declarative agent lifecycle management. Requires Node.js 20 (for ATK CLI) and service principal credentials.
+
+| Tool | Approval | Description |
+|------|----------|-------------|
+| `scaffold_agent` | None | Create new declarative agent project |
+| `configure_manifest` | None | Read/update declarativeAgent.json manifest |
+| `provision` | Architect | Deploy agent to M365 environment |
+| `share_agent` | Architect | Share agent with users by email |
+| `update_manifest` | Developer | Push manifest updates |
+| `uninstall_agent` | Admin | Remove agent from M365 Copilot |
+| `get_agent_status` | None | Read project state and env files |
+| `list_agents` | None | List all ATK project directories |
+
+**Authentication**: Service principal auth via `M365_TENANT_ID`, `M365_CLIENT_ID`, `M365_CLIENT_SECRET` environment variables passed to ATK CLI subprocess calls.
+
+**Storage**: ATK projects are stored in a persistent Docker volume (`druppie_atk_projects`) mounted at `/atk-projects/`.
+
+**Database tracking**: Three tables (`atk_agents`, `atk_agent_shares`, `atk_deployment_logs`) track deployed agents, sharing records, and audit trail in the main Druppie database.
+
+### 6.8 Declarative Parameter Injection
 
 MCP tools can have parameters auto-injected from the session/project context. Injected parameters are marked `hidden: true` and are removed from the LLM-visible tool schema. This prevents the LLM from needing to know internal IDs.
 
@@ -501,7 +526,7 @@ inject:
     tools: [read_file, write_file, list_dir, ...]
 ```
 
-### 6.8 Layered Approval System
+### 6.9 Layered Approval System
 
 Approvals have two layers:
 
@@ -538,6 +563,7 @@ mcp-docker          FastMCP           :9002   Docker operations
 mcp-filesearch      FastMCP           :9004   File search
 mcp-web             FastMCP           :9005   Web browsing
 mcp-archimate       FastMCP           :9006   ArchiMate models
+mcp-atk             FastMCP           :9010   ATK CLI / M365 Copilot
 adminer             Adminer           :8081   DB admin UI
 sandbox-control-plane  Node.js        :8787   Sandbox session/event management
 sandbox-manager     Node.js           :8000   Sandbox container lifecycle
@@ -650,6 +676,7 @@ Twelve agents are defined as YAML files in `druppie/agents/definitions/`:
 | `reviewer` | Reviews code quality | Default | `coding` | — |
 | `tester` | Writes and runs tests | `execute_coding_task` | `coding`, `docker` | — |
 | `deployer` | Builds and deploys containers | Default | `coding`, `docker` | — |
+| `atk_deployer` | Deploys declarative agents to M365 Copilot | Default | `atk`, `coding` | — |
 | `summarizer` | Creates conversation summary message | `create_message` | None | — |
 
 Default builtin tools (all agents): `done`, `hitl_ask_question`, `hitl_ask_multiple_choice_question`. Optional extra builtins: `execute_coding_task` (sandbox delegation, used by Developer/Tester).

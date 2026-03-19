@@ -20,6 +20,7 @@ import {
   LogOut,
   Wrench,
   Server,
+  Bot,
 } from 'lucide-react'
 
 import { useAuth } from '../App'
@@ -202,6 +203,7 @@ const NavRail = () => {
       <div className="mt-1 pt-1 border-t border-gray-800 w-8" />
       <NavRailItem to="/tools/mcp" icon={Wrench} label="MCP Tools" active={isActive('/tools/mcp')} />
       <NavRailItem to="/tools/infrastructure" icon={Server} label="Infrastructure" active={isActive('/tools/infrastructure')} />
+      <NavRailItem to="/copilot-agents" icon={Bot} label="Copilot Agents" active={isActive('/copilot-agents')} />
 
       {/* Admin */}
       {user?.roles?.includes('admin') && (

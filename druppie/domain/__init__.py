@@ -76,6 +76,15 @@ from .skill import SkillDetail, SkillSummary
 # Tool definition (unified tool metadata with Pydantic params models)
 from .tool import EmptyParams, ToolDefinition, ToolDefinitionSummary, ToolType
 
+# ATK agent models
+from .atk_agent import (
+    AtkAgentDetail,
+    AtkAgentStatus,
+    AtkAgentSummary,
+    AtkDeploymentLogEntry,
+    AtkShareInfo,
+)
+
 # User models
 from .user import UserInfo
 
@@ -135,6 +144,12 @@ __all__ = [
     "ToolDefinitionSummary",
     "ToolType",
     "EmptyParams",
+    # ATK agents
+    "AtkAgentStatus",
+    "AtkAgentSummary",
+    "AtkAgentDetail",
+    "AtkShareInfo",
+    "AtkDeploymentLogEntry",
 ]
 
 # Rebuild models to resolve forward references (circular imports between session/project)

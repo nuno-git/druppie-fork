@@ -577,6 +577,128 @@ mcps:
         description: "Get basic information about a web page"
         requires_approval: false
 
+  atk:
+    url: ${MCP_ATK_URL:-http://mcp-atk:9010}
+    description: "ATK CLI operations for M365 Copilot declarative agents"
+    tools:
+      - name: scaffold_agent
+        description: "Scaffold a new declarative agent project"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            name:
+              type: string
+              description: "Agent name (used as project directory name)"
+            description:
+              type: string
+              description: "Optional agent description"
+          required:
+            - name
+
+      - name: configure_manifest
+        description: "Read or update the declarativeAgent.json manifest"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            name:
+              type: string
+              description: "Agent project name"
+            instructions:
+              type: string
+              description: "New instructions text for the agent"
+            description:
+              type: string
+              description: "New description for the agent"
+            capabilities:
+              type: array
+              description: "List of capability names to enable"
+          required:
+            - name
+
+      - name: provision
+        description: "Provision (deploy) an agent to a M365 environment"
+        requires_approval: true
+        required_role: architect
+        parameters:
+          type: object
+          properties:
+            name:
+              type: string
+              description: "Agent project name"
+            environment:
+              type: string
+              description: "Target environment (dev, staging, production)"
+          required:
+            - name
+
+      - name: share_agent
+        description: "Share a provisioned agent with specific users"
+        requires_approval: true
+        required_role: architect
+        parameters:
+          type: object
+          properties:
+            name:
+              type: string
+              description: "Agent project name"
+            emails:
+              type: array
+              description: "List of email addresses to share with"
+            scope:
+              type: string
+              description: "Sharing scope (users, organization)"
+          required:
+            - name
+            - emails
+
+      - name: update_manifest
+        description: "Push manifest updates to a provisioned agent"
+        requires_approval: true
+        required_role: developer
+        parameters:
+          type: object
+          properties:
+            name:
+              type: string
+              description: "Agent project name"
+          required:
+            - name
+
+      - name: uninstall_agent
+        description: "Uninstall an agent from M365 Copilot"
+        requires_approval: true
+        required_role: admin
+        parameters:
+          type: object
+          properties:
+            name:
+              type: string
+              description: "Agent project name"
+          required:
+            - name
+
+      - name: get_agent_status
+        description: "Get status of an ATK agent project"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            name:
+              type: string
+              description: "Agent project name"
+          required:
+            - name
+
+      - name: list_agents
+        description: "List all ATK agent projects"
+        requires_approval: false
+        parameters:
+          type: object
+          properties: {}
+          required: []
+
   registry:
     url: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
     description: "Druppie platform building block catalog (read-only)"
