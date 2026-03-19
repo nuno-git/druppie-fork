@@ -21,7 +21,7 @@ Each module follows this pattern after migration:
 ```
 druppie/mcp-servers/module-<name>/
 ├── MODULE.yaml           # 3 fields: id, latest_version, versions
-├── Dockerfile            # Unchanged from original
+├── Dockerfile            # UPDATED: COPY . . (replaces specific file copies)
 ├── requirements.txt      # Add pyyaml dependency
 ├── server.py             # NEW: router that mounts v1, serves /health
 ├── v1/
@@ -259,7 +259,16 @@ if __name__ == "__main__":
 cp druppie/mcp-servers/filesearch/Dockerfile druppie/mcp-servers/module-filesearch/Dockerfile
 ```
 
-No changes needed — Dockerfile already does `COPY . .` and `CMD ["python", "server.py"]`.
+**IMPORTANT:** The existing Dockerfile copies specific files (`COPY server.py .` / `COPY module.py .`). Update to copy everything:
+
+```dockerfile
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+```
+
+This replaces the individual `COPY server.py .` and `COPY module.py .` lines. The same change applies to ALL server Dockerfiles in Tasks 2-7.
 
 - [ ] **Step 7: Copy and update requirements.txt**
 
@@ -357,8 +366,11 @@ Apply the same pattern as filesearch. Each task follows the same steps but adapt
 Follow same steps as Task 1. Key differences:
 - [ ] MODULE.yaml: `id: web`
 - [ ] Port: 9005
+- [ ] **Fix default port bug**: old `web/server.py` has `os.getenv("MCP_PORT", "9004")` (wrong default). New `server.py` router must use `os.getenv("MCP_PORT", "9005")`
 - [ ] tools.py: 6 tools (search_files, list_directory, read_file, fetch_url, search_web, get_page_info)
 - [ ] instructions: "Local file search and web browsing. Use for fetching web content and searching local datasets."
+- [ ] **Dockerfile**: update `COPY` lines to `COPY . .` (same as Task 1 Step 6)
+- [ ] **Clean up logger names**: replace `"bestand-zoeker"` with `"web-mcp"` in module.py and tools.py
 - [ ] docker-compose: `mcp-web` → `module-web`, container `druppie-module-web`
 - [ ] Delete old `druppie/mcp-servers/web/`
 - [ ] Build and verify: `curl http://localhost:9005/health`
@@ -379,6 +391,7 @@ Follow same steps as Task 1. Key differences:
 - [ ] tools.py: 8 tools (list_models, get_statistics, list_elements, get_element, list_views, get_view, search_model, get_impact)
 - [ ] instructions: "Read-only ArchiMate architecture reference. Use for querying elements, relationships, views, and impact analysis."
 - [ ] docker-compose: `mcp-archimate` → `module-archimate`, container `druppie-module-archimate`
+- [ ] **Dockerfile**: update `COPY` lines to `COPY . .`
 - [ ] **Important**: volume mount `./druppie/mcp-servers/archimate/models:/models:ro` changes to `./druppie/mcp-servers/module-archimate/models:/models:ro`
 - [ ] Build and verify: `curl http://localhost:9006/health`
 - [ ] Commit: `feat: migrate archimate to module convention`
@@ -387,14 +400,24 @@ Follow same steps as Task 1. Key differences:
 
 **Files:**
 - Create: `druppie/mcp-servers/module-hitl/{MODULE.yaml,server.py,v1/__init__.py,v1/tools.py}`
-- Move: `druppie/mcp-servers/hitl/module.py` → `v1/module.py`
 - Move: `druppie/mcp-servers/hitl/{Dockerfile,requirements.txt}`
 - Delete: `druppie/mcp-servers/hitl/`
+
+**IMPORTANT: HITL has NO module separation.** The old `server.py` contains ALL business logic inline (persist_question, safe_json_parse, tool handlers). The old `module.py` (404 lines, uses Redis) is **dead code** — server.py never imports it. Do NOT move old `module.py` to v1.
+
+Instead:
+- `v1/tools.py` gets the FastMCP app with `@mcp.tool()` decorators
+- `v1/hitl_helpers.py` gets the inline helper functions (persist_question, safe_json_parse)
+- `v1/tools.py` imports from `v1/hitl_helpers.py`
+- Delete old `module.py` (dead code)
 
 Follow same steps as Task 1. Key differences:
 - [ ] MODULE.yaml: `id: hitl`
 - [ ] Port: 9003
+- [ ] **No module.py** — extract inline helpers to `v1/hitl_helpers.py` instead
+- [ ] **Delete old module.py** — it's dead code (Redis-based, never imported by server.py)
 - [ ] tools.py: 3 tools (ask_question, ask_choice, submit_response)
+- [ ] **Dockerfile**: update `COPY` lines to `COPY . .`
 - [ ] instructions: "Human-in-the-loop interaction. Ask users questions and wait for responses."
 - [ ] **New docker-compose entry** — HITL currently has no service definition. Add:
 
@@ -439,6 +462,7 @@ Follow same steps as Task 1. Key differences:
 - [ ] tools.py: 8 tools (build, run, stop, logs, remove, list_containers, inspect, exec_command)
 - [ ] instructions: "Docker container operations. Build images from git repos, run containers with auto-port assignment."
 - [ ] docker-compose: `mcp-docker` → `module-docker`, container `druppie-module-docker`
+- [ ] **Dockerfile**: update `COPY` lines to `COPY . .`
 - [ ] Docker socket volume mount stays the same
 - [ ] Build and verify: `curl http://localhost:9002/health`
 - [ ] Commit: `feat: migrate docker to module convention`
@@ -462,6 +486,7 @@ Follow same steps as Task 1. Key differences:
   - `./druppie/core/mcp_config.yaml:/data/mcp_config.yaml:ro` (unchanged)
   - `./druppie/skills:/data/skills:ro` (unchanged)
   - `./druppie/agents/builtin_tools.py:/data/builtin_tools.py:ro` (unchanged)
+- [ ] **Dockerfile**: update `COPY` lines to `COPY . .`
 - [ ] Build and verify: `curl http://localhost:9007/health`
 - [ ] Commit: `feat: migrate registry to module convention`
 
@@ -488,7 +513,9 @@ Follow same steps as Task 1. Key differences:
 - [ ] Internal tools get `meta={"internal": True, ...}`
 - [ ] make_design gets `meta={"pre_validate": "validate_design", ...}`
 - [ ] Add new `validate_design` tool with `meta={"internal": True, ...}` that wraps `validate_mermaid_in_markdown()`
+- [ ] **`get_git_status` phantom tool**: exists in `PARAMS_MODEL_MAP` and agent YAMLs (`builder.yaml`, `developer.yaml`) but NOT as a `@mcp.tool()` in server.py. Either: (a) add it to v1/tools.py wrapping `run_git("status")`, or (b) remove from agent YAMLs. Recommend (a) — agents expect it to exist.
 - [ ] instructions: "File operations, git, testing, and pull requests in workspace sandbox."
+- [ ] **Dockerfile**: update `COPY` lines to `COPY . .`
 - [ ] docker-compose: `mcp-coding` → `module-coding`, container `druppie-module-coding`
 - [ ] **Import fixes in v1/tools.py**: change `from module import CodingModule` to `from .module import CodingModule`, similarly for testing_module, retry_module, mermaid_validator
 - [ ] Build and verify: `curl http://localhost:9001/health`
@@ -556,32 +583,75 @@ For each MCP entry:
         requires_approval: false
 ```
 
-- [ ] **Step 2: Update router.yaml**
+- [ ] **Step 2: Comprehensive bestand-zoeker → web rename**
 
-Change `bestand-zoeker` to `web` at line 75:
-
-```yaml
-mcps:
-  web:
-    - search_files
-    - list_directory
-    - read_file
-    - fetch_url
-    - search_web
-    - get_page_info
-```
-
-- [ ] **Step 3: Commit**
+All files with `bestand-zoeker` or `bestand_zoeker` references:
+- `druppie/agents/definitions/router.yaml` (line 75: `bestand-zoeker` → `web`)
+- `druppie/skills/code-review/SKILL.md` (update any `bestand-zoeker` references to `web`)
+- `druppie/mcps/bestand_zoeker.yaml` — delete this legacy file
+- Logger names in `module-web/v1/module.py` and `module-web/v1/tools.py` should already be fixed in Task 2
 
 ```bash
-git add druppie/core/mcp_config.yaml druppie/agents/definitions/router.yaml
+grep -r "bestand.zoeker\|bestand_zoeker" druppie/ --include="*.py" --include="*.yaml" --include="*.md" -l
+```
+
+Fix all remaining references.
+
+- [ ] **Step 3: Update docker-compose.yml backend env vars**
+
+The backend services (`druppie-backend-dev` and `druppie-backend-prod`) have `MCP_*_URL` environment variables with default hostnames like `http://mcp-coding:9001`. Update lines ~511-516 and ~585-590:
+
+```yaml
+MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
+MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
+MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://module-filesearch:9004}
+MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
+MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
+MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add -A
 git commit -m "refactor: slim mcp_config.yaml, rename bestand-zoeker to web, add filesearch entry
 
 - Remove tool descriptions and parameter schemas (now from tools/list)
 - Add type: core to all MCP entries
-- Update hostnames: mcp-* → module-*
-- Rename bestand-zoeker → web for consistency
+- Update hostnames: mcp-* → module-* in mcp_config.yaml and docker-compose.yml
+- Rename bestand-zoeker → web across all files
+- Delete legacy druppie/mcps/bestand_zoeker.yaml
 - Add missing filesearch entry"
+```
+
+---
+
+### Task 9b: Refactor mcp_config.py for slimmed YAML
+
+**Files:**
+- Modify: `druppie/core/mcp_config.py`
+
+After slimming `mcp_config.yaml` (Task 9), the `MCPConfig` class methods that read tool descriptions and parameters from config will return empty/missing data. Methods like `get_all_tools_for_agent()` will break.
+
+- [ ] **Step 1: Read current mcp_config.py**
+
+Read `druppie/core/mcp_config.py` (387 lines).
+
+- [ ] **Step 2: Simplify MCPConfig**
+
+- `get_tools(server)` → now returns only `name` + `requires_approval` + `required_role` (no description, no parameters)
+- Remove or simplify `_filter_parameters()` — no longer needed since parameters come from `tools/list`
+- `get_hidden_params()` for injection rules stays (injection is still YAML-based)
+- Add `get_server_type(server) -> str` to return the new `type` field
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add druppie/core/mcp_config.py
+git commit -m "refactor: simplify MCPConfig for slimmed mcp_config.yaml
+
+Tools no longer have descriptions or parameters in YAML.
+Injection rules and approval config stay."
 ```
 
 ---
@@ -619,10 +689,14 @@ Replace `params_model: Type[BaseModel]` with `json_schema: dict` and `meta: dict
 
 Key changes:
 - `params_model` field → `json_schema: dict = {}` and `meta: dict = {}`
+- `validate_arguments()` return type changes from `tuple[bool, str | None, BaseModel | None, dict | None]` to `tuple[bool, str | None, dict | None, dict | None]` (dict instead of BaseModel)
 - `validate_arguments()` → uses `jsonschema.validate(instance=args, schema=self.json_schema)`
 - `to_openai_format()` → uses `self.json_schema` directly for the `parameters` field
-- `get_hidden_fields()` → reads from `json_schema["properties"]` instead of `params_model.model_fields`
+- `get_param_descriptions()` (line ~405) → reads from `json_schema["properties"]` instead of `params_model.model_fields`
+- `_normalize_llm_arguments()` (line ~324) → get known fields from `self.json_schema.get("properties", {}).keys()` instead of `self.params_model.model_fields.keys()`
 - Keep normalization logic (e.g., `"null"` → `None`) as generic dict pre-processing
+- Update `ToolDefinitionSummary` if it references `params_model`
+- **Check all callers** of `validate_arguments()` in `tool_executor.py` and `db/models/tool_call.py`
 
 - [ ] **Step 3: Commit**
 
@@ -651,8 +725,9 @@ Remove all `from druppie.tools.params.*` imports and the `PARAMS_MODEL_MAP` dict
 
 Key method changes:
 - `_load_all_tools()` → async, calls `list_tools()` per server
-- `_ensure_loaded()` → needs to handle async (or use sync initialization with `asyncio.run()`)
+- **Async initialization strategy**: use eager async initialization at application startup. Add `await registry.initialize()` in the FastAPI `lifespan` context manager (in `druppie/api/app.py` or equivalent startup hook). The `_ensure_loaded()` pattern becomes a sync check that raises if not initialized.
 - New: `_load_mcp_tools_from_server(server, url)` — connects via FastMCP Client, calls `list_tools()`, returns tool defs
+- **`MCPHttp.list_tools()` update**: the current `list_tools()` method does NOT extract `meta` from tool responses. Update it to include `meta` (check if FastMCP's `list_tools()` response includes `meta` via `annotations` or custom field on the tool schema)
 - Remove: all `PARAMS_MODEL_MAP` references
 
 - [ ] **Step 3: Commit**
@@ -762,7 +837,20 @@ Read `druppie/execution/tool_executor.py` (970 lines), focusing on:
 - `_validate_make_design_content()` (lines 356-391) — hardcoded cross-boundary import
 - The pre-approval validation at lines 492-509
 
-- [ ] **Step 2: Replace hardcoded make_design validation with generic pre-validation**
+- [ ] **Step 2: Fix timeout override bug (lines ~907-910)**
+
+There's a pre-existing bug where `timeout = 60.0` overwrites the conditional `LONG_RUNNING_TIMEOUT` assignment. Fix while refactoring:
+
+```python
+# Before (broken):
+timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
+timeout = 60.0  # <-- this overwrites the line above
+
+# After (fixed): remove the second assignment
+timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
+```
+
+- [ ] **Step 3: Replace hardcoded make_design validation with generic pre-validation**
 
 Remove `_validate_make_design_content()` method entirely. Replace the `if tool_call.tool_name == "make_design"` block with a generic check:
 
