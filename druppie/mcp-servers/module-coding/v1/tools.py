@@ -1,7 +1,13 @@
-"""Coding MCP Server.
+"""Coding v1 — MCP Tool Definitions.
 
-Combined file operations and git functionality for workspace sandbox.
-Uses FastMCP framework for HTTP transport.
+Single source of truth for tool contract:
+- Tool name, description, input schema via @mcp.tool()
+- Version and module_id via @mcp.tool(meta={...})
+- Agent guidance via FastMCP(instructions=...)
+
+Contains ALL tools from the original coding MCP server plus:
+- validate_design (internal) — Mermaid pre-validation
+- get_git_status — was referenced in agent YAMLs but never implemented
 """
 
 import json
@@ -16,19 +22,22 @@ import time
 from pathlib import Path
 
 from fastmcp import FastMCP
-from mermaid_validator import validate_mermaid_in_markdown
-from retry_module import revert_to_commit, close_pull_request
-from testing_module import TestingModule
+from .mermaid_validator import validate_mermaid_in_markdown
+from .retry_module import revert_to_commit, close_pull_request
+from .testing_module import TestingModule
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger("coding-mcp")
 
+MODULE_ID = "coding"
+MODULE_VERSION = "1.0.0"
+
 # Initialize FastMCP server
-mcp = FastMCP("Coding MCP Server")
+mcp = FastMCP(
+    "Coding v1",
+    version=MODULE_VERSION,
+    instructions="File operations, git, testing, and pull requests in workspace sandbox.",
+)
 
 # Configuration
 WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/workspaces"))
@@ -38,6 +47,7 @@ GITEA_TOKEN = os.getenv("GITEA_TOKEN", "")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
 GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 
+
 def _testing_module(workspace_path: str | Path) -> TestingModule:
     """Create a TestingModule for the given workspace.
 
@@ -46,6 +56,7 @@ def _testing_module(workspace_path: str | Path) -> TestingModule:
     under concurrent requests.
     """
     return TestingModule(str(workspace_path))
+
 
 # In-memory workspace registry (in production, use DB)
 workspaces: dict[str, dict] = {}
@@ -340,7 +351,9 @@ def resolve_path(path: str, workspace_path: Path) -> Path:
 # =============================================================================
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def read_file(
     path: str,
     session_id: str | None = None,
@@ -452,7 +465,9 @@ async def read_file(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def write_file(
     path: str,
     content: str,
@@ -543,7 +558,9 @@ async def write_file(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION, "pre_validate": "validate_design"},
+)
 async def make_design(
     path: str,
     content: str,
@@ -644,7 +661,45 @@ async def make_design(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION, "internal": True},
+)
+async def validate_design(
+    content: str,
+) -> dict:
+    """Validate Mermaid syntax in markdown content without writing a file.
+
+    Internal tool used for pre-validation of design documents.
+
+    Args:
+        content: Full markdown content to validate
+
+    Returns:
+        Dict with valid (bool) and optionally errors list
+    """
+    try:
+        errors = validate_mermaid_in_markdown(content)
+        if errors:
+            return {
+                "valid": False,
+                "errors": [
+                    {
+                        "line_number": e.line_number,
+                        "rule": e.rule,
+                        "message": e.message,
+                    }
+                    for e in errors
+                ],
+            }
+        return {"valid": True}
+    except Exception as e:
+        logger.error("Error validating design: %s", str(e))
+        return {"valid": False, "errors": [{"message": str(e)}]}
+
+
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def list_dir(
     path: str = ".",
     session_id: str | None = None,
@@ -748,7 +803,9 @@ async def list_dir(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def delete_file(
     path: str,
     session_id: str | None = None,
@@ -940,7 +997,9 @@ async def _run_git(
     return response
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def batch_write_files(
     files: list[dict[str, str]],
     session_id: str | None = None,
@@ -1043,7 +1102,9 @@ async def batch_write_files(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def run_git(
     command: str,
     session_id: str | None = None,
@@ -1088,12 +1149,59 @@ async def run_git(
     return await _run_git(resolved_workspace_id, command, repo_name, repo_owner)
 
 
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def get_git_status(
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+) -> dict:
+    """Get git status of the workspace.
+
+    Convenience tool that wraps run_git("status"). Referenced in agent YAML
+    definitions for quick workspace state checks.
+
+    Args:
+        session_id: Session ID (auto-creates workspace if needed)
+        workspace_id: Legacy workspace ID (optional)
+        project_id: Project ID for workspace path (optional)
+        user_id: User ID for workspace path (optional)
+        repo_name: Gitea repository name (for workspace resolution)
+        repo_owner: Gitea repository owner (for workspace resolution)
+
+    Returns:
+        Dict with success, output, exit_code
+    """
+    # Resolve workspace
+    if session_id:
+        resolved_workspace_id, _ = get_or_create_workspace(
+            session_id=session_id,
+            project_id=project_id,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            repo_name=repo_name,
+            repo_owner=repo_owner,
+        )
+    elif workspace_id:
+        resolved_workspace_id = workspace_id
+    else:
+        return {"success": False, "error": "Either session_id or workspace_id is required"}
+
+    return await _run_git(resolved_workspace_id, "status", repo_name, repo_owner)
+
+
 # =============================================================================
 # TESTING TOOLS (delegated to TestingModule)
 # =============================================================================
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def get_test_framework(
     session_id: str | None = None,
     workspace_id: str | None = None,
@@ -1136,7 +1244,9 @@ async def get_test_framework(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def run_tests(
     session_id: str | None = None,
     workspace_id: str | None = None,
@@ -1261,7 +1371,9 @@ async def run_tests(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def get_coverage_report(
     session_id: str | None = None,
     workspace_id: str | None = None,
@@ -1325,7 +1437,9 @@ async def get_coverage_report(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def install_test_dependencies(
     session_id: str | None = None,
     workspace_id: str | None = None,
@@ -1549,7 +1663,9 @@ async def install_test_dependencies(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def validate_tdd(
     session_id: str | None = None,
     workspace_id: str | None = None,
@@ -1690,7 +1806,9 @@ def _get_repo_info(workspace_id: str) -> tuple[str, str] | None:
     return None
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def create_pull_request(
     title: str,
     body: str = "",
@@ -1806,7 +1924,9 @@ async def create_pull_request(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
 async def merge_pull_request(
     pr_number: int,
     delete_branch: bool = True,
@@ -1903,7 +2023,9 @@ async def merge_pull_request(
 # =============================================================================
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION, "internal": True},
+)
 async def _internal_revert_to_commit(
     target_commit: str,
     session_id: str | None = None,
@@ -1957,7 +2079,9 @@ async def _internal_revert_to_commit(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@mcp.tool(
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION, "internal": True},
+)
 async def _internal_close_pull_request(
     pr_number: int,
     session_id: str | None = None,
@@ -2005,33 +2129,3 @@ async def _internal_close_pull_request(
     except Exception as e:
         logger.error("close_pull_request error: %s", e)
         return {"success": False, "error": str(e)}
-
-
-# =============================================================================
-# MAIN
-# =============================================================================
-
-
-if __name__ == "__main__":
-    import uvicorn
-    from starlette.responses import JSONResponse
-    from starlette.routing import Route
-
-    # Get MCP app with HTTP transport
-    app = mcp.http_app()
-
-    # Add health endpoint
-    async def health(request):
-        """Health check endpoint."""
-        return JSONResponse({"status": "healthy", "service": "coding-mcp"})
-
-    app.routes.insert(0, Route("/health", health, methods=["GET"]))
-
-    port = int(os.getenv("MCP_PORT", "9001"))
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=port,
-        log_level="info",
-    )
