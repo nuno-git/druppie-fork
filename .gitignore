@@ -24,8 +24,6 @@ wheels/
 # Virtual environments
 venv/
 ENV/
-secrets/
-secrets
 
 # Node.js
 node_modules/
@@ -50,6 +48,7 @@ instance/
 
 # Secrets (private keys, certificates)
 secrets/
+secrets
 
 # Local config
 .druppie/
