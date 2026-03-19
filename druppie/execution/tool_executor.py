@@ -353,43 +353,6 @@ class ToolExecutor:
             )
             return None
 
-    def _validate_make_design_content(self, content: str) -> str | None:
-        """Validate Mermaid syntax in make_design content before the approval gate.
-
-        Loads the mermaid_validator from the coding MCP server package
-        (which uses a hyphenated directory name, so importlib is needed).
-
-        Returns:
-            Error message string if validation fails, None if valid.
-        """
-        try:
-            import importlib.util
-            from pathlib import Path
-
-            validator_path = (
-                Path(__file__).parent.parent / "mcp-servers" / "coding" / "mermaid_validator.py"
-            )
-            spec = importlib.util.spec_from_file_location("mermaid_validator", validator_path)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-
-            errors = mod.validate_mermaid_in_markdown(content)
-            if errors:
-                error_lines = [
-                    f"Line {e.line_number} [{e.rule}]: {e.message}"
-                    for e in errors
-                ]
-                return (
-                    "MERMAID SYNTAX ERRORS — file was NOT written. "
-                    "Fix these errors and try again:\n\n"
-                    + "\n".join(error_lines)
-                    + "\n\nAfter fixing, call make_design again with the corrected content."
-                )
-            return None
-        except Exception as e:
-            logger.warning("mermaid_pre_validation_exception", error=str(e))
-            return None
-
     def _is_tool_allowed_via_skill(
         self,
         mcp_server: str,
@@ -489,16 +452,39 @@ class ToolExecutor:
             self.db.commit()
             return ToolCallStatus.FAILED
 
-        # Step 2.6: Pre-approval content validation for make_design
-        # Validates Mermaid syntax BEFORE the approval gate so agents can fix
-        # errors without wasting a human reviewer's time.
-        if tool_call.tool_name == "make_design" and tool_call.arguments:
-            content = tool_call.arguments.get("content", "")
-            if content:
-                content_error = self._validate_make_design_content(content)
-                if content_error:
+        # Step 2.6: Generic pre-validation via meta.pre_validate
+        # If the tool definition has a meta.pre_validate field, call the named
+        # validation tool BEFORE the approval gate so agents can fix errors
+        # without wasting a human reviewer's time.
+        from druppie.core.tool_registry import get_tool_registry
+        registry = get_tool_registry()
+        if tool_call.mcp_server and tool_call.mcp_server != "builtin":
+            full_name = f"{tool_call.mcp_server}_{tool_call.tool_name}"
+        else:
+            full_name = tool_call.tool_name
+        tool_def = registry.get(full_name) if full_name else None
+        if tool_def and tool_def.meta.get("pre_validate"):
+            validate_tool_name = tool_def.meta["pre_validate"]
+            # Pass the tool's arguments to the validation tool
+            try:
+                validate_result = await self.mcp_http.call(
+                    tool_def.server, validate_tool_name, tool_call.arguments or {}
+                )
+                if not validate_result.get("valid", True):
+                    errors = validate_result.get("errors", [])
+                    error_lines = []
+                    for e in errors:
+                        if isinstance(e, dict):
+                            error_lines.append(f"Line {e.get('line', '?')} [{e.get('rule', '?')}]: {e.get('message', '')}")
+                        else:
+                            error_lines.append(str(e))
+                    content_error = (
+                        "PRE-VALIDATION FAILED — tool was NOT executed. "
+                        "Fix these errors and try again:\n\n"
+                        + "\n".join(error_lines)
+                    )
                     logger.warning(
-                        "pre_approval_content_validation_failed",
+                        "pre_validation_failed",
                         tool_call_id=str(tool_call_id),
                         tool_name=tool_call.tool_name,
                     )
@@ -509,6 +495,9 @@ class ToolExecutor:
                     )
                     self.db.commit()
                     return ToolCallStatus.FAILED
+            except Exception as e:
+                # Pre-validation failure should not block tool execution
+                logger.warning("pre_validation_exception", tool_name=tool_call.tool_name, error=str(e))
 
         # Step 3: Check tool access and approval for MCP tools (not builtin)
         if not is_builtin and tool_call.mcp_server:
@@ -905,9 +894,6 @@ class ToolExecutor:
             # (300s/180s) should fire first, but this prevents infinite hangs
             # if the MCP server crashes or the network drops.
             timeout = LONG_RUNNING_TIMEOUT if tool_call.tool_name in LONG_RUNNING_TOOLS else 60.0
-
-            # Execute via HTTP
-            timeout = 60.0
 
             result = await self.mcp_http.call(
                 tool_call.mcp_server,
