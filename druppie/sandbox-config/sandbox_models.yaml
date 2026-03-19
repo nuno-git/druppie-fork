@@ -13,15 +13,20 @@
 
 agents:
   druppie-builder:
+    - provider: zai
+      model: glm-5
     - provider: deepinfra
       model: zai-org/GLM-4.7-Flash
-    - provider: zai
-      model: glm-4.7
   druppie-tester:
+    - provider: zai
+      model: glm-5
     - provider: deepinfra
       model: zai-org/GLM-4.7-Flash
+  druppie-core-builder:
     - provider: zai
-      model: glm-4.7
+      model: glm-5
+    - provider: deepinfra
+      model: zai-org/GLM-4.7-Flash
 
 subagents:
   explore:
