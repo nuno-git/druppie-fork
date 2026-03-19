@@ -218,6 +218,15 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "type": "string",
                         "description": "Which sandbox agent to use",
                     },
+                    "repo_target": {
+                        "type": "string",
+                        "enum": ["project", "druppie_core"],
+                        "description": (
+                            "Which repo the sandbox works on. "
+                            "'project' (default) = session's Gitea project repo. "
+                            "'druppie_core' = Druppie's own GitHub repo (dual-repo: core + project context)."
+                        ),
+                    },
                 },
                 "required": ["task"],
             },
@@ -926,19 +935,21 @@ async def execute_sandbox_coding_task(
     if not session.user_id:
         return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
 
-    # Determine git provider and repo context based on calling agent
-    agent_run = execution_repo.get_by_id(agent_run_id)
-    calling_agent_id = agent_run.agent_id if agent_run else None
+    # Determine git provider and repo context based on repo_target param
+    repo_target = args.get("repo_target", "project")
 
-    # Context repo params (only for update_core_builder — dual-repo sandbox)
     context_repo_owner: str | None = None
     context_repo_name: str | None = None
     context_git_provider: str | None = None
 
-    if calling_agent_id == "update_core_builder":
-        # update_core_builder: use GitHub App credentials for Druppie's own repo
-        repo_owner = os.getenv("DRUPPIE_REPO_OWNER", "nuno-git")
-        repo_name = os.getenv("DRUPPIE_REPO_NAME", "druppie-fork")
+    if repo_target == "druppie_core":
+        # Target Druppie's own GitHub repo + project repo as read-only context
+        druppie_owner = os.getenv("DRUPPIE_REPO_OWNER")
+        druppie_name = os.getenv("DRUPPIE_REPO_NAME")
+        if not druppie_owner or not druppie_name:
+            return {"success": False, "error": "DRUPPIE_REPO_OWNER and DRUPPIE_REPO_NAME must be configured for repo_target='druppie_core'"}
+        repo_owner = druppie_owner
+        repo_name = druppie_name
         git_provider = "github"
 
         # Also pass the project repo as context (for FD/TD access)
@@ -952,7 +963,7 @@ async def execute_sandbox_coding_task(
                 context_repo_owner = project.repo_owner or context_repo_owner
                 context_repo_name = project.repo_name or ""
     else:
-        # All other agents: use Gitea credentials from the project
+        # Default: use Gitea credentials from the session's project
         repo_owner = os.getenv("GITEA_ORG", "druppie")
         repo_name = ""
         if session.project_id:
@@ -982,6 +993,7 @@ async def execute_sandbox_coding_task(
             context_repo_owner=context_repo_owner,
             context_repo_name=context_repo_name,
             context_git_provider=context_git_provider,
+            repo_target=repo_target,
         )
 
         logger.info(

@@ -66,12 +66,20 @@ Then create a PR via the GitHub API (see below).
 
 Use `curl` with `$GITHUB_API_PROXY_URL`. Auth is automatic — no token needed.
 
+First, discover the repo owner and name from the git remote:
 ```bash
-# Find OWNER and REPO from repo info
-curl -s "$GITHUB_API_PROXY_URL/repos/nuno-git/druppie-fork" | jq '{name, default_branch, html_url}'
+cd /workspace/core
+REPO_SLUG=$(git remote get-url origin | sed -E 's|.*/([^/]+/[^/]+?)(\.git)?$|\1|')
+echo "Repo: $REPO_SLUG"
+```
+
+Then use it for API calls:
+```bash
+# Get repo info
+curl -s "$GITHUB_API_PROXY_URL/repos/$REPO_SLUG" | jq '{name, default_branch, html_url}'
 
 # Create PR targeting colab-dev (NOT main!)
-curl -s -X POST "$GITHUB_API_PROXY_URL/repos/nuno-git/druppie-fork/pulls" \
+curl -s -X POST "$GITHUB_API_PROXY_URL/repos/$REPO_SLUG/pulls" \
   -H "Content-Type: application/json" \
   -d '{"title":"...","body":"...","head":"core/<branch-name>","base":"colab-dev"}'
 ```

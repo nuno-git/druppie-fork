@@ -67,3 +67,7 @@ class ExecuteCodingTaskParams(BaseModel):
         default=DEFAULT_SANDBOX_AGENT,
         description=f"Which sandbox agent to use ({DEFAULT_SANDBOX_AGENT} for coding, {DEFAULT_SANDBOX_TESTER_AGENT} for testing)",
     )
+    repo_target: str = Field(
+        default="project",
+        description="Which repo the sandbox works on: 'project' (default) or 'druppie_core'",
+    )
