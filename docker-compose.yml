@@ -323,11 +323,11 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-registry:
+  module-registry:
     build:
-      context: ./druppie/mcp-servers/registry
+      context: ./druppie/mcp-servers/module-registry
       dockerfile: Dockerfile
-    container_name: druppie-mcp-registry
+    container_name: druppie-module-registry
     profiles: [infra, dev, prod]
     environment:
       DATA_DIR: /data
@@ -535,7 +535,7 @@ services:
       MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
       MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
-      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
@@ -609,7 +609,7 @@ services:
       MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
       MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
-      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
