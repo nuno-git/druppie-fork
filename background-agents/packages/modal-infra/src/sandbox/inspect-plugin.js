@@ -88,11 +88,10 @@ export default tool({
           "Authorization": `Bearer ${BRIDGE_TOKEN}`,
         },
         body: JSON.stringify({
-          title: title,
-          body: body,
-          baseBranch: baseBranch,
-          headBranch: headBranch,
-          timestamp: Date.now(),
+          title,
+          body,
+          base: baseBranch || undefined,
+          head: headBranch || undefined,
         }),
       })
 

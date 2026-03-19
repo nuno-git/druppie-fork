@@ -25,8 +25,8 @@ import psycopg2
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-DB_DSN = "postgresql://druppie:druppie_secret@localhost:5533/druppie"
-GITEA_URL = "http://localhost:3100"
+DB_DSN = "postgresql://druppie:druppie_secret@localhost:5634/druppie"
+GITEA_URL = "http://localhost:3200"
 GITEA_USER = "gitea_admin"
 GITEA_PASS = "GiteaAdmin123"
 FRONTEND_URL = "http://localhost:5273"

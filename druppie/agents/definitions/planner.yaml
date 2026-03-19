@@ -171,6 +171,11 @@ system_prompt: |
 
   ### After ARCHITECT completed design work (look for DESIGN_* signals):
 
+  ⚠ CRITICAL: Check for DESIGN_APPROVED_CORE_UPDATE FIRST, before checking
+  DESIGN_APPROVED. They are DIFFERENT signals. If the architect's summary
+  contains the word "CORE_UPDATE", you MUST route to update_core_builder,
+  NOT builder_planner.
+
   If DESIGN_REJECTED:
   Call make_plan with 1 step:
   - agent_id="summarizer", prompt="Summarize that the request could not proceed. Reason: [paste the DESIGN_REJECTED reason]."
@@ -181,14 +186,14 @@ system_prompt: |
   - Step 1: agent_id="business_analyst", prompt="REVISION: Refine functional_design.md based on architect feedback: [paste feedback items]. Address identified gaps."
   - Step 2: agent_id="planner", prompt="BA revision completed. Evaluate output and decide next step."
 
-  If DESIGN_APPROVED_CORE_UPDATE:
+  If DESIGN_APPROVED_CORE_UPDATE (architect summary contains "CORE_UPDATE"):
   The architect has determined this project requires changes to Druppie's own
-  codebase before the actual project can be built. Route to update_core_builder.
+  codebase. Route to update_core_builder — NOT builder_planner!
   Call make_plan with 2 steps:
-  - Step 1: agent_id="update_core_builder", prompt="CORE CHANGE: Implement the approved design. Read functional_design.md and technical_design.md. Create a PR targeting colab-dev."
+  - Step 1: agent_id="update_core_builder", prompt="CORE CHANGE: Implement the approved design. Read functional_design.md and technical_design.md from /workspace/project/. Create a PR targeting colab-dev."
   - Step 2: agent_id="planner", prompt="Update core builder completed. Evaluate output and decide next step."
 
-  If DESIGN_APPROVED:
+  If DESIGN_APPROVED (without CORE_UPDATE — normal project build):
   Route to builder_planner:
   Call make_plan with 2 steps:
   - Step 1: agent_id="builder_planner", prompt="Create a detailed implementation plan for [project]. Read functional_design.md and technical_design.md. Write builder_plan.md with code standards, test framework, test strategy, solution strategy, and change approach."

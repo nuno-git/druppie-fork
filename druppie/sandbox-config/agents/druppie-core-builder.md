@@ -64,21 +64,18 @@ Then create a PR via the GitHub API (see below).
 
 ### Creating Pull Requests
 
-Use `curl` with `$GITHUB_API_PROXY_URL`. Auth is automatic — no token needed.
+Use the `create-pull-request` tool (preferred). Auth is automatic.
 
-First, discover the repo owner and name from the git remote:
+```
+create-pull-request(title="...", body="...", baseBranch="colab-dev")
+```
+
+The tool auto-detects the current branch as `head`. Always set `baseBranch="colab-dev"` (NOT main!).
+
+**Alternative:** Use `curl` with `$GITHUB_API_PROXY_URL` if the tool is unavailable:
 ```bash
 cd /workspace/core
 REPO_SLUG=$(git remote get-url origin | sed -E 's|.*/([^/]+/[^/]+?)(\.git)?$|\1|')
-echo "Repo: $REPO_SLUG"
-```
-
-Then use it for API calls:
-```bash
-# Get repo info
-curl -s "$GITHUB_API_PROXY_URL/repos/$REPO_SLUG" | jq '{name, default_branch, html_url}'
-
-# Create PR targeting colab-dev (NOT main!)
 curl -s -X POST "$GITHUB_API_PROXY_URL/repos/$REPO_SLUG/pulls" \
   -H "Content-Type: application/json" \
   -d '{"title":"...","body":"...","head":"core/<branch-name>","base":"colab-dev"}'

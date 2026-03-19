@@ -19,14 +19,25 @@ task prompt for instructions. For **GitHub repos** (github.com), the default PR 
 is `colab-dev` (NOT `main`). For Gitea repos, the default is `main`.
 
 IMPORTANT: Do NOT use `gh` CLI — it does not work in this environment.
-For GitHub API access, use `curl` with `$GITHUB_API_PROXY_URL`. Auth is automatic.
 
+### Creating Pull Requests
+
+Use the `create-pull-request` tool (preferred). Auth is automatic:
+```
+create-pull-request(title="...", body="...", baseBranch="colab-dev")
+```
+The tool auto-detects the current branch. Set `baseBranch` to `colab-dev` for GitHub repos or `main` for Gitea repos.
+
+**Alternative:** Use `curl` with `$GITHUB_API_PROXY_URL`:
 ```bash
-# Create a pull request (use "colab-dev" as base for GitHub repos, "main" for Gitea)
 curl -s -X POST "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls" \
   -H "Content-Type: application/json" \
   -d '{"title":"...","body":"...","head":"branch","base":"colab-dev"}'
+```
 
+### Other GitHub API calls
+
+```bash
 # View a pull request
 curl -s "$GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls/NUMBER" | jq
 
