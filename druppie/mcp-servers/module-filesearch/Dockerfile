@@ -10,8 +10,7 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py .
-COPY module.py .
+COPY . .
 
 # Create default dataset directory
 RUN mkdir -p /dataset
