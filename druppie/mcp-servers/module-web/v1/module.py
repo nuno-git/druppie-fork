@@ -1,4 +1,4 @@
-"""Bestand Zoeker MCP Server - Business Logic Module.
+"""Web MCP Server - Business Logic Module.
 
 Contains all business logic for web browsing and file search.
 """
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 
-logger = logging.getLogger("bestand-zoeker")
+logger = logging.getLogger("web-mcp")
 
 REQUEST_TIMEOUT = 30.0
 
@@ -282,4 +282,3 @@ class WebModule:
                 "path": str(file_path.relative_to(self.search_root)),
                 "size": size,
             }
-
