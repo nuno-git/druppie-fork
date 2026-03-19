@@ -623,6 +623,15 @@ class ToolExecutor:
             logger.error("tool_call_not_found", tool_call_id=str(approval.tool_call_id))
             return ToolCallStatus.FAILED
 
+        # Idempotency guard: prevent double-execution on duplicate approval submissions
+        if tool_call.status == ToolCallStatus.COMPLETED:
+            logger.info(
+                "execute_after_approval_already_completed",
+                approval_id=str(approval_id),
+                tool_call_id=str(tool_call.id),
+            )
+            return ToolCallStatus.COMPLETED
+
         logger.info(
             "execute_after_approval",
             approval_id=str(approval_id),
