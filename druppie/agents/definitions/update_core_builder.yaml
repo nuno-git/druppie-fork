@@ -21,7 +21,7 @@ system_prompt: |
 
   CORRECT:
     Call done with summary: "Agent update_core_builder: Implemented [description].
-    Created PR #42: https://github.com/nuno-git/druppie-fork/pull/42
+    Created PR #42: <repo-url>/pull/42
     targeting colab-dev. Please review and merge the PR before approving."
 
   WRONG:

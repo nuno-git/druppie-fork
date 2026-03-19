@@ -955,13 +955,13 @@ async def execute_sandbox_coding_task(
         # Also pass the project repo as context (for FD/TD access)
         context_git_provider = "gitea"
         context_repo_owner = os.getenv("GITEA_ORG", "druppie")
-        context_repo_name = ""
+        context_repo_name = None
         if session.project_id:
             project_repo = ProjectRepository(db)
             project = project_repo.get_by_id(session.project_id)
             if project:
                 context_repo_owner = project.repo_owner or context_repo_owner
-                context_repo_name = project.repo_name or ""
+                context_repo_name = project.repo_name or None
     else:
         # Default: use Gitea credentials from the session's project
         repo_owner = os.getenv("GITEA_ORG", "druppie")
