@@ -527,6 +527,10 @@ exit 1
 
         # Strip credential-bearing env vars — the git remote URL in .git/config
         # already points to the proxy, so git operations still work without these.
+        # NOTE: GITHUB_API_PROXY_URL is intentionally kept — the sandbox agent
+        # needs it for PR creation and GitHub API calls via curl. The URL contains
+        # a 256-bit proxy key, but the key is scoped to this session's authorized
+        # repo and the session is destroyed on completion.
         for secret_var in ("GIT_URL", "CONTEXT_GIT_URL", "GITHUB_APP_TOKEN", "GITHUB_TOKEN"):
             env.pop(secret_var, None)
 
