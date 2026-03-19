@@ -159,7 +159,7 @@ export function setupRoutes(
     const reasoningEffort = body.reasoningEffort ?? null;
 
     // Store credentials and generate proxy keys if provided
-    let proxyKeys: { gitProxyKey: string | null; llmProxyKey: string | null } | null = null;
+    let proxyKeys: { gitProxyKey: string | null; contextGitProxyKey: string | null; llmProxyKey: string | null; githubApiProxyKey: string | null } | null = null;
     let availableLlmProviders: string[] = [];
     if (credentialStore && body.credentials) {
       proxyKeys = credentialStore.store(sessionId, body.credentials, body.modelChains ?? null);
@@ -185,6 +185,8 @@ export function setupRoutes(
       agentModels: body.agentModels ?? null,
       opencodeFiles: body.opencodeFiles ?? body.agentFiles ?? null,
       modelChains: body.modelChains ?? null,
+      contextRepoOwner: body.contextRepoOwner ?? null,
+      contextRepoName: body.contextRepoName ?? null,
     });
 
     if (!initResult) {

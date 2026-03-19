@@ -11,6 +11,14 @@ After completing ALL code changes:
 
 Never leave commits unpushed. Every task MUST end with `git push`.
 
+Git authentication is handled automatically via proxy.
+
+### Determining the base branch for PRs
+Check what branch you are based on: `git log --oneline --decorate -1` or check your
+task prompt for instructions. The default PR target is `main`.
+
+IMPORTANT: Do NOT use `gh` CLI — it does not work in this environment.
+
 ## Coding Standards
 - Write clean, working code
 - Follow existing project patterns
