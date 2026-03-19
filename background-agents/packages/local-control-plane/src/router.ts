@@ -405,9 +405,13 @@ export function setupRoutes(
   app.post("/sessions/:id/pr", async (req, res) => {
     const sessionId = req.params.id;
     const body = req.body;
-    if (!body.title || !body.body || !body.head || !body.base) {
-      errorResponse(res, "title, body, head, and base are required");
+    if (!body.title || !body.body || !body.head) {
+      errorResponse(res, "title, body, and head are required");
       return;
+    }
+    // Default base branch to "main" if not provided
+    if (!body.base) {
+      body.base = "main";
     }
 
     // Look up git credentials from the credential store
