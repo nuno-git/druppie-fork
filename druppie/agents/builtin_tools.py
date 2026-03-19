@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 from druppie.sandbox.model_resolver import get_agent_chain, resolve_sandbox_models
+from druppie.tools.params.coding import VALID_REPO_TARGETS
 
 
 # =============================================================================
@@ -937,44 +938,21 @@ async def execute_sandbox_coding_task(
 
     # Determine git provider and repo context based on repo_target param
     repo_target = args.get("repo_target", "project")
-    if repo_target not in ("project", "druppie_core"):
-        return {"success": False, "error": f"Invalid repo_target '{repo_target}'. Must be 'project' or 'druppie_core'."}
+    if repo_target not in VALID_REPO_TARGETS:
+        return {"success": False, "error": f"Invalid repo_target '{repo_target}'. Must be one of: {VALID_REPO_TARGETS}."}
 
-    context_repo_owner: str | None = None
-    context_repo_name: str | None = None
-    context_git_provider: str | None = None
+    from druppie.sandbox.repo_context import resolve_repo_context
+    try:
+        repo_ctx = resolve_repo_context(repo_target, session_id, db)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
 
-    if repo_target == "druppie_core":
-        # Target Druppie's own GitHub repo + project repo as read-only context
-        druppie_owner = os.getenv("DRUPPIE_REPO_OWNER")
-        druppie_name = os.getenv("DRUPPIE_REPO_NAME")
-        if not druppie_owner or not druppie_name:
-            return {"success": False, "error": "DRUPPIE_REPO_OWNER and DRUPPIE_REPO_NAME must be configured for repo_target='druppie_core'"}
-        repo_owner = druppie_owner
-        repo_name = druppie_name
-        git_provider = "github"
-
-        # Also pass the project repo as context (for FD/TD access)
-        context_git_provider = "gitea"
-        context_repo_owner = os.getenv("GITEA_ORG", "druppie")
-        context_repo_name = None
-        if session.project_id:
-            project_repo = ProjectRepository(db)
-            project = project_repo.get_by_id(session.project_id)
-            if project:
-                context_repo_owner = project.repo_owner or context_repo_owner
-                context_repo_name = project.repo_name or None
-    else:
-        # Default: use Gitea credentials from the session's project
-        repo_owner = os.getenv("GITEA_ORG", "druppie")
-        repo_name = ""
-        if session.project_id:
-            project_repo = ProjectRepository(db)
-            project = project_repo.get_by_id(session.project_id)
-            if project:
-                repo_owner = project.repo_owner or repo_owner
-                repo_name = project.repo_name or ""
-        git_provider = "gitea"
+    repo_owner = repo_ctx.repo_owner
+    repo_name = repo_ctx.repo_name
+    git_provider = repo_ctx.git_provider
+    context_repo_owner = repo_ctx.context_repo_owner
+    context_repo_name = repo_ctx.context_repo_name
+    context_git_provider = repo_ctx.context_git_provider
 
     try:
         result = await create_and_start_sandbox(

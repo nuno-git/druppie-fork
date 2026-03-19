@@ -19,14 +19,6 @@ task prompt for instructions. The default PR target is `main`.
 
 IMPORTANT: Do NOT use `gh` CLI — it does not work in this environment.
 
-### Creating Pull Requests
-
-Use the `create-pull-request` tool (preferred). Auth is automatic:
-```
-create-pull-request(title="...", body="...", baseBranch="main")
-```
-The tool auto-detects the current branch.
-
 ## Coding Standards
 - Write clean, working code
 - Follow existing project patterns

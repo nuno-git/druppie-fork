@@ -255,45 +255,19 @@ async def _retry_sandbox_with_next_model(
 
     # Reconstruct repo context from the stored repo_target (no agent-id guessing)
     repo_target = sandbox_mapping.repo_target or "project"
-    repo_owner = os.getenv("GITEA_ORG", "druppie")
-    repo_name = ""
-    git_provider = "gitea"
-    context_repo_owner: str | None = None
-    context_repo_name: str | None = None
-    context_git_provider: str | None = None
+    from druppie.sandbox.repo_context import resolve_repo_context
+    try:
+        repo_ctx = resolve_repo_context(repo_target, sandbox_mapping.session_id, db)
+    except ValueError:
+        logger.error("sandbox_retry_missing_druppie_repo_config")
+        return False
 
-    if repo_target == "druppie_core":
-        druppie_owner = os.getenv("DRUPPIE_REPO_OWNER")
-        druppie_name = os.getenv("DRUPPIE_REPO_NAME")
-        if not druppie_owner or not druppie_name:
-            logger.error("sandbox_retry_missing_druppie_repo_config")
-            return False
-        repo_owner = druppie_owner
-        repo_name = druppie_name
-        git_provider = "github"
-
-        # Restore context repo (project with FD/TD) for dual-repo sandbox
-        if sandbox_mapping.session_id:
-            from druppie.repositories import SessionRepository, ProjectRepository
-            session_repo = SessionRepository(db)
-            session = session_repo.get_by_id(sandbox_mapping.session_id)
-            if session and session.project_id:
-                project_repo = ProjectRepository(db)
-                project = project_repo.get_by_id(session.project_id)
-                if project:
-                    context_git_provider = "gitea"
-                    context_repo_owner = project.repo_owner or os.getenv("GITEA_ORG", "druppie")
-                    context_repo_name = project.repo_name or ""
-    elif sandbox_mapping.session_id:
-        from druppie.repositories import SessionRepository, ProjectRepository
-        session_repo = SessionRepository(db)
-        session = session_repo.get_by_id(sandbox_mapping.session_id)
-        if session and session.project_id:
-            project_repo = ProjectRepository(db)
-            project = project_repo.get_by_id(session.project_id)
-            if project:
-                repo_owner = project.repo_owner or repo_owner
-                repo_name = project.repo_name or ""
+    repo_owner = repo_ctx.repo_owner
+    repo_name = repo_ctx.repo_name
+    git_provider = repo_ctx.git_provider
+    context_repo_owner = repo_ctx.context_repo_owner
+    context_repo_name = repo_ctx.context_repo_name
+    context_git_provider = repo_ctx.context_git_provider
 
     # Clean up old sandbox's Gitea service accounts before creating new one
     await _cleanup_gitea_users(sandbox_mapping, context="retry_")
