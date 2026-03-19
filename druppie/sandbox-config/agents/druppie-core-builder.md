@@ -72,14 +72,17 @@ create-pull-request(title="...", body="...", baseBranch="colab-dev")
 
 The tool auto-detects the current branch as `head`. Always set `baseBranch="colab-dev"` (NOT main!).
 
-**Alternative:** Use `curl` with `$GITHUB_API_PROXY_URL` if the tool is unavailable:
+**Alternative:** Use `curl` with `$GITHUB_API_PROXY_URL` if the tool is unavailable.
+First discover the repo slug from the git remote:
 ```bash
 cd /workspace/core
 REPO_SLUG=$(git remote get-url origin | sed -E 's|.*/([^/]+/[^/]+?)(\.git)?$|\1|')
+echo "Targeting repo: $REPO_SLUG"
 curl -s -X POST "$GITHUB_API_PROXY_URL/repos/$REPO_SLUG/pulls" \
   -H "Content-Type: application/json" \
   -d '{"title":"...","body":"...","head":"core/<branch-name>","base":"colab-dev"}'
 ```
+**IMPORTANT:** Always derive OWNER/REPO from `git remote -v` — never hardcode repo names.
 
 ## Coding Standards
 - Follow existing Druppie code patterns
