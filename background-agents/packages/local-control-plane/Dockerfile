@@ -23,7 +23,7 @@ COPY packages/shared/package.json packages/shared/package.json
 COPY packages/slack-bot/package.json packages/slack-bot/package.json
 COPY packages/web/package.json packages/web/package.json
 
-RUN npm ci
+RUN npm install --ignore-scripts && npm rebuild
 
 # Copy source
 COPY packages/shared/ packages/shared/
