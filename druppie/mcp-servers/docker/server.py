@@ -1,11 +1,13 @@
 """Docker MCP Server.
 
-Docker container operations - build, run, stop, logs.
+Docker container operations - build, run, stop, logs, compose_up, compose_down.
 Uses FastMCP framework for HTTP transport.
 
 This is a STANDALONE service:
 - build: Clones from git URL and builds (no workspace dependency)
 - run: Adds labels for ownership tracking (druppie.project_id, druppie.session_id)
+- compose_up: Deploys app + database via docker compose with health checking
+- compose_down: Tears down a docker compose deployment
 - list_containers: Can filter by project_id/session_id via labels
 """
 
@@ -44,10 +46,13 @@ GITEA_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
 GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 
-# Track used ports
+# Track used ports (guarded by _port_lock for async concurrency safety)
 used_ports: set[int] = set()
+_port_lock = asyncio.Lock()
 
-# Track compose project -> port mapping for clean teardown
+# Track compose project -> port mapping for clean teardown.
+# In-memory only: after MCP server restart this dict is empty, but compose_down
+# has a fallback that discovers ports from running containers via docker ps.
 compose_port_registry: dict[str, int] = {}
 
 
@@ -113,24 +118,27 @@ def is_port_available(port: int) -> bool:
     return True
 
 
-def get_next_port() -> int:
+async def get_next_port() -> int:
     """Get next available port from the configured range.
 
     Checks both Docker's currently bound ports and our internal tracking.
     Queries Docker once upfront to avoid N subprocess calls.
+    Uses _port_lock to prevent TOCTOU races on concurrent compose_up calls.
     """
-    docker_ports = get_used_host_ports()
-    for port in range(PORT_RANGE_START, PORT_RANGE_END):
-        if port not in docker_ports and port not in used_ports:
-            used_ports.add(port)
-            logger.info("Auto-selected available port %d", port)
-            return port
-    raise RuntimeError(f"No available ports in range {PORT_RANGE_START}-{PORT_RANGE_END}")
+    async with _port_lock:
+        docker_ports = get_used_host_ports()
+        for port in range(PORT_RANGE_START, PORT_RANGE_END):
+            if port not in docker_ports and port not in used_ports:
+                used_ports.add(port)
+                logger.info("Auto-selected available port %d", port)
+                return port
+        raise RuntimeError(f"No available ports in range {PORT_RANGE_START}-{PORT_RANGE_END}")
 
 
-def release_port(port: int) -> None:
+async def release_port(port: int) -> None:
     """Release a port back to pool."""
-    used_ports.discard(port)
+    async with _port_lock:
+        used_ports.discard(port)
 
 
 def get_gitea_clone_url(repo_name: str, repo_owner: str | None = None) -> str:
@@ -441,9 +449,9 @@ async def run(
                     "Requested port %d is not available, auto-selecting alternative",
                     requested_port
                 )
-                host_port = get_next_port()
+                host_port = await get_next_port()
         else:
-            host_port = get_next_port()
+            host_port = await get_next_port()
 
         logger.info(
             "Running container %s from image %s (port %d:%d, project=%s, session=%s)",
@@ -500,7 +508,7 @@ async def run(
         )
 
         if result.returncode != 0:
-            release_port(host_port)
+            await release_port(host_port)
             return {
                 "success": False,
                 "error": "Failed to start container",
@@ -560,7 +568,7 @@ async def compose_up(
     session_id: str | None = None,
     user_id: str | None = None,
     health_path: str = "/health",
-    health_timeout: int = 120,
+    health_timeout: int = 300,
 ) -> dict:
     """Deploy application with docker compose (app + database).
 
@@ -577,7 +585,7 @@ async def compose_up(
         session_id: Session ID for labels (injected)
         user_id: User ID for labels (injected)
         health_path: Health check endpoint path (default: /health, not agent-facing)
-        health_timeout: Seconds to wait for health check (default: 120, not agent-facing)
+        health_timeout: Seconds to wait for health check (default: 300, not agent-facing)
 
     Returns:
         Dict with success, url, port, compose_project_name, containers, health_check
@@ -621,7 +629,7 @@ async def compose_up(
         project_name = None
         try:
             # Step 3: Allocate host port
-            host_port = get_next_port()
+            host_port = await get_next_port()
 
             # Step 4: Determine compose project name
             project_name = compose_project_name
@@ -682,7 +690,7 @@ async def compose_up(
             )
 
             if compose_result.returncode != 0:
-                release_port(host_port)
+                await release_port(host_port)
                 host_port = None
                 return {
                     "success": False,
@@ -737,7 +745,7 @@ async def compose_up(
                     timeout=60,
                 )
                 failed_port = host_port
-                release_port(host_port)
+                await release_port(host_port)
                 host_port = None
                 compose_port_registry.pop(project_name, None)
                 return {
@@ -839,7 +847,7 @@ async def compose_down(
 
         # Release port
         if port:
-            release_port(port)
+            await release_port(port)
             compose_port_registry.pop(compose_project_name, None)
 
         logger.info("compose_down: stopped project %s", compose_project_name)

@@ -118,7 +118,7 @@ system_prompt: |
      - Do NOT pass git_url — repo_name is auto-injected and resolves to the correct internal URL
   2. Verify: if compose_up returns success with health_check "passed", deployment is good
      - The URL and port are in the compose_up result
-     - Health check runs automatically against /health with a 600s timeout — do NOT pass health parameters
+     - Health check runs automatically against /health with a 300s timeout — do NOT pass health parameters
      - If it fails, read the error/logs, try to fix (write_file + run_git to commit + retry)
   3. Use docker_logs if you need to debug (use compose project container names from result)
   4. Only report success once compose_up returns health_check "passed"
