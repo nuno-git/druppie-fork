@@ -37,7 +37,9 @@ def ai_chat_endpoint():
     """LLM chat completion. Body: {"prompt": "...", "system": "..."}"""
     from app.ai import ai_chat
 
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not data or "prompt" not in data:
+        return jsonify(error="Missing required field: prompt"), 400
     answer = ai_chat(data["prompt"], data.get("system", "You are a helpful assistant."))
     return jsonify(answer=answer)
 
@@ -47,6 +49,8 @@ def ai_ocr_endpoint():
     """OCR text extraction. Body: {"image_url": "https://..."}"""
     from app.ai import ocr_extract
 
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not data or "image_url" not in data:
+        return jsonify(error="Missing required field: image_url"), 400
     text = ocr_extract(data["image_url"])
     return jsonify(text=text)

@@ -235,7 +235,7 @@ import PageHeader from '../components/shared/PageHeader'
 | API routes | `druppie/api/routes/<entities>.py` | Plural noun |
 | Dependencies | `druppie/api/deps.py` | Single file |
 | Agent definitions | `druppie/agents/definitions/<agent_id>.yaml` | Agent ID |
-| Skills | `druppie/skills/<skill-name>/SKILL.md` | kebab-case directory |
+| Skills | `druppie/opencode/config/skills/<skill-name>/SKILL.md` | kebab-case directory |
 
 ### Frontend File Placement
 

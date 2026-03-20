@@ -129,7 +129,7 @@ project's own specification or builder_plan.md.
 - [ ] **Services** in `druppie/services/<entity>_service.py`
 - [ ] **API routes** in `druppie/api/routes/<entities>.py` — plural noun
 - [ ] **Frontend pages** in `frontend/src/pages/PascalCase.jsx`
-- [ ] **Skills** in `druppie/skills/<skill-name>/SKILL.md` — kebab-case dir
+- [ ] **Skills** in `druppie/opencode/config/skills/<skill-name>/SKILL.md` — kebab-case dir
 
 ---
 

@@ -492,7 +492,8 @@ class GiteaClient:
     ) -> dict[str, Any]:
         """Push all files from a template directory into a repository.
 
-        Walks the template directory and creates each file via the API.
+        Clones the repo via git, copies template files, commits, and pushes
+        in a single commit. Falls back to per-file API calls if git fails.
         Skips __pycache__ and .pyc files.
 
         Args:
@@ -504,27 +505,94 @@ class GiteaClient:
         Returns:
             Dict with success, files_pushed count, and any errors
         """
+        import shutil
+        import subprocess
+        import tempfile
         from pathlib import Path
 
         template_path = Path(template_dir)
         if not template_path.is_dir():
             return {"success": False, "error": f"Template dir not found: {template_dir}"}
 
-        errors = []
-        pushed = 0
-
+        # Collect template files
+        files: list[tuple[str, str]] = []  # (relative_path, content)
         for file_path in sorted(template_path.rglob("*")):
             if not file_path.is_file():
                 continue
             if "__pycache__" in str(file_path) or file_path.suffix == ".pyc":
                 continue
-
-            relative = str(file_path.relative_to(template_path))
             try:
                 content = file_path.read_text()
             except UnicodeDecodeError:
                 continue  # skip binary files
+            files.append((str(file_path.relative_to(template_path)), content))
 
+        if not files:
+            return {"success": True, "files_pushed": 0, "errors": None}
+
+        # Try git clone + commit + push for a single commit
+        clone_url = self.get_clone_url(repo, owner)
+        tmp_dir = None
+        try:
+            tmp_dir = tempfile.mkdtemp(prefix="druppie-template-")
+            clone_result = subprocess.run(
+                ["git", "clone", "--branch", branch, "--depth", "1", clone_url, tmp_dir],
+                capture_output=True, text=True, timeout=60,
+            )
+            if clone_result.returncode != 0:
+                raise RuntimeError(f"Clone failed: {clone_result.stderr}")
+
+            # Copy template files into the clone
+            for relative, content in files:
+                dest = Path(tmp_dir) / relative
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(content)
+
+            # Configure git identity for the commit
+            subprocess.run(
+                ["git", "config", "user.email", "druppie@druppie.local"],
+                cwd=tmp_dir, capture_output=True, timeout=10,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Druppie"],
+                cwd=tmp_dir, capture_output=True, timeout=10,
+            )
+
+            # Stage, commit, push
+            subprocess.run(["git", "add", "."], cwd=tmp_dir, capture_output=True, timeout=30)
+            commit_result = subprocess.run(
+                ["git", "commit", "-m", "feat: scaffold project template"],
+                cwd=tmp_dir, capture_output=True, text=True, timeout=30,
+            )
+            if commit_result.returncode != 0:
+                raise RuntimeError(f"Commit failed: {commit_result.stderr}")
+
+            push_result = subprocess.run(
+                ["git", "push", "origin", branch],
+                cwd=tmp_dir, capture_output=True, text=True, timeout=120,
+            )
+            if push_result.returncode != 0:
+                raise RuntimeError(f"Push failed: {push_result.stderr}")
+
+            logger.info(
+                "gitea_template_pushed",
+                repo=repo,
+                owner=owner or self.org,
+                files_pushed=len(files),
+                method="git",
+            )
+            return {"success": True, "files_pushed": len(files), "errors": None}
+
+        except Exception as e:
+            logger.warning("gitea_template_git_push_failed", error=str(e), fallback="api")
+        finally:
+            if tmp_dir:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        # Fallback: per-file API calls (creates N commits)
+        errors = []
+        pushed = 0
+        for relative, content in files:
             result = await self.create_file(
                 repo=repo,
                 path=relative,
@@ -533,7 +601,6 @@ class GiteaClient:
                 branch=branch,
                 owner=owner,
             )
-
             if result.get("success"):
                 pushed += 1
             else:
@@ -545,6 +612,7 @@ class GiteaClient:
             owner=owner or self.org,
             files_pushed=pushed,
             errors=len(errors),
+            method="api_fallback",
         )
 
         return {
