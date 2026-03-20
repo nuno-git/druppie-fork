@@ -34,7 +34,7 @@ Druppie has 12 agents executing in complex workflows (mandatory sequences of 8-1
 
 ### Proposed YAML Format
 
-Replace with a `fixtures/sessions/` directory of YAML files, one per session:
+Replace with a `fixtures/sessions/` directory of YAML files, one per session. The key principle is: **tool calls are the source of truth**. There is no separate `project:` section — the project gets created because `set_intent` was called. There is no separate git section — files exist because `write_file` was called. The loader either replays these tool calls against real infrastructure or inserts the records as-is, depending on the execution mode.
 
 ```yaml
 # fixtures/sessions/todo-app-builder-failed.yaml
@@ -42,16 +42,12 @@ metadata:
   id: todo-app-builder-failed          # Human-readable ID, hashed to UUID
   title: "hi build me a to do app"
   status: failed
-  intent: create_project
   user: admin
   language: en
   hours_ago: 0.5                       # Relative timestamp (resolved at seed time)
 
-project:
-  name: todo-app
-  create_gitea_repo: true              # Actually create the repo in Gitea
-
 agents:
+  # Router calls set_intent → this creates the project + Gitea repo
   - id: router
     status: completed
     tool_calls:
@@ -60,7 +56,6 @@ agents:
           intent: create_project
           project_name: todo-app
         status: completed
-        result: '{"intent": "create_project", "project_id": "..."}'
 
   - id: planner
     status: completed
@@ -74,6 +69,8 @@ agents:
               prompt: "Design architecture for the todo app."
         status: completed
 
+  # BA asks HITL question → question record auto-created
+  # BA writes file via MCP → file actually created in repo
   - id: business_analyst
     status: completed
     planned_prompt: "Analyze the user request and create SPEC.md."
@@ -83,11 +80,7 @@ agents:
           question: "What features should the todo app have?"
           context: "Initial requirements gathering"
         status: completed
-        result: "Basic CRUD, persistence, responsive design"
-        question:                          # Creates record in questions table
-          question_type: text
-          status: answered
-          answer: "Basic CRUD, persistence, responsive design"
+        answer: "Basic CRUD, persistence, responsive design"
       - tool: coding:write_file
         arguments:
           path: "SPEC.md"
@@ -98,13 +91,12 @@ agents:
             - Mark as complete
             - Persistent storage
         status: completed
-        approval:
-          required_role: null            # No approval needed
       - tool: builtin:done
         arguments:
           summary: "Agent business_analyst: DESIGN_APPROVED. Created SPEC.md with CRUD requirements."
         status: completed
 
+  # Architect writes design via MCP → approval auto-created + resolved
   - id: architect
     status: completed
     planned_prompt: "Design architecture for the todo app."
@@ -123,6 +115,7 @@ agents:
           summary: "Agent architect: DESIGN_APPROVED. Wrote technical_design.md."
         status: completed
 
+  # Builder's sandbox execution failed
   - id: builder
     status: failed
     planned_prompt: "Implement the Todo App based on architecture and tests."
@@ -133,10 +126,6 @@ agents:
           task: "Implement all source files to make tests pass..."
           agent: druppie-builder
         status: failed
-        result: null
-        sandbox_session:
-          status: failed
-          error: "connection timeout after 120s"
 
   - id: planner
     status: pending
@@ -151,15 +140,33 @@ messages:
 
 ### Key Design Decisions
 
+**Tool calls are the source of truth** — There is no separate `project:` block, no separate git/repo config. State emerges from tool calls, just like in a real session:
+- `builtin:set_intent` with `intent: create_project` → creates the project + Gitea repo
+- `coding:write_file` → creates the file in the repo
+- `coding:make_design` → creates the design file (with approval if configured)
+- `builtin:execute_coding_task` → creates sandbox session record
+- `builtin:hitl_ask_question` → creates question record, `answer` field provides the response
+- `builtin:make_plan` → creates pending agent run records
+
+This means the same YAML format works for both seeding (replay) and benchmarking (live execution). A seed fixture is just a recorded session.
+
+**Two execution modes:**
+
+1. **`--mode=replay`** (default for seeding) — The loader actually executes the tool calls against real infrastructure. `set_intent` creates a real Gitea repo. `write_file` writes a real file. The DB records are created as a side effect of execution, exactly like they would be in a real session. This guarantees consistency — if the tool call says a file was written, the file actually exists.
+
+2. **`--mode=record-only`** — The loader only inserts DB records (sessions, agent_runs, tool_calls) without executing anything against MCP servers or Gitea. Faster, no infrastructure needed. Good for UI testing where you just need the sidebar to show sessions, but the repos/files don't need to exist.
+
 **Human-readable IDs** — Session IDs like `todo-app-builder-failed` get hashed to deterministic UUIDs. Readable in YAML, valid in the DB. Same ID always produces the same UUID (idempotent seeding).
 
 **Relative timestamps** — `hours_ago: 0.5` resolved at seed time. Agent run timestamps auto-increment (2 minutes apart, matching current behavior).
 
-**Inline tool calls with full arguments** — The YAML captures actual tool arguments and results, not just status. This means seeded sessions have realistic audit trails that the UI can display correctly.
+**Implicit record creation** — The loader infers which DB records to create from tool calls:
+- HITL tool call with `answer:` field → creates `questions` table record with status `answered`
+- HITL tool call without `answer:` field → creates `questions` table record with status `pending` (session is paused)
+- Tool call with `approval:` block → creates `approvals` table record
+- `execute_coding_task` tool call → creates `sandbox_sessions` table record
 
-**Optional Gitea integration** — `create_gitea_repo: true` creates a real repo. For UI-only testing this can be `false`.
-
-**Approval chain** — Tool calls can include approval metadata (required_role, status, who approved). This seeds sessions in `paused_approval` state correctly.
+**Auto-generated LLM call records** — For each active agent run (completed, failed, running), creates one `llm_calls` record with synthetic token counts and timing. Tool calls reference this LLM call via `llm_call_id` FK. This keeps the YAML clean while maintaining FK integrity.
 
 **Messages linked to agents** — Messages in the `messages:` section can reference an `agent_id` to link them to a specific agent run. The loader resolves these to the correct `agent_run_id` FK. Messages without an `agent_id` (like user messages) get `agent_run_id = NULL`.
 
@@ -178,23 +185,25 @@ fixtures/
 druppie/
   fixtures/
     __init__.py
-    loader.py                          # YAML → SQLAlchemy models
-    gitea.py                           # Gitea repo creation (extracted from seed script)
+    loader.py                          # YAML → tool call replay / DB records
     ids.py                             # Deterministic UUID generation
 
 scripts/
-  seed.py                             # CLI: python scripts/seed.py [--fixtures-dir] [--reset]
+  seed.py                             # CLI: python scripts/seed.py [--mode=replay|record-only] [--fixtures-dir]
 ```
 
 The loader:
 1. Reads all YAML files from `fixtures/sessions/`
-2. Validates against a Pydantic schema (catches errors before DB writes)
+2. Validates against a Pydantic schema (catches errors before any execution)
 3. Generates deterministic UUIDs from human-readable IDs
-4. Creates Gitea repos if requested
-5. Inserts via SQLAlchemy models (not raw SQL) — uses the same domain models as the app
-6. **Auto-generates LLM call records** — For each active agent run (completed, failed, running), creates one `llm_calls` record with synthetic token counts and timing. Tool calls reference this LLM call via `llm_call_id` FK. This keeps the YAML clean while maintaining FK integrity.
-7. **Auto-generates question records** — For tool calls using `hitl_ask_question` or `hitl_ask_multiple_choice_question`, creates the corresponding `questions` table record from the `question:` sub-block.
-8. Is idempotent — re-running deletes and re-creates the same sessions
+4. For each session, processes agents in order:
+   - Creates session record
+   - For each agent run, processes tool calls in order:
+     - **replay mode**: Executes the tool call against real infrastructure (MCP servers, Gitea, etc.) and stores the result
+     - **record-only mode**: Inserts tool call record with the YAML-provided result
+   - Auto-creates related records (questions, approvals, sandbox_sessions) from tool call metadata
+   - Auto-generates LLM call records for FK integrity
+5. Is idempotent — re-running deletes and re-creates the same sessions
 
 ### Docker Compose Integration
 
