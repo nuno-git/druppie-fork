@@ -18,7 +18,7 @@ Injection rules allow automatic injection of context values into tool arguments:
 Example mcp_config.yaml:
     mcps:
       coding:
-        url: ${MCP_CODING_URL:-http://mcp-coding:9001}
+        url: ${MCP_CODING_URL:-http://module-coding:9001}
         inject:
           session_id:
             from: session.id

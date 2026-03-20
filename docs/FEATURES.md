@@ -433,7 +433,7 @@ allowed-tools:
   coding:
     - read_file
     - list_dir
-  bestand-zoeker:
+  web:
     - search_files
 ---
 # Code Review Instructions
