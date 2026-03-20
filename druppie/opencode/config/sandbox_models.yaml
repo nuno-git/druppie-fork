@@ -13,17 +13,24 @@
 
 agents:
   druppie-builder:
-    - provider: deepinfra
-      model: moonshotai/Kimi-K2.5-Turbo
     - provider: zai
       model: glm-5
+    - provider: deepinfra
+      model: moonshotai/Kimi-K2.5-Turbo
     - provider: zai
       model: glm-4.7
   druppie-tester:
+    - provider: zai
+      model: glm-5
     - provider: deepinfra
       model: moonshotai/Kimi-K2.5-Turbo
     - provider: zai
+      model: glm-4.7
+  druppie-core-builder:
+    - provider: zai
       model: glm-5
+    - provider: deepinfra
+      model: moonshotai/Kimi-K2.5-Turbo
     - provider: zai
       model: glm-4.7
 

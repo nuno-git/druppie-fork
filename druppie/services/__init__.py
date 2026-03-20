@@ -19,6 +19,7 @@ from .deployment_service import DeploymentService
 from .workflow_service import WorkflowService
 from .skill_service import SkillService
 from .revert_service import RevertService
+from .github_app_service import GitHubAppService, get_github_app_service
 
 __all__ = [
     "SessionService",
@@ -29,4 +30,6 @@ __all__ = [
     "WorkflowService",
     "SkillService",
     "RevertService",
+    "GitHubAppService",
+    "get_github_app_service",
 ]

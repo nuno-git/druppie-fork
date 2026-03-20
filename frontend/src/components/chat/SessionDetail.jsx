@@ -243,16 +243,16 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
   const queryClient = useQueryClient()
 
   const answerMut = useMutation({
-    mutationFn: ({ questionId, answer }) => answerQuestion(questionId, answer),
+    mutationFn: ({ questionId, answer, selectedChoices = null }) => answerQuestion(questionId, answer, selectedChoices),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['session', sessionId] }),
   })
 
   const isAnswered = tc.status === 'completed'
 
   const rawChoices = tc.arguments?.choices || tc.arguments?.options || []
-  const choices = rawChoices.map(c =>
-    typeof c === 'string' ? c : c.text || c.label || String(c)
-  )
+  const choices = rawChoices
+    .map(c => (typeof c === 'string' ? c : c.text || c.label || String(c)))
+    .filter(c => !/^other\b/i.test(c.trim()))
 
   let displayAnswer = null
   if (isAnswered && tc.result) {
@@ -285,6 +285,7 @@ const TimelineQuestion = ({ tc, agentId, sessionId }) => {
       <HITLQuestionMessage
         question={questionData}
         onChoiceSelect={(answer) => answerMut.mutate({ questionId: tc.question_id, answer })}
+        onSubmitChoices={({ indices, answerText }) => answerMut.mutate({ questionId: tc.question_id, answer: answerText, selectedChoices: indices })}
         isAnswering={answerMut.isPending}
         answered={isAnswered}
       />

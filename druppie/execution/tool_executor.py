@@ -557,6 +557,20 @@ class ToolExecutor:
                 # Create Approval record and pause execution
                 return await self._create_approval_and_wait(tool_call, required_role)
 
+        # Step 3.5: Check approval for builtin tools (via agent approval_overrides)
+        if is_builtin and not is_hitl:
+            agent_definition = self._get_agent_definition(tool_call.agent_run_id)
+            if agent_definition is not None:
+                override = agent_definition.get_approval_override("builtin", tool_call.tool_name)
+                if override is not None and override.requires_approval:
+                    logger.info(
+                        "builtin_tool_needs_approval",
+                        tool_name=tool_call.tool_name,
+                        agent_id=agent_definition.id,
+                        required_role=override.required_role,
+                    )
+                    return await self._create_approval_and_wait(tool_call, override.required_role)
+
         # Step 4: Execute based on tool type
         if is_hitl:
             # HITL tools create Question record and pause for user answer
@@ -610,13 +624,24 @@ class ToolExecutor:
             logger.error("tool_call_not_found", tool_call_id=str(approval.tool_call_id))
             return ToolCallStatus.FAILED
 
+        # Idempotency guard: prevent double-execution on duplicate approval submissions
+        if tool_call.status == ToolCallStatus.COMPLETED:
+            logger.info(
+                "execute_after_approval_already_completed",
+                approval_id=str(approval_id),
+                tool_call_id=str(tool_call.id),
+            )
+            return ToolCallStatus.COMPLETED
+
         logger.info(
             "execute_after_approval",
             approval_id=str(approval_id),
             tool_call_id=str(tool_call.id),
         )
 
-        # Execute the MCP tool (skip approval check since already approved)
+        # Execute the tool (skip approval check since already approved)
+        if tool_call.mcp_server == "builtin" or tool_call.tool_name in BUILTIN_TOOLS:
+            return await self._execute_builtin_tool(tool_call)
         return await self._execute_mcp_tool(tool_call)
 
     async def complete_after_answer(self, question_id: UUID, answer: str) -> str:

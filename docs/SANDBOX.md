@@ -6,7 +6,7 @@ Druppie delegates coding tasks to isolated Docker sandboxes. Each sandbox is a f
 
 ## Architecture
 
-The sandbox infrastructure is based on [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`), integrated as a git submodule at `vendor/open-inspect/`. Sandbox containers run [OpenCode](https://github.com/opencode-ai/opencode) (`latest`).
+The sandbox infrastructure is based on [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`), integrated as a git submodule at `background-agents/`. Sandbox containers run [OpenCode](https://github.com/opencode-ai/opencode) (`latest`).
 
 Three Docker services power the infrastructure:
 
@@ -171,10 +171,10 @@ For production or untrusted code, sandboxes can run inside lightweight VMs inste
 
 ```bash
 # 1. Install Kata Containers
-sudo vendor/open-inspect/packages/local-sandbox-manager/scripts/setup-kata.sh
+sudo background-agents/packages/local-sandbox-manager/scripts/setup-kata.sh
 
 # 2. Build the sandbox image for containerd
-vendor/open-inspect/packages/local-sandbox-manager/scripts/build-sandbox-image.sh --kata
+background-agents/packages/local-sandbox-manager/scripts/build-sandbox-image.sh --kata
 
 # 3. Configure .env
 echo "SANDBOX_RUNTIME=kata" >> .env
@@ -224,20 +224,47 @@ The `sandbox_sessions` table maps control plane session IDs to Druppie users. Sa
 
 Git and LLM credentials are never exposed to the sandbox. The control plane generates per-session proxy keys and intercepts git/LLM requests to inject real credentials.
 
+The sandbox never has real credentials. All git, LLM, and GitHub API access goes through the control plane, which injects real tokens server-side. The sandbox only sees opaque proxy URLs with random keys.
+
+```
+Sandbox Container (no real tokens)
+  │
+  ├── git clone/push  ──→  Control plane git proxy  ──→  Gitea / GitHub
+  │                        (injects username:password)
+  │
+  ├── LLM requests    ──→  Control plane LLM proxy   ──→  LLM providers
+  │                        (injects API keys, handles failover)
+  │
+  └── curl $GITHUB_API_PROXY_URL/...  ──→  Control plane GitHub API proxy  ──→  api.github.com
+                                           (injects Bearer token)
+```
+
+#### Gitea (create_project / update_project)
+
 **Per-sandbox Gitea accounts:** Each sandbox gets its own restricted Gitea user with collaborator access to only the target repository. The user is created before the sandbox starts and deleted after it completes. Even if a sandbox extracts its proxy key, the underlying Gitea token can only access the authorized repo.
+
+#### GitHub (update_core)
+
+**GitHub App installation tokens:** For `update_core`, the backend generates short-lived GitHub App installation tokens (~1 hour TTL) via `GitHubAppService`. These are sent to the control plane as git credentials (`x-access-token:{token}`) — the same proxy mechanism as Gitea, just different credentials. No Gitea service account is created; no cleanup is needed since tokens expire automatically.
+
+**GitHub API proxy:** The sandbox agent needs GitHub API access (create PRs, read issues, etc.) but can't use the `gh` CLI because it hardcodes HTTPS to `api.github.com` — it can't go through an HTTP proxy. Instead, the control plane exposes a reverse proxy at `/github-api-proxy/:proxyKey/*`. The sandbox receives only `$GITHUB_API_PROXY_URL` (an opaque URL with a 256-bit random key). The control plane injects the real Bearer token before forwarding to `api.github.com`. The agent uses `curl $GITHUB_API_PROXY_URL/repos/OWNER/REPO/pulls` etc. — standard GitHub REST API, just through the proxy.
+
+**`gh` CLI wrapper:** A wrapper script replaces the real `gh` binary inside the sandbox. When invoked, it prints usage instructions showing the equivalent `curl $GITHUB_API_PROXY_URL` commands, so the agent learns to use the proxy instead.
+
+#### Common (both providers)
 
 **Proxy-side validation:** The git proxy validates that the requested `owner/repo` matches the session's authorized scope. Requests for other repos return 403.
 
-**Credential lifecycle:** Proxy keys (both git and LLM) are invalidated when the sandbox completes (`execution_complete`), when the container is destroyed (timeout, failure, manual kill), and when the session is deleted. Orphaned Gitea service accounts are cleaned up on backend startup.
+**Credential lifecycle:** Proxy keys (git, LLM, and GitHub API) are invalidated when the sandbox completes (`execution_complete`), when the container is destroyed (timeout, failure, manual kill), and when the session is deleted. For Gitea, orphaned service accounts are cleaned up on backend startup. For GitHub, tokens simply expire.
 
 **Implementation details:**
 - Gitea users are named `sandbox-{session_id[:12]}` to stay within Gitea's username length limits
-- Each user gets `write` collaborator access on the target repo and a scoped access token (`write:repository`)
-- The `git_user_id` is stored on the `sandbox_sessions` DB table for cleanup
+- Each Gitea user gets `write` collaborator access on the target repo and a scoped access token (`write:repository`)
+- The `git_user_id` (Gitea only) and `git_provider` ("gitea" or "github") are stored on the `sandbox_sessions` DB table
 - The credential store's `GitCredentials` interface includes an `authorizedRepo` field (`"owner/repo"`) enforced by the git proxy
 - Credentials are destroyed in three places: `execution_complete` event handler, `destroySandboxContainer()`, and router `DELETE /sessions/:id`
 - On backend startup, `cleanup_orphaned_sandbox_users()` deletes all restricted `sandbox-*` Gitea users (startup-only — assumes no active sandboxes survive a restart)
-- Key files: `druppie/sandbox/gitea_credentials.py` (create/delete), `druppie/sandbox/gitea_cleanup.py` (GC), `credential-store.ts` (authorizedRepo), `git-proxy.ts` (scope validation)
+- Key files: `druppie/sandbox/gitea_credentials.py` (create/delete), `druppie/sandbox/gitea_cleanup.py` (GC), `credential-store.ts` (authorizedRepo), `git-proxy.ts` (scope validation), `github-api-proxy.ts` (GitHub API reverse proxy), `druppie/services/github_app_service.py` (token generation)
 
 ### Webhook Authentication
 
@@ -258,6 +285,9 @@ All webhooks are signed with HMAC-SHA256. The `callbackSecret` is set when creat
 | `SANDBOX_RUNTIME` | `docker` | Container runtime (`docker` or `kata`) |
 | `LLM_FORCE_PROVIDER` | — | Override: forces all sandbox profiles to use this provider (e.g., `deepinfra`). Must be set together with `LLM_FORCE_MODEL`. |
 | `LLM_FORCE_MODEL` | — | Override: forces all sandbox profiles to use this model (e.g., `Qwen/Qwen3-32B`). Must be set together with `LLM_FORCE_PROVIDER`. |
+| `GITHUB_APP_ID` | — | GitHub App ID (required for `update_core` flow). See [GitHub App Setup](#github-app-setup) below. |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | `/app/secrets/github-app-private-key.pem` | Path to `.pem` private key file (mounted via `secrets/` directory) |
+| `GITHUB_APP_INSTALLATION_ID` | — | GitHub App installation ID on the target repo |
 
 ### Config Files
 
@@ -282,3 +312,66 @@ curl -s http://localhost:8787/sessions | jq .
 ```
 
 For Kata-specific troubleshooting, see the [Kata Containers section](#kata-containers-optional-vm-isolation).
+
+---
+
+## GitHub App Setup
+
+The `update_core` flow requires a GitHub App for authentication. This is how Druppie creates PRs on its own GitHub repository without exposing long-lived tokens to sandbox agents.
+
+### 1. Create the GitHub App
+
+Go to [github.com/settings/apps/new](https://github.com/settings/apps/new) and configure:
+
+| Setting | Value |
+|---------|-------|
+| **App name** | `druppie-core-bot` (or any unique name) |
+| **Homepage URL** | Your Druppie instance URL (e.g., `http://localhost:5273`) |
+| **Webhook** | Disable (uncheck "Active") |
+
+**Permissions (Repository):**
+
+| Permission | Access |
+|------------|--------|
+| Contents | Read & Write |
+| Pull requests | Read & Write |
+| Metadata | Read-only |
+
+No other permissions are needed. Click **Create GitHub App**.
+
+### 2. Generate a private key
+
+On the App settings page, scroll to **Private keys** and click **Generate a private key**. A `.pem` file will be downloaded. Save it as:
+
+```
+secrets/github-app-private-key.pem
+```
+
+This directory is mounted into the backend container at `/app/secrets/` (read-only).
+
+### 3. Install the App on your repo
+
+Go to the App's **Install App** tab. Install it on the repository Druppie will create PRs against (e.g., `nuno-git/druppie-fork`). Note the **Installation ID** from the URL after installing (it's the number at the end of the URL).
+
+### 4. Configure environment variables
+
+Add to your `.env`:
+
+```bash
+GITHUB_APP_ID=<app-id-from-step-1>
+GITHUB_APP_PRIVATE_KEY_PATH=/app/secrets/github-app-private-key.pem
+GITHUB_APP_INSTALLATION_ID=<installation-id-from-step-3>
+```
+
+The App ID is shown on the App's settings page (under "About").
+
+### 5. Verify
+
+Restart the backend and check the logs:
+
+```bash
+docker restart druppie-new-backend
+docker logs druppie-new-backend 2>&1 | grep github_app
+```
+
+If configured correctly, `GitHubAppService` logs `enabled=True`. If any env var is missing, it logs `disabled` and the `update_core` flow will return an error when triggered.
