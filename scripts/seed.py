@@ -38,7 +38,7 @@ def main():
     parser.add_argument(
         "--fixtures-dir",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / "druppie" / "fixtures" / "sessions",
+        default=Path(__file__).resolve().parent.parent / "fixtures" / "sessions",
         help="Directory containing YAML fixture files",
     )
     args = parser.parse_args()
