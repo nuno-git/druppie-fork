@@ -505,6 +505,7 @@ class GiteaClient:
         Returns:
             Dict with success, files_pushed count, and any errors
         """
+        import asyncio
         import shutil
         import subprocess
         import tempfile
@@ -535,7 +536,8 @@ class GiteaClient:
         tmp_dir = None
         try:
             tmp_dir = tempfile.mkdtemp(prefix="druppie-template-")
-            clone_result = subprocess.run(
+            clone_result = await asyncio.to_thread(
+                subprocess.run,
                 ["git", "clone", "--branch", branch, "--depth", "1", clone_url, tmp_dir],
                 capture_output=True, text=True, timeout=60,
             )
@@ -549,25 +551,32 @@ class GiteaClient:
                 dest.write_text(content)
 
             # Configure git identity for the commit
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["git", "config", "user.email", "druppie@druppie.local"],
                 cwd=tmp_dir, capture_output=True, timeout=10,
             )
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["git", "config", "user.name", "Druppie"],
                 cwd=tmp_dir, capture_output=True, timeout=10,
             )
 
             # Stage, commit, push
-            subprocess.run(["git", "add", "."], cwd=tmp_dir, capture_output=True, timeout=30)
-            commit_result = subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
+                ["git", "add", "."], cwd=tmp_dir, capture_output=True, timeout=30,
+            )
+            commit_result = await asyncio.to_thread(
+                subprocess.run,
                 ["git", "commit", "-m", "feat: scaffold project template"],
                 cwd=tmp_dir, capture_output=True, text=True, timeout=30,
             )
             if commit_result.returncode != 0:
                 raise RuntimeError(f"Commit failed: {commit_result.stderr}")
 
-            push_result = subprocess.run(
+            push_result = await asyncio.to_thread(
+                subprocess.run,
                 ["git", "push", "origin", branch],
                 cwd=tmp_dir, capture_output=True, text=True, timeout=120,
             )
