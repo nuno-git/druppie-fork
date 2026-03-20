@@ -72,6 +72,7 @@ HITL_TOOLS = {
 LONG_RUNNING_TOOLS = {
     "run_tests",
     "install_test_dependencies",
+    "compose_up",
 }
 LONG_RUNNING_TIMEOUT = 1200.0  # 20 minutes
 

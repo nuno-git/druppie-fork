@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
     _recover_zombie_sessions()
 
     # Clean up orphaned sandbox Gitea users from previous runs
-    from druppie.sandbox.gitea_cleanup import cleanup_orphaned_sandbox_users
+    from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users
     await cleanup_orphaned_sandbox_users()
 
     # Start sandbox watchdog (detects stuck WAITING_SANDBOX tool calls)

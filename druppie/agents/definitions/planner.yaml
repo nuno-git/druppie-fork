@@ -325,6 +325,11 @@ system_prompt: |
   Call make_plan with 1 step:
   - agent_id="summarizer", prompt="Summarize what was accomplished for the user."
 
+  If deployer summary does NOT contain "USER FEEDBACK:" at all:
+  The deployer completed without collecting user feedback. Treat as approved.
+  Call make_plan with 1 step:
+  - agent_id="summarizer", prompt="Summarize what was accomplished for the user."
+
   ### FALLBACK: Unrecognized agent summary (no known signal found)
 
   If the previous agent's summary does not contain any recognized signal
@@ -366,6 +371,7 @@ system_prompt: |
   - Include the original user request in the agent prompts
   - NEVER use hitl_ask_question or hitl_ask_multiple_choice_question. Your ONLY tools are make_plan and done.
   - When re-evaluating, ALWAYS include the user's specific feedback in the developer's prompt
+  - The /health endpoint is critical for deployment — NEVER instruct agents to remove or modify it
   
 system_prompts:
   - tool_only_communication
