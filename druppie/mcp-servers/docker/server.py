@@ -11,6 +11,7 @@ This is a STANDALONE service:
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -525,7 +526,7 @@ async def run(
 
 
 @mcp.tool()
-async def compose_up(
+def compose_up(
     repo_name: str | None = None,
     repo_owner: str | None = None,
     git_url: str | None = None,
@@ -599,7 +600,9 @@ async def compose_up(
             sid_suffix = (session_id or build_id)[:8]
             project_name = f"{repo_name or 'app'}-{sid_suffix}"
         # Sanitize: compose project names must be lowercase alphanumeric + hyphens
-        project_name = project_name.lower().replace("_", "-")
+        project_name = re.sub(r'[^a-z0-9-]', '', project_name.lower().replace("_", "-"))
+        if not project_name:
+            project_name = f"app-{build_id}"
 
         # Step 5: Write override file with druppie labels and network config
         # Attach compose containers to the same Docker network as the MCP server
@@ -615,19 +618,27 @@ async def compose_up(
             labels["druppie.branch"] = branch
         labels["druppie.compose_project"] = project_name
 
-        override_content = "services:\n  app:\n    labels:\n"
-        for k, v in labels.items():
-            override_content += f'      {k}: "{v}"\n'
+        import yaml as pyyaml  # avoid shadowing
+
+        override_data: dict[str, Any] = {
+            "services": {
+                "app": {
+                    "labels": labels,
+                }
+            }
+        }
 
         # Join the Druppie Docker network so containers are discoverable
         # and the health check can reach them from inside the MCP server
         if DOCKER_NETWORK:
-            override_content += f"""
-networks:
-  default:
-    external: true
-    name: {DOCKER_NETWORK}
-"""
+            override_data["networks"] = {
+                "default": {
+                    "external": True,
+                    "name": DOCKER_NETWORK,
+                }
+            }
+
+        override_content = pyyaml.dump(override_data, default_flow_style=False, sort_keys=False)
 
         override_path = clone_path / "docker-compose.override.yaml"
         override_path.write_text(override_content)
@@ -686,6 +697,15 @@ networks:
                 text=True,
                 timeout=10,
             )
+            # Tear down failed deployment to avoid port/container leak
+            subprocess.run(
+                ["docker", "compose", "-p", project_name, "down", "-v"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            release_port(host_port)
+            compose_port_registry.pop(project_name, None)
             return {
                 "success": False,
                 "error": f"Health check failed after {health_timeout}s",

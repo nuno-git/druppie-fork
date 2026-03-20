@@ -33,8 +33,8 @@ DB_DSN = os.environ.get(
     "DB_DSN", "postgresql://druppie:druppie_secret@localhost:5634/druppie"
 )
 GITEA_URL = os.environ.get("GITEA_URL", "http://localhost:3200")
-GITEA_USER = "gitea_admin"
-GITEA_PASS = "GiteaAdmin123"
+GITEA_USER = os.environ.get("GITEA_USER", "gitea_admin")
+GITEA_PASS = os.environ.get("GITEA_PASSWORD", "GiteaAdmin123")
 FRONTEND_URL = "http://localhost:5273"
 
 # Template directory (relative to this script)
@@ -62,7 +62,7 @@ def ensure_gitea_user(client: httpx.Client):
         r = client.post("/api/v1/admin/users", json={
             "username": "druppie_admin",
             "email": "druppie_admin@druppie.local",
-            "password": "DruppieAdmin123!",
+            "password": os.environ.get("DRUPPIE_ADMIN_PASSWORD", "DruppieAdmin123!"),
             "must_change_password": False,
             "login_name": "druppie_admin",
             "source_id": 0,
