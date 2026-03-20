@@ -333,7 +333,7 @@ services:
 
   sandbox-control-plane:
     build:
-      context: ./vendor/open-inspect
+      context: ./background-agents
       dockerfile: packages/local-control-plane/Dockerfile
     container_name: druppie-sandbox-control-plane
     profiles: [infra, dev, prod]
@@ -360,7 +360,7 @@ services:
 
   sandbox-manager:
     build:
-      context: ./vendor/open-inspect
+      context: ./background-agents
       dockerfile: packages/local-sandbox-manager/Dockerfile
     container_name: druppie-sandbox-manager
     profiles: [infra, dev, prod]
@@ -395,7 +395,7 @@ services:
   # Builds the sandbox base image, then exits. Docker caches it — only rebuilds when Dockerfile changes.
   sandbox-image-builder:
     build:
-      context: ./vendor/open-inspect
+      context: ./background-agents
       dockerfile: packages/local-sandbox-manager/Dockerfile.sandbox
     image: open-inspect-sandbox:latest
     profiles: [infra, dev, prod]
@@ -519,8 +519,14 @@ services:
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
       BACKEND_URL: http://druppie-backend-dev:8000
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH:-}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
+      DRUPPIE_REPO_OWNER: ${DRUPPIE_REPO_OWNER:-}
+      DRUPPIE_REPO_NAME: ${DRUPPIE_REPO_NAME:-}
     volumes:
       - ./druppie:/app/druppie
+      - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     ports:
@@ -593,7 +599,13 @@ services:
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
       BACKEND_URL: http://druppie-backend:8000
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH:-}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
+      DRUPPIE_REPO_OWNER: ${DRUPPIE_REPO_OWNER:-}
+      DRUPPIE_REPO_NAME: ${DRUPPIE_REPO_NAME:-}
     volumes:
+      - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     ports:

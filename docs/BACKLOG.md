@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-03-09
+Last updated: 2026-03-19
 
 ---
 
@@ -39,6 +39,9 @@ Last updated: 2026-03-09
 - Test Executor Python-Level Safety Net
 - Frontend Agent Config from API
 - General Pre-Validation System for Tool Arguments
+- Update Core Flow — End-to-End Improvements
+- ~~Update Core — Technical Basis~~ ✅ DONE
+- ~~Update Core — Architect Signal & Dual-Repo Sandbox~~ ✅ DONE
 
 ---
 
@@ -175,7 +178,7 @@ Last updated: 2026-03-09
 ### ~~Sandboxed Execution Environment for Agents~~ (DONE)
 
 - **Resolved in:** `feature/execute-coding-task` branch
-- Full sandbox infrastructure implemented using Open-Inspect (git submodule at `vendor/open-inspect/`). Docker sandboxes with OpenCode provide isolated execution per task. Webhook + pause/resume pattern replaces long-polling. Provider resilience with three-layer failover. Optional Kata Containers for VM-level isolation.
+- Full sandbox infrastructure implemented using Open-Inspect (git submodule at `background-agents/`). Docker sandboxes with OpenCode provide isolated execution per task. Webhook + pause/resume pattern replaces long-polling. Provider resilience with three-layer failover. Optional Kata Containers for VM-level isolation.
 - See `docs/SANDBOX.md` for full details.
 
 ### ~~Test-Driven Development (TDD) Workflow~~ ✅ DONE
@@ -267,3 +270,43 @@ Last updated: 2026-03-09
 - **Current state:** The tool executor has a hardcoded `if tool_call.tool_name == "make_design"` check that runs Mermaid validation before the approval gate. The mermaid validator is imported via a fragile `importlib.util.spec_from_file_location` hack because it lives in `mcp-servers/coding/` (hyphenated directory, not a proper Python package).
 - **Problem:** Adding content validation for any other tool requires adding more `if` statements to the tool executor and more fragile imports.
 - **Desired improvement:** Add an optional `pre_validate(self) -> str | None` method to Pydantic params models. The tool executor calls it generically after schema validation succeeds. This way adding a new validator = adding a method to a params model, with zero changes to `tool_executor.py`. The mermaid validator moves to `druppie/tools/validators/mermaid.py` (properly importable). See issue #79 for the full plan.
+
+### Update Core Flow — End-to-End Improvements
+
+- **Current state:** PR #77 delivers the full `update_core` flow: signal-based routing (Architect signals `DESIGN_APPROVED_CORE_UPDATE`), dedicated `update_core_builder` agent, dual-repo sandbox, GitHub App tokens, GitHub API proxy, `create-pull-request` sandbox tool, and profile-based LLM routing.
+- **What works:**
+  - Architect detects core-change requests via keyword matching in the functional design
+  - Planner routes `DESIGN_APPROVED_CORE_UPDATE` signal to `update_core_builder` (no new intent — session stays `create_project`/`update_project`)
+  - `update_core_builder` calls `execute_coding_task` with `repo_target="druppie_core"` — dual-repo sandbox clones `/workspace/core/` (GitHub) + `/workspace/project/` (Gitea)
+  - `create-pull-request` sandbox tool creates PRs via control plane endpoint
+  - GitHub API proxy injects GitHub App installation tokens (short-lived, scoped) — sandbox never sees real tokens
+  - `done()` on `update_core_builder` requires developer approval (reviewer merges PR first)
+  - After core builder completes, Planner routes back to Architect (run 2) for project-specific design
+  - Repo coordinates configurable via `DRUPPIE_REPO_OWNER`/`DRUPPIE_REPO_NAME` env vars
+- **What's left:**
+  - **GitHub App token expiry:** Installation tokens expire after 1 hour. Tokens are baked into the git remote URL and credential store at clone time. Sandboxes running longer than 1 hour will get auth failures on `git push` and GitHub API calls via the proxy. Mitigation: add token refresh on 401 responses in the git/github-api proxy, or ensure the agent pushes early and often. See `druppie/services/github_app_service.py`.
+  - **Automated testing:** No automated tests for `GitHubAppService`, dual-repo credential path, or the `update_core_builder` routing logic.
+  - **Full E2E validation:** Dual-repo sandbox tested manually but needs a full end-to-end run with a real core change request.
+- **Priority:** Low — the architecture is in place. Remaining work is testing and hardening.
+
+### ~~Update Core — Technical Basis~~ (DONE)
+
+- **Resolved in:** `feature/update-core-flow` branch (PR #77)
+- GitHub App integration: `GitHubAppService` generates short-lived installation tokens from `GITHUB_APP_*` env vars. Caches until near-expiry. Disabled when not configured (no crash).
+- Signal-based routing: Architect detects core-change requests and signals `DESIGN_APPROVED_CORE_UPDATE` in its `done()` summary. Planner reads the signal and routes to `update_core_builder`. No separate `update_core` intent — session intent stays `create_project`/`update_project`.
+- `update_core_builder` agent: calls `execute_coding_task` with `repo_target="druppie_core"` and `agent="druppie-core-builder"`. `done()` requires developer role approval.
+- Dual-repo sandbox: `/workspace/core/` (GitHub, read+write) + `/workspace/project/` (Gitea, read-only context with FD/TD). Credential store manages dual git proxy keys per session.
+- GitHub API proxy in control plane: reverse proxy at `/github-api-proxy/:proxyKey/*` → `api.github.com`. Injects GitHub App token server-side.
+- Git proxy fix: `express.raw()` for binary git protocol data. Validates both primary and context git proxy keys.
+- `create-pull-request` sandbox tool: OpenCode inspect tool that calls control plane `/sessions/:id/pr` endpoint. Auto-detects current branch, defaults base to `main`.
+- Profile-based LLM routing: each sandbox agent gets a virtual `sandbox/{agent_name}` profile. `druppie-core-builder` has its own chain in `sandbox_models.yaml`.
+- Existing `create_project`, `update_project`, and `general_chat` flows unchanged.
+
+### ~~Update Core — Architect Signal & Dual-Repo Sandbox~~ (DONE)
+
+- **Resolved in:** `feature/update-core-flow` branch (PR #77)
+- **Architect signal:** The Architect agent detects when a project involves modifying Druppie itself. After writing `technical_design.md`, it signals `DESIGN_APPROVED_CORE_UPDATE` in its `done()` summary (plain text signal, not a tool call). Detection is based on keywords in the functional design and project description.
+- **Planner routing:** The Planner checks for `CORE_UPDATE` in the Architect's summary *before* checking for `DESIGN_APPROVED`. Routes to `update_core_builder` (2-step plan: update_core_builder → planner re-evaluation), then Architect runs again for the actual project design.
+- **`repo_target` parameter:** `execute_coding_task` accepts `repo_target` enum (`"project"` default, `"druppie_core"`). Controls whether the sandbox gets single-repo or dual-repo credentials.
+- **Simplified branch targeting:** The sandbox agent determines PR base branch from its git remote (GitHub repos → `colab-dev`, Gitea repos → `main`). Configured in sandbox agent prompts — no branch parameter threaded through infrastructure.
+- **YAML auto-reload:** `AgentDefinitionLoader` checks file mtime on each load and automatically reloads YAML definitions when they change on disk. No backend restart needed for prompt edits during development.

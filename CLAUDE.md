@@ -84,8 +84,7 @@ druppie/
 ├── core/          # MCP client, config loading
 └── mcp-servers/   # Coding (9001), Docker (9002) microservices
 
-vendor/
-└── open-inspect/  # Git submodule — sandbox infrastructure (background-agents)
+background-agents/  # Sandbox infrastructure (from nuno120/background-agents, branch druppie)
 
 frontend/
 ├── src/pages/     # React pages

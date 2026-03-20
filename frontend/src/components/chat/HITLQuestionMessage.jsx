@@ -17,7 +17,7 @@ import remarkGfm from 'remark-gfm'
 import { getAgentConfig, getAgentMessageColors } from '../../utils/agentConfig'
 import { chatMarkdownComponents } from './ChatHelpers'
 
-const HITLQuestionMessage = ({ question, onChoiceSelect, isAnswering, answered = false }) => {
+const HITLQuestionMessage = ({ question, onChoiceSelect, onSubmitChoices, isAnswering, answered = false }) => {
   const agentId = question.agent_id || 'unknown'
   const agentConfig = getAgentConfig(agentId)
   const AgentIcon = agentConfig.icon
@@ -25,6 +25,7 @@ const HITLQuestionMessage = ({ question, onChoiceSelect, isAnswering, answered =
 
   const hasOptions = question.choices && question.choices.length > 0
 
+  const [selectedIndices, setSelectedIndices] = useState(new Set())
   const [showFreeText, setShowFreeText] = useState(false)
   const [freeText, setFreeText] = useState('')
   const freeTextRef = useRef(null)
@@ -34,6 +35,25 @@ const HITLQuestionMessage = ({ question, onChoiceSelect, isAnswering, answered =
       freeTextRef.current.focus()
     }
   }, [showFreeText])
+
+  const handleToggleChoice = (index) => {
+    setSelectedIndices((prev) => {
+      const next = new Set(prev)
+      if (next.has(index)) {
+        next.delete(index)
+      } else {
+        next.add(index)
+      }
+      return next
+    })
+  }
+
+  const handleSubmitChoices = () => {
+    if (selectedIndices.size === 0) return
+    const indices = [...selectedIndices].sort((a, b) => a - b)
+    const answerText = indices.map((i) => question.choices[i]).join(', ')
+    onSubmitChoices?.({ indices, answerText })
+  }
 
   const handleFreeTextSubmit = () => {
     const trimmed = freeText.trim()
@@ -62,23 +82,23 @@ const HITLQuestionMessage = ({ question, onChoiceSelect, isAnswering, answered =
 
         {hasOptions && !answered && !showFreeText && (
           <div className="mt-2 space-y-1.5">
-            {question.choices.map((option, index) => (
-              <button
-                key={index}
-                onClick={() => onChoiceSelect?.(option)}
-                disabled={isAnswering}
-                className="w-full text-left px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-700 hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {isAnswering ? (
-                  <span className="flex items-center gap-2">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    {option}
-                  </span>
-                ) : (
-                  option
-                )}
-              </button>
-            ))}
+            {question.choices.map((option, index) => {
+              const isSelected = selectedIndices.has(index)
+              return (
+                <button
+                  key={index}
+                  onClick={() => handleToggleChoice(index)}
+                  disabled={isAnswering}
+                  className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isSelected
+                      ? 'border-blue-400 bg-blue-50 text-blue-800'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  {option}
+                </button>
+              )
+            })}
             {question.allowOther && (
               <button
                 onClick={() => setShowFreeText(true)}
@@ -88,6 +108,20 @@ const HITLQuestionMessage = ({ question, onChoiceSelect, isAnswering, answered =
                 Other (type your answer)
               </button>
             )}
+            <button
+              onClick={handleSubmitChoices}
+              disabled={selectedIndices.size === 0 || isAnswering}
+              className="w-full px-3 py-2 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              {isAnswering ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Submitting…
+                </span>
+              ) : (
+                `Submit${selectedIndices.size > 0 ? ` (${selectedIndices.size})` : ''}`
+              )}
+            </button>
           </div>
         )}
 

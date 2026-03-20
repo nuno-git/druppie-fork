@@ -140,8 +140,9 @@ druppie/
   sandbox-config/
     opencode-config.json   # OpenCode default agent + permissions
     agents/
-      druppie-builder.md   # Sandbox coding agent prompt
-      druppie-tester.md    # Sandbox testing agent prompt
+      druppie-builder.md        # Sandbox coding agent prompt
+      druppie-core-builder.md   # Sandbox core update agent prompt (dual-repo)
+      druppie-tester.md         # Sandbox testing agent prompt
   db/models/
     base.py              # SQLAlchemy base, mixins
     user.py
@@ -260,7 +261,7 @@ SQLAlchemy ORM models live in `druppie/db/models/`. The schema:
 | `UserRole` | User role assignments (admin, architect, developer) |
 | `UserToken` | User API tokens |
 | `Project` | Projects with Gitea repo references |
-| `Session` | Chat sessions tied to a user and optionally a project |
+| `Session` | Chat sessions tied to a user and optionally a project. Intent is `create_project`, `update_project`, or `general_chat`. |
 | `AgentRun` | Individual agent execution records within a session |
 | `Message` | Conversation messages (user and assistant) in the timeline |
 | `ToolCall` | Tool invocations by agents, linked to LLM calls |
@@ -644,6 +645,7 @@ Twelve agents are defined as YAML files in `druppie/agents/definitions/`:
 | `test_builder` | Generates tests (TDD Red Phase) | Default | `coding` | — |
 | `builder` | Implements code to pass tests (TDD Green Phase) | Default | `coding` | — |
 | `test_executor` | Runs tests, iteratively fixes code | `test_report` | `coding` | — |
+| `update_core_builder` | Delegates core changes to dual-repo sandbox | `execute_coding_task` | None | — |
 | `developer` | Writes code, commits, creates PRs | `invoke_skill`, `execute_coding_task` | `coding` | `code-review`, `git-workflow` |
 | `reviewer` | Reviews code quality | Default | `coding` | — |
 | `tester` | Writes and runs tests | `execute_coding_task` | `coding`, `docker` | — |
@@ -980,7 +982,7 @@ Optional:
 
 > Full documentation: [docs/SANDBOX.md](SANDBOX.md) — covers architecture, OpenCode integration, provider resilience, Kata Containers, and security.
 
-[Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`) is integrated as a git submodule at `vendor/open-inspect/`. Sandbox containers run OpenCode `v1.2.22` (pinned in `Dockerfile.sandbox`). They provide isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace.
+[Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`) is integrated as a direct directory at `background-agents/` (previously a git submodule, now tracked directly in the Druppie repo). Sandbox containers run OpenCode `v1.2.22` (pinned in `Dockerfile.sandbox`). They provide isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace.
 
 ### 10.1 Services
 
@@ -999,6 +1001,14 @@ Defined in `druppie/agents/builtin_tools.py`. Delegates a coding task to a sandb
 3. Registers ownership in `sandbox_sessions` table
 4. Returns `WAITING_SANDBOX` — agent pauses, thread freed
 5. On completion, control plane POSTs webhook → handler fetches events, completes tool call, resumes agent
+
+**Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `task` | Yes | Task description for the sandbox agent |
+| `agent` | No | Sandbox agent name (default: `druppie-builder`). Determines which OpenCode agent prompt is used. |
+| `repo_target` | No | Enum: `"project"` (default) or `"druppie_core"`. Controls git provider and credential routing. `"project"` clones the session's Gitea project repo (single-repo sandbox). `"druppie_core"` clones both Druppie's GitHub repo and the project repo (dual-repo sandbox — see Section 10.9). |
 
 **Auth:** HMAC-SHA256 tokens (`{unix_ms_timestamp}.{hmac_sha256_hex_signature}`), verified by Open-Inspect's `verifyInternalToken`.
 
@@ -1023,6 +1033,63 @@ The `sandbox_sessions` table maps control plane session IDs to Druppie users:
 | `user_id` | UUID (FK → users) | Owning user |
 | `tool_call_id` | UUID (nullable, FK → tool_calls, indexed) | Direct webhook lookup |
 | `webhook_secret` | str (nullable) | Per-session HMAC secret |
+| `git_user_id` | str (nullable) | Gitea service account ID for cleanup (None for GitHub — tokens expire automatically) |
 
 The `tool_call_id` FK enables direct lookup from webhook → tool call without table scans. Events proxy (`GET /api/sandbox-sessions/{id}/events`) enforces ownership — non-owners get 403, admins bypass.
+
+### 10.5 Git Provider Routing (Gitea vs GitHub)
+
+The `execute_coding_task` builtin determines git provider based on the `repo_target` parameter:
+
+| `repo_target` | Git Provider | Credentials | Cleanup |
+|---------------|-------------|-------------|---------|
+| `"project"` (default) | Gitea | Per-sandbox Gitea service account (scoped to repo) | Service account deleted on completion |
+| `"druppie_core"` | GitHub | GitHub App installation token (short-lived, ~1 hour) | No cleanup needed — tokens expire automatically |
+
+Any agent with `execute_coding_task` can pass `repo_target="druppie_core"` (e.g., `update_core_builder` for implementation, Architect for read-only exploration via `agent="explore"`). When `repo_target="druppie_core"`, the sandbox receives dual git credentials: GitHub for the core repo (`DRUPPIE_REPO_OWNER`/`DRUPPIE_REPO_NAME`) and Gitea for the project repo (from the session's linked project). The credential store generates separate proxy keys for each, and the sandbox entrypoint clones both repos into `/workspace/core/` and `/workspace/project/`.
+
+### 10.6 GitHub App Token Service
+
+`druppie/services/github_app_service.py` — singleton service that generates GitHub App installation access tokens.
+
+- Reads `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_APP_INSTALLATION_ID` from env
+- Generates RS256 JWT, exchanges for installation token via GitHub API
+- Caches token with 5-minute refresh margin (tokens last 1 hour)
+- Disabled when env vars are missing (no crash, `get_installation_token()` returns None)
+- GitHub API proxy in control plane (`/github-api-proxy/:proxyKey/*`) injects the token server-side — sandbox only sees an opaque proxy URL
+
+### 10.7 Branch Targeting
+
+The sandbox agent determines PR target branch from its git remote: GitHub repos target `colab-dev`, Gitea repos target `main`. This is configured in the `druppie-builder.md` agent prompt — no branch parameter is threaded through the infrastructure.
+
+### 10.8 Core Update Detection (DESIGN_APPROVED_CORE_UPDATE)
+
+When the Architect detects that a project involves modifying Druppie's own codebase, it signals `DESIGN_APPROVED_CORE_UPDATE` in its `done()` summary instead of `DESIGN_APPROVED`. The Planner reads this signal and routes to the `update_core_builder` agent.
+
+The detection is prompt-based: the Architect checks if the project adds, modifies, or removes anything in the Druppie codebase/repository itself (as opposed to a separate user project). Keywords include: druppie, core, router, planner, agent, prompt, skill, MCP server, sandbox, workflow, codebase, repository.
+
+The session intent is never changed — it stays `create_project` or `update_project` throughout. No session state is mutated for core updates.
+
+### 10.9 Dual-Repo Sandbox
+
+When `update_core_builder` calls `execute_coding_task`, the backend passes both core and project repo credentials to the control plane. The credential store generates two git proxy keys, and the session-instance constructs two env vars: `GIT_URL` (core repo) and `CONTEXT_GIT_URL` (project repo).
+
+The sandbox entrypoint detects `CONTEXT_GIT_URL` and switches to dual-repo mode:
+- `/workspace/core/` — Druppie's GitHub repo (cloned via git proxy, read+write)
+- `/workspace/project/` — Project Gitea repo (cloned via git proxy, contains FD/TD)
+
+The `druppie-core-builder` OpenCode agent (`druppie/sandbox-config/agents/druppie-core-builder.md`) instructs the sandbox LLM to read design docs from `/workspace/project/` and implement changes in `/workspace/core/`. Both `GIT_URL` and `CONTEXT_GIT_URL` are stripped from the OpenCode environment after clone — the sandbox agent never sees raw proxy keys or tokens.
+
+### 10.10 Builtin Tool Approval Overrides
+
+Agent YAML definitions can specify `approval_overrides` for builtin tools using the `"builtin:<tool_name>"` key format. The `update_core_builder` agent uses this to require developer approval for `done()`:
+
+```yaml
+approval_overrides:
+  "builtin:done":
+    requires_approval: true
+    required_role: developer
+```
+
+The tool executor checks these overrides before executing builtin tools, using the same layered approval system as MCP tools (agent override > global default).
 
