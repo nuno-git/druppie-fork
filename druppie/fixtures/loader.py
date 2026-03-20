@@ -6,8 +6,6 @@ Replicates what ``scripts/seed_builder_retry.py`` does but from YAML data.
 
 from __future__ import annotations
 
-import json
-import random
 from datetime import timedelta
 from pathlib import Path
 
@@ -22,6 +20,7 @@ from druppie.db.models import (
     Project,
     Question,
     Session,
+    ToolCall,
     User,
     UserRole,
 )
@@ -55,9 +54,15 @@ def seed_fixture(db: DbSession, fixture: SessionFixture) -> None:
     session_id = fixture_uuid(meta.id)
 
     # -- 1. Delete existing records for idempotency --
-    db.query(Session).filter(Session.id == session_id).delete()
-    # Project is cascade-independent; delete explicitly if exists
+    # Delete child records explicitly in FK order (works without CASCADE)
     project_id = fixture_uuid(meta.id, "project")
+    db.query(Approval).filter(Approval.session_id == session_id).delete()
+    db.query(Question).filter(Question.session_id == session_id).delete()
+    db.query(ToolCall).filter(ToolCall.session_id == session_id).delete()
+    db.query(LlmCall).filter(LlmCall.session_id == session_id).delete()
+    db.query(Message).filter(Message.session_id == session_id).delete()
+    db.query(AgentRun).filter(AgentRun.session_id == session_id).delete()
+    db.query(Session).filter(Session.id == session_id).delete()
     db.query(Project).filter(Project.id == project_id).delete()
     db.flush()
 
@@ -186,7 +191,7 @@ def seed_fixture(db: DbSession, fixture: SessionFixture) -> None:
                 prompt_tokens=p_tok,
                 completion_tokens=c_tok,
                 total_tokens=p_tok + c_tok,
-                duration_ms=random.randint(1500, 8000),
+                duration_ms=2000 + (idx * 500),
                 created_at=run_ts,
             ))
 
@@ -278,8 +283,6 @@ def _seed_tool_calls(
     user_id,
 ) -> None:
     """Create ToolCall (and optional Approval / Question) records."""
-    from druppie.db.models import ToolCall
-
     meta = fixture.metadata
 
     for tc_idx, tc in enumerate(agent.tool_calls):
