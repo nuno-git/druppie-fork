@@ -7,7 +7,6 @@ Default (all agents): done, hitl_ask_question, hitl_ask_multiple_choice_question
 Router adds: set_intent
 Planner adds: make_plan
 Agents with skills: invoke_skill (loads skill markdown prompts)
-
 Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
 Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
 """
@@ -24,6 +23,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 from druppie.sandbox.model_resolver import get_agent_chain, resolve_sandbox_models
+from druppie.tools.params.coding import VALID_REPO_TARGETS
 
 
 # =============================================================================
@@ -219,6 +219,15 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "type": "string",
                         "description": "Which sandbox agent to use",
                     },
+                    "repo_target": {
+                        "type": "string",
+                        "enum": ["project", "druppie_core"],
+                        "description": (
+                            "Which repo the sandbox works on. "
+                            "'project' (default) = session's Gitea project repo. "
+                            "'druppie_core' = Druppie's own GitHub repo (dual-repo: core + project context)."
+                        ),
+                    },
                 },
                 "required": ["task"],
             },
@@ -336,7 +345,6 @@ async def set_intent(
         project_name=project_name,
     )
 
-    # Validate intent
     valid_intents = ("create_project", "update_project", "general_chat")
     if intent not in valid_intents:
         return {
@@ -518,10 +526,10 @@ def _update_planner_prompt(
         return
 
     # Prepend intent context to the existing prompt
-    intent_context = f"""INTENT: {intent}
-PROJECT_ID: {str(project_id) if project_id else 'new'}
-
-"""
+    if project_id:
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: {str(project_id)}\n\n"
+    else:
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: new\n\n"
     new_prompt = intent_context + (planner_run.planned_prompt or "")
     execution_repo.update_planned_prompt(planner_run.id, new_prompt)
 
@@ -928,14 +936,23 @@ async def execute_sandbox_coding_task(
     if not session.user_id:
         return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
 
-    repo_owner = os.getenv("GITEA_ORG", "druppie")
-    repo_name = ""
-    if session.project_id:
-        project_repo = ProjectRepository(db)
-        project = project_repo.get_by_id(session.project_id)
-        if project:
-            repo_owner = project.repo_owner or repo_owner
-            repo_name = project.repo_name or ""
+    # Determine git provider and repo context based on repo_target param
+    repo_target = args.get("repo_target", "project")
+    if repo_target not in VALID_REPO_TARGETS:
+        return {"success": False, "error": f"Invalid repo_target '{repo_target}'. Must be one of: {VALID_REPO_TARGETS}."}
+
+    from druppie.sandbox.repo_context import resolve_repo_context
+    try:
+        repo_ctx = resolve_repo_context(repo_target, session_id, db)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    repo_owner = repo_ctx.repo_owner
+    repo_name = repo_ctx.repo_name
+    git_provider = repo_ctx.git_provider
+    context_repo_owner = repo_ctx.context_repo_owner
+    context_repo_name = repo_ctx.context_repo_name
+    context_git_provider = repo_ctx.context_git_provider
 
     try:
         result = await create_and_start_sandbox(
@@ -952,6 +969,11 @@ async def execute_sandbox_coding_task(
             source="api",
             author_id="druppie-agent",
             db=db,
+            git_provider=git_provider,
+            context_repo_owner=context_repo_owner,
+            context_repo_name=context_repo_name,
+            context_git_provider=context_git_provider,
+            repo_target=repo_target,
         )
 
         logger.info(

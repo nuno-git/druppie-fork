@@ -168,6 +168,9 @@ export class SessionInstance {
   private alarmTimer: ReturnType<typeof setTimeout> | null = null;
   private isSpawningSandbox = false;
   private gitProxyKey: string | null = null;
+  private contextGitProxyKey: string | null = null;
+  private contextRepoOwner: string | null = null;
+  private contextRepoName: string | null = null;
   private llmProxyKey: string | null = null;
   private githubApiProxyKey: string | null = null;
   private availableLlmProviders: string[] = [];
@@ -315,12 +318,13 @@ export class SessionInstance {
     this.scheduleAlarm(now + Math.min(inactivityTimeoutMs, 60_000));
   }
 
-  /** Invalidate all proxy keys for this session (git + LLM). Idempotent. */
+  /** Invalidate all proxy keys for this session (git + LLM + context). Idempotent. */
   private destroyCredentials(): void {
     if (this.credentialStore) {
       this.credentialStore.destroy(this.sessionId);
       this.log.info("Credentials destroyed");
     }
+    this.contextGitProxyKey = null;
   }
 
   /**
@@ -1086,9 +1090,13 @@ export class SessionInstance {
 
       if (this.gitProxyKey) {
         gitUrl = `${controlPlaneUrl}/git-proxy/${this.gitProxyKey}/${session.repo_owner}/${session.repo_name}.git`;
+        userEnvVars["GIT_URL"] = gitUrl;
       }
       if (this.llmProxyKey) {
         userEnvVars["LLM_PROXY_URL"] = `${controlPlaneUrl}/llm-proxy/${this.llmProxyKey}`;
+      }
+      if (this.contextGitProxyKey && this.contextRepoOwner && this.contextRepoName) {
+        userEnvVars["CONTEXT_GIT_URL"] = `${controlPlaneUrl}/git-proxy/${this.contextGitProxyKey}/${this.contextRepoOwner}/${this.contextRepoName}.git`;
       }
       if (this.githubApiProxyKey) {
         userEnvVars["GITHUB_API_PROXY_URL"] = `${controlPlaneUrl}/github-api-proxy/${this.githubApiProxyKey}`;
@@ -1177,8 +1185,14 @@ export class SessionInstance {
 
       // Build user env vars for proxy URLs
       const userEnvVars: Record<string, string> = {};
+      if (this.gitProxyKey) {
+        userEnvVars["GIT_URL"] = `${controlPlaneUrl}/git-proxy/${this.gitProxyKey}/${session.repo_owner}/${session.repo_name}.git`;
+      }
       if (this.llmProxyKey) {
         userEnvVars["LLM_PROXY_URL"] = `${controlPlaneUrl}/llm-proxy/${this.llmProxyKey}`;
+      }
+      if (this.contextGitProxyKey && this.contextRepoOwner && this.contextRepoName) {
+        userEnvVars["CONTEXT_GIT_URL"] = `${controlPlaneUrl}/git-proxy/${this.contextGitProxyKey}/${this.contextRepoOwner}/${this.contextRepoName}.git`;
       }
       if (this.githubApiProxyKey) {
         userEnvVars["GITHUB_API_PROXY_URL"] = `${controlPlaneUrl}/github-api-proxy/${this.githubApiProxyKey}`;
@@ -1362,9 +1376,14 @@ export class SessionInstance {
     // Store proxy keys if provided (from credential store)
     if (body.proxyKeys) {
       this.gitProxyKey = body.proxyKeys.gitProxyKey ?? null;
+      this.contextGitProxyKey = body.proxyKeys.contextGitProxyKey ?? null;
       this.llmProxyKey = body.proxyKeys.llmProxyKey ?? null;
       this.githubApiProxyKey = body.proxyKeys.githubApiProxyKey ?? null;
     }
+
+    // Store context repo info for dual-repo sandbox
+    this.contextRepoOwner = body.contextRepoOwner ?? null;
+    this.contextRepoName = body.contextRepoName ?? null;
 
     // Store available LLM providers for multi-provider sandbox config
     if (body.availableLlmProviders) {

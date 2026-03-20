@@ -40,6 +40,21 @@ SANDBOX_WATCHDOG_INTERVAL_SECONDS = int(os.getenv("SANDBOX_WATCHDOG_INTERVAL_SEC
 
 logger = structlog.get_logger()
 
+
+async def _cleanup_gitea_users(sandbox_mapping: SandboxSessionModel, context: str = "") -> None:
+    """Clean up per-sandbox Gitea service accounts (primary + context).
+
+    GitHub tokens expire automatically — git_user_id is None for GitHub sandboxes.
+    """
+    for uid_attr in ("git_user_id", "context_git_user_id"):
+        uid = getattr(sandbox_mapping, uid_attr)
+        if uid:
+            try:
+                from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
+                await delete_sandbox_git_user(uid)
+            except Exception as e:
+                logger.warning(f"sandbox_{context}gitea_cleanup_failed", attr=uid_attr, error=str(e))
+
 router = APIRouter()
 
 
@@ -238,27 +253,24 @@ async def _retry_sandbox_with_next_model(
         chain_index=next_index,
     )
 
-    # Get repo info from the original session
-    repo_owner = os.getenv("GITEA_ORG", "druppie")
-    repo_name = ""
-    if sandbox_mapping.session_id:
-        from druppie.repositories import SessionRepository, ProjectRepository
-        session_repo = SessionRepository(db)
-        session = session_repo.get_by_id(sandbox_mapping.session_id)
-        if session and session.project_id:
-            project_repo = ProjectRepository(db)
-            project = project_repo.get_by_id(session.project_id)
-            if project:
-                repo_owner = project.repo_owner or repo_owner
-                repo_name = project.repo_name or ""
+    # Reconstruct repo context from the stored repo_target (no agent-id guessing)
+    repo_target = sandbox_mapping.repo_target or "project"
+    from druppie.sandbox.repo_context import resolve_repo_context
+    try:
+        repo_ctx = resolve_repo_context(repo_target, sandbox_mapping.session_id, db)
+    except ValueError:
+        logger.error("sandbox_retry_missing_druppie_repo_config")
+        return False
 
-    # Clean up old sandbox's Gitea service account before creating new one
-    if sandbox_mapping.git_user_id:
-        try:
-            from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-            await delete_sandbox_git_user(sandbox_mapping.git_user_id)
-        except Exception as e:
-            logger.warning("sandbox_retry_gitea_cleanup_failed", error=str(e))
+    repo_owner = repo_ctx.repo_owner
+    repo_name = repo_ctx.repo_name
+    git_provider = repo_ctx.git_provider
+    context_repo_owner = repo_ctx.context_repo_owner
+    context_repo_name = repo_ctx.context_repo_name
+    context_git_provider = repo_ctx.context_git_provider
+
+    # Clean up old sandbox's Gitea service accounts before creating new one
+    await _cleanup_gitea_users(sandbox_mapping, context="retry_")
 
     try:
         result = await create_and_start_sandbox(
@@ -275,6 +287,11 @@ async def _retry_sandbox_with_next_model(
             source="retry",
             author_id=str(sandbox_mapping.user_id),
             db=db,
+            git_provider=git_provider,
+            context_repo_owner=context_repo_owner,
+            context_repo_name=context_repo_name,
+            context_git_provider=context_git_provider,
+            repo_target=repo_target,
         )
 
         # Link the new sandbox to the same tool call
@@ -412,13 +429,8 @@ async def sandbox_complete_webhook(
     # Mark the sandbox session as completed (proxy key lifecycle managed by control plane)
     sandbox_repo.mark_completed(sandbox_session_id)
 
-    # Clean up the per-sandbox Gitea service account
-    if sandbox_mapping.git_user_id:
-        try:
-            from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-            await delete_sandbox_git_user(sandbox_mapping.git_user_id)
-        except Exception as e:
-            logger.warning("sandbox_gitea_cleanup_failed", error=str(e))
+    # Clean up the per-sandbox Gitea service accounts
+    await _cleanup_gitea_users(sandbox_mapping)
 
     # On failure, attempt retry with next model in chain
     if not body.success:
@@ -605,13 +617,7 @@ async def sandbox_watchdog_loop() -> None:
                         if retry_initiated:
                             # Mark old sandbox as completed but keep tool call waiting
                             sandbox_repo.mark_completed(sandbox_mapping.sandbox_session_id)
-                            # Clean up old sandbox's Gitea service account
-                            if sandbox_mapping.git_user_id:
-                                try:
-                                    from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-                                    await delete_sandbox_git_user(sandbox_mapping.git_user_id)
-                                except Exception as e:
-                                    logger.warning("sandbox_watchdog_gitea_cleanup_failed", error=str(e))
+                            await _cleanup_gitea_users(sandbox_mapping, context="watchdog_")
                             # Reset sandbox_waiting_at so watchdog doesn't re-trigger immediately
                             execution_repo.update_tool_call(
                                 tc.id,
@@ -665,13 +671,7 @@ async def sandbox_watchdog_loop() -> None:
                     # Mark completed and cancel the sandbox container
                     if sandbox_mapping:
                         sandbox_repo.mark_completed(sandbox_mapping.sandbox_session_id)
-                        # Clean up the per-sandbox Gitea service account
-                        if sandbox_mapping.git_user_id:
-                            try:
-                                from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-                                await delete_sandbox_git_user(sandbox_mapping.git_user_id)
-                            except Exception as e:
-                                logger.warning("sandbox_watchdog_gitea_cleanup_failed", error=str(e))
+                        await _cleanup_gitea_users(sandbox_mapping, context="watchdog_")
                         try:
                             control_plane_url = os.environ.get(
                                 "SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787"
