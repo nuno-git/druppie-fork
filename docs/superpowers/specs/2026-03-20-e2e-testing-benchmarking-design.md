@@ -827,6 +827,156 @@ scenario:
 - `model-swap-comparison` — Same scenario, different LLM models
 - `config-change-impact` — Changed agent config, measure quality impact
 
+### Simulated Human Interaction (Solver Chain Pattern)
+
+Most Druppie agents interact with humans — the BA asks requirements questions, the architect may ask clarification, the deployer asks for feedback. To benchmark these agents end-to-end, we need an LLM that **plays the human role**, answering HITL questions as a realistic user would.
+
+This is inspired by Inspect AI's **solver chain** pattern, where solvers are chained together to process inputs. The simplest solver (`generate()`) just calls the model. More complex solvers do multi-turn dialog, critique, or provide scaffolding. We adapt this concept for Druppie's HITL flow.
+
+#### How It Works
+
+When a benchmark scenario runs and an agent asks a HITL question (via `hitl_ask_question` or `hitl_ask_multiple_choice_question`), instead of pausing and waiting for a real human, the benchmark harness intercepts the pause and routes the question to a **user simulator**:
+
+```
+Agent under test asks HITL question
+  → Orchestrator pauses (normal flow)
+  → Benchmark harness detects PAUSED_HITL
+  → Harness sends question + scenario context to user simulator
+  → User simulator (LLM) generates a realistic answer
+  → Harness calls resume_after_answer() with the simulated answer
+  → Agent continues with the answer
+  → Loop continues until agent calls done()
+```
+
+#### User Simulator Definition
+
+The user simulator is configured per scenario in YAML:
+
+```yaml
+# benchmarks/scenarios/create-todo-app.yaml
+scenario:
+  name: create_todo_app
+
+  input:
+    user_message: "build me a simple todo app with add, delete, and mark complete"
+
+  # Simulated human for HITL interactions
+  user_simulator:
+    model: claude-sonnet-4-6           # Model playing the human
+    persona: |
+      You are a non-technical project manager who wants a simple todo app.
+      You care about: ease of use, mobile responsiveness, clean design.
+      You do NOT care about: performance benchmarks, API design, database choice.
+      When asked about requirements, give clear but brief answers.
+      When asked about technical choices, say "I trust your judgment."
+      When given multiple choice options, pick the simplest option.
+
+    # Optional: pre-defined answers for specific questions (deterministic)
+    scripted_answers:
+      - question_contains: "what features"
+        answer: "Just add, delete, and mark as done. Keep it simple."
+      - question_contains: "design preferences"
+        answer: "Clean and modern, mobile-friendly."
+
+    # Optional: constraints on the simulator
+    max_interactions: 10               # Safety limit
+    timeout_per_answer: 30s
+```
+
+#### Three Modes of HITL Simulation
+
+**1. Scripted (fastest, most deterministic)**
+Pre-defined answers matched by question content. No LLM call needed. Best for regression tests where you want exact reproducibility.
+
+```yaml
+user_simulator:
+  mode: scripted
+  scripted_answers:
+    - question_contains: "what features"
+      answer: "CRUD operations, persistent storage"
+    - question_contains: "authentication"
+      answer: "No authentication needed"
+    - default: "Yes, that sounds good."     # Fallback for unexpected questions
+```
+
+**2. LLM-simulated (realistic, non-deterministic)**
+An LLM plays the user role with a persona prompt. The simulator sees the full conversation context (original request, what the agent has done so far, the question being asked). Best for quality benchmarks where you want to test how agents handle varied, realistic responses.
+
+```yaml
+user_simulator:
+  mode: llm
+  model: claude-sonnet-4-6
+  persona: |
+    You are a Dutch water authority employee requesting a sensor dashboard.
+    You speak Dutch. You have domain expertise in water management but
+    not in software development.
+```
+
+**3. Hybrid (scripted with LLM fallback)**
+Use scripted answers for known questions, fall back to LLM simulation for unexpected ones. Best balance of reproducibility and coverage.
+
+```yaml
+user_simulator:
+  mode: hybrid
+  model: claude-sonnet-4-6
+  persona: "Non-technical project manager..."
+  scripted_answers:
+    - question_contains: "features"
+      answer: "..."
+  # Questions not matched by scripted_answers go to the LLM
+```
+
+#### Multi-Agent Simulation
+
+For full pipeline benchmarks (BA → architect → builder → ... → deployer), each agent may ask HITL questions. The same user simulator handles all of them, maintaining conversation context across agents:
+
+```
+BA asks: "What features do you need?" → Simulator answers
+BA asks: "Any specific design preferences?" → Simulator answers (sees prior context)
+BA writes SPEC.md, calls done()
+Architect asks: "Should we use server-side or client-side rendering?" → Simulator answers
+Architect writes technical_design.md, calls done()
+...
+Deployer asks: "Is the deployment working correctly?" → Simulator answers
+```
+
+The simulator accumulates context: it sees the original request, all prior questions/answers, and the current agent's question. This lets it give consistent answers throughout the pipeline (e.g., if the user said "keep it simple" to the BA, the simulator should say "the simpler option" when the architect asks about rendering strategy).
+
+#### Approval Simulation
+
+Beyond HITL questions, agents also need **tool approvals** (e.g., architect needs architect-role approval for `make_design`). The benchmark harness auto-approves these by default, but this can be configured:
+
+```yaml
+# Auto-approve all approvals (default for benchmarks)
+approval_simulation:
+  mode: auto_approve
+
+# Selective approval (test governance boundaries)
+approval_simulation:
+  mode: selective
+  rules:
+    - tool: coding:make_design
+      action: approve
+    - tool: coding:execute_command
+      action: reject                   # Test: what does the agent do when denied?
+    - default: approve
+```
+
+#### Evaluating Simulator Quality
+
+The simulator's answers can themselves be evaluated — did the simulated user give realistic, consistent answers? This is a meta-evaluation:
+
+```yaml
+evaluations:
+  - name: user_simulator_consistency
+    rubric: |
+      Given the user's persona and the conversation history,
+      were the simulated answers consistent and realistic?
+      Did later answers contradict earlier ones?
+```
+
+This closes the loop: you're not just testing agents, you're also validating that your test setup is realistic.
+
 ---
 
 ## Part 7: Framework & Library Choices
@@ -964,4 +1114,4 @@ The patterns from Inspect AI (MCP tool integration, solver/scorer composition, s
 
 7. **Judge calibration** — Should we include few-shot examples in judge prompts (examples of what a 1/5 vs 5/5 looks like)? This improves consistency but makes rubrics longer.
 
-8. **HITL simulation in benchmarks** — When a benchmark agent asks a HITL question, how should we respond? Pre-defined answers in the scenario YAML? Another LLM simulating the user?
+8. **HITL simulation calibration** — The user simulator (Part 6) has three modes (scripted, LLM, hybrid). Should we maintain a library of "reference personas" (non-technical PM, Dutch water authority employee, senior developer) that scenarios can reuse, or define personas per-scenario?
