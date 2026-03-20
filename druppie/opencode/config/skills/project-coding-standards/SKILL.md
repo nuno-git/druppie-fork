@@ -8,8 +8,19 @@ description: >
 
 # Project Coding Standards
 
-These are the mandatory coding standards for the Druppie platform codebase.
+These are the mandatory coding standards for the **Druppie platform codebase**.
 All generated code MUST comply with these rules.
+
+**IMPORTANT: Druppie vs. User Projects**
+
+These standards apply to **Druppie's own codebase** (Python/FastAPI backend,
+React frontend, MCP servers). When building **user projects** (projects built
+by agents for end users from the Flask + React template), apply only general
+code quality rules (naming conventions, type hints, linting, error handling).
+Do NOT enforce Druppie-specific patterns (Summary/Detail, BaseRepository,
+structlog, deps.py wiring, etc.) on user projects — instead follow the
+technology stack and conventions defined in that project's specification
+and the `druppie-builder.md` agent instructions.
 
 ---
 
