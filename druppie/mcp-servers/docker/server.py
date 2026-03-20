@@ -32,6 +32,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("docker-mcp")
 
+# Validation for Docker resource names (container names, compose project names)
+_SAFE_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
+
+
+def _validate_name(name: str, label: str) -> str | None:
+    """Returns an error message if name is invalid, None if ok."""
+    if not name or not _SAFE_NAME_RE.match(name) or len(name) > 128:
+        return f"Invalid {label}: must start with alphanumeric, contain only alphanumeric/hyphens/dots/underscores, max 128 chars"
+    return None
+
 # Initialize FastMCP server
 mcp = FastMCP("Docker MCP Server")
 
@@ -423,6 +433,10 @@ async def run(
         Dict with success, container_name, port, container_port, url, labels
     """
     try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
         # Check for and remove existing container with same name
         existing = check_and_remove_existing_container(container_name)
         if existing:
@@ -552,8 +566,9 @@ def _discover_container_port(compose_file: Path) -> int:
                 # Strip protocol suffix like "/tcp"
                 container_port_str = container_port_str.split("/")[0]
                 return int(container_port_str)
+        logger.warning("compose_up: no port mapping found for 'app' service, defaulting to 8000")
     except Exception as e:
-        logger.warning("Could not parse container port from compose file: %s", e)
+        logger.warning("compose_up: could not parse container port from compose file: %s — defaulting to 8000", e)
     return 8000
 
 
@@ -784,6 +799,11 @@ async def compose_up(
         finally:
             # Always clean up cloned temp directory
             shutil.rmtree(clone_path, ignore_errors=True)
+            # Release port if we allocated one but didn't register success
+            if host_port is not None and (
+                project_name is None or project_name not in compose_port_registry
+            ):
+                await release_port(host_port)
 
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Operation timed out"}
@@ -806,13 +826,21 @@ async def compose_down(
         Dict with success, stopped project name
     """
     try:
+        # Sanitize project name the same way compose_up does
+        compose_project_name = re.sub(
+            r'[^a-z0-9-]', '', compose_project_name.lower().replace("_", "-")
+        )
+        if not compose_project_name:
+            return {"success": False, "error": "Invalid compose_project_name: empty after sanitization"}
+
         # Look up port from in-memory registry (may be empty after MCP server restart)
         port = compose_port_registry.get(compose_project_name)
 
         # Fallback: discover port from running containers if not in registry
         if port is None:
             try:
-                ps_result = subprocess.run(
+                ps_result = await asyncio.to_thread(
+                    subprocess.run,
                     ["docker", "compose", "-p", compose_project_name, "ps",
                      "--format", "{{.Ports}}"],
                     capture_output=True, text=True, timeout=10,
@@ -832,7 +860,8 @@ async def compose_down(
         if remove_volumes:
             cmd.append("-v")
 
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             cmd,
             capture_output=True,
             text=True,
@@ -876,6 +905,10 @@ async def stop(container_name: str, remove: bool = True) -> dict:
         Dict with success
     """
     try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
         # Stop container
         result = subprocess.run(
             ["docker", "stop", container_name],
@@ -921,6 +954,10 @@ async def logs(
         Dict with success, logs
     """
     try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
         cmd = ["docker", "logs", "--tail", str(tail), container_name]
 
         result = subprocess.run(
@@ -958,6 +995,10 @@ async def remove(container_name: str, force: bool = False) -> dict:
         Dict with success
     """
     try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
         cmd = ["docker", "rm"]
         if force:
             cmd.append("-f")
@@ -1070,6 +1111,10 @@ async def inspect(container_name: str) -> dict:
         Dict with container details
     """
     try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
         result = subprocess.run(
             ["docker", "inspect", container_name],
             capture_output=True,
@@ -1123,6 +1168,10 @@ async def exec_command(
         Dict with stdout, stderr, return_code
     """
     try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
         cmd = ["docker", "exec"]
 
         if workdir:
