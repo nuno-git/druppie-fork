@@ -14,13 +14,14 @@ import structlog
 
 logger = structlog.get_logger()
 
-_GITEA_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
-_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
-_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "")
 
-
-def _admin_auth() -> tuple[str, str]:
-    return (_ADMIN_USER, _ADMIN_PASSWORD)
+def _get_gitea_config() -> tuple[str, str, str]:
+    """Read Gitea config from env at call time (not import time)."""
+    return (
+        os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000"),
+        os.getenv("GITEA_ADMIN_USER", "gitea_admin"),
+        os.getenv("GITEA_ADMIN_PASSWORD", ""),
+    )
 
 
 async def cleanup_orphaned_sandbox_users() -> int:
@@ -28,7 +29,9 @@ async def cleanup_orphaned_sandbox_users() -> int:
 
     Returns the number of users deleted.
     """
-    base = _GITEA_URL.rstrip("/")
+    gitea_url, admin_user, admin_password = _get_gitea_config()
+    admin_auth = (admin_user, admin_password)
+    base = gitea_url.rstrip("/")
     deleted = 0
 
     try:
@@ -38,7 +41,7 @@ async def cleanup_orphaned_sandbox_users() -> int:
                 resp = await client.get(
                     f"{base}/api/v1/admin/users",
                     params={"limit": 50, "page": page},
-                    auth=_admin_auth(),
+                    auth=admin_auth,
                 )
                 if resp.status_code != 200:
                     logger.warning(
@@ -58,7 +61,7 @@ async def cleanup_orphaned_sandbox_users() -> int:
                             del_resp = await client.delete(
                                 f"{base}/api/v1/admin/users/{username}",
                                 params={"purge": "true"},
-                                auth=_admin_auth(),
+                                auth=admin_auth,
                             )
                             if del_resp.status_code == 204:
                                 deleted += 1

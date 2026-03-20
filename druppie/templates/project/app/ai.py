@@ -29,18 +29,29 @@ from openai import OpenAI
 
 from app.config import settings
 
-ai_client = OpenAI(
-    api_key=settings.deepinfra_api_key,
-    base_url="https://api.deepinfra.com/v1/openai",
-)
-
 AI_MODEL = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
 OCR_MODEL = "PaddlePaddle/PaddleOCR-VL-0.9B"
+
+_ai_client: OpenAI | None = None
+
+
+def _get_client() -> OpenAI:
+    global _ai_client
+    if _ai_client is None:
+        if not settings.deepinfra_api_key:
+            raise RuntimeError(
+                "DEEPINFRA_API_KEY not set — configure it in .env or docker-compose.yaml"
+            )
+        _ai_client = OpenAI(
+            api_key=settings.deepinfra_api_key,
+            base_url="https://api.deepinfra.com/v1/openai",
+        )
+    return _ai_client
 
 
 def ai_chat(prompt: str, system: str = "You are a helpful assistant.") -> str:
     """LLM chat completion via DeepInfra."""
-    response = ai_client.chat.completions.create(
+    response = _get_client().chat.completions.create(
         model=AI_MODEL,
         messages=[
             {"role": "system", "content": system},
@@ -52,7 +63,7 @@ def ai_chat(prompt: str, system: str = "You are a helpful assistant.") -> str:
 
 def ocr_extract(image_url: str) -> str:
     """Extract text from an image using PaddleOCR vision model."""
-    response = ai_client.chat.completions.create(
+    response = _get_client().chat.completions.create(
         model=OCR_MODEL,
         max_tokens=4092,
         messages=[

@@ -6,6 +6,7 @@ This is a core service, NOT an MCP server - it's used internally by WorkspaceSer
 
 import base64
 import os
+import re
 from typing import Any
 
 import httpx
@@ -593,7 +594,9 @@ class GiteaClient:
             return {"success": True, "files_pushed": len(files), "errors": None}
 
         except Exception as e:
-            logger.warning("gitea_template_git_push_failed", error=str(e), fallback="api")
+            # Sanitize error to avoid leaking embedded credentials from clone URL
+            error_msg = re.sub(r"://[^@]+@", "://***:***@", str(e))
+            logger.warning("gitea_template_git_push_failed", error=error_msg, fallback="api")
         finally:
             if tmp_dir:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
