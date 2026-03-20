@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-Druppie has 13 agents executing in complex workflows (mandatory sequences of 8-10 agents) with MCP tool permissions, HITL approval gates, and sandbox execution. Currently:
+Druppie has 12 agents executing in complex workflows (mandatory sequences of 8-10 agents) with MCP tool permissions, HITL approval gates, and sandbox execution. Currently:
 
 - **No automated quality measurement** — We don't know if agents follow governance policies, produce good artifacts, or use the right tools.
 - **Hacky seeding** — `seed_builder_retry.py` is a 500-line Python script with hardcoded SQL. Adding a new session state requires writing raw INSERT statements.
@@ -84,6 +84,10 @@ agents:
           context: "Initial requirements gathering"
         status: completed
         result: "Basic CRUD, persistence, responsive design"
+        question:                          # Creates record in questions table
+          question_type: text
+          status: answered
+          answer: "Basic CRUD, persistence, responsive design"
       - tool: coding:write_file
         arguments:
           path: "SPEC.md"
@@ -105,7 +109,7 @@ agents:
     status: completed
     planned_prompt: "Design architecture for the todo app."
     tool_calls:
-      - tool: coding:coding_make_design
+      - tool: coding:make_design
         arguments:
           path: "technical_design.md"
           content: "# Technisch Ontwerp\n## Componenten\n..."
@@ -157,6 +161,8 @@ messages:
 
 **Approval chain** — Tool calls can include approval metadata (required_role, status, who approved). This seeds sessions in `paused_approval` state correctly.
 
+**Messages linked to agents** — Messages in the `messages:` section can reference an `agent_id` to link them to a specific agent run. The loader resolves these to the correct `agent_run_id` FK. Messages without an `agent_id` (like user messages) get `agent_run_id = NULL`.
+
 ### Loader Architecture
 
 ```
@@ -186,7 +192,9 @@ The loader:
 3. Generates deterministic UUIDs from human-readable IDs
 4. Creates Gitea repos if requested
 5. Inserts via SQLAlchemy models (not raw SQL) — uses the same domain models as the app
-6. Is idempotent — re-running deletes and re-creates the same sessions
+6. **Auto-generates LLM call records** — For each active agent run (completed, failed, running), creates one `llm_calls` record with synthetic token counts and timing. Tool calls reference this LLM call via `llm_call_id` FK. This keeps the YAML clean while maintaining FK integrity.
+7. **Auto-generates question records** — For tool calls using `hitl_ask_question` or `hitl_ask_multiple_choice_question`, creates the corresponding `questions` table record from the `question:` sub-block.
+8. Is idempotent — re-running deletes and re-creates the same sessions
 
 ### Docker Compose Integration
 
@@ -254,7 +262,7 @@ Usage: `docker compose --profile seed run --rm seed`
 - Session seeded in `paused_approval` state → admin sees approval card → approves
 
 **LLM handling:** Two modes:
-1. **Recorded** — Capture real LLM responses once, replay in tests (fast, deterministic, but brittle)
+1. **Recorded** — Capture real LLM responses once, replay in tests using VCR.py / pytest-recording (fast, deterministic, but brittle if prompts change)
 2. **Mocked** — Inject predefined tool call sequences (tests orchestrator logic, not LLM quality)
 
 **Speed:** Minutes. Run on PR merge or nightly.
@@ -273,6 +281,8 @@ Usage: `docker compose --profile seed run --rm seed`
 - Does the planner follow the mandatory sequence?
 
 **Speed:** Minutes to hours. Run nightly or on-demand.
+
+See **Part 6: Benchmark Scenarios** for detailed scenario definitions and categories.
 
 ### Docker Compose Profiles
 
@@ -344,7 +354,7 @@ evaluation:
   # What to extract from the agent run for the judge
   context:
     - source: tool_call_result
-      tool: coding:coding_make_design
+      tool: coding:make_design
       as: design_document
     - source: tool_call_arguments
       tool: builtin:done
@@ -542,7 +552,7 @@ class JudgeEngine:
         # 3. Render rubric prompts with context
         # 4. Call judge LLM for each rubric
         # 5. Parse scores from judge response
-        # 6. Store results in benchmark_results table
+        # 6. Store results in evaluation_results table
         # 7. Return aggregated result
 ```
 
@@ -550,7 +560,7 @@ class JudgeEngine:
 
 **YAML rubrics, not code** — Rubrics are YAML files with prompt templates. Anyone can add a new evaluation dimension by writing a prompt. No Python code needed for new evaluations.
 
-**Context extraction is declarative** — The `context` section tells the engine what to pull from the DB. This separates "what data do I need" from "how do I judge it."
+**Context extraction is declarative** — The `context` section tells the engine what to pull from the DB. This separates "what data do I need" from "how do I judge it." **Note: context extraction is the most complex part of the judge engine.** Sources like `previous_agent_summary` require multi-step queries (find agent run → get sequence number → find previous run → find its `done()` tool call → extract summary from arguments). Start with simpler sources (`all_tool_calls`, `session_messages`, `agent_definition`) and add complex ones iteratively.
 
 **Judge model is configurable** — Per-evaluation, per-rubric, or globally. Defaults to a strong model (Opus) but can be overridden for cost/speed tradeoffs.
 
@@ -630,7 +640,10 @@ CREATE TABLE benchmark_runs (
     run_type VARCHAR(50),              -- "batch", "live", "manual"
     git_commit VARCHAR(40),            -- Code version
     git_branch VARCHAR(255),
-    config JSONB,                      -- Judge model, sample rate, etc.
+    judge_model VARCHAR(100),           -- LLM used as judge
+    sample_rate FLOAT,                  -- % of sessions evaluated
+    -- NOTE: No JSONB per project rule. Additional config goes in
+    -- benchmark_run_params (key/value table) if needed.
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -639,9 +652,9 @@ CREATE TABLE benchmark_runs (
 -- Individual evaluation result
 CREATE TABLE evaluation_results (
     id UUID PRIMARY KEY,
-    benchmark_run_id UUID REFERENCES benchmark_runs(id),
-    session_id UUID REFERENCES sessions(id),
-    agent_run_id UUID REFERENCES agent_runs(id),
+    benchmark_run_id UUID REFERENCES benchmark_runs(id) ON DELETE CASCADE,
+    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+    agent_run_id UUID REFERENCES agent_runs(id) ON DELETE CASCADE,
     agent_id VARCHAR(100),             -- "architect", "builder", etc.
     evaluation_name VARCHAR(255),      -- "architect_design_quality"
     rubric_name VARCHAR(255),          -- "requirement_coverage"
@@ -669,25 +682,15 @@ CREATE TABLE evaluation_results (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Aggregated scores per evaluation per benchmark run
-CREATE TABLE evaluation_summaries (
-    id UUID PRIMARY KEY,
-    benchmark_run_id UUID REFERENCES benchmark_runs(id),
-    agent_id VARCHAR(100),
-    evaluation_name VARCHAR(255),
-    rubric_name VARCHAR(255),
+-- NOTE: No separate evaluation_summaries table. Aggregates (avg, min, max,
+-- stddev) are computed on-the-fly from evaluation_results via SQL. If query
+-- performance becomes an issue at scale, add a materialized view later.
 
-    -- Aggregates
-    total_runs INTEGER,
-    pass_count INTEGER,                -- For binary
-    fail_count INTEGER,
-    avg_score FLOAT,                   -- For graded
-    min_score FLOAT,
-    max_score FLOAT,
-    stddev_score FLOAT,
-
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- Indexes for common query patterns
+CREATE INDEX idx_eval_results_agent ON evaluation_results(agent_id);
+CREATE INDEX idx_eval_results_rubric ON evaluation_results(rubric_name);
+CREATE INDEX idx_eval_results_run ON evaluation_results(benchmark_run_id);
+CREATE INDEX idx_eval_results_created ON evaluation_results(created_at);
 ```
 
 ### What Gets Tracked
@@ -789,7 +792,7 @@ scenario:
       assert: completed
     - agent: architect
       assert: tool_called
-      tool: coding:coding_make_design   # Must have created a design file
+      tool: coding:make_design   # Must have created a design file
     - agent: business_analyst
       assert: tool_called
       tool: builtin:done
@@ -899,7 +902,7 @@ Inspect AI is the closest external framework to what we need (MCP support, sandb
 4. **No live evaluation** — Batch-only. Can't evaluate production sessions.
 5. **No integration with existing DB** — Can't query agent runs, tool calls, or session state.
 
-The patterns from Inspect AI (MCP tool integration, solver/scorer composition, sandboxing) are worth studying and adapting, but the framework itself adds indirection between us and our own system.
+The patterns from Inspect AI (MCP tool integration, solver/scorer composition, sandboxing) are worth studying and adapting, but the framework itself adds indirection between us and our own system. **However**, individual Inspect AI scorers (like `model_graded_qa`) could potentially be used as Python library calls within our custom framework — getting battle-tested judge prompts without the framework coupling.
 
 ---
 
