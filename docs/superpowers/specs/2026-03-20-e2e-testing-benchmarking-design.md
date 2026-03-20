@@ -115,20 +115,60 @@ agents:
           summary: "Agent architect: DESIGN_APPROVED. Wrote technical_design.md."
         status: completed
 
-  # Builder's sandbox execution failed
+  # Builder's sandbox succeeded — outcome defines what files were created/pushed
   - id: builder
-    status: failed
+    status: completed
     planned_prompt: "Implement the Todo App based on architecture and tests."
-    error_message: "Sandbox execution failed: connection timeout after 120s"
     tool_calls:
       - tool: builtin:execute_coding_task
         arguments:
           task: "Implement all source files to make tests pass..."
           agent: druppie-builder
-        status: failed
+        status: completed
+        outcome:
+          files:
+            - path: "src/App.jsx"
+              content: |
+                import React, { useState } from 'react';
+                import TodoForm from './components/TodoForm';
+                import TodoItem from './components/TodoItem';
+                import { useTodos } from './hooks/useTodos';
+                // ... rest of component
+            - path: "src/components/TodoItem.jsx"
+              from_file: "fixtures/files/todo-app/TodoItem.jsx"  # Large files loaded from disk
+            - path: "src/components/TodoForm.jsx"
+              from_file: "fixtures/files/todo-app/TodoForm.jsx"
+            - path: "package.json"
+              content: |
+                {
+                  "name": "todo-app",
+                  "dependencies": { "react": "^18.2.0", "react-dom": "^18.2.0" }
+                }
+            - path: "Dockerfile"
+              content: |
+                FROM node:18-alpine
+                WORKDIR /app
+                COPY package*.json ./
+                RUN npm ci
+                COPY . .
+                RUN npm run build
+                CMD ["npm", "start"]
+          commit_message: "Implement todo app - all 12 tests passing"
+          push: true                     # Commit and push to Gitea/GitHub
+
+  # Example: builder failed (no outcome block needed)
+  # - id: builder
+  #   status: failed
+  #   error_message: "Sandbox execution failed: connection timeout after 120s"
+  #   tool_calls:
+  #     - tool: builtin:execute_coding_task
+  #       arguments:
+  #         task: "Implement all source files to make tests pass..."
+  #         agent: druppie-builder
+  #       status: failed
 
   - id: planner
-    status: pending
+    status: completed
 
 messages:
   - role: user
@@ -144,11 +184,25 @@ messages:
 - `builtin:set_intent` with `intent: create_project` → creates the project + Gitea repo
 - `coding:write_file` → creates the file in the repo
 - `coding:make_design` → creates the design file (with approval if configured)
-- `builtin:execute_coding_task` → creates sandbox session record
+- `builtin:execute_coding_task` → creates sandbox session record + executes `outcome:` (see below)
 - `builtin:hitl_ask_question` → creates question record, `answer` field provides the response
 - `builtin:make_plan` → creates pending agent run records
 
 This means the same YAML format works for both seeding (replay) and benchmarking (live execution). A seed fixture is just a recorded session.
+
+**`execute_coding_task` outcome block** — In a real session, the sandbox is a VM that clones the repo, runs OpenCode, creates/edits files, and pushes. For seeding, we don't spin up a real sandbox — the `outcome:` block describes what the sandbox would have produced:
+
+- `files:` — List of files to create/edit in the repo. Each file has a `path` and either inline `content` or a `from_file` reference to load from disk (useful for large files).
+- `commit_message:` — The commit message for the sandbox's work.
+- `push: true/false` — Whether to commit and push to Gitea/GitHub.
+
+In **replay mode**, the loader writes these files to the repo via Gitea API (or git operations), commits, and pushes. The result is identical to what a real sandbox would have produced — the repo has real files, real commits, real history.
+
+In **record-only mode**, the loader just inserts the `sandbox_sessions` and `tool_calls` DB records without touching the repo.
+
+For **failed** sandbox executions, omit the `outcome:` block — the tool call just has `status: failed` and the agent run gets `error_message`.
+
+For **benchmark testing**, the `execute_coding_task` runs against a real sandbox (no `outcome:` block needed — the sandbox produces the real outcome). The benchmark evaluator can then inspect the actual repo to judge the builder's work.
 
 **Two execution modes:**
 
@@ -459,6 +513,35 @@ evaluation:
         3 = Read tests, implemented, but didn't verify
         4 = Read tests, implemented, ran tests
         5 = Systematic TDD cycle with clear test-driven approach
+
+        Respond with JSON: {"score": <1-5>, "reasoning": "..."}
+
+    - name: repo_output_quality
+      scoring: graded
+      context_extra:                   # Additional context for this rubric
+        - source: repo_files           # Fetches file listing from Gitea/GitHub
+          as: repo_contents
+        - source: repo_file_content
+          path: "Dockerfile"           # Fetch specific file content
+          as: dockerfile
+        - source: repo_file_content
+          path: "package.json"
+          as: package_json
+      prompt: |
+        The builder agent was asked to implement a project. Evaluate the
+        actual output in the repository.
+
+        Task: {{task_prompt}}
+        Files in repo: {{repo_contents}}
+        Dockerfile: {{dockerfile}}
+        package.json: {{package_json}}
+
+        Score 1-5: Quality of the builder's output
+        1 = Missing critical files, won't build
+        2 = Files exist but incomplete or misconfigured
+        3 = Functional but missing best practices (no Dockerfile, no .gitignore)
+        4 = Complete with proper project structure and configuration
+        5 = Production-ready with Dockerfile, proper dependencies, clean structure
 
         Respond with JSON: {"score": <1-5>, "reasoning": "..."}
 ```
