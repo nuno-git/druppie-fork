@@ -126,6 +126,7 @@ agents:
           agent: druppie-builder
         status: completed
         outcome:
+          target: gitea                  # "gitea" (user projects) or "github" (core/druppie repo)
           files:
             - path: "src/App.jsx"
               content: |
@@ -154,7 +155,7 @@ agents:
                 RUN npm run build
                 CMD ["npm", "start"]
           commit_message: "Implement todo app - all 12 tests passing"
-          push: true                     # Commit and push to Gitea/GitHub
+          push: true
 
   # Example: builder failed (no outcome block needed)
   # - id: builder
@@ -192,13 +193,21 @@ This means the same YAML format works for both seeding (replay) and benchmarking
 
 **`execute_coding_task` outcome block** — In a real session, the sandbox is a VM that clones the repo, runs OpenCode, creates/edits files, and pushes. For seeding, we don't spin up a real sandbox — the `outcome:` block describes what the sandbox would have produced:
 
-- `files:` — List of files to create/edit in the repo. Each file has a `path` and either inline `content` or a `from_file` reference to load from disk (useful for large files).
+- `target:` — **Required.** Where the files go:
+  - `gitea` — User project repo in Gitea (created by `set_intent`). This is the default for `create_project` and `update_project` sessions. The loader uses the Gitea API to write files to the session's project repo.
+  - `github` — Core Druppie repo on GitHub. Used by `update_core_builder` agent for changes to the druppie codebase itself. The loader uses the GitHub API (via the control plane's GitHub API proxy or `GH_TOKEN`) to write files to a branch on the core repo.
+- `branch:` — Optional. Branch name to push to. Defaults to `main` for Gitea, or a feature branch for GitHub core changes (e.g., `sandbox/session-<id>`).
+- `files:` — List of files to create/edit. Each file has a `path` and either inline `content` or a `from_file` reference to load from disk (useful for large files).
 - `commit_message:` — The commit message for the sandbox's work.
-- `push: true/false` — Whether to commit and push to Gitea/GitHub.
+- `push: true/false` — Whether to commit and push.
 
-In **replay mode**, the loader writes these files to the repo via Gitea API (or git operations), commits, and pushes. The result is identical to what a real sandbox would have produced — the repo has real files, real commits, real history.
+This distinction matters because the two targets have completely different auth, APIs, and implications:
+- **Gitea repos** are disposable per-project repos. The loader can freely create/destroy them.
+- **GitHub core repo** is the real druppie codebase. In seeding, the loader should create a test branch (never push to main). In benchmarks, the evaluator checks whether the `update_core_builder` made sensible changes.
 
-In **record-only mode**, the loader just inserts the `sandbox_sessions` and `tool_calls` DB records without touching the repo.
+In **replay mode**, the loader writes files to the correct target repo, commits, and pushes. The result is identical to what a real sandbox would have produced.
+
+In **record-only mode**, the loader just inserts the `sandbox_sessions` and `tool_calls` DB records without touching any repo.
 
 For **failed** sandbox executions, omit the `outcome:` block — the tool call just has `status: failed` and the agent run gets `error_message`.
 
