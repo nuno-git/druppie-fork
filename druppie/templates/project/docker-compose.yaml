@@ -8,7 +8,7 @@ services:
         condition: service_healthy
     environment:
       - APP_NAME=${APP_NAME:-My App}
-      - DATABASE_URL=postgresql://app:app@db:5432/app
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@db:5432/${POSTGRES_DB:-app}
       - DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY:-}
       - DEBUG=${DEBUG:-false}
     healthcheck:
@@ -21,13 +21,15 @@ services:
   db:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: app
+      # NOTE: These are dev-only defaults. Production deployments should
+      # inject unique credentials via environment variables.
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      POSTGRES_DB: ${POSTGRES_DB:-app}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app}"]
       interval: 5s
       timeout: 3s
       retries: 5

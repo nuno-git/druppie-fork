@@ -9,17 +9,18 @@ This is a STANDALONE service:
 - list_containers: Can filter by project_id/session_id via labels
 """
 
+import asyncio
 import logging
 import os
 import re
 import shutil
 import subprocess
-import time
 import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
 
+import yaml as pyyaml
 from fastmcp import FastMCP
 
 # Configure logging
@@ -116,9 +117,11 @@ def get_next_port() -> int:
     """Get next available port from the configured range.
 
     Checks both Docker's currently bound ports and our internal tracking.
+    Queries Docker once upfront to avoid N subprocess calls.
     """
+    docker_ports = get_used_host_ports()
     for port in range(PORT_RANGE_START, PORT_RANGE_END):
-        if is_port_available(port):
+        if port not in docker_ports and port not in used_ports:
             used_ports.add(port)
             logger.info("Auto-selected available port %d", port)
             return port
@@ -525,8 +528,29 @@ async def run(
         return {"success": False, "error": str(e)}
 
 
+def _discover_container_port(compose_file: Path) -> int:
+    """Parse the app service's container port from docker-compose.yaml.
+
+    Falls back to 8000 if the port cannot be determined.
+    """
+    try:
+        data = pyyaml.safe_load(compose_file.read_text())
+        ports = data.get("services", {}).get("app", {}).get("ports", [])
+        for mapping in ports:
+            mapping_str = str(mapping)
+            # Handle "HOST:CONTAINER" or "${VAR:-HOST}:CONTAINER"
+            if ":" in mapping_str:
+                container_port_str = mapping_str.rsplit(":", 1)[1]
+                # Strip protocol suffix like "/tcp"
+                container_port_str = container_port_str.split("/")[0]
+                return int(container_port_str)
+    except Exception as e:
+        logger.warning("Could not parse container port from compose file: %s", e)
+    return 8000
+
+
 @mcp.tool()
-def compose_up(
+async def compose_up(
     repo_name: str | None = None,
     repo_owner: str | None = None,
     git_url: str | None = None,
@@ -536,7 +560,7 @@ def compose_up(
     session_id: str | None = None,
     user_id: str | None = None,
     health_path: str = "/health",
-    health_timeout: int = 600,
+    health_timeout: int = 120,
 ) -> dict:
     """Deploy application with docker compose (app + database).
 
@@ -553,7 +577,7 @@ def compose_up(
         session_id: Session ID for labels (injected)
         user_id: User ID for labels (injected)
         health_path: Health check endpoint path (default: /health, not agent-facing)
-        health_timeout: Seconds to wait for health check (default: 600, not agent-facing)
+        health_timeout: Seconds to wait for health check (default: 120, not agent-facing)
 
     Returns:
         Dict with success, url, port, compose_project_name, containers, health_check
@@ -574,7 +598,8 @@ def compose_up(
         BUILD_DIR.mkdir(parents=True, exist_ok=True)
 
         logger.info("compose_up: cloning %s (branch: %s)", url, branch)
-        clone_result = subprocess.run(
+        clone_result = await asyncio.to_thread(
+            subprocess.run,
             ["git", "clone", "--branch", branch, "--depth", "1", url, str(clone_path)],
             capture_output=True,
             text=True,
@@ -591,150 +616,166 @@ def compose_up(
             shutil.rmtree(clone_path, ignore_errors=True)
             return {"success": False, "error": "No docker-compose.yaml found in repository"}
 
-        # Step 3: Allocate host port
-        host_port = get_next_port()
+        # All remaining steps wrapped in try/finally to guarantee clone_path cleanup
+        host_port = None
+        project_name = None
+        try:
+            # Step 3: Allocate host port
+            host_port = get_next_port()
 
-        # Step 4: Determine compose project name
-        project_name = compose_project_name
-        if not project_name:
-            sid_suffix = (session_id or build_id)[:8]
-            project_name = f"{repo_name or 'app'}-{sid_suffix}"
-        # Sanitize: compose project names must be lowercase alphanumeric + hyphens
-        project_name = re.sub(r'[^a-z0-9-]', '', project_name.lower().replace("_", "-"))
-        if not project_name:
-            project_name = f"app-{build_id}"
+            # Step 4: Determine compose project name
+            project_name = compose_project_name
+            if not project_name:
+                sid_suffix = (session_id or build_id)[:8]
+                project_name = f"{repo_name or 'app'}-{sid_suffix}"
+            # Sanitize: compose project names must be lowercase alphanumeric + hyphens
+            project_name = re.sub(r'[^a-z0-9-]', '', project_name.lower().replace("_", "-"))
+            if not project_name:
+                project_name = f"app-{build_id}"
 
-        # Step 5: Write override file with druppie labels and network config
-        # Attach compose containers to the same Docker network as the MCP server
-        # so health checks can reach them via container name (not localhost).
-        labels = {}
-        if project_id:
-            labels["druppie.project_id"] = project_id
-        if session_id:
-            labels["druppie.session_id"] = session_id
-        if user_id:
-            labels["druppie.user_id"] = user_id
-        if branch:
-            labels["druppie.branch"] = branch
-        labels["druppie.compose_project"] = project_name
+            # Step 5: Write override file with druppie labels and network config
+            labels = {}
+            if project_id:
+                labels["druppie.project_id"] = project_id
+            if session_id:
+                labels["druppie.session_id"] = session_id
+            if user_id:
+                labels["druppie.user_id"] = user_id
+            if branch:
+                labels["druppie.branch"] = branch
+            labels["druppie.compose_project"] = project_name
 
-        import yaml as pyyaml  # avoid shadowing
-
-        override_data: dict[str, Any] = {
-            "services": {
-                "app": {
-                    "labels": labels,
-                }
-            }
-        }
-
-        # Join the Druppie Docker network so containers are discoverable
-        # and the health check can reach them from inside the MCP server
-        if DOCKER_NETWORK:
-            override_data["networks"] = {
-                "default": {
-                    "external": True,
-                    "name": DOCKER_NETWORK,
+            override_data: dict[str, Any] = {
+                "services": {
+                    "app": {
+                        "labels": labels,
+                    }
                 }
             }
 
-        override_content = pyyaml.dump(override_data, default_flow_style=False, sort_keys=False)
+            # Join the Druppie Docker network so containers are discoverable
+            if DOCKER_NETWORK:
+                override_data["networks"] = {
+                    "default": {
+                        "external": True,
+                        "name": DOCKER_NETWORK,
+                    }
+                }
 
-        override_path = clone_path / "docker-compose.override.yaml"
-        override_path.write_text(override_content)
+            override_content = pyyaml.dump(
+                override_data, default_flow_style=False, sort_keys=False
+            )
+            override_path = clone_path / "docker-compose.override.yaml"
+            override_path.write_text(override_content)
 
-        # Step 6: Run docker compose up
-        logger.info("compose_up: starting project %s on port %d", project_name, host_port)
-        env = {**os.environ, "APP_PORT": str(host_port)}
-        compose_result = subprocess.run(
-            ["docker", "compose", "-p", project_name, "up", "-d", "--build"],
-            capture_output=True,
-            text=True,
-            timeout=600,
-            cwd=str(clone_path),
-            env=env,
-        )
+            # Step 6: Run docker compose up
+            logger.info("compose_up: starting project %s on port %d", project_name, host_port)
+            env = {**os.environ, "APP_PORT": str(host_port)}
+            compose_result = await asyncio.to_thread(
+                subprocess.run,
+                ["docker", "compose", "-p", project_name, "up", "-d", "--build"],
+                capture_output=True,
+                text=True,
+                timeout=600,
+                cwd=str(clone_path),
+                env=env,
+            )
 
-        if compose_result.returncode != 0:
-            release_port(host_port)
-            shutil.rmtree(clone_path, ignore_errors=True)
-            return {
-                "success": False,
-                "error": "Docker compose up failed",
-                "build_log": compose_result.stdout + compose_result.stderr,
-            }
+            if compose_result.returncode != 0:
+                release_port(host_port)
+                host_port = None
+                return {
+                    "success": False,
+                    "error": "Docker compose up failed",
+                    "build_log": compose_result.stdout + compose_result.stderr,
+                }
 
-        # Step 7: Track port mapping
-        compose_port_registry[project_name] = host_port
+            # Step 7: Track port mapping
+            compose_port_registry[project_name] = host_port
 
-        # Step 8: Health check via Docker network (not localhost)
-        # The MCP server runs inside a container, so localhost:{host_port} won't
-        # reach the app. Instead, use the compose service container name on the
-        # internal port (8000) via the shared Docker network.
-        app_container = f"{project_name}-app-1"
-        health_url = f"http://{app_container}:8000{health_path}"
-        health_passed = False
+            # Step 8: Health check via Docker network (not localhost)
+            # Discover the container port from the compose file instead of hardcoding
+            container_port = _discover_container_port(compose_file)
+            app_container = f"{project_name}-app-1"
+            health_url = f"http://{app_container}:{container_port}{health_path}"
+            health_passed = False
 
-        for _ in range(health_timeout):
-            try:
-                req = urllib.request.Request(health_url)
-                with urllib.request.urlopen(req, timeout=2) as resp:
+            for elapsed in range(health_timeout):
+                try:
+                    req = urllib.request.Request(health_url)
+                    resp = await asyncio.to_thread(
+                        urllib.request.urlopen, req, timeout=2
+                    )
                     if resp.status == 200:
                         health_passed = True
+                        resp.close()
                         break
-            except Exception:
-                pass
-            time.sleep(1)
+                    resp.close()
+                except Exception:
+                    pass
+                if elapsed % 30 == 29:
+                    logger.info(
+                        "compose_up: health check pending (%ds/%ds)", elapsed + 1, health_timeout
+                    )
+                await asyncio.sleep(1)
 
-        # Step 9: Clean up cloned temp directory
-        shutil.rmtree(clone_path, ignore_errors=True)
+            if not health_passed:
+                # Get logs for debugging
+                log_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["docker", "compose", "-p", project_name, "logs", "app"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                # Tear down failed deployment to avoid port/container leak
+                await asyncio.to_thread(
+                    subprocess.run,
+                    ["docker", "compose", "-p", project_name, "down", "-v"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                failed_port = host_port
+                release_port(host_port)
+                host_port = None
+                compose_port_registry.pop(project_name, None)
+                return {
+                    "success": False,
+                    "error": f"Health check failed after {health_timeout}s",
+                    "url": f"http://localhost:{failed_port}",
+                    "port": failed_port,
+                    "compose_project_name": project_name,
+                    "logs": log_result.stdout + log_result.stderr,
+                }
 
-        if not health_passed:
-            # Get logs for debugging
-            log_result = subprocess.run(
-                ["docker", "compose", "-p", project_name, "logs", "app"],
+            # Step 9: Get container list
+            ps_result = await asyncio.to_thread(
+                subprocess.run,
+                ["docker", "compose", "-p", project_name, "ps", "--format", "{{.Name}}"],
                 capture_output=True,
                 text=True,
                 timeout=10,
             )
-            # Tear down failed deployment to avoid port/container leak
-            subprocess.run(
-                ["docker", "compose", "-p", project_name, "down", "-v"],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            release_port(host_port)
-            compose_port_registry.pop(project_name, None)
+            containers = [
+                c.strip() for c in ps_result.stdout.strip().split("\n") if c.strip()
+            ]
+
+            logger.info("compose_up: project %s running on port %d", project_name, host_port)
+
             return {
-                "success": False,
-                "error": f"Health check failed after {health_timeout}s",
+                "success": True,
                 "url": f"http://localhost:{host_port}",
                 "port": host_port,
                 "compose_project_name": project_name,
-                "logs": log_result.stdout + log_result.stderr,
+                "containers": containers,
+                "health_check": "passed",
+                "labels": labels,
             }
 
-        # Step 10: Get container list
-        ps_result = subprocess.run(
-            ["docker", "compose", "-p", project_name, "ps", "--format", "{{.Name}}"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        containers = [c.strip() for c in ps_result.stdout.strip().split("\n") if c.strip()]
-
-        logger.info("compose_up: project %s running on port %d", project_name, host_port)
-
-        return {
-            "success": True,
-            "url": f"http://localhost:{host_port}",
-            "port": host_port,
-            "compose_project_name": project_name,
-            "containers": containers,
-            "health_check": "passed",
-            "labels": labels,
-        }
+        finally:
+            # Always clean up cloned temp directory
+            shutil.rmtree(clone_path, ignore_errors=True)
 
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Operation timed out"}

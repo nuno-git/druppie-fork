@@ -146,8 +146,8 @@ def ai_classify_endpoint():
 
 ### Frontend (TypeScript) — Vercel AI SDK + helper
 
-The Vercel AI SDK (`ai` + `@ai-sdk/deepinfra`) is pre-installed. For
-server-side calls (API routes, server actions), use the SDK directly:
+For server-side calls (API routes, server actions) you can install and use the
+Vercel AI SDK (`npm install ai @ai-sdk/deepinfra`):
 
 ```typescript
 import { createDeepInfra } from "@ai-sdk/deepinfra";
