@@ -964,7 +964,7 @@ async def execute_sandbox_coding_task(
     if repo_target not in VALID_REPO_TARGETS:
         return {"success": False, "error": f"Invalid repo_target '{repo_target}'. Must be one of: {VALID_REPO_TARGETS}."}
 
-    from druppie.sandbox.repo_context import resolve_repo_context
+    from druppie.opencode.repo_context import resolve_repo_context
     try:
         repo_ctx = resolve_repo_context(repo_target, session_id, db)
     except ValueError as e:
