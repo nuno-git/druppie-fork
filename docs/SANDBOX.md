@@ -214,6 +214,99 @@ docker compose --profile dev down && docker compose --profile dev up -d
 
 ---
 
+## Dependency Cache
+
+Sandbox containers are ephemeral — each run clones the repo and installs dependencies from scratch. To avoid re-downloading identical packages every time, a shared Docker volume (`druppie_sandbox_dep_cache`) is mounted at `/cache` in every sandbox. Package managers automatically use it via environment variables baked into the sandbox image:
+
+| Package Manager | Env Var | Cache Path |
+|-----------------|---------|------------|
+| npm | `NPM_CONFIG_CACHE` | `/cache/npm` |
+| pnpm | `PNPM_STORE_DIR` | `/cache/pnpm` |
+| Bun | `BUN_INSTALL_CACHE_DIR` | `/cache/bun` |
+| uv | `UV_CACHE_DIR` | `/cache/uv` |
+| pip | `PIP_CACHE_DIR` | `/cache/pip` |
+
+### How it works
+
+- The sandbox image creates `/cache/*` directories at build time, so sandboxes work even without the volume mount (packages just won't persist across runs).
+- The sandbox-manager mounts the cache volume when `SANDBOX_CACHE_VOLUME` is set in its environment (configured in `docker-compose.yml`).
+- All supported package managers use content-addressable or content-hashed stores, making concurrent writes from multiple sandboxes safe.
+- If the cache becomes corrupted, package managers fall back to downloading from the network.
+
+### Purging the cache
+
+```bash
+docker compose --profile reset-cache run --rm reset-cache
+```
+
+The cache is also cleared during a hard reset (`--profile reset-hard`).
+
+### Disabling the cache
+
+Remove or empty the `SANDBOX_CACHE_VOLUME` env var from the `sandbox-manager` service in `docker-compose.yml`. Sandboxes will still work — they'll just download dependencies fresh every time.
+
+---
+
+## Security Hardening
+
+Five security controls protect the shared dependency cache and sandbox environment:
+
+### 1. Traceability — Cache Entry Logging
+
+Every sandbox run logs which packages were added to the shared cache. The `SandboxSupervisor` snapshots `/cache/{npm,pnpm,pip,uv,bun}` before and after the setup script, then emits structured `cache.new_entries` JSON log events with package manager, count, entry names, sandbox ID, and session ID.
+
+Check logs with:
+```bash
+docker compose logs -f sandbox-manager | grep cache.new_entries
+```
+
+### 2. Supply Chain Integrity — HTTPS-only + Lockfiles
+
+Package manager configs enforce HTTPS-only registries:
+- **npm**: `/home/sandbox/.npmrc` — `registry=https://registry.npmjs.org/`, `strict-ssl=true`
+- **pip**: `/etc/pip.conf` — `index-url = https://pypi.org/simple/`
+- **pnpm**: `/home/sandbox/.pnpmrc` — `registry=https://registry.npmjs.org/`, `strict-ssl=true`
+- **uv**: `UV_INDEX_URL=https://pypi.org/simple/` environment variable
+- **bun**: Uses HTTPS + strict SSL by default
+
+### 3. Enhanced Purge — Emergency Cache Wipe
+
+The `reset-cache` service performs a full emergency purge:
+1. Stops all running sandbox containers on `druppie-sandbox-network`
+2. Removes the `druppie_sandbox_dep_cache` volume
+3. Recreates an empty volume
+
+```bash
+# Standard purge
+docker compose --profile reset-cache run --rm reset-cache
+
+# With audit reason
+PURGE_REASON="suspected compromise" docker compose --profile reset-cache run --rm reset-cache
+```
+
+### 4. Vulnerability Scanning — OSV Scanner
+
+Scan cached dependencies for known vulnerabilities using [OSV Scanner](https://github.com/google/osv-scanner):
+
+```bash
+docker compose --profile scan-cache run --rm cache-scanner
+```
+
+Results are written to the `druppie_cache_scan_results` volume at `/scan-results/scan-{timestamp}.json`. Exit code 0 = clean, 1 = vulnerabilities found.
+
+### 5. Compartmentalization — Non-root + Capability Reduction
+
+Sandbox containers run as a non-root `sandbox` user (UID 1000) with minimal Linux capabilities:
+- **Kept**: `CHOWN`, `FOWNER` (shared cache file ownership), `NET_RAW` (health checks)
+- **Dropped**: `DAC_OVERRIDE`, `SETGID`, `SETUID`, `SYS_CHROOT`, `NET_BIND_SERVICE`, and all others
+- `--security-opt=no-new-privileges` prevents any escalation
+
+The `docker-entrypoint.sh` wrapper warns if cache directories aren't writable (stale root-owned volume from before migration).
+
+**Migration**: After deploying, run `docker compose --profile reset-cache run --rm reset-cache` once to clear root-owned cache files.
+
+---
+
 ## Security
 
 ### Session Ownership
@@ -283,6 +376,7 @@ All webhooks are signed with HMAC-SHA256. The `callbackSecret` is set when creat
 | `SANDBOX_MEMORY_LIMIT` | `4g` | Docker memory limit per sandbox |
 | `SANDBOX_CPU_LIMIT` | `2` | Docker CPU limit per sandbox |
 | `SANDBOX_RUNTIME` | `docker` | Container runtime (`docker` or `kata`) |
+| `SANDBOX_CACHE_VOLUME` | — | Docker volume name for shared dependency cache (empty = disabled) |
 | `LLM_FORCE_PROVIDER` | — | Override: forces all sandbox profiles to use this provider (e.g., `deepinfra`). Must be set together with `LLM_FORCE_MODEL`. |
 | `LLM_FORCE_MODEL` | — | Override: forces all sandbox profiles to use this model (e.g., `Qwen/Qwen3-32B`). Must be set together with `LLM_FORCE_PROVIDER`. |
 | `GITHUB_APP_ID` | — | GitHub App ID (required for `update_core` flow). See [GitHub App Setup](#github-app-setup) below. |
