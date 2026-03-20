@@ -1,0 +1,32 @@
+metadata:
+  id: general-chat-completed
+  title: "what agents do you have?"
+  status: completed
+  user: admin
+  intent: general_chat
+  project_name: null
+  language: en
+  hours_ago: 72
+
+agents:
+  # seq 1: router — completed, intent is general_chat
+  # The seed script checks `if agent_id == "router" and s["intent"]` — general_chat is truthy
+  # So it DOES call set_intent with project_name: null
+  - id: router
+    status: completed
+    tool_calls:
+      - tool: builtin:set_intent
+        arguments:
+          intent: general_chat
+          project_name: null
+        status: completed
+        result: "Intent set to general_chat"
+      - tool: builtin:done
+        arguments:
+          summary: "Agent router: Classified intent as general_chat, project 'project'."
+        status: completed
+        result: "Agent completed"
+
+messages:
+  - role: user
+    content: "what agents do you have?"
