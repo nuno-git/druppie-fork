@@ -82,6 +82,17 @@ mcps:
       - name: validate_tdd
         requires_approval: false
 
+      - name: get_git_status
+        requires_approval: false
+
+      # Internal tools (not visible to agents, callable by backend)
+      - name: validate_design
+        requires_approval: false
+      - name: _internal_revert_to_commit
+        requires_approval: false
+      - name: _internal_close_pull_request
+        requires_approval: false
+
   docker:
     url: ${MCP_DOCKER_URL:-http://module-docker:9002}
     type: core
