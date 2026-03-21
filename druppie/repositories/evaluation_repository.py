@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
-from ..db.models import BenchmarkRun, EvaluationResult
+from ..db.models import BenchmarkRun, EvaluationResult, TestRun, TestRunTag
 from .base import BaseRepository
 
 
@@ -147,6 +147,108 @@ class EvaluationRepository(BaseRepository):
             .filter(EvaluationResult.id == result_id)
             .first()
         )
+
+    # =========================================================================
+    # AGGREGATION METHODS
+    # =========================================================================
+
+    # =========================================================================
+    # TEST RUN METHODS (v2 testing framework)
+    # =========================================================================
+
+    def list_test_runs(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        tag: str | None = None,
+    ) -> tuple[list[TestRun], int]:
+        """List test runs with pagination, optionally filtered by tag.
+
+        Args:
+            limit: Maximum number of results to return.
+            offset: Number of results to skip.
+            tag: Optional tag filter.
+
+        Returns:
+            Tuple of (test_runs, total_count). Each test run has a _tags attribute.
+        """
+        query = self.db.query(TestRun)
+
+        if tag:
+            query = query.join(TestRunTag).filter(TestRunTag.tag == tag)
+
+        total = query.count()
+        items = (
+            query.order_by(TestRun.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        # Attach tags to each test run
+        for item in items:
+            item._tags = [
+                t.tag
+                for t in self.db.query(TestRunTag)
+                .filter(TestRunTag.test_run_id == item.id)
+                .all()
+            ]
+
+        return items, total
+
+    def get_test_run(self, test_run_id: UUID) -> TestRun | None:
+        """Get a single test run by ID with tags attached.
+
+        Args:
+            test_run_id: Test run UUID.
+
+        Returns:
+            TestRun with _tags attribute, or None if not found.
+        """
+        run = self.db.query(TestRun).filter(TestRun.id == test_run_id).first()
+        if run:
+            run._tags = [
+                t.tag
+                for t in self.db.query(TestRunTag)
+                .filter(TestRunTag.test_run_id == run.id)
+                .all()
+            ]
+        return run
+
+    def list_tags(self) -> list[dict]:
+        """Get all unique tags with test run counts.
+
+        Returns:
+            List of dicts with 'tag' and 'count' keys.
+        """
+        results = (
+            self.db.query(TestRunTag.tag, func.count(TestRunTag.id))
+            .group_by(TestRunTag.tag)
+            .order_by(TestRunTag.tag)
+            .all()
+        )
+        return [{"tag": tag, "count": count} for tag, count in results]
+
+    def delete_test_users(self) -> int:
+        """Delete all test users (matching test-* pattern) and cascade their data.
+
+        Returns:
+            Number of test users deleted.
+        """
+        from ..db.models import User, Session as SessionModel
+
+        test_users = (
+            self.db.query(User).filter(User.username.like("test-%")).all()
+        )
+        count = len(test_users)
+        for user in test_users:
+            # Delete sessions (cascades to agent_runs, tool_calls, etc.)
+            self.db.query(SessionModel).filter(
+                SessionModel.user_id == user.id
+            ).delete()
+            self.db.delete(user)
+
+        return count
 
     # =========================================================================
     # AGGREGATION METHODS

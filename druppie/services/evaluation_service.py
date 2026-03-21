@@ -6,7 +6,7 @@ from uuid import UUID
 import structlog
 
 from ..api.errors import NotFoundError
-from ..db.models import BenchmarkRun, EvaluationResult
+from ..db.models import BenchmarkRun, EvaluationResult, TestRun
 from ..domain.evaluation import (
     BenchmarkRunDetail,
     BenchmarkRunSummary,
@@ -109,6 +109,56 @@ class EvaluationService:
             Dict with keys: total, binary_pass_rate, graded_avg.
         """
         return self.eval_repo.get_agent_summary(agent_id)
+
+    # =========================================================================
+    # TEST RUNS (v2 testing framework)
+    # =========================================================================
+
+    def list_test_runs(
+        self,
+        page: int = 1,
+        limit: int = 20,
+        tag: str | None = None,
+    ) -> tuple[list[dict], int]:
+        """List test runs with pagination, optionally filtered by tag."""
+        offset = (page - 1) * limit
+        runs, total = self.eval_repo.list_test_runs(
+            limit=limit, offset=offset, tag=tag
+        )
+        return [self._test_run_to_dict(r) for r in runs], total
+
+    def get_test_run_detail(self, test_run_id: UUID) -> dict:
+        """Get a single test run with details.
+
+        Raises:
+            NotFoundError: If the test run does not exist.
+        """
+        run = self.eval_repo.get_test_run(test_run_id)
+        if not run:
+            raise NotFoundError("test_run", str(test_run_id))
+        return self._test_run_to_dict(run)
+
+    def list_tags(self) -> list[dict]:
+        """Get all unique tags with test run counts."""
+        return self.eval_repo.list_tags()
+
+    def delete_test_users(self) -> int:
+        """Delete all test users and their data.
+
+        Returns:
+            Number of test users deleted.
+        """
+        count = self.eval_repo.delete_test_users()
+        self.eval_repo.commit()
+        logger.info("test_users_deleted", count=count)
+        return count
+
+    @staticmethod
+    def _test_run_to_dict(run: TestRun) -> dict:
+        """Convert a TestRun DB model to a dict for API response."""
+        d = run.to_dict()
+        d["tags"] = getattr(run, "_tags", [])
+        return d
 
     # =========================================================================
     # BENCHMARK TRIGGER

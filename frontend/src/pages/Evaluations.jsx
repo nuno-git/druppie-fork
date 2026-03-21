@@ -1,8 +1,9 @@
 /**
  * Admin Evaluations Page
  *
- * Browse benchmark runs, drill into evaluation results, and trigger new benchmarks.
- * Three views: runs list -> run detail -> result detail.
+ * Two tabs:
+ *   1. Test Runs (v2) - browse test runs with tag filtering, assertion details
+ *   2. Benchmark Runs (existing) - browse benchmark runs, drill into evaluation results
  */
 
 import { useState, useEffect } from 'react'
@@ -18,6 +19,9 @@ import {
   ChevronLeft,
   ChevronRight,
   RefreshCw,
+  Tag,
+  Clock,
+  Filter,
 } from 'lucide-react'
 import {
   getBenchmarkRuns,
@@ -25,6 +29,10 @@ import {
   getEvaluationResult,
   triggerBenchmark,
   deleteBenchmarkRun,
+  getTestRuns,
+  getTestRun,
+  getTags,
+  deleteTestUsers,
 } from '../services/api'
 
 // ---- Helpers ----
@@ -36,6 +44,13 @@ const formatDate = (dateStr) => {
   } catch {
     return dateStr
   }
+}
+
+const formatDuration = (ms) => {
+  if (ms === null || ms === undefined) return '-'
+  if (ms < 1000) return `${ms}ms`
+  const secs = (ms / 1000).toFixed(1)
+  return `${secs}s`
 }
 
 const truncate = (str, maxLen = 80) => {
@@ -51,6 +66,8 @@ const StatusBadge = ({ value }) => {
     completed: 'bg-green-100 text-green-700',
     failed: 'bg-red-100 text-red-700',
     pending: 'bg-yellow-100 text-yellow-700',
+    passed: 'bg-green-100 text-green-700',
+    error: 'bg-orange-100 text-orange-700',
   }
   const colorClass = colors[value] || 'bg-gray-100 text-gray-700'
   return (
@@ -89,6 +106,390 @@ const ScoreDisplay = ({ result }) => {
     </span>
   )
 }
+
+// ---- Tab Selector ----
+
+const TabSelector = ({ activeTab, onTabChange }) => {
+  const tabs = [
+    { id: 'test-runs', label: 'Test Runs' },
+    { id: 'benchmark-runs', label: 'Benchmark Runs' },
+  ]
+
+  return (
+    <div className="flex border-b border-gray-200">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          onClick={() => onTabChange(tab.id)}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === tab.id
+              ? 'border-purple-600 text-purple-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ===========================================================================
+// TEST RUNS TAB (v2)
+// ===========================================================================
+
+// ---- Test Runs List View ----
+
+const TestRunsList = ({ onSelectRun }) => {
+  const [runs, setRuns] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [tags, setTags] = useState([])
+  const [selectedTag, setSelectedTag] = useState(null)
+  const [deletingUsers, setDeletingUsers] = useState(false)
+
+  const fetchTags = async () => {
+    try {
+      const data = await getTags()
+      setTags(data || [])
+    } catch {
+      // Tags are optional, don't block on failure
+    }
+  }
+
+  const fetchRuns = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const data = await getTestRuns(page, 20, selectedTag)
+      setRuns(data.items || [])
+      setTotalPages(data.total_pages || 1)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchTags()
+  }, [])
+
+  useEffect(() => {
+    fetchRuns()
+  }, [page, selectedTag])
+
+  const handleDeleteTestUsers = async () => {
+    if (!window.confirm('Delete ALL test users (test-*) and their sessions, projects, and data? This cannot be undone.')) return
+    setDeletingUsers(true)
+    try {
+      const result = await deleteTestUsers()
+      alert(result.message || 'Test users deleted.')
+      fetchRuns()
+    } catch (err) {
+      alert('Failed to delete test users: ' + err.message)
+    } finally {
+      setDeletingUsers(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+        <span className="ml-2 text-gray-600">Loading test runs...</span>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="p-8 text-center text-red-500">
+        <AlertCircle className="w-8 h-8 mx-auto mb-2" />
+        <p>{error}</p>
+        <button onClick={fetchRuns} className="mt-2 px-4 py-2 bg-blue-500 text-white rounded text-sm">
+          Retry
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Filter bar */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Filter className="w-4 h-4 text-gray-400" />
+          <select
+            value={selectedTag || ''}
+            onChange={(e) => {
+              setSelectedTag(e.target.value || null)
+              setPage(1)
+            }}
+            className="px-3 py-1.5 border rounded text-sm bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+          >
+            <option value="">All tags</option>
+            {tags.map((t) => (
+              <option key={t.tag} value={t.tag}>
+                {t.tag} ({t.count})
+              </option>
+            ))}
+          </select>
+          {selectedTag && (
+            <button
+              onClick={() => { setSelectedTag(null); setPage(1) }}
+              className="text-xs text-gray-500 hover:text-gray-700 underline"
+            >
+              Clear filter
+            </button>
+          )}
+        </div>
+        <button
+          onClick={handleDeleteTestUsers}
+          disabled={deletingUsers}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 rounded text-sm hover:bg-red-100 border border-red-200 disabled:opacity-50 transition-colors"
+        >
+          {deletingUsers ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+          Delete All Test Users
+        </button>
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-lg border overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-gray-100 bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Test Name</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">HITL Profile</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Judge Profile</th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Assertions</th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Judge Checks</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Duration</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tags</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
+                    No test runs found.{selectedTag ? ' Try clearing the tag filter.' : ' Run tests to see results here.'}
+                  </td>
+                </tr>
+              ) : (
+                runs.map((run) => (
+                  <tr
+                    key={run.id}
+                    onClick={() => onSelectRun(run.id)}
+                    className="border-b border-gray-50 hover:bg-purple-50/50 cursor-pointer transition-colors"
+                  >
+                    <td className="px-4 py-3 font-medium">{run.test_name || '-'}</td>
+                    <td className="px-4 py-3"><StatusBadge value={run.status} /></td>
+                    <td className="px-4 py-3 text-gray-600 text-xs font-mono">{run.hitl_profile || '-'}</td>
+                    <td className="px-4 py-3 text-gray-600 text-xs font-mono">{run.judge_profile || '-'}</td>
+                    <td className="px-4 py-3 text-center">
+                      {run.assertions_total != null ? (
+                        <span className={`font-mono text-xs font-medium ${
+                          run.assertions_passed === run.assertions_total ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {run.assertions_passed}/{run.assertions_total}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {run.judge_checks_total != null ? (
+                        <span className={`font-mono text-xs font-medium ${
+                          run.judge_checks_passed === run.judge_checks_total ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {run.judge_checks_passed}/{run.judge_checks_total}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {formatDuration(run.duration_ms)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {(run.tags || []).map((tag) => (
+                          <span
+                            key={tag}
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs"
+                          >
+                            <Tag className="w-2.5 h-2.5" />
+                            {tag}
+                          </span>
+                        ))}
+                        {(!run.tags || run.tags.length === 0) && (
+                          <span className="text-gray-400 text-xs">-</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{formatDate(run.created_at)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100">
+            <span className="text-sm text-gray-600">Page {page} of {totalPages}</span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="p-1 rounded hover:bg-gray-200 disabled:opacity-30"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="px-3 text-sm">{page}</span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="p-1 rounded hover:bg-gray-200 disabled:opacity-30"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---- Test Run Detail View ----
+
+const TestRunDetail = ({ testRunId, onBack }) => {
+  const [run, setRun] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    const fetch = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const data = await getTestRun(testRunId)
+        setRun(data)
+      } catch (err) {
+        setError(err.message)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetch()
+  }, [testRunId])
+
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="p-8 text-center text-red-500">
+        <AlertCircle className="w-8 h-8 mx-auto mb-2" />
+        <p>{error}</p>
+        <button onClick={onBack} className="mt-2 px-4 py-2 bg-gray-200 text-gray-700 rounded text-sm">
+          Back
+        </button>
+      </div>
+    )
+  }
+
+  if (!run) return null
+
+  const fields = [
+    ['Test Name', run.test_name],
+    ['Description', run.test_description],
+    ['Status', run.status],
+    ['Test User', run.test_user],
+    ['HITL Profile', run.hitl_profile],
+    ['Judge Profile', run.judge_profile],
+    ['Sessions Seeded', run.sessions_seeded],
+    ['Assertions', run.assertions_total != null ? `${run.assertions_passed}/${run.assertions_total}` : null],
+    ['Judge Checks', run.judge_checks_total != null ? `${run.judge_checks_passed}/${run.judge_checks_total}` : null],
+    ['Duration', formatDuration(run.duration_ms)],
+    ['Benchmark Run ID', run.benchmark_run_id],
+    ['Created', formatDate(run.created_at)],
+  ]
+
+  return (
+    <div className="space-y-4">
+      {/* Header card */}
+      <div className="bg-white rounded-lg border p-4 flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold">{run.test_name || 'Test Run'}</h3>
+          {run.test_description && (
+            <p className="text-sm text-gray-500 mt-0.5">{run.test_description}</p>
+          )}
+          <div className="flex items-center gap-2 mt-2">
+            {(run.tags || []).map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-0.5 px-2 py-0.5 bg-purple-50 text-purple-700 rounded text-xs"
+              >
+                <Tag className="w-3 h-3" />
+                {tag}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="text-right">
+          <StatusBadge value={run.status} />
+          {run.assertions_total != null && (
+            <div className="mt-2">
+              <span className={`text-2xl font-bold font-mono ${
+                run.assertions_passed === run.assertions_total ? 'text-green-600' : 'text-red-600'
+              }`}>
+                {run.assertions_passed}/{run.assertions_total}
+              </span>
+              <span className="text-xs text-gray-500 ml-1">assertions</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Metadata table */}
+      <div className="bg-white rounded-lg border overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+          <h3 className="font-semibold text-sm">Details</h3>
+        </div>
+        <table className="w-full text-sm">
+          <tbody>
+            {fields.map(([label, value]) => (
+              <tr key={label} className="border-b last:border-0">
+                <td className="px-4 py-2 font-medium text-gray-600 bg-gray-50 w-44">{label}</td>
+                <td className="px-4 py-2 font-mono text-xs">{value !== null && value !== undefined ? String(value) : '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ===========================================================================
+// BENCHMARK RUNS TAB (existing)
+// ===========================================================================
 
 // ---- Trigger Benchmark Form ----
 
@@ -172,9 +573,9 @@ const TriggerBenchmarkForm = ({ onTriggered }) => {
   )
 }
 
-// ---- Runs List View ----
+// ---- Benchmark Runs List View ----
 
-const RunsList = ({ onSelectRun }) => {
+const BenchmarkRunsList = ({ onSelectRun }) => {
   const [runs, setRuns] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -315,9 +716,9 @@ const RunsList = ({ onSelectRun }) => {
   )
 }
 
-// ---- Run Detail View ----
+// ---- Benchmark Run Detail View ----
 
-const RunDetail = ({ runId, onBack, onSelectResult }) => {
+const BenchmarkRunDetail = ({ runId, onBack, onSelectResult }) => {
   const [run, setRun] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -598,15 +999,20 @@ const ResultDetail = ({ resultId, onBack }) => {
   )
 }
 
-// ---- Main Component ----
+// ===========================================================================
+// MAIN COMPONENT
+// ===========================================================================
 
 export default function Evaluations() {
-  const [view, setView] = useState('list')       // 'list' | 'run' | 'result'
+  const [activeTab, setActiveTab] = useState('test-runs')
+  const [view, setView] = useState('list')       // 'list' | 'run' | 'result' | 'test-run-detail'
   const [selectedRunId, setSelectedRunId] = useState(null)
   const [selectedResultId, setSelectedResultId] = useState(null)
+  const [selectedTestRunId, setSelectedTestRunId] = useState(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
-  const handleSelectRun = (runId) => {
+  // Benchmark runs handlers
+  const handleSelectBenchmarkRun = (runId) => {
     setSelectedRunId(runId)
     setView('run')
   }
@@ -616,9 +1022,16 @@ export default function Evaluations() {
     setView('result')
   }
 
+  // Test runs handlers
+  const handleSelectTestRun = (testRunId) => {
+    setSelectedTestRunId(testRunId)
+    setView('test-run-detail')
+  }
+
   const handleBackToList = () => {
     setView('list')
     setSelectedRunId(null)
+    setSelectedTestRunId(null)
   }
 
   const handleBackToRun = () => {
@@ -629,6 +1042,22 @@ export default function Evaluations() {
   const handleTriggered = () => {
     setRefreshKey((k) => k + 1)
     setView('list')
+  }
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab)
+    setView('list')
+    setSelectedRunId(null)
+    setSelectedResultId(null)
+    setSelectedTestRunId(null)
+  }
+
+  // Determine page title based on view
+  const getTitle = () => {
+    if (view === 'test-run-detail') return 'Test Run Detail'
+    if (view === 'run') return 'Benchmark Run'
+    if (view === 'result') return 'Evaluation Result'
+    return 'Evaluations'
   }
 
   return (
@@ -646,11 +1075,7 @@ export default function Evaluations() {
             </button>
           )}
           <FlaskConical className="w-6 h-6 text-purple-600" />
-          <h1 className="text-2xl font-bold">
-            {view === 'list' && 'Evaluations'}
-            {view === 'run' && 'Benchmark Run'}
-            {view === 'result' && 'Evaluation Result'}
-          </h1>
+          <h1 className="text-2xl font-bold">{getTitle()}</h1>
         </div>
         {view === 'list' && (
           <div className="flex items-center gap-2">
@@ -661,15 +1086,30 @@ export default function Evaluations() {
             >
               <RefreshCw className="w-4 h-4" />
             </button>
-            <TriggerBenchmarkForm onTriggered={handleTriggered} />
+            {activeTab === 'benchmark-runs' && (
+              <TriggerBenchmarkForm onTriggered={handleTriggered} />
+            )}
           </div>
         )}
       </div>
 
+      {/* Tabs (only show on list view) */}
+      {view === 'list' && (
+        <TabSelector activeTab={activeTab} onTabChange={handleTabChange} />
+      )}
+
       {/* Content */}
-      {view === 'list' && <RunsList key={refreshKey} onSelectRun={handleSelectRun} />}
+      {view === 'list' && activeTab === 'test-runs' && (
+        <TestRunsList key={`test-${refreshKey}`} onSelectRun={handleSelectTestRun} />
+      )}
+      {view === 'list' && activeTab === 'benchmark-runs' && (
+        <BenchmarkRunsList key={`bench-${refreshKey}`} onSelectRun={handleSelectBenchmarkRun} />
+      )}
+      {view === 'test-run-detail' && (
+        <TestRunDetail testRunId={selectedTestRunId} onBack={handleBackToList} />
+      )}
       {view === 'run' && (
-        <RunDetail
+        <BenchmarkRunDetail
           runId={selectedRunId}
           onBack={handleBackToList}
           onSelectResult={handleSelectResult}

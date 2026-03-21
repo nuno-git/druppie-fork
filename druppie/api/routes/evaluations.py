@@ -309,6 +309,106 @@ async def trigger_benchmark(
     )
 
 
+# =============================================================================
+# V2 TEST RUN ENDPOINTS
+# =============================================================================
+
+
+@router.get("/evaluations/test-runs")
+async def list_test_runs(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    tag: str | None = Query(None, description="Filter by tag"),
+    service: EvaluationService = Depends(get_evaluation_service),
+    user: dict = Depends(require_admin),
+):
+    """List v2 test runs, optionally filtered by tag.
+
+    Admin only. Returns paginated list of test runs with tags, assertions,
+    HITL/judge profile info.
+
+    Query Parameters:
+        page: Page number (default 1)
+        limit: Items per page (default 20, max 100)
+        tag: Optional tag filter
+
+    Returns:
+        Paginated list of test run dicts
+    """
+    items, total = service.list_test_runs(page=page, limit=limit, tag=tag)
+    total_pages = max(1, (total + limit - 1) // limit)
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+    }
+
+
+@router.get("/evaluations/test-runs/{test_run_id}")
+async def get_test_run(
+    test_run_id: UUID,
+    service: EvaluationService = Depends(get_evaluation_service),
+    user: dict = Depends(require_admin),
+):
+    """Get a single test run with details.
+
+    Admin only.
+
+    Args:
+        test_run_id: Test run UUID
+
+    Returns:
+        Full test run dict with tags and assertion details
+
+    Raises:
+        NotFoundError: Test run not found
+    """
+    return service.get_test_run_detail(test_run_id)
+
+
+@router.get("/evaluations/tags")
+async def list_tags(
+    service: EvaluationService = Depends(get_evaluation_service),
+    user: dict = Depends(require_admin),
+):
+    """List all unique tags with test run counts.
+
+    Admin only.
+
+    Returns:
+        List of {tag, count} objects
+    """
+    return service.list_tags()
+
+
+@router.delete("/evaluations/test-users")
+async def delete_test_users(
+    service: EvaluationService = Depends(get_evaluation_service),
+    user: dict = Depends(require_admin),
+):
+    """Delete all test users (test-*) and their data.
+
+    Admin only. Removes all users whose username matches the test-* pattern,
+    along with their sessions, agent runs, tool calls, etc.
+
+    Returns:
+        Success confirmation with count of deleted users
+    """
+    count = service.delete_test_users()
+    logger.info(
+        "test_users_deleted_via_api",
+        count=count,
+        user_id=user.get("sub"),
+    )
+    return {
+        "success": True,
+        "deleted_count": count,
+        "message": f"Deleted {count} test user(s) and their data",
+    }
+
+
 @router.get("/evaluations/config")
 async def get_evaluation_config(
     user: dict = Depends(require_admin),
