@@ -149,6 +149,65 @@ agents:
     status: completed
     planned_prompt: "Implement weather dashboard to pass all 18 tests."
     tool_calls:
+      - tool: builtin:execute_coding_task
+        arguments:
+          task: "Implement weather dashboard to pass all 18 tests."
+          agent: druppie-builder
+        status: completed
+        result: "Sandbox completed successfully"
+        outcome:
+          target: gitea
+          files:
+            - path: "src/App.jsx"
+              content: |
+                import React, { useState, useEffect } from 'react';
+                import WeatherCard from './components/WeatherCard';
+
+                export default function App() {
+                  const [weather, setWeather] = useState(null);
+                  useEffect(() => {
+                    fetch('/api/weather?city=Amsterdam')
+                      .then(r => r.json())
+                      .then(setWeather);
+                  }, []);
+                  return (
+                    <div className="app">
+                      <h1>Weather Dashboard</h1>
+                      {weather && <WeatherCard data={weather} />}
+                    </div>
+                  );
+                }
+            - path: "src/components/WeatherCard.jsx"
+              content: |
+                import React from 'react';
+
+                export default function WeatherCard({ data }) {
+                  return (
+                    <div className="weather-card">
+                      <h2>{data.city}</h2>
+                      <p>{data.temperature}°C - {data.description}</p>
+                    </div>
+                  );
+                }
+            - path: "package.json"
+              content: |
+                {
+                  "name": "weather-dashboard",
+                  "version": "1.0.0",
+                  "dependencies": { "react": "^18.2.0", "react-dom": "^18.2.0" },
+                  "scripts": { "dev": "vite", "build": "vite build" }
+                }
+            - path: "Dockerfile"
+              content: |
+                FROM node:18-alpine
+                WORKDIR /app
+                COPY package*.json ./
+                RUN npm install
+                COPY . .
+                RUN npm run build
+                CMD ["npm", "start"]
+          commit_message: "Implement weather dashboard - all 18 tests passing"
+          push: true
       - tool: builtin:done
         arguments:
           summary: "Agent builder: Implemented weather-dashboard, all tests passing. Code committed and pushed."

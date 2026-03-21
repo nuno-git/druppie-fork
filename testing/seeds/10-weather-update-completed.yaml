@@ -115,6 +115,32 @@ agents:
     status: completed
     planned_prompt: "Implemented dark mode toggle, all 6 tests pass."
     tool_calls:
+      - tool: builtin:execute_coding_task
+        arguments:
+          task: "Implement dark mode toggle, all 6 tests pass."
+          agent: druppie-builder
+        status: completed
+        result: "Sandbox completed successfully"
+        outcome:
+          target: gitea
+          files:
+            - path: "src/theme.js"
+              content: |
+                const THEME_KEY = 'weather-dashboard-theme';
+
+                export function toggleTheme() {
+                  const current = document.documentElement.getAttribute('data-theme');
+                  const next = current === 'dark' ? 'light' : 'dark';
+                  document.documentElement.setAttribute('data-theme', next);
+                  localStorage.setItem(THEME_KEY, next);
+                }
+
+                export function initTheme() {
+                  const saved = localStorage.getItem(THEME_KEY) || 'light';
+                  document.documentElement.setAttribute('data-theme', saved);
+                }
+          commit_message: "Add dark mode theme toggle"
+          push: true
       - tool: builtin:done
         arguments:
           summary: "Agent builder: Implemented weather-dashboard-update, all tests passing. Code committed and pushed."
