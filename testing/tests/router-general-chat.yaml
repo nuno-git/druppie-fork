@@ -1,0 +1,13 @@
+test:
+  name: router-general-chat
+  description: "Router classifies a question as general_chat"
+  sessions: []
+  run:
+    message: "what agents do you have?"
+    real_agents: [router]
+  hitl: non-technical-pm
+  judge: fast-sonnet
+  evals:
+    - eval: router-correct-intent
+      expected:
+        intent: general_chat
