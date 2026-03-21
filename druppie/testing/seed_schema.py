@@ -85,6 +85,7 @@ class SessionMetadata(BaseModel):
     project_name: str | None = None
     language: str = "en"
     hours_ago: float = 0
+    after: str | None = None  # Chain: seed this session's parent first
 
 
 class SessionFixture(BaseModel):
