@@ -2,10 +2,12 @@
 # =========================================
 #
 # Profiles:
-#   infra   - Infrastructure only (databases, Keycloak, Gitea, MCP servers)
-#   dev     - Development mode with hot reload (backend + frontend with volume mounts)
-#   prod    - Production mode (backend + frontend without hot reload)
-#   init    - Initialization container (Keycloak + Gitea setup)
+#   infra            - Infrastructure only (databases, Keycloak, Gitea, MCP servers)
+#   dev              - Development mode with hot reload (backend + frontend with volume mounts)
+#   prod             - Production mode (backend + frontend without hot reload)
+#   init             - Initialization container (Keycloak + Gitea setup)
+#   test-integration - Run integration tests with isolated test database
+#   test-benchmark   - Run benchmark tests with isolated test database
 #
 # Usage:
 #   docker compose --profile infra --profile init up -d      # Infrastructure + init
@@ -13,6 +15,8 @@
 #   docker compose --profile prod --profile init up -d       # Full production
 #   docker compose --profile reset-db run --rm reset-db      # Reset app database
 #   docker compose --profile reset-hard run --rm reset-hard  # Full reset + re-init
+#   docker compose --profile test-integration up --abort-on-container-exit  # Integration tests
+#   docker compose --profile test-benchmark up --abort-on-container-exit    # Benchmark tests
 #   docker compose down                                       # Stop everything
 #
 # Ports:
@@ -778,6 +782,61 @@ services:
     volumes:
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - .:/project
+
+  # ===========================================================================
+  # TEST SERVICES
+  # ===========================================================================
+
+  test-db:
+    image: postgres:15-alpine
+    container_name: druppie-test-db
+    profiles: [test-integration, test-benchmark]
+    environment:
+      POSTGRES_DB: druppie_test
+      POSTGRES_USER: druppie_test
+      POSTGRES_PASSWORD: druppie_test_secret
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "druppie_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - druppie-new-network
+
+  test-integration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: druppie-test-integration
+    profiles: [test-integration]
+    command: ["python", "-m", "pytest", "druppie/tests/", "-v", "--tb=short"]
+    environment:
+      DATABASE_URL: postgresql://druppie_test:druppie_test_secret@test-db:5432/druppie_test
+      TESTING: "true"
+    depends_on:
+      test-db:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
+
+  test-benchmark:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: druppie-test-benchmark
+    profiles: [test-benchmark]
+    command: ["python", "scripts/benchmark.py", "--all", "--dry-run"]
+    environment:
+      DATABASE_URL: postgresql://druppie_test:druppie_test_secret@test-db:5432/druppie_test
+      TESTING: "true"
+      LLM_PROVIDER: ${LLM_PROVIDER:-zai}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+      BENCHMARK_JUDGE_MODEL: ${BENCHMARK_JUDGE_MODEL:-claude-sonnet-4-6}
+    depends_on:
+      test-db:
+        condition: service_healthy
+    networks:
+      - druppie-new-network
 
 # =============================================================================
 # VOLUMES
