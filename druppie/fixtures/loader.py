@@ -100,6 +100,7 @@ def seed_fixture(db: DbSession, fixture: SessionFixture) -> None:
             updated_at=base_ts,
         )
         db.add(project)
+        db.flush()
         project_db_id = project_id
 
     # -- 5. Token totals --
@@ -123,6 +124,7 @@ def seed_fixture(db: DbSession, fixture: SessionFixture) -> None:
         updated_at=base_ts,
     )
     db.add(session)
+    db.flush()
 
     # -- 7. User message at sequence 0 --
     # Use first user message from fixture, or fall back to title
@@ -143,6 +145,7 @@ def seed_fixture(db: DbSession, fixture: SessionFixture) -> None:
         sequence_number=0,
         created_at=base_ts,
     ))
+    db.flush()
 
     # -- 8. Agent runs --
     msg_seq = 1  # next message sequence number
@@ -178,6 +181,7 @@ def seed_fixture(db: DbSession, fixture: SessionFixture) -> None:
             created_at=run_ts,
         )
         db.add(agent_run)
+        db.flush()
 
         # LLM call (only for active agents)
         llm_id = fixture_uuid(meta.id, "run", idx, "llm")
@@ -194,6 +198,7 @@ def seed_fixture(db: DbSession, fixture: SessionFixture) -> None:
                 duration_ms=2000 + (idx * 500),
                 created_at=run_ts,
             ))
+            db.flush()
 
         # Tool calls
         _seed_tool_calls(
