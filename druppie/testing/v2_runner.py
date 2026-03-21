@@ -309,10 +309,10 @@ class HITLSimulator:
         )
         answer = response.content.strip()
         logger.info(
-            "hitl_simulator_answered",
-            question=question_text[:80],
-            answer=answer[:80],
-            interaction=self._interaction_count,
+            "HITL simulator answered (interaction %d): question=%s answer=%s",
+            self._interaction_count,
+            question_text[:80],
+            answer[:80],
         )
         return answer
 
@@ -451,10 +451,10 @@ class _BoundedOrchestrator:
                         )
                         session_repo.commit()
                         logger.info(
-                            "bounded_execution_stopped",
-                            session_id=str(session_id),
-                            completed_agents=completed_agents,
-                            cancelled_next=next_run.agent_id,
+                            "Bounded execution stopped: session=%s completed=%s cancelled_next=%s",
+                            session_id,
+                            completed_agents,
+                            next_run.agent_id,
                         )
                         return
 
@@ -546,8 +546,8 @@ class _BoundedOrchestrator:
             )
             if not pending_question:
                 logger.warning(
-                    "hitl_pause_no_pending_question",
-                    session_id=str(session_id),
+                    "HITL pause but no pending question found: session=%s",
+                    session_id,
                 )
                 break
 
@@ -559,10 +559,10 @@ class _BoundedOrchestrator:
 
             # Resume the orchestrator with the answer
             logger.info(
-                "hitl_resuming_with_answer",
-                session_id=str(session_id),
-                question_id=str(pending_question.id),
-                answer=answer[:80],
+                "HITL resuming with answer: session=%s question=%s answer=%s",
+                session_id,
+                pending_question.id,
+                answer[:80],
             )
             await orchestrator.resume_after_answer(
                 session_id=session_id,
@@ -714,7 +714,7 @@ Respond with JSON: {{"pass": true/false, "reasoning": "your explanation"}}"""
             )
             return self._parse_judge_response(response.content)
         except Exception as e:
-            logger.error("judge_check_failed", check=check[:80], error=str(e))
+            logger.error("Judge check failed: check=%s error=%s", check[:80], str(e))
             return False, f"Judge call failed: {e}"
 
     @staticmethod
@@ -732,8 +732,8 @@ Respond with JSON: {{"pass": true/false, "reasoning": "your explanation"}}"""
             return passed, reasoning
         except (json.JSONDecodeError, ValueError):
             logger.warning(
-                "judge_response_parse_failed",
-                response=response_text[:200],
+                "Judge response parse failed: response=%s",
+                response_text[:200],
             )
             return False, f"Failed to parse judge response: {response_text[:200]}"
 
@@ -844,7 +844,7 @@ class TestRunner:
             try:
                 hitl_profile = self._profiles.get_hitl(hitl_name)
             except KeyError:
-                logger.warning("hitl_profile_not_found", name=hitl_name)
+                logger.warning("HITL profile not found: %s", hitl_name)
 
         # Run real agent execution
         execution_session_id: UUID | None = None
@@ -860,9 +860,9 @@ class TestRunner:
             except Exception as e:
                 execution_error = f"{type(e).__name__}: {e}"
                 logger.error(
-                    "agent_execution_failed",
-                    test=test.name,
-                    error=execution_error,
+                    "Agent execution failed: test=%s error=%s",
+                    test.name,
+                    execution_error,
                     exc_info=True,
                 )
 
@@ -903,7 +903,7 @@ class TestRunner:
                 try:
                     judge_profile = self._profiles.get_judge(judge_name)
                 except KeyError:
-                    logger.warning("judge_profile_not_found", name=judge_name)
+                    logger.warning("Judge profile not found: %s", judge_name)
                     continue
 
                 judge = JudgeRunner(judge_profile)
