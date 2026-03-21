@@ -1,11 +1,14 @@
-"""YAML fixture loader — record-only mode.
+"""YAML fixture loader \u2014 creates DB records and optionally real Gitea repos.
 
 Reads validated YAML fixtures and inserts DB records via SQLAlchemy.
-Replicates what ``scripts/seed_builder_retry.py`` does but from YAML data.
+When a ``gitea_url`` is provided, actual repos are created in Gitea so that
+project links in the frontend point to working URLs.
 """
 
 from __future__ import annotations
 
+import logging
+import uuid
 from datetime import timedelta
 from pathlib import Path
 
@@ -29,8 +32,84 @@ from druppie.db.models.base import utcnow
 from .ids import fixture_uuid
 from .schema import AgentRunFixture, SessionFixture, ToolCallFixture
 
+logger = logging.getLogger(__name__)
+
 # HITL tool names that create Question records
 _HITL_TOOLS = {"hitl_ask_question", "hitl_ask_multiple_choice_question"}
+
+
+# ---------------------------------------------------------------------------
+# Gitea helper
+# ---------------------------------------------------------------------------
+
+
+def _create_gitea_repo(project_name: str, gitea_url: str) -> dict | None:
+    """Create a Gitea repo via REST API.
+
+    Returns a dict with ``repo_name``, ``repo_owner``, ``repo_url``, and
+    ``clone_url`` on success, or *None* if the request fails.
+    """
+    import httpx
+
+    try:
+        client = httpx.Client(
+            base_url=gitea_url,
+            auth=("gitea_admin", "GiteaAdmin123"),
+            timeout=15,
+        )
+
+        # Ensure druppie_admin user exists
+        r = client.get("/api/v1/users/druppie_admin")
+        if r.status_code == 404:
+            r2 = client.post("/api/v1/admin/users", json={
+                "username": "druppie_admin",
+                "email": "druppie_admin@druppie.local",
+                "password": "DruppieAdmin123!",
+                "must_change_password": False,
+                "login_name": "druppie_admin",
+                "source_id": 0,
+            })
+            if r2.status_code not in (201, 422):
+                logger.warning(
+                    "Could not create druppie_admin user: %s", r2.status_code
+                )
+            else:
+                logger.info("Created Gitea user druppie_admin")
+
+        # Create repo with a unique suffix
+        short = uuid.uuid4().hex[:8]
+        repo_name = f"{project_name}-{short}"
+        r = client.post("/api/v1/admin/users/druppie_admin/repos", json={
+            "name": repo_name,
+            "description": f"{project_name} \u2014 seeded test data",
+            "private": False,
+            "auto_init": True,
+            "readme": "Default",
+        })
+        if r.status_code == 201:
+            logger.info("Created Gitea repo: druppie_admin/%s", repo_name)
+        elif r.status_code in (409, 422):
+            logger.info("Gitea repo already exists: druppie_admin/%s", repo_name)
+        else:
+            logger.warning(
+                "Failed to create Gitea repo %s: HTTP %s", repo_name, r.status_code
+            )
+            return None
+
+        return {
+            "repo_name": repo_name,
+            "repo_owner": "druppie_admin",
+            "repo_url": f"{gitea_url}/druppie_admin/{repo_name}",
+            "clone_url": f"{gitea_url}/druppie_admin/{repo_name}.git",
+        }
+
+    except Exception:
+        logger.warning(
+            "Gitea not reachable at %s \u2014 falling back to placeholder URLs",
+            gitea_url,
+            exc_info=True,
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -48,8 +127,16 @@ def load_fixtures(fixtures_dir: Path) -> list[SessionFixture]:
     return results
 
 
-def seed_fixture(db: DbSession, fixture: SessionFixture) -> None:
-    """Insert DB records for a single fixture (idempotent)."""
+def seed_fixture(
+    db: DbSession,
+    fixture: SessionFixture,
+    gitea_url: str | None = None,
+) -> None:
+    """Insert DB records for a single fixture (idempotent).
+
+    When *gitea_url* is provided, a real Gitea repo is created for the
+    project so that links in the frontend resolve correctly.
+    """
     meta = fixture.metadata
     session_id = fixture_uuid(meta.id)
 
@@ -83,17 +170,34 @@ def seed_fixture(db: DbSession, fixture: SessionFixture) -> None:
     # -- 3. Timestamps --
     base_ts = utcnow() - timedelta(hours=meta.hours_ago)
 
-    # -- 4. Project (record-only: placeholder repo fields) --
+    # -- 4. Project --
     project_db_id = None
     if meta.project_name:
+        # Try to create a real Gitea repo when gitea_url is provided
+        repo_info = None
+        if gitea_url:
+            repo_info = _create_gitea_repo(meta.project_name, gitea_url)
+
+        if repo_info:
+            repo_name = repo_info["repo_name"]
+            repo_owner = repo_info["repo_owner"]
+            repo_url = repo_info["repo_url"]
+            clone_url = repo_info["clone_url"]
+        else:
+            # Placeholder URLs (record-only mode)
+            repo_name = meta.project_name
+            repo_owner = "druppie_admin"
+            repo_url = f"http://gitea:3000/druppie_admin/{meta.project_name}"
+            clone_url = f"http://gitea:3000/druppie_admin/{meta.project_name}.git"
+
         project = Project(
             id=project_id,
             name=meta.project_name,
             description=f"Fixture: {meta.title}",
-            repo_name=meta.project_name,
-            repo_owner="druppie_admin",
-            repo_url=f"http://gitea:3000/druppie_admin/{meta.project_name}",
-            clone_url=f"http://gitea:3000/druppie_admin/{meta.project_name}.git",
+            repo_name=repo_name,
+            repo_owner=repo_owner,
+            repo_url=repo_url,
+            clone_url=clone_url,
             owner_id=user.id,
             status="active",
             created_at=base_ts,
@@ -236,7 +340,7 @@ def seed_fixture(db: DbSession, fixture: SessionFixture) -> None:
                 session_id=session_id,
                 agent_run_id=run_id,
                 role="assistant",
-                content=f"Agent {agent.id}: Failed — {agent.error_message}",
+                content=f"Agent {agent.id}: Failed \u2014 {agent.error_message}",
                 agent_id=agent.id,
                 sequence_number=msg_seq,
                 created_at=run_ts,
@@ -263,11 +367,19 @@ def seed_fixture(db: DbSession, fixture: SessionFixture) -> None:
     db.flush()
 
 
-def seed_all(db: DbSession, fixtures_dir: Path) -> int:
-    """Load and seed all fixtures. Return the count of fixtures seeded."""
+def seed_all(
+    db: DbSession,
+    fixtures_dir: Path,
+    gitea_url: str | None = None,
+) -> int:
+    """Load and seed all fixtures. Return the count of fixtures seeded.
+
+    When *gitea_url* is provided it is passed through to each fixture so
+    that real Gitea repos are created for projects.
+    """
     fixtures = load_fixtures(fixtures_dir)
     for fix in fixtures:
-        seed_fixture(db, fix)
+        seed_fixture(db, fix, gitea_url=gitea_url)
     return len(fixtures)
 
 
