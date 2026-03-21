@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from druppie.testing.seed_schema import (
     SessionFixture, SessionMetadata, AgentRunFixture,
     ToolCallFixture, ApprovalFixture, MessageFixture,
+    OutcomeFile, ToolCallOutcome,
 )
 
 
@@ -180,3 +181,46 @@ def test_agent_with_planned_prompt():
         planned_prompt="Analyze the user request.",
     )
     assert agent.planned_prompt == "Analyze the user request."
+
+
+def test_outcome_on_execute_coding_task():
+    """Tool call with outcome block parses correctly."""
+    tc = ToolCallFixture(
+        tool="builtin:execute_coding_task",
+        arguments={"task": "Build it", "agent": "druppie-builder"},
+        status="completed",
+        result="Sandbox completed successfully",
+        outcome=ToolCallOutcome(
+            target="gitea",
+            files=[
+                OutcomeFile(path="src/App.jsx", content="export default function App() {}"),
+                OutcomeFile(path="README.md", from_file="/tmp/readme.md"),
+            ],
+            commit_message="Initial implementation",
+            push=True,
+        ),
+    )
+    assert tc.outcome is not None
+    assert tc.outcome.target == "gitea"
+    assert len(tc.outcome.files) == 2
+    assert tc.outcome.files[0].path == "src/App.jsx"
+    assert tc.outcome.files[0].content is not None
+    assert tc.outcome.files[1].from_file == "/tmp/readme.md"
+    assert tc.outcome.commit_message == "Initial implementation"
+    assert tc.outcome.push is True
+
+
+def test_outcome_defaults():
+    """ToolCallOutcome defaults are sensible."""
+    outcome = ToolCallOutcome()
+    assert outcome.target == "gitea"
+    assert outcome.branch is None
+    assert outcome.files == []
+    assert outcome.commit_message == "Automated commit"
+    assert outcome.push is True
+
+
+def test_tool_call_without_outcome():
+    """Tool call without outcome block has None."""
+    tc = ToolCallFixture(tool="builtin:done")
+    assert tc.outcome is None

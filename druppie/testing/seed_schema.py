@@ -13,6 +13,22 @@ class ApprovalFixture(BaseModel):
     approved_by: str | None = None
 
 
+class OutcomeFile(BaseModel):
+    """A file to create in the repo."""
+    path: str
+    content: str | None = None
+    from_file: str | None = None  # Load content from a local file path
+
+
+class ToolCallOutcome(BaseModel):
+    """Outcome of an execute_coding_task -- what files the sandbox produced."""
+    target: Literal["gitea", "github"] = "gitea"
+    branch: str | None = None  # Defaults to main for gitea
+    files: list[OutcomeFile] = Field(default_factory=list)
+    commit_message: str = "Automated commit"
+    push: bool = True
+
+
 class ToolCallFixture(BaseModel):
     """A single tool call within an agent run."""
     tool: str  # "builtin:set_intent", "coding:make_design", etc.
@@ -25,6 +41,7 @@ class ToolCallFixture(BaseModel):
     error_message: str | None = None
     answer: str | None = None  # HITL: creates Question record if present
     approval: ApprovalFixture | None = None
+    outcome: ToolCallOutcome | None = None  # For execute_coding_task
 
     @property
     def mcp_server(self) -> str:
