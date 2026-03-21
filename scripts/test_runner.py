@@ -318,18 +318,31 @@ def _print_result(result: TestRunResult) -> None:
     duration_s = result.duration_ms / 1000
     assertions_passed = sum(1 for a in result.assertion_results if a.passed)
     assertions_total = len(result.assertion_results)
+    judge_results = getattr(result, "judge_results", [])
+    judge_passed = sum(1 for j in judge_results if j.passed)
+    judge_total = len(judge_results)
 
-    if result.passed:
-        print(f"  {_green('[PASS]')} {result.test_name} ({duration_s:.1f}s)")
-        print(f"    hitl: {result.hitl_profile} | "
-              f"assertions: {assertions_passed}/{assertions_total}")
-    else:
-        print(f"  {_red('[FAIL]')} {result.test_name} ({duration_s:.1f}s)")
-        print(f"    hitl: {result.hitl_profile} | "
-              f"assertions: {assertions_passed}/{assertions_total}")
+    status_tag = _green("[PASS]") if result.passed else _red("[FAIL]")
+    if result.status == "error":
+        status_tag = _red("[ERROR]")
+
+    print(f"  {status_tag} {result.test_name} ({duration_s:.1f}s)")
+    parts = [f"hitl: {result.hitl_profile}"]
+    parts.append(f"assertions: {assertions_passed}/{assertions_total}")
+    if judge_total > 0:
+        parts.append(f"judge: {judge_passed}/{judge_total}")
+    print(f"    {' | '.join(parts)}")
+
+    if not result.passed:
         for a in result.assertion_results:
             if not a.passed:
                 print(f"    {_red('FAIL')}: {a.name}: {a.message}")
+        for j in judge_results:
+            if not j.passed:
+                check_short = j.check[:60] + "..." if len(j.check) > 60 else j.check
+                print(f"    {_red('JUDGE')}: {check_short}")
+                if j.reasoning:
+                    print(f"      {j.reasoning[:120]}")
     print()
 
 
@@ -397,17 +410,21 @@ def _generate_report(
         pass_rate = (tag_passed / tag_total * 100) if tag_total > 0 else 0
         lines.append(f"### {tag} ({tag_total} tests) -- {pass_rate:.0f}% pass rate")
         lines.append("")
-        lines.append("| Test | Status | HITL Profile | Assertions | Duration |")
-        lines.append("|------|--------|--------------|------------|----------|")
+        lines.append("| Test | Status | HITL Profile | Assertions | Judge | Duration |")
+        lines.append("|------|--------|--------------|------------|-------|----------|")
 
         for r in tag_res:
             a_passed = sum(1 for a in r.assertion_results if a.passed)
             a_total = len(r.assertion_results)
+            j_results = getattr(r, "judge_results", [])
+            j_passed = sum(1 for j in j_results if j.passed)
+            j_total = len(j_results)
+            judge_str = f"{j_passed}/{j_total}" if j_total > 0 else "-"
             duration_s = r.duration_ms / 1000
             status = "PASS" if r.passed else "FAIL" if r.status == "failed" else "ERROR"
             lines.append(
                 f"| {r.test_name} | {status} | {r.hitl_profile} | "
-                f"{a_passed}/{a_total} | {duration_s:.1f}s |"
+                f"{a_passed}/{a_total} | {judge_str} | {duration_s:.1f}s |"
             )
 
             # Show failures
@@ -415,27 +432,37 @@ def _generate_report(
                 for a in r.assertion_results:
                     if not a.passed:
                         lines.append(f"  > FAIL: {a.name}: {a.message}")
+                for j in j_results:
+                    if not j.passed:
+                        lines.append(f"  > JUDGE: {j.check[:80]}")
 
         lines.append("")
 
     if untagged:
         lines.append("### (untagged)")
         lines.append("")
-        lines.append("| Test | Status | HITL Profile | Assertions | Duration |")
-        lines.append("|------|--------|--------------|------------|----------|")
+        lines.append("| Test | Status | HITL Profile | Assertions | Judge | Duration |")
+        lines.append("|------|--------|--------------|------------|-------|----------|")
         for r in untagged:
             a_passed = sum(1 for a in r.assertion_results if a.passed)
             a_total = len(r.assertion_results)
+            j_results = getattr(r, "judge_results", [])
+            j_passed = sum(1 for j in j_results if j.passed)
+            j_total = len(j_results)
+            judge_str = f"{j_passed}/{j_total}" if j_total > 0 else "-"
             duration_s = r.duration_ms / 1000
             status = "PASS" if r.passed else "FAIL" if r.status == "failed" else "ERROR"
             lines.append(
                 f"| {r.test_name} | {status} | {r.hitl_profile} | "
-                f"{a_passed}/{a_total} | {duration_s:.1f}s |"
+                f"{a_passed}/{a_total} | {judge_str} | {duration_s:.1f}s |"
             )
             if not r.passed:
                 for a in r.assertion_results:
                     if not a.passed:
                         lines.append(f"  > FAIL: {a.name}: {a.message}")
+                for j in j_results:
+                    if not j.passed:
+                        lines.append(f"  > JUDGE: {j.check[:80]}")
         lines.append("")
 
     report_content = "\n".join(lines) + "\n"
