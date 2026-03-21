@@ -27,9 +27,9 @@ from druppie.db.models import (
     User,
     UserRole,
 )
-from druppie.fixtures.ids import fixture_uuid
-from druppie.fixtures.loader import load_fixtures, seed_fixture
-from druppie.fixtures.schema import (
+from druppie.testing.seed_ids import fixture_uuid
+from druppie.testing.seed_loader import load_fixtures, seed_fixture
+from druppie.testing.seed_schema import (
     AgentRunFixture,
     ApprovalFixture,
     MessageFixture,
@@ -599,10 +599,10 @@ class TestNoProjectForGeneralChat:
 
 
 class TestLoadFixturesFromDir:
-    """13. Load from real fixtures/sessions/ directory, verify all 11 parse."""
+    """13. Load from real testing/seeds/ directory, verify all 11 parse."""
 
     def test_load_fixtures_from_dir(self):
-        fixtures_dir = Path(__file__).resolve().parents[2] / "fixtures" / "sessions"
+        fixtures_dir = Path(__file__).resolve().parents[2] / "testing" / "seeds"
         if not fixtures_dir.exists():
             pytest.skip(f"Fixtures directory not found: {fixtures_dir}")
 

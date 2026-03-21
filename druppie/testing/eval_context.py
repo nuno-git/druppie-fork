@@ -14,7 +14,7 @@ import yaml
 from sqlalchemy.orm import Session as DbSession
 
 from druppie.db.models import AgentRun, Message, ToolCall
-from druppie.evaluation.schema import ContextSource
+from druppie.testing.eval_schema import ContextSource
 
 
 def extract_context(

@@ -131,9 +131,9 @@ class EvaluationService:
         Raises:
             FileNotFoundError: If the scenario YAML does not exist.
         """
-        from ..benchmarks.runner import ScenarioRunner, load_scenario
+        from ..testing.bench_runner import ScenarioRunner, load_scenario
 
-        scenarios_dir = Path(__file__).resolve().parent.parent.parent / "benchmarks" / "scenarios"
+        scenarios_dir = Path(__file__).resolve().parent.parent.parent / "testing" / "scenarios"
         scenario_path = scenarios_dir / f"{scenario_name}.yaml"
 
         if not scenario_path.exists():

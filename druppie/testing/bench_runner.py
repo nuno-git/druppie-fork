@@ -11,14 +11,14 @@ from uuid import UUID
 import yaml
 from sqlalchemy.orm import Session as DbSession
 
-from druppie.benchmarks.assertions import AssertionResult, check_assertions
-from druppie.benchmarks.schema import ScenarioDefinition, ScenarioFile
-from druppie.benchmarks.user_simulator import UserSimulator
+from druppie.testing.bench_assertions import AssertionResult, check_assertions
+from druppie.testing.bench_schema import ScenarioDefinition, ScenarioFile
+from druppie.testing.bench_simulator import UserSimulator
 from druppie.db.models import BenchmarkRun, EvaluationResult
-from druppie.evaluation.judge import JudgeEngine
-from druppie.fixtures.ids import fixture_uuid
-from druppie.fixtures.loader import seed_fixture
-from druppie.fixtures.schema import (
+from druppie.testing.eval_judge import JudgeEngine
+from druppie.testing.seed_ids import fixture_uuid
+from druppie.testing.seed_loader import seed_fixture
+from druppie.testing.seed_schema import (
     AgentRunFixture,
     MessageFixture,
     SessionFixture,

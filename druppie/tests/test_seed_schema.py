@@ -2,7 +2,7 @@
 
 import pytest
 from pydantic import ValidationError
-from druppie.fixtures.schema import (
+from druppie.testing.seed_schema import (
     SessionFixture, SessionMetadata, AgentRunFixture,
     ToolCallFixture, ApprovalFixture, MessageFixture,
 )
