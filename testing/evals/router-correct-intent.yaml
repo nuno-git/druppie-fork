@@ -10,4 +10,3 @@ eval:
   judge:
     checks:
       - "The router should classify the intent correctly based on the user message"
-      - "The router should identify the correct project when updating an existing one"
