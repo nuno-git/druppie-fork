@@ -21,6 +21,7 @@ import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import Settings from './pages/Settings'
 import AdminDatabase from './pages/AdminDatabase'
+import Evaluations from './pages/Evaluations'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -235,6 +236,14 @@ function App() {
                             element={
                               <ProtectedRoute requiredRole="admin">
                                 <AdminDatabase />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/admin/evaluations"
+                            element={
+                              <ProtectedRoute requiredRole="admin">
+                                <Evaluations />
                               </ProtectedRoute>
                             }
                           />
