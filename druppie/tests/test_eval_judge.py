@@ -22,7 +22,7 @@ from druppie.db.models import (
     ToolCall,
     User,
 )
-from druppie.evaluation.judge import JudgeEngine
+from druppie.testing.eval_judge import JudgeEngine
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ def _patch_uuid_columns_for_sqlite(base):
 # Fixtures (pytest)
 # ---------------------------------------------------------------------------
 
-EVALUATIONS_DIR = Path(__file__).resolve().parents[2] / "evaluations"
+EVALUATIONS_DIR = Path(__file__).resolve().parents[2] / "testing" / "evaluations"
 
 
 @pytest.fixture()

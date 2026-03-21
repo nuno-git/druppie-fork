@@ -6,7 +6,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 
-from druppie.benchmarks.schema import UserSimulatorConfig
+from druppie.testing.bench_schema import UserSimulatorConfig
 
 logger = logging.getLogger(__name__)
 

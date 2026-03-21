@@ -14,8 +14,8 @@ import yaml
 from sqlalchemy.orm import Session as DbSession
 
 from druppie.db.models import AgentRun, BenchmarkRun, EvaluationResult, LlmCall
-from druppie.evaluation.context import extract_context
-from druppie.evaluation.schema import EvaluationDefinition, EvaluationFile
+from druppie.testing.eval_context import extract_context
+from druppie.testing.eval_schema import EvaluationDefinition, EvaluationFile
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class JudgeEngine:
 
     def __init__(self, evaluations_dir: Path | None = None):
         self._evaluations_dir = evaluations_dir or (
-            Path(__file__).resolve().parents[2] / "evaluations"
+            Path(__file__).resolve().parents[2] / "testing" / "evaluations"
         )
         self._definitions: dict[str, EvaluationDefinition] = {}
         self._load_definitions()

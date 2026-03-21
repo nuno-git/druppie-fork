@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from druppie.db.models import BenchmarkRun
-from druppie.evaluation.config import get_evaluation_config
-from druppie.evaluation.judge import JudgeEngine
+from druppie.testing.eval_config import get_evaluation_config
+from druppie.testing.eval_judge import JudgeEngine
 
 logger = logging.getLogger(__name__)
 

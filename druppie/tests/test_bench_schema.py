@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from druppie.benchmarks.schema import (
+from druppie.testing.bench_schema import (
     Assertion,
     ApprovalSimulationConfig,
     MockedAgent,
@@ -13,7 +13,7 @@ from druppie.benchmarks.schema import (
     ScriptedAnswer,
     UserSimulatorConfig,
 )
-from druppie.fixtures.schema import ToolCallFixture
+from druppie.testing.seed_schema import ToolCallFixture
 
 
 def test_minimal_scenario():

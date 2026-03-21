@@ -43,7 +43,7 @@ if not os.getenv("DATABASE_URL"):
 
 from druppie.db.database import SessionLocal
 from druppie.db.models import BenchmarkRun
-from druppie.evaluation.judge import JudgeEngine
+from druppie.testing.eval_judge import JudgeEngine
 
 
 def _git_info():

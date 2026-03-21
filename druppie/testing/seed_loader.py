@@ -29,8 +29,8 @@ from druppie.db.models import (
 )
 from druppie.db.models.base import utcnow
 
-from .ids import fixture_uuid
-from .schema import AgentRunFixture, SessionFixture, ToolCallFixture
+from druppie.testing.seed_ids import fixture_uuid
+from druppie.testing.seed_schema import AgentRunFixture, SessionFixture, ToolCallFixture
 
 logger = logging.getLogger(__name__)
 

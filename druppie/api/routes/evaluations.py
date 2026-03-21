@@ -320,7 +320,7 @@ async def get_evaluation_config(
     Returns:
         Current live evaluation config (enabled, sample_rate, agent_evaluations, etc.)
     """
-    from druppie.evaluation.config import get_evaluation_config as _get_config
+    from druppie.testing.eval_config import get_evaluation_config as _get_config
 
     config = _get_config()
     return {
