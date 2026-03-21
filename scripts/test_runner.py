@@ -1,0 +1,633 @@
+#!/usr/bin/env python3
+"""V2 Test Runner -- run user-isolated tests.
+
+Usage:
+    # List all tests
+    python scripts/test_runner.py --list
+
+    # Run a specific test
+    python scripts/test_runner.py --test=router-update-weather-5-projects
+
+    # Run tests by tag
+    python scripts/test_runner.py --tag=router
+
+    # Run all tests
+    python scripts/test_runner.py --all
+
+    # Dry run (validate without executing)
+    python scripts/test_runner.py --all --dry-run
+
+    # With specific HITL/judge override
+    python scripts/test_runner.py --all --hitl=non-technical-pm --judge=strict-opus
+
+    # Cleanup test users
+    python scripts/test_runner.py --cleanup
+"""
+
+import argparse
+import os
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Add project root to path so druppie package is importable
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+# Set DATABASE_URL before importing druppie modules (database.py reads it at
+# import time via os.getenv)
+if not os.getenv("DATABASE_URL"):
+    os.environ["DATABASE_URL"] = (
+        "postgresql://druppie:druppie_secret@localhost:5533/druppie"
+    )
+
+from druppie.testing.v2_runner import (  # noqa: E402
+    EvalLoader,
+    TestRunner,
+    TestRunResult,
+)
+from druppie.testing.v2_schema import TestDefinition, TestFile  # noqa: E402
+
+TESTING_DIR = PROJECT_ROOT / "testing"
+TESTS_DIR = TESTING_DIR / "tests"
+EVALS_DIR = TESTING_DIR / "evals"
+REPORTS_DIR = TESTING_DIR / "reports"
+
+
+# ---------------------------------------------------------------------------
+# ANSI colours (disabled when stdout is not a TTY)
+# ---------------------------------------------------------------------------
+
+_USE_COLOR = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+
+def _green(text: str) -> str:
+    return f"\033[92m{text}\033[0m" if _USE_COLOR else text
+
+
+def _red(text: str) -> str:
+    return f"\033[91m{text}\033[0m" if _USE_COLOR else text
+
+
+def _yellow(text: str) -> str:
+    return f"\033[93m{text}\033[0m" if _USE_COLOR else text
+
+
+def _bold(text: str) -> str:
+    return f"\033[1m{text}\033[0m" if _USE_COLOR else text
+
+
+# ---------------------------------------------------------------------------
+# Gitea URL detection (same logic as seed.py)
+# ---------------------------------------------------------------------------
+
+
+def _default_gitea_url() -> str | None:
+    """Derive the default Gitea URL from .env or environment."""
+    url = os.getenv("GITEA_URL")
+    if url:
+        return url
+
+    env_path = PROJECT_ROOT / ".env"
+    gitea_port = None
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("GITEA_PORT="):
+                gitea_port = line.split("=", 1)[1].strip()
+                break
+    if gitea_port:
+        return f"http://localhost:{gitea_port}"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Test discovery & loading
+# ---------------------------------------------------------------------------
+
+
+def _load_test(path: Path) -> TestDefinition:
+    """Load a test definition from a YAML file."""
+    import yaml
+
+    data = yaml.safe_load(path.read_text())
+    return TestFile(**data).test
+
+
+def _discover_tests() -> list[tuple[Path, TestDefinition]]:
+    """Discover all test YAML files and load their definitions."""
+    if not TESTS_DIR.exists():
+        return []
+    tests = []
+    for path in sorted(TESTS_DIR.glob("*.yaml")):
+        try:
+            test_def = _load_test(path)
+            tests.append((path, test_def))
+        except Exception as exc:
+            print(f"  {_red('WARN')}: Failed to load {path.name}: {exc}")
+    return tests
+
+
+def _collect_tags_for_test(test: TestDefinition, eval_loader: EvalLoader) -> set[str]:
+    """Collect all tags from evals referenced by a test."""
+    tags: set[str] = set()
+    for eval_ref in test.evals:
+        try:
+            eval_def = eval_loader.get(eval_ref.eval)
+            tags.update(eval_def.tags)
+        except KeyError:
+            pass
+    return tags
+
+
+# ---------------------------------------------------------------------------
+# --list
+# ---------------------------------------------------------------------------
+
+
+def cmd_list() -> None:
+    """List all tests with name, description, and tags."""
+    eval_loader = EvalLoader(EVALS_DIR)
+    tests = _discover_tests()
+    if not tests:
+        print("No tests found in", TESTS_DIR)
+        return
+
+    print("=" * 60)
+    print("Druppie -- V2 Test Runner")
+    print("=" * 60)
+    print()
+    print(f"Found {len(tests)} test(s) in {TESTS_DIR}")
+    print()
+
+    for path, test_def in tests:
+        tags = _collect_tags_for_test(test_def, eval_loader)
+        tag_str = ", ".join(sorted(tags)) if tags else "(none)"
+        print(f"  {_bold(test_def.name)}")
+        if test_def.description:
+            print(f"    {test_def.description}")
+        print(f"    tags: {tag_str}")
+        print()
+
+    print("=" * 60)
+
+
+# ---------------------------------------------------------------------------
+# --dry-run
+# ---------------------------------------------------------------------------
+
+
+def cmd_dry_run(tests: list[tuple[Path, TestDefinition]]) -> None:
+    """Validate test files without executing."""
+    eval_loader = EvalLoader(EVALS_DIR)
+    errors: list[tuple[str, str]] = []
+
+    print("=" * 60)
+    print("Druppie -- V2 Test Runner (dry run)")
+    print("=" * 60)
+    print()
+    print(f"Validating {len(tests)} test(s)...")
+    print()
+
+    for path, test_def in tests:
+        issues: list[str] = []
+
+        # Validate eval references exist
+        for eval_ref in test_def.evals:
+            try:
+                eval_loader.get(eval_ref.eval)
+            except KeyError as exc:
+                issues.append(str(exc))
+
+        # Validate run section
+        if not test_def.run.message:
+            issues.append("run.message is empty")
+
+        if issues:
+            print(f"  {_red('[FAIL]')} {test_def.name}")
+            for issue in issues:
+                errors.append((test_def.name, issue))
+                print(f"    {_red('ERROR')}: {issue}")
+        else:
+            tags = _collect_tags_for_test(test_def, eval_loader)
+            tag_str = ", ".join(sorted(tags)) if tags else "(none)"
+            print(f"  {_green('[OK]')}   {test_def.name}")
+            print(f"    sessions: {len(test_def.sessions)} | "
+                  f"evals: {len(test_def.evals)} | "
+                  f"tags: {tag_str}")
+    print()
+    if errors:
+        print(f"{_red('Validation failed')}: {len(errors)} error(s)")
+    else:
+        print(f"{_green('All tests valid')}")
+    print("=" * 60)
+
+
+# ---------------------------------------------------------------------------
+# Run tests
+# ---------------------------------------------------------------------------
+
+
+def cmd_run(
+    tests: list[tuple[Path, TestDefinition]],
+    gitea_url: str | None,
+    hitl_override: str | None,
+    judge_override: str | None,
+) -> None:
+    """Run tests and produce results + report."""
+    from druppie.db.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        runner = TestRunner(db, testing_dir=TESTING_DIR, gitea_url=gitea_url)
+
+        print("=" * 60)
+        print("Druppie -- V2 Test Runner")
+        print("=" * 60)
+        print()
+        if gitea_url:
+            print(f"  Gitea URL: {gitea_url}")
+        else:
+            print("  Gitea URL: not set (record-only mode)")
+        print()
+        print(f"Running {len(tests)} test(s)...")
+        print()
+
+        all_results: list[TestRunResult] = []
+        run_start = time.time()
+
+        for _path, test_def in tests:
+            # Apply overrides
+            if hitl_override:
+                test_def.hitl = hitl_override
+            if judge_override:
+                test_def.judge = judge_override
+                test_def.judges = None
+
+            try:
+                results = runner.run_test(test_def)
+                db.commit()
+                all_results.extend(results)
+
+                for result in results:
+                    _print_result(result)
+            except Exception as exc:
+                db.rollback()
+                # Build a synthetic failure result
+                error_result = TestRunResult(
+                    test_name=test_def.name,
+                    test_user="(error)",
+                    hitl_profile=hitl_override or "default",
+                    judge_profiles=[judge_override or "default"],
+                    assertion_results=[],
+                    status="error",
+                    duration_ms=0,
+                )
+                all_results.append(error_result)
+                print(f"  {_red('[ERROR]')} {test_def.name}")
+                print(f"    {exc}")
+                print()
+
+        total_duration = time.time() - run_start
+        total_passed = sum(1 for r in all_results if r.passed)
+        total = len(all_results)
+
+        # Generate report
+        report_path = _generate_report(all_results, total_duration)
+
+        print("=" * 60)
+        status_line = f"Results: {total_passed}/{total} passed"
+        if total_passed == total:
+            print(_green(status_line))
+        else:
+            print(_red(status_line))
+        if report_path:
+            print(f"Report: {report_path.relative_to(PROJECT_ROOT)}")
+        print("=" * 60)
+
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _print_result(result: TestRunResult) -> None:
+    """Print a single test result to stdout."""
+    duration_s = result.duration_ms / 1000
+    assertions_passed = sum(1 for a in result.assertion_results if a.passed)
+    assertions_total = len(result.assertion_results)
+
+    if result.passed:
+        print(f"  {_green('[PASS]')} {result.test_name} ({duration_s:.1f}s)")
+        print(f"    hitl: {result.hitl_profile} | "
+              f"assertions: {assertions_passed}/{assertions_total}")
+    else:
+        print(f"  {_red('[FAIL]')} {result.test_name} ({duration_s:.1f}s)")
+        print(f"    hitl: {result.hitl_profile} | "
+              f"assertions: {assertions_passed}/{assertions_total}")
+        for a in result.assertion_results:
+            if not a.passed:
+                print(f"    {_red('FAIL')}: {a.name}: {a.message}")
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Report generation
+# ---------------------------------------------------------------------------
+
+
+def _generate_report(
+    results: list[TestRunResult],
+    total_duration: float,
+) -> Path | None:
+    """Generate a markdown report and save to testing/reports/."""
+    if not results:
+        return None
+
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    filename = now.strftime("%Y-%m-%d-%H%M%S") + ".md"
+    report_path = REPORTS_DIR / filename
+
+    total_passed = sum(1 for r in results if r.passed)
+    total = len(results)
+
+    lines: list[str] = []
+    lines.append(f"# Test Run: {now.strftime('%Y-%m-%d %H:%M')}")
+    lines.append("")
+    lines.append(
+        f"**Total: {total_passed}/{total} passed** | "
+        f"Duration: {total_duration:.1f}s | "
+        f"Timestamp: {now.isoformat()}"
+    )
+    lines.append("")
+
+    # Group results by tags
+    # First, collect tags for each result by loading evals
+    eval_loader = EvalLoader(EVALS_DIR)
+    tag_results: dict[str, list[TestRunResult]] = {}
+    untagged: list[TestRunResult] = []
+
+    for result in results:
+        # Find test definition to get eval refs
+        test_path = TESTS_DIR / f"{result.test_name}.yaml"
+        tags: set[str] = set()
+        if test_path.exists():
+            try:
+                test_def = _load_test(test_path)
+                tags = _collect_tags_for_test(test_def, eval_loader)
+            except Exception:
+                pass
+
+        if tags:
+            for tag in tags:
+                tag_results.setdefault(tag, []).append(result)
+        else:
+            untagged.append(result)
+
+    lines.append("## Results by Tag")
+    lines.append("")
+
+    for tag in sorted(tag_results.keys()):
+        tag_res = tag_results[tag]
+        tag_passed = sum(1 for r in tag_res if r.passed)
+        tag_total = len(tag_res)
+        pass_rate = (tag_passed / tag_total * 100) if tag_total > 0 else 0
+        lines.append(f"### {tag} ({tag_total} tests) -- {pass_rate:.0f}% pass rate")
+        lines.append("")
+        lines.append("| Test | Status | HITL Profile | Assertions | Duration |")
+        lines.append("|------|--------|--------------|------------|----------|")
+
+        for r in tag_res:
+            a_passed = sum(1 for a in r.assertion_results if a.passed)
+            a_total = len(r.assertion_results)
+            duration_s = r.duration_ms / 1000
+            status = "PASS" if r.passed else "FAIL" if r.status == "failed" else "ERROR"
+            lines.append(
+                f"| {r.test_name} | {status} | {r.hitl_profile} | "
+                f"{a_passed}/{a_total} | {duration_s:.1f}s |"
+            )
+
+            # Show failures
+            if not r.passed:
+                for a in r.assertion_results:
+                    if not a.passed:
+                        lines.append(f"  > FAIL: {a.name}: {a.message}")
+
+        lines.append("")
+
+    if untagged:
+        lines.append("### (untagged)")
+        lines.append("")
+        lines.append("| Test | Status | HITL Profile | Assertions | Duration |")
+        lines.append("|------|--------|--------------|------------|----------|")
+        for r in untagged:
+            a_passed = sum(1 for a in r.assertion_results if a.passed)
+            a_total = len(r.assertion_results)
+            duration_s = r.duration_ms / 1000
+            status = "PASS" if r.passed else "FAIL" if r.status == "failed" else "ERROR"
+            lines.append(
+                f"| {r.test_name} | {status} | {r.hitl_profile} | "
+                f"{a_passed}/{a_total} | {duration_s:.1f}s |"
+            )
+            if not r.passed:
+                for a in r.assertion_results:
+                    if not a.passed:
+                        lines.append(f"  > FAIL: {a.name}: {a.message}")
+        lines.append("")
+
+    report_content = "\n".join(lines) + "\n"
+    report_path.write_text(report_content)
+    return report_path
+
+
+# ---------------------------------------------------------------------------
+# --cleanup
+# ---------------------------------------------------------------------------
+
+
+def cmd_cleanup() -> None:
+    """Delete all test users (matching test-*) and their data from DB."""
+    from druppie.db.database import SessionLocal
+    from druppie.db.models import Session, User
+
+    db = SessionLocal()
+    try:
+        # Get test user IDs
+        test_user_ids = [
+            uid
+            for (uid,) in db.query(User.id)
+            .filter(User.username.like("test-%"))
+            .all()
+        ]
+
+        if not test_user_ids:
+            print("No test users found.")
+            return
+
+        # Delete sessions owned by test users
+        session_count = (
+            db.query(Session)
+            .filter(Session.user_id.in_(test_user_ids))
+            .delete(synchronize_session=False)
+        )
+
+        # Delete test users (cascades to roles, tokens)
+        user_count = (
+            db.query(User)
+            .filter(User.username.like("test-%"))
+            .delete(synchronize_session=False)
+        )
+
+        db.commit()
+        print(f"Deleted {user_count} test user(s) and {session_count} session(s).")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Filter helpers
+# ---------------------------------------------------------------------------
+
+
+def _filter_by_tag(
+    tests: list[tuple[Path, TestDefinition]],
+    tag: str,
+) -> list[tuple[Path, TestDefinition]]:
+    """Filter tests to those whose evals have the given tag."""
+    eval_loader = EvalLoader(EVALS_DIR)
+    filtered = []
+    for path, test_def in tests:
+        tags = _collect_tags_for_test(test_def, eval_loader)
+        if tag in tags:
+            filtered.append((path, test_def))
+    return filtered
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Druppie V2 Test Runner -- run user-isolated tests",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+
+    # Mode flags (mutually exclusive group for clarity, but allowing combos)
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List all tests with name, description, and tags",
+    )
+    parser.add_argument(
+        "--test",
+        type=str,
+        metavar="NAME",
+        help="Run a specific test by name (filename without .yaml)",
+    )
+    parser.add_argument(
+        "--tag",
+        type=str,
+        metavar="TAG",
+        help="Run all tests whose evals have this tag",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Run all tests",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate test files without executing",
+    )
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="Delete all test users (matching test-*) from DB",
+    )
+
+    # Overrides
+    parser.add_argument(
+        "--hitl",
+        type=str,
+        metavar="PROFILE",
+        help="Override HITL profile for all tests",
+    )
+    parser.add_argument(
+        "--judge",
+        type=str,
+        metavar="PROFILE",
+        help="Override judge profile for all tests",
+    )
+    parser.add_argument(
+        "--gitea-url",
+        type=str,
+        default=None,
+        help=(
+            "Gitea base URL (e.g. http://localhost:3200). "
+            "Auto-detected from GITEA_URL env var or GITEA_PORT in .env."
+        ),
+    )
+
+    args = parser.parse_args()
+
+    # If no action specified, show help
+    if not any([args.list, args.test, args.tag, args.all, args.cleanup]):
+        parser.print_help()
+        sys.exit(0)
+
+    # --list
+    if args.list:
+        cmd_list()
+        return
+
+    # --cleanup
+    if args.cleanup:
+        cmd_cleanup()
+        return
+
+    # Resolve Gitea URL
+    gitea_url = args.gitea_url or _default_gitea_url()
+
+    # Determine which tests to run
+    if args.test:
+        test_path = TESTS_DIR / f"{args.test}.yaml"
+        if not test_path.exists():
+            print(f"Error: test not found: {test_path}")
+            sys.exit(1)
+        tests = [(test_path, _load_test(test_path))]
+    elif args.tag:
+        all_tests = _discover_tests()
+        tests = _filter_by_tag(all_tests, args.tag)
+        if not tests:
+            print(f"No tests found with tag: {args.tag}")
+            sys.exit(1)
+    elif args.all:
+        tests = _discover_tests()
+        if not tests:
+            print(f"No tests found in {TESTS_DIR}")
+            sys.exit(1)
+    else:
+        parser.print_help()
+        sys.exit(0)
+
+    # --dry-run
+    if args.dry_run:
+        cmd_dry_run(tests)
+        return
+
+    # Run tests
+    cmd_run(tests, gitea_url, args.hitl, args.judge)
+
+
+if __name__ == "__main__":
+    main()
