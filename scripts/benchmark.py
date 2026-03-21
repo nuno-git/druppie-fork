@@ -24,7 +24,7 @@ if not os.getenv("DATABASE_URL"):
         "postgresql://druppie:druppie_secret@localhost:5533/druppie"
     )
 
-from druppie.benchmarks.runner import ScenarioRunner, load_all_scenarios, load_scenario
+from druppie.testing.bench_runner import ScenarioRunner, load_all_scenarios, load_scenario
 from druppie.db.database import SessionLocal
 
 
@@ -60,7 +60,7 @@ def main():
     parser.add_argument(
         "--scenarios-dir",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / "benchmarks" / "scenarios",
+        default=Path(__file__).resolve().parent.parent / "testing" / "scenarios",
     )
     args = parser.parse_args()
 

@@ -1,7 +1,7 @@
 """Tests for deterministic UUID generation."""
 
 import uuid
-from druppie.fixtures.ids import fixture_uuid, FIXTURE_NAMESPACE
+from druppie.testing.seed_ids import fixture_uuid, FIXTURE_NAMESPACE
 
 
 def test_same_inputs_produce_same_uuid():

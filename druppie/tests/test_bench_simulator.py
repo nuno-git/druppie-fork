@@ -2,8 +2,8 @@
 
 import pytest
 
-from druppie.benchmarks.schema import ScriptedAnswer, UserSimulatorConfig
-from druppie.benchmarks.user_simulator import UserSimulator
+from druppie.testing.bench_schema import ScriptedAnswer, UserSimulatorConfig
+from druppie.testing.bench_simulator import UserSimulator
 
 
 def _make_simulator(

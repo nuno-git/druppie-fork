@@ -15,11 +15,11 @@ from sqlalchemy import String, TypeDecorator, create_engine
 from sqlalchemy.orm import Session as DbSession, sessionmaker
 
 from druppie.db.models import Base
-from druppie.evaluation.context import extract_context
-from druppie.evaluation.schema import ContextSource
-from druppie.fixtures.ids import fixture_uuid
-from druppie.fixtures.loader import seed_fixture
-from druppie.fixtures.schema import (
+from druppie.testing.eval_context import extract_context
+from druppie.testing.eval_schema import ContextSource
+from druppie.testing.seed_ids import fixture_uuid
+from druppie.testing.seed_loader import seed_fixture
+from druppie.testing.seed_schema import (
     AgentRunFixture,
     MessageFixture,
     SessionFixture,

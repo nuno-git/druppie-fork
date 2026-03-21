@@ -2,7 +2,7 @@
 
 import pytest
 from pydantic import ValidationError
-from druppie.evaluation.schema import (
+from druppie.testing.eval_schema import (
     ContextSource,
     RubricDefinition,
     EvaluationDefinition,

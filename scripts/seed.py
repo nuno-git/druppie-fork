@@ -33,7 +33,7 @@ if not os.getenv("DATABASE_URL"):
     )
 
 from druppie.db.database import SessionLocal
-from druppie.fixtures.loader import seed_all
+from druppie.testing.seed_loader import seed_all
 
 
 def _default_gitea_url() -> str | None:
@@ -64,7 +64,7 @@ def main():
     parser.add_argument(
         "--fixtures-dir",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / "fixtures" / "sessions",
+        default=Path(__file__).resolve().parent.parent / "testing" / "seeds",
         help="Directory containing YAML fixture files",
     )
     parser.add_argument(

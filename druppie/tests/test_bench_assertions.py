@@ -12,8 +12,8 @@ import pytest
 from sqlalchemy import String, TypeDecorator, create_engine
 from sqlalchemy.orm import Session as DbSession, sessionmaker
 
-from druppie.benchmarks.assertions import AssertionResult, check_assertions
-from druppie.benchmarks.schema import Assertion
+from druppie.testing.bench_assertions import AssertionResult, check_assertions
+from druppie.testing.bench_schema import Assertion
 from druppie.db.models import AgentRun, Base, Session, ToolCall
 
 # ---------------------------------------------------------------------------

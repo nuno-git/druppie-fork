@@ -8,7 +8,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session as DbSession
 
-from druppie.benchmarks.schema import Assertion
+from druppie.testing.bench_schema import Assertion
 from druppie.db.models import AgentRun, ToolCall
 
 

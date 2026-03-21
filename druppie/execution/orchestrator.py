@@ -526,13 +526,13 @@ class Orchestrator:
     ) -> None:
         """Fire-and-forget live evaluation if configured."""
         try:
-            from druppie.evaluation.config import get_evaluation_config
+            from druppie.testing.eval_config import get_evaluation_config
 
             config = get_evaluation_config()
             if not config.should_evaluate(agent_id):
                 return
 
-            from druppie.evaluation.live_evaluator import run_live_evaluation
+            from druppie.testing.eval_live import run_live_evaluation
             from druppie.core.background_tasks import create_tracked_task
 
             create_tracked_task(

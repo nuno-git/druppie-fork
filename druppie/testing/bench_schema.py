@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Literal
 
-from druppie.fixtures.schema import ToolCallFixture
+from druppie.testing.seed_schema import ToolCallFixture
 
 
 class ScenarioInput(BaseModel):
