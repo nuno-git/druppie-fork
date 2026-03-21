@@ -322,3 +322,19 @@ export const triggerBenchmark = (scenarioName, judgeModel = null) =>
 
 export const getEvaluationConfig = () =>
   request('/api/evaluations/config')
+
+// ============ V2 Test Runs ============
+export const getTestRuns = (page = 1, limit = 20, tag = null) => {
+  const params = new URLSearchParams({ page, limit })
+  if (tag) params.append('tag', tag)
+  return request(`/api/evaluations/test-runs?${params.toString()}`)
+}
+
+export const getTestRun = (id) =>
+  request(`/api/evaluations/test-runs/${id}`)
+
+export const getTags = () =>
+  request('/api/evaluations/tags')
+
+export const deleteTestUsers = () =>
+  request('/api/evaluations/test-users', { method: 'DELETE' })
