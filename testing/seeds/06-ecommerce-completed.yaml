@@ -115,6 +115,65 @@ agents:
     status: completed
     planned_prompt: "Implement e-commerce page, all 14 tests passing."
     tool_calls:
+      - tool: builtin:execute_coding_task
+        arguments:
+          task: "Implement e-commerce page, all 14 tests passing."
+          agent: druppie-builder
+        status: completed
+        result: "Sandbox completed successfully"
+        outcome:
+          target: gitea
+          files:
+            - path: "src/App.jsx"
+              content: |
+                import React, { useState } from 'react';
+                import ProductCard from './components/ProductCard';
+
+                const PRODUCTS = [
+                  { id: 1, name: 'Wireless Headphones', price: 79.99, image: '/img/headphones.jpg' },
+                  { id: 2, name: 'USB-C Hub', price: 34.99, image: '/img/hub.jpg' },
+                  { id: 3, name: 'Mechanical Keyboard', price: 129.99, image: '/img/keyboard.jpg' },
+                ];
+
+                export default function App() {
+                  const [cart, setCart] = useState([]);
+                  const addToCart = (product) => setCart(prev => [...prev, product]);
+                  return (
+                    <div className="app">
+                      <h1>Shop</h1>
+                      <span className="cart-count">Cart: {cart.length}</span>
+                      <div className="products">
+                        {PRODUCTS.map(p => (
+                          <ProductCard key={p.id} product={p} onAdd={addToCart} />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+            - path: "src/components/ProductCard.jsx"
+              content: |
+                import React from 'react';
+
+                export default function ProductCard({ product, onAdd }) {
+                  return (
+                    <div className="product-card">
+                      <img src={product.image} alt={product.name} />
+                      <h3>{product.name}</h3>
+                      <p className="price">${product.price.toFixed(2)}</p>
+                      <button onClick={() => onAdd(product)}>Add to Cart</button>
+                    </div>
+                  );
+                }
+            - path: "package.json"
+              content: |
+                {
+                  "name": "ecommerce-page",
+                  "version": "1.0.0",
+                  "dependencies": { "react": "^18.2.0", "react-dom": "^18.2.0" },
+                  "scripts": { "dev": "vite", "build": "vite build" }
+                }
+          commit_message: "Implement e-commerce product page - all 14 tests passing"
+          push: true
       - tool: builtin:done
         arguments:
           summary: "Agent builder: Implemented ecommerce-page, all tests passing. Code committed and pushed."

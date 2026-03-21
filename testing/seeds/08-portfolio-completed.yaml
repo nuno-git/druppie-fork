@@ -115,6 +115,47 @@ agents:
     status: completed
     planned_prompt: "Built portfolio with 3 pages, responsive CSS grid."
     tool_calls:
+      - tool: builtin:execute_coding_task
+        arguments:
+          task: "Build portfolio with 3 pages, responsive CSS grid."
+          agent: druppie-builder
+        status: completed
+        result: "Sandbox completed successfully"
+        outcome:
+          target: gitea
+          files:
+            - path: "index.html"
+              content: |
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                  <meta charset="UTF-8" />
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                  <title>My Portfolio</title>
+                  <link rel="stylesheet" href="styles.css" />
+                </head>
+                <body>
+                  <header><h1>Jane Doe</h1><p>Full-Stack Developer</p></header>
+                  <section id="projects">
+                    <h2>Projects</h2>
+                    <div class="grid">
+                      <div class="card"><h3>Weather App</h3><p>React dashboard with 5-day forecast.</p></div>
+                      <div class="card"><h3>E-Commerce</h3><p>Product page with Stripe checkout.</p></div>
+                    </div>
+                  </section>
+                  <footer>&copy; 2026 Jane Doe</footer>
+                </body>
+                </html>
+            - path: "styles.css"
+              content: |
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body { font-family: system-ui, sans-serif; line-height: 1.6; color: #333; }
+                header { text-align: center; padding: 3rem 1rem; background: #1a1a2e; color: #fff; }
+                .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; padding: 2rem; }
+                .card { border: 1px solid #ddd; border-radius: 8px; padding: 1.5rem; }
+                footer { text-align: center; padding: 1rem; background: #f5f5f5; }
+          commit_message: "Implement portfolio site - responsive HTML/CSS"
+          push: true
       - tool: builtin:done
         arguments:
           summary: "Agent builder: Implemented portfolio-site, all tests passing. Code committed and pushed."

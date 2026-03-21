@@ -7,6 +7,7 @@ project links in the frontend point to working URLs.
 
 from __future__ import annotations
 
+import base64
 import logging
 import uuid
 from datetime import timedelta
@@ -30,7 +31,7 @@ from druppie.db.models import (
 from druppie.db.models.base import utcnow
 
 from druppie.testing.seed_ids import fixture_uuid
-from druppie.testing.seed_schema import AgentRunFixture, SessionFixture, ToolCallFixture
+from druppie.testing.seed_schema import AgentRunFixture, SessionFixture, ToolCallFixture, ToolCallOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,84 @@ def _create_gitea_repo(project_name: str, gitea_url: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Outcome replay — create files in repo for execute_coding_task outcomes
+# ---------------------------------------------------------------------------
+
+
+def _replay_outcome(
+    outcome: ToolCallOutcome,
+    gitea_url: str | None,
+    repo_owner: str,
+    repo_name: str,
+) -> None:
+    """Replay an execute_coding_task outcome: create files in the target repo."""
+    import httpx
+
+    if outcome.target == "github":
+        # GitHub support is future work — skip for now, log warning
+        logger.warning("GitHub target not yet supported for outcome replay, skipping")
+        return
+
+    if not gitea_url:
+        return  # Record-only mode, skip
+
+    client = httpx.Client(
+        base_url=gitea_url,
+        auth=("gitea_admin", "GiteaAdmin123"),
+        timeout=30,
+    )
+
+    try:
+        for f in outcome.files:
+            content = f.content
+            if content is None and f.from_file:
+                # Load from local file
+                file_path = Path(f.from_file)
+                if file_path.exists():
+                    content = file_path.read_text()
+                else:
+                    logger.warning("from_file not found: %s", f.from_file)
+                    continue
+
+            if content is None:
+                continue
+
+            encoded = base64.b64encode(content.encode()).decode()
+
+            # Check if file exists (need SHA for update)
+            r = client.get(f"/api/v1/repos/{repo_owner}/{repo_name}/contents/{f.path}")
+
+            body: dict = {
+                "content": encoded,
+                "message": outcome.commit_message or f"Add {f.path}",
+            }
+            if outcome.branch:
+                body["branch"] = outcome.branch
+
+            if r.status_code == 200:
+                body["sha"] = r.json()["sha"]
+                r = client.put(
+                    f"/api/v1/repos/{repo_owner}/{repo_name}/contents/{f.path}",
+                    json=body,
+                )
+            else:
+                r = client.post(
+                    f"/api/v1/repos/{repo_owner}/{repo_name}/contents/{f.path}",
+                    json=body,
+                )
+
+            if r.status_code in (200, 201):
+                logger.info("Created file %s in %s/%s", f.path, repo_owner, repo_name)
+            else:
+                logger.warning(
+                    "Failed to create %s: %s %s",
+                    f.path, r.status_code, r.text[:200],
+                )
+    finally:
+        client.close()
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -172,6 +251,8 @@ def seed_fixture(
 
     # -- 4. Project --
     project_db_id = None
+    _repo_owner: str | None = None
+    _repo_name: str | None = None
     if meta.project_name:
         # Try to create a real Gitea repo when gitea_url is provided
         repo_info = None
@@ -183,6 +264,8 @@ def seed_fixture(
             repo_owner = repo_info["repo_owner"]
             repo_url = repo_info["repo_url"]
             clone_url = repo_info["clone_url"]
+            _repo_owner = repo_owner
+            _repo_name = repo_name
         else:
             # Placeholder URLs (record-only mode)
             repo_name = meta.project_name
@@ -206,6 +289,9 @@ def seed_fixture(
         db.add(project)
         db.flush()
         project_db_id = project_id
+
+        # NOTE: repo files are now seeded via outcome blocks on
+        # execute_coding_task tool calls (see _seed_tool_calls).
 
     # -- 5. Token totals --
     completed_count = sum(1 for a in fixture.agents if a.status == "completed")
@@ -315,6 +401,9 @@ def seed_fixture(
             session_id=session_id,
             run_ts=run_ts,
             user_id=user.id,
+            gitea_url=gitea_url,
+            repo_owner=_repo_owner,
+            repo_name=_repo_name,
         )
 
         # Assistant message for completed agents with a done() tool call
@@ -387,6 +476,79 @@ def seed_all(
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _replay_tool_call(
+    tool_call: ToolCallFixture,
+    gitea_url: str,
+    repo_owner: str,
+    repo_name: str,
+) -> None:
+    """Execute a tool call against Gitea if applicable.
+
+    Only coding:write_file, coding:make_design, and coding:batch_write_files
+    are replayed. Other tool calls are just recorded in the DB.
+    """
+    import httpx
+
+    if tool_call.mcp_server != "coding":
+        return
+
+    client = httpx.Client(
+        base_url=gitea_url,
+        auth=("gitea_admin", "GiteaAdmin123"),
+        timeout=30,
+    )
+
+    try:
+        if tool_call.tool_name in ("write_file", "make_design"):
+            path = tool_call.arguments.get("path", "")
+            content = tool_call.arguments.get("content", "")
+            if path and content:
+                _gitea_create_file(client, repo_owner, repo_name, path, content)
+
+        elif tool_call.tool_name == "batch_write_files":
+            files = tool_call.arguments.get("files", [])
+            for f in files:
+                path = f.get("path", "")
+                content = f.get("content", "")
+                if path and content:
+                    _gitea_create_file(client, repo_owner, repo_name, path, content)
+    finally:
+        client.close()
+
+
+def _gitea_create_file(
+    client,
+    owner: str,
+    repo: str,
+    path: str,
+    content: str,
+) -> None:
+    """Create or update a file in a Gitea repo."""
+
+    # Check if file exists (need SHA for update)
+    r = client.get(f"/api/v1/repos/{owner}/{repo}/contents/{path}")
+
+    body = {
+        "content": base64.b64encode(content.encode()).decode(),
+        "message": f"Add {path}",
+    }
+
+    if r.status_code == 200:
+        # File exists, update it
+        body["sha"] = r.json()["sha"]
+        r = client.put(f"/api/v1/repos/{owner}/{repo}/contents/{path}", json=body)
+    else:
+        # File doesn't exist, create it
+        r = client.post(f"/api/v1/repos/{owner}/{repo}/contents/{path}", json=body)
+
+    if r.status_code in (200, 201):
+        logger.info("  Replayed file %s in %s/%s", path, owner, repo)
+    else:
+        logger.warning(
+            "  Failed to create file %s in %s/%s: %s", path, owner, repo, r.status_code
+        )
+
+
 def _seed_tool_calls(
     db: DbSession,
     *,
@@ -398,6 +560,9 @@ def _seed_tool_calls(
     session_id,
     run_ts,
     user_id,
+    gitea_url: str | None = None,
+    repo_owner: str | None = None,
+    repo_name: str | None = None,
 ) -> None:
     """Create ToolCall (and optional Approval / Question) records."""
     meta = fixture.metadata
@@ -421,6 +586,19 @@ def _seed_tool_calls(
             executed_at=run_ts if tc.status in ("completed", "failed") else None,
         )
         db.add(tool_call)
+
+        # Replay tool call against Gitea (create real files)
+        if gitea_url and repo_owner and repo_name:
+            _replay_tool_call(tc, gitea_url, repo_owner, repo_name)
+
+        # Replay outcome if this is an execute_coding_task with an outcome block
+        if (
+            tc.tool_name == "execute_coding_task"
+            and tc.outcome is not None
+            and repo_owner
+            and repo_name
+        ):
+            _replay_outcome(tc.outcome, gitea_url, repo_owner, repo_name)
 
         # Approval record
         if tc.approval:
