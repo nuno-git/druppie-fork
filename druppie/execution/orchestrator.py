@@ -514,13 +514,41 @@ class Orchestrator:
             agent_id=agent_id,
         )
 
+        self._on_agent_completed(session_id, agent_run_id, agent_id)
+
         return "completed"
+
+    def _on_agent_completed(
+        self,
+        session_id: UUID,
+        agent_run_id: UUID,
+        agent_id: str,
+    ) -> None:
+        """Fire-and-forget live evaluation if configured."""
+        try:
+            from druppie.evaluation.config import get_evaluation_config
+
+            config = get_evaluation_config()
+            if not config.should_evaluate(agent_id):
+                return
+
+            from druppie.evaluation.live_evaluator import run_live_evaluation
+            from druppie.core.background_tasks import create_tracked_task
+
+            create_tracked_task(
+                run_live_evaluation(session_id, agent_run_id, agent_id),
+                name=f"live-eval-{agent_id}-{agent_run_id}",
+            )
+        except Exception:
+            # Live evaluation must never crash agent execution
+            pass
 
     def _handle_agent_resume_result(
         self,
         session_id: UUID,
         agent_run_id: UUID,
         result: dict,
+        agent_id: str | None = None,
     ) -> str:
         """Handle the result from a resumed agent (continue_run).
 
@@ -552,6 +580,10 @@ class Orchestrator:
         # Completed
         self.execution_repo.update_status(agent_run_id, AgentRunStatus.COMPLETED)
         self.execution_repo.commit()
+
+        if agent_id:
+            self._on_agent_completed(session_id, agent_run_id, agent_id)
+
         return "completed"
 
     async def resume_after_approval(self, session_id: UUID, approval_id: UUID) -> UUID:
@@ -630,7 +662,7 @@ class Orchestrator:
         )
 
         # Step 6: Handle result (correctly handles user_paused, sandbox, etc.)
-        status = self._handle_agent_resume_result(session_id, agent_run.id, result)
+        status = self._handle_agent_resume_result(session_id, agent_run.id, result, agent_id=agent_run.agent_id)
 
         if status == "completed":
             logger.info(
@@ -731,7 +763,7 @@ class Orchestrator:
         )
 
         # Step 6: Handle result (correctly handles user_paused, sandbox, etc.)
-        status = self._handle_agent_resume_result(session_id, agent_run.id, result)
+        status = self._handle_agent_resume_result(session_id, agent_run.id, result, agent_id=agent_run.agent_id)
 
         if status == "completed":
             logger.info(
@@ -813,7 +845,7 @@ class Orchestrator:
                     self.execution_repo.commit()
                     raise
 
-                status = self._handle_agent_resume_result(session_id, orphan_run.id, result)
+                status = self._handle_agent_resume_result(session_id, orphan_run.id, result, agent_id=orphan_run.agent_id)
 
                 if status == "completed":
                     logger.info(
@@ -864,7 +896,7 @@ class Orchestrator:
             raise
 
         # Handle result (correctly handles user_paused, cancelled, etc.)
-        status = self._handle_agent_resume_result(session_id, paused_run.id, result)
+        status = self._handle_agent_resume_result(session_id, paused_run.id, result, agent_id=paused_run.agent_id)
 
         if status == "completed":
             logger.info(
@@ -983,7 +1015,7 @@ class Orchestrator:
             raise
 
         # Handle result — agent may pause again
-        status = self._handle_agent_resume_result(session_id, agent_run.id, result)
+        status = self._handle_agent_resume_result(session_id, agent_run.id, result, agent_id=agent_run.agent_id)
 
         if status == "completed":
             logger.info(
