@@ -254,41 +254,59 @@ def seed_fixture(
     _repo_owner: str | None = None
     _repo_name: str | None = None
     if meta.project_name:
-        # Try to create a real Gitea repo when gitea_url is provided
-        repo_info = None
-        if gitea_url:
-            repo_info = _create_gitea_repo(meta.project_name, gitea_url)
-
-        if repo_info:
-            repo_name = repo_info["repo_name"]
-            repo_owner = repo_info["repo_owner"]
-            repo_url = repo_info["repo_url"]
-            clone_url = repo_info["clone_url"]
-            _repo_owner = repo_owner
-            _repo_name = repo_name
-        else:
-            # Placeholder URLs (record-only mode)
-            repo_name = meta.project_name
-            repo_owner = "druppie_admin"
-            repo_url = f"http://gitea:3000/druppie_admin/{meta.project_name}"
-            clone_url = f"http://gitea:3000/druppie_admin/{meta.project_name}.git"
-
-        project = Project(
-            id=project_id,
-            name=meta.project_name,
-            description=f"Fixture: {meta.title}",
-            repo_name=repo_name,
-            repo_owner=repo_owner,
-            repo_url=repo_url,
-            clone_url=clone_url,
-            owner_id=user.id,
-            status="active",
-            created_at=base_ts,
-            updated_at=base_ts,
+        # Check if a project with this name already exists (e.g. update_project
+        # sessions reference the same project created by a create_project session)
+        existing_project = (
+            db.query(Project)
+            .filter(Project.name == meta.project_name)
+            .first()
         )
-        db.add(project)
-        db.flush()
-        project_db_id = project_id
+
+        if existing_project:
+            # Re-use the existing project — don't create a new one or repo
+            project_db_id = existing_project.id
+            _repo_owner = existing_project.repo_owner
+            _repo_name = existing_project.repo_name
+            logger.info(
+                "Linking session %s to existing project %s (%s/%s)",
+                meta.id, meta.project_name, _repo_owner, _repo_name,
+            )
+        else:
+            # Try to create a real Gitea repo when gitea_url is provided
+            repo_info = None
+            if gitea_url:
+                repo_info = _create_gitea_repo(meta.project_name, gitea_url)
+
+            if repo_info:
+                repo_name = repo_info["repo_name"]
+                repo_owner = repo_info["repo_owner"]
+                repo_url = repo_info["repo_url"]
+                clone_url = repo_info["clone_url"]
+                _repo_owner = repo_owner
+                _repo_name = repo_name
+            else:
+                # Placeholder URLs (record-only mode)
+                repo_name = meta.project_name
+                repo_owner = "druppie_admin"
+                repo_url = f"http://gitea:3000/druppie_admin/{meta.project_name}"
+                clone_url = f"http://gitea:3000/druppie_admin/{meta.project_name}.git"
+
+            project = Project(
+                id=project_id,
+                name=meta.project_name,
+                description=f"Fixture: {meta.title}",
+                repo_name=repo_name,
+                repo_owner=repo_owner,
+                repo_url=repo_url,
+                clone_url=clone_url,
+                owner_id=user.id,
+                status="active",
+                created_at=base_ts,
+                updated_at=base_ts,
+            )
+            db.add(project)
+            db.flush()
+            project_db_id = project_id
 
         # NOTE: repo files are now seeded via outcome blocks on
         # execute_coding_task tool calls (see _seed_tool_calls).

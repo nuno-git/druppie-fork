@@ -4,7 +4,7 @@ metadata:
   status: completed
   user: admin
   intent: update_project
-  project_name: weather-dashboard-update
+  project_name: weather-dashboard
   language: en
   hours_ago: 18
 
@@ -16,12 +16,12 @@ agents:
       - tool: builtin:set_intent
         arguments:
           intent: update_project
-          project_name: weather-dashboard-update
+          project_name: weather-dashboard
         status: completed
         result: "Intent set to update_project"
       - tool: builtin:done
         arguments:
-          summary: "Agent router: Classified intent as update_project, project 'weather-dashboard-update'."
+          summary: "Agent router: Classified intent as update_project, project 'weather-dashboard'."
         status: completed
         result: "Agent completed"
 
@@ -55,7 +55,7 @@ agents:
     tool_calls:
       - tool: builtin:done
         arguments:
-          summary: "Agent architect: Designed architecture for weather-dashboard-update. Created architecture.md and technical_design.md."
+          summary: "Agent architect: Designed architecture for weather-dashboard. Created architecture.md and technical_design.md."
         status: completed
         result: "Agent completed"
 
@@ -87,7 +87,7 @@ agents:
     tool_calls:
       - tool: builtin:done
         arguments:
-          summary: "Agent tester: Generated test suite for weather-dashboard-update. All tests initially fail (TDD red phase)."
+          summary: "Agent tester: Generated test suite for weather-dashboard. All tests initially fail (TDD red phase)."
         status: completed
         result: "Agent completed"
 
@@ -143,7 +143,7 @@ agents:
           push: true
       - tool: builtin:done
         arguments:
-          summary: "Agent builder: Implemented weather-dashboard-update, all tests passing. Code committed and pushed."
+          summary: "Agent builder: Implemented weather-dashboard, all tests passing. Code committed and pushed."
         status: completed
         result: "Agent completed"
 
@@ -171,7 +171,7 @@ agents:
     tool_calls:
       - tool: builtin:done
         arguments:
-          summary: "Agent deployer: Deployed weather-dashboard-update container. Application is running."
+          summary: "Agent deployer: Deployed weather-dashboard container. Application is running."
         status: completed
         result: "Agent completed"
 
