@@ -4,10 +4,11 @@
 
 A testing and benchmarking framework for Druppie where each test gets its own user with complete isolation — their own sessions, projects, and Gitea repos. Tests can run in parallel without conflicts.
 
-Three concepts:
+Four concepts:
 - **Sessions** — Reusable state definitions. Define what happened: projects, agent runs, tool calls, files in repos. Can chain via `after:` to build on each other.
 - **Evals** — Reusable evaluation definitions. Define WHAT to check (assertions + judge checks) without specifying correct answers. Tests reference evals and provide the expected values.
-- **Tests** — Reference sessions as their world, run a new message through real agents, reference evals with expected values, and evaluate the results.
+- **Profiles** — Reusable HITL simulator and judge configurations. HITL profiles define a model, provider, and persona prompt. Judge profiles define a model and provider.
+- **Tests** — Reference sessions as their world, run a new message through real agents, reference evals with expected values, and specify which HITL and judge profiles to use. Multiple HITL profiles cause one execution per profile; multiple judges evaluate each execution.
 
 ## Directory Structure
 
@@ -28,6 +29,9 @@ testing/
     router-create-recipe.yaml
     architect-design-quality.yaml
     ...
+  profiles/                    # HITL simulator and judge profiles
+    hitl.yaml                  # HITL simulator profiles
+    judges.yaml                # Judge profiles
   reports/                     # Generated test reports
     2026-03-21-203000.md
     ...
@@ -310,7 +314,85 @@ expected:
 
 ---
 
-## Part 3: Test Definitions
+## Part 3: Profiles
+
+### HITL Simulator Profiles
+
+Define reusable HITL simulator configurations with model, provider, and prompt:
+
+```yaml
+# testing/profiles/hitl.yaml
+profiles:
+  non-technical-pm:
+    model: claude-sonnet-4-6
+    provider: zai
+    prompt: |
+      You are a non-technical project manager. You give clear,
+      simple answers. You don't care about technical details.
+
+  dutch-water-authority:
+    model: claude-sonnet-4-6
+    provider: zai
+    prompt: |
+      You are a Dutch water authority employee. You speak Dutch.
+      You have domain expertise in water management but not software.
+
+  developer:
+    model: claude-haiku-4-5
+    provider: zai
+    prompt: |
+      You are a senior developer. You give technical, precise answers.
+      You care about architecture and code quality.
+```
+
+### Judge Profiles
+
+Define reusable judge configurations with model and provider:
+
+```yaml
+# testing/profiles/judges.yaml
+profiles:
+  strict-opus:
+    model: claude-opus-4-6
+    provider: zai
+
+  fast-sonnet:
+    model: claude-sonnet-4-6
+    provider: zai
+
+  cheap-haiku:
+    model: claude-haiku-4-5
+    provider: zai
+```
+
+### Usage in Tests
+
+Tests reference profiles by name. Both `hitl` and `judges` accept a single name or a list:
+
+```yaml
+# Single HITL + single judge
+hitl: non-technical-pm
+judge: strict-opus
+
+# Multiple HITL profiles + multiple judges
+hitl: [non-technical-pm, dutch-water-authority, developer]
+judges: [strict-opus, fast-sonnet]
+```
+
+### Inline Override
+
+Tests can also define HITL config inline instead of referencing a profile:
+
+```yaml
+hitl:
+  model: claude-sonnet-4-6
+  provider: zai
+  prompt: "You want to update the weather dashboard."
+```
+
+---
+
+## Part 4: Test Definitions
 
 Tests reference sessions as their world, run a new message, and evaluate using reusable evals (with expected values) and/or inline evaluate blocks.
 
@@ -333,7 +415,9 @@ test:
     message: "update the weather dashboard to add dark mode"
     real_agents: [router]
 
-  user_prompt: "You want to update the weather dashboard."
+  # Profile references (single)
+  hitl: non-technical-pm
+  judge: strict-opus
 
   # Reusable evals with expected answers for THIS test
   evals:
@@ -352,7 +436,7 @@ test:
         - "Router should not ask the user which project to update when the message clearly mentions weather dashboard"
 ```
 
-Another test reusing the same eval with different expected values:
+Another test reusing the same eval with different expected values, and multiple profiles:
 ```yaml
 # testing/tests/router-create-recipe.yaml
 test:
@@ -361,7 +445,11 @@ test:
   run:
     message: "build me a recipe sharing app"
     real_agents: [router]
-  user_prompt: "You want a new recipe app."
+
+  # Multiple HITL profiles = one execution per profile
+  hitl: [non-technical-pm, dutch-water-authority, developer]
+  judges: [strict-opus, fast-sonnet]
+
   evals:
     - eval: router-correct-intent
       expected:
@@ -391,11 +479,11 @@ If `real_agents` is omitted or empty, ALL agents run for real (full end-to-end t
 
 ### HITL Simulation
 
-When a real agent asks a HITL question (via `hitl_ask_question` or `hitl_ask_multiple_choice_question`), the test runner intercepts the pause and sends the question to an LLM with the `user_prompt` as its persona.
+When a real agent asks a HITL question (via `hitl_ask_question` or `hitl_ask_multiple_choice_question`), the test runner intercepts the pause and sends the question to an LLM configured by the test's `hitl` profile (or inline HITL config).
 
-The LLM sees: the persona prompt, the conversation history so far, and the question. It generates a natural answer.
+The LLM sees: the persona prompt from the profile, the conversation history so far, and the question. It generates a natural answer.
 
-If `user_prompt` is omitted, a default prompt is used: "You are a helpful user who gives clear, concise answers to questions."
+If `hitl` is omitted, a default prompt is used: "You are a helpful user who gives clear, concise answers to questions." with `claude-sonnet-4-6` as the model.
 
 ### Evaluation
 
@@ -408,11 +496,28 @@ If `user_prompt` is omitted, a default prompt is used: "You are a helpful user w
 **Judge checks** are LLM-evaluated:
 - Each check is a natural language description of expected behavior
 - The judge LLM sees the full agent execution trace (tool calls, results, messages) and scores each check as pass/fail with reasoning
-- `model` specifies which LLM judges (defaults to `claude-sonnet-4-6`)
+- The `judge` or `judges` field specifies which judge profile(s) to use (defaults to `fast-sonnet` if omitted)
+
+### Multi-HITL / Multi-Judge Execution
+
+When a test specifies multiple HITL profiles, the test is executed once per HITL profile. Each execution:
+- Gets its own test user (e.g., `test-router-update-nontech-1711054800`, `test-router-update-dutch-1711054801`)
+- Seeds its own sessions/projects/repos
+- Runs the agents with that HITL simulator answering questions
+- Is evaluated by ALL specified judges
+
+So if a test has 3 HITL profiles and 2 judges:
+- 3 separate executions (3 users, 3 sets of repos)
+- Each execution evaluated by 2 judges
+- 6 total evaluation results
+- Analytics can compare: "Does the agent behave differently with different user types?" and "Do judges agree?"
+
+The test user name includes the HITL profile name for traceability:
+`test-{test-name}-{hitl-profile}-{timestamp}`
 
 ---
 
-## Part 4: Test Execution
+## Part 5: Test Execution
 
 ### Per-Test Isolation
 
@@ -449,11 +554,11 @@ For each test:
        - Replay outcome blocks (create files in Gitea repos)
        - Link everything to the test user
 
-  4. Run the test
+  4. Run the test (once per HITL profile, or once if single/no profile)
      - Create new session with run.message
      - Send through orchestrator as the test user
      - For agents in real_agents: execute with real LLM
-     - For HITL pauses: answer via LLM with user_prompt
+     - For HITL pauses: answer via LLM with the HITL profile's model and prompt
      - Stop after last real_agent completes
 
   5. Evaluate
@@ -487,7 +592,7 @@ Test users and their data accumulate by default. Cleanup options:
 
 ---
 
-## Part 5: Results & Analytics
+## Part 6: Results & Analytics
 
 ### Storage
 
@@ -504,6 +609,8 @@ CREATE TABLE test_runs (
     test_name VARCHAR(255) NOT NULL,
     test_description TEXT,
     test_user VARCHAR(255),           -- the created test user
+    hitl_profile VARCHAR(100),        -- which HITL simulator was used
+    judge_profile VARCHAR(100),       -- which judge was used
     sessions_seeded INTEGER,          -- how many sessions were seeded
     assertions_total INTEGER,
     assertions_passed INTEGER,
@@ -524,6 +631,8 @@ CREATE INDEX idx_test_run_tags_tag ON test_run_tags(tag);
 ```
 
 Results are grouped by eval tags (from the eval definitions) as well as test tags. The analytics show pass rate per eval across different tests — so you can see how well `router-correct-intent` performs across all tests that reference it.
+
+Each result row includes the `hitl_profile` and `judge_profile` used, enabling analytics to filter and group by these dimensions. For example: "How does the router perform when the user is a non-technical PM vs. a developer?" or "Do the strict-opus and fast-sonnet judges agree on pass/fail?"
 
 ### Generated Report
 
@@ -560,20 +669,23 @@ The report is saved to `testing/reports/YYYY-MM-DD-HHMMSS.md` and also stored in
 
 The admin evaluations page (`/admin/evaluations`) shows:
 
-1. **Test Runs tab** — list of test runs with overall pass/fail, filterable by tags
+1. **Test Runs tab** — list of test runs with overall pass/fail, filterable by tags, HITL profile, and judge profile
 2. **Tag Analytics tab** — pass rate per tag over time (shows trends)
 3. **Eval Analytics tab** — pass rate per eval across different tests (shows which evals fail most often)
-4. **Test Detail** — click a run to see all individual test results
-5. **Result Detail** — click a test result to see assertions, judge checks, reasoning
-6. **Actions**:
+4. **Profile Comparison tab** — compare results across HITL profiles (does the agent behave differently with different user types?) and across judge profiles (do judges agree?)
+5. **Test Detail** — click a run to see all individual test results, grouped by HITL profile
+6. **Result Detail** — click a test result to see assertions, judge checks, reasoning, and which HITL/judge profiles were used
+7. **Actions**:
    - "Run All Tests" button
    - "Run Tests by Tag" dropdown
+   - "Filter by HITL Profile" dropdown
+   - "Filter by Judge Profile" dropdown
    - "Delete All Test Users" button
    - "Delete Test Run" per-run button
 
 ---
 
-## Part 6: CLI & Docker
+## Part 7: CLI & Docker
 
 ### CLI
 
@@ -593,7 +705,13 @@ python scripts/test_runner.py --all
 # Run all tests, 4 in parallel
 python scripts/test_runner.py --all --parallel=4
 
-# Run with specific judge model
+# Run with specific HITL profile (overrides test's hitl field)
+python scripts/test_runner.py --test=router-update-weather --hitl=non-technical-pm
+
+# Run with specific judge profile (overrides test's judge field)
+python scripts/test_runner.py --all --judge=strict-opus
+
+# Run with specific judge model (legacy, prefer --judge)
 python scripts/test_runner.py --all --judge-model=claude-opus-4-6
 
 # Dry run (validate test files without executing)
@@ -622,11 +740,11 @@ docker compose --profile test-full up --abort-on-container-exit
 
 | v1 (Current) | v2 (This Spec) |
 |---|---|
-| Seeds, evaluations, scenarios are separate concepts | Sessions + evals + tests are the three concepts |
+| Seeds, evaluations, scenarios are separate concepts | Sessions + evals + profiles + tests are the four concepts |
 | Scenarios duplicate agent definitions from seeds | Tests reference sessions by name |
 | Evaluations bake in the correct answers | Evals define WHAT to check; tests provide expected values |
 | No argument matching modes | Three modes: exact, wildcard (`*`), any-of list |
-| Scripted HITL answers (question_contains matching) | LLM simulator with a prompt per test |
+| Scripted HITL answers (question_contains matching) | LLM simulator with reusable HITL profiles; multi-profile execution |
 | CLI-only | CLI + admin UI + reports |
 | No test isolation | Each test gets its own user + repos |
 | No analytics grouping | Tags + eval-level analytics for filtering and trends |
