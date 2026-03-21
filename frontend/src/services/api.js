@@ -284,3 +284,41 @@ export const getAdminTableData = (tableName, page = 1, limit = 50, options = {})
 }
 export const getAdminRecord = (tableName, recordId) =>
   request(`/api/admin/table/${tableName}/${recordId}`)
+
+// ============ Evaluations (Admin) ============
+export const getBenchmarkRuns = (page = 1, limit = 20, runType = null) => {
+  const params = new URLSearchParams({ page, limit })
+  if (runType) params.append('run_type', runType)
+  return request(`/api/evaluations/benchmark-runs?${params.toString()}`)
+}
+
+export const getBenchmarkRun = (runId) =>
+  request(`/api/evaluations/benchmark-runs/${runId}`)
+
+export const deleteBenchmarkRun = (runId) =>
+  request(`/api/evaluations/benchmark-runs/${runId}`, { method: 'DELETE' })
+
+export const getEvaluationResults = (options = {}) => {
+  const params = new URLSearchParams()
+  if (options.benchmarkRunId) params.append('benchmark_run_id', options.benchmarkRunId)
+  if (options.agentId) params.append('agent_id', options.agentId)
+  if (options.evaluationName) params.append('evaluation_name', options.evaluationName)
+  params.append('page', options.page || 1)
+  params.append('limit', options.limit || 50)
+  return request(`/api/evaluations/results?${params.toString()}`)
+}
+
+export const getEvaluationResult = (resultId) =>
+  request(`/api/evaluations/results/${resultId}`)
+
+export const getAgentEvalSummary = (agentId) =>
+  request(`/api/evaluations/agent-summary/${agentId}`)
+
+export const triggerBenchmark = (scenarioName, judgeModel = null) =>
+  request('/api/evaluations/trigger-benchmark', {
+    method: 'POST',
+    body: JSON.stringify({ scenario_name: scenarioName, judge_model: judgeModel }),
+  })
+
+export const getEvaluationConfig = () =>
+  request('/api/evaluations/config')
