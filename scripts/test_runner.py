@@ -35,6 +35,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Load .env file so LLM API keys and provider config are available.
+# Uses override=False so explicit env vars (e.g. from CLI) take precedence.
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv(PROJECT_ROOT / ".env", override=False)
+
 # Set DATABASE_URL before importing druppie modules (database.py reads it at
 # import time via os.getenv)
 if not os.getenv("DATABASE_URL"):
