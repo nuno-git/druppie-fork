@@ -1,0 +1,14 @@
+# evaluation_config.yaml
+# Controls live (background) evaluation of completed agent runs.
+
+live_evaluation:
+  enabled: false                     # Set to true to enable live evaluation
+  sample_rate: 1.0                   # 0.0-1.0, fraction of completed runs to evaluate
+  judge_model: claude-sonnet-4-6     # Default judge model for live eval
+
+  # Which evaluations to run for which agents
+  agent_evaluations:
+    architect:
+      - architect_design_quality
+    builder:
+      - builder_tool_compliance
