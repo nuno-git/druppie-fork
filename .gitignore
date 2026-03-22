@@ -63,3 +63,4 @@ druppie-app/
 
 # Personal compose overrides
 docker-compose.robbe.yml
+testing/reports/*.md

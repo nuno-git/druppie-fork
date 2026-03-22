@@ -98,7 +98,17 @@ def _bold(text: str) -> str:
 
 
 def _default_gitea_url() -> str | None:
-    """Derive the default Gitea URL from .env or environment."""
+    """Derive the default Gitea URL from .env or environment.
+
+    Prefers GITEA_INTERNAL_URL (Docker-internal address like http://gitea:3000)
+    when available, since tests typically run inside the Docker network.
+    Falls back to GITEA_URL or GITEA_PORT-based localhost URL.
+    """
+    # Inside Docker, GITEA_INTERNAL_URL points to the Docker network address
+    internal_url = os.getenv("GITEA_INTERNAL_URL")
+    if internal_url:
+        return internal_url
+
     url = os.getenv("GITEA_URL")
     if url:
         return url
