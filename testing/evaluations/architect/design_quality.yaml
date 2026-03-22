@@ -2,7 +2,7 @@ evaluation:
   name: architect_design_quality
   description: "Evaluates technical design documents produced by the architect agent"
   target_agent: architect
-  judge_model: claude-sonnet-4-6
+  judge_model: glm-5
 
   context:
     - source: tool_call_result

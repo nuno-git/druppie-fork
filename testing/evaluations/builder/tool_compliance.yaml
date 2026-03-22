@@ -2,7 +2,7 @@ evaluation:
   name: builder_tool_compliance
   description: "Evaluates whether the builder agent stays within its approved tool set"
   target_agent: builder
-  judge_model: claude-sonnet-4-6
+  judge_model: glm-5
 
   context:
     - source: all_tool_calls
