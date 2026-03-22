@@ -349,7 +349,8 @@ async def list_available_tests(
 
     from druppie.testing.v2_schema import TestFile
 
-    tests_dir = Path(__file__).resolve().parents[2] / "testing" / "tests"
+    # parents[3] goes from druppie/api/routes/ up to project root (/app/)
+    tests_dir = Path(__file__).resolve().parents[3] / "testing" / "tests"
     tests = []
     if tests_dir.exists():
         for path in sorted(tests_dir.glob("*.yaml")):
