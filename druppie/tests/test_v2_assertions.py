@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session as DbSession, sessionmaker
 
 from druppie.testing.v2_assertions import AssertionResult, match_assertions
 from druppie.testing.v2_schema import EvalAssertion
-from druppie.db.models import AgentRun, Base, Session, ToolCall
+from druppie.db.models import AgentRun, Base, Project, Session, ToolCall, User
 
 # ---------------------------------------------------------------------------
 # SQLite / PostgreSQL-UUID compatibility (same shim as other test files)
@@ -78,9 +78,13 @@ def db_session():
 # ---------------------------------------------------------------------------
 
 
-def _seed_session(db: DbSession, session_id: uuid.UUID) -> None:
+def _seed_session(
+    db: DbSession,
+    session_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+) -> None:
     """Insert a minimal Session row."""
-    db.add(Session(id=session_id, title="Test", status="completed"))
+    db.add(Session(id=session_id, title="Test", status="completed", user_id=user_id))
     db.flush()
 
 
@@ -432,3 +436,194 @@ class TestMissingAgent:
         assert len(results2) == 1
         assert results2[0].passed is False
         assert "No agent run found" in results2[0].message
+
+
+# ---------------------------------------------------------------------------
+# Helpers for project reference tests
+# ---------------------------------------------------------------------------
+
+
+def _seed_user(db: DbSession, user_id: uuid.UUID, username: str = "testuser") -> User:
+    """Insert a minimal User row."""
+    user = User(
+        id=user_id,
+        username=username,
+        email=f"{username}@test.local",
+        display_name=username,
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def _seed_project(
+    db: DbSession,
+    project_id: uuid.UUID,
+    name: str,
+    owner_id: uuid.UUID,
+) -> Project:
+    """Insert a minimal Project row."""
+    project = Project(
+        id=project_id,
+        name=name,
+        owner_id=owner_id,
+        status="active",
+    )
+    db.add(project)
+    db.flush()
+    return project
+
+
+class TestProjectReference:
+    """@project:<name> reference resolution in expected values."""
+
+    def test_project_reference_resolved(self, db_session: DbSession):
+        """@project:name resolves to actual project UUID and matches."""
+        user_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        sid = uuid.uuid4()
+        rid = uuid.uuid4()
+
+        _seed_user(db_session, user_id)
+        _seed_project(db_session, project_id, "weather-dashboard", user_id)
+        _seed_session(db_session, sid, user_id=user_id)
+        _seed_agent_run(
+            db_session,
+            agent_run_id=rid,
+            session_id=sid,
+            agent_id="router",
+        )
+        _seed_tool_call(
+            db_session,
+            agent_run_id=rid,
+            session_id=sid,
+            mcp_server="builtin",
+            tool_name="set_intent",
+            arguments={
+                "intent": "update_project",
+                "project_id": str(project_id),
+            },
+        )
+
+        results = match_assertions(
+            db_session,
+            sid,
+            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            {
+                "intent": "update_project",
+                "project_id": "@project:weather-dashboard",
+            },
+        )
+        assert len(results) == 1
+        assert results[0].passed is True
+
+    def test_project_reference_wrong_project(self, db_session: DbSession):
+        """@project:name resolves but doesn't match the wrong project UUID."""
+        user_id = uuid.uuid4()
+        weather_id = uuid.uuid4()
+        todo_id = uuid.uuid4()
+        sid = uuid.uuid4()
+        rid = uuid.uuid4()
+
+        _seed_user(db_session, user_id)
+        _seed_project(db_session, weather_id, "weather-dashboard", user_id)
+        _seed_project(db_session, todo_id, "todo-app", user_id)
+        _seed_session(db_session, sid, user_id=user_id)
+        _seed_agent_run(
+            db_session,
+            agent_run_id=rid,
+            session_id=sid,
+            agent_id="router",
+        )
+        # Router picked the wrong project (todo-app instead of weather-dashboard)
+        _seed_tool_call(
+            db_session,
+            agent_run_id=rid,
+            session_id=sid,
+            mcp_server="builtin",
+            tool_name="set_intent",
+            arguments={
+                "intent": "update_project",
+                "project_id": str(todo_id),
+            },
+        )
+
+        results = match_assertions(
+            db_session,
+            sid,
+            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            {
+                "intent": "update_project",
+                "project_id": "@project:weather-dashboard",
+            },
+        )
+        assert len(results) == 1
+        assert results[0].passed is False
+        assert "project_id" in results[0].name
+
+    def test_project_reference_not_found(self, db_session: DbSession):
+        """@project:nonexistent leaves value as-is and fails."""
+        user_id = uuid.uuid4()
+        sid = uuid.uuid4()
+        rid = uuid.uuid4()
+
+        _seed_user(db_session, user_id)
+        _seed_session(db_session, sid, user_id=user_id)
+        _seed_agent_run(
+            db_session,
+            agent_run_id=rid,
+            session_id=sid,
+            agent_id="router",
+        )
+        _seed_tool_call(
+            db_session,
+            agent_run_id=rid,
+            session_id=sid,
+            mcp_server="builtin",
+            tool_name="set_intent",
+            arguments={
+                "intent": "update_project",
+                "project_id": str(uuid.uuid4()),
+            },
+        )
+
+        results = match_assertions(
+            db_session,
+            sid,
+            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            {
+                "intent": "update_project",
+                "project_id": "@project:nonexistent",
+            },
+        )
+        assert len(results) == 1
+        assert results[0].passed is False
+
+    def test_no_references_skips_resolution(self, db_session: DbSession):
+        """Expected values without @project: references pass through unchanged."""
+        sid = uuid.uuid4()
+        rid = uuid.uuid4()
+        _seed_session(db_session, sid)
+        _seed_agent_run(
+            db_session,
+            agent_run_id=rid,
+            session_id=sid,
+            agent_id="router",
+        )
+        _seed_tool_call(
+            db_session,
+            agent_run_id=rid,
+            session_id=sid,
+            mcp_server="builtin",
+            tool_name="set_intent",
+            arguments={"intent": "create_project"},
+        )
+
+        results = match_assertions(
+            db_session,
+            sid,
+            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            {"intent": "create_project"},
+        )
+        assert len(results) == 1
+        assert results[0].passed is True
