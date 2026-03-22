@@ -61,6 +61,10 @@ class RunTestsRequest(BaseModel):
     test_name: str | None = None  # Run a specific test by name
     tag: str | None = None  # Run tests matching a tag
     run_all: bool = False  # Run all tests
+    # Phase toggles (all default to True for full run)
+    seed: bool = True  # Phase 1: Seed sessions/projects/repos
+    execute: bool = True  # Phase 2: Run agents with real LLMs + HITL
+    judge: bool = True  # Phase 3: Run LLM judge checks
 
 
 class TriggerBenchmarkRequest(BaseModel):
@@ -342,6 +346,9 @@ async def run_tests(
         test_name=body.test_name,
         tag=body.tag,
         run_all=body.run_all,
+        seed=body.seed,
+        execute=body.execute,
+        judge=body.judge,
     )
 
     logger.info(

@@ -889,14 +889,30 @@ class TestRunner:
         d = tests_dir or self._testing_dir / "tests"
         return [(p, self.load_test(p)) for p in sorted(d.glob("*.yaml"))]
 
-    def run_test(self, test: TestDefinition) -> list[TestRunResult]:
-        """Run a test. Returns one TestRunResult per HITL profile."""
+    def run_test(
+        self,
+        test: TestDefinition,
+        seed: bool = True,
+        execute: bool = True,
+        judge: bool = True,
+    ) -> list[TestRunResult]:
+        """Run a test. Returns one TestRunResult per HITL profile.
+
+        Args:
+            test: The test definition.
+            seed: Phase 1 -- create test user and seed sessions.
+            execute: Phase 2 -- run real agents with LLMs + HITL.
+            judge: Phase 3 -- run LLM judge checks.
+        """
         results = []
         hitl_profiles = test.get_hitl_profiles()
         judge_profiles = test.get_judge_profiles()
 
         for hitl_name in hitl_profiles:
-            result = self._run_single(test, hitl_name, judge_profiles)
+            result = self._run_single(
+                test, hitl_name, judge_profiles,
+                seed=seed, execute=execute, judge=judge,
+            )
             results.append(result)
 
         return results
@@ -906,14 +922,21 @@ class TestRunner:
         test: TestDefinition,
         hitl_name: str,
         judge_profiles: list[str],
+        seed: bool = True,
+        execute: bool = True,
+        judge: bool = True,
     ) -> TestRunResult:
-        """Run one execution of a test with a specific HITL profile."""
+        """Run one execution of a test with a specific HITL profile.
+
+        Args:
+            seed: Phase 1 -- create test user and seed sessions.
+            execute: Phase 2 -- run real agents with LLMs + HITL.
+            judge: Phase 3 -- run LLM judge checks.
+        """
         start = time.time()
         timestamp = int(start)
         # Gitea usernames have a 40-char limit. Use a short hash.
         import hashlib
-        short_hash = hashlib.md5(f"{test.name}-{hitl_name}-{timestamp}".encode()).hexdigest()[:8]
-        test_user = f"t-{short_hash}"
 
         # Create benchmark run
         git_commit, git_branch = _git_info()
@@ -927,64 +950,98 @@ class TestRunner:
         self._db.add(benchmark_run)
         self._db.flush()
 
-        # Resolve and seed sessions (world state)
-        # Use a unique namespace prefix so deterministic UUIDs don't collide
-        # across re-runs of the same test (fixture_uuid is based on metadata.id)
-        run_namespace = f"{test_user}"
-        sessions = self._sessions.resolve_chain(test.sessions)
-        for session_fixture in sessions:
-            # Override the user for isolation
-            session_fixture.metadata.user = test_user
-            # Make metadata.id unique per run to avoid duplicate key on re-run
-            session_fixture.metadata.id = f"{run_namespace}:{session_fixture.metadata.id}"
-            seed_fixture(self._db, session_fixture, gitea_url=self._gitea_url)
-        self._db.flush()
-
-        # Create test user in DB (seed_fixture creates users, but ensure one
-        # exists for the orchestrator)
-        user = self._db.query(User).filter(User.username == test_user).first()
-        if not user:
-            user_id = uuid4()
-            user = User(
-                id=user_id,
-                username=test_user,
-                email=f"{test_user}@druppie.local",
-                display_name=test_user.title(),
-            )
-            self._db.add(user)
-            self._db.add(UserRole(user_id=user_id, role="admin"))
-            self._db.flush()
-
-        # Resolve HITL profile
-        hitl_profile: HITLProfile | None = None
-        if hitl_name == "inline" and isinstance(test.hitl, HITLProfile):
-            hitl_profile = test.hitl
-        else:
-            try:
-                hitl_profile = self._profiles.get_hitl(hitl_name)
-            except KeyError:
-                logger.warning("HITL profile not found: %s", hitl_name)
-
-        # Run real agent execution
+        sessions: list[SessionFixture] = []
         execution_session_id: UUID | None = None
         execution_error: str | None = None
-        if test.run.message:
-            try:
-                execution_session_id = self._execute_agents(
-                    message=test.run.message,
-                    user_id=user.id,
-                    real_agents=test.run.real_agents,
-                    hitl_profile=hitl_profile,
-                    test_context=test.run.message,
+
+        if seed:
+            # --- Phase 1: Seed ---
+            short_hash = hashlib.md5(f"{test.name}-{hitl_name}-{timestamp}".encode()).hexdigest()[:8]
+            test_user = f"t-{short_hash}"
+
+            # Resolve and seed sessions (world state)
+            run_namespace = f"{test_user}"
+            sessions = self._sessions.resolve_chain(test.sessions)
+            for session_fixture in sessions:
+                session_fixture.metadata.user = test_user
+                session_fixture.metadata.id = f"{run_namespace}:{session_fixture.metadata.id}"
+                seed_fixture(self._db, session_fixture, gitea_url=self._gitea_url)
+            self._db.flush()
+
+            # Create test user in DB
+            user = self._db.query(User).filter(User.username == test_user).first()
+            if not user:
+                user_id = uuid4()
+                user = User(
+                    id=user_id,
+                    username=test_user,
+                    email=f"{test_user}@druppie.local",
+                    display_name=test_user.title(),
                 )
-            except Exception as e:
-                execution_error = f"{type(e).__name__}: {e}"
-                logger.error(
-                    "Agent execution failed: test=%s error=%s",
-                    test.name,
-                    execution_error,
-                    exc_info=True,
+                self._db.add(user)
+                self._db.add(UserRole(user_id=user_id, role="admin"))
+                self._db.flush()
+        else:
+            # --- Seed skipped: find existing test user ---
+            # Look for the most recent test user for this test name
+            latest_run = (
+                self._db.query(TestRunModel)
+                .filter(TestRunModel.test_name == test.name)
+                .order_by(TestRunModel.created_at.desc())
+                .first()
+            )
+            if latest_run and latest_run.test_user:
+                test_user = latest_run.test_user
+                execution_session_id = latest_run.session_id
+            else:
+                # Fallback: generate a user name but don't seed
+                short_hash = hashlib.md5(f"{test.name}-{hitl_name}-{timestamp}".encode()).hexdigest()[:8]
+                test_user = f"t-{short_hash}"
+
+            user = self._db.query(User).filter(User.username == test_user).first()
+            if not user:
+                # User doesn't exist and seed=False -- create a minimal user
+                user_id = uuid4()
+                user = User(
+                    id=user_id,
+                    username=test_user,
+                    email=f"{test_user}@druppie.local",
+                    display_name=test_user.title(),
                 )
+                self._db.add(user)
+                self._db.add(UserRole(user_id=user_id, role="admin"))
+                self._db.flush()
+
+        if execute:
+            # --- Phase 2: Execute ---
+            # Resolve HITL profile
+            hitl_profile: HITLProfile | None = None
+            if hitl_name == "inline" and isinstance(test.hitl, HITLProfile):
+                hitl_profile = test.hitl
+            else:
+                try:
+                    hitl_profile = self._profiles.get_hitl(hitl_name)
+                except KeyError:
+                    logger.warning("HITL profile not found: %s", hitl_name)
+
+            # Run real agent execution
+            if test.run.message:
+                try:
+                    execution_session_id = self._execute_agents(
+                        message=test.run.message,
+                        user_id=user.id,
+                        real_agents=test.run.real_agents,
+                        hitl_profile=hitl_profile,
+                        test_context=test.run.message,
+                    )
+                except Exception as e:
+                    execution_error = f"{type(e).__name__}: {e}"
+                    logger.error(
+                        "Agent execution failed: test=%s error=%s",
+                        test.name,
+                        execution_error,
+                        exc_info=True,
+                    )
 
         # Determine the session to evaluate against
         # Prefer the execution session (where real agents ran);
@@ -992,8 +1049,18 @@ class TestRunner:
         eval_session_id: UUID | None = execution_session_id
         if eval_session_id is None and sessions:
             eval_session_id = fixture_uuid(sessions[-1].metadata.id)
+        # If seed was skipped, try to get session from most recent test run
+        if eval_session_id is None and not seed:
+            latest_run = (
+                self._db.query(TestRunModel)
+                .filter(TestRunModel.test_name == test.name)
+                .order_by(TestRunModel.created_at.desc())
+                .first()
+            )
+            if latest_run:
+                eval_session_id = latest_run.session_id
 
-        # Evaluate with assertions
+        # Evaluate with assertions (always run -- they are deterministic)
         all_assertion_results: list[AssertionResult] = []
         if eval_session_id is not None:
             for eval_ref in test.evals:
@@ -1016,9 +1083,9 @@ class TestRunner:
                 )
                 all_assertion_results.extend(inline_results)
 
-        # Run judge checks
+        # Run judge checks (Phase 3)
         all_judge_results: list[JudgeCheckResult] = []
-        if eval_session_id is not None:
+        if judge and eval_session_id is not None:
             for judge_name in judge_profiles:
                 try:
                     judge_profile = self._profiles.get_judge(judge_name)
@@ -1026,7 +1093,7 @@ class TestRunner:
                     logger.warning("Judge profile not found: %s", judge_name)
                     continue
 
-                judge = JudgeRunner(judge_profile)
+                judge_runner = JudgeRunner(judge_profile)
 
                 # Eval judge checks
                 for eval_ref in test.evals:
@@ -1038,7 +1105,7 @@ class TestRunner:
                             if eval_def.assertions
                             else "router"
                         )
-                        judge_results = judge.run_checks(
+                        judge_results = judge_runner.run_checks(
                             db=self._db,
                             session_id=eval_session_id,
                             checks=eval_def.judge.checks,
@@ -1053,7 +1120,7 @@ class TestRunner:
                     target_agent = "router"
                     if test.evaluate.assertions:
                         target_agent = test.evaluate.assertions[0].agent
-                    judge_results = judge.run_checks(
+                    judge_results = judge_runner.run_checks(
                         db=self._db,
                         session_id=eval_session_id,
                         checks=test.evaluate.judge.checks,
