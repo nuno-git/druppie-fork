@@ -1,6 +1,5 @@
-"""Evaluation service for benchmark runs and results."""
+"""Evaluation service for benchmark runs, evaluation results, and v2 tests."""
 
-from pathlib import Path
 from uuid import UUID
 
 import structlog
@@ -252,51 +251,6 @@ class EvaluationService:
         d = run.to_dict()
         d["tags"] = getattr(run, "_tags", [])
         return d
-
-    # =========================================================================
-    # BENCHMARK TRIGGER
-    # =========================================================================
-
-    def trigger_benchmark(
-        self,
-        scenario_name: str,
-        judge_model: str | None = None,
-    ) -> UUID:
-        """Load and run a benchmark scenario, returning the benchmark_run_id.
-
-        Args:
-            scenario_name: Name of the scenario YAML file (without extension).
-            judge_model: Optional judge model override.
-
-        Returns:
-            The UUID of the created benchmark run.
-
-        Raises:
-            FileNotFoundError: If the scenario YAML does not exist.
-        """
-        from ..testing.bench_runner import ScenarioRunner, load_scenario
-
-        scenarios_dir = Path(__file__).resolve().parent.parent.parent / "testing" / "scenarios"
-        scenario_path = scenarios_dir / f"{scenario_name}.yaml"
-
-        if not scenario_path.exists():
-            raise FileNotFoundError(f"Scenario not found: {scenario_path}")
-
-        scenario = load_scenario(scenario_path)
-        runner = ScenarioRunner(
-            db=self.eval_repo.db,
-            judge_model=judge_model,
-        )
-        result = runner.run(scenario)
-
-        logger.info(
-            "benchmark_triggered",
-            scenario=scenario_name,
-            benchmark_run_id=str(result.benchmark_run_id),
-            passed=result.passed,
-        )
-
-        return result.benchmark_run_id
 
     # =========================================================================
     # CONVERSION HELPERS

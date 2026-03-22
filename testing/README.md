@@ -12,26 +12,20 @@ testing/
   profiles/        <- HITL and judge model configurations
     hitl.yaml
     judges.yaml
-  scenarios/       <- Legacy benchmark scenarios (v1)
   reports/         <- Generated test reports (gitignored)
 
 druppie/testing/                      <- Python code (one package)
   seed_schema.py, seed_loader.py,     <- Seeding: schema, loader, UUID generation
     seed_ids.py
-  v2_schema.py, v2_runner.py,         <- V2 test runner: schema, runner, assertions
+  v2_schema.py, v2_runner.py,         <- Test runner: schema, runner, assertions
     v2_assertions.py
   eval_schema.py, eval_judge.py,      <- Evaluation: judge engine, context extraction,
     eval_context.py, eval_config.py,      config, live eval hook
     eval_live.py
-  bench_schema.py, bench_runner.py,   <- Legacy benchmarks: scenario runner, assertions,
-    bench_assertions.py,                  user simulator
-    bench_simulator.py
 
 scripts/                              <- CLI entry points
   seed.py                             <- Seed the database
-  test_runner.py                      <- Run v2 tests
-  evaluate.py                         <- Run evaluations (v1)
-  benchmark.py                        <- Run benchmark scenarios (v1)
+  test_runner.py                      <- Run tests
 
 evaluation_config.yaml                <- Live evaluation config (project root)
 ```
@@ -125,8 +119,8 @@ Navigate to `/admin/evaluations` in the frontend. Shows test runs, evaluation sc
 # Integration tests (isolated test DB)
 docker compose --profile test-integration up --abort-on-container-exit
 
-# Benchmark tests (dry-run by default; set BENCHMARK_JUDGE_MODEL for real runs)
-docker compose --profile test-benchmark up --abort-on-container-exit
+# V2 tests (run inside backend container)
+docker exec druppie-new-backend python scripts/test_runner.py --all
 ```
 
 ## Key Concepts
