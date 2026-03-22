@@ -482,40 +482,252 @@ def _generate_report(
 
 
 def cmd_cleanup() -> None:
-    """Delete all test users (matching test-*) and their data from DB."""
+    """Delete all test users (matching test-*) and their data from DB.
+
+    Deletes in FK-safe order to avoid foreign key violations:
+    1. TestRunTag, TestRun, BenchmarkRun (test metadata)
+    2. EvaluationResult (references sessions, agent_runs, benchmark_runs)
+    3. SandboxSession (references sessions, users, tool_calls)
+    4. Approval, Question (reference tool_calls, sessions, users)
+    5. ToolCallNormalization (references tool_calls)
+    6. ToolCall (references sessions, agent_runs, llm_calls)
+    7. LlmRetry (references llm_calls)
+    8. LlmCall (references sessions, agent_runs)
+    9. Message (references sessions, agent_runs)
+    10. AgentRun (references sessions)
+    11. Session (references users, projects)
+    12. Project (references users via owner_id)
+    13. UserRole, UserToken (reference users -- CASCADE, but explicit is safer)
+    14. User
+    """
+    from sqlalchemy import text
+
     from druppie.db.database import SessionLocal
-    from druppie.db.models import Session, User
+    from druppie.db.models import (
+        AgentRun,
+        Approval,
+        BenchmarkRun,
+        EvaluationResult,
+        LlmCall,
+        Message,
+        Project,
+        Question,
+        SandboxSession,
+        Session,
+        TestRun,
+        TestRunTag,
+        ToolCall,
+        ToolCallNormalization,
+        User,
+        UserRole,
+        UserToken,
+    )
+    from druppie.db.models.llm_retry import LlmRetry
 
     db = SessionLocal()
     try:
         # Get test user IDs
-        test_user_ids = [
-            uid
-            for (uid,) in db.query(User.id)
-            .filter(User.username.like("test-%"))
-            .all()
-        ]
-
-        if not test_user_ids:
+        test_users = db.query(User).filter(User.username.like("test-%")).all()
+        if not test_users:
             print("No test users found.")
             return
 
-        # Delete sessions owned by test users
+        user_ids = [u.id for u in test_users]
+        print(f"Found {len(test_users)} test user(s), cleaning up...")
+
+        # -- Get session IDs owned by test users --
+        session_ids = [
+            sid
+            for (sid,) in db.query(Session.id)
+            .filter(Session.user_id.in_(user_ids))
+            .all()
+        ]
+
+        # -- Get project IDs owned by test users --
+        project_ids = [
+            pid
+            for (pid,) in db.query(Project.id)
+            .filter(Project.owner_id.in_(user_ids))
+            .all()
+        ]
+
+        # -- 1. Delete test run metadata (benchmark_runs named "test-*") --
+        test_run_ids = [
+            trid
+            for (trid,) in db.query(TestRun.id)
+            .filter(TestRun.test_user.like("test-%"))
+            .all()
+        ]
+        if test_run_ids:
+            tag_count = (
+                db.query(TestRunTag)
+                .filter(TestRunTag.test_run_id.in_(test_run_ids))
+                .delete(synchronize_session=False)
+            )
+            print(f"  Deleted {tag_count} test run tag(s)")
+
+        tr_count = (
+            db.query(TestRun)
+            .filter(TestRun.test_user.like("test-%"))
+            .delete(synchronize_session=False)
+        )
+        print(f"  Deleted {tr_count} test run(s)")
+
+        br_count = (
+            db.query(BenchmarkRun)
+            .filter(BenchmarkRun.name.like("test-%"))
+            .delete(synchronize_session=False)
+        )
+        print(f"  Deleted {br_count} benchmark run(s)")
+
+        if session_ids:
+            # -- 2. Evaluation results --
+            er_count = (
+                db.query(EvaluationResult)
+                .filter(EvaluationResult.session_id.in_(session_ids))
+                .delete(synchronize_session=False)
+            )
+            print(f"  Deleted {er_count} evaluation result(s)")
+
+            # -- 3. Sandbox sessions --
+            ss_count = (
+                db.query(SandboxSession)
+                .filter(SandboxSession.session_id.in_(session_ids))
+                .delete(synchronize_session=False)
+            )
+            print(f"  Deleted {ss_count} sandbox session(s)")
+
+            # -- 4. Approvals and Questions --
+            ap_count = (
+                db.query(Approval)
+                .filter(Approval.session_id.in_(session_ids))
+                .delete(synchronize_session=False)
+            )
+            print(f"  Deleted {ap_count} approval(s)")
+
+            q_count = (
+                db.query(Question)
+                .filter(Question.session_id.in_(session_ids))
+                .delete(synchronize_session=False)
+            )
+            print(f"  Deleted {q_count} question(s)")
+
+            # -- 5. Tool call normalizations (via tool_calls in these sessions) --
+            tc_ids = [
+                tcid
+                for (tcid,) in db.query(ToolCall.id)
+                .filter(ToolCall.session_id.in_(session_ids))
+                .all()
+            ]
+            if tc_ids:
+                tcn_count = (
+                    db.query(ToolCallNormalization)
+                    .filter(ToolCallNormalization.tool_call_id.in_(tc_ids))
+                    .delete(synchronize_session=False)
+                )
+                print(f"  Deleted {tcn_count} tool call normalization(s)")
+
+            # -- 6. Tool calls --
+            tc_count = (
+                db.query(ToolCall)
+                .filter(ToolCall.session_id.in_(session_ids))
+                .delete(synchronize_session=False)
+            )
+            print(f"  Deleted {tc_count} tool call(s)")
+
+            # -- 7-8. LLM retries and calls --
+            llm_ids = [
+                lid
+                for (lid,) in db.query(LlmCall.id)
+                .filter(LlmCall.session_id.in_(session_ids))
+                .all()
+            ]
+            if llm_ids:
+                lr_count = (
+                    db.query(LlmRetry)
+                    .filter(LlmRetry.llm_call_id.in_(llm_ids))
+                    .delete(synchronize_session=False)
+                )
+                print(f"  Deleted {lr_count} LLM retry(ies)")
+
+            llm_count = (
+                db.query(LlmCall)
+                .filter(LlmCall.session_id.in_(session_ids))
+                .delete(synchronize_session=False)
+            )
+            print(f"  Deleted {llm_count} LLM call(s)")
+
+            # -- 9. Messages --
+            msg_count = (
+                db.query(Message)
+                .filter(Message.session_id.in_(session_ids))
+                .delete(synchronize_session=False)
+            )
+            print(f"  Deleted {msg_count} message(s)")
+
+            # -- 10. Agent runs --
+            ar_count = (
+                db.query(AgentRun)
+                .filter(AgentRun.session_id.in_(session_ids))
+                .delete(synchronize_session=False)
+            )
+            print(f"  Deleted {ar_count} agent run(s)")
+
+        # -- 11. Sessions --
         session_count = (
             db.query(Session)
-            .filter(Session.user_id.in_(test_user_ids))
+            .filter(Session.user_id.in_(user_ids))
             .delete(synchronize_session=False)
         )
+        print(f"  Deleted {session_count} session(s)")
 
-        # Delete test users (cascades to roles, tokens)
+        # -- 12. Projects owned by test users --
+        project_count = (
+            db.query(Project)
+            .filter(Project.owner_id.in_(user_ids))
+            .delete(synchronize_session=False)
+        )
+        print(f"  Deleted {project_count} project(s)")
+
+        # -- 13. Also delete sandbox sessions referencing test users directly --
+        ss_user_count = (
+            db.query(SandboxSession)
+            .filter(SandboxSession.user_id.in_(user_ids))
+            .delete(synchronize_session=False)
+        )
+        if ss_user_count:
+            print(f"  Deleted {ss_user_count} additional sandbox session(s) by user")
+
+        # -- 14. Clear approval resolved_by references to test users --
+        # (approvals in non-test sessions that were resolved by a test user)
+        db.execute(
+            text("UPDATE approvals SET resolved_by = NULL WHERE resolved_by = ANY(:ids)"),
+            {"ids": user_ids},
+        )
+
+        # -- 15. User roles and tokens (CASCADE would handle this, but be explicit) --
+        role_count = (
+            db.query(UserRole)
+            .filter(UserRole.user_id.in_(user_ids))
+            .delete(synchronize_session=False)
+        )
+        token_count = (
+            db.query(UserToken)
+            .filter(UserToken.user_id.in_(user_ids))
+            .delete(synchronize_session=False)
+        )
+        print(f"  Deleted {role_count} user role(s), {token_count} user token(s)")
+
+        # -- 16. Users --
         user_count = (
             db.query(User)
-            .filter(User.username.like("test-%"))
+            .filter(User.id.in_(user_ids))
             .delete(synchronize_session=False)
         )
+        print(f"  Deleted {user_count} user(s)")
 
         db.commit()
-        print(f"Deleted {user_count} test user(s) and {session_count} session(s).")
+        print(f"\nCleanup complete: {user_count} test user(s) removed.")
     except Exception:
         db.rollback()
         raise
