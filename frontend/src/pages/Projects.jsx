@@ -95,6 +95,15 @@ const ProjectCard = ({ project, deployment, onDelete, isDeleting, onViewDetails,
         </div>
         <StatusBadge hasRepo={hasRepo} isRunning={isRunning} />
       </div>
+      {project.username && (
+        <div className="mb-2">
+          <span className={`text-xs font-medium ${
+            project.username.startsWith('t-') ? 'text-orange-500' : 'text-blue-500'
+          }`}>
+            {project.username}
+          </span>
+        </div>
+      )}
 
       {/* Description */}
       {project.description && (
