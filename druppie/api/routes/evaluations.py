@@ -65,6 +65,7 @@ class RunTestsRequest(BaseModel):
     """Request body for running v2 tests."""
 
     test_name: str | None = None  # Run a specific test by name
+    test_names: list[str] | None = None  # Run multiple tests by name
     tag: str | None = None  # Run tests matching a tag
     run_all: bool = False  # Run all tests
     # Phase toggles (seed always runs; only execute and judge are toggleable)
@@ -399,6 +400,7 @@ async def run_tests(
 
     # Capture request params for the background thread
     test_name = body.test_name
+    test_names = body.test_names
     tag = body.tag
     run_all = body.run_all
     execute = body.execute
@@ -416,6 +418,7 @@ async def run_tests(
 
             result = svc.run_tests(
                 test_name=test_name,
+                test_names=test_names,
                 tag=tag,
                 run_all=run_all,
                 execute=execute,

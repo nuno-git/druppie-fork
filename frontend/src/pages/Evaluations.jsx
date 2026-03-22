@@ -2,11 +2,11 @@
  * Admin Tests Page
  *
  * Two-section layout:
- * 1. Available Tests -- YAML test definitions that can be run
+ * 1. Run Tests -- dropdown selector for choosing tests, phase toggles, run button
  * 2. Test Results -- past test run results with detail view
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   FlaskConical,
   ArrowLeft,
@@ -18,13 +18,13 @@ import {
   XCircle,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   RefreshCw,
   Tag,
   Clock,
   Filter,
   MessageSquare,
   FileText,
-  Users,
 } from 'lucide-react'
 import {
   getAvailableTests,
@@ -105,103 +105,122 @@ const ResultsBanner = ({ result, onDismiss }) => {
   )
 }
 
-// ---- Available Tests Section ----
+// ---- Test Selector Dropdown ----
 
-const AvailableTests = ({ onRunSingle, isRunning, runningSingle }) => {
-  const [tests, setTests] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+const TestSelectorDropdown = ({ tests, loading, error, selectAll, setSelectAll, selectedTests, setSelectedTests }) => {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
 
+  // Close on click outside
   useEffect(() => {
-    const fetch = async () => {
-      setLoading(true)
-      setError(null)
-      try {
-        const data = await getAvailableTests()
-        setTests(data || [])
-      } catch (err) {
-        setError(err.message)
-      } finally {
-        setLoading(false)
-      }
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
     }
-    fetch()
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
   }, [])
 
+  const toggleTest = (name) => {
+    const next = new Set(selectedTests)
+    if (next.has(name)) {
+      next.delete(name)
+    } else {
+      next.add(name)
+    }
+    // If all are individually selected, switch to selectAll
+    if (next.size === tests.length) {
+      setSelectAll(true)
+      setSelectedTests(new Set())
+    } else {
+      setSelectAll(false)
+      setSelectedTests(next)
+    }
+  }
+
+  const toggleAll = () => {
+    if (selectAll) {
+      setSelectAll(false)
+      setSelectedTests(new Set())
+    } else {
+      setSelectAll(true)
+      setSelectedTests(new Set())
+    }
+  }
+
+  // Label for closed state
+  const effectiveCount = selectAll ? tests.length : selectedTests.size
+  let label = 'Select tests...'
   if (loading) {
-    return (
-      <div className="p-4 flex items-center justify-center">
-        <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-        <span className="ml-2 text-sm text-gray-600">Loading test definitions...</span>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="p-4 text-center text-red-500 text-sm">
-        <AlertCircle className="w-5 h-5 mx-auto mb-1" />
-        <p>{error}</p>
-      </div>
-    )
-  }
-
-  if (tests.length === 0) {
-    return (
-      <div className="p-4 text-center text-gray-500 text-sm">
-        No test definitions found in testing/tests/
-      </div>
-    )
+    label = 'Loading...'
+  } else if (error) {
+    label = 'Error loading tests'
+  } else if (selectAll) {
+    label = `All tests (${tests.length})`
+  } else if (selectedTests.size === 1) {
+    label = [...selectedTests][0]
+  } else if (selectedTests.size > 1) {
+    label = `${selectedTests.size} tests selected`
   }
 
   return (
-    <div className="divide-y divide-gray-100">
-      {tests.map((test) => (
-        <div
-          key={test.name}
-          className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
-        >
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <FileText className="w-4 h-4 text-purple-500 flex-shrink-0" />
-              <span className="font-medium text-sm">{test.name}</span>
-            </div>
-            <p className="text-xs text-gray-500 mt-0.5 ml-6 truncate">
-              {test.description || test.message}
-            </p>
-            <div className="flex items-center gap-3 mt-1 ml-6">
-              <span className="text-xs text-gray-400">
-                agents: [{test.real_agents.join(', ')}]
-              </span>
-              {test.num_sessions > 0 && (
-                <span className="text-xs text-gray-400">
-                  {test.num_sessions} session{test.num_sessions !== 1 ? 's' : ''}
-                </span>
-              )}
-            </div>
-          </div>
-          <button
-            onClick={() => onRunSingle(test.name)}
-            disabled={isRunning}
-            title={`Run ${test.name}`}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 text-green-700 rounded text-xs font-medium hover:bg-green-100 border border-green-200 disabled:opacity-30 transition-colors flex-shrink-0 ml-3"
-          >
-            {runningSingle === test.name ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Play className="w-3.5 h-3.5" />
-            )}
-            Run
-          </button>
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={loading || !!error}
+        className="flex items-center justify-between gap-2 min-w-[260px] px-3 py-1.5 bg-white border rounded text-sm hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-colors"
+      >
+        <span className="truncate text-left">{label}</span>
+        <ChevronDown className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && tests.length > 0 && (
+        <div className="absolute z-50 mt-1 w-full min-w-[340px] bg-white border rounded-lg shadow-lg max-h-72 overflow-y-auto">
+          {/* All tests option */}
+          <label className="flex items-start gap-2.5 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100">
+            <input
+              type="checkbox"
+              checked={selectAll}
+              onChange={toggleAll}
+              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 mt-0.5"
+            />
+            <span className="text-sm font-medium">All tests</span>
+          </label>
+
+          {/* Individual tests */}
+          {tests.map((test) => {
+            const checked = selectAll || selectedTests.has(test.name)
+            return (
+              <label
+                key={test.name}
+                className="flex items-start gap-2.5 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0"
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleTest(test.name)}
+                  className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 mt-0.5"
+                />
+                <div className="min-w-0">
+                  <span className="text-sm font-medium block">{test.name}</span>
+                  {(test.description || test.message) && (
+                    <span className="text-xs text-gray-500 block truncate">
+                      {test.description || test.message}
+                    </span>
+                  )}
+                </div>
+              </label>
+            )
+          })}
         </div>
-      ))}
+      )}
     </div>
   )
 }
 
 // ---- Test Runs List View ----
 
-const TestRunsList = ({ onSelectRun, refreshKey, onRunSingle, isRunning, runningSingle, runResult, setRunResult, runMessage }) => {
+const TestRunsList = ({ onSelectRun, refreshKey, onRunSingle, isRunning, runningSingle, runResult, setRunResult }) => {
   const [runs, setRuns] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -557,17 +576,21 @@ export default function Evaluations() {
   const [selectedTestRunId, setSelectedTestRunId] = useState(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
-  // Shared run state (lifted up so both sections can use it)
-  const [runningAll, setRunningAll] = useState(false)
-  const [runningTag, setRunningTag] = useState(null)
-  const [runningSingle, setRunningSingle] = useState(null)
+  // Available tests (loaded once)
+  const [availableTests, setAvailableTests] = useState([])
+  const [testsLoading, setTestsLoading] = useState(true)
+  const [testsError, setTestsError] = useState(null)
+
+  // Test selector state
+  const [selectAll, setSelectAll] = useState(true)
+  const [selectedTests, setSelectedTests] = useState(new Set())
+
+  // Shared run state
+  const [isRunning, setIsRunning] = useState(false)
   const [runResult, setRunResult] = useState(null)
   const [runMessage, setRunMessage] = useState(null)
   const [phases, setPhases] = useState({ execute: true, judge: true })
   const [deletingUsers, setDeletingUsers] = useState(false)
-  const [tags, setTags] = useState([])
-
-  const isRunning = runningAll || runningTag || runningSingle
 
   const activePhaseLabels = [
     'Seed',
@@ -576,33 +599,41 @@ export default function Evaluations() {
   ].filter(Boolean)
   const phaseDescription = activePhaseLabels.join(' \u2192 ')
 
-  // Fetch tags for "Run by tag" buttons
+  // Effective selected count for display
+  const effectiveCount = selectAll ? availableTests.length : selectedTests.size
+  const canRun = !isRunning && effectiveCount > 0 && !testsLoading && !testsError
+
+  // Load available tests
   useEffect(() => {
-    const fetchTags = async () => {
+    const fetch = async () => {
+      setTestsLoading(true)
+      setTestsError(null)
       try {
-        const data = await getTags()
-        setTags(data || [])
-      } catch {
-        // ignore
+        const data = await getAvailableTests()
+        setAvailableTests(data || [])
+      } catch (err) {
+        setTestsError(err.message)
+      } finally {
+        setTestsLoading(false)
       }
     }
-    fetchTags()
-  }, [refreshKey])
+    fetch()
+  }, [])
 
   // Poll for background test run completion
-  const pollRunStatus = (runId, clearRunning) => {
+  const pollRunStatus = (runId) => {
     const pollInterval = setInterval(async () => {
       try {
         const status = await getRunStatus(runId)
         if (status.status === 'completed') {
           clearInterval(pollInterval)
-          clearRunning()
+          setIsRunning(false)
           setRunMessage(null)
           setRunResult(status.results)
           setRefreshKey((k) => k + 1)
         } else if (status.status === 'error') {
           clearInterval(pollInterval)
-          clearRunning()
+          setIsRunning(false)
           setRunMessage(null)
           alert('Test run failed: ' + status.message)
         } else {
@@ -610,50 +641,50 @@ export default function Evaluations() {
         }
       } catch {
         clearInterval(pollInterval)
-        clearRunning()
+        setIsRunning(false)
         setRunMessage(null)
         alert('Failed to check test run status')
       }
     }, 2000)
   }
 
-  const handleRunAllTests = async () => {
-    setRunningAll(true)
+  const handleRun = async () => {
+    if (!canRun) return
+
+    setIsRunning(true)
     setRunResult(null)
     setRunMessage('Starting tests...')
+
     try {
-      const { run_id } = await runTests({ run_all: true, ...phases })
-      pollRunStatus(run_id, () => setRunningAll(false))
+      const options = { ...phases }
+
+      if (selectAll) {
+        options.run_all = true
+      } else if (selectedTests.size === 1) {
+        options.test_name = [...selectedTests][0]
+      } else {
+        options.test_names = [...selectedTests]
+      }
+
+      const { run_id } = await runTests(options)
+      pollRunStatus(run_id)
     } catch (err) {
-      setRunningAll(false)
+      setIsRunning(false)
       setRunMessage(null)
       alert('Failed to run tests: ' + err.message)
     }
   }
 
-  const handleRunByTag = async (tag) => {
-    setRunningTag(tag)
-    setRunResult(null)
-    setRunMessage('Starting tests...')
-    try {
-      const { run_id } = await runTests({ tag, ...phases })
-      pollRunStatus(run_id, () => setRunningTag(null))
-    } catch (err) {
-      setRunningTag(null)
-      setRunMessage(null)
-      alert('Failed to run tests: ' + err.message)
-    }
-  }
-
+  // Re-run a single test from the results table
   const handleRunSingle = async (testName) => {
-    setRunningSingle(testName)
+    setIsRunning(true)
     setRunResult(null)
-    setRunMessage('Starting tests...')
+    setRunMessage(`Starting "${testName}"...`)
     try {
       const { run_id } = await runTests({ test_name: testName, ...phases })
-      pollRunStatus(run_id, () => setRunningSingle(null))
+      pollRunStatus(run_id)
     } catch (err) {
-      setRunningSingle(null)
+      setIsRunning(false)
       setRunMessage(null)
       alert('Failed to run test: ' + err.message)
     }
@@ -682,6 +713,13 @@ export default function Evaluations() {
     setView('list')
     setSelectedTestRunId(null)
   }
+
+  // Build a description of what will run
+  const runDescription = selectAll
+    ? 'all tests'
+    : selectedTests.size === 1
+      ? `"${[...selectedTests][0]}"`
+      : `${selectedTests.size} tests`
 
   return (
     <div className="space-y-4">
@@ -714,86 +752,73 @@ export default function Evaluations() {
       {/* Content */}
       {view === 'list' && (
         <div className="space-y-6">
-          {/* ============ SECTION 1: Available Tests ============ */}
-          <div className="bg-white rounded-lg border overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+          {/* ============ SECTION 1: Run Tests ============ */}
+          <div className="bg-white rounded-lg border overflow-visible">
+            <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between rounded-t-lg">
               <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-purple-600" />
-                <h2 className="font-semibold text-sm">Available Tests</h2>
+                <Play className="w-4 h-4 text-purple-600" />
+                <h2 className="font-semibold text-sm">Run Tests</h2>
               </div>
+              <button
+                onClick={handleDeleteTestUsers}
+                disabled={deletingUsers || isRunning}
+                className="flex items-center gap-1 px-2 py-1 bg-red-50 text-red-600 rounded text-xs hover:bg-red-100 border border-red-200 disabled:opacity-50 transition-colors"
+              >
+                {deletingUsers ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                Delete Test Users
+              </button>
             </div>
 
-            <AvailableTests
-              onRunSingle={handleRunSingle}
-              isRunning={isRunning}
-              runningSingle={runningSingle}
-            />
-
-            {/* Controls bar */}
-            <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 space-y-3">
-              {/* Phase toggles */}
-              <div className="flex items-center gap-6">
-                <span className="text-xs font-medium text-gray-500 uppercase">Phases:</span>
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={phases.execute}
-                    onChange={e => setPhases(p => ({ ...p, execute: e.target.checked }))}
-                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-                  />
-                  <span className="text-xs">Execute Agents</span>
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={phases.judge}
-                    onChange={e => setPhases(p => ({ ...p, judge: e.target.checked }))}
-                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-                  />
-                  <span className="text-xs">LLM Judge</span>
-                </label>
-              </div>
-
-              {/* Action buttons */}
-              <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="px-4 py-4">
+              <div className="flex items-center gap-4 flex-wrap">
+                {/* Test selector dropdown */}
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleRunAllTests}
-                    disabled={isRunning}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
-                  >
-                    {runningAll ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Play className="w-3.5 h-3.5" />
-                    )}
-                    {runningAll ? 'Running...' : 'Run All Tests'}
-                  </button>
-
-                  {tags.length > 0 && tags.map((t) => (
-                    <button
-                      key={t.tag}
-                      onClick={() => handleRunByTag(t.tag)}
-                      disabled={isRunning}
-                      className="inline-flex items-center gap-1 px-2 py-1.5 bg-purple-50 text-purple-700 rounded text-xs font-medium hover:bg-purple-100 border border-purple-200 disabled:opacity-50 transition-colors"
-                    >
-                      {runningTag === t.tag ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <Play className="w-3 h-3" />
-                      )}
-                      {t.tag}
-                    </button>
-                  ))}
+                  <span className="text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Tests:</span>
+                  <TestSelectorDropdown
+                    tests={availableTests}
+                    loading={testsLoading}
+                    error={testsError}
+                    selectAll={selectAll}
+                    setSelectAll={setSelectAll}
+                    selectedTests={selectedTests}
+                    setSelectedTests={setSelectedTests}
+                  />
                 </div>
 
+                {/* Phase toggles */}
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={phases.execute}
+                      onChange={e => setPhases(p => ({ ...p, execute: e.target.checked }))}
+                      className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                    />
+                    <span className="text-xs">Execute</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={phases.judge}
+                      onChange={e => setPhases(p => ({ ...p, judge: e.target.checked }))}
+                      className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                    />
+                    <span className="text-xs">Judge</span>
+                  </label>
+                </div>
+
+                {/* Run button */}
                 <button
-                  onClick={handleDeleteTestUsers}
-                  disabled={deletingUsers || isRunning}
-                  className="flex items-center gap-1 px-2 py-1.5 bg-red-50 text-red-600 rounded text-xs hover:bg-red-100 border border-red-200 disabled:opacity-50 transition-colors"
+                  onClick={handleRun}
+                  disabled={!canRun}
+                  className="flex items-center gap-1.5 px-4 py-1.5 bg-green-600 text-white rounded text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors ml-auto"
                 >
-                  {deletingUsers ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-                  Delete Test Users
+                  {isRunning ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Play className="w-4 h-4" />
+                  )}
+                  {isRunning ? 'Running...' : 'Run'}
                 </button>
               </div>
             </div>
@@ -804,7 +829,7 @@ export default function Evaluations() {
             <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
               <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
               <span className="text-blue-800 font-medium text-sm">
-                {runMessage || `Running${runningSingle ? ` "${runningSingle}"` : ' tests'}...`} ({phaseDescription})
+                {runMessage || `Running ${runDescription}...`} ({phaseDescription})
               </span>
             </div>
           )}
@@ -823,10 +848,9 @@ export default function Evaluations() {
                 onSelectRun={handleSelectTestRun}
                 onRunSingle={handleRunSingle}
                 isRunning={isRunning}
-                runningSingle={runningSingle}
+                runningSingle={null}
                 runResult={runResult}
                 setRunResult={setRunResult}
-                runMessage={runMessage}
               />
             </div>
           </div>

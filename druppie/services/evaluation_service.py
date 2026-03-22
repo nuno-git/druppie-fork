@@ -145,6 +145,7 @@ class EvaluationService:
     def run_tests(
         self,
         test_name: str | None = None,
+        test_names: list[str] | None = None,
         tag: str | None = None,
         run_all: bool = False,
         execute: bool = True,
@@ -154,6 +155,7 @@ class EvaluationService:
 
         Args:
             test_name: Run a specific test by name.
+            test_names: Run multiple tests by name.
             tag: Run tests matching a tag.
             run_all: Run all tests.
             execute: Phase 2 -- run real agents with LLMs + HITL.
@@ -175,6 +177,14 @@ class EvaluationService:
                 raise FileNotFoundError(f"Test not found: {test_path}")
             test_def = runner.load_test(test_path)
             results = runner.run_test(test_def, **phase_flags)
+        elif test_names:
+            tests_dir = runner._testing_dir / "tests"
+            for name in test_names:
+                test_path = tests_dir / f"{name}.yaml"
+                if not test_path.exists():
+                    raise FileNotFoundError(f"Test not found: {test_path}")
+                test_def = runner.load_test(test_path)
+                results.extend(runner.run_test(test_def, **phase_flags))
         elif tag:
             all_tests = runner.load_all_tests()
             for _path, test_def in all_tests:
