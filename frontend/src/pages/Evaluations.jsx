@@ -29,6 +29,7 @@ import {
   getTags,
   deleteTestUsers,
   runTests,
+  getRunStatus,
 } from '../services/api'
 
 // ---- Helpers ----
@@ -116,6 +117,7 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
   const [runningSingle, setRunningSingle] = useState(null)
   const [runResult, setRunResult] = useState(null)
   const [phases, setPhases] = useState({ execute: true, judge: true })
+  const [runMessage, setRunMessage] = useState(null)
 
   const fetchTags = async () => {
     try {
@@ -148,48 +150,74 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
     fetchRuns()
   }, [page, selectedTag, refreshKey])
 
+  // Poll for background test run completion
+  const pollRunStatus = (runId, clearRunning) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const status = await getRunStatus(runId)
+        if (status.status === 'completed') {
+          clearInterval(pollInterval)
+          clearRunning()
+          setRunMessage(null)
+          setRunResult(status.results)
+          fetchRuns()
+          fetchTags()
+        } else if (status.status === 'error') {
+          clearInterval(pollInterval)
+          clearRunning()
+          setRunMessage(null)
+          alert('Test run failed: ' + status.message)
+        } else {
+          setRunMessage(status.message || 'Running tests...')
+        }
+      } catch {
+        clearInterval(pollInterval)
+        clearRunning()
+        setRunMessage(null)
+        alert('Failed to check test run status')
+      }
+    }, 2000)
+  }
+
   const handleRunAllTests = async () => {
     setRunningAll(true)
     setRunResult(null)
+    setRunMessage('Starting tests...')
     try {
-      const result = await runTests({ run_all: true, ...phases })
-      setRunResult(result)
-      fetchRuns()
-      fetchTags()
+      const { run_id } = await runTests({ run_all: true, ...phases })
+      pollRunStatus(run_id, () => setRunningAll(false))
     } catch (err) {
-      alert('Failed to run tests: ' + err.message)
-    } finally {
       setRunningAll(false)
+      setRunMessage(null)
+      alert('Failed to run tests: ' + err.message)
     }
   }
 
   const handleRunByTag = async (tag) => {
     setRunningTag(tag)
     setRunResult(null)
+    setRunMessage('Starting tests...')
     try {
-      const result = await runTests({ tag, ...phases })
-      setRunResult(result)
-      fetchRuns()
-      fetchTags()
+      const { run_id } = await runTests({ tag, ...phases })
+      pollRunStatus(run_id, () => setRunningTag(null))
     } catch (err) {
-      alert('Failed to run tests: ' + err.message)
-    } finally {
       setRunningTag(null)
+      setRunMessage(null)
+      alert('Failed to run tests: ' + err.message)
     }
   }
 
   const handleRunSingle = async (testName) => {
     setRunningSingle(testName)
     setRunResult(null)
+    setRunMessage('Starting tests...')
     try {
-      const result = await runTests({ test_name: testName, ...phases })
-      setRunResult(result)
-      fetchRuns()
-      fetchTags()
+      const { run_id } = await runTests({ test_name: testName, ...phases })
+      pollRunStatus(run_id, () => setRunningSingle(null))
     } catch (err) {
-      alert('Failed to run test: ' + err.message)
-    } finally {
       setRunningSingle(null)
+      setRunMessage(null)
+      alert('Failed to run test: ' + err.message)
     }
   }
 
@@ -298,7 +326,7 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
         <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
           <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
           <span className="text-blue-800 font-medium">
-            Running{runningSingle ? ` "${runningSingle}"` : ' tests'}... ({phaseDescription})
+            {runMessage || `Running${runningSingle ? ` "${runningSingle}"` : ' tests'}...`} ({phaseDescription})
           </span>
         </div>
       )}

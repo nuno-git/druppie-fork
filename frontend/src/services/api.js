@@ -344,3 +344,6 @@ export const runTests = (options = {}) =>
     method: 'POST',
     body: JSON.stringify(options),
   })
+
+export const getRunStatus = (runId) =>
+  request(`/api/evaluations/run-status/${runId}`)
