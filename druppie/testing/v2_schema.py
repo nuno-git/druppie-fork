@@ -83,6 +83,7 @@ class JudgeProfilesFile(BaseModel):
 class TestEvalRef(BaseModel):
     """Reference to an eval with expected values for this test."""
 
+    __test__ = False  # Not a pytest test class
     model_config = ConfigDict(populate_by_name=True)
     eval: str  # eval name to reference
     expected: dict[str, object] = Field(default_factory=dict)
@@ -92,12 +93,14 @@ class TestEvalRef(BaseModel):
 class TestInlineJudge(BaseModel):
     """Inline judge checks specific to this test."""
 
+    __test__ = False  # Not a pytest test class
     checks: list[str] = Field(default_factory=list)
 
 
 class TestInlineEvaluate(BaseModel):
     """Inline evaluation specific to this test (not reusable)."""
 
+    __test__ = False  # Not a pytest test class
     assertions: list[EvalAssertion] = Field(default_factory=list)
     judge: TestInlineJudge | None = None
 
@@ -105,6 +108,7 @@ class TestInlineEvaluate(BaseModel):
 class TestRun(BaseModel):
     """What to run in the test."""
 
+    __test__ = False  # Not a pytest test class
     message: str
     real_agents: list[str] = Field(default_factory=list)  # empty = all agents run for real
 
@@ -112,6 +116,7 @@ class TestRun(BaseModel):
 class TestDefinition(BaseModel):
     """A test definition -- combines sessions + run + evals."""
 
+    __test__ = False  # Not a pytest test class
     name: str
     description: str = ""
 
@@ -156,4 +161,5 @@ class TestDefinition(BaseModel):
 class TestFile(BaseModel):
     """Wrapper for test YAML files."""
 
+    __test__ = False  # Not a pytest test class
     test: TestDefinition
