@@ -38,7 +38,12 @@ from druppie.testing.seed_loader import seed_all
 
 def _default_gitea_url() -> str | None:
     """Derive the default Gitea URL from .env or environment."""
-    # Explicit env var takes priority
+    # Docker-internal URL takes priority (set by docker-compose for in-container use)
+    url = os.getenv("GITEA_INTERNAL_URL")
+    if url:
+        return url
+
+    # External URL (may point to host:port, works outside Docker)
     url = os.getenv("GITEA_URL")
     if url:
         return url
