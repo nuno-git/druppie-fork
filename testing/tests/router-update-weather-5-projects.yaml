@@ -16,4 +16,4 @@ test:
     - eval: router-correct-intent
       expected:
         intent: update_project
-        project_id: "*"                    # UUID, just check it was set
+        project_id: "@project:weather-dashboard"   # resolves to actual UUID
