@@ -147,7 +147,6 @@ class EvaluationService:
         test_name: str | None = None,
         tag: str | None = None,
         run_all: bool = False,
-        seed: bool = True,
         execute: bool = True,
         judge: bool = True,
     ) -> dict:
@@ -157,7 +156,6 @@ class EvaluationService:
             test_name: Run a specific test by name.
             tag: Run tests matching a tag.
             run_all: Run all tests.
-            seed: Phase 1 -- create test user and seed sessions.
             execute: Phase 2 -- run real agents with LLMs + HITL.
             judge: Phase 3 -- run LLM judge checks.
 
@@ -168,7 +166,7 @@ class EvaluationService:
 
         runner = TestRunner(db=self.eval_repo.db)
         results = []
-        phase_flags = dict(seed=seed, execute=execute, judge=judge)
+        phase_flags = dict(execute=execute, judge=judge)
 
         if test_name:
             tests_dir = runner._testing_dir / "tests"
