@@ -909,7 +909,10 @@ class TestRunner:
         """Run one execution of a test with a specific HITL profile."""
         start = time.time()
         timestamp = int(start)
-        test_user = f"test-{test.name}-{hitl_name}-{timestamp}"
+        # Gitea usernames have a 40-char limit. Use a short hash.
+        import hashlib
+        short_hash = hashlib.md5(f"{test.name}-{hitl_name}-{timestamp}".encode()).hexdigest()[:8]
+        test_user = f"t-{short_hash}"
 
         # Create benchmark run
         git_commit, git_branch = _git_info()
