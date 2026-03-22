@@ -970,6 +970,8 @@ class TestRunner:
             test_description=test.description,
             test_user=test_user,
             hitl_profile=hitl_name,
+            judge_profile=", ".join(judge_profiles) if judge_profiles else None,
+            session_id=execution_session_id,
             sessions_seeded=len(sessions),
             assertions_total=assertions_total,
             assertions_passed=assertions_passed,

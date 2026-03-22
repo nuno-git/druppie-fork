@@ -22,6 +22,7 @@ import {
   Tag,
   Clock,
   Filter,
+  MessageSquare,
 } from 'lucide-react'
 import {
   getBenchmarkRuns,
@@ -452,7 +453,7 @@ const TestRunDetail = ({ testRunId, onBack }) => {
             ))}
           </div>
         </div>
-        <div className="text-right">
+        <div className="text-right space-y-2">
           <StatusBadge value={run.status} />
           {run.assertions_total != null && (
             <div className="mt-2">
@@ -463,6 +464,15 @@ const TestRunDetail = ({ testRunId, onBack }) => {
               </span>
               <span className="text-xs text-gray-500 ml-1">assertions</span>
             </div>
+          )}
+          {run.session_id && (
+            <a
+              href={`/chat?session=${run.session_id}`}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm"
+            >
+              <MessageSquare size={16} />
+              View Session
+            </a>
           )}
         </div>
       </div>
