@@ -218,7 +218,7 @@ const NavRail = () => {
           <NavRailItem
             to="/admin/evaluations"
             icon={FlaskConical}
-            label="Evaluations"
+            label="Tests"
             active={isActive('/admin/evaluations')}
             accent="purple"
           />

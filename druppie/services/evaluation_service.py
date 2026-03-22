@@ -142,6 +142,68 @@ class EvaluationService:
         """Get all unique tags with test run counts."""
         return self.eval_repo.list_tags()
 
+    def run_tests(
+        self,
+        test_name: str | None = None,
+        tag: str | None = None,
+        run_all: bool = False,
+    ) -> dict:
+        """Run tests and return results.
+
+        Args:
+            test_name: Run a specific test by name.
+            tag: Run tests matching a tag.
+            run_all: Run all tests.
+
+        Returns:
+            Dict with total/passed/failed counts and per-test result details.
+        """
+        from ..testing.v2_runner import TestRunner
+
+        runner = TestRunner(db=self.eval_repo.db)
+        results = []
+
+        if test_name:
+            tests_dir = runner._testing_dir / "tests"
+            test_path = tests_dir / f"{test_name}.yaml"
+            if not test_path.exists():
+                raise FileNotFoundError(f"Test not found: {test_path}")
+            test_def = runner.load_test(test_path)
+            results = runner.run_test(test_def)
+        elif tag:
+            all_tests = runner.load_all_tests()
+            for _path, test_def in all_tests:
+                # Check if any eval references an eval with this tag
+                for eval_ref in test_def.evals:
+                    eval_def = runner._evals.get(eval_ref.eval)
+                    if eval_def and tag in eval_def.tags:
+                        results.extend(runner.run_test(test_def))
+                        break
+        elif run_all:
+            all_tests = runner.load_all_tests()
+            for _path, test_def in all_tests:
+                results.extend(runner.run_test(test_def))
+
+        self.eval_repo.db.commit()
+
+        return {
+            "total": len(results),
+            "passed": sum(1 for r in results if r.passed),
+            "failed": sum(1 for r in results if not r.passed),
+            "results": [
+                {
+                    "test_name": r.test_name,
+                    "status": r.status,
+                    "assertions": (
+                        f"{sum(1 for a in r.assertion_results if a.passed)}"
+                        f"/{len(r.assertion_results)}"
+                    ),
+                    "duration_ms": r.duration_ms,
+                }
+                for r in results
+            ],
+        }
+
     def delete_test_users(self) -> int:
         """Delete all test users and their data.
 
