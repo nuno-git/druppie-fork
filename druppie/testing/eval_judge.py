@@ -25,7 +25,7 @@ class JudgeEngine:
 
     def __init__(self, evaluations_dir: Path | None = None):
         self._evaluations_dir = evaluations_dir or (
-            Path(__file__).resolve().parents[2] / "testing" / "evaluations"
+            Path(__file__).resolve().parents[2] / "testing" / "evals"
         )
         self._definitions: dict[str, EvaluationDefinition] = {}
         self._load_definitions()
@@ -33,8 +33,15 @@ class JudgeEngine:
     def _load_definitions(self) -> None:
         for path in sorted(self._evaluations_dir.rglob("*.yaml")):
             data = yaml.safe_load(path.read_text())
-            parsed = EvaluationFile(**data)
-            self._definitions[parsed.evaluation.name] = parsed.evaluation
+            if not isinstance(data, dict) or "evaluation" not in data:
+                # Skip v2-format eval files (use 'eval' key, not 'evaluation')
+                logger.debug("Skipping non-v1 eval file: %s", path)
+                continue
+            try:
+                parsed = EvaluationFile(**data)
+                self._definitions[parsed.evaluation.name] = parsed.evaluation
+            except Exception:
+                logger.warning("Failed to parse eval file: %s", path, exc_info=True)
 
     @property
     def available_evaluations(self) -> list[str]:
