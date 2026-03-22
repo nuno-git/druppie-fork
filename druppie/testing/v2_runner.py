@@ -305,7 +305,7 @@ class HITLSimulator:
                 f"\nContext: The user originally requested: \"{self._test_context}\""
             )
         system_parts.append(
-            "\nWhen asked multiple choice questions, respond with ONLY the number of your choice."
+            "\nWhen asked multiple choice questions, respond with the FULL TEXT of your chosen option, NOT a number."
             "\nWhen asked open-ended questions, give a clear 1-2 sentence answer."
         )
         system_prompt = "\n".join(system_parts)
@@ -324,7 +324,7 @@ class HITLSimulator:
                 f"\"{question_text}\"\n\n"
                 f"Options:\n"
                 + "\n".join(choice_lines)
-                + "\n\nPlease respond with ONLY the number of your chosen option."
+                + "\n\nRespond with the FULL TEXT of your chosen option, NOT a number. Copy the exact text of the option you choose."
             )
         else:
             user_prompt = (
@@ -622,32 +622,50 @@ class _BoundedOrchestrator:
         raw_answer: str,
         choices: list[dict],
     ) -> tuple[str, list[int] | None]:
-        """Convert a numeric LLM answer into the actual choice text.
+        """Convert an LLM answer into the actual choice text.
 
-        The HITL simulator is instructed to respond with ONLY the number of
-        its chosen option (1-based).  This method extracts that number,
-        maps it to the 0-based index, and returns the choice text plus the
-        ``selected_indices`` list expected by ``QuestionRepository.update_answer``.
-
-        If the answer cannot be parsed as a valid choice number, the raw
-        answer is returned unchanged with no selected_indices.
+        The HITL simulator is instructed to respond with the full text of
+        its chosen option.  This method first tries to match the answer
+        against the choice texts (exact or substring match).  If that fails,
+        it falls back to parsing a numeric answer (1-based index).
 
         Returns:
             (answer_text, selected_indices)
         """
         text = raw_answer.strip().rstrip(".")
+
+        # Extract choice texts for matching
+        choice_texts = []
+        for c in choices:
+            ct = c.get("text", str(c)) if isinstance(c, dict) else str(c)
+            choice_texts.append(ct)
+
+        # Try exact text match first (case-insensitive)
+        text_lower = text.lower()
+        for idx, ct in enumerate(choice_texts):
+            if ct.lower() == text_lower:
+                return ct, [idx]
+
+        # Try substring match (answer contains choice text or vice versa)
+        for idx, ct in enumerate(choice_texts):
+            if ct.lower() in text_lower or text_lower in ct.lower():
+                return ct, [idx]
+
+        # Fall back to numeric parsing (e.g. "2" or "2.")
         try:
-            # Handle answers like "2" or "2."
             choice_num = int(text)
         except ValueError:
-            # LLM returned something other than a number -- use as-is
+            # Not a number and no text match -- return raw answer
+            logger.warning(
+                "HITL answer does not match any choice: raw=%s choices=%s",
+                raw_answer,
+                choice_texts,
+            )
             return raw_answer, None
 
         idx = choice_num - 1  # 1-based -> 0-based
         if 0 <= idx < len(choices):
-            choice = choices[idx]
-            choice_text = choice.get("text", str(choice)) if isinstance(choice, dict) else str(choice)
-            return choice_text, [idx]
+            return choice_texts[idx], [idx]
 
         # Out-of-range number -- use raw answer
         logger.warning(

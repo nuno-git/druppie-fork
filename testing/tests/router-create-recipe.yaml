@@ -8,7 +8,7 @@ test:
     message: "build me a recipe sharing app"
     real_agents: [router]
   hitl: non-technical-pm
-  judge: fast-sonnet
+  judge: default
   evals:
     - eval: router-correct-intent
       expected:

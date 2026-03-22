@@ -331,6 +331,47 @@ async def trigger_benchmark(
 # =============================================================================
 
 
+@router.get("/evaluations/available-tests")
+async def list_available_tests(
+    user: dict = Depends(require_admin),
+):
+    """List all test YAML definitions (not results).
+
+    Admin only. Scans the testing/tests directory for YAML test definitions
+    and returns their metadata without running anything.
+
+    Returns:
+        List of test definition summaries (name, description, sessions, agents, message)
+    """
+    from pathlib import Path
+
+    import yaml as _yaml
+
+    from druppie.testing.v2_schema import TestFile
+
+    tests_dir = Path(__file__).resolve().parents[2] / "testing" / "tests"
+    tests = []
+    if tests_dir.exists():
+        for path in sorted(tests_dir.glob("*.yaml")):
+            data = _yaml.safe_load(path.read_text())
+            test_def = TestFile(**data).test
+            tests.append({
+                "name": test_def.name,
+                "description": test_def.description,
+                "sessions": test_def.sessions,
+                "real_agents": test_def.run.real_agents,
+                "message": test_def.run.message,
+                "hitl": (
+                    test_def.hitl
+                    if isinstance(test_def.hitl, str)
+                    else "inline" if test_def.hitl else "default"
+                ),
+                "judge": test_def.judge or "default",
+                "num_sessions": len(test_def.sessions),
+            })
+    return tests
+
+
 @router.post("/evaluations/run-tests")
 async def run_tests(
     body: RunTestsRequest,
