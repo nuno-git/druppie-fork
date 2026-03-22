@@ -892,7 +892,6 @@ class TestRunner:
     def run_test(
         self,
         test: TestDefinition,
-        seed: bool = True,
         execute: bool = True,
         judge: bool = True,
     ) -> list[TestRunResult]:
@@ -900,7 +899,6 @@ class TestRunner:
 
         Args:
             test: The test definition.
-            seed: Phase 1 -- create test user and seed sessions.
             execute: Phase 2 -- run real agents with LLMs + HITL.
             judge: Phase 3 -- run LLM judge checks.
         """
@@ -911,7 +909,7 @@ class TestRunner:
         for hitl_name in hitl_profiles:
             result = self._run_single(
                 test, hitl_name, judge_profiles,
-                seed=seed, execute=execute, judge=judge,
+                execute=execute, judge=judge,
             )
             results.append(result)
 
@@ -922,14 +920,12 @@ class TestRunner:
         test: TestDefinition,
         hitl_name: str,
         judge_profiles: list[str],
-        seed: bool = True,
         execute: bool = True,
         judge: bool = True,
     ) -> TestRunResult:
         """Run one execution of a test with a specific HITL profile.
 
         Args:
-            seed: Phase 1 -- create test user and seed sessions.
             execute: Phase 2 -- run real agents with LLMs + HITL.
             judge: Phase 3 -- run LLM judge checks.
         """
@@ -954,63 +950,32 @@ class TestRunner:
         execution_session_id: UUID | None = None
         execution_error: str | None = None
 
-        if seed:
-            # --- Phase 1: Seed ---
-            short_hash = hashlib.md5(f"{test.name}-{hitl_name}-{timestamp}".encode()).hexdigest()[:8]
-            test_user = f"t-{short_hash}"
+        # --- Phase 1: Seed (always runs) ---
+        short_hash = hashlib.md5(f"{test.name}-{hitl_name}-{timestamp}".encode()).hexdigest()[:8]
+        test_user = f"t-{short_hash}"
 
-            # Resolve and seed sessions (world state)
-            run_namespace = f"{test_user}"
-            sessions = self._sessions.resolve_chain(test.sessions)
-            for session_fixture in sessions:
-                session_fixture.metadata.user = test_user
-                session_fixture.metadata.id = f"{run_namespace}:{session_fixture.metadata.id}"
-                seed_fixture(self._db, session_fixture, gitea_url=self._gitea_url)
-            self._db.flush()
+        # Resolve and seed sessions (world state)
+        run_namespace = f"{test_user}"
+        sessions = self._sessions.resolve_chain(test.sessions)
+        for session_fixture in sessions:
+            session_fixture.metadata.user = test_user
+            session_fixture.metadata.id = f"{run_namespace}:{session_fixture.metadata.id}"
+            seed_fixture(self._db, session_fixture, gitea_url=self._gitea_url)
+        self._db.flush()
 
-            # Create test user in DB
-            user = self._db.query(User).filter(User.username == test_user).first()
-            if not user:
-                user_id = uuid4()
-                user = User(
-                    id=user_id,
-                    username=test_user,
-                    email=f"{test_user}@druppie.local",
-                    display_name=test_user.title(),
-                )
-                self._db.add(user)
-                self._db.add(UserRole(user_id=user_id, role="admin"))
-                self._db.flush()
-        else:
-            # --- Seed skipped: find existing test user ---
-            # Look for the most recent test user for this test name
-            latest_run = (
-                self._db.query(TestRunModel)
-                .filter(TestRunModel.test_name == test.name)
-                .order_by(TestRunModel.created_at.desc())
-                .first()
+        # Create test user in DB
+        user = self._db.query(User).filter(User.username == test_user).first()
+        if not user:
+            user_id = uuid4()
+            user = User(
+                id=user_id,
+                username=test_user,
+                email=f"{test_user}@druppie.local",
+                display_name=test_user.title(),
             )
-            if latest_run and latest_run.test_user:
-                test_user = latest_run.test_user
-                execution_session_id = latest_run.session_id
-            else:
-                # Fallback: generate a user name but don't seed
-                short_hash = hashlib.md5(f"{test.name}-{hitl_name}-{timestamp}".encode()).hexdigest()[:8]
-                test_user = f"t-{short_hash}"
-
-            user = self._db.query(User).filter(User.username == test_user).first()
-            if not user:
-                # User doesn't exist and seed=False -- create a minimal user
-                user_id = uuid4()
-                user = User(
-                    id=user_id,
-                    username=test_user,
-                    email=f"{test_user}@druppie.local",
-                    display_name=test_user.title(),
-                )
-                self._db.add(user)
-                self._db.add(UserRole(user_id=user_id, role="admin"))
-                self._db.flush()
+            self._db.add(user)
+            self._db.add(UserRole(user_id=user_id, role="admin"))
+            self._db.flush()
 
         if execute:
             # --- Phase 2: Execute ---
@@ -1049,16 +1014,6 @@ class TestRunner:
         eval_session_id: UUID | None = execution_session_id
         if eval_session_id is None and sessions:
             eval_session_id = fixture_uuid(sessions[-1].metadata.id)
-        # If seed was skipped, try to get session from most recent test run
-        if eval_session_id is None and not seed:
-            latest_run = (
-                self._db.query(TestRunModel)
-                .filter(TestRunModel.test_name == test.name)
-                .order_by(TestRunModel.created_at.desc())
-                .first()
-            )
-            if latest_run:
-                eval_session_id = latest_run.session_id
 
         # Evaluate with assertions (always run -- they are deterministic)
         all_assertion_results: list[AssertionResult] = []
