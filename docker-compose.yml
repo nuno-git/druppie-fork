@@ -7,7 +7,7 @@
 #   prod             - Production mode (backend + frontend without hot reload)
 #   init             - Initialization container (Keycloak + Gitea setup)
 #   test-integration - Run integration tests with isolated test database
-#   test-benchmark   - Run benchmark tests with isolated test database
+#   (test-benchmark removed — v1 benchmarks replaced by v2 test runner)
 #   (test runner runs inside backend-dev via: docker exec druppie-new-backend python scripts/test_runner.py)
 #
 # Usage:
@@ -17,7 +17,7 @@
 #   docker compose --profile reset-db run --rm reset-db      # Reset app database
 #   docker compose --profile reset-hard run --rm reset-hard  # Full reset + re-init
 #   docker compose --profile test-integration up --abort-on-container-exit  # Integration tests
-#   docker compose --profile test-benchmark up --abort-on-container-exit    # Benchmark tests
+#   docker exec druppie-new-backend python scripts/test_runner.py --all     # V2 tests
 #   docker compose down                                       # Stop everything
 #
 # Ports:
@@ -771,7 +771,7 @@ services:
   test-db:
     image: postgres:15-alpine
     container_name: druppie-test-db
-    profiles: [test-integration, test-benchmark]
+    profiles: [test-integration]
     environment:
       POSTGRES_DB: druppie_test
       POSTGRES_USER: druppie_test
@@ -794,25 +794,6 @@ services:
     environment:
       DATABASE_URL: postgresql://druppie_test:druppie_test_secret@test-db:5432/druppie_test
       TESTING: "true"
-    depends_on:
-      test-db:
-        condition: service_healthy
-    networks:
-      - druppie-new-network
-
-  test-benchmark:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: druppie-test-benchmark
-    profiles: [test-benchmark]
-    command: ["python", "scripts/benchmark.py", "--all", "--dry-run"]
-    environment:
-      DATABASE_URL: postgresql://druppie_test:druppie_test_secret@test-db:5432/druppie_test
-      TESTING: "true"
-      LLM_PROVIDER: ${LLM_PROVIDER:-zai}
-      ZAI_API_KEY: ${ZAI_API_KEY:-}
-      BENCHMARK_JUDGE_MODEL: ${BENCHMARK_JUDGE_MODEL:-claude-sonnet-4-6}
     depends_on:
       test-db:
         condition: service_healthy
