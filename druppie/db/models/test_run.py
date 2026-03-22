@@ -37,6 +37,7 @@ class TestRun(Base):
     )
     status = Column(String(50), nullable=True)  # passed, failed, error
     duration_ms = Column(Integer, nullable=True)
+    batch_id = Column(String(36), nullable=True, index=True)  # Groups tests from same Run click
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
     # Relationships
@@ -50,6 +51,7 @@ class TestRun(Base):
         return {
             "id": str(self.id),
             "benchmark_run_id": str(self.benchmark_run_id) if self.benchmark_run_id else None,
+            "batch_id": self.batch_id,
             "test_name": self.test_name,
             "test_description": self.test_description,
             "test_user": self.test_user,

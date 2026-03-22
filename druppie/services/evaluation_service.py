@@ -138,6 +138,20 @@ class EvaluationService:
             raise NotFoundError("test_run", str(test_run_id))
         return self._test_run_to_dict(run)
 
+    def list_test_batches(
+        self,
+        page: int = 1,
+        limit: int = 10,
+        tag: str | None = None,
+    ) -> tuple[list[dict], int]:
+        """List test runs grouped by batch_id.
+
+        Returns:
+            Tuple of (batches, total_batch_count). Each batch is a dict
+            with summary stats and a list of individual test runs.
+        """
+        return self.eval_repo.list_test_batches(page=page, limit=limit, tag=tag)
+
     def list_tags(self) -> list[dict]:
         """Get all unique tags with test run counts."""
         return self.eval_repo.list_tags()
@@ -150,6 +164,7 @@ class EvaluationService:
         run_all: bool = False,
         execute: bool = True,
         judge: bool = True,
+        batch_id: str | None = None,
     ) -> dict:
         """Run tests and return results.
 
@@ -160,6 +175,7 @@ class EvaluationService:
             run_all: Run all tests.
             execute: Phase 2 -- run real agents with LLMs + HITL.
             judge: Phase 3 -- run LLM judge checks.
+            batch_id: Optional batch identifier to group tests from the same run.
 
         Returns:
             Dict with total/passed/failed counts and per-test result details.
@@ -168,7 +184,7 @@ class EvaluationService:
 
         runner = TestRunner(db=self.eval_repo.db)
         results = []
-        phase_flags = dict(execute=execute, judge=judge)
+        phase_flags = dict(execute=execute, judge=judge, batch_id=batch_id)
 
         if test_name:
             tests_dir = runner._testing_dir / "tests"

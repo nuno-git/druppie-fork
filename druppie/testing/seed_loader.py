@@ -247,7 +247,7 @@ def seed_fixture(
         db.flush()
 
     # -- 3. Timestamps --
-    base_ts = utcnow() - timedelta(hours=meta.hours_ago)
+    base_ts = utcnow()  # Always use current time for seeded data
 
     # -- 4. Project --
     project_db_id = None

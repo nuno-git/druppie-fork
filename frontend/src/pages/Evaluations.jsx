@@ -2,8 +2,8 @@
  * Admin Tests Page
  *
  * Two-section layout:
- * 1. Run Tests -- dropdown selector for choosing tests, phase toggles, run button
- * 2. Test Results -- past test run results with detail view
+ * 1. Run Tests -- full-screen modal selector for choosing tests, phase toggles, run button
+ * 2. Test Results -- past test runs grouped by batch with expandable detail
  */
 
 import { useState, useEffect, useRef } from 'react'
@@ -19,16 +19,18 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
   RefreshCw,
   Tag,
   Clock,
   Filter,
   MessageSquare,
-  FileText,
+  X,
+  Info,
 } from 'lucide-react'
 import {
   getAvailableTests,
-  getTestRuns,
+  getTestBatches,
   getTestRun,
   getTags,
   deleteTestUsers,
@@ -105,20 +107,23 @@ const ResultsBanner = ({ result, onDismiss }) => {
   )
 }
 
-// ---- Test Selector Dropdown ----
+// ---- Full-screen Test Selector Modal ----
 
-const TestSelectorDropdown = ({ tests, loading, error, selectAll, setSelectAll, selectedTests, setSelectedTests }) => {
-  const [open, setOpen] = useState(false)
-  const ref = useRef(null)
-
-  // Close on click outside
-  useEffect(() => {
-    const handler = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
+const TestSelectorModal = ({
+  tests,
+  loading,
+  error,
+  selectAll,
+  setSelectAll,
+  selectedTests,
+  setSelectedTests,
+  phases,
+  setPhases,
+  onRun,
+  onClose,
+  isRunning,
+}) => {
+  const [expandedTests, setExpandedTests] = useState(new Set())
 
   const toggleTest = (name) => {
     const next = new Set(selectedTests)
@@ -127,7 +132,6 @@ const TestSelectorDropdown = ({ tests, loading, error, selectAll, setSelectAll, 
     } else {
       next.add(name)
     }
-    // If all are individually selected, switch to selectAll
     if (next.size === tests.length) {
       setSelectAll(true)
       setSelectedTests(new Set())
@@ -147,103 +151,232 @@ const TestSelectorDropdown = ({ tests, loading, error, selectAll, setSelectAll, 
     }
   }
 
-  // Label for closed state
-  const effectiveCount = selectAll ? tests.length : selectedTests.size
-  let label = 'Select tests...'
-  if (loading) {
-    label = 'Loading...'
-  } else if (error) {
-    label = 'Error loading tests'
-  } else if (selectAll) {
-    label = `All tests (${tests.length})`
-  } else if (selectedTests.size === 1) {
-    label = [...selectedTests][0]
-  } else if (selectedTests.size > 1) {
-    label = `${selectedTests.size} tests selected`
+  const toggleExpanded = (name) => {
+    const next = new Set(expandedTests)
+    if (next.has(name)) {
+      next.delete(name)
+    } else {
+      next.add(name)
+    }
+    setExpandedTests(next)
   }
 
+  const effectiveCount = selectAll ? tests.length : selectedTests.size
+  const canRun = !isRunning && effectiveCount > 0 && !loading && !error
+
   return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        disabled={loading || !!error}
-        className="flex items-center justify-between gap-2 min-w-[260px] px-3 py-1.5 bg-white border rounded text-sm hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-colors"
-      >
-        <span className="truncate text-left">{label}</span>
-        <ChevronDown className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col mx-4">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <h2 className="text-lg font-bold flex items-center gap-2">
+            <FlaskConical className="w-5 h-5 text-purple-600" />
+            Select Tests
+          </h2>
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-gray-100 rounded transition-colors"
+          >
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
 
-      {open && tests.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full min-w-[340px] bg-white border rounded-lg shadow-lg max-h-72 overflow-y-auto">
-          {/* All tests option */}
-          <label className="flex items-start gap-2.5 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100">
-            <input
-              type="checkbox"
-              checked={selectAll}
-              onChange={toggleAll}
-              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 mt-0.5"
-            />
-            <span className="text-sm font-medium">All tests</span>
-          </label>
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+              <span className="ml-2 text-gray-600">Loading tests...</span>
+            </div>
+          )}
 
-          {/* Individual tests */}
-          {tests.map((test) => {
-            const checked = selectAll || selectedTests.has(test.name)
-            return (
-              <label
-                key={test.name}
-                className="flex items-start gap-2.5 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0"
-              >
+          {error && (
+            <div className="text-center py-12 text-red-500">
+              <AlertCircle className="w-8 h-8 mx-auto mb-2" />
+              <p>{error}</p>
+            </div>
+          )}
+
+          {!loading && !error && (
+            <>
+              {/* Select All */}
+              <label className="flex items-center gap-3 px-4 py-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
                 <input
                   type="checkbox"
-                  checked={checked}
-                  onChange={() => toggleTest(test.name)}
-                  className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 mt-0.5"
+                  checked={selectAll}
+                  onChange={toggleAll}
+                  className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
                 />
-                <div className="min-w-0">
-                  <span className="text-sm font-medium block">{test.name}</span>
-                  {(test.description || test.message) && (
-                    <span className="text-xs text-gray-500 block truncate">
-                      {test.description || test.message}
-                    </span>
-                  )}
-                </div>
+                <span className="font-semibold text-sm">Select All ({tests.length} tests)</span>
               </label>
-            )
-          })}
+
+              {/* Individual tests */}
+              {tests.map((test) => {
+                const checked = selectAll || selectedTests.has(test.name)
+                const expanded = expandedTests.has(test.name)
+                return (
+                  <div
+                    key={test.name}
+                    className="border rounded-lg overflow-hidden"
+                  >
+                    <div className="flex items-start gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleTest(test.name)}
+                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4 mt-0.5 flex-shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-sm">{test.name}</span>
+                          <button
+                            onClick={() => toggleExpanded(test.name)}
+                            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 ml-2 flex-shrink-0"
+                          >
+                            {expanded ? (
+                              <>
+                                <ChevronUp className="w-3 h-3" />
+                                hide
+                              </>
+                            ) : (
+                              <>
+                                <Info className="w-3 h-3" />
+                                details
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        {test.message && (
+                          <p className="text-xs text-gray-500 mt-0.5 italic">
+                            &quot;{test.message}&quot;
+                          </p>
+                        )}
+                        <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                          <span>
+                            Agents: {test.real_agents?.join(', ') || 'all'}
+                          </span>
+                          {test.sessions?.length > 0 && (
+                            <span>
+                              Sessions: {test.sessions.join(', ')}
+                            </span>
+                          )}
+                          {test.sessions?.length === 0 && (
+                            <span>Sessions: (none)</span>
+                          )}
+                        </div>
+
+                        {/* Expanded details */}
+                        {expanded && (
+                          <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                            {test.evals && test.evals.length > 0 && (
+                              <div>
+                                <span className="text-xs font-semibold text-gray-600 uppercase">Evals:</span>
+                                {test.evals.map((ev, idx) => (
+                                  <div key={idx} className="ml-3 mt-1">
+                                    <span className="text-xs font-medium text-purple-700">{ev.name}</span>
+                                    {ev.expected && Object.keys(ev.expected).length > 0 && (
+                                      <div className="ml-3 text-xs text-gray-500">
+                                        Expected: {Object.entries(ev.expected).map(([k, v]) => (
+                                          <span key={k} className="inline-flex items-center gap-0.5 mr-2">
+                                            <span className="font-mono">{k}</span>=<span className="font-mono text-gray-700">{typeof v === 'string' ? v : JSON.stringify(v)}</span>
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <div className="flex items-center gap-4 text-xs text-gray-500">
+                              <span>HITL: <span className="font-medium text-gray-700">{test.hitl || 'default'}</span></span>
+                              <span>Judge: <span className="font-medium text-gray-700">{test.judge || 'default'}</span></span>
+                            </div>
+                            {test.description && (
+                              <p className="text-xs text-gray-500">{test.description}</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </>
+          )}
         </div>
-      )}
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={phases.execute}
+                onChange={e => setPhases(p => ({ ...p, execute: e.target.checked }))}
+                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+              />
+              <span className="text-sm">Execute Agents</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={phases.judge}
+                onChange={e => setPhases(p => ({ ...p, judge: e.target.checked }))}
+                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+              />
+              <span className="text-sm">LLM Judge</span>
+            </label>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-500">
+              {effectiveCount} test{effectiveCount !== 1 ? 's' : ''} selected
+            </span>
+            <button
+              onClick={() => { onRun(); onClose() }}
+              disabled={!canRun}
+              className="flex items-center gap-1.5 px-5 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
+            >
+              {isRunning ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4" />
+              )}
+              Run
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
 
-// ---- Test Runs List View ----
+// ---- Batch Results List ----
 
-const TestRunsList = ({ onSelectRun, refreshKey, onRunSingle, isRunning, runningSingle, runResult, setRunResult }) => {
-  const [runs, setRuns] = useState([])
+const BatchResultsList = ({ refreshKey, onSelectRun, isRunning, runResult, setRunResult }) => {
+  const [batches, setBatches] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [tags, setTags] = useState([])
   const [selectedTag, setSelectedTag] = useState(null)
+  const [expandedBatches, setExpandedBatches] = useState(new Set())
 
   const fetchTags = async () => {
     try {
       const data = await getTags()
       setTags(data || [])
     } catch {
-      // Tags are optional, don't block on failure
+      // Tags are optional
     }
   }
 
-  const fetchRuns = async () => {
+  const fetchBatches = async () => {
     setLoading(true)
     setError(null)
     try {
-      const data = await getTestRuns(page, 20, selectedTag)
-      setRuns(data.items || [])
+      const data = await getTestBatches(page, 10, selectedTag)
+      setBatches(data.items || [])
       setTotalPages(data.total_pages || 1)
     } catch (err) {
       setError(err.message)
@@ -257,8 +390,18 @@ const TestRunsList = ({ onSelectRun, refreshKey, onRunSingle, isRunning, running
   }, [refreshKey])
 
   useEffect(() => {
-    fetchRuns()
+    fetchBatches()
   }, [page, selectedTag, refreshKey])
+
+  const toggleBatch = (batchId) => {
+    const next = new Set(expandedBatches)
+    if (next.has(batchId)) {
+      next.delete(batchId)
+    } else {
+      next.add(batchId)
+    }
+    setExpandedBatches(next)
+  }
 
   return (
     <div className="space-y-3">
@@ -299,7 +442,7 @@ const TestRunsList = ({ onSelectRun, refreshKey, onRunSingle, isRunning, running
       {loading && (
         <div className="p-8 flex items-center justify-center">
           <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
-          <span className="ml-2 text-gray-600">Loading test runs...</span>
+          <span className="ml-2 text-gray-600">Loading test results...</span>
         </div>
       )}
 
@@ -308,114 +451,143 @@ const TestRunsList = ({ onSelectRun, refreshKey, onRunSingle, isRunning, running
         <div className="p-8 text-center text-red-500">
           <AlertCircle className="w-8 h-8 mx-auto mb-2" />
           <p>{error}</p>
-          <button onClick={fetchRuns} className="mt-2 px-4 py-2 bg-blue-500 text-white rounded text-sm">
+          <button onClick={fetchBatches} className="mt-2 px-4 py-2 bg-blue-500 text-white rounded text-sm">
             Retry
           </button>
         </div>
       )}
 
-      {/* Table */}
+      {/* Batch list */}
       {!loading && !error && (
-        <div className="bg-white rounded-lg border overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="border-b border-gray-100 bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Test Name</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Assertions</th>
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Judge</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Duration</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tags</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase w-12"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
-                      No test runs found.{selectedTag ? ' Try clearing the tag filter.' : ' Run tests above to see results here.'}
-                    </td>
-                  </tr>
-                ) : (
-                  runs.map((run) => (
-                    <tr
-                      key={run.id}
-                      onClick={() => onSelectRun(run.id)}
-                      className="border-b border-gray-50 hover:bg-purple-50/50 cursor-pointer transition-colors"
-                    >
-                      <td className="px-4 py-3 font-medium">{run.test_name || '-'}</td>
-                      <td className="px-4 py-3"><StatusBadge value={run.status} /></td>
-                      <td className="px-4 py-3 text-center">
-                        {run.assertions_total != null ? (
-                          <span className={`font-mono text-xs font-medium ${
-                            run.assertions_passed === run.assertions_total ? 'text-green-600' : 'text-red-600'
-                          }`}>
-                            {run.assertions_passed}/{run.assertions_total}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400">-</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {run.judge_checks_total != null ? (
-                          <span className={`font-mono text-xs font-medium ${
-                            run.judge_checks_passed === run.judge_checks_total ? 'text-green-600' : 'text-red-600'
-                          }`}>
-                            {run.judge_checks_passed}/{run.judge_checks_total}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400">-</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 text-xs">
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          {formatDuration(run.duration_ms)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {(run.tags || []).map((tag) => (
-                            <span
-                              key={tag}
-                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs"
+        <div className="space-y-2">
+          {batches.length === 0 ? (
+            <div className="bg-white rounded-lg border p-8 text-center text-gray-500">
+              No test runs found.{selectedTag ? ' Try clearing the tag filter.' : ' Run tests above to see results here.'}
+            </div>
+          ) : (
+            batches.map((batch) => {
+              const expanded = expandedBatches.has(batch.batch_id)
+              const allPassed = batch.passed === batch.test_count
+              const borderColor = allPassed ? 'border-green-200' : 'border-red-200'
+              const headerBg = allPassed ? 'bg-green-50' : 'bg-red-50'
+              const Icon = allPassed ? CheckCircle2 : XCircle
+
+              return (
+                <div key={batch.batch_id} className={`bg-white rounded-lg border ${borderColor} overflow-hidden`}>
+                  {/* Batch header */}
+                  <button
+                    onClick={() => toggleBatch(batch.batch_id)}
+                    className={`w-full flex items-center justify-between px-4 py-3 ${headerBg} hover:opacity-90 transition-colors`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Icon className={`w-5 h-5 ${allPassed ? 'text-green-600' : 'text-red-600'}`} />
+                      <span className="font-medium text-sm">
+                        {batch.test_count === 1
+                          ? batch.runs[0]?.test_name || 'Test Run'
+                          : `${batch.test_count} tests`
+                        }
+                      </span>
+                      <span className={`font-mono text-xs font-semibold ${allPassed ? 'text-green-700' : 'text-red-700'}`}>
+                        {batch.passed}/{batch.test_count} passed
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-500 flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {formatDuration(batch.total_duration_ms)}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {formatDate(batch.started_at)}
+                      </span>
+                      {expanded ? (
+                        <ChevronUp className="w-4 h-4 text-gray-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-gray-400" />
+                      )}
+                    </div>
+                  </button>
+
+                  {/* Expanded: individual test runs */}
+                  {expanded && (
+                    <div className="border-t border-gray-100">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 border-b border-gray-100">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Test Name</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                            <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Assertions</th>
+                            <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Judge</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Duration</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tags</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {batch.runs.map((run) => (
+                            <tr
+                              key={run.id}
+                              onClick={() => onSelectRun(run.id)}
+                              className="border-b border-gray-50 hover:bg-purple-50/50 cursor-pointer transition-colors"
                             >
-                              <Tag className="w-2.5 h-2.5" />
-                              {tag}
-                            </span>
+                              <td className="px-4 py-2.5 font-medium">{run.test_name || '-'}</td>
+                              <td className="px-4 py-2.5"><StatusBadge value={run.status} /></td>
+                              <td className="px-4 py-2.5 text-center">
+                                {run.assertions_total != null ? (
+                                  <span className={`font-mono text-xs font-medium ${
+                                    run.assertions_passed === run.assertions_total ? 'text-green-600' : 'text-red-600'
+                                  }`}>
+                                    {run.assertions_passed}/{run.assertions_total}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400">-</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 text-center">
+                                {run.judge_checks_total != null ? (
+                                  <span className={`font-mono text-xs font-medium ${
+                                    run.judge_checks_passed === run.judge_checks_total ? 'text-green-600' : 'text-red-600'
+                                  }`}>
+                                    {run.judge_checks_passed}/{run.judge_checks_total}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400">-</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 text-gray-500 text-xs">
+                                <span className="flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  {formatDuration(run.duration_ms)}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <div className="flex flex-wrap gap-1">
+                                  {(run.tags || []).map((tag) => (
+                                    <span
+                                      key={tag}
+                                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs"
+                                    >
+                                      <Tag className="w-2.5 h-2.5" />
+                                      {tag}
+                                    </span>
+                                  ))}
+                                  {(!run.tags || run.tags.length === 0) && (
+                                    <span className="text-gray-400 text-xs">-</span>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
                           ))}
-                          {(!run.tags || run.tags.length === 0) && (
-                            <span className="text-gray-400 text-xs">-</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 text-xs">{formatDate(run.created_at)}</td>
-                      <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); onRunSingle(run.test_name) }}
-                          disabled={isRunning}
-                          title="Re-run this test"
-                          className="p-1 rounded hover:bg-indigo-100 text-gray-400 hover:text-indigo-600 disabled:opacity-30 transition-colors"
-                        >
-                          {runningSingle === run.test_name ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Play className="w-4 h-4" />
-                          )}
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )
+            })
+          )}
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100">
+            <div className="flex items-center justify-between px-4 py-3">
               <span className="text-sm text-gray-600">Page {page} of {totalPages}</span>
               <div className="flex items-center gap-1">
                 <button
@@ -499,6 +671,7 @@ const TestRunDetail = ({ testRunId, onBack }) => {
     ['Judge Checks', run.judge_checks_total != null ? `${run.judge_checks_passed}/${run.judge_checks_total}` : null],
     ['Duration', formatDuration(run.duration_ms)],
     ['Benchmark Run ID', run.benchmark_run_id],
+    ['Batch ID', run.batch_id],
     ['Created', formatDate(run.created_at)],
   ]
 
@@ -581,7 +754,8 @@ export default function Evaluations() {
   const [testsLoading, setTestsLoading] = useState(true)
   const [testsError, setTestsError] = useState(null)
 
-  // Test selector state
+  // Test selector modal state
+  const [showSelector, setShowSelector] = useState(false)
   const [selectAll, setSelectAll] = useState(true)
   const [selectedTests, setSelectedTests] = useState(new Set())
 
@@ -601,7 +775,6 @@ export default function Evaluations() {
 
   // Effective selected count for display
   const effectiveCount = selectAll ? availableTests.length : selectedTests.size
-  const canRun = !isRunning && effectiveCount > 0 && !testsLoading && !testsError
 
   // Load available tests
   useEffect(() => {
@@ -649,7 +822,8 @@ export default function Evaluations() {
   }
 
   const handleRun = async () => {
-    if (!canRun) return
+    if (isRunning) return
+    if (effectiveCount === 0) return
 
     setIsRunning(true)
     setRunResult(null)
@@ -672,21 +846,6 @@ export default function Evaluations() {
       setIsRunning(false)
       setRunMessage(null)
       alert('Failed to run tests: ' + err.message)
-    }
-  }
-
-  // Re-run a single test from the results table
-  const handleRunSingle = async (testName) => {
-    setIsRunning(true)
-    setRunResult(null)
-    setRunMessage(`Starting "${testName}"...`)
-    try {
-      const { run_id } = await runTests({ test_name: testName, ...phases })
-      pollRunStatus(run_id)
-    } catch (err) {
-      setIsRunning(false)
-      setRunMessage(null)
-      alert('Failed to run test: ' + err.message)
     }
   }
 
@@ -770,48 +929,36 @@ export default function Evaluations() {
             </div>
 
             <div className="px-4 py-4">
-              <div className="flex items-center gap-4 flex-wrap">
-                {/* Test selector dropdown */}
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Tests:</span>
-                  <TestSelectorDropdown
-                    tests={availableTests}
-                    loading={testsLoading}
-                    error={testsError}
-                    selectAll={selectAll}
-                    setSelectAll={setSelectAll}
-                    selectedTests={selectedTests}
-                    setSelectedTests={setSelectedTests}
-                  />
-                </div>
+              <div className="flex items-center gap-4">
+                {/* Select tests button */}
+                <button
+                  onClick={() => setShowSelector(true)}
+                  disabled={isRunning}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-lg text-sm font-medium hover:bg-purple-100 disabled:opacity-50 transition-colors"
+                >
+                  <FlaskConical className="w-4 h-4" />
+                  {testsLoading ? 'Loading...' : testsError ? 'Error' : selectAll ? `All tests (${availableTests.length})` : `${selectedTests.size} test${selectedTests.size !== 1 ? 's' : ''} selected`}
+                  <ChevronDown className="w-4 h-4" />
+                </button>
 
-                {/* Phase toggles */}
-                <div className="flex items-center gap-4">
-                  <label className="flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={phases.execute}
-                      onChange={e => setPhases(p => ({ ...p, execute: e.target.checked }))}
-                      className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-                    />
-                    <span className="text-xs">Execute</span>
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={phases.judge}
-                      onChange={e => setPhases(p => ({ ...p, judge: e.target.checked }))}
-                      className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-                    />
-                    <span className="text-xs">Judge</span>
-                  </label>
+                {/* Phase indicators */}
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <span className="px-2 py-1 bg-gray-100 rounded">Seed</span>
+                  <span className="text-gray-300">{'\u2192'}</span>
+                  <span className={`px-2 py-1 rounded ${phases.execute ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'}`}>
+                    Execute
+                  </span>
+                  <span className="text-gray-300">{'\u2192'}</span>
+                  <span className={`px-2 py-1 rounded ${phases.judge ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'}`}>
+                    Judge
+                  </span>
                 </div>
 
                 {/* Run button */}
                 <button
                   onClick={handleRun}
-                  disabled={!canRun}
-                  className="flex items-center gap-1.5 px-4 py-1.5 bg-green-600 text-white rounded text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors ml-auto"
+                  disabled={isRunning || effectiveCount === 0}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 transition-colors ml-auto"
                 >
                   {isRunning ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -834,21 +981,19 @@ export default function Evaluations() {
             </div>
           )}
 
-          {/* ============ SECTION 2: Test Results ============ */}
+          {/* ============ SECTION 2: Test Results (grouped by batch) ============ */}
           <div className="bg-white rounded-lg border overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center gap-2">
               <Clock className="w-4 h-4 text-gray-500" />
-              <h2 className="font-semibold text-sm">Test Results (past runs)</h2>
+              <h2 className="font-semibold text-sm">Test Results</h2>
             </div>
 
             <div className="p-3">
-              <TestRunsList
+              <BatchResultsList
                 key={refreshKey}
                 refreshKey={refreshKey}
                 onSelectRun={handleSelectTestRun}
-                onRunSingle={handleRunSingle}
                 isRunning={isRunning}
-                runningSingle={null}
                 runResult={runResult}
                 setRunResult={setRunResult}
               />
@@ -858,6 +1003,24 @@ export default function Evaluations() {
       )}
       {view === 'detail' && (
         <TestRunDetail testRunId={selectedTestRunId} onBack={handleBackToList} />
+      )}
+
+      {/* Full-screen test selector modal */}
+      {showSelector && (
+        <TestSelectorModal
+          tests={availableTests}
+          loading={testsLoading}
+          error={testsError}
+          selectAll={selectAll}
+          setSelectAll={setSelectAll}
+          selectedTests={selectedTests}
+          setSelectedTests={setSelectedTests}
+          phases={phases}
+          setPhases={setPhases}
+          onRun={handleRun}
+          onClose={() => setShowSelector(false)}
+          isRunning={isRunning}
+        />
       )}
     </div>
   )

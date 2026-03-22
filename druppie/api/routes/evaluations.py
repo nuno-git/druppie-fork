@@ -370,6 +370,13 @@ async def list_available_tests(
                 ),
                 "judge": test_def.judge or "default",
                 "num_sessions": len(test_def.sessions),
+                "evals": [
+                    {
+                        "name": e.eval,
+                        "expected": e.expected,
+                    }
+                    for e in test_def.evals
+                ],
             })
     return tests
 
@@ -423,6 +430,7 @@ async def run_tests(
                 run_all=run_all,
                 execute=execute,
                 judge=judge,
+                batch_id=run_id,
             )
             db.commit()
 
@@ -539,6 +547,37 @@ async def get_test_run(
         NotFoundError: Test run not found
     """
     return service.get_test_run_detail(test_run_id)
+
+
+@router.get("/evaluations/test-batches")
+async def list_test_batches(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=50, description="Items per page"),
+    tag: str | None = Query(None, description="Filter by tag"),
+    service: EvaluationService = Depends(get_evaluation_service),
+    user: dict = Depends(require_admin),
+):
+    """List test runs grouped by batch (each Run click = one batch).
+
+    Admin only. Returns batches with summary stats and individual test runs.
+
+    Query Parameters:
+        page: Page number (default 1)
+        limit: Batches per page (default 10, max 50)
+        tag: Optional tag filter
+
+    Returns:
+        Paginated list of batch objects, each containing its test runs
+    """
+    batches, total = service.list_test_batches(page=page, limit=limit, tag=tag)
+    total_pages = max(1, (total + limit - 1) // limit)
+    return {
+        "items": batches,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+    }
 
 
 @router.get("/evaluations/tags")

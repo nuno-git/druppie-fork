@@ -215,6 +215,114 @@ class EvaluationRepository(BaseRepository):
             ]
         return run
 
+    def list_test_batches(
+        self,
+        page: int = 1,
+        limit: int = 10,
+        tag: str | None = None,
+    ) -> tuple[list[dict], int]:
+        """List test runs grouped by batch_id.
+
+        Returns:
+            Tuple of (batches, total_batch_count). Each batch contains
+            summary stats and individual test run dicts.
+        """
+        # Get distinct batch_ids ordered by most recent created_at
+        batch_query = (
+            self.db.query(
+                TestRun.batch_id,
+                func.min(TestRun.created_at).label("started_at"),
+                func.count(TestRun.id).label("test_count"),
+                func.sum(TestRun.duration_ms).label("total_duration_ms"),
+            )
+            .filter(TestRun.batch_id.isnot(None))
+        )
+
+        if tag:
+            batch_query = batch_query.join(TestRunTag).filter(TestRunTag.tag == tag)
+
+        batch_query = batch_query.group_by(TestRun.batch_id)
+
+        total = batch_query.count()
+        offset = (page - 1) * limit
+
+        batch_rows = (
+            batch_query
+            .order_by(func.min(TestRun.created_at).desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        batches = []
+        for row in batch_rows:
+            batch_id = row.batch_id
+            # Get all test runs in this batch
+            runs = (
+                self.db.query(TestRun)
+                .filter(TestRun.batch_id == batch_id)
+                .order_by(TestRun.created_at.asc())
+                .all()
+            )
+
+            # Attach tags to each run
+            run_dicts = []
+            for run in runs:
+                run._tags = [
+                    t.tag
+                    for t in self.db.query(TestRunTag)
+                    .filter(TestRunTag.test_run_id == run.id)
+                    .all()
+                ]
+                d = run.to_dict()
+                d["tags"] = run._tags
+                run_dicts.append(d)
+
+            passed = sum(1 for r in runs if r.status == "passed")
+            total_tests = len(runs)
+
+            batches.append({
+                "batch_id": batch_id,
+                "started_at": row.started_at.isoformat() if row.started_at else None,
+                "test_count": total_tests,
+                "passed": passed,
+                "failed": total_tests - passed,
+                "total_duration_ms": row.total_duration_ms,
+                "runs": run_dicts,
+            })
+
+        # Also include unbatched runs (batch_id is NULL) as individual batches
+        # grouped by their own id
+        if page == 1 and not tag:
+            unbatched = (
+                self.db.query(TestRun)
+                .filter(TestRun.batch_id.is_(None))
+                .order_by(TestRun.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            for run in unbatched:
+                run._tags = [
+                    t.tag
+                    for t in self.db.query(TestRunTag)
+                    .filter(TestRunTag.test_run_id == run.id)
+                    .all()
+                ]
+                d = run.to_dict()
+                d["tags"] = run._tags
+                batches.append({
+                    "batch_id": str(run.id),
+                    "started_at": run.created_at.isoformat() if run.created_at else None,
+                    "test_count": 1,
+                    "passed": 1 if run.status == "passed" else 0,
+                    "failed": 0 if run.status == "passed" else 1,
+                    "total_duration_ms": run.duration_ms,
+                    "runs": [d],
+                })
+            total += len(unbatched)
+
+        return batches, total
+
     def list_tags(self) -> list[dict]:
         """Get all unique tags with test run counts.
 
