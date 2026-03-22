@@ -357,13 +357,14 @@ class HITLSimulator:
 class _BoundedOrchestrator:
     """Wraps the real Orchestrator to stop after the last real_agent completes.
 
-    After each agent run completes, checks if the next pending agent is NOT
-    in real_agents. If so, cancels all remaining pending runs and marks the
-    session as completed to stop execution early.
+    Uses a DB-query approach instead of in-memory tracking: after each agent
+    completes, queries ``get_completed_runs()`` to check if all real_agents
+    are done.  This works regardless of whether the agent completed during
+    the initial ``execute_pending_runs`` call or via ``resume_after_answer``.
 
     Also handles HITL: when the orchestrator pauses for a question, this
     wrapper detects the pause, generates an answer via HITLSimulator, and
-    resumes execution.
+    resumes execution -- but only if the questioning agent is in real_agents.
     """
 
     def __init__(
@@ -377,6 +378,52 @@ class _BoundedOrchestrator:
         self._user_id = user_id
         self._real_agents = real_agents
         self._hitl_simulator = hitl_simulator
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _all_real_agents_done(self, session_id: UUID, execution_repo) -> bool:
+        """Check if all real_agents have completed by querying the DB."""
+        if not self._real_agents:
+            return False
+        self._db.expire_all()
+        completed_runs = execution_repo.get_completed_runs(session_id)
+        completed_ids = {r.agent_id for r in completed_runs}
+        done = all(a in completed_ids for a in self._real_agents)
+        if done:
+            logger.info(
+                "All real_agents completed: real=%s completed=%s",
+                self._real_agents,
+                sorted(completed_ids),
+            )
+        return done
+
+    def _cancel_remaining_runs(
+        self, session_id: UUID, execution_repo, session_repo
+    ) -> None:
+        """Cancel all pending and running agent runs, mark session COMPLETED."""
+        cancelled_count = execution_repo.cancel_pending_runs(session_id)
+        execution_repo.commit()
+
+        # Also cancel any running runs (belt-and-suspenders)
+        running = execution_repo.get_running_run(session_id)
+        if running:
+            execution_repo.update_status(running.id, AgentRunStatus.CANCELLED)
+            execution_repo.commit()
+            cancelled_count += 1
+
+        session_repo.update_status(session_id, SessionStatus.COMPLETED)
+        session_repo.commit()
+        logger.info(
+            "Bounded cleanup: cancelled %d remaining runs, session=%s marked COMPLETED",
+            cancelled_count,
+            session_id,
+        )
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
 
     async def run(self, message: str) -> UUID:
         """Run the orchestrator with bounded agent execution.
@@ -415,32 +462,11 @@ class _BoundedOrchestrator:
             )
             return session_id
 
-        # Bounded execution: run process_message which creates the session,
-        # saves user message, creates router + planner pending runs, then
-        # calls execute_pending_runs(). We monkey-patch the orchestrator's
-        # _run_agent to intercept after each agent completes.
-        original_run_agent = orchestrator._run_agent
-        completed_agents: list[str] = []
-
-        async def _bounded_run_agent(
-            session_id, agent_run_id, agent_id, prompt, context=None
-        ):
-            """Run agent, then check if we should stop."""
-            result = await original_run_agent(
-                session_id=session_id,
-                agent_run_id=agent_run_id,
-                agent_id=agent_id,
-                prompt=prompt,
-                context=context,
-            )
-            if result == "completed":
-                completed_agents.append(agent_id)
-            return result
-
-        orchestrator._run_agent = _bounded_run_agent
-
-        # Patch execute_pending_runs to stop after last real_agent
-        original_execute = orchestrator.execute_pending_runs
+        # ------------------------------------------------------------------
+        # Bounded execution: patch execute_pending_runs to stop when the
+        # next pending agent is NOT in real_agents and all real_agents have
+        # completed (checked via DB query, not in-memory list).
+        # ------------------------------------------------------------------
 
         async def _bounded_execute(session_id):
             """Execute pending runs, stopping after the last real_agent."""
@@ -457,36 +483,12 @@ class _BoundedOrchestrator:
                     session_repo.commit()
                     return
 
-                # If the next agent is NOT in real_agents and we've already
-                # run at least one real agent, stop execution
-                if (
-                    next_run.agent_id not in self._real_agents
-                    and completed_agents
-                    # The agent that just completed was the last real_agent,
-                    # or we've run all the real_agents we care about
-                ):
-                    # Check if all real_agents have completed
-                    all_real_done = all(
-                        a in completed_agents for a in self._real_agents
-                    )
-                    if all_real_done:
-                        # Cancel remaining pending runs
-                        pending = execution_repo.get_pending_runs(session_id)
-                        for run in pending:
-                            execution_repo.update_status(
-                                run.id, AgentRunStatus.CANCELLED
-                            )
-                        execution_repo.commit()
-
-                        session_repo.update_status(
-                            session_id, SessionStatus.COMPLETED
-                        )
-                        session_repo.commit()
-                        logger.info(
-                            "Bounded execution stopped: session=%s completed=%s cancelled_next=%s",
-                            session_id,
-                            completed_agents,
-                            next_run.agent_id,
+                # If the next agent is NOT in real_agents, check if all
+                # real_agents have already completed (DB query)
+                if next_run.agent_id not in self._real_agents:
+                    if self._all_real_agents_done(session_id, execution_repo):
+                        self._cancel_remaining_runs(
+                            session_id, execution_repo, session_repo
                         )
                         return
 
@@ -536,6 +538,16 @@ class _BoundedOrchestrator:
             orchestrator, session_id, question_repo, execution_repo, session_repo
         )
 
+        # ------------------------------------------------------------------
+        # Post-execution cleanup (belt-and-suspenders): even if the bounded
+        # execute or HITL loop didn't stop perfectly, force-cancel everything
+        # remaining once we're back here.
+        # ------------------------------------------------------------------
+        if self._all_real_agents_done(session_id, execution_repo):
+            self._cancel_remaining_runs(
+                session_id, execution_repo, session_repo
+            )
+
         return session_id
 
     async def _handle_hitl_loop(
@@ -549,11 +561,12 @@ class _BoundedOrchestrator:
         """Detect HITL pauses and answer them automatically.
 
         Loops until the session is no longer paused for HITL.
+        Skips HITL questions from agents NOT in real_agents (when bounded).
         """
         if not self._hitl_simulator:
             return session_id
 
-        for _ in range(MAX_HITL_INTERACTIONS):
+        for iteration in range(MAX_HITL_INTERACTIONS):
             # Refresh session status
             self._db.expire_all()
             from druppie.db.models import Session as DBSession
@@ -583,6 +596,34 @@ class _BoundedOrchestrator:
                 )
                 break
 
+            # If bounded: check if the questioning agent is in real_agents.
+            # If not, stop the loop -- we don't want to answer HITL questions
+            # for agents we didn't intend to run.
+            if self._real_agents and pending_question.agent_run_id:
+                agent_run = self._db.query(AgentRun).filter(
+                    AgentRun.id == pending_question.agent_run_id
+                ).first()
+                if agent_run and agent_run.agent_id not in self._real_agents:
+                    logger.info(
+                        "HITL question from agent '%s' not in real_agents %s -- "
+                        "stopping HITL loop: session=%s",
+                        agent_run.agent_id,
+                        self._real_agents,
+                        session_id,
+                    )
+                    break
+
+            # If bounded: check if all real_agents already completed.
+            # No point answering more HITL questions.
+            if self._real_agents and self._all_real_agents_done(
+                session_id, execution_repo
+            ):
+                logger.info(
+                    "All real_agents done, stopping HITL loop: session=%s",
+                    session_id,
+                )
+                break
+
             # Generate answer
             raw_answer = self._hitl_simulator.answer(
                 question_text=pending_question.question,
@@ -603,7 +644,8 @@ class _BoundedOrchestrator:
 
             # Resume the orchestrator with the answer
             logger.info(
-                "HITL resuming with answer: session=%s question=%s raw=%s resolved=%s",
+                "HITL resuming with answer (iteration %d): session=%s question=%s raw=%s resolved=%s",
+                iteration + 1,
                 session_id,
                 pending_question.id,
                 raw_answer[:80],
