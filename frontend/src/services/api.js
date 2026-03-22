@@ -324,6 +324,9 @@ export const getEvaluationConfig = () =>
   request('/api/evaluations/config')
 
 // ============ V2 Test Runs ============
+export const getAvailableTests = () =>
+  request('/api/evaluations/available-tests')
+
 export const getTestRuns = (page = 1, limit = 20, tag = null) => {
   const params = new URLSearchParams({ page, limit })
   if (tag) params.append('tag', tag)

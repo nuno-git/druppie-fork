@@ -11,7 +11,7 @@ test:
     message: "update the weather dashboard to add dark mode"
     real_agents: [router]
   hitl: non-technical-pm
-  judge: fast-sonnet
+  judge: default
   evals:
     - eval: router-correct-intent
       expected:
