@@ -1,7 +1,7 @@
 """Evaluations API routes.
 
 Admin-only endpoints for viewing benchmark runs, evaluation results,
-and triggering new benchmark scenarios.
+and running v2 tests.
 
 Architecture:
     Route (this file)
@@ -14,7 +14,7 @@ import uuid as uuid_mod
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 import structlog
 
@@ -71,21 +71,6 @@ class RunTestsRequest(BaseModel):
     # Phase toggles (seed always runs; only execute and judge are toggleable)
     execute: bool = True  # Phase 2: Run agents with real LLMs + HITL
     judge: bool = True  # Phase 3: Run LLM judge checks
-
-
-class TriggerBenchmarkRequest(BaseModel):
-    """Request body for triggering a benchmark run."""
-
-    scenario_name: str
-    judge_model: str | None = None
-
-
-class TriggerBenchmarkResponse(BaseModel):
-    """Response for a triggered benchmark run."""
-
-    success: bool
-    benchmark_run_id: str
-    message: str
 
 
 class AgentSummaryResponse(BaseModel):
@@ -280,50 +265,6 @@ async def get_agent_summary(
     return AgentSummaryResponse(
         agent_id=agent_id,
         **summary,
-    )
-
-
-@router.post(
-    "/evaluations/trigger-benchmark",
-    response_model=TriggerBenchmarkResponse,
-)
-async def trigger_benchmark(
-    body: TriggerBenchmarkRequest,
-    service: EvaluationService = Depends(get_evaluation_service),
-    user: dict = Depends(require_admin),
-) -> TriggerBenchmarkResponse:
-    """Trigger a benchmark scenario run.
-
-    Admin only. Loads a scenario YAML and runs all evaluations.
-
-    Args:
-        body: Scenario name and optional judge model override
-
-    Returns:
-        Created benchmark run ID
-
-    Raises:
-        HTTPException 404: Scenario YAML not found
-    """
-    try:
-        benchmark_run_id = service.trigger_benchmark(
-            scenario_name=body.scenario_name,
-            judge_model=body.judge_model,
-        )
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-    logger.info(
-        "benchmark_triggered_via_api",
-        scenario=body.scenario_name,
-        benchmark_run_id=str(benchmark_run_id),
-        user_id=user.get("sub"),
-    )
-
-    return TriggerBenchmarkResponse(
-        success=True,
-        benchmark_run_id=str(benchmark_run_id),
-        message=f"Benchmark '{body.scenario_name}' started",
     )
 
 
