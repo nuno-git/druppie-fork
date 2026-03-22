@@ -65,6 +65,7 @@ class SessionSummary(BaseModel):
     status: SessionStatus
     error_message: str | None = None
     project_id: UUID | None
+    username: str | None = None
     token_usage: TokenUsage
     created_at: datetime
     updated_at: datetime | None
