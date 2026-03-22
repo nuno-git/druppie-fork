@@ -55,6 +55,14 @@ class PaginatedEvaluationResults(BaseModel):
     limit: int
 
 
+class RunTestsRequest(BaseModel):
+    """Request body for running v2 tests."""
+
+    test_name: str | None = None  # Run a specific test by name
+    tag: str | None = None  # Run tests matching a tag
+    run_all: bool = False  # Run all tests
+
+
 class TriggerBenchmarkRequest(BaseModel):
     """Request body for triggering a benchmark run."""
 
@@ -312,6 +320,39 @@ async def trigger_benchmark(
 # =============================================================================
 # V2 TEST RUN ENDPOINTS
 # =============================================================================
+
+
+@router.post("/evaluations/run-tests")
+async def run_tests(
+    body: RunTestsRequest,
+    service: EvaluationService = Depends(get_evaluation_service),
+    user: dict = Depends(require_admin),
+):
+    """Run tests. Supports: all tests, by tag, or a specific test.
+
+    Admin only. Runs synchronously and returns results.
+
+    Args:
+        body: Specifies which tests to run (test_name, tag, or run_all)
+
+    Returns:
+        Summary with total/passed/failed counts and per-test results
+    """
+    results = service.run_tests(
+        test_name=body.test_name,
+        tag=body.tag,
+        run_all=body.run_all,
+    )
+
+    logger.info(
+        "tests_run_via_api",
+        total=results["total"],
+        passed=results["passed"],
+        failed=results["failed"],
+        user_id=user.get("sub"),
+    )
+
+    return results
 
 
 @router.get("/evaluations/test-runs")

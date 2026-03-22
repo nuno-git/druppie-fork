@@ -338,3 +338,9 @@ export const getTags = () =>
 
 export const deleteTestUsers = () =>
   request('/api/evaluations/test-users', { method: 'DELETE' })
+
+export const runTests = (options = {}) =>
+  request('/api/evaluations/run-tests', {
+    method: 'POST',
+    body: JSON.stringify(options),
+  })
