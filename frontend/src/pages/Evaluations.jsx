@@ -113,7 +113,9 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
   const [deletingUsers, setDeletingUsers] = useState(false)
   const [runningAll, setRunningAll] = useState(false)
   const [runningTag, setRunningTag] = useState(null)
+  const [runningSingle, setRunningSingle] = useState(null)
   const [runResult, setRunResult] = useState(null)
+  const [phases, setPhases] = useState({ seed: true, execute: true, judge: true })
 
   const fetchTags = async () => {
     try {
@@ -150,7 +152,7 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
     setRunningAll(true)
     setRunResult(null)
     try {
-      const result = await runTests({ run_all: true })
+      const result = await runTests({ run_all: true, ...phases })
       setRunResult(result)
       fetchRuns()
       fetchTags()
@@ -165,7 +167,7 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
     setRunningTag(tag)
     setRunResult(null)
     try {
-      const result = await runTests({ tag })
+      const result = await runTests({ tag, ...phases })
       setRunResult(result)
       fetchRuns()
       fetchTags()
@@ -173,6 +175,21 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
       alert('Failed to run tests: ' + err.message)
     } finally {
       setRunningTag(null)
+    }
+  }
+
+  const handleRunSingle = async (testName) => {
+    setRunningSingle(testName)
+    setRunResult(null)
+    try {
+      const result = await runTests({ test_name: testName, ...phases })
+      setRunResult(result)
+      fetchRuns()
+      fetchTags()
+    } catch (err) {
+      alert('Failed to run test: ' + err.message)
+    } finally {
+      setRunningSingle(null)
     }
   }
 
@@ -190,10 +207,56 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
     }
   }
 
-  const isRunning = runningAll || runningTag
+  const isRunning = runningAll || runningTag || runningSingle
+
+  const activePhaseLabels = [
+    phases.seed && 'Seed',
+    phases.execute && 'Execute',
+    phases.judge && 'Judge',
+  ].filter(Boolean)
+  const phaseDescription = activePhaseLabels.length === 3
+    ? 'Seed \u2192 Execute \u2192 Judge'
+    : activePhaseLabels.length > 0
+      ? activePhaseLabels.join(' \u2192 ')
+      : 'No phases selected'
 
   return (
     <div className="space-y-3">
+      {/* Phase toggles */}
+      <div className="flex items-center gap-6 p-4 bg-gray-50 rounded-lg border">
+        <span className="text-sm font-medium text-gray-700">Phases:</span>
+
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={phases.seed}
+            onChange={e => setPhases(p => ({ ...p, seed: e.target.checked }))}
+            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+          />
+          <span className="text-sm">Seed DB</span>
+        </label>
+
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={phases.execute}
+            onChange={e => setPhases(p => ({ ...p, execute: e.target.checked }))}
+            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+          />
+          <span className="text-sm">Execute Agents</span>
+        </label>
+
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={phases.judge}
+            onChange={e => setPhases(p => ({ ...p, judge: e.target.checked }))}
+            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+          />
+          <span className="text-sm">LLM Judge</span>
+        </label>
+      </div>
+
       {/* Action bar */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
@@ -249,7 +312,7 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
         <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
           <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
           <span className="text-blue-800 font-medium">
-            Running tests... This may take a few minutes.
+            Running{runningSingle ? ` "${runningSingle}"` : ' tests'}... ({phaseDescription})
           </span>
         </div>
       )}
@@ -320,12 +383,13 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Duration</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tags</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase w-12"></th>
                 </tr>
               </thead>
               <tbody>
                 {runs.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
+                    <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
                       No test runs found.{selectedTag ? ' Try clearing the tag filter.' : ' Run tests to see results here.'}
                     </td>
                   </tr>
@@ -385,6 +449,20 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-gray-500 text-xs">{formatDate(run.created_at)}</td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleRunSingle(run.test_name) }}
+                          disabled={isRunning}
+                          title="Re-run this test"
+                          className="p-1 rounded hover:bg-indigo-100 text-gray-400 hover:text-indigo-600 disabled:opacity-30 transition-colors"
+                        >
+                          {runningSingle === run.test_name ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Play className="w-4 h-4" />
+                          )}
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}

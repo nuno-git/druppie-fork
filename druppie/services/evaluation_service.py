@@ -147,6 +147,9 @@ class EvaluationService:
         test_name: str | None = None,
         tag: str | None = None,
         run_all: bool = False,
+        seed: bool = True,
+        execute: bool = True,
+        judge: bool = True,
     ) -> dict:
         """Run tests and return results.
 
@@ -154,6 +157,9 @@ class EvaluationService:
             test_name: Run a specific test by name.
             tag: Run tests matching a tag.
             run_all: Run all tests.
+            seed: Phase 1 -- create test user and seed sessions.
+            execute: Phase 2 -- run real agents with LLMs + HITL.
+            judge: Phase 3 -- run LLM judge checks.
 
         Returns:
             Dict with total/passed/failed counts and per-test result details.
@@ -162,6 +168,7 @@ class EvaluationService:
 
         runner = TestRunner(db=self.eval_repo.db)
         results = []
+        phase_flags = dict(seed=seed, execute=execute, judge=judge)
 
         if test_name:
             tests_dir = runner._testing_dir / "tests"
@@ -169,7 +176,7 @@ class EvaluationService:
             if not test_path.exists():
                 raise FileNotFoundError(f"Test not found: {test_path}")
             test_def = runner.load_test(test_path)
-            results = runner.run_test(test_def)
+            results = runner.run_test(test_def, **phase_flags)
         elif tag:
             all_tests = runner.load_all_tests()
             for _path, test_def in all_tests:
@@ -177,12 +184,12 @@ class EvaluationService:
                 for eval_ref in test_def.evals:
                     eval_def = runner._evals.get(eval_ref.eval)
                     if eval_def and tag in eval_def.tags:
-                        results.extend(runner.run_test(test_def))
+                        results.extend(runner.run_test(test_def, **phase_flags))
                         break
         elif run_all:
             all_tests = runner.load_all_tests()
             for _path, test_def in all_tests:
-                results.extend(runner.run_test(test_def))
+                results.extend(runner.run_test(test_def, **phase_flags))
 
         self.eval_repo.db.commit()
 
