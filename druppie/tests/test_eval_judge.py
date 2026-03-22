@@ -65,7 +65,7 @@ def _patch_uuid_columns_for_sqlite(base):
 # Fixtures (pytest)
 # ---------------------------------------------------------------------------
 
-EVALUATIONS_DIR = Path(__file__).resolve().parents[2] / "testing" / "evaluations"
+EVALUATIONS_DIR = Path(__file__).resolve().parent / "fixtures" / "evals"
 
 _has_evaluations = EVALUATIONS_DIR.exists() and any(EVALUATIONS_DIR.rglob("*.yaml"))
 
@@ -87,9 +87,9 @@ def db_session():
 
 @pytest.fixture()
 def engine():
-    """Return a JudgeEngine pointing at the real evaluations/ directory."""
+    """Return a JudgeEngine pointing at the test fixtures evals/ directory."""
     if not _has_evaluations:
-        pytest.skip("testing/evaluations/ directory not present (v1 rubrics removed)")
+        pytest.skip("test fixtures evals/ directory not present")
     return JudgeEngine(evaluations_dir=EVALUATIONS_DIR)
 
 
