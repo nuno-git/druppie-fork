@@ -567,33 +567,103 @@ async def run_unit_tests(
     user: dict = Depends(require_admin),
 ):
     """Run pytest unit tests and return results."""
+    import re
     import subprocess
 
     try:
         result = subprocess.run(
-            ["python", "-m", "pytest", "druppie/tests/", "-v", "--tb=short", "--no-header", "-q"],
+            ["python", "-m", "pytest", "druppie/tests/", "-v", "--tb=short", "-rs"],
             capture_output=True,
             text=True,
             timeout=120,
             cwd="/app",
         )
 
-        # Parse the output to extract test results
+        # Parse verbose pytest output.
+        # Lines look like:
+        #   druppie/tests/test_seed_ids.py::test_func PASSED
+        #   druppie/tests/test_eval_judge.py::TestClass::test_method SKIPPED (reason)
+        #   druppie/tests/test_foo.py::test_bar FAILED
         lines = result.stdout.strip().split("\n")
         tests = []
-        for line in lines:
-            if "::" in line and (" PASSED" in line or " FAILED" in line or " ERROR" in line or " SKIPPED" in line):
-                parts = line.strip().split(" ")
-                status = parts[-1].lower()
-                name = " ".join(parts[:-1]).strip()
-                tests.append({"name": name, "status": status})
+        test_line_re = re.compile(
+            r"^([\w/\\.]+\.py)"  # file path
+            r"::"
+            r"([\w:]+)"  # class::method or just method
+            r"\s+"
+            r"(PASSED|FAILED|SKIPPED|ERROR)"  # status
+            r"(.*)?$"  # optional tail (skip reason, etc.)
+        )
 
-        # Get summary line (last non-empty line like "85 passed, 3 skipped in 1.2s")
+        for line in lines:
+            m = test_line_re.search(line.strip())
+            if not m:
+                continue
+            file_path = m.group(1)
+            name_part = m.group(2)
+            status = m.group(3).lower()
+            tail = (m.group(4) or "").strip()
+
+            # Split class::method if present
+            if "::" in name_part:
+                cls_name, method_name = name_part.split("::", 1)
+            else:
+                cls_name = None
+                method_name = name_part
+
+            # Extract file basename
+            file_name = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
+
+            # Extract reason from tail (e.g. "(reason text here)")
+            reason = None
+            if tail:
+                reason_match = re.search(r"\((.+)\)", tail)
+                if reason_match:
+                    reason = reason_match.group(1)
+
+            tests.append({
+                "file": file_name,
+                "class": cls_name,
+                "name": method_name,
+                "status": status,
+                "reason": reason,
+            })
+
+        # Parse summary line for duration.
+        # Example: "= 85 passed, 12 skipped, 6 warnings in 1.11s ="
         summary = ""
+        duration_seconds = None
         for line in reversed(lines):
             if "passed" in line or "failed" in line:
-                summary = line.strip()
+                summary = line.strip().strip("=").strip()
+                dur_match = re.search(r"in\s+([\d.]+)s", line)
+                if dur_match:
+                    duration_seconds = float(dur_match.group(1))
                 break
+
+        # Also capture FAILED test details from --tb=short output
+        failure_details: dict[str, str] = {}
+        in_failure = False
+        current_test_key = None
+        failure_lines: list[str] = []
+        for line in lines:
+            if line.startswith("FAILED "):
+                # e.g. "FAILED druppie/tests/test_foo.py::test_bar - AssertionError: ..."
+                parts = line.split(" - ", 1)
+                key = parts[0].replace("FAILED ", "").strip()
+                msg = parts[1].strip() if len(parts) > 1 else ""
+                failure_details[key] = msg
+
+        # Enrich tests with failure messages
+        for t in tests:
+            if t["status"] == "failed":
+                # Build lookup key: file::class::method or file::method
+                if t["class"]:
+                    key = f"druppie/tests/{t['file']}::{t['class']}::{t['name']}"
+                else:
+                    key = f"druppie/tests/{t['file']}::{t['name']}"
+                if key in failure_details:
+                    t["reason"] = failure_details[key]
 
         return {
             "status": "passed" if result.returncode == 0 else "failed",
@@ -605,7 +675,7 @@ async def run_unit_tests(
             "tests": tests,
             "output": result.stdout,
             "errors": result.stderr if result.returncode != 0 else "",
-            "duration_seconds": None,
+            "duration_seconds": duration_seconds,
         }
     except subprocess.TimeoutExpired:
         return {
@@ -613,6 +683,7 @@ async def run_unit_tests(
             "summary": "Timeout after 120 seconds",
             "total": 0, "passed": 0, "failed": 0, "skipped": 0,
             "tests": [], "output": "", "errors": "Timeout",
+            "duration_seconds": None,
         }
     except Exception as e:
         return {
@@ -620,6 +691,7 @@ async def run_unit_tests(
             "summary": str(e),
             "total": 0, "passed": 0, "failed": 0, "skipped": 0,
             "tests": [], "output": "", "errors": str(e),
+            "duration_seconds": None,
         }
 
 
