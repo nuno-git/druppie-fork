@@ -69,7 +69,7 @@ def main():
     parser.add_argument(
         "--fixtures-dir",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / "testing" / "seeds",
+        default=Path(__file__).resolve().parent.parent / "testing" / "sessions",
         help="Directory containing YAML fixture files",
     )
     parser.add_argument(

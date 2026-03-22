@@ -161,7 +161,7 @@ class SessionLoader:
 
     def __init__(self, sessions_dir: Path | None = None):
         self._sessions_dir = sessions_dir or (
-            Path(__file__).resolve().parents[2] / "testing" / "seeds"
+            Path(__file__).resolve().parents[2] / "testing" / "sessions"
         )
         self._sessions: dict[str, SessionFixture] = {}
         self._load()
@@ -893,7 +893,7 @@ class TestRunner:
         self._gitea_url = gitea_url
         self._profiles = ProfileLoader(self._testing_dir / "profiles")
         self._evals = EvalLoader(self._testing_dir / "evals")
-        self._sessions = SessionLoader(self._testing_dir / "seeds")
+        self._sessions = SessionLoader(self._testing_dir / "sessions")
 
     def load_test(self, path: Path) -> TestDefinition:
         """Load a single test definition from a YAML file."""
