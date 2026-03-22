@@ -235,16 +235,22 @@ class EvaluationRepository(BaseRepository):
         Returns:
             Number of test users deleted.
         """
-        from ..db.models import User, Session as SessionModel
+        from ..db.models import User, Session as SessionModel, Project
 
         test_users = (
-            self.db.query(User).filter(User.username.like("test-%")).all()
+            self.db.query(User)
+            .filter(User.username.like("test-%") | User.username.like("t-%"))
+            .all()
         )
         count = len(test_users)
         for user in test_users:
             # Delete sessions (cascades to agent_runs, tool_calls, etc.)
             self.db.query(SessionModel).filter(
                 SessionModel.user_id == user.id
+            ).delete()
+            # Delete projects owned by test user
+            self.db.query(Project).filter(
+                Project.owner_id == user.id
             ).delete()
             self.db.delete(user)
 
