@@ -94,7 +94,7 @@ def test_parse_hitl_profiles_file():
     assert hpf.profiles["non-technical-pm"].model == "claude-sonnet-4-6"
     assert hpf.profiles["non-technical-pm"].provider == "zai"
     assert "non-technical" in hpf.profiles["non-technical-pm"].prompt
-    assert hpf.profiles["developer"].provider == "deepinfra"  # default
+    assert hpf.profiles["developer"].provider == "zai"  # default
 
 
 def test_parse_judge_profiles_file():
@@ -107,7 +107,7 @@ def test_parse_judge_profiles_file():
     )
     assert len(jpf.profiles) == 2
     assert jpf.profiles["strict-opus"].model == "claude-opus-4-6"
-    assert jpf.profiles["strict-opus"].provider == "deepinfra"  # default
+    assert jpf.profiles["strict-opus"].provider == "zai"  # default
     assert jpf.profiles["fast-sonnet"].model == "claude-sonnet-4-6"
 
 

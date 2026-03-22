@@ -8,20 +8,20 @@
 
 profiles:
   standard:
-    - provider: deepinfra
-      model: Qwen/Qwen3-Next-80B-A3B-Instruct
     - provider: zai
       model: glm-5
+    - provider: deepinfra
+      model: Qwen/Qwen3-Next-80B-A3B-Instruct
     - provider: ollama
       model: gpt-oss:120b
     - provider: azure_foundry
       model: GPT-5-MINI
 
   cheap:
-    - provider: deepinfra
-      model: Qwen/Qwen3-Next-80B-A3B-Instruct
     - provider: zai
       model: glm-5
+    - provider: deepinfra
+      model: Qwen/Qwen3-Next-80B-A3B-Instruct
     - provider: ollama
       model: gpt-oss:20b
     - provider: azure_foundry
