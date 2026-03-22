@@ -36,6 +36,7 @@ import {
   deleteTestUsers,
   runTests,
   getRunStatus,
+  runUnitTests,
 } from '../services/api'
 
 // ---- Helpers ----
@@ -740,6 +741,211 @@ const TestRunDetail = ({ testRunId, onBack }) => {
   )
 }
 
+// ---- Unit Tests Section ----
+
+const UnitTestsSection = () => {
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState(null)
+  const [expandedFiles, setExpandedFiles] = useState(new Set())
+
+  const handleRun = async () => {
+    setLoading(true)
+    setError(null)
+    setResult(null)
+    try {
+      const data = await runUnitTests()
+      setResult(data)
+      // Auto-expand files with failures
+      if (data.tests) {
+        const failedFiles = new Set()
+        data.tests.forEach((t) => {
+          if (t.status === 'failed' || t.status === 'error') {
+            const file = t.name.split('::')[0]
+            failedFiles.add(file)
+          }
+        })
+        setExpandedFiles(failedFiles)
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Group tests by file
+  const groupedTests = {}
+  if (result?.tests) {
+    result.tests.forEach((t) => {
+      const parts = t.name.split('::')
+      const file = parts[0] || t.name
+      if (!groupedTests[file]) groupedTests[file] = []
+      groupedTests[file].push({ ...t, shortName: parts.slice(1).join('::') || t.name })
+    })
+  }
+
+  const toggleFile = (file) => {
+    const next = new Set(expandedFiles)
+    if (next.has(file)) {
+      next.delete(file)
+    } else {
+      next.add(file)
+    }
+    setExpandedFiles(next)
+  }
+
+  const fileStatusColors = {
+    allPass: 'text-green-600',
+    hasFail: 'text-red-600',
+  }
+
+  return (
+    <div className="bg-white rounded-lg border overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between rounded-t-lg">
+        <div className="flex items-center gap-2">
+          <FlaskConical className="w-4 h-4 text-blue-600" />
+          <h2 className="font-semibold text-sm">Unit Tests (Framework)</h2>
+        </div>
+        <button
+          onClick={handleRun}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+        >
+          {loading ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Play className="w-3.5 h-3.5" />
+          )}
+          {loading ? 'Running...' : 'Run'}
+        </button>
+      </div>
+
+      <div className="p-4">
+        {/* Loading state */}
+        {loading && (
+          <div className="flex items-center gap-3 py-6 justify-center">
+            <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+            <span className="text-sm text-gray-600">Running pytest...</span>
+          </div>
+        )}
+
+        {/* Error state */}
+        {error && !loading && (
+          <div className="text-center py-4 text-red-500">
+            <AlertCircle className="w-6 h-6 mx-auto mb-1" />
+            <p className="text-sm">{error}</p>
+          </div>
+        )}
+
+        {/* Results */}
+        {result && !loading && (
+          <div className="space-y-3">
+            {/* Summary bar */}
+            <div className={`flex items-center justify-between px-4 py-3 rounded-lg border ${
+              result.status === 'passed' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+            }`}>
+              <div className="flex items-center gap-3">
+                {result.status === 'passed' ? (
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                ) : (
+                  <XCircle className="w-5 h-5 text-red-600" />
+                )}
+                <span className={`font-medium text-sm ${
+                  result.status === 'passed' ? 'text-green-800' : 'text-red-800'
+                }`}>
+                  {result.summary || `${result.passed} passed, ${result.failed} failed, ${result.skipped} skipped`}
+                </span>
+              </div>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                result.status === 'passed'
+                  ? 'bg-green-100 text-green-700'
+                  : result.status === 'failed'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-orange-100 text-orange-700'
+              }`}>
+                {result.status}
+              </span>
+            </div>
+
+            {/* Grouped test list */}
+            {Object.keys(groupedTests).length > 0 && (
+              <div className="space-y-1">
+                {Object.entries(groupedTests).map(([file, tests]) => {
+                  const allPass = tests.every((t) => t.status === 'passed' || t.status === 'skipped')
+                  const failCount = tests.filter((t) => t.status === 'failed' || t.status === 'error').length
+                  const expanded = expandedFiles.has(file)
+                  const fileName = file.split('/').pop()
+
+                  return (
+                    <div key={file} className="border rounded-lg overflow-hidden">
+                      <button
+                        onClick={() => toggleFile(file)}
+                        className="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-50 transition-colors text-left"
+                      >
+                        <div className="flex items-center gap-2">
+                          {expanded ? (
+                            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                          ) : (
+                            <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
+                          )}
+                          <span className="text-sm font-medium">{fileName}</span>
+                          <span className="text-xs text-gray-400">({tests.length} tests)</span>
+                        </div>
+                        <span className={`text-xs font-medium ${allPass ? fileStatusColors.allPass : fileStatusColors.hasFail}`}>
+                          {allPass ? 'all pass' : `${failCount} failed`}
+                        </span>
+                      </button>
+
+                      {expanded && (
+                        <div className="border-t border-gray-100 bg-gray-50/50">
+                          {tests.map((test, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between px-4 py-1.5 text-xs border-b border-gray-100 last:border-0"
+                            >
+                              <span className="font-mono text-gray-700 truncate mr-2">{test.shortName}</span>
+                              <span className={`px-1.5 py-0.5 rounded text-xs font-medium flex-shrink-0 ${
+                                test.status === 'passed' ? 'bg-green-100 text-green-700' :
+                                test.status === 'failed' ? 'bg-red-100 text-red-700' :
+                                test.status === 'skipped' ? 'bg-yellow-100 text-yellow-700' :
+                                'bg-orange-100 text-orange-700'
+                              }`}>
+                                {test.status}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Error output for failures */}
+            {result.errors && (
+              <details className="mt-2">
+                <summary className="text-xs text-red-600 cursor-pointer font-medium">Error Output</summary>
+                <pre className="mt-1 p-3 bg-red-50 border border-red-200 rounded text-xs text-red-800 overflow-x-auto whitespace-pre-wrap max-h-60 overflow-y-auto">
+                  {result.errors}
+                </pre>
+              </details>
+            )}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!result && !loading && !error && (
+          <p className="text-sm text-gray-400 text-center py-4">
+            Click Run to execute pytest unit tests.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ===========================================================================
 // MAIN COMPONENT
 // ===========================================================================
@@ -999,6 +1205,9 @@ export default function Evaluations() {
               />
             </div>
           </div>
+
+          {/* ============ SECTION 3: Unit Tests ============ */}
+          <UnitTestsSection />
         </div>
       )}
       {view === 'detail' && (
