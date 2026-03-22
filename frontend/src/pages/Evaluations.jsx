@@ -115,7 +115,7 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
   const [runningTag, setRunningTag] = useState(null)
   const [runningSingle, setRunningSingle] = useState(null)
   const [runResult, setRunResult] = useState(null)
-  const [phases, setPhases] = useState({ seed: true, execute: true, judge: true })
+  const [phases, setPhases] = useState({ execute: true, judge: true })
 
   const fetchTags = async () => {
     try {
@@ -210,31 +210,17 @@ const TestRunsList = ({ onSelectRun, refreshKey }) => {
   const isRunning = runningAll || runningTag || runningSingle
 
   const activePhaseLabels = [
-    phases.seed && 'Seed',
+    'Seed',
     phases.execute && 'Execute',
     phases.judge && 'Judge',
   ].filter(Boolean)
-  const phaseDescription = activePhaseLabels.length === 3
-    ? 'Seed \u2192 Execute \u2192 Judge'
-    : activePhaseLabels.length > 0
-      ? activePhaseLabels.join(' \u2192 ')
-      : 'No phases selected'
+  const phaseDescription = activePhaseLabels.join(' \u2192 ')
 
   return (
     <div className="space-y-3">
       {/* Phase toggles */}
       <div className="flex items-center gap-6 p-4 bg-gray-50 rounded-lg border">
         <span className="text-sm font-medium text-gray-700">Phases:</span>
-
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={phases.seed}
-            onChange={e => setPhases(p => ({ ...p, seed: e.target.checked }))}
-            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-          />
-          <span className="text-sm">Seed DB</span>
-        </label>
 
         <label className="flex items-center gap-2 cursor-pointer">
           <input
