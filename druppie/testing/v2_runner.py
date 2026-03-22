@@ -912,6 +912,7 @@ class TestRunner:
         test: TestDefinition,
         execute: bool = True,
         judge: bool = True,
+        batch_id: str | None = None,
     ) -> list[TestRunResult]:
         """Run a test. Returns one TestRunResult per HITL profile.
 
@@ -919,6 +920,7 @@ class TestRunner:
             test: The test definition.
             execute: Phase 2 -- run real agents with LLMs + HITL.
             judge: Phase 3 -- run LLM judge checks.
+            batch_id: Optional batch identifier to group tests from the same run.
         """
         results = []
         hitl_profiles = test.get_hitl_profiles()
@@ -928,6 +930,7 @@ class TestRunner:
             result = self._run_single(
                 test, hitl_name, judge_profiles,
                 execute=execute, judge=judge,
+                batch_id=batch_id,
             )
             results.append(result)
 
@@ -940,6 +943,7 @@ class TestRunner:
         judge_profiles: list[str],
         execute: bool = True,
         judge: bool = True,
+        batch_id: str | None = None,
     ) -> TestRunResult:
         """Run one execution of a test with a specific HITL profile.
 
@@ -1121,6 +1125,7 @@ class TestRunner:
         # Store test run record
         test_run = TestRunModel(
             benchmark_run_id=benchmark_run.id,
+            batch_id=batch_id,
             test_name=test.name,
             test_description=test.description,
             test_user=test_user,

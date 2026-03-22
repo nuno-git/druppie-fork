@@ -350,3 +350,9 @@ export const runTests = (options = {}) =>
 
 export const getRunStatus = (runId) =>
   request(`/api/evaluations/run-status/${runId}`)
+
+export const getTestBatches = (page = 1, limit = 10, tag = null) => {
+  const params = new URLSearchParams({ page, limit })
+  if (tag) params.append('tag', tag)
+  return request(`/api/evaluations/test-batches?${params.toString()}`)
+}
