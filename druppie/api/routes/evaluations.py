@@ -9,6 +9,9 @@ Architecture:
       +---> EvaluationService ---> EvaluationRepository ---> Database
 """
 
+import threading
+import uuid as uuid_mod
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -30,6 +33,9 @@ from druppie.services import EvaluationService
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+# In-memory store for background test run status (no DB needed for this)
+_test_run_status: dict[str, dict] = {}
 
 
 # =============================================================================
@@ -328,36 +334,112 @@ async def trigger_benchmark(
 @router.post("/evaluations/run-tests")
 async def run_tests(
     body: RunTestsRequest,
-    service: EvaluationService = Depends(get_evaluation_service),
     user: dict = Depends(require_admin),
 ):
-    """Run tests. Supports: all tests, by tag, or a specific test.
+    """Start test execution in the background. Returns a run_id to poll status.
 
-    Admin only. Runs synchronously and returns results.
+    Admin only. Returns immediately with a run_id. Poll /run-status/{run_id}
+    for progress and results.
 
     Args:
         body: Specifies which tests to run (test_name, tag, or run_all)
 
     Returns:
-        Summary with total/passed/failed counts and per-test results
+        run_id and initial status
     """
-    results = service.run_tests(
-        test_name=body.test_name,
-        tag=body.tag,
-        run_all=body.run_all,
-        execute=body.execute,
-        judge=body.judge,
-    )
+    run_id = str(uuid_mod.uuid4())
+    _test_run_status[run_id] = {
+        "status": "running",
+        "message": "Starting tests...",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "results": None,
+    }
 
-    logger.info(
-        "tests_run_via_api",
-        total=results["total"],
-        passed=results["passed"],
-        failed=results["failed"],
-        user_id=user.get("sub"),
-    )
+    # Capture request params for the background thread
+    test_name = body.test_name
+    tag = body.tag
+    run_all = body.run_all
+    execute = body.execute
+    judge = body.judge
+    user_id = user.get("sub")
 
-    return results
+    def _run():
+        from druppie.db.database import SessionLocal
+        from druppie.repositories.evaluation_repository import EvaluationRepository
+
+        db = SessionLocal()
+        try:
+            repo = EvaluationRepository(db)
+            svc = EvaluationService(repo)
+
+            result = svc.run_tests(
+                test_name=test_name,
+                tag=tag,
+                run_all=run_all,
+                execute=execute,
+                judge=judge,
+            )
+            db.commit()
+
+            logger.info(
+                "tests_run_via_api",
+                run_id=run_id,
+                total=result["total"],
+                passed=result["passed"],
+                failed=result["failed"],
+                user_id=user_id,
+            )
+
+            _test_run_status[run_id] = {
+                "status": "completed",
+                "message": f"{result['passed']}/{result['total']} passed",
+                "results": result,
+            }
+        except Exception as e:
+            logger.error(
+                "tests_run_error",
+                run_id=run_id,
+                error=str(e),
+                exc_info=True,
+            )
+            _test_run_status[run_id] = {
+                "status": "error",
+                "message": str(e),
+                "results": None,
+            }
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        finally:
+            db.close()
+
+    thread = threading.Thread(target=_run, daemon=True, name=f"test-run-{run_id}")
+    thread.start()
+
+    return {"run_id": run_id, "status": "running"}
+
+
+@router.get("/evaluations/run-status/{run_id}")
+async def get_run_status(
+    run_id: str,
+    user: dict = Depends(require_admin),
+):
+    """Poll for test run status.
+
+    Admin only. Returns the current status and results (when completed)
+    for a background test run.
+
+    Args:
+        run_id: The run_id returned by POST /evaluations/run-tests
+
+    Returns:
+        Status object with status, message, and results (when completed)
+    """
+    status = _test_run_status.get(run_id)
+    if not status:
+        return {"status": "not_found"}
+    return status
 
 
 @router.get("/evaluations/test-runs")
