@@ -599,10 +599,10 @@ class TestNoProjectForGeneralChat:
 
 
 class TestLoadFixturesFromDir:
-    """13. Load from real testing/seeds/ directory, verify all 11 parse."""
+    """13. Load from real testing/sessions/ directory, verify all 11 parse."""
 
     def test_load_fixtures_from_dir(self):
-        fixtures_dir = Path(__file__).resolve().parents[2] / "testing" / "seeds"
+        fixtures_dir = Path(__file__).resolve().parents[2] / "testing" / "sessions"
         if not fixtures_dir.exists():
             pytest.skip(f"Fixtures directory not found: {fixtures_dir}")
 

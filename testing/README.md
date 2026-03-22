@@ -1,33 +1,37 @@
-# Testing & Benchmarking Framework
+# Testing & Evaluation Framework
 
-Declarative session seeding, LLM-as-judge evaluation, and end-to-end benchmarking for Druppie agents. Seed the database from YAML fixtures, score agent behavior with configurable judge rubrics, and run controlled benchmark scenarios to compare models, prompts, and configurations.
+Declarative session seeding, LLM-as-judge evaluation, and end-to-end test execution for Druppie agents.
 
 ## Directory Structure
 
 ```
-testing/                              <- All YAML data files
-  seeds/                              <- Session fixtures for DB seeding (11 files)
-  evaluations/
-    architect/                        <- Rubrics for architect agent
-      design_quality.yaml
-    builder/                          <- Rubrics for builder agent
-      tool_compliance.yaml
-  scenarios/                          <- Benchmark test scenarios (3 files)
+testing/
+  sessions/       <- Session definitions (used for both demo seeding AND test worlds)
+  evals/           <- Evaluation checks (what to verify, reusable across tests)
+  tests/           <- Test definitions (combine sessions + run + evals)
+  profiles/        <- HITL and judge model configurations
+    hitl.yaml
+    judges.yaml
+  scenarios/       <- Legacy benchmark scenarios (v1)
+  reports/         <- Generated test reports (gitignored)
 
 druppie/testing/                      <- Python code (one package)
   seed_schema.py, seed_loader.py,     <- Seeding: schema, loader, UUID generation
     seed_ids.py
+  v2_schema.py, v2_runner.py,         <- V2 test runner: schema, runner, assertions
+    v2_assertions.py
   eval_schema.py, eval_judge.py,      <- Evaluation: judge engine, context extraction,
     eval_context.py, eval_config.py,      config, live eval hook
     eval_live.py
-  bench_schema.py, bench_runner.py,   <- Benchmarks: scenario runner, assertions,
+  bench_schema.py, bench_runner.py,   <- Legacy benchmarks: scenario runner, assertions,
     bench_assertions.py,                  user simulator
     bench_simulator.py
 
 scripts/                              <- CLI entry points
   seed.py                             <- Seed the database
-  evaluate.py                         <- Run evaluations
-  benchmark.py                        <- Run benchmark scenarios
+  test_runner.py                      <- Run v2 tests
+  evaluate.py                         <- Run evaluations (v1)
+  benchmark.py                        <- Run benchmark scenarios (v1)
 
 evaluation_config.yaml                <- Live evaluation config (project root)
 ```
@@ -51,7 +55,7 @@ python scripts/seed.py
 Each seed file is a self-contained session. Tool calls are the source of truth -- there is no separate `project:` block. The project exists because `set_intent` was called; files exist because `execute_coding_task` ran.
 
 ```yaml
-# testing/seeds/02-calculator-architect-paused.yaml
+# testing/sessions/02-calculator-architect-paused.yaml
 metadata:
   id: calculator-architect-paused
   title: "create a scientific calculator"
@@ -90,103 +94,32 @@ The `outcome:` block on `execute_coding_task` creates real files in Gitea when `
                 // ...
 ```
 
-### 2. Run Evaluations (LLM-as-Judge)
+### 2. Run V2 Tests
 
-Scores a completed session against rubric definitions. Results are stored in a `benchmark_runs` DB table.
-
-```bash
-# List available evaluations
-python scripts/evaluate.py --list
-
-# Run a specific evaluation
-python scripts/evaluate.py \
-    --evaluation=architect_design_quality \
-    --session-id=<uuid>
-
-# Override judge model
-python scripts/evaluate.py \
-    --evaluation=architect_design_quality \
-    --session-id=<uuid> \
-    --judge-model=glm-5
-```
-
-Rubrics live in `testing/evaluations/<agent>/`. Each rubric defines context extraction (which tool calls, messages, or definitions to pull) and judge prompts with `graded` (1-5) or `binary` (pass/fail) scoring:
-
-```yaml
-rubrics:
-  - name: requirement_coverage
-    scoring: graded
-    prompt: |
-      Score 1-5: Does the technical design cover the user's requirements?
-      ...
-```
-
-### 3. Run Benchmarks
-
-Runs end-to-end scenarios with mocked agents, real agents under test, automated assertions, and optional LLM-as-judge evaluation.
+The v2 test runner creates isolated users per test, seeds world state, runs real agents with LLM calls, handles HITL simulation, and evaluates with assertions and LLM judge checks.
 
 ```bash
-# List scenarios
-python scripts/benchmark.py --list
+# List all tests
+python scripts/test_runner.py --list
 
-# Run one scenario
-python scripts/benchmark.py --scenario=create-todo-app
+# Run a specific test
+python scripts/test_runner.py --test=router-create-recipe
 
-# Run all, dry-run (validates YAML only)
-python scripts/benchmark.py --all --dry-run
+# Run tests by tag
+python scripts/test_runner.py --tag=router
 
-# Run all with a specific judge model
-python scripts/benchmark.py --all --judge-model=glm-5
+# Run all tests
+python scripts/test_runner.py --all
+
+# Dry run (validate without executing)
+python scripts/test_runner.py --all --dry-run
 ```
 
-Scenarios define input, mocked agents, agents under test, assertions, evaluations, and an optional user simulator for HITL questions:
+### 3. Admin UI
 
-```yaml
-scenario:
-  name: create_todo_app
-  input:
-    user_message: "build me a simple todo app"
-    user: admin
-  mocked_agents:
-    - agent_id: router
-      # ... predetermined tool calls
-  agents_under_test: [business_analyst, architect]
-  evaluations: [architect_design_quality]
-  assertions:
-    - agent: architect
-      assert: completed
-  user_simulator:
-    mode: scripted
-    scripted_answers:
-      - question_contains: "features"
-        answer: "Add, delete, mark complete. No auth needed."
-    default_answer: "Yes, that sounds good."
-  timeout_minutes: 15
-```
+Navigate to `/admin/evaluations` in the frontend. Shows test runs, evaluation scores, and per-session results.
 
-### 4. Live Evaluation
-
-Scores production sessions in the background as agents complete. Edit `evaluation_config.yaml` at the project root:
-
-```yaml
-live_evaluation:
-  enabled: true               # flip to true
-  sample_rate: 1.0             # 0.0-1.0
-  judge_model: glm-5
-  agent_evaluations:
-    architect:
-      - architect_design_quality
-    builder:
-      - builder_tool_compliance
-```
-
-No restart required -- config is re-read on each agent completion.
-
-### 5. Admin UI
-
-Navigate to `/admin/evaluations` in the frontend. Shows benchmark runs, evaluation scores, and per-session results.
-
-### 6. Docker Compose Test Profiles
+### 4. Docker Compose Test Profiles
 
 ```bash
 # Integration tests (isolated test DB)
@@ -198,10 +131,10 @@ docker compose --profile test-benchmark up --abort-on-container-exit
 
 ## Key Concepts
 
-- **Seeds** -- Declarative session state as YAML. Tool calls are the source of truth. The `outcome:` block on `execute_coding_task` creates real files in Gitea/GitHub so seeded sessions have browsable repos.
+- **Sessions** -- Declarative session state as YAML. Tool calls are the source of truth. The `outcome:` block on `execute_coding_task` creates real files in Gitea/GitHub so seeded sessions have browsable repos. Used for both demo seeding (admin sidebar) and test world state.
 
-- **Evaluations** -- LLM-as-judge rubrics that score agent behavior. Each rubric extracts context (tool call results, agent definitions, session messages) and sends a judge prompt. Scoring is `binary` (pass/fail) or `graded` (1-5). Configurable per-agent.
+- **Evals** -- Reusable evaluation checks. Each eval defines assertions (deterministic checks) and optional judge checks (LLM-as-judge). Referenced by tests via name.
 
-- **Scenarios** -- End-to-end benchmark definitions. Mock early agents (router, planner), run later agents for real, assert on outcomes, and optionally run evaluations. A user simulator answers HITL questions automatically.
+- **Tests** -- Test definitions that combine sessions (world state) + a run (message + agents) + evals (assertions + judge checks). Support HITL and judge profile matrix execution.
 
-- **Live evaluation** -- Background scoring of production sessions. Controlled by `evaluation_config.yaml`. Results feed the admin UI dashboard for ongoing quality tracking.
+- **Profiles** -- HITL profiles (model + prompt for simulating users) and judge profiles (model + config for LLM-as-judge).
