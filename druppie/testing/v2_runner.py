@@ -94,8 +94,8 @@ class ProfileLoader:
         """Get an HITL profile by name. Returns a sensible default for 'default'."""
         if name == "default":
             return HITLProfile(
-                model="Qwen/Qwen3-Next-80B-A3B-Instruct",
-                provider="deepinfra",
+                model="glm-5",
+                provider="zai",
                 prompt="You are a helpful user who gives clear, concise answers.",
             )
         if name not in self._hitl:
@@ -108,7 +108,7 @@ class ProfileLoader:
     def get_judge(self, name: str) -> JudgeProfile:
         """Get a judge profile by name. Returns a sensible default for 'default'."""
         if name == "default":
-            return JudgeProfile(model="Qwen/Qwen3-Next-80B-A3B-Instruct", provider="deepinfra")
+            return JudgeProfile(model="glm-5", provider="zai")
         if name not in self._judges:
             raise KeyError(
                 f"Unknown judge profile: {name}. "

@@ -1,12 +1,12 @@
 profiles:
   strict-opus:
-    model: Qwen/Qwen3-Next-80B-A3B-Instruct
-    provider: deepinfra
+    model: glm-5
+    provider: zai
 
   fast-sonnet:
-    model: Qwen/Qwen3-Next-80B-A3B-Instruct
-    provider: deepinfra
+    model: glm-5
+    provider: zai
 
   cheap-haiku:
-    model: Qwen/Qwen3-Next-80B-A3B-Instruct
-    provider: deepinfra
+    model: glm-5
+    provider: zai

@@ -8,8 +8,6 @@
 
 profiles:
   standard:
-    - provider: deepinfra
-      model: Qwen/Qwen3-Next-80B-A3B-Instruct
     - provider: zai
       model: glm-5
     - provider: deepinfra
@@ -22,8 +20,6 @@ profiles:
       model: GPT-5-MINI
 
   cheap:
-    - provider: deepinfra
-      model: Qwen/Qwen3-Next-80B-A3B-Instruct
     - provider: zai
       model: glm-5
     - provider: deepinfra

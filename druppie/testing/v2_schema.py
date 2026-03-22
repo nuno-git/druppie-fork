@@ -54,7 +54,7 @@ class HITLProfile(BaseModel):
     """HITL simulator profile."""
 
     model: str
-    provider: str = "deepinfra"
+    provider: str = "zai"
     prompt: str
 
 
@@ -62,7 +62,7 @@ class JudgeProfile(BaseModel):
     """Judge profile."""
 
     model: str
-    provider: str = "deepinfra"
+    provider: str = "zai"
 
 
 class HITLProfilesFile(BaseModel):
