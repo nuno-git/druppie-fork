@@ -535,7 +535,9 @@ def cmd_cleanup() -> None:
     db = SessionLocal()
     try:
         # Get test user IDs
-        test_users = db.query(User).filter(User.username.like("test-%")).all()
+        test_users = db.query(User).filter(
+            User.username.like("test-%") | User.username.like("t-%")
+        ).all()
         if not test_users:
             print("No test users found.")
             return
@@ -563,7 +565,7 @@ def cmd_cleanup() -> None:
         test_run_ids = [
             trid
             for (trid,) in db.query(TestRun.id)
-            .filter(TestRun.test_user.like("test-%"))
+            .filter(TestRun.test_user.like("test-%") | TestRun.test_user.like("t-%"))
             .all()
         ]
         if test_run_ids:
@@ -576,7 +578,7 @@ def cmd_cleanup() -> None:
 
         tr_count = (
             db.query(TestRun)
-            .filter(TestRun.test_user.like("test-%"))
+            .filter(TestRun.test_user.like("test-%") | TestRun.test_user.like("t-%"))
             .delete(synchronize_session=False)
         )
         print(f"  Deleted {tr_count} test run(s)")
