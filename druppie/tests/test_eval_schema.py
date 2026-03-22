@@ -151,6 +151,6 @@ def test_defaults():
             ),
         ],
     )
-    assert ev.judge_model == "claude-sonnet-4-6"
+    assert ev.judge_model == "glm-5"
     assert ev.description == ""
     assert ev.context == []

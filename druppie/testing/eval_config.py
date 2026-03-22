@@ -13,7 +13,7 @@ class LiveEvaluationConfig(BaseModel):
 
     enabled: bool = False
     sample_rate: float = 1.0
-    judge_model: str = "claude-sonnet-4-6"
+    judge_model: str = "glm-5"
     agent_evaluations: dict[str, list[str]] = Field(default_factory=dict)
 
     def should_evaluate(self, agent_id: str) -> bool:

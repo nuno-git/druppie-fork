@@ -258,7 +258,10 @@ def seed_fixture(
         # sessions reference the same project created by a create_project session)
         existing_project = (
             db.query(Project)
-            .filter(Project.name == meta.project_name)
+            .filter(
+                Project.name == meta.project_name,
+                Project.owner_id == user.id,
+            )
             .first()
         )
 
