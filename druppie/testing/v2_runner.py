@@ -768,11 +768,12 @@ class JudgeRunner:
         for tc in tool_calls:
             args_str = json.dumps(tc.arguments) if tc.arguments else "{}"
             status = tc.status or "pending"
-            result_part = ""
+            # Always show the status; include the tool result so the judge
+            # can see what the agent actually produced (e.g. the intent)
+            result_part = f" -> {status}"
             if tc.result:
-                # Truncate very long results
                 result_text = tc.result[:500]
-                result_part = f" -> {status}"
+                result_part = f" -> {result_text}"
             lines.append(
                 f"  [{tc.tool_call_index}] {tc.mcp_server}:{tc.tool_name}"
                 f"({args_str}){result_part}"
