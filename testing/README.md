@@ -107,7 +107,7 @@ python scripts/evaluate.py \
 python scripts/evaluate.py \
     --evaluation=architect_design_quality \
     --session-id=<uuid> \
-    --judge-model=claude-opus-4-6
+    --judge-model=glm-5
 ```
 
 Rubrics live in `testing/evaluations/<agent>/`. Each rubric defines context extraction (which tool calls, messages, or definitions to pull) and judge prompts with `graded` (1-5) or `binary` (pass/fail) scoring:
@@ -136,7 +136,7 @@ python scripts/benchmark.py --scenario=create-todo-app
 python scripts/benchmark.py --all --dry-run
 
 # Run all with a specific judge model
-python scripts/benchmark.py --all --judge-model=claude-opus-4-6
+python scripts/benchmark.py --all --judge-model=glm-5
 ```
 
 Scenarios define input, mocked agents, agents under test, assertions, evaluations, and an optional user simulator for HITL questions:
@@ -172,7 +172,7 @@ Scores production sessions in the background as agents complete. Edit `evaluatio
 live_evaluation:
   enabled: true               # flip to true
   sample_rate: 1.0             # 0.0-1.0
-  judge_model: claude-sonnet-4-6
+  judge_model: glm-5
   agent_evaluations:
     architect:
       - architect_design_quality

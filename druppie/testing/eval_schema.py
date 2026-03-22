@@ -31,7 +31,7 @@ class EvaluationDefinition(BaseModel):
     name: str
     description: str = ""
     target_agent: str
-    judge_model: str = "claude-sonnet-4-6"
+    judge_model: str = "glm-5"
     context: list[ContextSource] = Field(default_factory=list)
     rubrics: list[RubricDefinition]
 
