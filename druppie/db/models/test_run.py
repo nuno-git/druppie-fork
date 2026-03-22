@@ -30,6 +30,11 @@ class TestRun(Base):
     assertions_passed = Column(Integer, nullable=True)
     judge_checks_total = Column(Integer, nullable=True)
     judge_checks_passed = Column(Integer, nullable=True)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     status = Column(String(50), nullable=True)  # passed, failed, error
     duration_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
@@ -50,6 +55,7 @@ class TestRun(Base):
             "test_user": self.test_user,
             "hitl_profile": self.hitl_profile,
             "judge_profile": self.judge_profile,
+            "session_id": str(self.session_id) if self.session_id else None,
             "sessions_seeded": self.sessions_seeded,
             "assertions_total": self.assertions_total,
             "assertions_passed": self.assertions_passed,
