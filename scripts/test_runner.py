@@ -48,6 +48,14 @@ if not os.getenv("DATABASE_URL"):
         "postgresql://druppie:druppie_secret@localhost:5533/druppie"
     )
 
+# Set GITEA_URL before importing druppie modules (gitea.py reads it at
+# import time via os.getenv and defaults to http://gitea:3000 which is
+# only reachable inside Docker).  When running from the host, derive a
+# localhost URL from GITEA_PORT (loaded by dotenv above).
+if not os.getenv("GITEA_URL"):
+    _gitea_port = os.getenv("GITEA_PORT", "3200")
+    os.environ["GITEA_URL"] = f"http://localhost:{_gitea_port}"
+
 from druppie.testing.v2_runner import (  # noqa: E402
     EvalLoader,
     TestRunner,
