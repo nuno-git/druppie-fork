@@ -323,6 +323,9 @@ export const triggerBenchmark = (scenarioName, judgeModel = null) =>
 export const getEvaluationConfig = () =>
   request('/api/evaluations/config')
 
+export const runUnitTests = () =>
+  request('/api/evaluations/run-unit-tests', { method: 'POST' })
+
 // ============ V2 Test Runs ============
 export const getAvailableTests = () =>
   request('/api/evaluations/available-tests')

@@ -562,6 +562,67 @@ async def delete_test_users(
     }
 
 
+@router.post("/evaluations/run-unit-tests")
+async def run_unit_tests(
+    user: dict = Depends(require_admin),
+):
+    """Run pytest unit tests and return results."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["python", "-m", "pytest", "druppie/tests/", "-v", "--tb=short", "--no-header", "-q"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd="/app",
+        )
+
+        # Parse the output to extract test results
+        lines = result.stdout.strip().split("\n")
+        tests = []
+        for line in lines:
+            if "::" in line and (" PASSED" in line or " FAILED" in line or " ERROR" in line or " SKIPPED" in line):
+                parts = line.strip().split(" ")
+                status = parts[-1].lower()
+                name = " ".join(parts[:-1]).strip()
+                tests.append({"name": name, "status": status})
+
+        # Get summary line (last non-empty line like "85 passed, 3 skipped in 1.2s")
+        summary = ""
+        for line in reversed(lines):
+            if "passed" in line or "failed" in line:
+                summary = line.strip()
+                break
+
+        return {
+            "status": "passed" if result.returncode == 0 else "failed",
+            "summary": summary,
+            "total": len(tests),
+            "passed": sum(1 for t in tests if t["status"] == "passed"),
+            "failed": sum(1 for t in tests if t["status"] == "failed"),
+            "skipped": sum(1 for t in tests if t["status"] == "skipped"),
+            "tests": tests,
+            "output": result.stdout,
+            "errors": result.stderr if result.returncode != 0 else "",
+            "duration_seconds": None,
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "error",
+            "summary": "Timeout after 120 seconds",
+            "total": 0, "passed": 0, "failed": 0, "skipped": 0,
+            "tests": [], "output": "", "errors": "Timeout",
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "summary": str(e),
+            "total": 0, "passed": 0, "failed": 0, "skipped": 0,
+            "tests": [], "output": "", "errors": str(e),
+        }
+
+
 @router.get("/evaluations/config")
 async def get_evaluation_config(
     user: dict = Depends(require_admin),
