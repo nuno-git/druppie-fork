@@ -1,12 +1,12 @@
 profiles:
-  strict-opus:
+  default:
     model: glm-5
     provider: zai
 
-  fast-sonnet:
+  strict:
     model: glm-5
     provider: zai
 
-  cheap-haiku:
+  fast:
     model: glm-5
     provider: zai

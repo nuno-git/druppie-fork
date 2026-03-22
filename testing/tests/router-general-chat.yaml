@@ -6,7 +6,7 @@ test:
     message: "what agents do you have?"
     real_agents: [router]
   hitl: non-technical-pm
-  judge: fast-sonnet
+  judge: default
   evals:
     - eval: router-correct-intent
       expected:
