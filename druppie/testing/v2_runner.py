@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session as DbSession
 from druppie.db.models import (
     AgentRun,
     BenchmarkRun,
+    Message,
     Question,
     ToolCall,
     User,
@@ -259,11 +260,14 @@ class HITLSimulator:
     """Simulates human-in-the-loop answers using an LLM with a profile prompt.
 
     Much simpler than the full UserSimulator -- just calls an LLM with the
-    profile's system prompt and the agent's question.
+    profile's system prompt and the agent's question.  The simulator receives
+    the test's ``run.message`` so it knows what project is being discussed
+    and can give contextually relevant answers.
     """
 
-    def __init__(self, profile: HITLProfile):
+    def __init__(self, profile: HITLProfile, test_context: str = ""):
         self._profile = profile
+        self._test_context = test_context
         self._interaction_count = 0
 
     def answer(
@@ -294,16 +298,44 @@ class HITLSimulator:
             temperature=0.7,
         )
 
-        user_prompt = f"The AI agent asks you:\n\n{question_text}"
-        if choices:
-            user_prompt += "\n\nChoices:\n" + "\n".join(
-                f"  {i + 1}. {c.get('text', c)}" for i, c in enumerate(choices)
+        # Build system prompt: persona + test context
+        system_parts = [self._profile.prompt.strip()]
+        if self._test_context:
+            system_parts.append(
+                f"\nContext: The user originally requested: \"{self._test_context}\""
             )
-        user_prompt += "\n\nRespond with ONLY your answer, no explanation."
+        system_parts.append(
+            "\nWhen asked multiple choice questions, respond with ONLY the number of your choice."
+            "\nWhen asked open-ended questions, give a clear 1-2 sentence answer."
+        )
+        system_prompt = "\n".join(system_parts)
+
+        # Build user prompt with question and formatted choices
+        is_choice_question = bool(choices)
+        if is_choice_question:
+            # Format choices clearly with numbered options
+            choice_lines = []
+            for i, c in enumerate(choices):
+                text = c.get("text", c) if isinstance(c, dict) else str(c)
+                choice_lines.append(f"{i + 1}. {text}")
+
+            user_prompt = (
+                f"The agent asks you a multiple choice question:\n\n"
+                f"\"{question_text}\"\n\n"
+                f"Options:\n"
+                + "\n".join(choice_lines)
+                + "\n\nPlease respond with ONLY the number of your chosen option."
+            )
+        else:
+            user_prompt = (
+                f"The agent asks you:\n\n"
+                f"\"{question_text}\"\n\n"
+                f"Respond with ONLY your answer, no explanation."
+            )
 
         response = llm.chat(
             messages=[
-                {"role": "system", "content": self._profile.prompt},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ]
         )
@@ -552,16 +584,29 @@ class _BoundedOrchestrator:
                 break
 
             # Generate answer
-            answer = self._hitl_simulator.answer(
+            raw_answer = self._hitl_simulator.answer(
                 question_text=pending_question.question,
                 choices=pending_question.choices,
             )
 
+            # For multiple choice questions, parse the numeric answer into
+            # the actual choice text so the agent gets a meaningful answer
+            # (e.g. "Yes, but allow guests to browse" instead of just "2").
+            answer = raw_answer
+            if pending_question.choices and pending_question.question_type in (
+                "single_choice",
+                "multiple_choice",
+            ):
+                answer, _ = self._resolve_choice_answer(
+                    raw_answer, pending_question.choices
+                )
+
             # Resume the orchestrator with the answer
             logger.info(
-                "HITL resuming with answer: session=%s question=%s answer=%s",
+                "HITL resuming with answer: session=%s question=%s raw=%s resolved=%s",
                 session_id,
                 pending_question.id,
+                raw_answer[:80],
                 answer[:80],
             )
             await orchestrator.resume_after_answer(
@@ -571,6 +616,46 @@ class _BoundedOrchestrator:
             )
 
         return session_id
+
+    @staticmethod
+    def _resolve_choice_answer(
+        raw_answer: str,
+        choices: list[dict],
+    ) -> tuple[str, list[int] | None]:
+        """Convert a numeric LLM answer into the actual choice text.
+
+        The HITL simulator is instructed to respond with ONLY the number of
+        its chosen option (1-based).  This method extracts that number,
+        maps it to the 0-based index, and returns the choice text plus the
+        ``selected_indices`` list expected by ``QuestionRepository.update_answer``.
+
+        If the answer cannot be parsed as a valid choice number, the raw
+        answer is returned unchanged with no selected_indices.
+
+        Returns:
+            (answer_text, selected_indices)
+        """
+        text = raw_answer.strip().rstrip(".")
+        try:
+            # Handle answers like "2" or "2."
+            choice_num = int(text)
+        except ValueError:
+            # LLM returned something other than a number -- use as-is
+            return raw_answer, None
+
+        idx = choice_num - 1  # 1-based -> 0-based
+        if 0 <= idx < len(choices):
+            choice = choices[idx]
+            choice_text = choice.get("text", str(choice)) if isinstance(choice, dict) else str(choice)
+            return choice_text, [idx]
+
+        # Out-of-range number -- use raw answer
+        logger.warning(
+            "HITL choice index out of range: raw=%s num_choices=%d",
+            raw_answer,
+            len(choices),
+        )
+        return raw_answer, None
 
 
 # ---------------------------------------------------------------------------
@@ -635,8 +720,22 @@ class JudgeRunner:
     ) -> str:
         """Extract the execution trace for an agent from the DB.
 
-        Includes tool calls with their arguments and results.
+        Includes:
+        - The user's original message (from session messages)
+        - The agent's tool calls with arguments and results
+        - The agent's completion status
         """
+        # Get the user's original message from the session
+        user_message = (
+            db.query(Message)
+            .filter(
+                Message.session_id == session_id,
+                Message.role == "user",
+            )
+            .order_by(Message.sequence_number.asc())
+            .first()
+        )
+
         agent_run = (
             db.query(AgentRun)
             .filter(
@@ -656,7 +755,15 @@ class JudgeRunner:
             .all()
         )
 
-        lines = [f"Agent: {agent_id}", f"Status: {agent_run.status}", ""]
+        lines = []
+
+        # Include the user's original message so the judge knows what
+        # the agent was responding to
+        if user_message:
+            lines.append(f'User message: "{user_message.content}"')
+            lines.append("")
+
+        lines.extend([f"Agent: {agent_id} (status: {agent_run.status})", ""])
         lines.append("Tool calls:")
         for tc in tool_calls:
             args_str = json.dumps(tc.arguments) if tc.arguments else "{}"
@@ -665,10 +772,10 @@ class JudgeRunner:
             if tc.result:
                 # Truncate very long results
                 result_text = tc.result[:500]
-                result_part = f' -> "{result_text}"'
+                result_part = f" -> {status}"
             lines.append(
                 f"  [{tc.tool_call_index}] {tc.mcp_server}:{tc.tool_name}"
-                f"({args_str}) status={status}{result_part}"
+                f"({args_str}){result_part}"
             )
 
         return "\n".join(lines)
@@ -691,8 +798,11 @@ class JudgeRunner:
 
         prompt = f"""You are evaluating an AI agent's behavior.
 
-The agent's execution trace (tool calls and results):
+The following trace shows the user's original message and the agent's execution (tool calls and results):
+
+---
 {agent_trace}
+---
 
 Evaluate this check:
 {check}
@@ -861,6 +971,7 @@ class TestRunner:
                     user_id=user.id,
                     real_agents=test.run.real_agents,
                     hitl_profile=hitl_profile,
+                    test_context=test.run.message,
                 )
             except Exception as e:
                 execution_error = f"{type(e).__name__}: {e}"
@@ -1012,16 +1123,24 @@ class TestRunner:
         user_id: UUID,
         real_agents: list[str],
         hitl_profile: HITLProfile | None,
+        test_context: str = "",
     ) -> UUID:
         """Execute agents with real LLM calls via the orchestrator.
 
         Creates a bounded orchestrator that stops after the last real_agent
         completes and handles HITL automatically.
 
+        Args:
+            message: The user message to send to the orchestrator.
+            user_id: User UUID.
+            real_agents: List of agent IDs to actually run.
+            hitl_profile: HITL profile for simulating user answers.
+            test_context: The test's run.message for HITL context.
+
         Returns:
             The session_id of the newly created session.
         """
-        hitl_sim = HITLSimulator(hitl_profile) if hitl_profile else None
+        hitl_sim = HITLSimulator(hitl_profile, test_context=test_context) if hitl_profile else None
         bounded = _BoundedOrchestrator(
             db=self._db,
             user_id=user_id,
