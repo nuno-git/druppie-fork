@@ -814,10 +814,15 @@ class TestRunner:
         self._db.flush()
 
         # Resolve and seed sessions (world state)
+        # Use a unique namespace prefix so deterministic UUIDs don't collide
+        # across re-runs of the same test (fixture_uuid is based on metadata.id)
+        run_namespace = f"{test_user}"
         sessions = self._sessions.resolve_chain(test.sessions)
         for session_fixture in sessions:
             # Override the user for isolation
             session_fixture.metadata.user = test_user
+            # Make metadata.id unique per run to avoid duplicate key on re-run
+            session_fixture.metadata.id = f"{run_namespace}:{session_fixture.metadata.id}"
             seed_fixture(self._db, session_fixture, gitea_url=self._gitea_url)
         self._db.flush()
 
