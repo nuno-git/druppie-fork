@@ -368,120 +368,6 @@ def _build_agent_result_text(
     return "\n".join(lines)
 
 
-async def _retry_sandbox_with_next_model(
-    sandbox_mapping: SandboxSessionModel,
-    tool_call_id: UUID,
-    db: Session,
-) -> bool:
-    """Attempt to retry the sandbox with the next model in the chain.
-
-    Creates a new sandbox session on the control plane with the next model,
-    registers ownership, and sends the prompt. Returns True if retry was
-    initiated, False if no more models to try.
-    """
-    from druppie.opencode import create_and_start_sandbox, SandboxCreateError
-    from druppie.opencode.model_resolver import PROVIDER_API_KEYS
-
-    if not sandbox_mapping.model_chain or not sandbox_mapping.task_prompt:
-        return False
-
-    chain = json.loads(sandbox_mapping.model_chain)
-    next_index = (sandbox_mapping.model_chain_index or 0) + 1
-
-    # Skip providers whose API key is not configured
-    while next_index < len(chain):
-        entry = chain[next_index]
-        env_var = PROVIDER_API_KEYS.get(entry["provider"])
-        if env_var and os.getenv(env_var):
-            break
-        logger.warning(
-            "sandbox_retry_provider_unavailable",
-            provider=entry["provider"],
-            model=entry["model"],
-        )
-        next_index += 1
-
-    if next_index >= len(chain):
-        logger.info(
-            "sandbox_retry_chain_exhausted",
-            sandbox_session_id=sandbox_mapping.sandbox_session_id,
-            tried_models=next_index,
-            chain_length=len(chain),
-        )
-        return False
-
-    next_entry = chain[next_index]
-    agent = sandbox_mapping.agent_name or "druppie-builder"
-    # Use profile-based model name — the proxy handles real model resolution
-    profile_model = f"sandbox/{agent}"
-
-    logger.info(
-        "sandbox_retry_with_next_model",
-        sandbox_session_id=sandbox_mapping.sandbox_session_id,
-        profile=profile_model,
-        next_provider=next_entry["provider"],
-        chain_index=next_index,
-    )
-
-    # Reconstruct repo context from the stored repo_target (no agent-id guessing)
-    repo_target = sandbox_mapping.repo_target or "project"
-    from druppie.opencode.repo_context import resolve_repo_context
-    try:
-        repo_ctx = resolve_repo_context(repo_target, sandbox_mapping.session_id, db)
-    except ValueError:
-        logger.error("sandbox_retry_missing_druppie_repo_config")
-        return False
-
-    repo_owner = repo_ctx.repo_owner
-    repo_name = repo_ctx.repo_name
-    git_provider = repo_ctx.git_provider
-    context_repo_owner = repo_ctx.context_repo_owner
-    context_repo_name = repo_ctx.context_repo_name
-    context_git_provider = repo_ctx.context_git_provider
-
-    # Clean up old sandbox's Gitea service accounts before creating new one
-    await _cleanup_gitea_users(sandbox_mapping, context="retry_")
-
-    try:
-        result = await create_and_start_sandbox(
-            task_prompt=sandbox_mapping.task_prompt,
-            model=profile_model,
-            agent_name=agent,
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            user_id=sandbox_mapping.user_id,
-            session_id=sandbox_mapping.session_id,
-            model_chain=sandbox_mapping.model_chain,
-            model_chain_index=next_index,
-            title=f"Druppie sandbox (retry {next_index}): {sandbox_mapping.task_prompt[:80]}",
-            source="retry",
-            author_id=str(sandbox_mapping.user_id),
-            db=db,
-            git_provider=git_provider,
-            context_repo_owner=context_repo_owner,
-            context_repo_name=context_repo_name,
-            context_git_provider=context_git_provider,
-            repo_target=repo_target,
-        )
-
-        # Link the new sandbox to the same tool call
-        sandbox_repo = SandboxSessionRepository(db)
-        sandbox_repo.update_tool_call_id(result["sandbox_session_id"], tool_call_id)
-        db.flush()
-
-        logger.info(
-            "sandbox_retry_initiated",
-            old_sandbox=sandbox_mapping.sandbox_session_id,
-            new_sandbox=result["sandbox_session_id"],
-            profile=profile_model,
-            chain_index=next_index,
-        )
-        return True
-
-    except SandboxCreateError as e:
-        logger.error("sandbox_retry_error", error=str(e))
-        return False
-
 
 @router.post("/sandbox-sessions/{sandbox_session_id}/complete")
 async def sandbox_complete_webhook(
@@ -606,22 +492,6 @@ async def sandbox_complete_webhook(
 
     # Clean up the per-sandbox Gitea service accounts
     await _cleanup_gitea_users(sandbox_mapping)
-
-    # On failure, attempt retry with next model in chain
-    if not body.success:
-        retry_initiated = await _retry_sandbox_with_next_model(
-            sandbox_mapping, sandbox_mapping.tool_call_id, db
-        )
-        if retry_initiated:
-            logger.info(
-                "sandbox_webhook_retry_initiated",
-                sandbox_session_id=sandbox_session_id,
-                tool_call_id=str(sandbox_mapping.tool_call_id),
-            )
-            # Don't complete the tool call — keep it in WAITING_SANDBOX state
-            # The new sandbox will fire its own webhook when done
-            db.commit()
-            return {"status": "retrying", "sandbox_session_id": sandbox_session_id}
 
     # Build structured result text for the agent (readable by LLM)
     agent_result_text = _build_agent_result_text(
@@ -806,43 +676,9 @@ async def sandbox_watchdog_loop() -> None:
 
             for tc in stuck_tool_calls:
                 try:
-                    # Try retry with next model before failing
                     sandbox_mapping = sandbox_repo.get_by_tool_call_id(tc.id)
-                    if sandbox_mapping:
-                        retry_initiated = await _retry_sandbox_with_next_model(
-                            sandbox_mapping, tc.id, db
-                        )
-                        if retry_initiated:
-                            # Mark old sandbox as completed but keep tool call waiting
-                            sandbox_repo.mark_completed(sandbox_mapping.sandbox_session_id)
-                            await _cleanup_gitea_users(sandbox_mapping, context="watchdog_")
-                            # Reset sandbox_waiting_at so watchdog doesn't re-trigger immediately
-                            execution_repo.update_tool_call(
-                                tc.id,
-                                sandbox_waiting_at=datetime.now(timezone.utc),
-                            )
-                            db.commit()
-                            logger.info(
-                                "sandbox_watchdog_retry_initiated",
-                                tool_call_id=str(tc.id),
-                                old_sandbox=sandbox_mapping.sandbox_session_id,
-                            )
-                            # Best-effort cancel old sandbox
-                            try:
-                                control_plane_url = os.environ.get(
-                                    "SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787"
-                                ).rstrip("/")
-                                token = generate_control_plane_token(SANDBOX_API_SECRET)
-                                async with httpx.AsyncClient(timeout=10.0) as client:
-                                    await client.delete(
-                                        f"{control_plane_url}/sessions/{sandbox_mapping.sandbox_session_id}",
-                                        headers={"Authorization": f"Bearer {token}"},
-                                    )
-                            except Exception:
-                                pass
-                            continue  # Don't fail the tool call
 
-                    # No retry possible — fail as before
+                    # Fail the stuck tool call
                     execution_repo.update_tool_call(
                         tc.id,
                         status=ToolCallStatus.FAILED,
