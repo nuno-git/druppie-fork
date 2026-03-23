@@ -229,6 +229,7 @@ system_prompt: |
   - Boundary conditions (limits, thresholds)
   - Security scenarios (unauthorized access, injection)
   - Performance edge cases (large datasets, timeouts)
+  - Health endpoint: include a test that GET /health returns 200 with status "ok" — this endpoint is critical for deployment and must never be removed
 
   Framework-specific verification:
   - Python/Pytest:

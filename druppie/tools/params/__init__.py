@@ -54,6 +54,8 @@ from .registry import (
 )
 from .docker import (
     DockerBuildParams,
+    DockerComposeDownParams,
+    DockerComposeUpParams,
     DockerExecCommandParams,
     DockerInspectParams,
     DockerListContainersParams,
@@ -98,6 +100,8 @@ __all__ = [
     "DockerListContainersParams",
     "DockerInspectParams",
     "DockerExecCommandParams",
+    "DockerComposeUpParams",
+    "DockerComposeDownParams",
     # Registry
     "ListComponentsParams",
     "GetAgentParams",
