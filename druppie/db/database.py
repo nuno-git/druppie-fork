@@ -15,16 +15,17 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./druppie.db")
 
 # Create engine with explicit pool settings to prevent connection exhaustion
 # from concurrent background tasks (orchestrator, sandbox resume, watchdog).
-# pool_size=10 + max_overflow=20 = 30 max connections. Sufficient for ~25
-# concurrent sessions; increase if running more in parallel.
+# pool_size=20 + max_overflow=30 = 50 max connections. Each session uses
+# ~2 connections (orchestrator + webhook/resume), plus watchdog + API handlers.
+# PostgreSQL default max_connections=100, so 50 leaves headroom.
 _is_sqlite = "sqlite" in DATABASE_URL
 engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False} if _is_sqlite else {},
     pool_pre_ping=True,  # Enable connection health checks
     **({} if _is_sqlite else {
-        "pool_size": 10,
-        "max_overflow": 20,
+        "pool_size": 20,
+        "max_overflow": 30,
     }),
 )
 
