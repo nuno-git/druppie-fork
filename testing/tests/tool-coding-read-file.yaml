@@ -1,0 +1,15 @@
+test:
+  name: tool-coding-read-file
+  mode: replay
+  description: "coding:read_file returns file content"
+  sessions:
+    - weather-dashboard-completed
+  run:
+    message: "test"
+    real_agents: []
+  evaluate:
+    assertions:
+      - agent: architect
+        tool_called: coding:read_file
+        result_valid:
+          - not_empty

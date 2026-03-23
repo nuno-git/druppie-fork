@@ -359,3 +359,37 @@ export const getTestBatches = (page = 1, limit = 10, tag = null) => {
   if (tag) params.append('tag', tag)
   return request(`/api/evaluations/test-batches?${params.toString()}`)
 }
+
+// ============ Analytics (v3) ============
+
+export const getAnalyticsSummary = (days = 30) =>
+  request(`/api/evaluations/analytics/summary?days=${days}`)
+
+export const getAnalyticsTrends = (days = 30) =>
+  request(`/api/evaluations/analytics/trends?days=${days}`)
+
+export const getAnalyticsByAgent = (batchId = null) => {
+  const params = batchId ? `?batch_id=${batchId}` : ''
+  return request(`/api/evaluations/analytics/by-agent${params}`)
+}
+
+export const getAnalyticsByEval = (batchId = null) => {
+  const params = batchId ? `?batch_id=${batchId}` : ''
+  return request(`/api/evaluations/analytics/by-eval${params}`)
+}
+
+export const getAnalyticsByTool = (batchId = null) => {
+  const params = batchId ? `?batch_id=${batchId}` : ''
+  return request(`/api/evaluations/analytics/by-tool${params}`)
+}
+
+export const getAnalyticsByTest = (batchId = null) => {
+  const params = batchId ? `?batch_id=${batchId}` : ''
+  return request(`/api/evaluations/analytics/by-test${params}`)
+}
+
+export const getAnalyticsBatchDetail = (batchId) =>
+  request(`/api/evaluations/analytics/batch/${batchId}`)
+
+export const getTestRunAssertions = (testRunId) =>
+  request(`/api/evaluations/test-runs/${testRunId}/assertions`)

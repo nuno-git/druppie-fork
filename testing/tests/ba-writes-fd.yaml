@@ -1,0 +1,12 @@
+test:
+  name: ba-writes-fd
+  mode: live
+  description: "BA creates functional_design.md"
+  sessions: []
+  run:
+    message: "build a simple calculator app"
+    real_agents: [router, planner, business_analyst]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: ba-writes-fd

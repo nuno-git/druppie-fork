@@ -1,0 +1,12 @@
+test:
+  name: ba-gathers-requirements
+  mode: live
+  description: "BA asks clarifying questions via HITL"
+  sessions: []
+  run:
+    message: "build a recipe sharing app"
+    real_agents: [router, planner, business_analyst]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: ba-asks-questions
