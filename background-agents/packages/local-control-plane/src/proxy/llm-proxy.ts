@@ -29,7 +29,7 @@ const CONSECUTIVE_ERROR_THRESHOLD = 3;
 
 /** Per-provider retry config: retry same provider before failover */
 const SAME_PROVIDER_MAX_RETRIES = 3;
-const SAME_PROVIDER_BASE_DELAY_MS = 1000; // 1s, 2s, 4s exponential backoff
+const SAME_PROVIDER_DELAYS_MS = [10_000, 30_000, 120_000]; // 10s, 30s, 2min
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -528,7 +528,7 @@ async function handleRequestWithFailover(
       let succeeded = false;
       for (let retry = 0; retry < SAME_PROVIDER_MAX_RETRIES; retry++) {
         if (retry > 0) {
-          const delay = SAME_PROVIDER_BASE_DELAY_MS * Math.pow(2, retry - 1);
+          const delay = SAME_PROVIDER_DELAYS_MS[retry - 1] ?? 120_000;
           console.log(
             `[llm-proxy] ${attempt.provider} retry ${retry}/${SAME_PROVIDER_MAX_RETRIES - 1} after ${delay}ms`
           );
@@ -570,7 +570,7 @@ async function handleRequestWithFailover(
       let lastResult: BufferedResult | null = null;
       for (let retry = 0; retry < SAME_PROVIDER_MAX_RETRIES; retry++) {
         if (retry > 0) {
-          const delay = SAME_PROVIDER_BASE_DELAY_MS * Math.pow(2, retry - 1);
+          const delay = SAME_PROVIDER_DELAYS_MS[retry - 1] ?? 120_000;
           console.log(
             `[llm-proxy] ${attempt.provider} retry ${retry}/${SAME_PROVIDER_MAX_RETRIES - 1} after ${delay}ms`
           );
