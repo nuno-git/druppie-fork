@@ -1,0 +1,15 @@
+test:
+  name: router-update-nonexistent
+  mode: live
+  description: "Router falls back to create_project when project not found"
+  sessions:
+    - weather-dashboard-completed
+  run:
+    message: "update the cryptocurrency tracker app"
+    real_agents: [router]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: router-correct-intent
+      expected:
+        intent: create_project

@@ -1,0 +1,12 @@
+test:
+  name: edge-tool-failure
+  mode: live
+  description: "Agent handles tool call failure gracefully"
+  sessions: []
+  run:
+    message: "what agents do you have available?"
+    real_agents: [router]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: agent-uses-done

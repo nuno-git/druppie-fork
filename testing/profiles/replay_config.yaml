@@ -1,0 +1,13 @@
+replay:
+  blocklist:
+    - coding:execute_coding_task
+    - docker:build_image
+    - docker:deploy_container
+
+  default_results:
+    "coding:execute_coding_task": "Task completed successfully. Files created as specified."
+    "docker:build_image": '{"image_id": "sha256:mock123", "tag": "latest"}'
+    "docker:deploy_container": '{"container_id": "mock-container-1", "url": "http://localhost:3000"}'
+
+  timeout: 30
+  on_error: mock

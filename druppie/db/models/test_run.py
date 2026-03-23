@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -40,11 +40,25 @@ class TestRun(Base):
     batch_id = Column(String(36), nullable=True, index=True)  # Groups tests from same Run click
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
+    # v3 fields
+    agent_id = Column(String(100), nullable=True)  # Primary agent tested
+    mode = Column(String(20), nullable=True)  # record_only, replay, live
+
     # Relationships
     tags = relationship(
         "TestRunTag",
         back_populates="test_run",
         cascade="all, delete-orphan",
+    )
+    assertion_results = relationship(
+        "TestAssertionResult",
+        back_populates="test_run",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("idx_test_runs_created_at", "created_at"),
+        Index("idx_test_runs_agent_id", "agent_id"),
     )
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,5 +79,8 @@ class TestRun(Base):
             "judge_checks_passed": self.judge_checks_passed,
             "status": self.status,
             "duration_ms": self.duration_ms,
+            "agent_id": self.agent_id,
+            "mode": self.mode,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "assertion_results": [r.to_dict() for r in self.assertion_results] if self.assertion_results else [],
         }

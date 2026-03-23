@@ -22,6 +22,10 @@ class EvalAssertion(BaseModel):
     agent: str
     completed: bool | None = None
     tool_called: str | None = None  # e.g. "builtin:set_intent"
+    result_valid: list[str] | None = None  # list of validator names
+    status: str | None = None  # expected tool call status
+    error_contains: str | None = None  # expected error message substring
+    error_matches: str | None = None  # expected error message regex
     # No arguments here -- tests fill in expected values
 
 
@@ -80,6 +84,27 @@ class JudgeProfilesFile(BaseModel):
 # --- Test Schema ---
 
 
+class SeedSessionRef(BaseModel):
+    """Reference to a session with explicit seed mode."""
+
+    __test__ = False
+    session: str
+    mode: str = "replay"
+
+
+class VerifyCheck(BaseModel):
+    """A side-effect verification check."""
+
+    __test__ = False
+    file_exists: str | None = None
+    file_not_empty: str | None = None
+    file_contains: dict | None = None  # {path, content}
+    file_matches: dict | None = None  # {path, pattern}
+    mermaid_valid: str | None = None
+    git_branch_exists: str | None = None
+    gitea_repo_exists: bool | None = None
+
+
 class TestEvalRef(BaseModel):
     """Reference to an eval with expected values for this test."""
 
@@ -103,6 +128,7 @@ class TestInlineEvaluate(BaseModel):
     __test__ = False  # Not a pytest test class
     assertions: list[EvalAssertion] = Field(default_factory=list)
     judge: TestInlineJudge | None = None
+    verify: list[VerifyCheck] | None = None
 
 
 class TestRun(BaseModel):
@@ -120,8 +146,14 @@ class TestDefinition(BaseModel):
     name: str
     description: str = ""
 
+    # Tag/category for UI filtering
+    mode: str = "record_only"
+
     # World: sessions to seed
     sessions: list[str] = Field(default_factory=list)
+
+    # Sessions with explicit mode
+    seed_sessions: list[SeedSessionRef] = Field(default_factory=list)
 
     # What to run
     run: TestRun

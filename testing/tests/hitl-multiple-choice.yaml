@@ -1,0 +1,14 @@
+test:
+  name: hitl-multiple-choice
+  mode: live
+  description: "Agent asks multiple-choice question, simulator picks option"
+  sessions: []
+  run:
+    message: "build me an app"
+    real_agents: [router]
+  hitl: non-technical-pm
+  judge: default
+  evaluate:
+    judge:
+      checks:
+        - "If the router asks a multiple-choice question, the answer should be one of the provided options"

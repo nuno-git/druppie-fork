@@ -1,0 +1,16 @@
+test:
+  name: architect-design-in-dutch
+  mode: live
+  description: "technical_design.md is written in Dutch"
+  sessions: []
+  run:
+    message: "build a meeting room booking system"
+    real_agents: [router, planner, business_analyst, planner, architect]
+  hitl: dutch-water-authority
+  judge: default
+  evals:
+    - eval: architect-produces-design
+  evaluate:
+    judge:
+      checks:
+        - "The technical_design.md MUST be written in Dutch (Nederlands)"

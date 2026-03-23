@@ -715,3 +715,347 @@ async def get_evaluation_config(
         "judge_model": config.judge_model,
         "agent_evaluations": config.agent_evaluations,
     }
+
+
+# =============================================================================
+# ANALYTICS ENDPOINTS (v3)
+# =============================================================================
+
+
+@router.get("/evaluations/analytics/summary")
+async def get_analytics_summary(
+    days: int = Query(default=30, ge=1, le=365),
+    user: dict = Depends(require_admin),
+    service: EvaluationService = Depends(get_evaluation_service),
+):
+    """Global analytics summary: totals, pass rate, avg duration."""
+    from datetime import timedelta
+
+    from druppie.db.models import TestRun as TestRunModel
+
+    db = service._repo._db
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    runs = (
+        db.query(TestRunModel)
+        .filter(TestRunModel.created_at >= cutoff)
+        .all()
+    )
+    total = len(runs)
+    passed = sum(1 for r in runs if r.status == "passed")
+    failed = total - passed
+    durations = [r.duration_ms for r in runs if r.duration_ms is not None]
+    avg_duration = int(sum(durations) / len(durations)) if durations else 0
+    return {
+        "total_runs": total,
+        "total_passed": passed,
+        "total_failed": failed,
+        "pass_rate": round(passed / total * 100, 1) if total else 0,
+        "avg_duration_ms": avg_duration,
+    }
+
+
+@router.get("/evaluations/analytics/trends")
+async def get_analytics_trends(
+    days: int = Query(default=30, ge=1, le=365),
+    user: dict = Depends(require_admin),
+    service: EvaluationService = Depends(get_evaluation_service),
+):
+    """Pass rate trends over time, grouped by day."""
+    from collections import defaultdict
+    from datetime import timedelta
+
+    from druppie.db.models import TestRun as TestRunModel
+
+    db = service._repo._db
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    runs = (
+        db.query(TestRunModel)
+        .filter(TestRunModel.created_at >= cutoff)
+        .order_by(TestRunModel.created_at)
+        .all()
+    )
+
+    by_day: dict[str, dict] = defaultdict(lambda: {"total": 0, "passed": 0, "failed": 0})
+    for r in runs:
+        day = r.created_at.strftime("%Y-%m-%d") if r.created_at else "unknown"
+        by_day[day]["total"] += 1
+        if r.status == "passed":
+            by_day[day]["passed"] += 1
+        else:
+            by_day[day]["failed"] += 1
+
+    return [
+        {
+            "date": day,
+            "total": data["total"],
+            "passed": data["passed"],
+            "failed": data["failed"],
+            "pass_rate": round(data["passed"] / data["total"] * 100, 1) if data["total"] else 0,
+        }
+        for day, data in sorted(by_day.items())
+    ]
+
+
+@router.get("/evaluations/analytics/by-agent")
+async def get_analytics_by_agent(
+    batch_id: str | None = Query(default=None),
+    user: dict = Depends(require_admin),
+    service: EvaluationService = Depends(get_evaluation_service),
+):
+    """Results grouped by agent."""
+    from collections import defaultdict
+
+    from druppie.db.models import TestAssertionResult, TestRun as TestRunModel
+
+    db = service._repo._db
+    query = db.query(TestAssertionResult)
+    if batch_id:
+        query = query.join(TestRunModel).filter(TestRunModel.batch_id == batch_id)
+
+    results = query.filter(TestAssertionResult.agent_id.isnot(None)).all()
+
+    by_agent: dict[str, dict] = defaultdict(lambda: {"total": 0, "passed": 0, "failed": 0})
+    for r in results:
+        agent = r.agent_id or "unknown"
+        by_agent[agent]["total"] += 1
+        if r.passed:
+            by_agent[agent]["passed"] += 1
+        else:
+            by_agent[agent]["failed"] += 1
+
+    return [
+        {
+            "agent": agent,
+            "total": data["total"],
+            "passed": data["passed"],
+            "failed": data["failed"],
+            "pass_rate": round(data["passed"] / data["total"] * 100, 1) if data["total"] else 0,
+        }
+        for agent, data in sorted(by_agent.items())
+    ]
+
+
+@router.get("/evaluations/analytics/by-eval")
+async def get_analytics_by_eval(
+    batch_id: str | None = Query(default=None),
+    user: dict = Depends(require_admin),
+    service: EvaluationService = Depends(get_evaluation_service),
+):
+    """Results grouped by eval name."""
+    from collections import defaultdict
+
+    from druppie.db.models import TestAssertionResult, TestRun as TestRunModel
+
+    db = service._repo._db
+    query = db.query(TestAssertionResult)
+    if batch_id:
+        query = query.join(TestRunModel).filter(TestRunModel.batch_id == batch_id)
+
+    results = query.filter(TestAssertionResult.eval_name.isnot(None)).all()
+
+    by_eval: dict[str, dict] = defaultdict(lambda: {"total": 0, "passed": 0, "failed": 0})
+    for r in results:
+        name = r.eval_name or "unknown"
+        by_eval[name]["total"] += 1
+        if r.passed:
+            by_eval[name]["passed"] += 1
+        else:
+            by_eval[name]["failed"] += 1
+
+    return [
+        {
+            "eval_name": name,
+            "total": data["total"],
+            "passed": data["passed"],
+            "failed": data["failed"],
+            "pass_rate": round(data["passed"] / data["total"] * 100, 1) if data["total"] else 0,
+        }
+        for name, data in sorted(by_eval.items())
+    ]
+
+
+@router.get("/evaluations/analytics/by-tool")
+async def get_analytics_by_tool(
+    batch_id: str | None = Query(default=None),
+    user: dict = Depends(require_admin),
+    service: EvaluationService = Depends(get_evaluation_service),
+):
+    """Results grouped by tool name."""
+    from collections import defaultdict
+
+    from druppie.db.models import TestAssertionResult, TestRun as TestRunModel
+
+    db = service._repo._db
+    query = db.query(TestAssertionResult)
+    if batch_id:
+        query = query.join(TestRunModel).filter(TestRunModel.batch_id == batch_id)
+
+    results = query.filter(TestAssertionResult.tool_name.isnot(None)).all()
+
+    by_tool: dict[str, dict] = defaultdict(lambda: {"total": 0, "passed": 0, "failed": 0})
+    for r in results:
+        tool = r.tool_name or "unknown"
+        by_tool[tool]["total"] += 1
+        if r.passed:
+            by_tool[tool]["passed"] += 1
+        else:
+            by_tool[tool]["failed"] += 1
+
+    return [
+        {
+            "tool": tool,
+            "total": data["total"],
+            "passed": data["passed"],
+            "failed": data["failed"],
+            "pass_rate": round(data["passed"] / data["total"] * 100, 1) if data["total"] else 0,
+        }
+        for tool, data in sorted(by_tool.items())
+    ]
+
+
+@router.get("/evaluations/analytics/by-test")
+async def get_analytics_by_test(
+    batch_id: str | None = Query(default=None),
+    user: dict = Depends(require_admin),
+    service: EvaluationService = Depends(get_evaluation_service),
+):
+    """Results grouped by test name."""
+    from collections import defaultdict
+
+    from druppie.db.models import TestRun as TestRunModel
+
+    db = service._repo._db
+    query = db.query(TestRunModel)
+    if batch_id:
+        query = query.filter(TestRunModel.batch_id == batch_id)
+
+    runs = query.all()
+
+    by_test: dict[str, dict] = defaultdict(
+        lambda: {"total": 0, "passed": 0, "failed": 0, "durations": []}
+    )
+    for r in runs:
+        name = r.test_name
+        by_test[name]["total"] += 1
+        if r.status == "passed":
+            by_test[name]["passed"] += 1
+        else:
+            by_test[name]["failed"] += 1
+        if r.duration_ms is not None:
+            by_test[name]["durations"].append(r.duration_ms)
+
+    return [
+        {
+            "test_name": name,
+            "total": data["total"],
+            "passed": data["passed"],
+            "failed": data["failed"],
+            "pass_rate": round(data["passed"] / data["total"] * 100, 1) if data["total"] else 0,
+            "avg_duration_ms": int(sum(data["durations"]) / len(data["durations"])) if data["durations"] else 0,
+        }
+        for name, data in sorted(by_test.items())
+    ]
+
+
+@router.get("/evaluations/analytics/batch/{batch_id}")
+async def get_analytics_batch_detail(
+    batch_id: str,
+    user: dict = Depends(require_admin),
+    service: EvaluationService = Depends(get_evaluation_service),
+):
+    """Detailed analytics for a single batch."""
+    from collections import defaultdict
+
+    from druppie.db.models import TestAssertionResult, TestRun as TestRunModel
+
+    db = service._repo._db
+    runs = (
+        db.query(TestRunModel)
+        .filter(TestRunModel.batch_id == batch_id)
+        .all()
+    )
+    if not runs:
+        return {"batch_id": batch_id, "total": 0, "passed": 0, "failed": 0}
+
+    total = len(runs)
+    passed = sum(1 for r in runs if r.status == "passed")
+    failed = total - passed
+    durations = [r.duration_ms for r in runs if r.duration_ms is not None]
+    total_duration = sum(durations) if durations else 0
+    created_at = min(r.created_at for r in runs if r.created_at) if runs else None
+
+    # Per-agent breakdown from assertion results
+    run_ids = [r.id for r in runs]
+    assertion_results = (
+        db.query(TestAssertionResult)
+        .filter(TestAssertionResult.test_run_id.in_(run_ids))
+        .all()
+    )
+
+    by_agent: dict[str, dict] = defaultdict(lambda: {"total": 0, "passed": 0, "failed": 0})
+    by_eval: dict[str, dict] = defaultdict(lambda: {"total": 0, "passed": 0, "failed": 0})
+    for ar in assertion_results:
+        if ar.agent_id:
+            by_agent[ar.agent_id]["total"] += 1
+            if ar.passed:
+                by_agent[ar.agent_id]["passed"] += 1
+            else:
+                by_agent[ar.agent_id]["failed"] += 1
+        if ar.eval_name:
+            by_eval[ar.eval_name]["total"] += 1
+            if ar.passed:
+                by_eval[ar.eval_name]["passed"] += 1
+            else:
+                by_eval[ar.eval_name]["failed"] += 1
+
+    return {
+        "batch_id": batch_id,
+        "created_at": created_at.isoformat() if created_at else None,
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "pass_rate": round(passed / total * 100, 1) if total else 0,
+        "duration_ms": total_duration,
+        "by_agent": [
+            {"agent": a, **d, "pass_rate": round(d["passed"] / d["total"] * 100, 1) if d["total"] else 0}
+            for a, d in sorted(by_agent.items())
+        ],
+        "by_eval": [
+            {"eval_name": e, **d, "pass_rate": round(d["passed"] / d["total"] * 100, 1) if d["total"] else 0}
+            for e, d in sorted(by_eval.items())
+        ],
+        "by_test": [
+            {
+                "test_name": r.test_name,
+                "status": r.status,
+                "duration_ms": r.duration_ms,
+                "hitl_profile": r.hitl_profile,
+                "judge_profile": r.judge_profile,
+                "assertions_total": r.assertions_total,
+                "assertions_passed": r.assertions_passed,
+                "judge_checks_total": r.judge_checks_total,
+                "judge_checks_passed": r.judge_checks_passed,
+                "assertion_results": [ar.to_dict() for ar in assertion_results if ar.test_run_id == r.id],
+            }
+            for r in runs
+        ],
+    }
+
+
+@router.get("/evaluations/test-runs/{test_run_id}/assertions")
+async def get_test_run_assertions(
+    test_run_id: UUID,
+    user: dict = Depends(require_admin),
+    service: EvaluationService = Depends(get_evaluation_service),
+):
+    """Get detailed assertion results for a test run."""
+    from druppie.db.models import TestAssertionResult
+
+    db = service._repo._db
+    results = (
+        db.query(TestAssertionResult)
+        .filter(TestAssertionResult.test_run_id == test_run_id)
+        .order_by(TestAssertionResult.created_at)
+        .all()
+    )
+    return [r.to_dict() for r in results]
