@@ -65,7 +65,6 @@ class ToolResponse(BaseModel):
     description: str
     category: str
     requires_approval: bool
-    danger_level: str
     required_roles: list[str] = []
 
 
@@ -153,7 +152,6 @@ async def list_mcps(
                     description=tool.get("description", ""),
                     category=server_id,
                     requires_approval=tool.get("requires_approval", False),
-                    danger_level=tool.get("danger_level", "low"),
                     required_roles=required_roles,
                 )
             )
@@ -273,7 +271,6 @@ async def get_tool(
         "category": server_id,
         "requires_approval": tool_config.get("requires_approval", False),
         "required_roles": required_roles,
-        "danger_level": tool_config.get("danger_level", "low"),
         "permission": {
             "allowed": True,  # All tools are visible, but may require approval
             "can_approve": can_approve,
@@ -309,7 +306,6 @@ async def get_mcp_server(
             "name": tool["name"],
             "description": tool.get("description", ""),
             "requires_approval": tool.get("requires_approval", False),
-            "danger_level": tool.get("danger_level", "low"),
             "required_roles": required_roles,
         })
 

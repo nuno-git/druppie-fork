@@ -7,10 +7,12 @@ RUN apt-get update && \
     apt-get install -y curl && \
     rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY module-filesearch/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Copy shared router factory and module code
+COPY module_router.py .
+COPY module-filesearch/ .
 
 # Create default dataset directory
 RUN mkdir -p /dataset

@@ -553,11 +553,13 @@ gitea-db            PostgreSQL 15     -       Gitea database (internal)
 gitea               Gitea 1.21        :3100   Git hosting
 druppie-backend     FastAPI           :8100   Backend API
 druppie-frontend    Vite/React        :5273   Frontend
-mcp-coding          FastMCP           :9001   File/git operations
-mcp-docker          FastMCP           :9002   Docker operations
-mcp-filesearch      FastMCP           :9004   File search
-mcp-web             FastMCP           :9005   Web browsing
-mcp-archimate       FastMCP           :9006   ArchiMate models
+module-coding       FastMCP           :9001   File/git operations
+module-docker       FastMCP           :9002   Docker operations
+module-hitl         FastMCP           :9003   Human-in-the-loop
+module-filesearch   FastMCP           :9004   File search
+module-web          FastMCP           :9005   Web browsing
+module-archimate    FastMCP           :9006   ArchiMate models
+module-registry     FastMCP           :9007   Tool registry
 adminer             Adminer           :8081   DB admin UI
 sandbox-control-plane  Node.js        :8787   Sandbox session/event management
 sandbox-manager     Node.js           :8000   Sandbox container lifecycle
@@ -566,7 +568,7 @@ sandbox-image-builder  Docker         -       Builds open-inspect-sandbox:latest
 
 ### 7.2 Network
 
-All containers share a single bridge network: `druppie-new-network`. Internal communication uses container hostnames (e.g., `druppie-db`, `keycloak`, `gitea`, `mcp-coding`).
+All containers share a single bridge network: `druppie-new-network`. Internal communication uses container hostnames (e.g., `druppie-db`, `keycloak`, `gitea`, `module-coding`).
 
 ### 7.3 Volumes
 
@@ -590,7 +592,7 @@ druppie-db  <-- keycloak (via keycloak-db)
             <-- gitea (via gitea-db)
             <-- druppie-backend
                    <-- druppie-frontend
-                   <-- mcp-coding (depends on gitea)
+                   <-- module-coding (depends on gitea)
 ```
 
 ### 7.5 Development Setup

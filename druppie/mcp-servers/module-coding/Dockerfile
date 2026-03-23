@@ -14,11 +14,12 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 RUN npm install -g @mermaid-js/mermaid-cli
 
 # Install dependencies
-COPY requirements.txt .
+COPY module-coding/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy server code
-COPY . .
+# Copy shared router factory and module code
+COPY module_router.py .
+COPY module-coding/ .
 
 # Create workspace directory
 RUN mkdir -p /workspaces

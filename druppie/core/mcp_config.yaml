@@ -5,7 +5,7 @@
 # - This file defines GLOBAL DEFAULTS for all agents
 # - Agents can OVERRIDE these defaults in their YAML files via approval_overrides
 # - Use "required_role" (singular string) instead of "required_roles" (array)
-# - No danger_level - keeping it simple
+# - danger_level has been removed (was never used)
 #
 # Example override in agent YAML:
 #   approval_overrides:
@@ -150,44 +150,12 @@ mcps:
         required_role: developer
 
       - name: compose_up
-        description: "Deploy application with docker compose (app + database)"
         requires_approval: true
         required_role: developer
-        parameters:
-          type: object
-          properties:
-            repo_name:
-              type: string
-              description: "Gitea repository name"
-            repo_owner:
-              type: string
-              description: "Gitea repository owner"
-            git_url:
-              type: string
-              description: "Full git URL (alternative to repo_name/repo_owner)"
-            branch:
-              type: string
-              description: "Git branch to deploy (default: main)"
-            compose_project_name:
-              type: string
-              description: "Docker Compose project name (auto-derived if omitted)"
-          required: []
 
       - name: compose_down
-        description: "Stop and remove a docker compose deployment"
         requires_approval: true
         required_role: developer
-        parameters:
-          type: object
-          properties:
-            compose_project_name:
-              type: string
-              description: "Docker Compose project name to stop"
-            remove_volumes:
-              type: boolean
-              description: "Remove associated volumes (default: true)"
-          required:
-            - compose_project_name
 
   # NOTE: HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question) are
   # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
