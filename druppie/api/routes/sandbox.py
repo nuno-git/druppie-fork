@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -187,6 +188,16 @@ def _extract_changed_files(events: list[dict]) -> list[dict]:
     return files
 
 
+def _strip_think_tags(text: str) -> str:
+    """Strip <think>...</think> reasoning blocks from model output.
+
+    Some models (Qwen3, DeepSeek R1) emit chain-of-thought reasoning
+    inside <think> tags. This is useful for the model but should not
+    leak into agent results or user-facing output.
+    """
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
 def _extract_agent_output(events: list[dict]) -> str:
     """Extract agent text output from token events, sorted chronologically."""
     parts = []
@@ -202,7 +213,8 @@ def _extract_agent_output(events: list[dict]) -> str:
                 ts = event.get("createdAt") or event.get("created_at") or ""
                 parts.append((ts, content))
     parts.sort(key=lambda x: x[0])
-    return "\n".join(c for _, c in parts).strip()
+    raw = "\n".join(c for _, c in parts).strip()
+    return _strip_think_tags(raw)
 
 
 def _extract_git_operations(events: list[dict]) -> dict:
