@@ -15,6 +15,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./druppie.db")
 
 # Create engine with explicit pool settings to prevent connection exhaustion
 # from concurrent background tasks (orchestrator, sandbox resume, watchdog).
+# pool_size=10 + max_overflow=20 = 30 max connections. Sufficient for ~25
+# concurrent sessions; increase if running more in parallel.
 _is_sqlite = "sqlite" in DATABASE_URL
 engine = create_engine(
     DATABASE_URL,
@@ -23,7 +25,6 @@ engine = create_engine(
     **({} if _is_sqlite else {
         "pool_size": 10,
         "max_overflow": 20,
-        "pool_recycle": 1800,  # Recycle connections after 30 minutes
     }),
 )
 
