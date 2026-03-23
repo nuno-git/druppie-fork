@@ -166,10 +166,13 @@ export const checkMCPPermission = (tool) =>
 export const getQuestions = (sessionId = null) =>
   request(`/api/questions${sessionId ? `?session_id=${sessionId}` : ''}`)
 export const getQuestion = (questionId) => request(`/api/questions/${questionId}`)
-export const answerQuestion = (questionId, answer) =>
+export const answerQuestion = (questionId, answer, selectedChoices = null) =>
   request(`/api/questions/${questionId}/answer`, {
     method: 'POST',
-    body: JSON.stringify({ answer }),
+    body: JSON.stringify({
+      answer,
+      ...(selectedChoices != null && { selected_choices: selectedChoices }),
+    }),
   })
 export const cancelQuestion = (questionId) =>
   request(`/api/questions/${questionId}/cancel`, { method: 'POST' })

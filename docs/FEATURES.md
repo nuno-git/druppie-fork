@@ -8,7 +8,7 @@ Druppie is a governance platform where users describe what they want built in na
 
 Every action an agent takes goes through a **tool call** -- either an **MCP tool** provided by an external server, or a **builtin tool** provided by the platform itself.
 
-**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Additional builtins are restricted to specific agents: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), `test_report` (Test Executor only -- structured test iteration reporting), `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access), and `execute_coding_task` (Developer/Tester -- delegates coding to an isolated sandbox).
+**Builtin tools** are provided by the platform to every agent: `done` (signal completion and pass a summary to the next agent), `hitl_ask_question` (pause and ask the user a free-form question), and `hitl_ask_multiple_choice_question` (pause and present choices). Additional builtins are restricted to specific agents: `set_intent` (Router only -- declares the session intent and creates the project/repo), `make_plan` (Planner only -- creates an ordered list of agent steps to execute), `test_report` (Test Executor only -- structured test iteration reporting), `invoke_skill` (agents with skills configured -- invokes a predefined skill and gains temporary tool access), and `execute_coding_task` (Developer/Update Core Builder -- delegates coding to an isolated sandbox).
 
 **MCP tools** are provided by external MCP servers over HTTP (e.g., `read_file`, `write_file`, `docker:build`). Which tools each agent can call is configured in its YAML definition.
 
@@ -18,7 +18,7 @@ Because all actions are tool calls, every action can be logged, inspected, and g
 
 ## Agent Pipeline
 
-Twelve agents are defined. Eleven are functional; one is a stub.
+Thirteen agents are defined. Twelve are functional; one is a stub.
 
 ### Functional Agents
 
@@ -28,11 +28,12 @@ Twelve agents are defined. Eleven are functional; one is a stub.
 | **Router** | Classifies user intent | Determines whether the request is `create_project`, `update_project`, or `general_chat`. Can ask clarifying questions. Has web search access. |
 | **Planner** | Orchestrates the pipeline | Creates execution plans as ordered sequences of agent steps. Re-evaluates after each major phase. Manages design loops (BA/Architect) and execution loops (Developer/Deployer). Max 15 iterations. |
 | **Business Analyst** | Gathers requirements | Engages the user in structured dialogue using a funnel approach (max 1 question at a time, almost always multiple choice). Produces `functional_design.md` via the `make_design` tool with built-in Mermaid validation. Considers security and compliance by design. Handles revision cycles when the Architect sends feedback. Supports `NO_FD_CHANGE` pass-through for technical fixes. Max 50 iterations. |
-| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Three outcomes: APPROVE (writes `technical_design.md` via `make_design`), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
+| **Architect** | Designs system architecture | Reviews the functional design against NORA standards and water authority architecture principles. Four outcomes: APPROVE (writes `technical_design.md` via `make_design`), APPROVE_CORE_UPDATE (same, but signals the project modifies Druppie's own codebase), FEEDBACK (sends specific items back to BA), or REJECT (communicates directly with user). Has access to ArchiMate models via MCP. Can create Mermaid diagrams with built-in syntax validation. Applies Security by Design and Compliance by Design. Max 50 iterations. |
 | **Builder Planner** | Creates implementation plans | Reads `functional_design.md` and `technical_design.md`, writes `builder_plan.md` with code standards, test framework, test strategy, solution strategy, and change approach. Guides downstream test_builder and builder agents. Max 30 iterations. |
 | **Test Builder** | Generates tests (TDD Red Phase) | Writes comprehensive test suites based on functional and technical design documents and builder_plan.md. Sets up test frameworks and dependencies. Does NOT run tests. Max 30 iterations. |
 | **Builder** | Implements code (TDD Green Phase) | Reads tests written by test_builder and implements source code to pass them. Follows TDD methodology. Max 100 iterations. |
 | **Test Executor** | Runs and fixes tests iteratively | Executes tests, diagnoses failures, applies fixes, and re-runs in an internal loop. Reports structured PASS/FAIL results via `test_report` builtin tool. Max 100 iterations. |
+| **Update Core Builder** | Implements Druppie core changes | Delegates coding to a dual-repo sandbox via `execute_coding_task` with the `druppie-core-builder` sandbox agent. The sandbox clones Druppie's GitHub repo into `/workspace/core/` and the project repo (with FD/TD) into `/workspace/project/`. Creates a PR targeting `colab-dev` on GitHub. The `done()` tool requires approval from a user with the `developer` role — the reviewer merges the PR on GitHub before approving. Max 100 iterations. |
 | **Developer** | Writes and modifies code | Implements features in git-managed workspaces. Handles branch creation, file writes, commits, pull requests, and merges. Can delegate to sandbox agents via `execute_coding_task`. For `create_project`, works on main; for `update_project`, works on feature branches. Max 100 iterations. |
 | **Deployer** | Builds and deploys via Docker | Clones from git, builds Docker images, runs containers with auto-assigned ports (9100-9199). Verifies health via container logs. For preview deploys, asks the user for feedback before finalizing. Max 100 iterations. |
 | **Reviewer** | Code review | Reviews code for quality, security, and best practices. |
@@ -97,6 +98,36 @@ An existing project is modified via feature branches:
     - If approved: Developer merges PR, Deployer does final deploy from main
     - If changes requested: loops back to Developer on the feature branch
 12. **Summarizer** creates the final summary
+
+### Core Update (Druppie self-improvement)
+
+When a project involves modifying Druppie's own codebase, the Architect signals `DESIGN_APPROVED_CORE_UPDATE` instead of `DESIGN_APPROVED`. The Planner then routes to the `update_core_builder` agent, which creates a PR on GitHub for human review. After the core changes are merged, the Architect runs again to design the actual project, and the normal pipeline continues.
+
+The session intent stays `create_project` or `update_project` throughout — there is no separate `update_core` intent. The core update is a detour within the normal flow, not a separate workflow.
+
+**Pipeline:**
+
+1. **Router** classifies intent as `create_project` (a project record and Gitea repo are created as usual)
+2. **Business Analyst** gathers requirements, writes `functional_design.md`
+3. **Architect** (run 1) reviews the design, writes `technical_design.md`, detects the project modifies Druppie's codebase, signals `DESIGN_APPROVED_CORE_UPDATE`
+4. **Update Core Builder** delegates to a dual-repo sandbox via `execute_coding_task`:
+   - Sandbox clones Druppie's GitHub repo into `/workspace/core/` and the project repo (with FD/TD) into `/workspace/project/`
+   - The `druppie-core-builder` sandbox agent reads design docs from `/workspace/project/`, implements changes in `/workspace/core/`
+   - Creates a `core/` branch from `colab-dev`, commits, pushes via the git proxy
+   - Creates a PR on GitHub targeting `colab-dev` via the GitHub API proxy
+   - Calls `done()` — which requires approval from a user with the `developer` role
+   - The reviewer merges the PR on GitHub, then approves `done()` in Druppie
+5. **Architect** (run 2) designs the actual project with the core changes now in place, signals `DESIGN_APPROVED`
+6. Normal pipeline continues: Builder Planner → Test Builder → Builder → Test Executor → Deployer → Summarizer
+
+**Key characteristics:**
+- The Architect detects core changes by checking if the project adds, modifies, or removes anything in the Druppie codebase/repository itself
+- Git provider routing is determined by the calling agent: `update_core_builder` uses GitHub, all other agents use Gitea
+- Authentication via GitHub App installation tokens (short-lived, ~1 hour) — the sandbox only sees proxy URLs, not real tokens
+- The `done()` approval gate ensures a human developer reviews and merges the PR before the pipeline continues
+- No deploy or merge step for core changes — PRs are always reviewed and merged by humans on GitHub
+
+**Prerequisites:** Requires a GitHub App configured with Contents R/W, Pull Requests R/W, and Metadata R permissions, plus `DRUPPIE_REPO_OWNER` and `DRUPPIE_REPO_NAME` env vars pointing to the Druppie repo.
 
 ### general_chat
 
@@ -405,11 +436,15 @@ Agents can delegate coding tasks to isolated Docker sandboxes. Each sandbox is a
 3. When the sandbox completes, a webhook callback resumes the agent automatically
 4. The chat timeline shows a **Sandbox Session card** with files changed, elapsed time, expandable events timeline, and full conversation history
 
-**Sandbox agents:** Two preconfigured agents run inside sandboxes -- `druppie-builder` (implements features) and `druppie-tester` (writes and runs tests). Both enforce a mandatory git workflow: add, commit, push. No unpushed commits allowed.
+**Sandbox agents:** Three preconfigured agents run inside sandboxes -- `druppie-builder` (implements features), `druppie-tester` (writes and runs tests), and `druppie-core-builder` (implements changes to Druppie's own codebase in a dual-repo sandbox). All enforce a mandatory git workflow: add, commit, push. No unpushed commits allowed.
 
 **Profile-based LLM routing:** Each sandbox agent/subagent has its own model profile (e.g., `sandbox/druppie-builder`). The LLM proxy resolves profiles to real provider chains at request time, allowing different agents to use different models. Profiles are configured in `sandbox_models.yaml`.
 
 **Provider resilience:** If an LLM provider fails mid-sandbox (any non-2xx response), a three-layer defense handles it: transparent proxy failover (sub-second, tries next provider in chain), failure detection signals, and Druppie-level retry with a new sandbox session. Set `LLM_FORCE_PROVIDER` and `LLM_FORCE_MODEL` to override all profiles with a single provider.
+
+**`create-pull-request` tool:** Sandbox agents create PRs via the `create-pull-request` OpenCode tool, which calls the control plane `/sessions/:id/pr` endpoint. The tool auto-detects the current branch and defaults to `main` if no base branch is specified. For GitHub repos, agents specify `baseBranch="colab-dev"`.
+
+**`repo_target` parameter:** `execute_coding_task` accepts a `repo_target` parameter: `"project"` (default) for single-repo sandboxes using the session's Gitea project, or `"druppie_core"` for dual-repo sandboxes that clone both Druppie's GitHub repo and the project repo (see Core Update workflow).
 
 **Security:** Sandbox events are only visible to the owning user (admins can view any). Git and LLM credentials are proxied -- never exposed to sandbox code. Webhooks are HMAC-signed.
 
@@ -461,6 +496,20 @@ Review the code for quality, security, and best practices...
 ### Skill-Based Tool Access
 
 Tools granted via skills are checked in `ToolExecutor` alongside the agent's static MCP permissions. If a tool is not in the agent's YAML `mcps` list but is allowed by an active skill, the agent can still use it.
+
+### Coding Standards and Templates
+
+The Builder and Reviewer agents use skills to enforce project-specific coding standards and architecture patterns:
+
+| Skill | Used By | Purpose |
+|-------|---------|---------|
+| `project-coding-standards` | Builder, Reviewer | Python/React code style, naming conventions, formatting rules, import conventions, and critical project rules |
+| `fullstack-architecture` | Builder | Clean architecture patterns (Summary/Detail, Repository, Service, Route) and code templates for all component types |
+| `standards-validation` | Reviewer | Structured validation checklist for architecture compliance and standards compliance |
+
+**Builder behavior**: Before writing code for the Druppie codebase, the Builder invokes `fullstack-architecture` and `project-coding-standards` to load the architecture patterns and coding standards. New components are scaffolded from embedded templates (domain models with Summary/Detail pattern, repositories extending BaseRepository, services with constructor injection, thin API routes with Depends injection, and React pages with React Query).
+
+**Reviewer behavior**: Before reviewing code, the Reviewer invokes `project-coding-standards` and `standards-validation` to load the validation checklist. Reviews include explicit architecture compliance and standards compliance sections, with critical violations (e.g., JSON/JSONB columns, business logic in routes) resulting in an automatic FAIL verdict.
 
 ---
 

@@ -22,6 +22,7 @@ class Session(Base):
     error_message = Column(Text)  # Error details when status is 'failed'
     intent = Column(String(50))  # create_project, update_project, general_chat
     branch_name = Column(String(255), nullable=True)  # Feature branch for update_project
+
     language = Column(String(10), nullable=True)  # Detected conversational language (e.g., "nl", "en")
 
     # Token usage (aggregated)
