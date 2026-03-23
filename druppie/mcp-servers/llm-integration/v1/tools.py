@@ -1,6 +1,9 @@
 """MCP tool definitions for LLM Integration Module.
 
-Implements the MCP tools exposed by this module.
+Implements the MCP tools exposed by this module:
+- chat_completion: Execute chat completion with automatic failover
+- count_tokens: Count tokens for given text
+- list_providers: List available providers and their status
 """
 
 from typing import Any, Literal, cast
@@ -16,12 +19,67 @@ from .models import (
 )
 from .providers import ProviderError, ProviderManager
 
-# Initialize logger
+KNOWN_MODELS: dict[str, list[str]] = {
+    "openai": [
+        "gpt-4",
+        "gpt-4-turbo",
+        "gpt-4-turbo-preview",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-3.5-turbo",
+        "gpt-3.5-turbo-16k",
+    ],
+    "anthropic": [
+        "claude-3-opus-20240229",
+        "claude-3-sonnet-20240229",
+        "claude-3-haiku-20240307",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022",
+    ],
+    "ollama": [
+        "llama2",
+        "llama3",
+        "llama3.1",
+        "mistral",
+        "codellama",
+        "phi3",
+    ],
+}
+
+ALL_KNOWN_MODELS: set[str] = {model for models in KNOWN_MODELS.values() for model in models}
+
 configure_logging()
 logger = get_logger()
 
-# Initialize provider manager
 provider_manager = ProviderManager(get_config())
+
+
+def validate_model(model: str | None) -> tuple[bool, str | None]:
+    """Validate that a model name is recognized.
+
+    Checks if the model is in the known models list for any provider.
+    A model is considered valid if it's a known model or if no model
+    is specified (None), which will use the provider's default.
+
+    Args:
+        model: Model identifier to validate, or None.
+
+    Returns:
+        Tuple of (is_valid, error_message). error_message is None if valid.
+    """
+    if model is None:
+        return True, None
+
+    if model in ALL_KNOWN_MODELS:
+        return True, None
+
+    for provider, models in KNOWN_MODELS.items():
+        for known_model in models:
+            if model.startswith(known_model) or known_model in model:
+                return True, None
+
+    valid_models = ", ".join(sorted(ALL_KNOWN_MODELS)[:10]) + "..."
+    return False, f"Unknown model '{model}'. Known models include: {valid_models}"
 
 
 async def chat_completion(
@@ -56,7 +114,15 @@ async def chat_completion(
         )
     """
     try:
-        # Validate and convert messages
+        if model is not None:
+            is_valid, error_msg = validate_model(model)
+            if not is_valid:
+                logger.warning("Model validation failed", model=model, error=error_msg)
+                return {
+                    "success": False,
+                    "error": error_msg,
+                }
+
         validated_messages = []
         for msg in messages:
             role = msg.get("role", "")

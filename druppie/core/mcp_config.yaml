@@ -683,3 +683,66 @@ mcps:
           required:
             - server_name
             - tool_name
+
+  llm-integration:
+    url: ${MCP_LLM_URL:-http://mcp-llm:9003}
+    description: "LLM abstraction layer with multi-provider support and automatic failover. Provides chat completion, token counting, and provider management."
+    tools:
+      - name: chat_completion
+        description: "Execute chat completion with automatic provider failover"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            messages:
+              type: array
+              description: "List of message dicts with 'role' and 'content' keys"
+              items:
+                type: object
+                properties:
+                  role:
+                    type: string
+                    description: "Message role: system, user, or assistant"
+                  content:
+                    type: string
+                    description: "Message content"
+                required:
+                  - role
+                  - content
+            model:
+              type: string
+              description: "Model identifier (optional, uses first available provider)"
+            stream:
+              type: boolean
+              description: "Whether to stream the response (default: false)"
+            max_tokens:
+              type: integer
+              description: "Maximum tokens to generate (optional)"
+            temperature:
+              type: number
+              description: "Sampling temperature 0-2 (optional)"
+          required:
+            - messages
+
+      - name: count_tokens
+        description: "Count tokens for given text using tiktoken or character-based estimate"
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            text:
+              type: string
+              description: "Text to count tokens for"
+            model:
+              type: string
+              description: "Model identifier (optional, defaults to gpt-3.5-turbo)"
+          required:
+            - text
+
+      - name: list_providers
+        description: "List available LLM providers and their status"
+        requires_approval: false
+        parameters:
+          type: object
+          properties: {}
+          required: []
