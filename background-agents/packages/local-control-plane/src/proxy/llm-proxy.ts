@@ -27,6 +27,14 @@ const READ_TIMEOUT_MS = 300_000;
 
 const CONSECUTIVE_ERROR_THRESHOLD = 3;
 
+/** Per-provider retry config: retry same provider before failover */
+const SAME_PROVIDER_MAX_RETRIES = 3;
+const SAME_PROVIDER_BASE_DELAY_MS = 1000; // 1s, 2s, 4s exponential backoff
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /** Map of provider names to their base URLs (fallbacks if not stored). */
 const PROVIDER_BASE_URLS: Record<string, string> = {
   anthropic: "https://api.anthropic.com",
@@ -516,27 +524,40 @@ async function handleRequestWithFailover(
     }
 
     if (streaming) {
-      const result = await attemptStreamingRequest(
-        upstreamUrl,
-        req.method,
-        headers,
-        attemptBody,
-        res,
-        attempt.provider
-      );
+      // Retry same provider with exponential backoff before failover
+      let succeeded = false;
+      for (let retry = 0; retry < SAME_PROVIDER_MAX_RETRIES; retry++) {
+        if (retry > 0) {
+          const delay = SAME_PROVIDER_BASE_DELAY_MS * Math.pow(2, retry - 1);
+          console.log(
+            `[llm-proxy] ${attempt.provider} retry ${retry}/${SAME_PROVIDER_MAX_RETRIES - 1} after ${delay}ms`
+          );
+          await sleep(delay);
+        }
 
-      if (result === "success") {
-        trackLlmResult(proxyKey, attempt.provider, true, credentialStore, callbacks);
-        return;
-      }
-      if (result === "headers_sent") {
-        // Partially sent — can't retry, but it's a failure
+        const result = await attemptStreamingRequest(
+          upstreamUrl,
+          req.method,
+          headers,
+          attemptBody,
+          res,
+          attempt.provider
+        );
+
+        if (result === "success") {
+          trackLlmResult(proxyKey, attempt.provider, true, credentialStore, callbacks);
+          return;
+        }
+        if (result === "headers_sent") {
+          // Partially sent — can't retry (headers already forwarded to client)
+          trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
+          return;
+        }
+        // failed_before_headers — retry same provider or move to next
         trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
-        return;
       }
-      // failed_before_headers — try next provider
-      trackLlmResult(proxyKey, attempt.provider, false, credentialStore, callbacks);
 
+      // All retries for this provider exhausted
       if (isLastAttempt) {
         if (!res.headersSent) {
           res.status(502).json({ error: "All providers failed" });
@@ -545,29 +566,48 @@ async function handleRequestWithFailover(
       }
       continue;
     } else {
-      const result = await attemptBufferedRequest(
-        upstreamUrl,
-        req.method,
-        headers,
-        attemptBody,
-        attempt.provider
-      );
-      const isRetryable = result.status < 200 || result.status >= 300;
+      // Retry same provider with exponential backoff before failover
+      let lastResult: BufferedResult | null = null;
+      for (let retry = 0; retry < SAME_PROVIDER_MAX_RETRIES; retry++) {
+        if (retry > 0) {
+          const delay = SAME_PROVIDER_BASE_DELAY_MS * Math.pow(2, retry - 1);
+          console.log(
+            `[llm-proxy] ${attempt.provider} retry ${retry}/${SAME_PROVIDER_MAX_RETRIES - 1} after ${delay}ms`
+          );
+          await sleep(delay);
+        }
 
-      trackLlmResult(proxyKey, attempt.provider, !isRetryable, credentialStore, callbacks);
+        lastResult = await attemptBufferedRequest(
+          upstreamUrl,
+          req.method,
+          headers,
+          attemptBody,
+          attempt.provider
+        );
 
-      if (!isRetryable || isLastAttempt) {
-        // Success, non-retriable 4xx, or last attempt — send response
-        res.status(result.status);
-        if (result.contentType) res.setHeader("Content-Type", result.contentType);
-        res.send(result.body);
-        return;
+        const isRetryable = lastResult.status >= 500 || lastResult.status === 429;
+        trackLlmResult(proxyKey, attempt.provider, !isRetryable, credentialStore, callbacks);
+
+        if (!isRetryable) {
+          // Success or non-retryable error (4xx) — send response
+          res.status(lastResult.status);
+          if (lastResult.contentType) res.setHeader("Content-Type", lastResult.contentType);
+          res.send(lastResult.body);
+          return;
+        }
+
+        console.log(
+          `[llm-proxy] ${attempt.provider} returned ${lastResult.status}, ${retry < SAME_PROVIDER_MAX_RETRIES - 1 ? "retrying same provider" : "trying next provider"}`
+        );
       }
 
-      // 5xx/429 and not last attempt — try next provider
-      console.log(
-        `[llm-proxy] ${attempt.provider} returned ${result.status}, trying next provider`
-      );
+      // All retries exhausted for this provider
+      if (isLastAttempt && lastResult) {
+        res.status(lastResult.status);
+        if (lastResult.contentType) res.setHeader("Content-Type", lastResult.contentType);
+        res.send(lastResult.body);
+        return;
+      }
       continue;
     }
   }
