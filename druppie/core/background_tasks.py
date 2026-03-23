@@ -243,6 +243,25 @@ async def run_session_task(
 
         await task_fn(ctx)
 
+    except asyncio.CancelledError:
+        # Graceful shutdown (e.g. uvicorn reload) — mark session as paused
+        # so zombie recovery on restart can handle it cleanly instead of
+        # leaving the session stuck in 'active' status.
+        logger.warning(
+            f"{task_name}_cancelled",
+            session_id=str(session_id),
+        )
+        try:
+            db.rollback()
+            SessionRepository(db).update_status(
+                session_id,
+                SessionStatus.PAUSED,
+            )
+            db.commit()
+        except Exception:
+            pass  # Best-effort — process is dying
+        raise
+
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         logger.error(

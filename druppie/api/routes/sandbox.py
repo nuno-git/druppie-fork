@@ -18,7 +18,7 @@ import os
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException, Request
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import httpx
@@ -317,7 +317,6 @@ async def _retry_sandbox_with_next_model(
 async def sandbox_complete_webhook(
     sandbox_session_id: str,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """Webhook called by the control plane when a sandbox session completes.
@@ -475,10 +474,25 @@ async def sandbox_complete_webhook(
         changed_files=len(changed_files),
     )
 
-    # Resume the agent in the background via Starlette BackgroundTasks
-    # (properly managed lifecycle — awaited before server shutdown)
-    tool_call_id = tool_call.id
-    background_tasks.add_task(_resume_agent_after_sandbox, tool_call_id)
+    # Resume the agent via create_session_task for proper lifecycle management:
+    # - Tracked by shutdown_background_tasks (survives hot-reload gracefully)
+    # - Session-level concurrency guard prevents duplicate resume tasks
+    from druppie.core.background_tasks import create_session_task, SessionTaskConflict
+
+    druppie_session_id = tool_call.session_id
+    tc_id = tool_call.id
+    try:
+        create_session_task(
+            druppie_session_id,
+            _resume_agent_after_sandbox(tc_id),
+            name=f"sandbox-resume-{druppie_session_id}",
+        )
+    except SessionTaskConflict:
+        logger.warning(
+            "sandbox_resume_task_conflict",
+            sandbox_session_id=sandbox_session_id,
+            session_id=str(druppie_session_id),
+        )
 
     return {"status": "ok", "sandbox_session_id": sandbox_session_id}
 
