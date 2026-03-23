@@ -126,13 +126,20 @@ async def get_sandbox_events(
                 timeout=10.0,
             )
             resp.raise_for_status()
-            return resp.json()
-    except httpx.HTTPStatusError as e:
-        logger.warning("sandbox_events_proxy_error", session_id=session_id, status=e.response.status_code)
-        raise HTTPException(status_code=e.response.status_code, detail="Failed to fetch sandbox events")
-    except httpx.RequestError as e:
-        logger.warning("sandbox_events_connection_error", session_id=session_id, error=str(e))
-        raise HTTPException(status_code=502, detail="Sandbox control plane unavailable")
+            data = resp.json()
+            # If control plane returned events, use them
+            if data.get("events"):
+                return data
+            # If control plane returned empty but we have a persisted snapshot, use that
+            if mapping.events_snapshot:
+                return {"events": json.loads(mapping.events_snapshot), "hasMore": False, "source": "snapshot"}
+            return data
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        # Control plane unavailable — fall back to persisted snapshot
+        logger.warning("sandbox_events_proxy_error", session_id=session_id, error=str(e))
+        if mapping.events_snapshot:
+            return {"events": json.loads(mapping.events_snapshot), "hasMore": False, "source": "snapshot"}
+        raise HTTPException(status_code=502, detail="Sandbox events unavailable")
 
 
 # =============================================================================
@@ -196,6 +203,157 @@ def _extract_agent_output(events: list[dict]) -> str:
                 parts.append((ts, content))
     parts.sort(key=lambda x: x[0])
     return "\n".join(c for _, c in parts).strip()
+
+
+def _extract_git_operations(events: list[dict]) -> dict:
+    """Extract git-related info from sandbox events: commits, PRs, branches."""
+    commits = []
+    pr_urls = []
+    branches = []
+    for event in events:
+        if event.get("type") != "tool_call":
+            continue
+        data = event.get("data", {})
+        tool = (data.get("tool") or "").lower()
+        result = data.get("result", {})
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                result = {}
+
+        # Extract commit info
+        if tool in ("run_git", "git") and isinstance(result, dict):
+            output = result.get("output", "") or result.get("stdout", "") or ""
+            args = data.get("args", {})
+            command = args.get("command", "") or args.get("args", "")
+            if "commit" in str(command) and output:
+                commits.append(output.strip()[:200])
+            if "branch" in str(command) and output:
+                for line in output.strip().split("\n"):
+                    line = line.strip().lstrip("* ")
+                    if line and line not in branches:
+                        branches.append(line)
+
+        # Extract PR info
+        if tool in ("create_pull_request", "create_pr"):
+            if isinstance(result, dict):
+                pr_url = result.get("url") or result.get("pr_url") or result.get("html_url") or ""
+                if pr_url:
+                    pr_urls.append(pr_url)
+                pr_number = result.get("number") or result.get("pr_number")
+                if pr_number and not pr_url:
+                    pr_urls.append(f"PR #{pr_number}")
+
+    return {
+        "commits": commits[-5:],  # Last 5 commits
+        "pr_urls": pr_urls,
+        "branches": branches[-3:],  # Last 3 branches
+    }
+
+
+def _extract_tool_results_summary(events: list[dict]) -> list[str]:
+    """Extract a summary of key tool calls and their results."""
+    summaries = []
+    for event in events:
+        if event.get("type") != "tool_call":
+            continue
+        data = event.get("data", {})
+        tool = data.get("tool") or ""
+        args = data.get("args", {})
+        result = data.get("result", {})
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Summarize important operations
+        tool_lower = tool.lower()
+        if tool_lower in ("write", "write_file"):
+            path = args.get("filePath") or args.get("path") or "?"
+            summaries.append(f"Wrote file: {path}")
+        elif tool_lower == "edit":
+            path = args.get("filePath") or args.get("path") or "?"
+            summaries.append(f"Edited file: {path}")
+        elif tool_lower in ("run_git", "git"):
+            command = args.get("command") or args.get("args") or ""
+            if isinstance(command, list):
+                command = " ".join(command)
+            summaries.append(f"Git: {command[:100]}")
+        elif tool_lower in ("create_pull_request", "create_pr"):
+            if isinstance(result, dict):
+                pr_url = result.get("url") or result.get("pr_url") or result.get("html_url") or ""
+                title = result.get("title") or args.get("title") or ""
+                summaries.append(f"Created PR: {title} ({pr_url})")
+        elif tool_lower == "bash":
+            command = args.get("command") or ""
+            summaries.append(f"Ran: {command[:100]}")
+
+    return summaries
+
+
+def _build_agent_result_text(
+    success: bool,
+    changed_files: list[dict],
+    agent_output: str,
+    git_info: dict,
+    tool_summaries: list[str],
+) -> str:
+    """Build a structured, human-readable result for the Druppie agent.
+
+    This replaces the raw JSON blob with clear text the LLM can understand.
+    """
+    lines = []
+
+    if success:
+        lines.append("SANDBOX TASK COMPLETED SUCCESSFULLY")
+    else:
+        lines.append("SANDBOX TASK FAILED")
+
+    # PR info (most important for the agent)
+    if git_info.get("pr_urls"):
+        lines.append("")
+        lines.append("Pull Requests created:")
+        for url in git_info["pr_urls"]:
+            lines.append(f"  - {url}")
+
+    # Changed files
+    if changed_files:
+        lines.append("")
+        lines.append(f"Files changed ({len(changed_files)}):")
+        for f in changed_files[:20]:  # Cap at 20
+            lines.append(f"  - {f['action']}: {f['path']}")
+        if len(changed_files) > 20:
+            lines.append(f"  ... and {len(changed_files) - 20} more files")
+
+    # Git commits
+    if git_info.get("commits"):
+        lines.append("")
+        lines.append("Git commits:")
+        for c in git_info["commits"]:
+            lines.append(f"  - {c}")
+
+    # Tool operations summary
+    if tool_summaries:
+        lines.append("")
+        lines.append(f"Operations performed ({len(tool_summaries)}):")
+        # Show last 30 operations (most relevant)
+        for s in tool_summaries[-30:]:
+            lines.append(f"  - {s}")
+        if len(tool_summaries) > 30:
+            lines.append(f"  ... and {len(tool_summaries) - 30} earlier operations")
+
+    # Agent reasoning/output (last 10000 chars instead of 5000)
+    if agent_output:
+        lines.append("")
+        lines.append("Agent output (summary):")
+        truncated = agent_output[-10000:] if len(agent_output) > 10000 else agent_output
+        if len(agent_output) > 10000:
+            lines.append(f"  [... truncated {len(agent_output) - 10000} chars ...]")
+        lines.append(truncated)
+
+    return "\n".join(lines)
 
 
 async def _retry_sandbox_with_next_model(
@@ -403,7 +561,10 @@ async def sandbox_complete_webhook(
     ).rstrip("/")
     changed_files = []
     agent_output = ""
+    git_info: dict = {}
+    tool_summaries: list[str] = []
     event_count = 0
+    events: list[dict] = []
 
     try:
         token = generate_control_plane_token(SANDBOX_API_SECRET)
@@ -418,6 +579,8 @@ async def sandbox_complete_webhook(
                 event_count = len(events)
                 changed_files = _extract_changed_files(events)
                 agent_output = _extract_agent_output(events)
+                git_info = _extract_git_operations(events)
+                tool_summaries = _extract_tool_results_summary(events)
     except Exception as e:
         logger.warning("sandbox_webhook_event_fetch_failed", error=str(e))
 
@@ -448,22 +611,44 @@ async def sandbox_complete_webhook(
             db.commit()
             return {"status": "retrying", "sandbox_session_id": sandbox_session_id}
 
-    # Build the final tool result
+    # Build structured result text for the agent (readable by LLM)
+    agent_result_text = _build_agent_result_text(
+        success=body.success,
+        changed_files=changed_files,
+        agent_output=agent_output,
+        git_info=git_info,
+        tool_summaries=tool_summaries,
+    )
+
+    # Also store structured data for the frontend/API
     result = {
         "success": body.success,
         "sandbox_session_id": sandbox_session_id,
         "status": "completed" if body.success else "failed",
         "event_count": event_count,
         "changed_files": changed_files,
-        "agent_output": agent_output[-5000:] if agent_output else "",
+        "git_info": git_info,
+        "tool_summaries": tool_summaries[-50:],
+        "agent_result_text": agent_result_text,
     }
 
-    # Complete the tool call
+    # Complete the tool call — use the readable text as the result so the
+    # agent sees a clear summary, not a raw JSON blob
     execution_repo.update_tool_call(
         tool_call.id,
         status=ToolCallStatus.COMPLETED if body.success else ToolCallStatus.FAILED,
-        result=result,
+        result=agent_result_text,
     )
+
+    # Persist events snapshot to sandbox_session so they survive control plane
+    # restarts and remain visible in the frontend details view
+    try:
+        sandbox_mapping.events_snapshot = json.dumps(events[-500:])  # Last 500 events
+        sandbox_mapping.result_summary = json.dumps(result)
+        db.add(sandbox_mapping)
+    except Exception as e:
+        logger.warning("sandbox_events_persist_failed", error=str(e))
+
     db.commit()
 
     logger.info(
@@ -473,6 +658,7 @@ async def sandbox_complete_webhook(
         success=body.success,
         event_count=event_count,
         changed_files=len(changed_files),
+        pr_urls=git_info.get("pr_urls", []),
     )
 
     # Resume the agent in the background via Starlette BackgroundTasks
