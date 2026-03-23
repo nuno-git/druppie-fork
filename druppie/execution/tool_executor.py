@@ -466,10 +466,16 @@ class ToolExecutor:
         tool_def = registry.get(full_name) if full_name else None
         if tool_def and tool_def.meta.get("pre_validate"):
             validate_tool_name = tool_def.meta["pre_validate"]
-            # Pass the tool's arguments to the validation tool
+            # Look up the validation tool's schema to pass only the args it expects
+            validate_tool_def = registry.get_by_server_and_name(tool_def.server, validate_tool_name)
+            validate_args = tool_call.arguments or {}
+            if validate_tool_def and validate_tool_def.json_schema:
+                expected_params = set(validate_tool_def.json_schema.get("properties", {}).keys())
+                if expected_params:
+                    validate_args = {k: v for k, v in validate_args.items() if k in expected_params}
             try:
                 validate_result = await self.mcp_http.call(
-                    tool_def.server, validate_tool_name, tool_call.arguments or {}
+                    tool_def.server, validate_tool_name, validate_args
                 )
                 if not validate_result.get("valid", True):
                     errors = validate_result.get("errors", [])
@@ -497,8 +503,25 @@ class ToolExecutor:
                     self.db.commit()
                     return ToolCallStatus.FAILED
             except Exception as e:
-                # Pre-validation failure should not block tool execution
-                logger.warning("pre_validation_exception", tool_name=tool_call.tool_name, error=str(e))
+                # Pre-validation infrastructure failure — block execution rather than
+                # silently skipping validation (which would defeat the purpose)
+                error_msg = (
+                    f"PRE-VALIDATION ERROR — could not run {validate_tool_name}: {e}. "
+                    f"Tool was NOT executed. Retry or contact an administrator."
+                )
+                logger.error(
+                    "pre_validation_exception",
+                    tool_name=tool_call.tool_name,
+                    validate_tool=validate_tool_name,
+                    error=str(e),
+                )
+                self.execution_repo.update_tool_call(
+                    tool_call.id,
+                    status=ToolCallStatus.FAILED,
+                    error=error_msg,
+                )
+                self.db.commit()
+                return ToolCallStatus.FAILED
 
         # Step 3: Check tool access and approval for MCP tools (not builtin)
         if not is_builtin and tool_call.mcp_server:
