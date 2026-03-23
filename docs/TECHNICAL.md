@@ -137,7 +137,7 @@ druppie/
       builtin.py         # Pydantic models for builtin tool params
       coding.py          # Pydantic models for coding MCP tool params
       docker.py          # Pydantic models for docker MCP tool params
-  sandbox-config/
+  opencode/config/
     opencode-config.json   # OpenCode default agent + permissions
     agents/
       druppie-builder.md        # Sandbox coding agent prompt
@@ -974,7 +974,7 @@ Optional:
 | `docker-compose.yml` | Infrastructure service definitions (at repository root) |
 | `.env` | Environment variable overrides |
 | `.env.example` | Documented template for environment variables |
-| `druppie/sandbox-config/` | OpenCode config and agent prompts injected into sandboxes |
+| `druppie/opencode/config/` | OpenCode config and agent prompts injected into sandboxes |
 
 ---
 
@@ -1078,7 +1078,7 @@ The sandbox entrypoint detects `CONTEXT_GIT_URL` and switches to dual-repo mode:
 - `/workspace/core/` — Druppie's GitHub repo (cloned via git proxy, read+write)
 - `/workspace/project/` — Project Gitea repo (cloned via git proxy, contains FD/TD)
 
-The `druppie-core-builder` OpenCode agent (`druppie/sandbox-config/agents/druppie-core-builder.md`) instructs the sandbox LLM to read design docs from `/workspace/project/` and implement changes in `/workspace/core/`. Both `GIT_URL` and `CONTEXT_GIT_URL` are stripped from the OpenCode environment after clone — the sandbox agent never sees raw proxy keys or tokens.
+The `druppie-core-builder` OpenCode agent (`druppie/opencode/config/agents/druppie-core-builder.md`) instructs the sandbox LLM to read design docs from `/workspace/project/` and implement changes in `/workspace/core/`. Both `GIT_URL` and `CONTEXT_GIT_URL` are stripped from the OpenCode environment after clone — the sandbox agent never sees raw proxy keys or tokens.
 
 ### 10.10 Builtin Tool Approval Overrides
 

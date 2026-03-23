@@ -11,7 +11,9 @@ profiles:
     - provider: zai
       model: glm-5
     - provider: deepinfra
-      model: Qwen/Qwen2.5-72B-Instruct
+      model: moonshotai/Kimi-K2.5-Turbo
+    - provider: zai
+      model: glm-4.7
     - provider: ollama
       model: gpt-oss:120b
     - provider: azure_foundry
@@ -21,7 +23,9 @@ profiles:
     - provider: zai
       model: glm-5
     - provider: deepinfra
-      model: Qwen/Qwen2.5-72B-Instruct
+      model: moonshotai/Kimi-K2.5-Turbo
+    - provider: zai
+      model: glm-4.7
     - provider: ollama
       model: gpt-oss:20b
     - provider: azure_foundry
