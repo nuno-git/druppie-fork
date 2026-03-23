@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS messages (
   source TEXT NOT NULL,
   model TEXT,
   reasoning_effort TEXT,
+  agent_id TEXT,
   attachments TEXT,
   callback_context TEXT,
   status TEXT DEFAULT 'pending',
@@ -672,7 +673,7 @@ export class SessionInstance {
 
   private async handlePrompt(
     ws: WsWebSocket,
-    data: { content: string; model?: string; reasoningEffort?: string }
+    data: { content: string; model?: string; reasoningEffort?: string; agent?: string }
   ): Promise<void> {
     const client = this.wsManager.getClient(ws);
     if (!client) {
@@ -696,14 +697,15 @@ export class SessionInstance {
 
     // Create message
     this.sql.exec(
-      `INSERT INTO messages (id, author_id, content, source, model, reasoning_effort, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO messages (id, author_id, content, source, model, reasoning_effort, agent_id, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       messageId,
       client.participantId,
       data.content,
       "web",
       data.model || null,
       data.reasoningEffort || null,
+      data.agent || null,
       "pending",
       now
     );
@@ -786,7 +788,7 @@ export class SessionInstance {
 
     // Send prompt to sandbox
     const session = this.getSession();
-    const command = {
+    const command: Record<string, any> = {
       type: "prompt",
       messageId: nextMsg.id,
       content: nextMsg.content,
@@ -799,9 +801,13 @@ export class SessionInstance {
       },
     };
 
+    if (nextMsg.agent_id) {
+      command.agent = nextMsg.agent_id;
+    }
+
     if (nextMsg.attachments) {
       try {
-        (command as any).attachments = JSON.parse(nextMsg.attachments);
+        command.attachments = JSON.parse(nextMsg.attachments);
       } catch {
         /* ignore malformed JSON */
       }
@@ -1515,14 +1521,15 @@ export class SessionInstance {
     }
 
     this.sql.exec(
-      `INSERT INTO messages (id, author_id, content, source, model, reasoning_effort, callback_context, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO messages (id, author_id, content, source, model, reasoning_effort, agent_id, callback_context, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       messageId,
       participant.id,
       body.content,
       body.source || "web",
       body.model ?? null,
       body.reasoningEffort ?? null,
+      body.agent ?? null,
       body.callbackContext ? JSON.stringify(body.callbackContext) : null,
       "pending",
       now

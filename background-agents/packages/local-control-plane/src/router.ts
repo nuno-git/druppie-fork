@@ -253,6 +253,7 @@ export function setupRoutes(
       source: body.source || "web",
       model: body.model,
       reasoningEffort: body.reasoningEffort,
+      agent: body.agent,
       attachments: body.attachments,
       callbackContext:
         body.callbackContext ||

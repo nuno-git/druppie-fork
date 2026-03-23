@@ -199,7 +199,12 @@ def _strip_think_tags(text: str) -> str:
 
 
 def _extract_agent_output(events: list[dict]) -> str:
-    """Extract agent text output from token events, sorted chronologically."""
+    """Extract agent text output from token events, sorted chronologically.
+
+    Falls back to conversation_history assistant messages if token events
+    are empty after stripping think tags (common with Qwen3/DeepSeek R1
+    models that wrap everything in <think> blocks).
+    """
     parts = []
     for event in events:
         if event.get("type") == "token":
@@ -214,7 +219,54 @@ def _extract_agent_output(events: list[dict]) -> str:
                 parts.append((ts, content))
     parts.sort(key=lambda x: x[0])
     raw = "\n".join(c for _, c in parts).strip()
-    return _strip_think_tags(raw)
+    result = _strip_think_tags(raw)
+
+    # If stripping think tags left nothing, extract from conversation_history.
+    # This covers models that emit only <think> blocks (Qwen3, DeepSeek R1)
+    # where the useful output is in tool results within the conversation.
+    if not result:
+        result = _extract_output_from_conversation_history(events)
+
+    return result
+
+
+def _extract_output_from_conversation_history(events: list[dict]) -> str:
+    """Extract assistant text and tool results from conversation_history event.
+
+    Used as fallback when token events contain only think-tagged content.
+    """
+    for event in events:
+        if event.get("type") != "conversation_history":
+            continue
+        data = event.get("data") or {}
+        messages = data.get("messages", [])
+        output_parts = []
+        for msg in messages:
+            if msg.get("role") != "assistant":
+                continue
+            for part in msg.get("parts", []):
+                if part.get("type") == "text":
+                    text = _strip_think_tags(part.get("text", ""))
+                    if text:
+                        output_parts.append(text)
+                elif part.get("type") == "tool":
+                    state = part.get("state", {})
+                    tool_name = part.get("tool", "unknown")
+                    status = state.get("status", "")
+                    # Include tool output/error for context
+                    if status == "error":
+                        error = state.get("error", "")
+                        if error:
+                            output_parts.append(f"[{tool_name} error]: {error}")
+                    elif status == "completed":
+                        output = state.get("output", "")
+                        if output:
+                            # Cap individual tool output at 5000 chars
+                            truncated = output[:5000] if len(output) > 5000 else output
+                            output_parts.append(f"[{tool_name} output]: {truncated}")
+        if output_parts:
+            return "\n\n".join(output_parts)
+    return ""
 
 
 def _extract_git_operations(events: list[dict]) -> dict:
