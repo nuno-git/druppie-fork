@@ -42,6 +42,7 @@ class ToolCallFixture(BaseModel):
     answer: str | None = None  # HITL: creates Question record if present
     approval: ApprovalFixture | None = None
     outcome: ToolCallOutcome | None = None  # For execute_coding_task
+    execute: bool | None = None
 
     @property
     def mcp_server(self) -> str:
@@ -93,3 +94,4 @@ class SessionFixture(BaseModel):
     metadata: SessionMetadata
     agents: list[AgentRunFixture] = Field(default_factory=list)
     messages: list[MessageFixture] = Field(default_factory=list)
+    mode: str = "record_only"

@@ -1,0 +1,15 @@
+test:
+  name: planner-general-chat-routing
+  mode: live
+  description: "Planner routes general chat to correct agent"
+  sessions: []
+  run:
+    message: "what architecture principles do you follow?"
+    real_agents: [router, planner]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: router-correct-intent
+      expected:
+        intent: general_chat
+    - eval: planner-correct-next-agent

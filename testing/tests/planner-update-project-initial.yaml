@@ -1,0 +1,16 @@
+test:
+  name: planner-update-project-initial
+  mode: live
+  description: "Planner plans developer (branch) as first step for update_project"
+  sessions:
+    - weather-dashboard-completed
+  run:
+    message: "update the weather dashboard to add dark mode"
+    real_agents: [router, planner]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: router-correct-intent
+      expected:
+        intent: update_project
+    - eval: planner-correct-next-agent

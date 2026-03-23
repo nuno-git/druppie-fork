@@ -1,0 +1,16 @@
+test:
+  name: planner-after-architect-approved
+  mode: live
+  description: "Planner plans builder_planner after DESIGN_APPROVED"
+  sessions: []
+  run:
+    message: "build a simple todo list"
+    real_agents: [router, planner, business_analyst, planner, architect, planner]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: planner-correct-next-agent
+  evaluate:
+    judge:
+      checks:
+        - "If the architect gave DESIGN_APPROVED, the planner should route to the builder_planner"

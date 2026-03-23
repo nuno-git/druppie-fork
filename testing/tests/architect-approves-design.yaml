@@ -1,0 +1,12 @@
+test:
+  name: architect-approves-design
+  mode: live
+  description: "Architect writes technical_design.md and signals DESIGN_APPROVED"
+  sessions: []
+  run:
+    message: "build a simple calculator"
+    real_agents: [router, planner, business_analyst, planner, architect]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: architect-produces-design

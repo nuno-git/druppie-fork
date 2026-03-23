@@ -38,7 +38,8 @@ from .base import Base, new_uuid, utcnow
 from .benchmark_run import BenchmarkRun
 from .evaluation_result import EvaluationResult
 
-# Test run models (v2 testing framework)
+# Test run models (v2/v3 testing framework)
+from .test_assertion_result import TestAssertionResult
 from .test_run import TestRun
 from .test_run_tag import TestRunTag
 from .llm_call import LlmCall
@@ -90,7 +91,8 @@ __all__ = [
     # Benchmark and evaluation
     "BenchmarkRun",
     "EvaluationResult",
-    # Test runs (v2 testing framework)
+    # Test runs (v2/v3 testing framework)
     "TestRun",
     "TestRunTag",
+    "TestAssertionResult",
 ]

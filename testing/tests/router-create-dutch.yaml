@@ -1,0 +1,15 @@
+test:
+  name: router-create-dutch
+  mode: live
+  description: "Router handles Dutch language request"
+  sessions: []
+  run:
+    message: "maak een applicatie voor het beheren van vergaderingen"
+    real_agents: [router]
+  hitl: dutch-water-authority
+  judge: default
+  evals:
+    - eval: router-correct-intent
+      expected:
+        intent: create_project
+        project_name: "*"

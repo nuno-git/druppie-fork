@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import {
   FlaskConical,
   ArrowLeft,
@@ -27,6 +28,7 @@ import {
   MessageSquare,
   X,
   Info,
+  BarChart3,
 } from 'lucide-react'
 import {
   getAvailableTests,
@@ -493,6 +495,14 @@ const BatchResultsList = ({ refreshKey, onSelectRun, isRunning, runResult, setRu
                       </span>
                     </div>
                     <div className="flex items-center gap-3">
+                      <Link
+                        to={`/admin/tests/batch/${batch.batch_id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
+                      >
+                        <BarChart3 className="w-3 h-3" />
+                        Detail
+                      </Link>
                       <span className="text-xs text-gray-500 flex items-center gap-1">
                         <Clock className="w-3 h-3" />
                         {formatDuration(batch.total_duration_ms)}
@@ -1103,15 +1113,26 @@ export default function Evaluations() {
           <FlaskConical className="w-6 h-6 text-purple-600" />
           <h1 className="text-2xl font-bold">{view === 'detail' ? 'Test Run Detail' : 'Tests'}</h1>
         </div>
-        {view === 'list' && (
-          <button
-            onClick={() => setRefreshKey((k) => k + 1)}
-            className="p-2 hover:bg-gray-200 rounded transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {view === 'list' && (
+            <Link
+              to="/admin/tests/analytics"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors"
+            >
+              <BarChart3 className="w-4 h-4" />
+              Analytics
+            </Link>
+          )}
+          {view === 'list' && (
+            <button
+              onClick={() => setRefreshKey((k) => k + 1)}
+              className="p-2 hover:bg-gray-200 rounded transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Content */}

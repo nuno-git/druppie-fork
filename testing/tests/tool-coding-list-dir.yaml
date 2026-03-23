@@ -1,0 +1,16 @@
+test:
+  name: tool-coding-list-dir
+  mode: replay
+  description: "coding:list_dir returns directory listing"
+  sessions:
+    - weather-dashboard-completed
+  run:
+    message: "test"
+    real_agents: []
+  evaluate:
+    assertions:
+      - agent: architect
+        tool_called: coding:list_dir
+        result_valid:
+          - not_empty
+          - no_error

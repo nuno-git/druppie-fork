@@ -1,0 +1,14 @@
+test:
+  name: tool-registry-list-components
+  mode: replay
+  description: "registry:list_components returns component data"
+  sessions: []
+  run:
+    message: "test"
+    real_agents: []
+  evaluate:
+    assertions:
+      - agent: architect
+        tool_called: registry:list_components
+        result_valid:
+          - not_empty

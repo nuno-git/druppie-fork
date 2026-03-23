@@ -22,6 +22,8 @@ import ProjectDetail from './pages/ProjectDetail'
 import Settings from './pages/Settings'
 import AdminDatabase from './pages/AdminDatabase'
 import Evaluations from './pages/Evaluations'
+import Analytics from './pages/Analytics'
+import BatchDetail from './pages/BatchDetail'
 
 // Auth context
 const AuthContext = React.createContext(null)
@@ -244,6 +246,22 @@ function App() {
                             element={
                               <ProtectedRoute requiredRole="admin">
                                 <Evaluations />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/admin/tests/analytics"
+                            element={
+                              <ProtectedRoute requiredRole="admin">
+                                <Analytics />
+                              </ProtectedRoute>
+                            }
+                          />
+                          <Route
+                            path="/admin/tests/batch/:batchId"
+                            element={
+                              <ProtectedRoute requiredRole="admin">
+                                <BatchDetail />
                               </ProtectedRoute>
                             }
                           />
