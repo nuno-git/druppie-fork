@@ -33,12 +33,14 @@ export interface GithubApiCredentials {
 
 export interface SessionCredentials {
   git?: GitCredentials;
+  contextGit?: GitCredentials; // Second repo (e.g., project repo for context)
   llm?: LlmCredentials | LlmCredentials[];
   githubApi?: GithubApiCredentials;
 }
 
 export interface ProxyKeys {
   gitProxyKey: string | null;
+  contextGitProxyKey: string | null;
   llmProxyKey: string | null;
   githubApiProxyKey: string | null;
 }
@@ -52,10 +54,12 @@ export interface ModelChainEntry {
 interface StoredSession {
   sessionId: string;
   gitCredentials: GitCredentials | null;
+  contextGitCredentials: GitCredentials | null;
   /** provider name -> LlmCredentials (multi-provider support) */
   llmCredentials: Map<string, LlmCredentials>;
   githubApiCredentials: GithubApiCredentials | null;
   gitProxyKey: string | null;
+  contextGitProxyKey: string | null;
   llmProxyKey: string | null;
   githubApiProxyKey: string | null;
   /** Model chains for proxy failover — keyed by model string */
@@ -73,6 +77,8 @@ export class CredentialStore {
   private llmKeyIndex = new Map<string, string>();
   /** githubApiProxyKey -> sessionId (reverse index) */
   private githubApiKeyIndex = new Map<string, string>();
+  /** contextGitProxyKey -> sessionId (reverse index) */
+  private contextGitKeyIndex = new Map<string, string>();
 
   /**
    * Store credentials for a session and generate proxy keys.
@@ -88,6 +94,9 @@ export class CredentialStore {
     this.destroy(sessionId);
 
     const gitProxyKey = credentials.git ? crypto.randomBytes(32).toString("hex") : null;
+    const contextGitProxyKey = credentials.contextGit
+      ? crypto.randomBytes(32).toString("hex")
+      : null;
 
     // Normalize llm into a Map<provider, LlmCredentials>
     const llmMap = new Map<string, LlmCredentials>();
@@ -108,9 +117,11 @@ export class CredentialStore {
     const stored: StoredSession = {
       sessionId,
       gitCredentials: credentials.git ?? null,
+      contextGitCredentials: credentials.contextGit ?? null,
       llmCredentials: llmMap,
       githubApiCredentials: credentials.githubApi ?? null,
       gitProxyKey,
+      contextGitProxyKey,
       llmProxyKey,
       githubApiProxyKey,
       modelChains: modelChains ?? null,
@@ -124,11 +135,14 @@ export class CredentialStore {
     if (llmProxyKey) {
       this.llmKeyIndex.set(llmProxyKey, sessionId);
     }
+    if (contextGitProxyKey) {
+      this.contextGitKeyIndex.set(contextGitProxyKey, sessionId);
+    }
     if (githubApiProxyKey) {
       this.githubApiKeyIndex.set(githubApiProxyKey, sessionId);
     }
 
-    return { gitProxyKey, llmProxyKey, githubApiProxyKey };
+    return { gitProxyKey, contextGitProxyKey, llmProxyKey, githubApiProxyKey };
   }
 
   /** Look up git credentials by proxy key. Returns null if key is invalid. */
@@ -140,6 +154,17 @@ export class CredentialStore {
     if (!stored?.gitCredentials) return null;
 
     return { ...stored.gitCredentials, sessionId };
+  }
+
+  /** Look up context git credentials by proxy key. Returns null if key is invalid. */
+  getByContextGitProxyKey(key: string): (GitCredentials & { sessionId: string }) | null {
+    const sessionId = this.contextGitKeyIndex.get(key);
+    if (!sessionId) return null;
+
+    const stored = this.sessions.get(sessionId);
+    if (!stored?.contextGitCredentials) return null;
+
+    return { ...stored.contextGitCredentials, sessionId };
   }
 
   /** Look up GitHub API credentials by proxy key. Returns null if key is invalid. */
@@ -184,6 +209,7 @@ export class CredentialStore {
 
     return {
       gitProxyKey: stored.gitProxyKey,
+      contextGitProxyKey: stored.contextGitProxyKey,
       llmProxyKey: stored.llmProxyKey,
       githubApiProxyKey: stored.githubApiProxyKey,
     };
@@ -199,6 +225,9 @@ export class CredentialStore {
     }
     if (stored.llmProxyKey) {
       this.llmKeyIndex.delete(stored.llmProxyKey);
+    }
+    if (stored.contextGitProxyKey) {
+      this.contextGitKeyIndex.delete(stored.contextGitProxyKey);
     }
     if (stored.githubApiProxyKey) {
       this.githubApiKeyIndex.delete(stored.githubApiProxyKey);

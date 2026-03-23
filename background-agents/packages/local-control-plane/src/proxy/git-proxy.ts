@@ -12,6 +12,7 @@
  * Body is handled as raw buffers (git smart HTTP protocol).
  */
 
+import express from "express";
 import type { Express, Request, Response } from "express";
 import type { CredentialStore } from "../credentials/credential-store.js";
 
@@ -32,43 +33,17 @@ function isAllowedGitPath(gitPath: string): boolean {
 }
 
 export function setupGitProxy(app: Express, credentialStore: CredentialStore): void {
-  // Parse raw body for git-proxy routes
-  const rawParser = (req: Request, res: Response, next: () => void) => {
-    if (!req.path.startsWith("/git-proxy/")) return next();
-
-    const contentLength = parseInt(req.headers["content-length"] || "0", 10);
-    if (contentLength > MAX_BODY_SIZE) {
-      res.status(413).json({ error: "Request body too large" });
-      return;
-    }
-
-    const chunks: Buffer[] = [];
-    let size = 0;
-
-    req.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > MAX_BODY_SIZE) {
-        res.status(413).json({ error: "Request body too large" });
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-
-    req.on("end", () => {
-      (req as any).rawBody = Buffer.concat(chunks);
-      next();
-    });
-
-    req.on("error", (err) => {
-      console.error("[git-proxy] Request stream error:", err.message);
-      res.status(500).json({ error: "Stream error" });
-    });
-  };
+  // Use express.raw() to capture the binary git protocol body.
+  // This replaces the custom rawParser which had issues with streams
+  // being consumed before the data events fired.
+  const rawBodyParser = express.raw({
+    type: () => true, // Accept any content-type
+    limit: MAX_BODY_SIZE,
+  });
 
   app.all(
     "/git-proxy/:proxyKey/:owner/:repoName.git/*",
-    rawParser,
+    rawBodyParser,
     async (req: Request, res: Response) => {
       const proxyKey = req.params.proxyKey as string;
       const owner = req.params.owner as string;
@@ -76,8 +51,9 @@ export function setupGitProxy(app: Express, credentialStore: CredentialStore): v
       // Express puts the wildcard capture in params[0]
       const gitPath = (req.params[0] as string) || "";
 
-      // 1. Validate proxy key
-      const creds = credentialStore.getByGitProxyKey(proxyKey);
+      // 1. Validate proxy key (check both primary and context git keys)
+      const creds = credentialStore.getByGitProxyKey(proxyKey)
+        ?? credentialStore.getByContextGitProxyKey(proxyKey);
       if (!creds) {
         console.warn("[git-proxy] Invalid proxy key");
         res.status(403).json({ error: "Invalid proxy key" });
@@ -133,8 +109,9 @@ export function setupGitProxy(app: Express, credentialStore: CredentialStore): v
           headers,
         };
 
-        if (req.method !== "GET" && req.method !== "HEAD") {
-          fetchOptions.body = (req as any).rawBody;
+        // express.raw() puts the body in req.body as a Buffer
+        if (req.method !== "GET" && req.method !== "HEAD" && Buffer.isBuffer(req.body) && req.body.length > 0) {
+          fetchOptions.body = req.body;
         }
 
         const upstream = await fetch(fullUrl, fetchOptions);

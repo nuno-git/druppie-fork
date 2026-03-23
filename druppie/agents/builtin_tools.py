@@ -7,7 +7,6 @@ Default (all agents): done, hitl_ask_question, hitl_ask_multiple_choice_question
 Router adds: set_intent
 Planner adds: make_plan
 Agents with skills: invoke_skill (loads skill markdown prompts)
-
 Tool definitions are in BUILTIN_TOOL_DEFS (dict keyed by name).
 Use get_builtin_tools(names) to get OpenAI-format definitions for an agent.
 """
@@ -23,7 +22,8 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-from druppie.sandbox.model_resolver import get_agent_chain, resolve_sandbox_models
+from druppie.opencode.model_resolver import get_agent_chain, resolve_sandbox_models
+from druppie.tools.params.coding import VALID_REPO_TARGETS
 
 
 # =============================================================================
@@ -219,6 +219,15 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                         "type": "string",
                         "description": "Which sandbox agent to use",
                     },
+                    "repo_target": {
+                        "type": "string",
+                        "enum": ["project", "druppie_core"],
+                        "description": (
+                            "Which repo the sandbox works on. "
+                            "'project' (default) = session's Gitea project repo. "
+                            "'druppie_core' = Druppie's own GitHub repo (dual-repo: core + project context)."
+                        ),
+                    },
                 },
                 "required": ["task"],
             },
@@ -336,7 +345,6 @@ async def set_intent(
         project_name=project_name,
     )
 
-    # Validate intent
     valid_intents = ("create_project", "update_project", "general_chat")
     if intent not in valid_intents:
         return {
@@ -431,6 +439,29 @@ async def set_intent(
                             repo_name=repo_name,
                             repo_owner=repo_owner,
                         )
+
+                        # Push project template into the new repo
+                        from pathlib import Path
+
+                        template_dir = Path(__file__).resolve().parent.parent / "templates" / "project"
+                        if template_dir.is_dir():
+                            template_result = await gitea.push_template(
+                                repo=repo_name,
+                                template_dir=str(template_dir),
+                                owner=repo_owner,
+                            )
+                            if template_result.get("success"):
+                                logger.info(
+                                    "project_template_pushed",
+                                    repo_name=repo_name,
+                                    files=template_result.get("files_pushed"),
+                                )
+                            else:
+                                logger.warning(
+                                    "project_template_push_failed",
+                                    repo_name=repo_name,
+                                    errors=template_result.get("errors"),
+                                )
                     else:
                         gitea_error = f"Gitea repo creation failed: {repo_result.get('error')}"
                 else:
@@ -518,10 +549,10 @@ def _update_planner_prompt(
         return
 
     # Prepend intent context to the existing prompt
-    intent_context = f"""INTENT: {intent}
-PROJECT_ID: {str(project_id) if project_id else 'new'}
-
-"""
+    if project_id:
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: {str(project_id)}\n\n"
+    else:
+        intent_context = f"INTENT: {intent}\nPROJECT_ID: new\n\n"
     new_prompt = intent_context + (planner_run.planned_prompt or "")
     execution_repo.update_planned_prompt(planner_run.id, new_prompt)
 
@@ -905,7 +936,7 @@ async def execute_sandbox_coding_task(
         The caller (tool_executor) should set ToolCallStatus.WAITING_SANDBOX.
     """
     import json as _json
-    from druppie.sandbox import create_and_start_sandbox, SandboxCreateError
+    from druppie.opencode import create_and_start_sandbox, SandboxCreateError
 
     task = args.get("task", "")
     from druppie.core.config import DEFAULT_SANDBOX_AGENT
@@ -928,14 +959,44 @@ async def execute_sandbox_coding_task(
     if not session.user_id:
         return {"success": False, "error": "Cannot create sandbox: session has no user_id"}
 
-    repo_owner = os.getenv("GITEA_ORG", "druppie")
-    repo_name = ""
-    if session.project_id:
-        project_repo = ProjectRepository(db)
-        project = project_repo.get_by_id(session.project_id)
-        if project:
-            repo_owner = project.repo_owner or repo_owner
-            repo_name = project.repo_name or ""
+    # Determine git provider and repo context based on repo_target param
+    repo_target = args.get("repo_target", "project")
+    if repo_target not in VALID_REPO_TARGETS:
+        return {"success": False, "error": f"Invalid repo_target '{repo_target}'. Must be one of: {VALID_REPO_TARGETS}."}
+
+    from druppie.opencode.repo_context import resolve_repo_context
+    try:
+        repo_ctx = resolve_repo_context(repo_target, session_id, db)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    repo_owner = repo_ctx.repo_owner
+    repo_name = repo_ctx.repo_name
+    git_provider = repo_ctx.git_provider
+    context_repo_owner = repo_ctx.context_repo_owner
+    context_repo_name = repo_ctx.context_repo_name
+    context_git_provider = repo_ctx.context_git_provider
+
+    # Append mandatory push instruction to the task prompt.
+    # The sandbox agent (OpenCode) must push after committing — the deployer
+    # pulls from the remote and unpushed commits are invisible.
+    task += (
+        "\n\n## MANDATORY: Git push after commit"
+        "\nAfter committing your changes, you MUST push to the remote."
+        "\n"
+        "\nFirst, configure git credentials (the git proxy handles auth server-side,"
+        "\nso these are just placeholders to prevent interactive prompts):"
+        "\n```bash"
+        "\ngit config --global credential.helper '!f() { echo username=x; echo password=x; }; f'"
+        "\n```"
+        "\n"
+        "\nThen push:"
+        "\n```bash"
+        "\ngit push origin HEAD"
+        "\n```"
+        "\nVerify the push succeeded by running: git log --oneline origin/HEAD..HEAD"
+        "\n(should show nothing). Do NOT complete the task until push succeeds."
+    )
 
     try:
         result = await create_and_start_sandbox(
@@ -952,6 +1013,11 @@ async def execute_sandbox_coding_task(
             source="api",
             author_id="druppie-agent",
             db=db,
+            git_provider=git_provider,
+            context_repo_owner=context_repo_owner,
+            context_repo_name=context_repo_name,
+            context_git_provider=context_git_provider,
+            repo_target=repo_target,
         )
 
         logger.info(

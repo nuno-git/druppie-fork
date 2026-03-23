@@ -175,6 +175,31 @@ After editing `.env`, apply changes:
 docker compose --profile dev up -d
 ```
 
+## GitHub App Setup (for `update_core`)
+
+The `update_core` flow lets Druppie modify its own codebase via PRs on GitHub. It requires a GitHub App for authentication. **This is optional** — all other flows work without it.
+
+### Steps
+
+1. **Create a GitHub App** at [github.com/settings/apps/new](https://github.com/settings/apps/new):
+   - Permissions: **Contents** (R/W), **Pull requests** (R/W), **Metadata** (Read)
+   - Webhook: disabled
+
+2. **Generate a private key** on the App settings page → save as `secrets/github-app-private-key.pem`
+
+3. **Install the App** on the target repository (e.g., your Druppie fork)
+
+4. **Add to `.env`:**
+   ```bash
+   GITHUB_APP_ID=<from app settings page>
+   GITHUB_APP_PRIVATE_KEY_PATH=/app/secrets/github-app-private-key.pem
+   GITHUB_APP_INSTALLATION_ID=<from install URL>
+   ```
+
+5. **Restart:** `docker compose --profile dev up -d`
+
+> See [docs/SANDBOX.md](docs/SANDBOX.md#github-app-setup) for detailed setup instructions.
+
 ## Custom Ports
 
 Edit `.env` if default ports conflict:
