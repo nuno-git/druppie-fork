@@ -9,11 +9,12 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
-COPY requirements.txt .
+COPY module-docker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy server code
-COPY . .
+# Copy shared router factory and module code
+COPY module_router.py .
+COPY module-docker/ .
 
 # Environment variables
 ENV MCP_PORT=9002

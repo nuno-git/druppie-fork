@@ -70,9 +70,10 @@ class ToolRegistry:
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 # We're in an async context but initialize() wasn't called
-                logger.warning(
+                logger.error(
                     "tool_registry_not_initialized",
-                    hint="Call await registry.initialize() at startup",
+                    hint="Call await initialize_tool_registry() at startup",
+                    impact="Only builtin tools available — ALL MCP tools (coding, docker, filesearch, etc.) are MISSING",
                 )
                 # Load builtin tools only as fallback
                 self._load_builtin_tools()
@@ -82,6 +83,11 @@ class ToolRegistry:
             pass
 
         # Not in async context - do sync load (builtin only)
+        logger.error(
+            "tool_registry_sync_fallback",
+            hint="Call await initialize_tool_registry() at startup",
+            impact="Only builtin tools available — ALL MCP tools are MISSING",
+        )
         self._load_builtin_tools()
         self._initialized = True
 
@@ -91,15 +97,26 @@ class ToolRegistry:
         self._load_builtin_tools()
 
         # Load MCP tools from each server via tools/list
+        failed_servers = []
         for server in self._mcp_config.get_servers():
             try:
                 await self._load_mcp_tools_from_server(server)
             except Exception as e:
-                logger.warning(
+                failed_servers.append(server)
+                logger.error(
                     "failed_to_load_server_tools",
                     server=server,
+                    url=self._mcp_config.get_server_url(server),
                     error=str(e),
+                    impact=f"All tools from '{server}' are unavailable",
                 )
+
+        if failed_servers:
+            logger.error(
+                "tool_registry_partial_init",
+                failed_servers=failed_servers,
+                impact=f"{len(failed_servers)} MCP server(s) unreachable — their tools will not work",
+            )
 
     def _load_builtin_tools(self) -> None:
         """Load builtin tools from BUILTIN_TOOL_DEFS."""

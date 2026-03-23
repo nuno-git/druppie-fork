@@ -159,15 +159,12 @@ class MCPHttp:
             config: MCP configuration (server URLs, etc.)
         """
         self.config = config
-        self._clients: dict[str, Client] = {}
 
-    def _get_client(self, server: str) -> Client:
-        """Get or create FastMCP client for a server."""
-        if server not in self._clients:
-            url = self.config.get_server_url(server)
-            transport = StreamableHttpTransport(url)
-            self._clients[server] = Client(transport)
-        return self._clients[server]
+    def _create_client(self, server: str) -> Client:
+        """Create a fresh FastMCP client for a server."""
+        url = self.config.get_server_url(server)
+        transport = StreamableHttpTransport(url)
+        return Client(transport)
 
     async def call(
         self,
@@ -175,20 +172,24 @@ class MCPHttp:
         tool: str,
         args: dict[str, Any],
         timeout_seconds: float | None = 60.0,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
     ) -> dict[str, Any]:
-        """Call an MCP tool via HTTP.
+        """Call an MCP tool via HTTP with retry for transient errors.
 
         Args:
             server: MCP server name (coding, docker)
             tool: Tool name (read_file, write_file, build, etc.)
             args: Tool arguments
             timeout_seconds: Request timeout (None = wait indefinitely)
+            max_retries: Max retry attempts for transient errors
+            base_delay: Base delay in seconds (doubles each retry)
 
         Returns:
             Tool result as dict
 
         Raises:
-            MCPHttpError: If the call fails
+            MCPHttpError: If the call fails after all retries
         """
         url = self.config.get_server_url(server)
 
@@ -200,52 +201,76 @@ class MCPHttp:
             args_preview=str(args)[:200],
         )
 
-        try:
-            client = self._get_client(server)
+        last_error: Exception | None = None
 
-            async def _do_call():
-                async with client:
-                    return await client.call_tool(tool, args)
+        for attempt in range(max_retries + 1):
+            try:
+                client = self._create_client(server)
 
-            if timeout_seconds is not None:
-                result = await asyncio.wait_for(_do_call(), timeout=timeout_seconds)
-            else:
-                result = await _do_call()
+                async def _do_call():
+                    async with client:
+                        return await client.call_tool(tool, args)
 
-            # Parse FastMCP response
-            result_dict = self._parse_result(result)
+                if timeout_seconds is not None:
+                    result = await asyncio.wait_for(_do_call(), timeout=timeout_seconds)
+                else:
+                    result = await _do_call()
 
-            logger.info(
-                "mcp_http_call_completed",
-                server=server,
-                tool=tool,
-                success=result_dict.get("success", True),
-                result_preview=str(result_dict)[:200],
-            )
+                # Parse FastMCP response
+                result_dict = self._parse_result(result)
 
-            return result_dict
+                logger.info(
+                    "mcp_http_call_completed",
+                    server=server,
+                    tool=tool,
+                    success=result_dict.get("success", True),
+                    result_preview=str(result_dict)[:200],
+                    attempt=attempt + 1,
+                )
 
-        except asyncio.TimeoutError:
-            logger.error("mcp_http_timeout", server=server, tool=tool)
-            raise MCPHttpError(
-                server, tool,
-                f"Timeout calling {server}:{tool}",
-                retryable=True,
-            )
-        except ConnectionError as e:
-            logger.error("mcp_http_connection_error", server=server, tool=tool, error=str(e))
-            raise MCPHttpError(
-                server, tool,
-                f"Connection error: {e}",
-                retryable=True,
-            )
-        except Exception as e:
-            logger.error("mcp_http_error", server=server, tool=tool, error=str(e))
-            raise MCPHttpError(
-                server, tool,
-                f"Error calling {server}:{tool}: {e}",
-                retryable=False,
-            )
+                return result_dict
+
+            except Exception as e:
+                error_type, retryable, _ = classify_error(e)
+                last_error = e
+
+                if retryable and attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        "mcp_http_retry",
+                        server=server,
+                        tool=tool,
+                        error_type=error_type,
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        delay=delay,
+                        error=str(e),
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+                # Non-retryable or exhausted retries
+                logger.error(
+                    "mcp_http_error",
+                    server=server,
+                    tool=tool,
+                    error_type=error_type,
+                    retryable=retryable,
+                    attempt=attempt + 1,
+                    error=str(e),
+                )
+                raise MCPHttpError(
+                    server, tool,
+                    f"Error calling {server}:{tool}: {e}",
+                    retryable=retryable,
+                )
+
+        # Should not reach here, but safety net
+        raise MCPHttpError(
+            server, tool,
+            f"Max retries ({max_retries}) exceeded for {server}:{tool}: {last_error}",
+            retryable=False,
+        )
 
     def _parse_result(self, result: Any) -> dict[str, Any]:
         """Parse FastMCP response into a dict.
@@ -293,7 +318,7 @@ class MCPHttp:
             List of tool definitions
         """
         try:
-            client = self._get_client(server)
+            client = self._create_client(server)
             async with client:
                 tools = await client.list_tools()
                 return [

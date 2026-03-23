@@ -178,8 +178,8 @@ services:
 
   module-coding:
     build:
-      context: ./druppie/mcp-servers/module-coding
-      dockerfile: Dockerfile
+      context: ./druppie/mcp-servers
+      dockerfile: module-coding/Dockerfile
     container_name: druppie-module-coding
     profiles: [infra, dev, prod]
     environment:
@@ -213,8 +213,8 @@ services:
 
   module-docker:
     build:
-      context: ./druppie/mcp-servers/module-docker
-      dockerfile: Dockerfile
+      context: ./druppie/mcp-servers
+      dockerfile: module-docker/Dockerfile
     container_name: druppie-module-docker
     profiles: [infra, dev, prod]
     environment:
@@ -238,8 +238,8 @@ services:
 
   module-filesearch:
     build:
-      context: ./druppie/mcp-servers/module-filesearch
-      dockerfile: Dockerfile
+      context: ./druppie/mcp-servers
+      dockerfile: module-filesearch/Dockerfile
     container_name: druppie-module-filesearch
     profiles: [infra, dev, prod]
     environment:
@@ -260,8 +260,8 @@ services:
 
   module-archimate:
     build:
-      context: ./druppie/mcp-servers/module-archimate
-      dockerfile: Dockerfile
+      context: ./druppie/mcp-servers
+      dockerfile: module-archimate/Dockerfile
     container_name: druppie-module-archimate
     profiles: [infra, dev, prod]
     environment:
@@ -282,8 +282,8 @@ services:
 
   module-web:
     build:
-      context: ./druppie/mcp-servers/module-web
-      dockerfile: Dockerfile
+      context: ./druppie/mcp-servers
+      dockerfile: module-web/Dockerfile
     container_name: druppie-module-web
     profiles: [infra, dev, prod]
     environment:
@@ -304,8 +304,8 @@ services:
 
   module-hitl:
     build:
-      context: ./druppie/mcp-servers/module-hitl
-      dockerfile: Dockerfile
+      context: ./druppie/mcp-servers
+      dockerfile: module-hitl/Dockerfile
     container_name: druppie-module-hitl
     profiles: [infra, dev, prod]
     environment:
@@ -326,8 +326,8 @@ services:
 
   module-registry:
     build:
-      context: ./druppie/mcp-servers/module-registry
-      dockerfile: Dockerfile
+      context: ./druppie/mcp-servers
+      dockerfile: module-registry/Dockerfile
     container_name: druppie-module-registry
     profiles: [infra, dev, prod]
     environment:
