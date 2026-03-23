@@ -87,6 +87,18 @@ def _load_workspace_state(workspace_path: str | Path) -> dict | None:
     return None
 
 
+def _sanitize_param(value: str | None) -> str | None:
+    """Sanitize LLM-provided parameter values.
+
+    LLMs often send the literal strings "null", "none", or "undefined"
+    when they don't have a value. Treat these as None to prevent
+    cross-session data leaks via shared workspace registry keys.
+    """
+    if value and value.lower() in ("null", "none", "undefined", ""):
+        return None
+    return value
+
+
 def get_or_create_workspace(
     session_id: str,
     project_id: str | None = None,
@@ -111,19 +123,16 @@ def get_or_create_workspace(
     Returns:
         Tuple of (workspace_id, workspace_path)
     """
-    # If workspace_id provided and registered, use it
-    if workspace_id and workspace_id in workspaces:
-        ws = workspaces[workspace_id]
-        # Update repo info if provided and not already set
-        if repo_name and not ws.get("repo_name"):
-            ws["repo_name"] = repo_name
-            ws["repo_owner"] = repo_owner
-        return workspace_id, Path(ws["path"])
+    # Sanitize LLM sentinel strings ("null", "none", "undefined") → None
+    workspace_id = _sanitize_param(workspace_id)
+    user_id = _sanitize_param(user_id)
+    project_id = _sanitize_param(project_id)
 
-    # Derive workspace_id from session_id if not provided
-    derived_workspace_id = workspace_id or f"session-{session_id}"
+    # session_id is the canonical key — always derive workspace from it.
+    # workspace_id is only a fallback when session_id is absent.
+    derived_workspace_id = f"session-{session_id}"
 
-    # Check if already registered
+    # Check if already registered for this session
     if derived_workspace_id in workspaces:
         ws = workspaces[derived_workspace_id]
         workspace_path = Path(ws["path"])
@@ -140,6 +149,22 @@ def get_or_create_workspace(
             derived_workspace_id, ws.get("repo_owner"), ws.get("repo_name"), workspace_path,
         )
         return derived_workspace_id, workspace_path
+
+    # Legacy fallback: workspace_id only used when not already matched by session
+    if workspace_id and workspace_id in workspaces:
+        ws = workspaces[workspace_id]
+        # Verify session ownership — never return another session's workspace
+        if ws.get("session_id") == session_id:
+            if repo_name and not ws.get("repo_name"):
+                ws["repo_name"] = repo_name
+                ws["repo_owner"] = repo_owner
+            return workspace_id, Path(ws["path"])
+        else:
+            logger.warning(
+                "workspace_session_mismatch: workspace_id=%s belongs to session %s, "
+                "but called from session %s — ignoring stale workspace_id",
+                workspace_id, ws.get("session_id"), session_id,
+            )
 
     # Auto-create workspace path
     # Path structure: /workspaces/{user_id or "default"}/{project_id or "scratch"}/{session_id}
