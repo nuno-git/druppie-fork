@@ -1,0 +1,14 @@
+name: llm-integration
+version: 1.0.0
+description: Centralized LLM abstraction layer with multi-provider support and automatic failover
+author: Druppie Platform Team
+tools:
+  - chat_completion
+  - count_tokens
+  - list_providers
+dependencies:
+  - litellm>=1.0.0
+  - fastmcp>=0.1.0
+  - pydantic>=2.0.0
+  - tiktoken>=0.5.0
+  - structlog>=23.0.0
