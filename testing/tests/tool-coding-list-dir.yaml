@@ -16,15 +16,18 @@ test:
     message: ""
     real_agents: []
 
-  evals:
-    - eval: router-correct-intent
-      expected:
-        intent: create_project
-
   evaluate:
     assertions:
+      - agent: router
+        tool_called: builtin:set_intent
+        status: completed
+      - agent: router
+        completed: true
       - agent: architect
         tool_called: coding:list_dir
+        status: completed
         result_valid:
           - not_empty
           - no_error
+      - agent: architect
+        completed: true
