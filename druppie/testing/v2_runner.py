@@ -1077,7 +1077,14 @@ class TestRunner:
         # fall back to the last seeded session for assertion-only tests
         eval_session_id: UUID | None = execution_session_id
         if eval_session_id is None and sessions:
-            eval_session_id = fixture_uuid(sessions[-1].metadata.id)
+            # Look up the actual session UUID from DB (not computed)
+            from druppie.db.models import Session as SessionModel
+            last_sid = fixture_uuid(sessions[-1].metadata.id)
+            found = self._db.query(SessionModel).filter(SessionModel.id == last_sid).first()
+            if found:
+                eval_session_id = found.id
+            else:
+                eval_session_id = last_sid
 
         # Evaluate with assertions (always run -- they are deterministic)
         all_assertion_results: list[AssertionResult] = []
@@ -1165,6 +1172,18 @@ class TestRunner:
             status = "failed"
 
         # Store test run record
+        # Use eval_session_id as fallback when execution_session_id is None (seed-only)
+        stored_session_id = execution_session_id or eval_session_id
+
+        # Determine primary agent (first in real_agents, or first eval agent)
+        primary_agent = None
+        if test.run.real_agents:
+            primary_agent = test.run.real_agents[0]
+        elif test.evals:
+            eval_def = self._evals.get(test.evals[0].eval)
+            if eval_def.assertions:
+                primary_agent = eval_def.assertions[0].agent
+
         test_run = TestRunModel(
             benchmark_run_id=benchmark_run.id,
             batch_id=batch_id,
@@ -1173,7 +1192,7 @@ class TestRunner:
             test_user=test_user,
             hitl_profile=hitl_name,
             judge_profile=", ".join(judge_profiles) if judge_profiles else None,
-            session_id=execution_session_id,
+            session_id=stored_session_id,
             sessions_seeded=len(sessions),
             assertions_total=assertions_total,
             assertions_passed=assertions_passed,
@@ -1181,15 +1200,66 @@ class TestRunner:
             judge_checks_passed=judge_passed,
             status=status,
             duration_ms=duration_ms,
+            agent_id=primary_agent,
+            mode=getattr(test, "mode", None),
         )
         self._db.add(test_run)
         self._db.flush()
 
-        # Store tags (from all referenced evals)
+        # Store individual assertion results in TestAssertionResult table
+        from druppie.db.models import TestAssertionResult
+
+        for ar in all_assertion_results:
+            # Parse agent and tool from the assertion result name
+            ar_agent = None
+            ar_tool = None
+            ar_eval = None
+            if "." in ar.name:
+                ar_agent = ar.name.split(".")[0]
+            if "tool_called(" in ar.name:
+                ar_tool = ar.name.split("tool_called(")[1].rstrip(")")
+                if "." in ar_tool:
+                    ar_tool = ar_tool.split(")")[0]
+            # Try to find eval name from context
+            for eval_ref in test.evals:
+                eval_def = self._evals.get(eval_ref.eval)
+                for assertion in eval_def.assertions:
+                    if assertion.agent and assertion.agent in ar.name:
+                        ar_eval = eval_ref.eval
+                        break
+
+            self._db.add(TestAssertionResult(
+                test_run_id=test_run.id,
+                assertion_type="tool_called" if "tool_called" in ar.name else "completed",
+                agent_id=ar_agent,
+                tool_name=ar_tool,
+                eval_name=ar_eval,
+                passed=ar.passed,
+                message=ar.message,
+            ))
+
+        for jr in all_judge_results:
+            jr_agent = getattr(jr, "agent", None) or primary_agent
+            jr_eval = getattr(jr, "source", None)
+            self._db.add(TestAssertionResult(
+                test_run_id=test_run.id,
+                assertion_type="judge_check",
+                agent_id=jr_agent,
+                eval_name=jr_eval,
+                passed=jr.passed,
+                message=jr.check if hasattr(jr, "check") else str(jr),
+                judge_reasoning=jr.reasoning if hasattr(jr, "reasoning") else None,
+            ))
+
+        self._db.flush()
+
+        # Store tags (from all referenced evals + test mode tag)
         tags: set[str] = set()
         for eval_ref in test.evals:
             eval_def = self._evals.get(eval_ref.eval)
             tags.update(eval_def.tags)
+        if hasattr(test, "mode") and test.mode:
+            tags.add(f"mode:{test.mode}")
         for tag in tags:
             self._db.add(TestRunTag(test_run_id=test_run.id, tag=tag))
         self._db.flush()
