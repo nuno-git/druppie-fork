@@ -1,15 +1,28 @@
-## Session for testing coding:list_dir tool via replay.
-## The architect calls list_dir to see project files.
+## Replay session: Router creates project, then architect lists files.
+## When replayed, set_intent creates a real Gitea repo, then list_dir reads it.
 
 metadata:
   id: tool-test-list-dir
-  title: "Tool test: list directory"
+  title: "build a weather dashboard"
   status: completed
   user: admin
-  intent: create_project
-  project_name: weather-dashboard
 
 agents:
+  # Step 1: Router sets intent → creates project + Gitea repo
+  - id: router
+    status: completed
+    tool_calls:
+      - tool: "builtin:set_intent"
+        arguments:
+          intent: create_project
+          project_name: weather-dashboard
+        status: completed
+      - tool: "builtin:done"
+        arguments:
+          summary: "Agent router: Classified intent as create_project, project 'weather-dashboard'."
+        status: completed
+
+  # Step 2: Architect lists directory (now project + repo exist)
   - id: architect
     status: completed
     tool_calls:
@@ -21,5 +34,7 @@ agents:
         arguments:
           summary: "Agent architect: Listed directory contents."
         status: completed
-        result: "Agent completed"
-        execute: false
+
+messages:
+  - role: user
+    content: "build a weather dashboard"

@@ -1,16 +1,13 @@
-## REPLAY TEST: coding:list_dir returns directory listing
-## Executes a list_dir tool call through the real MCP coding server.
+## REPLAY TEST: Full workflow replay — router creates project, architect lists files.
+## Everything happens for real: Gitea repo created, files listed.
 
 test:
   name: tool-coding-list-dir
   mode: replay
-  description: "coding:list_dir returns directory listing"
+  description: "Replay: router creates project, architect lists directory"
 
-  # First seed world state (record_only — creates the project/repo)
-  sessions:
-    - weather-dashboard-completed
+  sessions: []
 
-  # Then replay the list_dir call through the real coding MCP
   seed_sessions:
     - session: tool-test-list-dir
       mode: replay
@@ -18,6 +15,11 @@ test:
   run:
     message: ""
     real_agents: []
+
+  evals:
+    - eval: router-correct-intent
+      expected:
+        intent: create_project
 
   evaluate:
     assertions:
