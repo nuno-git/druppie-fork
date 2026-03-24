@@ -73,7 +73,9 @@ RUN mkdir -p /workspace /app/plugins /tmp/opencode \
     /cache/npm /cache/pnpm /cache/bun /cache/uv /cache/pip \
     && echo 'Image built for local Kata sandbox' > /app/image-version.txt
 
-# Supply chain integrity: HTTPS-only package manager configs
+# Supply chain integrity: HTTPS-only package manager configs.
+# pip.conf is system-wide (/etc/) so it applies regardless of which user runs pip.
+# npmrc/pnpmrc are per-user (~/.npmrc) because npm/pnpm ignore system-level configs.
 COPY packages/local-sandbox-manager/sandbox-config/pip.conf /etc/pip.conf
 
 # Copy sandbox code (entrypoint, bridge, plugins, types)
@@ -126,6 +128,10 @@ ENV HOME=/home/sandbox \
 # Git config for sandbox user
 RUN su sandbox -c 'git config --global user.name "Sandbox Agent"' \
     && su sandbox -c 'git config --global user.email "sandbox@druppie.local"'
+
+# Make gh CLI writable by sandbox user so entrypoint.py can replace it
+# with a wrapper script that redirects to the GitHub API proxy.
+RUN rm -f /usr/local/bin/gh && touch /usr/local/bin/gh && chown sandbox:sandbox /usr/local/bin/gh
 
 # Entrypoint wrapper for cache permission checks
 COPY packages/local-sandbox-manager/sandbox-config/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

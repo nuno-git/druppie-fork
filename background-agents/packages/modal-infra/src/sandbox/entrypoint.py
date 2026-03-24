@@ -53,6 +53,7 @@ class SandboxSupervisor:
         self.shutdown_event = asyncio.Event()
         self.git_sync_complete = asyncio.Event()
         self.opencode_ready = asyncio.Event()
+        self._cache_snapshot_before: dict[str, set[str]] | None = None
 
         # Configuration from environment (set by Modal/SandboxManager)
         self.sandbox_id = os.environ.get("SANDBOX_ID", "unknown")
@@ -1094,13 +1095,14 @@ exit 1
             # Phase 2: Configure git identity (if repo was cloned)
             await self.configure_git_identity()
 
+            # Snapshot cache state before any package installs (setup + coding task).
+            # The "after" snapshot is taken at shutdown to capture the full lifecycle.
+            self._cache_snapshot_before = await self._snapshot_cache_state()
+
             # Phase 2.5: Run repo setup script (fresh clone only)
             setup_success: bool | None = None
             if not restored_from_snapshot:
-                cache_before = await self._snapshot_cache_state()
                 setup_success = await self.run_setup_script()
-                cache_after = await self._snapshot_cache_state()
-                await self._log_cache_changes(cache_before, cache_after)
 
             # Phase 2.7: Start Docker daemon (DinD) for builder verification
             dockerd_success: bool | None = None
@@ -1147,6 +1149,14 @@ exit 1
     async def shutdown(self) -> None:
         """Graceful shutdown of all processes."""
         self.log.info("supervisor.shutdown_start")
+
+        # Log cache changes across the full sandbox lifecycle (setup + coding task)
+        if self._cache_snapshot_before is not None:
+            try:
+                cache_after = await self._snapshot_cache_state()
+                await self._log_cache_changes(self._cache_snapshot_before, cache_after)
+            except Exception as e:
+                self.log.warn("cache.snapshot_error", exc=e)
 
         # Stop inner Docker containers and daemon (DinD cleanup)
         if self.dockerd_process and self.dockerd_process.returncode is None:

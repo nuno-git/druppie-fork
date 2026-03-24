@@ -543,7 +543,7 @@ Five layers protect the cache from supply-chain attacks:
 
 ### Cache Entry Logging
 
-When a sandbox completes, the entrypoint diffs cache snapshots (before vs after) and emits structured `cache.new_entries` JSON log events per package manager, including the sandbox ID, session ID, and up to 50 new entries per package manager.
+When a sandbox shuts down, the entrypoint diffs cache snapshots (taken at startup vs shutdown) and emits structured `cache.new_entries` JSON log events per package manager, including the sandbox ID, session ID, and up to 50 new entries per package manager. This captures packages installed during both the setup script and the main coding task.
 
 ### Commands
 
