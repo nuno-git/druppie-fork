@@ -1017,17 +1017,9 @@ class TestRunner:
         # --- Phase 1: Seed (always runs) ---
         short_hash = hashlib.md5(f"{test.name}-{hitl_name}-{timestamp}".encode()).hexdigest()[:8]
         test_user = f"t-{short_hash}"
-
-        # Resolve and seed sessions (world state)
         run_namespace = f"{test_user}"
-        sessions = self._sessions.resolve_chain(test.sessions)
-        for session_fixture in sessions:
-            session_fixture.metadata.user = test_user
-            session_fixture.metadata.id = f"{run_namespace}:{session_fixture.metadata.id}"
-            seed_fixture(self._db, session_fixture, gitea_url=self._gitea_url)
-        self._db.flush()
 
-        # Create test user in DB
+        # Create test user in DB FIRST (needed for replay executor)
         user = self._db.query(User).filter(User.username == test_user).first()
         if not user:
             user_id = uuid4()
@@ -1040,6 +1032,61 @@ class TestRunner:
             self._db.add(user)
             self._db.add(UserRole(user_id=user_id, role="admin"))
             self._db.flush()
+
+        # 1. Regular sessions (always record_only — fast DB insert)
+        sessions = self._sessions.resolve_chain(test.sessions)
+        for session_fixture in sessions:
+            session_fixture.metadata.user = test_user
+            session_fixture.metadata.id = f"{run_namespace}:{session_fixture.metadata.id}"
+            seed_fixture(self._db, session_fixture, gitea_url=self._gitea_url)
+
+        # 2. seed_sessions with explicit mode (record_only or replay)
+        if hasattr(test, "seed_sessions") and test.seed_sessions:
+            from druppie.testing.replay_config import load_replay_config
+            from druppie.testing.replay_executor import ReplayExecutor
+
+            replay_config = load_replay_config()
+            replay_exec = ReplayExecutor(replay_config, self._db)
+
+            for seed_ref in test.seed_sessions:
+                seed_sessions_resolved = self._sessions.resolve_chain([seed_ref.session])
+                for session_fixture in seed_sessions_resolved:
+                    session_fixture.metadata.user = test_user
+                    session_fixture.metadata.id = f"{run_namespace}:{session_fixture.metadata.id}"
+
+                    if seed_ref.mode == "replay":
+                        # REPLAY: execute tool calls through real orchestrator
+                        logger.info(
+                            "Replay mode: executing tool calls for session %s",
+                            seed_ref.session,
+                        )
+                        import asyncio
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # We're already in an async context — run directly
+                            import concurrent.futures
+                            with concurrent.futures.ThreadPoolExecutor() as pool:
+                                result = pool.submit(
+                                    asyncio.run,
+                                    replay_exec.replay_session(
+                                        session_fixture, user.id, self._gitea_url,
+                                    ),
+                                ).result()
+                        else:
+                            result = asyncio.run(
+                                replay_exec.replay_session(
+                                    session_fixture, user.id, self._gitea_url,
+                                )
+                            )
+                        logger.info("Replay complete: %s", result)
+                    else:
+                        # record_only
+                        seed_fixture(self._db, session_fixture, gitea_url=self._gitea_url)
+
+                    # Track for eval_session_id resolution
+                    sessions.append(session_fixture)
+
+        self._db.flush()
 
         if execute:
             # --- Phase 2: Execute ---

@@ -129,7 +129,7 @@ class ReplayExecutor:
         )
 
         meta = fixture.metadata
-        session_id = fixture_uuid(meta.id, str(user_id))
+        session_id = fixture_uuid(meta.id)  # Must match seed_fixture's UUID scheme
 
         # Create session record
         session = Session(
@@ -149,7 +149,7 @@ class ReplayExecutor:
         if meta.project_name:
             from druppie.db.models import Project
 
-            project_id = fixture_uuid(f"{meta.id}-project", str(user_id))
+            project_id = fixture_uuid(meta.id, "project")
             repo_info = None
             if gitea_url:
                 repo_info = _create_gitea_repo(meta.project_name, gitea_url)
@@ -172,7 +172,7 @@ class ReplayExecutor:
         # Replay each agent's tool calls
         for seq, agent_fix in enumerate(fixture.agents):
             agent_run = AgentRun(
-                id=fixture_uuid(f"{meta.id}-{agent_fix.id}", str(user_id)),
+                id=fixture_uuid(meta.id, "run", seq),
                 session_id=session_id,
                 agent_id=agent_fix.id,
                 status=agent_fix.status,
@@ -208,7 +208,7 @@ class ReplayExecutor:
                 if tc.outcome and gitea_url:
                     _replay_outcome(tc.outcome, fixture, self._db, gitea_url)
 
-        self._db.commit()
+        self._db.flush()
         return {
             "session_id": str(session_id),
             "project_id": str(project_id) if project_id else None,
