@@ -480,7 +480,7 @@ services:
       dockerfile: Dockerfile
     container_name: druppie-new-backend
     profiles: [dev]
-    command: ["uvicorn", "druppie.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-include", "*.py"]
+    command: ["uvicorn", "druppie.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-exclude", "workspace"]
     environment:
       DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
       DEV_MODE: ${DEV_MODE:-false}
