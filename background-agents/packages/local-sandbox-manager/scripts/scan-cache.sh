@@ -70,6 +70,27 @@ else
     echo "  /cache/pip not found, skipping"
 fi
 
+# --- uv: same PyPI ecosystem as pip, uses METADATA files ---
+echo "Scanning uv cache..."
+if [ -d /cache/uv ]; then
+    uv_dir="$SCAN_DIR/uv"
+    mkdir -p "$uv_dir"
+    find /cache/uv -name "METADATA" -o -name "PKG-INFO" 2>/dev/null | head -200 | while read -r meta; do
+        hash=$(echo "$meta" | md5sum | cut -d' ' -f1)
+        target_dir="$uv_dir/pkg-${hash}"
+        mkdir -p "$target_dir"
+        cp "$meta" "$target_dir/$(basename "$meta")" 2>/dev/null || true
+    done
+    count=$(find "$uv_dir" -type f 2>/dev/null | wc -l)
+    echo "  Found $count uv package metadata files"
+else
+    echo "  /cache/uv not found, skipping"
+fi
+
+# Note: bun is not scanned because its cache stores compiled/binary artifacts
+# without standard package manifests (no package.json or METADATA files).
+# osv-scanner cannot identify packages from bun's cache format.
+
 echo ""
 echo "Running osv-scanner..."
 echo ""

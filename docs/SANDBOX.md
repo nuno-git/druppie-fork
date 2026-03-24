@@ -6,7 +6,7 @@ Druppie delegates coding tasks to isolated Docker sandboxes. Each sandbox is a f
 
 ## Architecture
 
-The sandbox infrastructure is based on [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`), integrated as a git submodule at `background-agents/`. Sandbox containers run [OpenCode](https://github.com/opencode-ai/opencode) (`latest`).
+The sandbox infrastructure is based on [Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`), vendored directly at `background-agents/`. Sandbox containers run [OpenCode](https://github.com/opencode-ai/opencode) (`latest`).
 
 Three Docker services power the infrastructure:
 
@@ -253,7 +253,7 @@ Five security controls protect the shared dependency cache and sandbox environme
 
 ### 1. Traceability — Cache Entry Logging
 
-Every sandbox run logs which packages were added to the shared cache. The `SandboxSupervisor` snapshots `/cache/{npm,pnpm,pip,uv,bun}` before and after the setup script, then emits structured `cache.new_entries` JSON log events with package manager, count, entry names, sandbox ID, and session ID.
+Every sandbox run logs which packages were added to the shared cache. The `SandboxSupervisor` snapshots `/cache/{npm,pnpm,pip,uv,bun}` at startup and again at shutdown, then emits structured `cache.new_entries` JSON log events with package manager, count, entry names, sandbox ID, and session ID. This covers packages installed during both the setup script and the main coding task.
 
 Check logs with:
 ```bash
