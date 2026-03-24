@@ -301,6 +301,7 @@ async def list_available_tests(
             tests.append({
                 "name": test_def.name,
                 "description": test_def.description,
+                "mode": test_def.mode,
                 "sessions": test_def.sessions,
                 "real_agents": test_def.run.real_agents,
                 "message": test_def.run.message,
