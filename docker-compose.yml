@@ -798,7 +798,7 @@ services:
   # Usage: docker compose --profile scan-cache run --rm cache-scanner
   cache-scanner:
     build:
-      context: ./vendor/open-inspect
+      context: ./background-agents
       dockerfile: packages/local-sandbox-manager/Dockerfile.cache-scanner
     container_name: druppie-cache-scanner
     profiles: [scan-cache]
