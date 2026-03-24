@@ -146,8 +146,8 @@ class TestDefinition(BaseModel):
     name: str
     description: str = ""
 
-    # Tag/category for UI filtering
-    mode: str = "record_only"
+    # Tag/category for UI filtering (live, replay, record_only)
+    mode: str = "live"
 
     # World: sessions to seed
     sessions: list[str] = Field(default_factory=list)
