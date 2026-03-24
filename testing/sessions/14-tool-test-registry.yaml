@@ -1,11 +1,11 @@
-## Session for testing registry:list_components tool via replay.
+## Replay session: Architect queries registry for components.
+## No project needed — registry is a global service.
 
 metadata:
   id: tool-test-registry
-  title: "Tool test: list registry components"
+  title: "what components are available?"
   status: completed
   user: admin
-  intent: general_chat
 
 agents:
   - id: architect
@@ -18,5 +18,7 @@ agents:
         arguments:
           summary: "Agent architect: Listed registry components."
         status: completed
-        result: "Agent completed"
-        execute: false
+
+messages:
+  - role: user
+    content: "what components are available in the platform?"

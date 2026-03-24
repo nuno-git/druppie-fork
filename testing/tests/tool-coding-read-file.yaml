@@ -1,13 +1,11 @@
-## REPLAY TEST: coding:read_file returns file content
-## Executes a read_file tool call through the real MCP coding server.
+## REPLAY TEST: Router creates project, architect reads README.
 
 test:
   name: tool-coding-read-file
   mode: replay
-  description: "coding:read_file returns file content"
+  description: "Replay: router creates project, architect reads file"
 
-  sessions:
-    - weather-dashboard-completed
+  sessions: []
 
   seed_sessions:
     - session: tool-test-read-file
