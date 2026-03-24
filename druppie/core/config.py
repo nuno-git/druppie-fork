@@ -184,15 +184,15 @@ class MCPSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MCP_")
 
     coding_url: str = Field(
-        default="http://mcp-coding:9001",
+        default="http://module-coding:9001",
         description="Coding MCP server URL",
     )
     docker_url: str = Field(
-        default="http://mcp-docker:9002",
+        default="http://module-docker:9002",
         description="Docker MCP server URL",
     )
     filesearch_url: str = Field(
-        default="http://mcp-filesearch:9004",
+        default="http://module-filesearch:9004",
         description="Filesearch MCP server URL",
     )
     timeout: int = Field(

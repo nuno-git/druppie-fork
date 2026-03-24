@@ -1,20 +1,18 @@
 """Tool definition domain models.
 
-Unified tool definitions using Pydantic models for type-safe parameters.
+Unified tool definitions with JSON schema validation for parameters.
 
-Instead of storing parameters as JSON Schema (dict), each tool has a
-Pydantic model class that:
-1. Defines parameters with proper Python types
-2. Auto-generates JSON Schema for LLM function calling
-3. Validates arguments at runtime with helpful error messages
-4. Provides IDE autocomplete and type checking
+Each tool has a JSON schema (from MCP tools/list or builtin definitions) that:
+1. Defines parameters with proper JSON types
+2. Gets sent directly to the LLM for function calling
+3. Validates arguments at runtime via jsonschema
+4. Provides parameter descriptions for documentation
 
 Usage:
     tool = registry.get("coding_write_file")
 
-    # Validate arguments (returns typed model instance)
-    params = tool.validate_arguments({"path": "test.txt", "content": "hello"})
-    # params is WriteFileParams with .path and .content attributes
+    # Validate arguments (returns validated dict)
+    is_valid, error, validated, normalized = tool.validate_arguments({"path": "test.txt", "content": "hello"})
 
     # Get JSON Schema for LLM
     schema = tool.get_json_schema()
@@ -24,9 +22,8 @@ Usage:
 """
 
 from enum import Enum
-from typing import Type
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 
 
 class ToolType(str, Enum):
@@ -36,17 +33,11 @@ class ToolType(str, Enum):
     MCP = "mcp"
 
 
-class EmptyParams(BaseModel):
-    """Empty parameters model for tools with no parameters."""
-
-    pass
-
-
 class ToolDefinition(BaseModel):
-    """Unified tool definition with type-safe parameters.
+    """Unified tool definition with JSON schema validation.
 
-    Single source of truth for tool metadata. The params_model field
-    holds a Pydantic model class that defines the tool's parameters.
+    Single source of truth for tool metadata. The json_schema field
+    holds the JSON schema dict that defines the tool's parameters.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -59,8 +50,11 @@ class ToolDefinition(BaseModel):
     # For LLM - description shown to the model
     description: str
 
-    # Type-safe parameters - a Pydantic model class
-    params_model: Type[BaseModel] = EmptyParams
+    # JSON schema for parameters (from tools/list or builtin definitions)
+    json_schema: dict = {}
+
+    # Tool metadata (module_id, version, internal, pre_validate, etc.)
+    meta: dict = {}
 
     # For approval system
     requires_approval: bool = False
@@ -77,10 +71,9 @@ class ToolDefinition(BaseModel):
         return self.name
 
     def get_json_schema(self, strict: bool = True) -> dict:
-        """Generate JSON Schema from the params model.
+        """Get JSON Schema for the tool's parameters.
 
         This is what gets sent to the LLM for function calling.
-        Pydantic generates this automatically from the model definition.
 
         Args:
             strict: If True, generate OpenAI strict mode compliant schema:
@@ -88,13 +81,14 @@ class ToolDefinition(BaseModel):
                     - All properties in required array
                     - Optional fields use type union with null
         """
-        if self.params_model is EmptyParams:
+        if not self.json_schema:
             schema = {"type": "object", "properties": {}}
             if strict:
                 schema["additionalProperties"] = False
             return schema
 
-        schema = self.params_model.model_json_schema()
+        import copy
+        schema = copy.deepcopy(self.json_schema)
 
         # Inline $defs references before removing $defs
         # This handles nested models like PlanStep in MakePlanParams
@@ -103,7 +97,7 @@ class ToolDefinition(BaseModel):
             schema = self._inline_refs(schema, defs)
 
         # Clean up schema for LLM consumption
-        # Remove Pydantic-specific fields that confuse some LLMs or cause duplication
+        # Remove fields that confuse some LLMs or cause duplication
         schema.pop("title", None)
         schema.pop("description", None)  # Remove - already in function.description
 
@@ -208,7 +202,7 @@ class ToolDefinition(BaseModel):
             prop_schema.setdefault("default", None)
 
     def _inline_refs(self, obj: dict | list, defs: dict) -> dict | list:
-        """Recursively inline $ref references and clean up Pydantic artifacts.
+        """Recursively inline $ref references and clean up artifacts.
 
         Args:
             obj: The schema object to process
@@ -321,8 +315,8 @@ class ToolDefinition(BaseModel):
         _logger = structlog.get_logger()
 
         # Strip unknown arguments not in the tool's schema
-        known_fields = set(self.params_model.model_fields.keys())
-        extra_keys = set(arguments.keys()) - known_fields
+        known_fields = set(self.json_schema.get("properties", {}).keys())
+        extra_keys = set(arguments.keys()) - known_fields if known_fields else set()
         if extra_keys:
             _logger.warning(
                 "stripping_unknown_tool_arguments",
@@ -356,8 +350,8 @@ class ToolDefinition(BaseModel):
                 normalized[key] = value
         return normalized
 
-    def validate_arguments(self, arguments: dict | None) -> tuple[bool, str | None, BaseModel | None, dict | None]:
-        """Validate arguments and return typed params model.
+    def validate_arguments(self, arguments: dict | None) -> tuple[bool, str | None, dict | None, dict | None]:
+        """Validate arguments against JSON schema.
 
         First attempts validation with original arguments. If that fails,
         retries with normalized arguments (handling common LLM mistakes like
@@ -367,53 +361,51 @@ class ToolDefinition(BaseModel):
             arguments: Raw arguments dict from LLM
 
         Returns:
-            Tuple of (is_valid, error_message, validated_params, normalized_args)
-            - If valid with original: (True, None, ParamsModel, None)
-            - If valid with normalized: (True, None, ParamsModel, normalized_dict)
+            Tuple of (is_valid, error_message, validated_args, normalized_args)
+            - If valid with original: (True, None, args, None)
+            - If valid with normalized: (True, None, normalized_dict, normalized_dict)
             - If invalid: (False, error_message, None, None)
         """
+        import jsonschema
+
         if arguments is None:
             arguments = {}
 
+        if not self.json_schema:
+            # No schema to validate against - accept everything
+            return True, None, arguments, None
+
         # First try with original arguments
         try:
-            validated = self.params_model.model_validate(arguments)
-            # Pydantic may coerce types (e.g. "600" -> 600). Return the
-            # coerced dict so the MCP server receives correct types.
-            coerced = validated.model_dump(exclude_unset=True)
-            coerced_diff = {k: coerced[k] for k in coerced if k in arguments and coerced[k] != arguments[k]}
-            if coerced_diff:
-                return True, None, validated, {**arguments, **coerced}
-            return True, None, validated, None  # No coercion needed
-        except ValidationError as first_error:
+            jsonschema.validate(instance=arguments, schema=self.json_schema)
+            return True, None, arguments, None
+        except jsonschema.ValidationError:
             pass  # Try normalization fallback
 
         # Retry with normalized arguments (handles "null" strings, etc.)
         normalized = self._normalize_llm_arguments(arguments)
         try:
-            validated = self.params_model.model_validate(normalized)
-            return True, None, validated, normalized  # Return normalized dict
-        except ValidationError as e:
-            # Format error message nicely (use original error for clarity)
-            errors = []
-            for error in first_error.errors():
-                loc = ".".join(str(x) for x in error["loc"])
-                msg = error["msg"]
-                errors.append(f"{loc}: {msg}")
-            return False, "; ".join(errors), None, None
+            jsonschema.validate(instance=normalized, schema=self.json_schema)
+            return True, None, normalized, normalized
+        except jsonschema.ValidationError as e:
+            return False, str(e.message), None, None
 
     def get_param_descriptions(self) -> dict[str, str]:
-        """Get parameter descriptions from the model's field info.
+        """Get parameter descriptions from the JSON schema.
 
         Returns:
             Dict mapping parameter name to description
         """
-        if self.params_model is EmptyParams:
+        if not self.json_schema:
             return {}
 
+        properties = self.json_schema.get("properties", {})
         descriptions = {}
-        for name, field_info in self.params_model.model_fields.items():
-            descriptions[name] = field_info.description or ""
+        for name, prop_schema in properties.items():
+            if isinstance(prop_schema, dict):
+                descriptions[name] = prop_schema.get("description", "")
+            else:
+                descriptions[name] = ""
         return descriptions
 
 

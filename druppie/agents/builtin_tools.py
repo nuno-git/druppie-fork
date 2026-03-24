@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 from druppie.opencode.model_resolver import get_agent_chain, resolve_sandbox_models
-from druppie.tools.params.coding import VALID_REPO_TARGETS
+
+VALID_REPO_TARGETS = ("project", "druppie_core")
 
 
 # =============================================================================

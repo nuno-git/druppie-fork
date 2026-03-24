@@ -69,6 +69,15 @@ async def lifespan(app: FastAPI):
     from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users
     await cleanup_orphaned_sandbox_users()
 
+    # Initialize tool registry (discovers MCP tools from servers via tools/list)
+    from druppie.core.tool_registry import initialize_tool_registry
+    try:
+        await initialize_tool_registry()
+        logger.info("tool_registry_initialized")
+    except Exception as e:
+        logger.warning("tool_registry_init_failed", error=str(e),
+                       hint="MCP servers may not be ready yet. Registry will load builtin tools only.")
+
     # Start sandbox watchdog (detects stuck WAITING_SANDBOX tool calls)
     from druppie.api.routes.sandbox import sandbox_watchdog_loop
     create_tracked_task(sandbox_watchdog_loop(), name="sandbox-watchdog")
