@@ -17,13 +17,14 @@ import structlog
 
 logger = structlog.get_logger()
 
-_GITEA_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
-_ADMIN_USER = os.getenv("GITEA_ADMIN_USER", "gitea_admin")
-_ADMIN_PASSWORD = os.getenv("GITEA_ADMIN_PASSWORD", "")
 
-
-def _admin_auth() -> tuple[str, str]:
-    return (_ADMIN_USER, _ADMIN_PASSWORD)
+def _get_gitea_config() -> tuple[str, str, str]:
+    """Read Gitea config from env at call time (not import time)."""
+    return (
+        os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000"),
+        os.getenv("GITEA_ADMIN_USER", "gitea_admin"),
+        os.getenv("GITEA_ADMIN_PASSWORD", ""),
+    )
 
 
 async def create_sandbox_git_user(
@@ -39,10 +40,13 @@ async def create_sandbox_git_user(
     The user is named `sandbox-{sandbox_session_id[:12]}` to stay within
     Gitea's username length limits while remaining identifiable.
     """
+    gitea_url, admin_user, admin_password = _get_gitea_config()
+    admin_auth = (admin_user, admin_password)
+
     username = f"sandbox-{sandbox_session_id[:12]}"
     password = secrets.token_urlsafe(24)
     email = f"{username}@sandbox.druppie.local"
-    base = _GITEA_URL.rstrip("/")
+    base = gitea_url.rstrip("/")
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         # 1. Create restricted user via admin API
@@ -57,7 +61,7 @@ async def create_sandbox_git_user(
         resp = await client.post(
             f"{base}/api/v1/admin/users",
             json=user_payload,
-            auth=_admin_auth(),
+            auth=admin_auth,
         )
 
         if resp.status_code == 422 and "already exists" in resp.text.lower():
@@ -66,7 +70,7 @@ async def create_sandbox_git_user(
             resp = await client.post(
                 f"{base}/api/v1/admin/users",
                 json=user_payload,
-                auth=_admin_auth(),
+                auth=admin_auth,
             )
             if resp.status_code != 201:
                 raise RuntimeError(
@@ -81,7 +85,7 @@ async def create_sandbox_git_user(
         resp = await client.put(
             f"{base}/api/v1/repos/{repo_owner}/{repo_name}/collaborators/{username}",
             json={"permission": "write"},
-            auth=_admin_auth(),
+            auth=admin_auth,
         )
 
         if resp.status_code not in (204, 200):
@@ -121,7 +125,7 @@ async def create_sandbox_git_user(
 
         return {
             "provider": "gitea",
-            "url": _GITEA_URL,
+            "url": gitea_url,
             "username": username,
             "password": token,
             "authorizedRepo": f"{repo_owner}/{repo_name}",
@@ -130,20 +134,29 @@ async def create_sandbox_git_user(
 
 async def delete_sandbox_git_user(sandbox_session_id: str) -> None:
     """Delete the sandbox's Gitea user. Idempotent — ignores 404."""
+    gitea_url, admin_user, admin_password = _get_gitea_config()
     username = f"sandbox-{sandbox_session_id[:12]}"
-    base = _GITEA_URL.rstrip("/")
+    base = gitea_url.rstrip("/")
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        await _delete_user(client, base, username)
+        await _delete_user(client, base, username, (admin_user, admin_password))
 
 
-async def _delete_user(client: httpx.AsyncClient, base: str, username: str) -> None:
+async def _delete_user(
+    client: httpx.AsyncClient,
+    base: str,
+    username: str,
+    auth: tuple[str, str] | None = None,
+) -> None:
     """Delete a Gitea user via admin API. Ignores 404."""
+    if auth is None:
+        _, admin_user, admin_password = _get_gitea_config()
+        auth = (admin_user, admin_password)
     try:
         resp = await client.delete(
             f"{base}/api/v1/admin/users/{username}",
             params={"purge": "true"},
-            auth=_admin_auth(),
+            auth=auth,
         )
         if resp.status_code in (204, 404):
             logger.info("sandbox_gitea_user_deleted", username=username)

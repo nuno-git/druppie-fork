@@ -1,22 +1,28 @@
 """Docker MCP Server.
 
-Docker container operations - build, run, stop, logs.
+Docker container operations - build, run, stop, logs, compose_up, compose_down.
 Uses FastMCP framework for HTTP transport.
 
 This is a STANDALONE service:
 - build: Clones from git URL and builds (no workspace dependency)
 - run: Adds labels for ownership tracking (druppie.project_id, druppie.session_id)
+- compose_up: Deploys app + database via docker compose with health checking
+- compose_down: Tears down a docker compose deployment
 - list_containers: Can filter by project_id/session_id via labels
 """
 
+import asyncio
 import logging
 import os
+import re
 import shutil
 import subprocess
+import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
 
+import yaml as pyyaml
 from fastmcp import FastMCP
 
 # Configure logging
@@ -25,6 +31,16 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("docker-mcp")
+
+# Validation for Docker resource names (container names, compose project names)
+_SAFE_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
+
+
+def _validate_name(name: str, label: str) -> str | None:
+    """Returns an error message if name is invalid, None if ok."""
+    if not name or not _SAFE_NAME_RE.match(name) or len(name) > 128:
+        return f"Invalid {label}: must start with alphanumeric, contain only alphanumeric/hyphens/dots/underscores, max 128 chars"
+    return None
 
 # Initialize FastMCP server
 mcp = FastMCP("Docker MCP Server")
@@ -40,8 +56,14 @@ GITEA_URL = os.getenv("GITEA_INTERNAL_URL", "http://gitea:3000")
 GITEA_USER = os.getenv("GITEA_USER", "gitea_admin")
 GITEA_PASSWORD = os.getenv("GITEA_PASSWORD", "")
 
-# Track used ports
+# Track used ports (guarded by _port_lock for async concurrency safety)
 used_ports: set[int] = set()
+_port_lock = asyncio.Lock()
+
+# Track compose project -> port mapping for clean teardown.
+# In-memory only: after MCP server restart this dict is empty, but compose_down
+# has a fallback that discovers ports from running containers via docker ps.
+compose_port_registry: dict[str, int] = {}
 
 
 def get_used_host_ports() -> set[int]:
@@ -106,22 +128,27 @@ def is_port_available(port: int) -> bool:
     return True
 
 
-def get_next_port() -> int:
+async def get_next_port() -> int:
     """Get next available port from the configured range.
 
     Checks both Docker's currently bound ports and our internal tracking.
+    Queries Docker once upfront to avoid N subprocess calls.
+    Uses _port_lock to prevent TOCTOU races on concurrent compose_up calls.
     """
-    for port in range(PORT_RANGE_START, PORT_RANGE_END):
-        if is_port_available(port):
-            used_ports.add(port)
-            logger.info("Auto-selected available port %d", port)
-            return port
-    raise RuntimeError(f"No available ports in range {PORT_RANGE_START}-{PORT_RANGE_END}")
+    async with _port_lock:
+        docker_ports = get_used_host_ports()
+        for port in range(PORT_RANGE_START, PORT_RANGE_END):
+            if port not in docker_ports and port not in used_ports:
+                used_ports.add(port)
+                logger.info("Auto-selected available port %d", port)
+                return port
+        raise RuntimeError(f"No available ports in range {PORT_RANGE_START}-{PORT_RANGE_END}")
 
 
-def release_port(port: int) -> None:
+async def release_port(port: int) -> None:
     """Release a port back to pool."""
-    used_ports.discard(port)
+    async with _port_lock:
+        used_ports.discard(port)
 
 
 def get_gitea_clone_url(repo_name: str, repo_owner: str | None = None) -> str:
@@ -406,6 +433,10 @@ async def run(
         Dict with success, container_name, port, container_port, url, labels
     """
     try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
         # Check for and remove existing container with same name
         existing = check_and_remove_existing_container(container_name)
         if existing:
@@ -432,9 +463,9 @@ async def run(
                     "Requested port %d is not available, auto-selecting alternative",
                     requested_port
                 )
-                host_port = get_next_port()
+                host_port = await get_next_port()
         else:
-            host_port = get_next_port()
+            host_port = await get_next_port()
 
         logger.info(
             "Running container %s from image %s (port %d:%d, project=%s, session=%s)",
@@ -491,7 +522,7 @@ async def run(
         )
 
         if result.returncode != 0:
-            release_port(host_port)
+            await release_port(host_port)
             return {
                 "success": False,
                 "error": "Failed to start container",
@@ -519,6 +550,349 @@ async def run(
         return {"success": False, "error": str(e)}
 
 
+def _discover_container_port(compose_file: Path) -> int:
+    """Parse the app service's container port from docker-compose.yaml.
+
+    Falls back to 8000 if the port cannot be determined.
+    """
+    try:
+        data = pyyaml.safe_load(compose_file.read_text())
+        ports = data.get("services", {}).get("app", {}).get("ports", [])
+        for mapping in ports:
+            mapping_str = str(mapping)
+            # Handle "HOST:CONTAINER" or "${VAR:-HOST}:CONTAINER"
+            if ":" in mapping_str:
+                container_port_str = mapping_str.rsplit(":", 1)[1]
+                # Strip protocol suffix like "/tcp"
+                container_port_str = container_port_str.split("/")[0]
+                return int(container_port_str)
+        logger.warning("compose_up: no port mapping found for 'app' service, defaulting to 8000")
+    except Exception as e:
+        logger.warning("compose_up: could not parse container port from compose file: %s — defaulting to 8000", e)
+    return 8000
+
+
+@mcp.tool()
+async def compose_up(
+    repo_name: str | None = None,
+    repo_owner: str | None = None,
+    git_url: str | None = None,
+    branch: str = "main",
+    compose_project_name: str | None = None,
+    project_id: str | None = None,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    health_path: str = "/health",
+    health_timeout: int = 300,
+) -> dict:
+    """Deploy application with docker compose (app + database).
+
+    Clones from git, writes a label override, runs `docker compose up -d --build`,
+    waits for health check, then returns the URL.
+
+    Args:
+        repo_name: Gitea repo name (constructs URL using Gitea config)
+        repo_owner: Gitea repo owner (defaults to "druppie" org)
+        git_url: Full git URL (alternative to repo_name/repo_owner)
+        branch: Git branch (default: main)
+        compose_project_name: Docker Compose project name (auto-derived if omitted)
+        project_id: Project ID for labels (injected)
+        session_id: Session ID for labels (injected)
+        user_id: User ID for labels (injected)
+        health_path: Health check endpoint path (default: /health, not agent-facing)
+        health_timeout: Seconds to wait for health check (default: 300, not agent-facing)
+
+    Returns:
+        Dict with success, url, port, compose_project_name, containers, health_check
+    """
+    try:
+        if not git_url and not repo_name:
+            return {"success": False, "error": "Must provide either git_url or repo_name"}
+
+        # Prefer repo_name (uses internal Gitea URL) over git_url (may be external/localhost)
+        if repo_name:
+            url = get_gitea_clone_url(repo_name, repo_owner)
+        else:
+            url = git_url
+
+        # Step 1: Clone repository
+        build_id = str(uuid.uuid4())[:8]
+        clone_path = BUILD_DIR / build_id
+        BUILD_DIR.mkdir(parents=True, exist_ok=True)
+
+        logger.info("compose_up: cloning %s (branch: %s)", url, branch)
+        clone_result = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "clone", "--branch", branch, "--depth", "1", url, str(clone_path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if clone_result.returncode != 0:
+            return {"success": False, "error": f"Git clone failed: {clone_result.stderr}"}
+
+        # Step 2: Verify docker-compose.yaml exists
+        compose_file = clone_path / "docker-compose.yaml"
+        if not compose_file.exists():
+            compose_file = clone_path / "docker-compose.yml"
+        if not compose_file.exists():
+            shutil.rmtree(clone_path, ignore_errors=True)
+            return {"success": False, "error": "No docker-compose.yaml found in repository"}
+
+        # All remaining steps wrapped in try/finally to guarantee clone_path cleanup
+        host_port = None
+        project_name = None
+        try:
+            # Step 3: Allocate host port
+            host_port = await get_next_port()
+
+            # Step 4: Determine compose project name
+            project_name = compose_project_name
+            if not project_name:
+                sid_suffix = (session_id or build_id)[:8]
+                project_name = f"{repo_name or 'app'}-{sid_suffix}"
+            # Sanitize: compose project names must be lowercase alphanumeric + hyphens
+            project_name = re.sub(r'[^a-z0-9-]', '', project_name.lower().replace("_", "-"))
+            if not project_name:
+                project_name = f"app-{build_id}"
+
+            # Step 5: Write override file with druppie labels and network config
+            labels = {}
+            if project_id:
+                labels["druppie.project_id"] = project_id
+            if session_id:
+                labels["druppie.session_id"] = session_id
+            if user_id:
+                labels["druppie.user_id"] = user_id
+            if branch:
+                labels["druppie.branch"] = branch
+            labels["druppie.compose_project"] = project_name
+
+            override_data: dict[str, Any] = {
+                "services": {
+                    "app": {
+                        "labels": labels,
+                    }
+                }
+            }
+
+            # Join the Druppie Docker network so containers are discoverable
+            if DOCKER_NETWORK:
+                override_data["networks"] = {
+                    "default": {
+                        "external": True,
+                        "name": DOCKER_NETWORK,
+                    }
+                }
+
+            override_content = pyyaml.dump(
+                override_data, default_flow_style=False, sort_keys=False
+            )
+            override_path = clone_path / "docker-compose.override.yaml"
+            override_path.write_text(override_content)
+
+            # Step 6: Run docker compose up
+            logger.info("compose_up: starting project %s on port %d", project_name, host_port)
+            env = {**os.environ, "APP_PORT": str(host_port)}
+            compose_result = await asyncio.to_thread(
+                subprocess.run,
+                ["docker", "compose", "-p", project_name, "up", "-d", "--build"],
+                capture_output=True,
+                text=True,
+                timeout=600,
+                cwd=str(clone_path),
+                env=env,
+            )
+
+            if compose_result.returncode != 0:
+                await release_port(host_port)
+                host_port = None
+                return {
+                    "success": False,
+                    "error": "Docker compose up failed",
+                    "build_log": compose_result.stdout + compose_result.stderr,
+                }
+
+            # Step 7: Track port mapping
+            compose_port_registry[project_name] = host_port
+
+            # Step 8: Health check via Docker network (not localhost)
+            # Discover the container port from the compose file instead of hardcoding
+            container_port = _discover_container_port(compose_file)
+            app_container = f"{project_name}-app-1"
+            health_url = f"http://{app_container}:{container_port}{health_path}"
+            health_passed = False
+
+            for elapsed in range(health_timeout):
+                try:
+                    req = urllib.request.Request(health_url)
+                    resp = await asyncio.to_thread(
+                        urllib.request.urlopen, req, timeout=2
+                    )
+                    if resp.status == 200:
+                        health_passed = True
+                        resp.close()
+                        break
+                    resp.close()
+                except Exception:
+                    pass
+                if elapsed % 30 == 29:
+                    logger.info(
+                        "compose_up: health check pending (%ds/%ds)", elapsed + 1, health_timeout
+                    )
+                await asyncio.sleep(1)
+
+            if not health_passed:
+                # Get logs for debugging
+                log_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["docker", "compose", "-p", project_name, "logs", "app"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                # Tear down failed deployment to avoid port/container leak
+                await asyncio.to_thread(
+                    subprocess.run,
+                    ["docker", "compose", "-p", project_name, "down", "-v"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                failed_port = host_port
+                await release_port(host_port)
+                host_port = None
+                compose_port_registry.pop(project_name, None)
+                return {
+                    "success": False,
+                    "error": f"Health check failed after {health_timeout}s",
+                    "url": f"http://localhost:{failed_port}",
+                    "port": failed_port,
+                    "compose_project_name": project_name,
+                    "logs": log_result.stdout + log_result.stderr,
+                }
+
+            # Step 9: Get container list
+            ps_result = await asyncio.to_thread(
+                subprocess.run,
+                ["docker", "compose", "-p", project_name, "ps", "--format", "{{.Name}}"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            containers = [
+                c.strip() for c in ps_result.stdout.strip().split("\n") if c.strip()
+            ]
+
+            logger.info("compose_up: project %s running on port %d", project_name, host_port)
+
+            return {
+                "success": True,
+                "url": f"http://localhost:{host_port}",
+                "port": host_port,
+                "compose_project_name": project_name,
+                "containers": containers,
+                "health_check": "passed",
+                "labels": labels,
+            }
+
+        finally:
+            # Always clean up cloned temp directory
+            shutil.rmtree(clone_path, ignore_errors=True)
+            # Release port if we allocated one but didn't register success
+            if host_port is not None and (
+                project_name is None or project_name not in compose_port_registry
+            ):
+                await release_port(host_port)
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Operation timed out"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool()
+async def compose_down(
+    compose_project_name: str,
+    remove_volumes: bool = True,
+) -> dict:
+    """Stop and remove a docker compose deployment.
+
+    Args:
+        compose_project_name: Compose project name to stop
+        remove_volumes: Remove associated volumes (default: True)
+
+    Returns:
+        Dict with success, stopped project name
+    """
+    try:
+        # Sanitize project name the same way compose_up does
+        compose_project_name = re.sub(
+            r'[^a-z0-9-]', '', compose_project_name.lower().replace("_", "-")
+        )
+        if not compose_project_name:
+            return {"success": False, "error": "Invalid compose_project_name: empty after sanitization"}
+
+        # Look up port from in-memory registry (may be empty after MCP server restart)
+        port = compose_port_registry.get(compose_project_name)
+
+        # Fallback: discover port from running containers if not in registry
+        if port is None:
+            try:
+                ps_result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["docker", "compose", "-p", compose_project_name, "ps",
+                     "--format", "{{.Ports}}"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                # Parse "0.0.0.0:9101->8000/tcp" to extract host port
+                for mapping in ps_result.stdout.split(","):
+                    if "->" in mapping:
+                        host_part = mapping.strip().split("->")[0]
+                        port_str = host_part.rsplit(":", 1)[-1]
+                        port = int(port_str)
+                        break
+            except Exception:
+                pass
+
+        # Run docker compose down
+        cmd = ["docker", "compose", "-p", compose_project_name, "down"]
+        if remove_volumes:
+            cmd.append("-v")
+
+        result = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode != 0:
+            return {
+                "success": False,
+                "error": f"Docker compose down failed: {result.stderr}",
+            }
+
+        # Release port
+        if port:
+            await release_port(port)
+            compose_port_registry.pop(compose_project_name, None)
+
+        logger.info("compose_down: stopped project %s", compose_project_name)
+
+        return {
+            "success": True,
+            "stopped": compose_project_name,
+            "removed_volumes": remove_volumes,
+        }
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Operation timed out"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @mcp.tool()
 async def stop(container_name: str, remove: bool = True) -> dict:
     """Stop a running container.
@@ -531,6 +905,10 @@ async def stop(container_name: str, remove: bool = True) -> dict:
         Dict with success
     """
     try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
         # Stop container
         result = subprocess.run(
             ["docker", "stop", container_name],
@@ -576,6 +954,10 @@ async def logs(
         Dict with success, logs
     """
     try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
         cmd = ["docker", "logs", "--tail", str(tail), container_name]
 
         result = subprocess.run(
@@ -613,6 +995,10 @@ async def remove(container_name: str, force: bool = False) -> dict:
         Dict with success
     """
     try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
         cmd = ["docker", "rm"]
         if force:
             cmd.append("-f")
@@ -725,6 +1111,10 @@ async def inspect(container_name: str) -> dict:
         Dict with container details
     """
     try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
         result = subprocess.run(
             ["docker", "inspect", container_name],
             capture_output=True,
@@ -778,6 +1168,10 @@ async def exec_command(
         Dict with stdout, stderr, return_code
     """
     try:
+        err = _validate_name(container_name, "container_name")
+        if err:
+            return {"success": False, "error": err}
+
         cmd = ["docker", "exec"]
 
         if workdir:
