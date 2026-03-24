@@ -409,15 +409,22 @@ const TestSelectorModal = ({
             ))}
           </div>
           <div className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={judgeEnabled}
-                onChange={(e) => setJudgeEnabled(e.target.checked)}
-                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-              />
-              <span className="text-xs text-gray-600">LLM Judge</span>
-            </label>
+            {(() => {
+              const hasLive = selectAll
+                ? tests.some((t) => t.mode === 'live')
+                : tests.some((t) => selectedTests.has(t.name) && t.mode === 'live')
+              return hasLive ? (
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={judgeEnabled}
+                    onChange={(e) => setJudgeEnabled(e.target.checked)}
+                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                  />
+                  <span className="text-xs text-gray-600">LLM Judge</span>
+                </label>
+              ) : null
+            })()}
             <span className="text-sm text-gray-500">
               {effectiveCount} test{effectiveCount !== 1 ? 's' : ''} selected
             </span>
