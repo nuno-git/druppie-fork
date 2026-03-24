@@ -81,7 +81,7 @@ class ReplayExecutor:
 
             # Import here to avoid circular imports
             from druppie.core.mcp_config import MCPConfig
-            from druppie.core.mcp_http import MCPHttp
+            from druppie.execution.mcp_http import MCPHttp
             from druppie.execution.tool_executor import ToolExecutor
 
             mcp_config = MCPConfig()
