@@ -42,3 +42,8 @@ class SandboxSession(Base):
 
     # Repo target for retry reconstruction: "project" (default) or "druppie_core"
     repo_target = Column(String(20), default="project", nullable=False, server_default="project")
+
+    # Persisted event snapshot — survives control plane restarts so frontend
+    # can still show sandbox details after the session is done
+    events_snapshot = Column(Text, nullable=True)   # JSON array of last N events
+    result_summary = Column(Text, nullable=True)    # JSON dict with structured result

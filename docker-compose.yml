@@ -176,11 +176,11 @@ services:
   # MCP SERVERS (Microservices)
   # ===========================================================================
 
-  mcp-coding:
+  module-coding:
     build:
-      context: ./druppie/mcp-servers/coding
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-coding
+      context: ./druppie/mcp-servers
+      dockerfile: module-coding/Dockerfile
+    container_name: druppie-module-coding
     profiles: [infra, dev, prod]
     environment:
       WORKSPACE_ROOT: /workspaces
@@ -211,11 +211,11 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-docker:
+  module-docker:
     build:
-      context: ./druppie/mcp-servers/docker
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-docker
+      context: ./druppie/mcp-servers
+      dockerfile: module-docker/Dockerfile
+    container_name: druppie-module-docker
     profiles: [infra, dev, prod]
     environment:
       MCP_PORT: "9002"
@@ -236,11 +236,11 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-filesearch:
+  module-filesearch:
     build:
-      context: ./druppie/mcp-servers/filesearch
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-filesearch
+      context: ./druppie/mcp-servers
+      dockerfile: module-filesearch/Dockerfile
+    container_name: druppie-module-filesearch
     profiles: [infra, dev, prod]
     environment:
       SEARCH_ROOT: /dataset
@@ -258,17 +258,17 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-archimate:
+  module-archimate:
     build:
-      context: ./druppie/mcp-servers/archimate
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-archimate
+      context: ./druppie/mcp-servers
+      dockerfile: module-archimate/Dockerfile
+    container_name: druppie-module-archimate
     profiles: [infra, dev, prod]
     environment:
       MODELS_DIR: /models
       MCP_PORT: "9006"
     volumes:
-      - ./druppie/mcp-servers/archimate/models:/models:ro
+      - ./druppie/mcp-servers/module-archimate/models:/models:ro
     ports:
       - "${MCP_ARCHIMATE_PORT:-9006}:9006"
     networks:
@@ -280,11 +280,11 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-web:
+  module-web:
     build:
-      context: ./druppie/mcp-servers/web
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-web
+      context: ./druppie/mcp-servers
+      dockerfile: module-web/Dockerfile
+    container_name: druppie-module-web
     profiles: [infra, dev, prod]
     environment:
       SEARCH_ROOT: /dataset
@@ -302,11 +302,33 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-registry:
+  module-hitl:
     build:
-      context: ./druppie/mcp-servers/registry
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-registry
+      context: ./druppie/mcp-servers
+      dockerfile: module-hitl/Dockerfile
+    container_name: druppie-module-hitl
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9003"
+      BACKEND_URL: http://druppie-backend:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
+      HITL_TIMEOUT: "300"
+    ports:
+      - "${MCP_HITL_PORT:-9003}:9003"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  module-registry:
+    build:
+      context: ./druppie/mcp-servers
+      dockerfile: module-registry/Dockerfile
+    container_name: druppie-module-registry
     profiles: [infra, dev, prod]
     environment:
       DATA_DIR: /data
@@ -510,12 +532,12 @@ services:
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
       USE_MCP_MICROSERVICES: "true"
-      MCP_CODING_URL: ${MCP_CODING_URL:-http://mcp-coding:9001}
-      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
-      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
-      MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
-      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
-      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+      MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
+      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
+      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://module-filesearch:9004}
+      MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
+      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
+      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
@@ -590,12 +612,12 @@ services:
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
       USE_MCP_MICROSERVICES: "true"
-      MCP_CODING_URL: ${MCP_CODING_URL:-http://mcp-coding:9001}
-      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
-      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
-      MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
-      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
-      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+      MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
+      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
+      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://module-filesearch:9004}
+      MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
+      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
+      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}

@@ -72,7 +72,7 @@ extra_builtin_tools:
   - set_intent
 
 mcps:
-  bestand-zoeker:
+  web:
     - search_files
     - list_directory
     - read_file
