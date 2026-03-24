@@ -1,8 +1,14 @@
 """Replay executor — executes tool calls from YAML through the real pipeline.
 
 In replay mode, tool calls defined in session YAML fixtures are executed
-against real MCP servers (or the orchestrator for builtin tools) instead
-of being inserted as static DB records.
+against real MCP servers and builtin tools, just like a real agent workflow.
+The only difference: the tool calls come from YAML instead of an LLM deciding them.
+
+This means:
+- builtin:set_intent creates real projects + Gitea repos
+- coding:list_dir actually lists files
+- coding:make_design actually creates files
+- Everything shows up in the session exactly like a real run
 
 The executor respects:
 - Per-tool-call `execute` overrides (True/False)
@@ -19,7 +25,8 @@ from sqlalchemy.orm import Session as DbSession
 from druppie.db.models import AgentRun, Message, Session, ToolCall
 from druppie.db.models.base import utcnow
 from druppie.testing.replay_config import ReplayConfig
-from druppie.testing.seed_schema import AgentRunFixture, SessionFixture, ToolCallFixture
+from druppie.testing.seed_ids import fixture_uuid
+from druppie.testing.seed_schema import SessionFixture, ToolCallFixture
 
 logger = logging.getLogger(__name__)
 
@@ -46,69 +53,104 @@ class ReplayExecutor:
             return default
         return '{"status": "ok", "message": "mocked"}'
 
+    async def _execute_real(
+        self,
+        tool_call: ToolCallFixture,
+        session_id: UUID,
+        agent_run_id: UUID,
+    ) -> tuple[str, str]:
+        """Execute a tool call through the real ToolExecutor.
+
+        Returns (result_string, status_string).
+        """
+        # Create ToolCall DB record — ToolExecutor loads it by ID
+        tc_record = ToolCall(
+            id=uuid4(),
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            mcp_server=tool_call.mcp_server,
+            tool_name=tool_call.tool_name,
+            arguments=tool_call.arguments,
+            status="pending",
+            created_at=utcnow(),
+        )
+        self._db.add(tc_record)
+        self._db.flush()
+
+        from druppie.core.mcp_config import MCPConfig
+        from druppie.execution.mcp_http import MCPHttp
+        from druppie.execution.tool_executor import ToolExecutor
+
+        mcp_config = MCPConfig()
+        mcp_http = MCPHttp(mcp_config)
+        executor = ToolExecutor(self._db, mcp_http, mcp_config)
+        result_status = await executor.execute(tc_record.id)
+
+        # Refresh to get updated fields
+        self._db.refresh(tc_record)
+        return tc_record.result or "", result_status
+
     async def execute_tool_call(
         self,
         tool_call: ToolCallFixture,
         session_id: UUID,
         agent_run_id: UUID,
-        agent_id: str,
-    ) -> str:
-        """Execute a single tool call through the orchestrator, or return mock.
+    ) -> tuple[str, str, bool]:
+        """Execute a single tool call. Returns (result, status, was_real)."""
 
-        For MCP tools, this calls the real MCP server via MCPHttp.
-        For builtin tools, this calls the builtin handler.
-        For blocklisted/mocked tools, returns the mock result.
-        """
         if not self.should_execute(tool_call):
-            logger.info(
-                "Replay mock: %s (blocklisted or execute=false)", tool_call.tool
-            )
-            return self.get_mock_result(tool_call)
+            mock_result = self.get_mock_result(tool_call)
+            logger.info("Replay mock: %s", tool_call.tool)
 
-        try:
-            # Create a ToolCall DB record so the executor has something to work with
+            # Create a DB record for the mocked tool call
             tc_record = ToolCall(
                 id=uuid4(),
+                session_id=session_id,
                 agent_run_id=agent_run_id,
                 mcp_server=tool_call.mcp_server,
                 tool_name=tool_call.tool_name,
                 arguments=tool_call.arguments,
-                status="pending",
+                status=tool_call.status or "completed",
+                result=mock_result,
+                error_message=tool_call.error_message,
                 created_at=utcnow(),
             )
             self._db.add(tc_record)
             self._db.flush()
+            return mock_result, "completed", False
 
-            # Import here to avoid circular imports
-            from druppie.core.mcp_config import MCPConfig
-            from druppie.execution.mcp_http import MCPHttp
-            from druppie.execution.tool_executor import ToolExecutor
-
-            mcp_config = MCPConfig()
-            mcp_http = MCPHttp(mcp_config)
-            executor = ToolExecutor(self._db, mcp_http, mcp_config)
-            result_status = await executor.execute(tc_record.id)
-
-            # Refresh to get updated result
-            self._db.refresh(tc_record)
-            result = tc_record.result or ""
-            logger.info(
-                "Replay executed: %s -> %s (%s)",
-                tool_call.tool, result_status, result[:100],
+        try:
+            result, status = await self._execute_real(
+                tool_call, session_id, agent_run_id,
             )
-            return result
+            logger.info("Replay executed: %s -> %s", tool_call.tool, status)
+            return result, status, True
 
         except Exception as e:
             if self.config.on_error == "fail":
                 raise
             elif self.config.on_error == "skip":
                 logger.warning("Replay skip: %s error: %s", tool_call.tool, e)
-                return ""
-            else:  # "mock" (default)
-                logger.warning(
-                    "Replay mock (on_error): %s failed: %s", tool_call.tool, e
+                return "", "skipped", False
+            else:  # "mock"
+                logger.warning("Replay mock (on_error): %s failed: %s", tool_call.tool, e)
+                mock_result = self.get_mock_result(tool_call)
+                # Still create a DB record
+                tc_record = ToolCall(
+                    id=uuid4(),
+                    session_id=session_id,
+                    agent_run_id=agent_run_id,
+                    mcp_server=tool_call.mcp_server,
+                    tool_name=tool_call.tool_name,
+                    arguments=tool_call.arguments,
+                    status="failed",
+                    result=mock_result,
+                    error_message=str(e),
+                    created_at=utcnow(),
                 )
-                return self.get_mock_result(tool_call)
+                self._db.add(tc_record)
+                self._db.flush()
+                return mock_result, "failed", False
 
     async def replay_session(
         self,
@@ -118,60 +160,31 @@ class ReplayExecutor:
     ) -> dict:
         """Replay all tool calls in a session fixture.
 
-        1. Create session + agent_run DB records
-        2. Execute each tool call in order
-        3. Return session info dict
+        Creates a bare session, then executes each tool call through the real
+        pipeline. Side effects (project creation, Gitea repos, file writes)
+        happen naturally through the tool calls — just like a real workflow.
+
+        The session view will show every tool call and its result.
         """
-        from druppie.testing.seed_ids import fixture_uuid
-        from druppie.testing.seed_loader import (
-            _create_gitea_repo,
-            _replay_outcome,
-        )
-
         meta = fixture.metadata
-        session_id = fixture_uuid(meta.id)  # Must match seed_fixture's UUID scheme
+        session_id = fixture_uuid(meta.id)
 
-        # Create session record
+        # Create bare session — NO project, NO intent pre-set
+        # These will be created by the tool calls (e.g. set_intent creates the project)
         session = Session(
             id=session_id,
             user_id=user_id,
             title=meta.title,
-            status=meta.status,
-            intent=meta.intent,
+            status="active",  # Start as active, tools will update it
             language=meta.language,
             created_at=utcnow(),
         )
         self._db.add(session)
         self._db.flush()
 
-        # Create project if needed
-        project_id = None
-        if meta.project_name:
-            from druppie.db.models import Project
-
-            project_id = fixture_uuid(meta.id, "project")
-            repo_info = None
-            if gitea_url:
-                repo_info = _create_gitea_repo(meta.project_name, gitea_url)
-
-            project = Project(
-                id=project_id,
-                name=meta.project_name,
-                owner_id=user_id,
-                description=f"Test project: {meta.title}",
-                repo_name=repo_info["repo_name"] if repo_info else meta.project_name,
-                repo_owner=repo_info["repo_owner"] if repo_info else "druppie_admin",
-                repo_url=repo_info["repo_url"] if repo_info else None,
-                clone_url=repo_info["clone_url"] if repo_info else None,
-                created_at=utcnow(),
-            )
-            self._db.add(project)
-            session.project_id = project_id
-            self._db.flush()
-
         msg_seq = 0
 
-        # Add fixture messages (user message, etc.)
+        # Add fixture messages (user message first — this is what the "user said")
         for msg_fix in fixture.messages:
             self._db.add(Message(
                 id=fixture_uuid(meta.id, "msg", msg_seq),
@@ -183,51 +196,36 @@ class ReplayExecutor:
                 created_at=utcnow(),
             ))
             msg_seq += 1
+        self._db.flush()
 
-        # Replay each agent's tool calls
+        # Replay each agent's tool calls in order
         for seq, agent_fix in enumerate(fixture.agents):
             agent_run = AgentRun(
                 id=fixture_uuid(meta.id, "run", seq),
                 session_id=session_id,
                 agent_id=agent_fix.id,
-                status=agent_fix.status,
+                status="running",  # Start as running
                 sequence_number=seq,
-                error_message=agent_fix.error_message,
                 planned_prompt=agent_fix.planned_prompt,
                 created_at=utcnow(),
             )
             self._db.add(agent_run)
             self._db.flush()
 
-            for tc_idx, tc in enumerate(agent_fix.tool_calls):
-                result = await self.execute_tool_call(
-                    tc, session_id, agent_run.id, agent_fix.id,
+            for tc in agent_fix.tool_calls:
+                result, status, was_real = await self.execute_tool_call(
+                    tc, session_id, agent_run.id,
                 )
 
-                # For mocked tools, create the ToolCall record manually
-                if not self.should_execute(tc):
-                    tc_record = ToolCall(
-                        id=uuid4(),
-                        agent_run_id=agent_run.id,
-                        mcp_server=tc.mcp_server,
-                        tool_name=tc.tool_name,
-                        arguments=tc.arguments,
-                        status=tc.status,
-                        result=result,
-                        error_message=tc.error_message,
-                        created_at=utcnow(),
-                    )
-                    self._db.add(tc_record)
-                    self._db.flush()
-
-                # Create a tool message so it shows in the session view
+                # Create a message so it shows in the session timeline
                 result_preview = (result or "")[:500]
+                label = "executed" if was_real else "mocked"
                 self._db.add(Message(
                     id=fixture_uuid(meta.id, "msg", msg_seq),
                     session_id=session_id,
                     agent_run_id=agent_run.id,
                     role="tool",
-                    content=f"**{tc.tool}**({', '.join(f'{k}={v}' for k, v in tc.arguments.items())})\n\n→ {result_preview}",
+                    content=f"[{label}] **{tc.tool}**({', '.join(f'{k}={v}' for k, v in tc.arguments.items())})\n\n→ {result_preview}",
                     agent_id=agent_fix.id,
                     tool_name=tc.tool,
                     sequence_number=msg_seq,
@@ -235,24 +233,38 @@ class ReplayExecutor:
                 ))
                 msg_seq += 1
 
-                # Handle outcome blocks (Gitea file creation)
+                # Handle outcome blocks (file creation in Gitea)
                 if tc.outcome and gitea_url:
+                    from druppie.testing.seed_loader import _replay_outcome
                     _replay_outcome(tc.outcome, fixture, self._db, gitea_url)
 
-            # Add an assistant message summarizing the agent's work
+            # Update agent run status
+            agent_run.status = agent_fix.status
+            self._db.flush()
+
+            # Summary message
+            executed_count = sum(1 for tc in agent_fix.tool_calls if self.should_execute(tc))
+            mocked_count = len(agent_fix.tool_calls) - executed_count
             self._db.add(Message(
                 id=fixture_uuid(meta.id, "msg", msg_seq),
                 session_id=session_id,
                 agent_run_id=agent_run.id,
                 role="assistant",
-                content=f"Agent **{agent_fix.id}** completed ({len(agent_fix.tool_calls)} tool calls executed via replay)",
+                content=f"Agent **{agent_fix.id}** completed — {executed_count} tool calls executed, {mocked_count} mocked",
                 agent_id=agent_fix.id,
                 sequence_number=msg_seq,
                 created_at=utcnow(),
             ))
             msg_seq += 1
 
+        # Update session status to match fixture
+        session.status = meta.status
         self._db.flush()
+
+        # Get project_id if one was created by set_intent
+        self._db.refresh(session)
+        project_id = session.project_id
+
         return {
             "session_id": str(session_id),
             "project_id": str(project_id) if project_id else None,
