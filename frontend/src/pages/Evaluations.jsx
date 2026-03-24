@@ -121,8 +121,8 @@ const TestSelectorModal = ({
   setSelectAll,
   selectedTests,
   setSelectedTests,
-  phases,
-  setPhases,
+  modeFilter,
+  setModeFilter,
   onRun,
   onClose,
   isRunning,
@@ -215,9 +215,14 @@ const TestSelectorModal = ({
               </label>
 
               {/* Individual tests */}
-              {tests.map((test) => {
+              {tests.filter((t) => modeFilter === 'all' || t.mode === modeFilter).map((test) => {
                 const checked = selectAll || selectedTests.has(test.name)
                 const expanded = expandedTests.has(test.name)
+                const modeBg = {
+                  live: 'bg-blue-100 text-blue-700',
+                  replay: 'bg-amber-100 text-amber-700',
+                  record_only: 'bg-gray-200 text-gray-700',
+                }[test.mode] || 'bg-gray-100 text-gray-600'
                 return (
                   <div
                     key={test.name}
@@ -232,7 +237,12 @@ const TestSelectorModal = ({
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                          <span className="font-medium text-sm">{test.name}</span>
+                          <div className="flex items-center gap-2">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${modeBg}`}>
+                              {test.mode === 'record_only' ? 'record' : test.mode}
+                            </span>
+                            <span className="font-medium text-sm">{test.name}</span>
+                          </div>
                           <button
                             onClick={() => toggleExpanded(test.name)}
                             className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 ml-2 flex-shrink-0"
@@ -311,25 +321,20 @@ const TestSelectorModal = ({
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={phases.execute}
-                onChange={e => setPhases(p => ({ ...p, execute: e.target.checked }))}
-                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-              />
-              <span className="text-sm">Execute Agents</span>
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={phases.judge}
-                onChange={e => setPhases(p => ({ ...p, judge: e.target.checked }))}
-                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-              />
-              <span className="text-sm">LLM Judge</span>
-            </label>
+          <div className="flex items-center gap-1">
+            {['all', 'live', 'record_only', 'replay'].map((m) => (
+              <button
+                key={m}
+                onClick={() => setModeFilter(m)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                  modeFilter === m
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {m === 'all' ? 'All' : m === 'record_only' ? 'Record Only' : m === 'live' ? 'Live' : 'Replay'}
+              </button>
+            ))}
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-500">
@@ -1071,15 +1076,8 @@ export default function Evaluations() {
   const [isRunning, setIsRunning] = useState(false)
   const [runResult, setRunResult] = useState(null)
   const [runMessage, setRunMessage] = useState(null)
-  const [phases, setPhases] = useState({ execute: true, judge: true })
+  const [modeFilter, setModeFilter] = useState('all') // all, live, record_only, replay
   const [deletingUsers, setDeletingUsers] = useState(false)
-
-  const activePhaseLabels = [
-    'Seed',
-    phases.execute && 'Execute',
-    phases.judge && 'Judge',
-  ].filter(Boolean)
-  const phaseDescription = activePhaseLabels.join(' \u2192 ')
 
   // Effective selected count for display
   const effectiveCount = selectAll ? availableTests.length : selectedTests.size
@@ -1138,7 +1136,7 @@ export default function Evaluations() {
     setRunMessage('Starting tests...')
 
     try {
-      const options = { ...phases }
+      const options = { execute: true, judge: true }
 
       if (selectAll) {
         options.run_all = true
@@ -1260,17 +1258,15 @@ export default function Evaluations() {
                   <ChevronDown className="w-4 h-4" />
                 </button>
 
-                {/* Phase indicators */}
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span className="px-2 py-1 bg-gray-100 rounded">Seed</span>
-                  <span className="text-gray-300">{'\u2192'}</span>
-                  <span className={`px-2 py-1 rounded ${phases.execute ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'}`}>
-                    Execute
-                  </span>
-                  <span className="text-gray-300">{'\u2192'}</span>
-                  <span className={`px-2 py-1 rounded ${phases.judge ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'}`}>
-                    Judge
-                  </span>
+                {/* Mode filter indicator */}
+                <div className="flex items-center gap-1 text-xs">
+                  {['all', 'live', 'record_only', 'replay'].map((m) => (
+                    <span key={m} className={`px-2 py-1 rounded ${
+                      modeFilter === m ? 'bg-indigo-100 text-indigo-700 font-medium' : 'bg-gray-100 text-gray-400'
+                    }`}>
+                      {m === 'all' ? 'All' : m === 'record_only' ? 'Record' : m === 'live' ? 'Live' : 'Replay'}
+                    </span>
+                  ))}
                 </div>
 
                 {/* Run button */}
@@ -1295,7 +1291,7 @@ export default function Evaluations() {
             <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
               <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
               <span className="text-blue-800 font-medium text-sm">
-                {runMessage || `Running ${runDescription}...`} ({phaseDescription})
+                {runMessage || `Running ${effectiveCount} test${effectiveCount !== 1 ? 's' : ''}...`}
               </span>
             </div>
           )}
@@ -1337,8 +1333,8 @@ export default function Evaluations() {
           setSelectAll={setSelectAll}
           selectedTests={selectedTests}
           setSelectedTests={setSelectedTests}
-          phases={phases}
-          setPhases={setPhases}
+          modeFilter={modeFilter}
+          setModeFilter={setModeFilter}
           onRun={handleRun}
           onClose={() => setShowSelector(false)}
           isRunning={isRunning}
