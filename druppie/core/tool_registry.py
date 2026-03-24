@@ -1,13 +1,7 @@
 """Tool Registry - single source of truth for all tool definitions.
 
-Combines:
-- MCP tools with their Pydantic parameter models
-- Builtin tools with their Pydantic parameter models
-
-The registry maps tool names to ToolDefinition objects, which contain:
-- Tool metadata (name, description, server)
-- A Pydantic model class for type-safe parameters
-- Approval requirements
+Discovers MCP tools from servers via tools/list at startup.
+Combines with builtin tools defined in builtin_tools.py.
 
 Usage:
     registry = get_tool_registry()
@@ -16,10 +10,8 @@ Usage:
     tool = registry.get("coding_write_file")
     tool = registry.get_by_server_and_name("coding", "write_file")
 
-    # Validate arguments (returns typed model)
-    is_valid, error, params = tool.validate_arguments({"path": "test.txt", "content": "hello"})
-    if is_valid:
-        print(params.path)  # Type-safe access!
+    # Validate arguments (returns validated dict)
+    is_valid, error, args, normalized = tool.validate_arguments({"path": "test.txt", "content": "hello"})
 
     # Get tools for an agent
     tools = registry.get_tools_for_agent(
@@ -31,137 +23,21 @@ Usage:
     openai_tools = registry.to_openai_format(tools)
 """
 
-from typing import Type
+import asyncio
 
 import structlog
-from pydantic import BaseModel
 
 from druppie.core.mcp_config import MCPConfig, get_mcp_config
-from druppie.domain.tool import EmptyParams, ToolDefinition, ToolType
-
-# Import all parameter models
-from druppie.tools.params.builtin import (
-    CreateMessageParams,
-    DoneParams,
-    HitlAskMultipleChoiceQuestionParams,
-    HitlAskQuestionParams,
-    InvokeSkillParams,
-    MakePlanParams,
-    SetIntentParams,
-)
-from druppie.tools.params.coding import (
-    BatchWriteFilesParams,
-    CreatePullRequestParams,
-    DeleteFileParams,
-    ExecuteCodingTaskParams,
-    GetGitStatusParams,
-    ListDirParams,
-    MakeDesignParams,
-    MergePullRequestParams,
-    ReadFileParams,
-    RunGitParams,
-    WriteFileParams,
-)
-from druppie.tools.params.archimate import (
-    GetElementParams,
-    GetImpactParams,
-    GetStatisticsParams,
-    GetViewParams,
-    ListElementsParams,
-    ListViewsParams,
-    SearchModelParams,
-)
-from druppie.tools.params.registry import (
-    GetAgentParams,
-    GetMcpServerParams,
-    GetSkillParams,
-    GetToolParams,
-    ListComponentsParams,
-)
-from druppie.tools.params.docker import (
-    DockerBuildParams,
-    DockerComposeDownParams,
-    DockerComposeUpParams,
-    DockerExecCommandParams,
-    DockerInspectParams,
-    DockerListContainersParams,
-    DockerLogsParams,
-    DockerRemoveParams,
-    DockerRunParams,
-    DockerStopParams,
-)
-from druppie.tools.params.testing import (
-    GetCoverageReportParams,
-    GetTestFrameworkParams,
-    InstallTestDependenciesParams,
-    RunTestsParams,
-    ValidateTddParams,
-)
+from druppie.domain.tool import ToolDefinition, ToolType
 
 logger = structlog.get_logger()
-
-
-# Mapping from (server, tool_name) to Pydantic params model
-PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
-    # Coding tools
-    ("coding", "read_file"): ReadFileParams,
-    ("coding", "write_file"): WriteFileParams,
-    ("coding", "make_design"): MakeDesignParams,
-    ("coding", "batch_write_files"): BatchWriteFilesParams,
-    ("coding", "list_dir"): ListDirParams,
-    ("coding", "delete_file"): DeleteFileParams,
-    ("coding", "run_git"): RunGitParams,
-    ("coding", "create_pull_request"): CreatePullRequestParams,
-    ("coding", "merge_pull_request"): MergePullRequestParams,
-    ("coding", "get_git_status"): GetGitStatusParams,
-    ("builtin", "execute_coding_task"): ExecuteCodingTaskParams,
-    # Docker tools
-    ("docker", "build"): DockerBuildParams,
-    ("docker", "run"): DockerRunParams,
-    ("docker", "stop"): DockerStopParams,
-    ("docker", "logs"): DockerLogsParams,
-    ("docker", "remove"): DockerRemoveParams,
-    ("docker", "list_containers"): DockerListContainersParams,
-    ("docker", "inspect"): DockerInspectParams,
-    ("docker", "exec_command"): DockerExecCommandParams,
-    ("docker", "compose_up"): DockerComposeUpParams,
-    ("docker", "compose_down"): DockerComposeDownParams,
-    # Testing tools (consolidated into coding server)
-    ("coding", "get_test_framework"): GetTestFrameworkParams,
-    ("coding", "run_tests"): RunTestsParams,
-    ("coding", "get_coverage_report"): GetCoverageReportParams,
-    ("coding", "install_test_dependencies"): InstallTestDependenciesParams,
-    ("coding", "validate_tdd"): ValidateTddParams,
-    # Archimate tools
-    ("archimate", "get_statistics"): GetStatisticsParams,
-    ("archimate", "list_elements"): ListElementsParams,
-    ("archimate", "get_element"): GetElementParams,
-    ("archimate", "list_views"): ListViewsParams,
-    ("archimate", "get_view"): GetViewParams,
-    ("archimate", "search_model"): SearchModelParams,
-    ("archimate", "get_impact"): GetImpactParams,
-    # Registry tools
-    ("registry", "list_components"): ListComponentsParams,
-    ("registry", "get_agent"): GetAgentParams,
-    ("registry", "get_skill"): GetSkillParams,
-    ("registry", "get_mcp_server"): GetMcpServerParams,
-    ("registry", "get_tool"): GetToolParams,
-    # Builtin tools
-    ("builtin", "done"): DoneParams,
-    ("builtin", "hitl_ask_question"): HitlAskQuestionParams,
-    ("builtin", "hitl_ask_multiple_choice_question"): HitlAskMultipleChoiceQuestionParams,
-    ("builtin", "set_intent"): SetIntentParams,
-    ("builtin", "make_plan"): MakePlanParams,
-    ("builtin", "create_message"): CreateMessageParams,
-    ("builtin", "invoke_skill"): InvokeSkillParams,
-}
 
 
 class ToolRegistry:
     """Central registry for all tool definitions.
 
-    Loads tools from MCP config and builtin tools, mapping each to its
-    corresponding Pydantic parameter model for type-safe validation.
+    MCP tools are discovered from servers via tools/list.
+    Builtin tools are loaded from BUILTIN_TOOL_DEFS.
     """
 
     def __init__(self, mcp_config: MCPConfig | None = None):
@@ -172,56 +48,154 @@ class ToolRegistry:
         """
         self._mcp_config = mcp_config or get_mcp_config()
         self._tools: dict[str, ToolDefinition] = {}
-        self._loaded = False
+        self._initialized = False
+
+    async def initialize(self) -> None:
+        """Initialize the registry by discovering tools from all MCP servers.
+
+        Call this once at application startup (e.g., FastAPI lifespan).
+        """
+        if self._initialized:
+            return
+        await self._load_all_tools()
+        self._initialized = True
 
     def _ensure_loaded(self) -> None:
-        """Lazy load all tools on first access."""
-        if self._loaded:
+        """Check that registry is initialized. Raises if not."""
+        if self._initialized:
             return
-        self._load_all_tools()
-        self._loaded = True
 
-    def _load_all_tools(self) -> None:
+        # Fallback: try sync initialization for backwards compatibility
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We're in an async context but initialize() wasn't called
+                logger.error(
+                    "tool_registry_not_initialized",
+                    hint="Call await initialize_tool_registry() at startup",
+                    impact="Only builtin tools available — ALL MCP tools (coding, docker, filesearch, etc.) are MISSING",
+                )
+                # Load builtin tools only as fallback
+                self._load_builtin_tools()
+                self._initialized = True
+                return
+        except RuntimeError:
+            pass
+
+        # Not in async context - do sync load (builtin only)
+        logger.error(
+            "tool_registry_sync_fallback",
+            hint="Call await initialize_tool_registry() at startup",
+            impact="Only builtin tools available — ALL MCP tools are MISSING",
+        )
+        self._load_builtin_tools()
+        self._initialized = True
+
+    async def _load_all_tools(self) -> None:
         """Load all tools from both sources."""
-        # Import here to avoid circular imports
+        # Load builtin tools (sync)
+        self._load_builtin_tools()
+
+        # Load MCP tools from each server via tools/list
+        failed_servers = []
+        for server in self._mcp_config.get_servers():
+            try:
+                await self._load_mcp_tools_from_server(server)
+            except Exception as e:
+                failed_servers.append(server)
+                logger.error(
+                    "failed_to_load_server_tools",
+                    server=server,
+                    url=self._mcp_config.get_server_url(server),
+                    error=str(e),
+                    impact=f"All tools from '{server}' are unavailable",
+                )
+
+        if failed_servers:
+            logger.error(
+                "tool_registry_partial_init",
+                failed_servers=failed_servers,
+                impact=f"{len(failed_servers)} MCP server(s) unreachable — their tools will not work",
+            )
+
+    def _load_builtin_tools(self) -> None:
+        """Load builtin tools from BUILTIN_TOOL_DEFS."""
         from druppie.agents.builtin_tools import BUILTIN_TOOL_DEFS
 
-        # Load builtin tools
         for name, openai_def in BUILTIN_TOOL_DEFS.items():
             func = openai_def.get("function", {})
-            params_model = PARAMS_MODEL_MAP.get(("builtin", name), EmptyParams)
-
             self._tools[name] = ToolDefinition(
                 name=name,
                 tool_type=ToolType.BUILTIN,
                 server=None,
                 description=func.get("description", ""),
-                params_model=params_model,
+                json_schema=func.get("parameters", {}),
+                meta={},
                 requires_approval=False,
             )
 
         logger.debug("loaded_builtin_tools", count=len(BUILTIN_TOOL_DEFS))
 
-        # Load MCP tools
+    async def _load_mcp_tools_from_server(self, server: str) -> None:
+        """Discover tools from an MCP server via tools/list."""
+        from fastmcp import Client
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        url = self._mcp_config.get_server_url(server)
+
+        try:
+            transport = StreamableHttpTransport(url)
+            async with Client(transport) as client:
+                tools = await client.list_tools()
+        except Exception as e:
+            logger.warning(
+                "mcp_list_tools_failed",
+                server=server,
+                url=url,
+                error=str(e),
+            )
+            return
+
+        # Get approval config from mcp_config.yaml
+        tool_configs = {t["name"]: t for t in self._mcp_config.get_tools(server)}
+
         mcp_count = 0
-        for server in self._mcp_config.get_servers():
-            for tool_config in self._mcp_config.get_tools(server):
-                name = tool_config["name"]
-                full_name = f"{server}_{name}"
-                params_model = PARAMS_MODEL_MAP.get((server, name), EmptyParams)
+        for tool in tools:
+            name = tool.name
+            full_name = f"{server}_{name}"
 
-                self._tools[full_name] = ToolDefinition(
-                    name=name,
-                    tool_type=ToolType.MCP,
-                    server=server,
-                    description=tool_config.get("description", ""),
-                    params_model=params_model,
-                    requires_approval=tool_config.get("requires_approval", False),
-                    required_role=tool_config.get("required_role"),
+            # Get approval settings from config
+            config = tool_configs.get(name, {})
+
+            # Extract meta from tool (check various FastMCP response formats)
+            meta = {}
+            if hasattr(tool, "meta") and tool.meta:
+                meta = dict(tool.meta)
+            elif hasattr(tool, "annotations") and tool.annotations:
+                meta = dict(tool.annotations)
+
+            # Get JSON schema
+            json_schema = {}
+            if hasattr(tool, "inputSchema") and tool.inputSchema:
+                json_schema = (
+                    dict(tool.inputSchema)
+                    if not isinstance(tool.inputSchema, dict)
+                    else tool.inputSchema
                 )
-                mcp_count += 1
 
-        logger.debug("loaded_mcp_tools", count=mcp_count)
+            self._tools[full_name] = ToolDefinition(
+                name=name,
+                tool_type=ToolType.MCP,
+                server=server,
+                description=tool.description or "",
+                json_schema=json_schema,
+                meta=meta,
+                requires_approval=config.get("requires_approval", False),
+                required_role=config.get("required_role"),
+            )
+            mcp_count += 1
+
+        logger.debug("loaded_mcp_tools", server=server, count=mcp_count)
 
     # -------------------------------------------------------------------------
     # Lookup methods
@@ -333,6 +307,9 @@ class ToolRegistry:
                         if not tool_names or tool.name in tool_names:
                             tools.append(tool)
 
+        # Filter out internal tools (not exposed to agents)
+        tools = [t for t in tools if not t.meta.get("internal", False)]
+
         return tools
 
     def to_openai_format(self, tools: list[ToolDefinition]) -> list[dict]:
@@ -355,7 +332,7 @@ class ToolRegistry:
         server: str,
         tool_name: str,
         arguments: dict,
-    ) -> tuple[bool, str | None, BaseModel | None]:
+    ) -> tuple[bool, str | None, dict | None, dict | None]:
         """Validate a tool call's arguments.
 
         Args:
@@ -364,11 +341,11 @@ class ToolRegistry:
             arguments: Arguments to validate
 
         Returns:
-            Tuple of (is_valid, error_message, validated_params)
+            Tuple of (is_valid, error_message, validated_args, normalized_args)
         """
         tool = self.get_by_server_and_name(server, tool_name)
         if not tool:
-            return False, f"Unknown tool: {server}:{tool_name}", None
+            return False, f"Unknown tool: {server}:{tool_name}", None, None
         return tool.validate_arguments(arguments)
 
 
@@ -382,6 +359,12 @@ def get_tool_registry() -> ToolRegistry:
     if _registry is None:
         _registry = ToolRegistry()
     return _registry
+
+
+async def initialize_tool_registry() -> None:
+    """Initialize the tool registry. Call at app startup."""
+    registry = get_tool_registry()
+    await registry.initialize()
 
 
 def reset_tool_registry() -> None:
