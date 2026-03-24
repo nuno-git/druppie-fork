@@ -221,6 +221,7 @@ services:
       MCP_PORT: "9002"
       WORKSPACE_ROOT: /workspaces
       DOCKER_NETWORK: druppie-new-network
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
     volumes:
       - druppie_new_workspace:/workspaces
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock

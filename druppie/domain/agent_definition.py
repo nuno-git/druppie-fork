@@ -43,7 +43,7 @@ class AgentDefinition(BaseModel):
     # Key format: "mcp:tool_name" (e.g., "coding:write_file")
     approval_overrides: dict[str, ApprovalOverride] = Field(default_factory=dict)
 
-    # Skills this agent can invoke
+    # Skills this agent can invoke (Druppie's own agent skill system)
     # List of skill names that match directories in druppie/skills/
     skills: list[str] = Field(default_factory=list)
 

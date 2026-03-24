@@ -15,12 +15,14 @@ import httpx
 import structlog
 
 from druppie.core.sandbox_auth import generate_control_plane_token
-from druppie.sandbox.credentials import build_llm_credentials
-from druppie.sandbox.model_resolver import get_raw_model_chains, resolve_sandbox_models
+from druppie.opencode.credentials import build_llm_credentials
+from druppie.opencode.model_resolver import get_raw_model_chains, resolve_sandbox_models
 
 logger = structlog.get_logger()
 
-_AGENTS_DIR = Path(__file__).parent.parent / "sandbox-config" / "agents"
+_OPENCODE_DIR = Path(__file__).parent
+_AGENTS_DIR = _OPENCODE_DIR / "config" / "agents"
+_OPENCODE_SKILLS_DIR = _OPENCODE_DIR / "config" / "skills"
 
 
 class SandboxCreateError(Exception):
@@ -29,11 +31,30 @@ class SandboxCreateError(Exception):
     pass
 
 
-def _load_agent_files() -> dict[str, str]:
-    """Load all .md agent files from sandbox-config/agents/ directory."""
+def _load_opencode_files() -> dict[str, str]:
+    """Load all OpenCode files (agents + skills) for a sandbox session.
+
+    Agent files are keyed as 'agents/{name}' and skill files as
+    'skills/{name}/SKILL'. The sandbox entrypoint writes each entry
+    to .opencode/{key}.md.
+
+    All available skills are included; per-agent access is controlled
+    by the permission.skill block in each agent's markdown frontmatter.
+    """
+    files: dict[str, str] = {}
+
+    # Load agent markdown files
     if _AGENTS_DIR.is_dir():
-        return {f.stem: f.read_text() for f in _AGENTS_DIR.glob("*.md")}
-    return {}
+        for f in _AGENTS_DIR.glob("*.md"):
+            files[f"agents/{f.stem}"] = f.read_text()
+
+    # Load all OpenCode skills
+    if _OPENCODE_SKILLS_DIR.is_dir():
+        for skill_file in _OPENCODE_SKILLS_DIR.glob("*/SKILL.md"):
+            skill_name = skill_file.parent.name
+            files[f"skills/{skill_name}/SKILL"] = skill_file.read_text()
+
+    return files
 
 
 async def _build_github_git_credentials(repo_owner: str, repo_name: str) -> dict:
@@ -140,7 +161,7 @@ async def create_and_start_sandbox(
     if git_provider == "github":
         scoped_git_creds = await _build_github_git_credentials(repo_owner, repo_name)
     else:
-        from druppie.sandbox.gitea_credentials import create_sandbox_git_user, delete_sandbox_git_user
+        from druppie.opencode.gitea_credentials import create_sandbox_git_user, delete_sandbox_git_user
         git_user_id = secrets.token_hex(6)  # 12-char hex, used for Gitea username
         scoped_git_creds = await create_sandbox_git_user(
             sandbox_session_id=git_user_id,
@@ -162,7 +183,7 @@ async def create_and_start_sandbox(
         if context_git_provider == "github":
             context_git_creds = await _build_github_git_credentials(context_repo_owner, context_repo_name)
         else:
-            from druppie.sandbox.gitea_credentials import create_sandbox_git_user, delete_sandbox_git_user
+            from druppie.opencode.gitea_credentials import create_sandbox_git_user, delete_sandbox_git_user
             context_git_user_id = secrets.token_hex(6)
             context_git_creds = await create_sandbox_git_user(
                 sandbox_session_id=context_git_user_id,
@@ -185,7 +206,7 @@ async def create_and_start_sandbox(
         "repoName": repo_name,
         "model": model,
         "agentModels": model_config.agents,
-        "agentFiles": _load_agent_files(),
+        "opencodeFiles": _load_opencode_files(),
         "modelChains": get_raw_model_chains(),
         "title": title,
         "credentials": credentials,

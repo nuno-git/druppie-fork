@@ -50,7 +50,7 @@ async def _cleanup_gitea_users(sandbox_mapping: SandboxSessionModel, context: st
         uid = getattr(sandbox_mapping, uid_attr)
         if uid:
             try:
-                from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
+                from druppie.opencode.gitea_credentials import delete_sandbox_git_user
                 await delete_sandbox_git_user(uid)
             except Exception as e:
                 logger.warning(f"sandbox_{context}gitea_cleanup_failed", attr=uid_attr, error=str(e))
@@ -209,8 +209,8 @@ async def _retry_sandbox_with_next_model(
     registers ownership, and sends the prompt. Returns True if retry was
     initiated, False if no more models to try.
     """
-    from druppie.sandbox import create_and_start_sandbox, SandboxCreateError
-    from druppie.sandbox.model_resolver import PROVIDER_API_KEYS
+    from druppie.opencode import create_and_start_sandbox, SandboxCreateError
+    from druppie.opencode.model_resolver import PROVIDER_API_KEYS
 
     if not sandbox_mapping.model_chain or not sandbox_mapping.task_prompt:
         return False
@@ -255,7 +255,7 @@ async def _retry_sandbox_with_next_model(
 
     # Reconstruct repo context from the stored repo_target (no agent-id guessing)
     repo_target = sandbox_mapping.repo_target or "project"
-    from druppie.sandbox.repo_context import resolve_repo_context
+    from druppie.opencode.repo_context import resolve_repo_context
     try:
         repo_ctx = resolve_repo_context(repo_target, sandbox_mapping.session_id, db)
     except ValueError:

@@ -71,7 +71,7 @@ Druppie backend
 
 ## Sandbox Agents
 
-Two preconfigured agents run inside sandboxes (defined in `druppie/sandbox-config/agents/`):
+Two preconfigured agents run inside sandboxes (defined in `druppie/opencode/config/agents/`):
 
 | Agent | Purpose | Key Behavior |
 |-------|---------|--------------|
@@ -88,7 +88,7 @@ Agents that can delegate to sandboxes declare `extra_builtin_tools: [execute_cod
 
 ### Config Injection
 
-Sandbox agents are configured via files in `druppie/sandbox-config/`:
+Sandbox agents are configured via files in `druppie/opencode/config/`:
 
 - **`opencode-config.json`** — Sets `default_agent` to `druppie-builder` and grants broad tool permissions
 - **`agents/druppie-builder.md`** — Coding agent system prompt
@@ -146,7 +146,7 @@ Three detection signals work in parallel:
 
 ### Model Chains (Profile-Based Routing)
 
-Model chains are configured in `druppie/sandbox-config/sandbox_models.yaml`. Each agent/subagent name acts as a "profile" (e.g., `sandbox/druppie-builder`). OpenCode sees profile-based model names via a single `sandbox` provider using `@ai-sdk/openai-compatible`. The LLM proxy resolves profile names to real provider chains at request time.
+Model chains are configured in `druppie/opencode/config/sandbox_models.yaml`. Each agent/subagent name acts as a "profile" (e.g., `sandbox/druppie-builder`). OpenCode sees profile-based model names via a single `sandbox` provider using `@ai-sdk/openai-compatible`. The LLM proxy resolves profile names to real provider chains at request time.
 
 Each profile has an ordered list of `{provider, model}` pairs. Model names in the YAML use the raw API model name without a provider prefix. The chain is threaded from `builtin_tools.py` → credential store for proxy failover.
 
@@ -387,10 +387,10 @@ All webhooks are signed with HMAC-SHA256. The `callbackSecret` is set when creat
 
 | File | Purpose |
 |------|---------|
-| `druppie/sandbox-config/opencode-config.json` | OpenCode configuration injected into sandboxes |
-| `druppie/sandbox-config/agents/druppie-builder.md` | Builder agent system prompt |
-| `druppie/sandbox-config/agents/druppie-tester.md` | Tester agent system prompt |
-| `druppie/sandbox-config/sandbox_models.yaml` | Model chains for provider failover (profile-based routing) |
+| `druppie/opencode/config/opencode-config.json` | OpenCode configuration injected into sandboxes |
+| `druppie/opencode/config/agents/druppie-builder.md` | Builder agent system prompt |
+| `druppie/opencode/config/agents/druppie-tester.md` | Tester agent system prompt |
+| `druppie/opencode/config/sandbox_models.yaml` | Model chains for provider failover (profile-based routing) |
 
 ### Troubleshooting
 

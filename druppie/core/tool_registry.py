@@ -80,6 +80,8 @@ from druppie.tools.params.registry import (
 )
 from druppie.tools.params.docker import (
     DockerBuildParams,
+    DockerComposeDownParams,
+    DockerComposeUpParams,
     DockerExecCommandParams,
     DockerInspectParams,
     DockerListContainersParams,
@@ -122,6 +124,8 @@ PARAMS_MODEL_MAP: dict[tuple[str, str], Type[BaseModel]] = {
     ("docker", "list_containers"): DockerListContainersParams,
     ("docker", "inspect"): DockerInspectParams,
     ("docker", "exec_command"): DockerExecCommandParams,
+    ("docker", "compose_up"): DockerComposeUpParams,
+    ("docker", "compose_down"): DockerComposeDownParams,
     # Testing tools (consolidated into coding server)
     ("coding", "get_test_framework"): GetTestFrameworkParams,
     ("coding", "run_tests"): RunTestsParams,
