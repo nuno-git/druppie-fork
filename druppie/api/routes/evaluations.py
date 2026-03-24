@@ -733,7 +733,7 @@ async def get_analytics_summary(
 
     from druppie.db.models import TestRun as TestRunModel
 
-    db = service._repo._db
+    db = service.eval_repo.db
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     runs = (
         db.query(TestRunModel)
@@ -766,7 +766,7 @@ async def get_analytics_trends(
 
     from druppie.db.models import TestRun as TestRunModel
 
-    db = service._repo._db
+    db = service.eval_repo.db
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     runs = (
         db.query(TestRunModel)
@@ -807,7 +807,7 @@ async def get_analytics_by_agent(
 
     from druppie.db.models import TestAssertionResult, TestRun as TestRunModel
 
-    db = service._repo._db
+    db = service.eval_repo.db
     query = db.query(TestAssertionResult)
     if batch_id:
         query = query.join(TestRunModel).filter(TestRunModel.batch_id == batch_id)
@@ -846,7 +846,7 @@ async def get_analytics_by_eval(
 
     from druppie.db.models import TestAssertionResult, TestRun as TestRunModel
 
-    db = service._repo._db
+    db = service.eval_repo.db
     query = db.query(TestAssertionResult)
     if batch_id:
         query = query.join(TestRunModel).filter(TestRunModel.batch_id == batch_id)
@@ -885,7 +885,7 @@ async def get_analytics_by_tool(
 
     from druppie.db.models import TestAssertionResult, TestRun as TestRunModel
 
-    db = service._repo._db
+    db = service.eval_repo.db
     query = db.query(TestAssertionResult)
     if batch_id:
         query = query.join(TestRunModel).filter(TestRunModel.batch_id == batch_id)
@@ -924,7 +924,7 @@ async def get_analytics_by_test(
 
     from druppie.db.models import TestRun as TestRunModel
 
-    db = service._repo._db
+    db = service.eval_repo.db
     query = db.query(TestRunModel)
     if batch_id:
         query = query.filter(TestRunModel.batch_id == batch_id)
@@ -968,7 +968,7 @@ async def get_analytics_batch_detail(
 
     from druppie.db.models import TestAssertionResult, TestRun as TestRunModel
 
-    db = service._repo._db
+    db = service.eval_repo.db
     runs = (
         db.query(TestRunModel)
         .filter(TestRunModel.batch_id == batch_id)
@@ -1051,7 +1051,7 @@ async def get_test_run_assertions(
     """Get detailed assertion results for a test run."""
     from druppie.db.models import TestAssertionResult
 
-    db = service._repo._db
+    db = service.eval_repo.db
     results = (
         db.query(TestAssertionResult)
         .filter(TestAssertionResult.test_run_id == test_run_id)
