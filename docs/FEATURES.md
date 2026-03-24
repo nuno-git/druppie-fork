@@ -490,6 +490,50 @@ Tools granted via skills are checked in `ToolExecutor` alongside the agent's sta
 
 ---
 
+## Shared Dependency Cache
+
+Sandbox containers share a persistent dependency cache volume so that packages downloaded by one sandbox are available to all future sandboxes. This avoids redundant downloads, speeds up builds, and reduces external network traffic.
+
+### How It Works
+
+A named Docker volume (`druppie_sandbox_dep_cache`) is mounted at `/cache` inside every sandbox container. Environment variables point each package manager to a subdirectory:
+
+| Package Manager | Env Var | Cache Path |
+|----------------|---------|------------|
+| npm | `NPM_CONFIG_CACHE` | `/cache/npm` |
+| pnpm | `PNPM_STORE_DIR` | `/cache/pnpm` |
+| Bun | `BUN_INSTALL_CACHE_DIR` | `/cache/bun` |
+| uv | `UV_CACHE_DIR` | `/cache/uv` |
+| pip | `PIP_CACHE_DIR` | `/cache/pip` |
+
+The cache is transparent to agents — no YAML or prompt changes are needed. Package managers automatically read from and write to the shared volume via their standard environment variables.
+
+### Security Controls
+
+Five layers protect the cache from supply-chain attacks:
+
+1. **HTTPS-only registries** — `.npmrc`, `.pnpmrc`, and `pip.conf` enforce `strict-ssl=true` and HTTPS registry URLs. `UV_INDEX_URL` is set to `https://pypi.org/simple/`.
+2. **Lockfile enforcement** — `.npmrc` sets `package-lock=true`; pnpm creates lockfiles by default. This ensures reproducible installs.
+3. **OSV vulnerability scanning** — A dedicated `cache-scanner` service scans all cached packages for known vulnerabilities using the [OSV scanner](https://github.com/google/osv-scanner) (binary verified by SHA256 checksum at build time).
+4. **Non-root + minimal capabilities** — Sandboxes run as `sandbox:1000` (non-root). All Linux capabilities are dropped (`--cap-drop=ALL`), then only the minimum required set is re-added.
+5. **Network isolation** — Sandbox containers run on `druppie-sandbox-network`, an isolated bridge network. Only the control plane bridges both networks; sandboxes cannot reach the database, Keycloak, Gitea, or backend directly.
+
+### Cache Entry Logging
+
+When a sandbox completes, the entrypoint diffs cache snapshots (before vs after) and emits structured `cache.new_entries` JSON log events per package manager, including the sandbox ID, session ID, and up to 50 new entries per package manager.
+
+### Commands
+
+```bash
+# Purge the dependency cache (stops sandboxes, removes + recreates volume)
+docker compose --profile reset-cache run --rm reset-cache
+
+# Scan cached packages for known vulnerabilities (OSV)
+docker compose --profile scan-cache run --rm cache-scanner
+```
+
+---
+
 ## Project Management
 
 - **Create**: Projects are created automatically when the Router classifies a `create_project` intent. Each project gets a Gitea repository.
