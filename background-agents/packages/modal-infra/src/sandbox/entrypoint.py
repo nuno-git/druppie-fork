@@ -792,6 +792,48 @@ exit 1
         except Exception as e:
             self.log.error("git.identity_error", exc=e)
 
+    async def _snapshot_cache_state(self) -> dict[str, set[str]]:
+        """List top-level entries in each cache directory for change tracking."""
+
+        def _scan() -> dict[str, set[str]]:
+            cache_dirs = ["npm", "pnpm", "pip", "uv", "bun"]
+            snapshot: dict[str, set[str]] = {}
+            for name in cache_dirs:
+                cache_path = Path(f"/cache/{name}")
+                try:
+                    if cache_path.is_dir():
+                        snapshot[name] = {e.name for e in cache_path.iterdir()}
+                    else:
+                        snapshot[name] = set()
+                except OSError:
+                    snapshot[name] = set()
+            return snapshot
+
+        return await asyncio.to_thread(_scan)
+
+    async def _log_cache_changes(
+        self,
+        before: dict[str, set[str]],
+        after: dict[str, set[str]],
+    ) -> None:
+        """Diff two cache snapshots and emit structured log events for new entries."""
+        for pm in before:
+            new_entries = after.get(pm, set()) - before.get(pm, set())
+            if not new_entries:
+                continue
+            # Cap logged entries to avoid oversized log lines
+            entries_list = sorted(new_entries)[:50]
+            self.log.info(
+                "cache.new_entries",
+                package_manager=pm,
+                count=len(new_entries),
+                entries=entries_list,
+                sandbox_id=self.sandbox_id,
+                session_id=self.session_config.get("session_id", ""),
+                repo_owner=self.repo_owner,
+                repo_name=self.repo_name,
+            )
+
     async def run_setup_script(self) -> bool:
         """
         Run .openinspect/setup.sh if it exists in the cloned repo.
@@ -1055,7 +1097,10 @@ exit 1
             # Phase 2.5: Run repo setup script (fresh clone only)
             setup_success: bool | None = None
             if not restored_from_snapshot:
+                cache_before = await self._snapshot_cache_state()
                 setup_success = await self.run_setup_script()
+                cache_after = await self._snapshot_cache_state()
+                await self._log_cache_changes(cache_before, cache_after)
 
             # Phase 2.7: Start Docker daemon (DinD) for builder verification
             dockerd_success: bool | None = None
