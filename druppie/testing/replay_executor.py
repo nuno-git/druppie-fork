@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session as DbSession
 
-from druppie.db.models import AgentRun, Session, ToolCall
+from druppie.db.models import AgentRun, Message, Session, ToolCall
 from druppie.db.models.base import utcnow
 from druppie.testing.replay_config import ReplayConfig
 from druppie.testing.seed_schema import AgentRunFixture, SessionFixture, ToolCallFixture
@@ -169,6 +169,20 @@ class ReplayExecutor:
             session.project_id = project_id
             self._db.flush()
 
+        msg_seq = 0
+
+        # Add fixture messages (user message, etc.)
+        for msg_fix in fixture.messages:
+            self._db.add(Message(
+                id=fixture_uuid(meta.id, "msg", msg_seq),
+                session_id=session_id,
+                role=msg_fix.role,
+                content=msg_fix.content,
+                agent_id=msg_fix.agent_id,
+                created_at=utcnow(),
+            ))
+            msg_seq += 1
+
         # Replay each agent's tool calls
         for seq, agent_fix in enumerate(fixture.agents):
             agent_run = AgentRun(
@@ -184,11 +198,12 @@ class ReplayExecutor:
             self._db.add(agent_run)
             self._db.flush()
 
-            for tc in agent_fix.tool_calls:
+            for tc_idx, tc in enumerate(agent_fix.tool_calls):
                 result = await self.execute_tool_call(
                     tc, session_id, agent_run.id, agent_fix.id,
                 )
-                # Update the tool call result if it was mocked
+
+                # For mocked tools, create the ToolCall record manually
                 if not self.should_execute(tc):
                     tc_record = ToolCall(
                         id=uuid4(),
@@ -204,9 +219,35 @@ class ReplayExecutor:
                     self._db.add(tc_record)
                     self._db.flush()
 
+                # Create a tool message so it shows in the session view
+                result_preview = (result or "")[:500]
+                self._db.add(Message(
+                    id=fixture_uuid(meta.id, "msg", msg_seq),
+                    session_id=session_id,
+                    agent_run_id=agent_run.id,
+                    role="tool",
+                    content=f"**{tc.tool}**({', '.join(f'{k}={v}' for k, v in tc.arguments.items())})\n\n→ {result_preview}",
+                    agent_id=agent_fix.id,
+                    tool_name=tc.tool,
+                    created_at=utcnow(),
+                ))
+                msg_seq += 1
+
                 # Handle outcome blocks (Gitea file creation)
                 if tc.outcome and gitea_url:
                     _replay_outcome(tc.outcome, fixture, self._db, gitea_url)
+
+            # Add an assistant message summarizing the agent's work
+            self._db.add(Message(
+                id=fixture_uuid(meta.id, "msg", msg_seq),
+                session_id=session_id,
+                agent_run_id=agent_run.id,
+                role="assistant",
+                content=f"Agent **{agent_fix.id}** completed ({len(agent_fix.tool_calls)} tool calls executed via replay)",
+                agent_id=agent_fix.id,
+                created_at=utcnow(),
+            ))
+            msg_seq += 1
 
         self._db.flush()
         return {
