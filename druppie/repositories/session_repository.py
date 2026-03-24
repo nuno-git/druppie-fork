@@ -252,7 +252,7 @@ class SessionRepository(BaseRepository):
         messages = (
             self.db.query(MessageModel)
             .filter_by(session_id=session_id)
-            .filter(MessageModel.role.in_(["user", "system", "assistant"]))
+            .filter(MessageModel.role.in_(["user", "system", "assistant", "tool"]))
             .order_by(MessageModel.created_at)
             .all()
         )
