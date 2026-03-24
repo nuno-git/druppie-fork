@@ -1,0 +1,29 @@
+## MANUAL TEST: Ask any question in general chat
+## The tester types their own question and checks the agent's answer quality.
+
+test:
+  name: manual-general-chat-question
+  mode: live
+  description: "General chat: {{question}}"
+  manual_input: true
+  inputs:
+    - name: question
+      label: "Your question"
+      type: textarea
+      required: true
+      default: "What is the NORA architecture framework?"
+
+  sessions: []
+  run:
+    message: "{{question}}"
+    real_agents: [router, planner]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: router-correct-intent
+      expected:
+        intent: general_chat
+  evaluate:
+    judge:
+      checks:
+        - "The agent should provide a helpful, relevant answer to the user's question"

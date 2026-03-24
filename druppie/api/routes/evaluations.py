@@ -71,6 +71,8 @@ class RunTestsRequest(BaseModel):
     # Phase toggles (seed always runs; only execute and judge are toggleable)
     execute: bool = True  # Phase 2: Run agents with real LLMs + HITL
     judge: bool = True  # Phase 3: Run LLM judge checks
+    # Manual input values: {input_name: value} for manual tests
+    input_values: dict[str, str] | None = None
 
 
 class AgentSummaryResponse(BaseModel):
@@ -292,9 +294,14 @@ async def list_available_tests(
     from druppie.testing.v2_schema import TestFile
 
     # parents[3] goes from druppie/api/routes/ up to project root (/app/)
-    tests_dir = Path(__file__).resolve().parents[3] / "testing" / "tests"
+    base_dir = Path(__file__).resolve().parents[3] / "testing"
     tests = []
-    if tests_dir.exists():
+
+    # Scan both testing/tests/ and testing/manual-tests/
+    for subdir in ["tests", "manual-tests"]:
+        tests_dir = base_dir / subdir
+        if not tests_dir.exists():
+            continue
         for path in sorted(tests_dir.glob("*.yaml")):
             data = _yaml.safe_load(path.read_text())
             test_def = TestFile(**data).test
@@ -302,6 +309,18 @@ async def list_available_tests(
                 "name": test_def.name,
                 "description": test_def.description,
                 "mode": test_def.mode,
+                "manual_input": test_def.manual_input,
+                "inputs": [
+                    {
+                        "name": inp.name,
+                        "label": inp.label or inp.name,
+                        "type": inp.type,
+                        "required": inp.required,
+                        "default": inp.default,
+                        "options": inp.options,
+                    }
+                    for inp in test_def.inputs
+                ] if test_def.inputs else [],
                 "sessions": test_def.sessions,
                 "real_agents": test_def.run.real_agents,
                 "message": test_def.run.message,
@@ -361,6 +380,7 @@ async def run_tests(
     run_all = body.run_all
     execute = body.execute
     judge = body.judge
+    input_values = body.input_values or {}
     user_id = user.get("sub")
 
     def _run():
@@ -373,17 +393,35 @@ async def run_tests(
             runner = TestRunner(db=db)
             phase_flags = dict(execute=execute, judge=judge, batch_id=run_id)
 
+            def _find_test(name):
+                """Find test YAML in tests/ or manual-tests/."""
+                for subdir in ["tests", "manual-tests"]:
+                    p = runner._testing_dir / subdir / f"{name}.yaml"
+                    if p.exists():
+                        return p
+                return None
+
+            def _load_and_resolve(name):
+                """Load test and resolve manual inputs."""
+                path = _find_test(name)
+                if not path:
+                    return None
+                test_def = runner.load_test(path)
+                if test_def.manual_input and input_values:
+                    test_def = test_def.resolve_inputs(input_values)
+                return test_def
+
             # Resolve which tests to run
             tests_to_run = []
             if test_name:
-                test_path = runner._testing_dir / "tests" / f"{test_name}.yaml"
-                if test_path.exists():
-                    tests_to_run.append((test_name, runner.load_test(test_path)))
+                td = _load_and_resolve(test_name)
+                if td:
+                    tests_to_run.append((test_name, td))
             elif test_names:
                 for name in test_names:
-                    test_path = runner._testing_dir / "tests" / f"{name}.yaml"
-                    if test_path.exists():
-                        tests_to_run.append((name, runner.load_test(test_path)))
+                    td = _load_and_resolve(name)
+                    if td:
+                        tests_to_run.append((name, td))
             elif tag:
                 all_tests = runner.load_all_tests()
                 for _path, test_def in all_tests:

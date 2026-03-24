@@ -131,6 +131,18 @@ class TestInlineEvaluate(BaseModel):
     verify: list[VerifyCheck] | None = None
 
 
+class TestInput(BaseModel):
+    """A user-provided input field for manual tests."""
+
+    __test__ = False
+    name: str  # Variable name, used in {{name}} placeholders
+    label: str = ""  # Display label in UI
+    type: str = "text"  # text, textarea, select
+    required: bool = True
+    default: str | None = None
+    options: list[str] | None = None  # For type=select
+
+
 class TestRun(BaseModel):
     """What to run in the test."""
 
@@ -148,6 +160,10 @@ class TestDefinition(BaseModel):
 
     # Tag/category for UI filtering (live, replay, record_only)
     mode: str = "live"
+
+    # Manual input: user must fill in fields before running
+    manual_input: bool = False
+    inputs: list[TestInput] = Field(default_factory=list)
 
     # World: sessions to seed
     sessions: list[str] = Field(default_factory=list)
@@ -170,6 +186,24 @@ class TestDefinition(BaseModel):
 
     # Inline evaluation (test-specific, not reusable)
     evaluate: TestInlineEvaluate | None = None
+
+    def resolve_inputs(self, values: dict[str, str]) -> "TestDefinition":
+        """Return a copy with {{placeholder}} replaced by provided values."""
+        import re
+
+        def _replace(text: str) -> str:
+            if not text:
+                return text
+            for key, val in values.items():
+                text = text.replace(f"{{{{{key}}}}}", val)
+            return text
+
+        # Deep copy and replace in message
+        import copy
+        resolved = copy.deepcopy(self)
+        resolved.run.message = _replace(resolved.run.message)
+        resolved.description = _replace(resolved.description)
+        return resolved
 
     def get_hitl_profiles(self) -> list[str]:
         """Normalize hitl field to list of profile names."""
