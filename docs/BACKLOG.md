@@ -2,7 +2,7 @@
 
 Bugs, implementation gaps, technical debt, and improvement ideas for the Druppie platform.
 
-Last updated: 2026-03-19
+Last updated: 2026-03-24
 
 ---
 
@@ -42,6 +42,9 @@ Last updated: 2026-03-19
 - Update Core Flow — End-to-End Improvements
 - ~~Update Core — Technical Basis~~ ✅ DONE
 - ~~Update Core — Architect Signal & Dual-Repo Sandbox~~ ✅ DONE
+- Dependency Cache — Remote/Distributed Caching
+- Dependency Cache — Pre-Populated Common Packages
+- Dependency Cache — Automated Periodic Vulnerability Scanning
 
 ---
 
@@ -310,3 +313,31 @@ Last updated: 2026-03-19
 - **`repo_target` parameter:** `execute_coding_task` accepts `repo_target` enum (`"project"` default, `"druppie_core"`). Controls whether the sandbox gets single-repo or dual-repo credentials.
 - **Simplified branch targeting:** The sandbox agent determines PR base branch from its git remote (GitHub repos → `colab-dev`, Gitea repos → `main`). Configured in sandbox agent prompts — no branch parameter threaded through infrastructure.
 - **YAML auto-reload:** `AgentDefinitionLoader` checks file mtime on each load and automatically reloads YAML definitions when they change on disk. No backend restart needed for prompt edits during development.
+
+### Dependency Cache — Remote/Distributed Caching
+
+- **Current state:** The shared dependency cache is a local Docker volume (`druppie_sandbox_dep_cache`) on a single host. This works well for single-node deployments but does not scale to multi-node or team environments.
+- **Desired improvement:** Investigate remote/distributed caching solutions:
+  - **Verdaccio** (npm proxy registry) or **Artifactory** for a shared package proxy that caches across multiple hosts
+  - **S3-backed cache** for pip/uv using `PIP_INDEX_URL` pointed at a caching proxy
+  - Network-attached storage for the cache volume in multi-node Docker Swarm or Kubernetes deployments
+- **Priority:** Low — only relevant when scaling beyond a single Docker host.
+
+### Dependency Cache — Pre-Populated Common Packages
+
+- **Current state:** The dependency cache starts empty and is populated on-demand as sandboxes install packages. The first sandbox to install a popular package (e.g., `react`, `express`, `fastapi`) pays the full download cost.
+- **Desired improvement:** Pre-populate the cache with commonly used packages to speed up first runs. This could be:
+  - A one-shot init container that installs a curated list of popular packages into the cache volume
+  - A periodic "warm-up" job that refreshes cached versions of common packages
+  - Analysis of past sandbox sessions to identify the most frequently installed packages
+- **Priority:** Low — useful optimization once the cache is in active production use.
+
+### Dependency Cache — Automated Periodic Vulnerability Scanning
+
+- **Current state:** The cache scanner (`docker compose --profile scan-cache run --rm cache-scanner`) must be run manually. There is no scheduled or automated scanning.
+- **Desired improvement:** Run vulnerability scans automatically:
+  - Cron job or scheduled container that runs the OSV scan daily/weekly
+  - Alert mechanism (e.g., webhook, email, Slack) when vulnerabilities are found
+  - Optional policy: auto-purge packages with critical vulnerabilities
+  - Dashboard or log aggregation for scan results over time
+- **Priority:** Medium — important for continuous security posture in production environments.
