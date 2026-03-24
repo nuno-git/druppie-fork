@@ -1156,8 +1156,11 @@ class TestRunner:
                 all_assertion_results.extend(inline_results)
 
         # Run judge checks (Phase 3)
+        # Skip judges for replay/record_only — no LLM made decisions to evaluate
         all_judge_results: list[JudgeCheckResult] = []
-        if judge and eval_session_id is not None:
+        test_mode = getattr(test, "mode", "live")
+        run_judge = judge and eval_session_id is not None and test_mode == "live"
+        if run_judge:
             for judge_name in judge_profiles:
                 try:
                     judge_profile = self._profiles.get_judge(judge_name)
