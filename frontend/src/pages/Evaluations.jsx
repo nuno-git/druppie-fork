@@ -1099,6 +1099,8 @@ export default function Evaluations() {
     fetch()
   }, [])
 
+  const [runProgress, setRunProgress] = useState(null) // {current_test, completed_tests, total_tests}
+
   // Poll for background test run completion
   const pollRunStatus = (runId) => {
     const pollInterval = setInterval(async () => {
@@ -1108,23 +1110,31 @@ export default function Evaluations() {
           clearInterval(pollInterval)
           setIsRunning(false)
           setRunMessage(null)
+          setRunProgress(null)
           setRunResult(status.results)
           setRefreshKey((k) => k + 1)
         } else if (status.status === 'error') {
           clearInterval(pollInterval)
           setIsRunning(false)
           setRunMessage(null)
+          setRunProgress(null)
           alert('Test run failed: ' + status.message)
         } else {
           setRunMessage(status.message || 'Running tests...')
+          setRunProgress({
+            current_test: status.current_test,
+            completed_tests: status.completed_tests || [],
+            total_tests: status.total_tests || 0,
+          })
         }
       } catch {
         clearInterval(pollInterval)
         setIsRunning(false)
         setRunMessage(null)
+        setRunProgress(null)
         alert('Failed to check test run status')
       }
-    }, 2000)
+    }, 1500)
   }
 
   const handleRun = async () => {
@@ -1146,12 +1156,17 @@ export default function Evaluations() {
         options.test_names = [...selectedTests]
       }
 
-      const { run_id } = await runTests(options)
+      const response = await runTests(options)
+      const { run_id } = response
       pollRunStatus(run_id)
     } catch (err) {
       setIsRunning(false)
       setRunMessage(null)
-      alert('Failed to run tests: ' + err.message)
+      setRunProgress(null)
+      const msg = err.status === 409
+        ? 'A test run is already in progress. Please wait for it to finish.'
+        : 'Failed to run tests: ' + err.message
+      alert(msg)
     }
   }
 
@@ -1286,13 +1301,47 @@ export default function Evaluations() {
             </div>
           </div>
 
-          {/* Running spinner */}
+          {/* Running progress */}
           {isRunning && (
-            <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-              <span className="text-blue-800 font-medium text-sm">
-                {runMessage || `Running ${effectiveCount} test${effectiveCount !== 1 ? 's' : ''}...`}
-              </span>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg overflow-hidden">
+              <div className="flex items-center gap-3 px-4 py-3">
+                <Loader2 className="w-5 h-5 animate-spin text-blue-600 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-blue-800 font-medium text-sm">
+                    {runMessage || 'Starting tests...'}
+                  </span>
+                  {runProgress && runProgress.total_tests > 0 && (
+                    <div className="w-full bg-blue-200 rounded-full h-1.5 mt-2">
+                      <div
+                        className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${(runProgress.completed_tests.length / runProgress.total_tests) * 100}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+              {/* Completed tests so far */}
+              {runProgress && runProgress.completed_tests.length > 0 && (
+                <div className="border-t border-blue-200 px-4 py-2 space-y-1">
+                  {runProgress.completed_tests.map((t, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                      {t.status === 'passed' ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                      ) : (
+                        <XCircle className="w-3.5 h-3.5 text-red-500" />
+                      )}
+                      <span className="text-gray-700">{t.test_name}</span>
+                      <span className="text-gray-400">{formatDuration(t.duration_ms)}</span>
+                    </div>
+                  ))}
+                  {runProgress.current_test && (
+                    <div className="flex items-center gap-2 text-xs">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500" />
+                      <span className="text-blue-700 font-medium">{runProgress.current_test}</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

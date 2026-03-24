@@ -331,23 +331,30 @@ async def run_tests(
     """Start test execution in the background. Returns a run_id to poll status.
 
     Admin only. Returns immediately with a run_id. Poll /run-status/{run_id}
-    for progress and results.
+    for progress and results. Tests run one-by-one with per-test status updates.
 
-    Args:
-        body: Specifies which tests to run (test_name, tag, or run_all)
-
-    Returns:
-        run_id and initial status
+    Returns 409 if a test run is already in progress.
     """
+    # Prevent concurrent runs
+    from fastapi.responses import JSONResponse
+    for existing in _test_run_status.values():
+        if existing.get("status") == "running":
+            return JSONResponse(
+                status_code=409,
+                content={"error": "A test run is already in progress", "status": "busy"},
+            )
+
     run_id = str(uuid_mod.uuid4())
     _test_run_status[run_id] = {
         "status": "running",
-        "message": "Starting tests...",
+        "message": "Loading tests...",
         "started_at": datetime.now(timezone.utc).isoformat(),
         "results": None,
+        "current_test": None,
+        "completed_tests": [],
+        "total_tests": 0,
     }
 
-    # Capture request params for the background thread
     test_name = body.test_name
     test_names = body.test_names
     tag = body.tag
@@ -359,48 +366,101 @@ async def run_tests(
     def _run():
         from druppie.db.database import SessionLocal
         from druppie.repositories.evaluation_repository import EvaluationRepository
+        from druppie.testing.v2_runner import TestRunner
 
         db = SessionLocal()
         try:
-            repo = EvaluationRepository(db)
-            svc = EvaluationService(repo)
+            runner = TestRunner(db=db)
+            phase_flags = dict(execute=execute, judge=judge, batch_id=run_id)
 
-            result = svc.run_tests(
-                test_name=test_name,
-                test_names=test_names,
-                tag=tag,
-                run_all=run_all,
-                execute=execute,
-                judge=judge,
-                batch_id=run_id,
-            )
+            # Resolve which tests to run
+            tests_to_run = []
+            if test_name:
+                test_path = runner._testing_dir / "tests" / f"{test_name}.yaml"
+                if test_path.exists():
+                    tests_to_run.append((test_name, runner.load_test(test_path)))
+            elif test_names:
+                for name in test_names:
+                    test_path = runner._testing_dir / "tests" / f"{name}.yaml"
+                    if test_path.exists():
+                        tests_to_run.append((name, runner.load_test(test_path)))
+            elif tag:
+                all_tests = runner.load_all_tests()
+                for _path, test_def in all_tests:
+                    for eval_ref in test_def.evals:
+                        eval_def = runner._evals.get(eval_ref.eval)
+                        if eval_def and tag in eval_def.tags:
+                            tests_to_run.append((test_def.name, test_def))
+                            break
+            elif run_all:
+                all_tests = runner.load_all_tests()
+                tests_to_run = [(td.name, td) for _p, td in all_tests]
+
+            total = len(tests_to_run)
+            _test_run_status[run_id]["total_tests"] = total
+            _test_run_status[run_id]["message"] = f"Running 0/{total} tests..."
+
+            all_results = []
+            for idx, (name, test_def) in enumerate(tests_to_run):
+                # Update status: which test is running now
+                _test_run_status[run_id]["current_test"] = name
+                _test_run_status[run_id]["message"] = f"Running {idx + 1}/{total}: {name}"
+
+                try:
+                    test_results = runner.run_test(test_def, **phase_flags)
+                    all_results.extend(test_results)
+
+                    # Update completed list
+                    for r in test_results:
+                        _test_run_status[run_id]["completed_tests"].append({
+                            "test_name": r.test_name,
+                            "status": r.status,
+                            "duration_ms": r.duration_ms,
+                        })
+                except Exception as test_err:
+                    logger.error("test_failed", test=name, error=str(test_err), exc_info=True)
+                    _test_run_status[run_id]["completed_tests"].append({
+                        "test_name": name,
+                        "status": "error",
+                        "duration_ms": 0,
+                        "error": str(test_err),
+                    })
+
             db.commit()
 
-            logger.info(
-                "tests_run_via_api",
-                run_id=run_id,
-                total=result["total"],
-                passed=result["passed"],
-                failed=result["failed"],
-                user_id=user_id,
-            )
+            passed = sum(1 for r in all_results if r.status == "passed")
+            failed = len(all_results) - passed
+            result = {
+                "total": len(all_results),
+                "passed": passed,
+                "failed": failed,
+                "results": [
+                    {
+                        "test_name": r.test_name,
+                        "status": r.status,
+                        "duration_ms": r.duration_ms,
+                    }
+                    for r in all_results
+                ],
+            }
 
             _test_run_status[run_id] = {
                 "status": "completed",
-                "message": f"{result['passed']}/{result['total']} passed",
+                "message": f"{passed}/{result['total']} passed",
                 "results": result,
+                "current_test": None,
+                "completed_tests": _test_run_status[run_id]["completed_tests"],
+                "total_tests": total,
             }
         except Exception as e:
-            logger.error(
-                "tests_run_error",
-                run_id=run_id,
-                error=str(e),
-                exc_info=True,
-            )
+            logger.error("tests_run_error", run_id=run_id, error=str(e), exc_info=True)
             _test_run_status[run_id] = {
                 "status": "error",
                 "message": str(e),
                 "results": None,
+                "current_test": None,
+                "completed_tests": _test_run_status[run_id].get("completed_tests", []),
+                "total_tests": _test_run_status[run_id].get("total_tests", 0),
             }
             try:
                 db.rollback()
