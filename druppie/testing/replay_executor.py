@@ -22,7 +22,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session as DbSession
 
-from druppie.db.models import AgentRun, Message, Session, ToolCall
+from druppie.db.models import AgentRun, LlmCall, Message, Session, ToolCall
 from druppie.db.models.base import utcnow
 from druppie.testing.replay_config import ReplayConfig
 from druppie.testing.seed_ids import fixture_uuid
@@ -204,7 +204,7 @@ class ReplayExecutor:
                 id=fixture_uuid(meta.id, "run", seq),
                 session_id=session_id,
                 agent_id=agent_fix.id,
-                status="running",  # Start as running
+                status="running",
                 sequence_number=seq,
                 planned_prompt=agent_fix.planned_prompt,
                 created_at=utcnow(),
@@ -212,26 +212,48 @@ class ReplayExecutor:
             self._db.add(agent_run)
             self._db.flush()
 
-            for tc in agent_fix.tool_calls:
+            # Create a fake LlmCall so tool calls show in inspect view
+            # (the frontend expects ToolCalls nested under LlmCalls)
+            llm_call = LlmCall(
+                id=fixture_uuid(meta.id, "run", seq, "llm"),
+                session_id=session_id,
+                agent_run_id=agent_run.id,
+                provider="replay",
+                model="replay",
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                duration_ms=0,
+                response_tool_calls=[
+                    {"name": tc.tool, "arguments": tc.arguments}
+                    for tc in agent_fix.tool_calls
+                ],
+                created_at=utcnow(),
+            )
+            self._db.add(llm_call)
+            self._db.flush()
+
+            for tc_idx, tc in enumerate(agent_fix.tool_calls):
                 result, status, was_real = await self.execute_tool_call(
                     tc, session_id, agent_run.id,
                 )
 
-                # Create a message so it shows in the session timeline
-                result_preview = (result or "")[:500]
-                label = "executed" if was_real else "mocked"
-                self._db.add(Message(
-                    id=fixture_uuid(meta.id, "msg", msg_seq),
-                    session_id=session_id,
-                    agent_run_id=agent_run.id,
-                    role="tool",
-                    content=f"[{label}] **{tc.tool}**({', '.join(f'{k}={v}' for k, v in tc.arguments.items())})\n\n→ {result_preview}",
-                    agent_id=agent_fix.id,
-                    tool_name=tc.tool,
-                    sequence_number=msg_seq,
-                    created_at=utcnow(),
-                ))
-                msg_seq += 1
+                # Link the ToolCall record to the fake LlmCall
+                # (ToolExecutor creates the record; we update it after)
+                tc_records = (
+                    self._db.query(ToolCall)
+                    .filter(
+                        ToolCall.agent_run_id == agent_run.id,
+                        ToolCall.mcp_server == tc.mcp_server,
+                        ToolCall.tool_name == tc.tool_name,
+                    )
+                    .order_by(ToolCall.created_at.desc())
+                    .all()
+                )
+                if tc_records:
+                    tc_records[0].llm_call_id = llm_call.id
+                    tc_records[0].tool_call_index = tc_idx
+                    self._db.flush()
 
                 # Handle outcome blocks (file creation in Gitea)
                 if tc.outcome and gitea_url:
@@ -241,21 +263,6 @@ class ReplayExecutor:
             # Update agent run status
             agent_run.status = agent_fix.status
             self._db.flush()
-
-            # Summary message
-            executed_count = sum(1 for tc in agent_fix.tool_calls if self.should_execute(tc))
-            mocked_count = len(agent_fix.tool_calls) - executed_count
-            self._db.add(Message(
-                id=fixture_uuid(meta.id, "msg", msg_seq),
-                session_id=session_id,
-                agent_run_id=agent_run.id,
-                role="assistant",
-                content=f"Agent **{agent_fix.id}** completed — {executed_count} tool calls executed, {mocked_count} mocked",
-                agent_id=agent_fix.id,
-                sequence_number=msg_seq,
-                created_at=utcnow(),
-            ))
-            msg_seq += 1
 
         # Update session status to match fixture
         session.status = meta.status
