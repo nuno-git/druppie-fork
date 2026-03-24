@@ -203,6 +203,25 @@ def _check_tool_called(
             f"Tool {assertion.tool_called} not found in agent run",
         )
 
+    # Check tool call status if assertion specifies one
+    if assertion.status:
+        if tc.status != assertion.status:
+            return AssertionResult(
+                f"{assertion.agent}.tool_called({assertion.tool_called}).status",
+                False,
+                f"Tool status: expected {assertion.status}, got {tc.status}",
+            )
+
+    # Check error message if assertion specifies one
+    if assertion.error_contains:
+        error_msg = tc.error_message or tc.result or ""
+        if assertion.error_contains.lower() not in error_msg.lower():
+            return AssertionResult(
+                f"{assertion.agent}.tool_called({assertion.tool_called}).error",
+                False,
+                f"Error does not contain '{assertion.error_contains}': {error_msg[:200]}",
+            )
+
     # Match expected arguments
     if expected:
         actual_args = tc.arguments or {}
@@ -218,7 +237,7 @@ def _check_tool_called(
     return AssertionResult(
         f"{assertion.agent}.tool_called({assertion.tool_called})",
         True,
-        "Tool called with matching arguments",
+        f"Tool called with status={tc.status}" + (" and matching arguments" if expected else ""),
     )
 
 
