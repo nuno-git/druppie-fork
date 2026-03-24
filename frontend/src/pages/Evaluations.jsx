@@ -128,6 +128,8 @@ const TestSelectorModal = ({
   isRunning,
   inputValues,
   setInputValues,
+  judgeEnabled,
+  setJudgeEnabled,
 }) => {
   const [expandedTests, setExpandedTests] = useState(new Set())
 
@@ -407,6 +409,15 @@ const TestSelectorModal = ({
             ))}
           </div>
           <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={judgeEnabled}
+                onChange={(e) => setJudgeEnabled(e.target.checked)}
+                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+              />
+              <span className="text-xs text-gray-600">LLM Judge</span>
+            </label>
             <span className="text-sm text-gray-500">
               {effectiveCount} test{effectiveCount !== 1 ? 's' : ''} selected
             </span>
@@ -1147,7 +1158,8 @@ export default function Evaluations() {
   const [isRunning, setIsRunning] = useState(false)
   const [runResult, setRunResult] = useState(null)
   const [runMessage, setRunMessage] = useState(null)
-  const [modeFilter, setModeFilter] = useState('all') // all, live, record_only, replay
+  const [modeFilter, setModeFilter] = useState('all') // all, live, record_only, replay, manual
+  const [judgeEnabled, setJudgeEnabled] = useState(true)
   const [deletingUsers, setDeletingUsers] = useState(false)
 
   // Effective selected count for display
@@ -1217,7 +1229,7 @@ export default function Evaluations() {
     setRunMessage('Starting tests...')
 
     try {
-      const options = { execute: true, judge: true }
+      const options = { execute: true, judge: judgeEnabled }
 
       if (selectAll) {
         options.run_all = true
@@ -1470,6 +1482,8 @@ export default function Evaluations() {
           setModeFilter={setModeFilter}
           inputValues={inputValues}
           setInputValues={setInputValues}
+          judgeEnabled={judgeEnabled}
+          setJudgeEnabled={setJudgeEnabled}
           onRun={handleRun}
           onClose={() => setShowSelector(false)}
           isRunning={isRunning}
