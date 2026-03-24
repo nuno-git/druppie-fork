@@ -945,9 +945,15 @@ class TestRunner:
     def load_all_tests(
         self, tests_dir: Path | None = None
     ) -> list[tuple[Path, TestDefinition]]:
-        """Load all test definitions from a directory."""
-        d = tests_dir or self._testing_dir / "tests"
-        return [(p, self.load_test(p)) for p in sorted(d.glob("*.yaml"))]
+        """Load all test definitions from tests/ and manual-tests/ directories."""
+        results = []
+        for subdir in ["tests", "manual-tests"]:
+            d = tests_dir or self._testing_dir / subdir
+            if d.exists():
+                results.extend(
+                    (p, self.load_test(p)) for p in sorted(d.glob("*.yaml"))
+                )
+        return results
 
     def run_test(
         self,

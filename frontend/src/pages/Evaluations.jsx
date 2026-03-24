@@ -126,6 +126,8 @@ const TestSelectorModal = ({
   onRun,
   onClose,
   isRunning,
+  inputValues,
+  setInputValues,
 }) => {
   const [expandedTests, setExpandedTests] = useState(new Set())
 
@@ -135,6 +137,11 @@ const TestSelectorModal = ({
       next.delete(name)
     } else {
       next.add(name)
+      // Auto-expand manual tests so the input form is visible
+      const test = tests.find((t) => t.name === name)
+      if (test?.manual_input) {
+        setExpandedTests((prev) => new Set([...prev, name]))
+      }
     }
     if (next.size === tests.length) {
       setSelectAll(true)
@@ -215,7 +222,11 @@ const TestSelectorModal = ({
               </label>
 
               {/* Individual tests */}
-              {tests.filter((t) => modeFilter === 'all' || t.mode === modeFilter).map((test) => {
+              {tests.filter((t) => {
+                if (modeFilter === 'all') return true
+                if (modeFilter === 'manual') return t.manual_input
+                return t.mode === modeFilter && !t.manual_input
+              }).map((test) => {
                 const checked = selectAll || selectedTests.has(test.name)
                 const expanded = expandedTests.has(test.name)
                 const modeBg = {
@@ -241,6 +252,11 @@ const TestSelectorModal = ({
                             <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${modeBg}`}>
                               {test.mode === 'record_only' ? 'record' : test.mode}
                             </span>
+                            {test.manual_input && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-amber-100 text-amber-700">
+                                manual
+                              </span>
+                            )}
                             <span className="font-medium text-sm">{test.name}</span>
                           </div>
                           <button
@@ -282,6 +298,60 @@ const TestSelectorModal = ({
                         {/* Expanded details */}
                         {expanded && (
                           <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                            {/* Manual input form */}
+                            {test.manual_input && test.inputs?.length > 0 && (
+                              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-3">
+                                <div className="flex items-center gap-2 text-xs font-semibold text-amber-700 uppercase">
+                                  <FlaskConical className="w-3.5 h-3.5" />
+                                  Manual Input Required
+                                </div>
+                                {test.inputs.map((inp) => (
+                                  <div key={inp.name}>
+                                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                                      {inp.label || inp.name}
+                                      {inp.required && <span className="text-red-500 ml-0.5">*</span>}
+                                    </label>
+                                    {inp.type === 'textarea' ? (
+                                      <textarea
+                                        value={inputValues[`${test.name}:${inp.name}`] ?? inp.default ?? ''}
+                                        onChange={(e) => setInputValues((prev) => ({
+                                          ...prev,
+                                          [`${test.name}:${inp.name}`]: e.target.value,
+                                        }))}
+                                        rows={4}
+                                        className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                                        placeholder={inp.default || ''}
+                                      />
+                                    ) : inp.type === 'select' ? (
+                                      <select
+                                        value={inputValues[`${test.name}:${inp.name}`] ?? inp.default ?? ''}
+                                        onChange={(e) => setInputValues((prev) => ({
+                                          ...prev,
+                                          [`${test.name}:${inp.name}`]: e.target.value,
+                                        }))}
+                                        className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                                      >
+                                        {(inp.options || []).map((opt) => (
+                                          <option key={opt} value={opt}>{opt}</option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <input
+                                        type="text"
+                                        value={inputValues[`${test.name}:${inp.name}`] ?? inp.default ?? ''}
+                                        onChange={(e) => setInputValues((prev) => ({
+                                          ...prev,
+                                          [`${test.name}:${inp.name}`]: e.target.value,
+                                        }))}
+                                        className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                                        placeholder={inp.default || ''}
+                                      />
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
                             {test.evals && test.evals.length > 0 && (
                               <div>
                                 <span className="text-xs font-semibold text-gray-600 uppercase">Evals:</span>
@@ -322,7 +392,7 @@ const TestSelectorModal = ({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
           <div className="flex items-center gap-1">
-            {['all', 'live', 'record_only', 'replay'].map((m) => (
+            {['all', 'live', 'record_only', 'replay', 'manual'].map((m) => (
               <button
                 key={m}
                 onClick={() => setModeFilter(m)}
@@ -332,7 +402,7 @@ const TestSelectorModal = ({
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
               >
-                {m === 'all' ? 'All' : m === 'record_only' ? 'Record Only' : m === 'live' ? 'Live' : 'Replay'}
+                {m === 'all' ? 'All' : m === 'record_only' ? 'Record Only' : m === 'live' ? 'Live' : m === 'replay' ? 'Replay' : 'Manual'}
               </button>
             ))}
           </div>
@@ -1071,6 +1141,7 @@ export default function Evaluations() {
   const [showSelector, setShowSelector] = useState(false)
   const [selectAll, setSelectAll] = useState(true)
   const [selectedTests, setSelectedTests] = useState(new Set())
+  const [inputValues, setInputValues] = useState({})
 
   // Shared run state
   const [isRunning, setIsRunning] = useState(false)
@@ -1154,6 +1225,19 @@ export default function Evaluations() {
         options.test_name = [...selectedTests][0]
       } else {
         options.test_names = [...selectedTests]
+      }
+
+      // Collect manual input values for selected tests
+      const resolvedInputs = {}
+      for (const [key, val] of Object.entries(inputValues)) {
+        // Key format: "test-name:input-name" — extract just input-name
+        const parts = key.split(':')
+        if (parts.length === 2) {
+          resolvedInputs[parts[1]] = val
+        }
+      }
+      if (Object.keys(resolvedInputs).length > 0) {
+        options.input_values = resolvedInputs
       }
 
       const response = await runTests(options)
@@ -1384,6 +1468,8 @@ export default function Evaluations() {
           setSelectedTests={setSelectedTests}
           modeFilter={modeFilter}
           setModeFilter={setModeFilter}
+          inputValues={inputValues}
+          setInputValues={setInputValues}
           onRun={handleRun}
           onClose={() => setShowSelector(false)}
           isRunning={isRunning}

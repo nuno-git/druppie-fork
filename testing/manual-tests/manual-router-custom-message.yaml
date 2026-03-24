@@ -1,0 +1,34 @@
+## MANUAL TEST: Router with custom user message
+## The tester types their own message and sees how the router classifies it.
+
+test:
+  name: manual-router-custom-message
+  mode: live
+  description: "Route a custom message: {{user_message}}"
+  manual_input: true
+  inputs:
+    - name: user_message
+      label: "User message to classify"
+      type: textarea
+      required: true
+      default: "I want to build something cool"
+    - name: expected_intent
+      label: "Expected intent"
+      type: select
+      required: true
+      default: create_project
+      options:
+        - create_project
+        - update_project
+        - general_chat
+
+  sessions: []
+  run:
+    message: "{{user_message}}"
+    real_agents: [router]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: router-correct-intent
+      expected:
+        intent: "{{expected_intent}}"

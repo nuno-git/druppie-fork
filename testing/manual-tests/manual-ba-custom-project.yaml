@@ -1,0 +1,35 @@
+## MANUAL TEST: BA gathers requirements for a user-defined project
+## The tester describes their project and checks the BA asks good questions.
+
+test:
+  name: manual-ba-custom-project
+  mode: live
+  description: "BA gathers requirements for: {{project_description}}"
+  manual_input: true
+  inputs:
+    - name: project_description
+      label: "Describe the project you want to build"
+      type: textarea
+      required: true
+      default: "A dashboard for monitoring water pump stations"
+    - name: hitl_persona
+      label: "Who are you? (the HITL simulator will act as this person)"
+      type: select
+      required: true
+      default: non-technical-pm
+      options:
+        - non-technical-pm
+        - dutch-water-authority
+        - developer
+
+  sessions: []
+  run:
+    message: "{{project_description}}"
+    real_agents: [router, planner, business_analyst]
+  hitl: "{{hitl_persona}}"
+  judge: default
+  evals:
+    - eval: ba-asks-questions
+    - eval: router-correct-intent
+      expected:
+        intent: create_project
