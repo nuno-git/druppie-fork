@@ -140,17 +140,6 @@ const getToolDescription = (toolName) => {
   return toolDescriptions[toolName] || `Execute ${toolName}`
 }
 
-// Helper to get danger level badge
-const getDangerLevelBadge = (level) => {
-  const levels = {
-    low: { bg: 'bg-green-100', text: 'text-green-700', label: 'Low Risk' },
-    medium: { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Medium Risk' },
-    high: { bg: 'bg-orange-100', text: 'text-orange-700', label: 'High Risk' },
-    critical: { bg: 'bg-red-100', text: 'text-red-700', label: 'Critical' },
-  }
-  return levels[level] || levels.low
-}
-
 // Helper to detect language from file path for syntax highlighting hint
 const getLanguageFromPath = (path) => {
   if (!path) return 'text'
@@ -225,9 +214,6 @@ const TaskCard = ({ task, onApprove, onReject }) => {
   const toolName = task.mcp_tool || task.tool_name || null
   const isWorkflowStep = task.approval_type === 'workflow_step'
   const toolDescription = toolName ? getToolDescription(toolName) : (isWorkflowStep ? 'Approve workflow checkpoint to proceed to next phase' : 'Approval required')
-  const dangerLevel = task.danger_level || 'medium'
-  const dangerBadge = getDangerLevelBadge(dangerLevel)
-
   return (
     <div className={`bg-white rounded-xl border p-4 ${isMultiApproval ? 'border-blue-200' : 'border-gray-100'}`}>
       {/* Header — compact summary line with inline actions */}

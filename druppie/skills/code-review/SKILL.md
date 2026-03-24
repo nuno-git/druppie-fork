@@ -5,7 +5,7 @@ allowed-tools:
   coding:
     - read_file
     - list_dir
-  bestand-zoeker:
+  web:
     - read_file
     - search_files
     - list_directory

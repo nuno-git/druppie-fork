@@ -27,6 +27,7 @@ pydantic-settings>=2.1.0
 # Configuration
 pyyaml>=6.0.0
 python-dotenv>=1.0.0
+jsonschema>=4.0.0
 
 # Logging
 structlog>=24.1.0

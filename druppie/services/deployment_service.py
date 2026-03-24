@@ -16,10 +16,10 @@ class DeploymentService:
     def __init__(
         self,
         project_repo: ProjectRepository,
-        mcp_client,  # MCPClient instance
+        mcp_http,  # MCPHttp instance
     ):
         self.project_repo = project_repo
-        self.mcp_client = mcp_client
+        self.mcp_http = mcp_http
 
     async def list_for_user(self, user_id: UUID) -> list[DeploymentInfo]:
         """List all running deployments for user's projects."""
@@ -27,7 +27,7 @@ class DeploymentService:
 
         deployments = []
         for project in projects:
-            result = await self.mcp_client.call_tool(
+            result = await self.mcp_http.call(
                 "docker",
                 "list_containers",
                 {"project_id": str(project.id)},
@@ -48,7 +48,7 @@ class DeploymentService:
         if not await self._user_owns_container(container_name, user_id):
             raise AuthorizationError("Can only stop your own containers")
 
-        result = await self.mcp_client.call_tool(
+        result = await self.mcp_http.call(
             "docker",
             "stop",
             {"container_name": container_name},
@@ -70,7 +70,7 @@ class DeploymentService:
         if not await self._user_owns_container(container_name, user_id):
             raise AuthorizationError("Can only view logs for your own containers")
 
-        result = await self.mcp_client.call_tool(
+        result = await self.mcp_http.call(
             "docker",
             "logs",
             {"container_name": container_name, "tail": tail},
@@ -86,7 +86,7 @@ class DeploymentService:
 
     async def _user_owns_container(self, container_name: str, user_id: UUID) -> bool:
         """Check if user owns the container via project_id label."""
-        result = await self.mcp_client.call_tool(
+        result = await self.mcp_http.call(
             "docker",
             "inspect",
             {"container_name": container_name},

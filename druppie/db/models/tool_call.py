@@ -94,7 +94,7 @@ class ToolCall(Base):
         defn = self.definition
         if not defn:
             return True, None  # Can't validate without definition
-        is_valid, error, _ = defn.validate_arguments(self.arguments or {})
+        is_valid, error, _, _ = defn.validate_arguments(self.arguments or {})
         return is_valid, error
 
     # -------------------------------------------------------------------------
