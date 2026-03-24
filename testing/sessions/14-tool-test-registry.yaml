@@ -1,0 +1,22 @@
+## Session for testing registry:list_components tool via replay.
+
+metadata:
+  id: tool-test-registry
+  title: "Tool test: list registry components"
+  status: completed
+  user: admin
+  intent: general_chat
+
+agents:
+  - id: architect
+    status: completed
+    tool_calls:
+      - tool: "registry:list_components"
+        arguments: {}
+        status: completed
+      - tool: "builtin:done"
+        arguments:
+          summary: "Agent architect: Listed registry components."
+        status: completed
+        result: "Agent completed"
+        execute: false
