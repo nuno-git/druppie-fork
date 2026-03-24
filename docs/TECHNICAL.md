@@ -603,7 +603,7 @@ docker compose ps
 
 Sandbox containers are hardened with multiple isolation layers:
 
-**Capability reduction:** All Linux capabilities are dropped (`--cap-drop=ALL`), then a minimal set is re-added: `CHOWN`, `DAC_OVERRIDE`, `FOWNER` (file permissions), `SETGID`, `SETUID` (user/group), `NET_RAW`, `NET_BIND_SERVICE` (networking), `SYS_CHROOT` (build tools), `SYS_ADMIN`, `MKNOD` (Docker-in-Docker). See `docker_manager.py:84-94`.
+**Capability reduction:** All Linux capabilities are dropped (`--cap-drop=ALL`), then only 3 are re-added: `CHOWN` and `FOWNER` (shared cache file ownership), `NET_RAW` (health checks). Combined with `--security-opt=no-new-privileges` to block setuid/setgid escalation. See `docker_manager.py`.
 
 **Non-root execution:** Sandboxes run as `sandbox:1000` (non-root user created in `Dockerfile.sandbox:83-84`).
 
