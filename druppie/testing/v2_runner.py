@@ -1067,23 +1067,16 @@ class TestRunner:
                             seed_ref.session,
                         )
                         import asyncio
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            # We're already in an async context — run directly
-                            import concurrent.futures
-                            with concurrent.futures.ThreadPoolExecutor() as pool:
-                                result = pool.submit(
-                                    asyncio.run,
-                                    replay_exec.replay_session(
-                                        session_fixture, user.id, self._gitea_url,
-                                    ),
-                                ).result()
-                        else:
-                            result = asyncio.run(
+                        # Create a fresh event loop for this thread
+                        loop = asyncio.new_event_loop()
+                        try:
+                            result = loop.run_until_complete(
                                 replay_exec.replay_session(
                                     session_fixture, user.id, self._gitea_url,
                                 )
                             )
+                        finally:
+                            loop.close()
                         logger.info("Replay complete: %s", result)
                     else:
                         # record_only
