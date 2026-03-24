@@ -34,6 +34,7 @@ import {
   getAvailableTests,
   getTestBatches,
   getTestRun,
+  getTestRunAssertions,
   getTags,
   deleteTestUsers,
   runTests,
@@ -629,23 +630,28 @@ const BatchResultsList = ({ refreshKey, onSelectRun, isRunning, runResult, setRu
 
 const TestRunDetail = ({ testRunId, onBack }) => {
   const [run, setRun] = useState(null)
+  const [assertionResults, setAssertionResults] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    const fetch = async () => {
+    const fetchData = async () => {
       setLoading(true)
       setError(null)
       try {
-        const data = await getTestRun(testRunId)
+        const [data, assertions] = await Promise.all([
+          getTestRun(testRunId),
+          getTestRunAssertions(testRunId).catch(() => []),
+        ])
         setRun(data)
+        setAssertionResults(assertions || [])
       } catch (err) {
         setError(err.message)
       } finally {
         setLoading(false)
       }
     }
-    fetch()
+    fetchData()
   }, [testRunId])
 
   if (loading) {
@@ -670,21 +676,16 @@ const TestRunDetail = ({ testRunId, onBack }) => {
 
   if (!run) return null
 
-  const fields = [
-    ['Test Name', run.test_name],
-    ['Description', run.test_description],
-    ['Status', run.status],
-    ['Test User', run.test_user],
-    ['HITL Profile', run.hitl_profile],
-    ['Judge Profile', run.judge_profile],
-    ['Sessions Seeded', run.sessions_seeded],
-    ['Assertions', run.assertions_total != null ? `${run.assertions_passed}/${run.assertions_total}` : null],
-    ['Judge Checks', run.judge_checks_total != null ? `${run.judge_checks_passed}/${run.judge_checks_total}` : null],
-    ['Duration', formatDuration(run.duration_ms)],
-    ['Benchmark Run ID', run.benchmark_run_id],
-    ['Batch ID', run.batch_id],
-    ['Created', formatDate(run.created_at)],
-  ]
+  // Group assertion results by type
+  const assertions = assertionResults.filter((r) => r.assertion_type !== 'judge_check')
+  const judgeChecks = assertionResults.filter((r) => r.assertion_type === 'judge_check')
+
+  const modeLabel = run.mode || 'live'
+  const modeBg = {
+    live: 'bg-blue-100 text-blue-700',
+    replay: 'bg-amber-100 text-amber-700',
+    record_only: 'bg-gray-100 text-gray-700',
+  }[modeLabel] || 'bg-gray-100 text-gray-700'
 
   return (
     <div className="space-y-4">
@@ -696,6 +697,14 @@ const TestRunDetail = ({ testRunId, onBack }) => {
             <p className="text-sm text-gray-500 mt-0.5">{run.test_description}</p>
           )}
           <div className="flex items-center gap-2 mt-2">
+            <span className={`px-2 py-0.5 rounded text-xs font-medium ${modeBg}`}>
+              {modeLabel}
+            </span>
+            {run.agent_id && (
+              <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs font-medium">
+                agent: {run.agent_id}
+              </span>
+            )}
             {(run.tags || []).map((tag) => (
               <span
                 key={tag}
@@ -709,16 +718,7 @@ const TestRunDetail = ({ testRunId, onBack }) => {
         </div>
         <div className="text-right space-y-2">
           <StatusBadge value={run.status} />
-          {run.assertions_total != null && (
-            <div className="mt-2">
-              <span className={`text-2xl font-bold font-mono ${
-                run.assertions_passed === run.assertions_total ? 'text-green-600' : 'text-red-600'
-              }`}>
-                {run.assertions_passed}/{run.assertions_total}
-              </span>
-              <span className="text-xs text-gray-500 ml-1">assertions</span>
-            </div>
-          )}
+          <div className="text-sm text-gray-500">{formatDuration(run.duration_ms)}</div>
           {run.session_id && (
             <a
               href={`/chat?session=${run.session_id}`}
@@ -731,17 +731,109 @@ const TestRunDetail = ({ testRunId, onBack }) => {
         </div>
       </div>
 
-      {/* Metadata table */}
+      {/* What was tested — Assertions */}
+      <div className="bg-white rounded-lg border overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+          <h3 className="font-semibold text-sm">Assertions ({assertions.filter(a => a.passed).length}/{assertions.length} passed)</h3>
+        </div>
+        {assertions.length === 0 ? (
+          <div className="px-4 py-3 text-sm text-gray-400">No assertions recorded</div>
+        ) : (
+          <div className="divide-y">
+            {assertions.map((ar, i) => (
+              <div key={i} className="px-4 py-3 flex items-start gap-3">
+                {ar.passed ? (
+                  <CheckCircle2 className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
+                ) : (
+                  <XCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`px-1.5 py-0.5 rounded text-xs font-mono ${
+                      ar.assertion_type === 'completed' ? 'bg-blue-50 text-blue-700' :
+                      ar.assertion_type === 'tool_called' ? 'bg-purple-50 text-purple-700' :
+                      ar.assertion_type === 'verify' ? 'bg-amber-50 text-amber-700' :
+                      ar.assertion_type === 'result_valid' ? 'bg-cyan-50 text-cyan-700' :
+                      'bg-gray-50 text-gray-700'
+                    }`}>
+                      {ar.assertion_type}
+                    </span>
+                    {ar.agent_id && (
+                      <span className="text-sm font-medium text-gray-700">{ar.agent_id}</span>
+                    )}
+                    {ar.tool_name && (
+                      <span className="text-sm font-mono text-gray-500">{ar.tool_name}</span>
+                    )}
+                    {ar.eval_name && (
+                      <span className="text-xs text-gray-400">[{ar.eval_name}]</span>
+                    )}
+                  </div>
+                  {ar.message && (
+                    <p className="text-sm text-gray-500 mt-1">{ar.message}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Judge Checks */}
+      {judgeChecks.length > 0 && (
+        <div className="bg-white rounded-lg border overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+            <h3 className="font-semibold text-sm">Judge Checks ({judgeChecks.filter(j => j.passed).length}/{judgeChecks.length} passed)</h3>
+          </div>
+          <div className="divide-y">
+            {judgeChecks.map((jr, i) => (
+              <div key={i} className="px-4 py-3 flex items-start gap-3">
+                {jr.passed ? (
+                  <CheckCircle2 className="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
+                ) : (
+                  <XCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-1.5 py-0.5 rounded text-xs font-mono bg-yellow-50 text-yellow-700">
+                      judge
+                    </span>
+                    {jr.agent_id && (
+                      <span className="text-sm font-medium text-gray-700">{jr.agent_id}</span>
+                    )}
+                  </div>
+                  {jr.message && (
+                    <p className="text-sm text-gray-700 mt-1">{jr.message}</p>
+                  )}
+                  {jr.judge_reasoning && (
+                    <p className="text-sm text-gray-400 mt-1 italic">{jr.judge_reasoning}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Metadata */}
       <div className="bg-white rounded-lg border overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
-          <h3 className="font-semibold text-sm">Details</h3>
+          <h3 className="font-semibold text-sm">Run Details</h3>
         </div>
         <table className="w-full text-sm">
           <tbody>
-            {fields.map(([label, value]) => (
+            {[
+              ['Mode', modeLabel],
+              ['Primary Agent', run.agent_id || '-'],
+              ['HITL Profile', run.hitl_profile],
+              ['Judge Profile', run.judge_profile],
+              ['Test User', run.test_user],
+              ['Sessions Seeded', run.sessions_seeded],
+              ['Duration', formatDuration(run.duration_ms)],
+              ['Created', formatDate(run.created_at)],
+            ].map(([label, value]) => (
               <tr key={label} className="border-b last:border-0">
                 <td className="px-4 py-2 font-medium text-gray-600 bg-gray-50 w-44">{label}</td>
-                <td className="px-4 py-2 font-mono text-xs">{value !== null && value !== undefined ? String(value) : '-'}</td>
+                <td className="px-4 py-2 text-sm">{value !== null && value !== undefined ? String(value) : '-'}</td>
               </tr>
             ))}
           </tbody>
