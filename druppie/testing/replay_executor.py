@@ -179,6 +179,7 @@ class ReplayExecutor:
                 role=msg_fix.role,
                 content=msg_fix.content,
                 agent_id=msg_fix.agent_id,
+                sequence_number=msg_seq,
                 created_at=utcnow(),
             ))
             msg_seq += 1
@@ -229,6 +230,7 @@ class ReplayExecutor:
                     content=f"**{tc.tool}**({', '.join(f'{k}={v}' for k, v in tc.arguments.items())})\n\n→ {result_preview}",
                     agent_id=agent_fix.id,
                     tool_name=tc.tool,
+                    sequence_number=msg_seq,
                     created_at=utcnow(),
                 ))
                 msg_seq += 1
@@ -245,6 +247,7 @@ class ReplayExecutor:
                 role="assistant",
                 content=f"Agent **{agent_fix.id}** completed ({len(agent_fix.tool_calls)} tool calls executed via replay)",
                 agent_id=agent_fix.id,
+                sequence_number=msg_seq,
                 created_at=utcnow(),
             ))
             msg_seq += 1
