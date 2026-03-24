@@ -1,0 +1,25 @@
+## Session for testing coding:list_dir tool via replay.
+## The architect calls list_dir to see project files.
+
+metadata:
+  id: tool-test-list-dir
+  title: "Tool test: list directory"
+  status: completed
+  user: admin
+  intent: create_project
+  project_name: weather-dashboard
+
+agents:
+  - id: architect
+    status: completed
+    tool_calls:
+      - tool: "coding:list_dir"
+        arguments:
+          path: "."
+        status: completed
+      - tool: "builtin:done"
+        arguments:
+          summary: "Agent architect: Listed directory contents."
+        status: completed
+        result: "Agent completed"
+        execute: false

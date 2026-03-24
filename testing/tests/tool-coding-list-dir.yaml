@@ -1,12 +1,24 @@
+## REPLAY TEST: coding:list_dir returns directory listing
+## Executes a list_dir tool call through the real MCP coding server.
+
 test:
   name: tool-coding-list-dir
   mode: replay
   description: "coding:list_dir returns directory listing"
+
+  # First seed world state (record_only — creates the project/repo)
   sessions:
     - weather-dashboard-completed
+
+  # Then replay the list_dir call through the real coding MCP
+  seed_sessions:
+    - session: tool-test-list-dir
+      mode: replay
+
   run:
-    message: "test"
+    message: ""
     real_agents: []
+
   evaluate:
     assertions:
       - agent: architect

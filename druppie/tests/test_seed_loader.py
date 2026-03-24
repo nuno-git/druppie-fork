@@ -607,7 +607,7 @@ class TestLoadFixturesFromDir:
             pytest.skip(f"Fixtures directory not found: {fixtures_dir}")
 
         fixtures = load_fixtures(fixtures_dir)
-        assert len(fixtures) == 12
+        assert len(fixtures) == 15
 
         # Every fixture has a non-empty id and title
         for fix in fixtures:

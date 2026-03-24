@@ -1,12 +1,22 @@
+## REPLAY TEST: coding:read_file returns file content
+## Executes a read_file tool call through the real MCP coding server.
+
 test:
   name: tool-coding-read-file
   mode: replay
   description: "coding:read_file returns file content"
+
   sessions:
     - weather-dashboard-completed
+
+  seed_sessions:
+    - session: tool-test-read-file
+      mode: replay
+
   run:
-    message: "test"
+    message: ""
     real_agents: []
+
   evaluate:
     assertions:
       - agent: architect

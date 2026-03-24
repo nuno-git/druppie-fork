@@ -1,0 +1,24 @@
+## Session for testing coding:read_file tool via replay.
+
+metadata:
+  id: tool-test-read-file
+  title: "Tool test: read file"
+  status: completed
+  user: admin
+  intent: create_project
+  project_name: weather-dashboard
+
+agents:
+  - id: architect
+    status: completed
+    tool_calls:
+      - tool: "coding:read_file"
+        arguments:
+          path: "README.md"
+        status: completed
+      - tool: "builtin:done"
+        arguments:
+          summary: "Agent architect: Read file contents."
+        status: completed
+        result: "Agent completed"
+        execute: false
