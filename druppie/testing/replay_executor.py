@@ -166,6 +166,12 @@ class ReplayExecutor:
 
         The session view will show every tool call and its result.
         """
+        # Reset the Gitea client singleton so it creates a fresh AsyncClient
+        # bound to THIS event loop (not the FastAPI main loop)
+        import druppie.core.gitea as _gitea_mod
+        if _gitea_mod._gitea_client is not None:
+            _gitea_mod._gitea_client._client = None  # Force new AsyncClient
+
         meta = fixture.metadata
         session_id = fixture_uuid(meta.id)
 
