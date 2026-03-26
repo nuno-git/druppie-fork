@@ -78,8 +78,6 @@ class DockerContainerManager:
             "--security-opt=no-new-privileges",
             # Drop ALL capabilities, add back only essentials for non-root
             "--cap-drop=ALL",
-            "--cap-add=CHOWN",         # fix ownership on shared cache files
-            "--cap-add=FOWNER",        # change file ownership on shared cache
             "--cap-add=NET_RAW",       # raw sockets (ping, health checks)
             # Resource limits
             f"--memory={config.DOCKER_MEMORY_LIMIT}",
@@ -104,7 +102,7 @@ class DockerContainerManager:
         volume_flags: list[str] = []
         cache_volume = config.SANDBOX_CACHE_VOLUME
         if cache_volume:
-            volume_flags.extend(["-v", f"{cache_volume}:/cache"])
+            volume_flags.extend(["-v", f"{cache_volume}:/cache:rw"])
 
         cmd = [
             "docker", "run",

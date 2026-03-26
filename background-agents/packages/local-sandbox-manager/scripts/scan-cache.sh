@@ -27,20 +27,20 @@ if [ -d /cache/npm/_cacache/index-v5 ]; then
         | sed -n 's|.*/-/\(.*\)\.tgz|\1|p' \
         | sort -u \
         | head -"$MAX_ENTRIES" \
-        | awk -F'-' '{
-            # Split "name-version" — version starts at the last segment matching [0-9]
-            # Handle scoped packages and multi-hyphen names
+        | awk -F'-' 'BEGIN { first=1 }
+        {
             for (i=NF; i>=2; i--) {
                 if ($i ~ /^[0-9]/) {
                     name=""; for(j=1;j<i;j++) name = name (j>1?"-":"") $j
                     ver=""; for(j=i;j<=NF;j++) ver = ver (j>i?"-":"") $j
+                    if (!first) printf ",\n"
                     printf "    \"%s\": \"%s\"", name, ver
-                    if (NR > 1) printf ","
-                    printf "\n"
+                    first=0
                     break
                 }
             }
-        }' > "$npm_dir/deps.tmp" 2>/dev/null || true
+        }
+        END { printf "\n" }' > "$npm_dir/deps.tmp" 2>/dev/null || true
 
     if [ -s "$npm_dir/deps.tmp" ]; then
         # Remove trailing comma from last line and wrap in package.json
