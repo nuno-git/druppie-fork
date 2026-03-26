@@ -1,5 +1,11 @@
 """Registry v1 — MCP Tool Definitions.
 
+Module-first registry for the Druppie platform. Every MCP server IS a module.
+
+Tools are organized in two groups:
+- Module tools: list_modules, get_module, search_modules
+- Component tools: list_components, get_agent, get_skill
+
 Single source of truth for tool contract:
 - Tool name, description, input schema via @mcp.tool()
 - Version and module_id via @mcp.tool(meta={...})
@@ -16,25 +22,27 @@ MODULE_VERSION = "1.0.0"
 mcp = FastMCP(
     "Registry v1",
     version=MODULE_VERSION,
-    instructions="Druppie platform building block catalog. List and inspect modules, agents, skills, MCP tools, and builtin tools. Use list_modules/get_module/search_modules for module discovery.",
+    instructions=(
+        "Druppie platform registry. Every MCP server is a module — use "
+        "list_modules/get_module/search_modules to discover modules and their "
+        "tools. Use list_components/get_agent/get_skill for agents, skills, "
+        "and builtin tools."
+    ),
 )
 
 DATA_DIR = os.getenv("DATA_DIR", "/data")
 module = RegistryModule(data_dir=DATA_DIR)
 
 
-@mcp.tool(
-    name="list_components",
-    description="List all Druppie building blocks: agents, skills, MCP servers, and builtin tools. Optionally filter by category.",
-    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
-)
-async def list_components(category: str = "") -> dict:
-    return module.list_components(category=category)
-
+# ── Module tools ─────────────────────────────────────────────────────────
 
 @mcp.tool(
     name="list_modules",
-    description="List all available Druppie modules with their versions and type. Optionally filter by type ('core', 'module', or 'both').",
+    description=(
+        "List all available Druppie modules with their versions, type, tool "
+        "count, and which agents use them. Optionally filter by type: 'core' "
+        "(agents only), 'module' (apps only), or 'both' (agents + apps)."
+    ),
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def list_modules(category: str = "") -> dict:
@@ -43,7 +51,12 @@ async def list_modules(category: str = "") -> dict:
 
 @mcp.tool(
     name="get_module",
-    description="Get detailed info for a specific module: description, available versions, full tool list with schemas, and which agents use it. Optionally specify a version to inspect.",
+    description=(
+        "Get detailed info for a specific module: versions, description, full "
+        "tool list with schemas and approval rules, and which agents use it. "
+        "Fetches live tool schemas from the running MCP server when available. "
+        "Optionally specify a version to inspect (e.g. 'v1', 'v2')."
+    ),
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def get_module(module_id: str, version: str = "") -> dict:
@@ -52,16 +65,38 @@ async def get_module(module_id: str, version: str = "") -> dict:
 
 @mcp.tool(
     name="search_modules",
-    description="Search modules by keyword across module IDs, tool names, and descriptions. Use this to check if a capability already exists before proposing a new module.",
+    description=(
+        "Search modules by keyword across module IDs, tool names, and "
+        "descriptions. Use this to check if a capability already exists "
+        "before proposing a new module."
+    ),
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def search_modules(query: str) -> dict:
     return module.search_modules(query=query)
 
 
+# ── Component tools (agents, skills, builtin tools) ─────────────────────
+
+@mcp.tool(
+    name="list_components",
+    description=(
+        "List agents, skills, and builtin tools. For modules, use "
+        "list_modules() instead. Optionally filter by category: 'agents', "
+        "'skills', or 'builtin_tools'."
+    ),
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def list_components(category: str = "") -> dict:
+    return module.list_components(category=category)
+
+
 @mcp.tool(
     name="get_agent",
-    description="Get full details of an agent: description, skills, MCP tools, builtin tools, approval overrides, and config.",
+    description=(
+        "Get full details of an agent: description, skills, modules it uses, "
+        "builtin tools, approval overrides, and config."
+    ),
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def get_agent(agent_id: str) -> dict:
@@ -75,21 +110,3 @@ async def get_agent(agent_id: str) -> dict:
 )
 async def get_skill(skill_name: str) -> dict:
     return module.get_skill(skill_name=skill_name)
-
-
-@mcp.tool(
-    name="get_mcp_server",
-    description="Get MCP server details: description, full tool list with descriptions, and which agents use it.",
-    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
-)
-async def get_mcp_server(server_name: str) -> dict:
-    return await module.get_mcp_server(server_name=server_name)
-
-
-@mcp.tool(
-    name="get_tool",
-    description="Get full tool definition: parameters, approval requirements, and per-agent overrides.",
-    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
-)
-async def get_tool(server_name: str, tool_name: str) -> dict:
-    return await module.get_tool(server_name=server_name, tool_name=tool_name)

@@ -239,21 +239,6 @@ mcps:
     url: ${MCP_REGISTRY_URL:-http://module-registry:9007}
     type: core
     tools:
-      - name: list_components
-        requires_approval: false
-
-      - name: get_agent
-        requires_approval: false
-
-      - name: get_skill
-        requires_approval: false
-
-      - name: get_mcp_server
-        requires_approval: false
-
-      - name: get_tool
-        requires_approval: false
-
       - name: list_modules
         requires_approval: false
 
@@ -261,4 +246,13 @@ mcps:
         requires_approval: false
 
       - name: search_modules
+        requires_approval: false
+
+      - name: list_components
+        requires_approval: false
+
+      - name: get_agent
+        requires_approval: false
+
+      - name: get_skill
         requires_approval: false
