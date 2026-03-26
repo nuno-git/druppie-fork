@@ -338,6 +338,7 @@ services:
       - ./druppie/core/mcp_config.yaml:/data/mcp_config.yaml:ro
       - ./druppie/skills:/data/skills:ro
       - ./druppie/agents/builtin_tools.py:/data/builtin_tools.py:ro
+      - ./druppie/mcp-servers:/data/mcp-servers:ro
     ports:
       - "${MCP_REGISTRY_PORT:-9007}:9007"
     networks:

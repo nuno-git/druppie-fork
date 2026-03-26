@@ -16,7 +16,7 @@ MODULE_VERSION = "1.0.0"
 mcp = FastMCP(
     "Registry v1",
     version=MODULE_VERSION,
-    instructions="Druppie platform building block catalog. List and inspect agents, skills, MCP tools, and builtin tools.",
+    instructions="Druppie platform building block catalog. List and inspect modules, agents, skills, MCP tools, and builtin tools. Use list_modules/get_module/search_modules for module discovery.",
 )
 
 DATA_DIR = os.getenv("DATA_DIR", "/data")
@@ -30,6 +30,33 @@ module = RegistryModule(data_dir=DATA_DIR)
 )
 async def list_components(category: str = "") -> dict:
     return module.list_components(category=category)
+
+
+@mcp.tool(
+    name="list_modules",
+    description="List all available Druppie modules with their versions and type. Optionally filter by type ('core', 'module', or 'both').",
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def list_modules(category: str = "") -> dict:
+    return module.list_modules(category=category)
+
+
+@mcp.tool(
+    name="get_module",
+    description="Get detailed info for a specific module: description, available versions, full tool list with schemas, and which agents use it. Optionally specify a version to inspect.",
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def get_module(module_id: str, version: str = "") -> dict:
+    return await module.get_module(module_id=module_id, version=version)
+
+
+@mcp.tool(
+    name="search_modules",
+    description="Search modules by keyword across module IDs, tool names, and descriptions. Use this to check if a capability already exists before proposing a new module.",
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def search_modules(query: str) -> dict:
+    return module.search_modules(query=query)
 
 
 @mcp.tool(
