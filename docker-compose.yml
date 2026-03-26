@@ -797,7 +797,11 @@ services:
         echo "Step 1: Stopping running sandbox containers..."
         sandbox_ids=$(docker ps --filter "network=druppie-sandbox-network" -q)
         if [ -n "$sandbox_ids" ]; then
-          docker stop -t 5 $sandbox_ids 2>/dev/null || true
+          echo "  Stopping sandbox(es)..."
+          if ! docker stop -t 5 $sandbox_ids 2>/dev/null; then
+            echo "  WARNING: Graceful stop failed, forcing..."
+            docker kill $sandbox_ids 2>/dev/null || true
+          fi
           docker rm -f $sandbox_ids 2>/dev/null || true
           echo "  Stopped."
         else
@@ -805,12 +809,23 @@ services:
         fi
         echo ""
         echo "Step 2: Removing cache volume..."
-        docker volume rm druppie_sandbox_dep_cache 2>/dev/null \
-          && echo "  Removed." \
-          || echo "  Not found."
+        if docker volume inspect druppie_sandbox_dep_cache >/dev/null 2>&1; then
+          if ! docker volume rm druppie_sandbox_dep_cache; then
+            echo "  ERROR: Failed to remove volume. Is it still in use?"
+            echo "  Check: docker ps --filter volume=druppie_sandbox_dep_cache"
+            exit 1
+          fi
+          echo "  Removed."
+        else
+          echo "  Volume does not exist (already removed)."
+        fi
         echo ""
         echo "Step 3: Recreating empty volume..."
         docker volume create druppie_sandbox_dep_cache
+        if ! docker volume inspect druppie_sandbox_dep_cache >/dev/null 2>&1; then
+          echo "  ERROR: Volume creation failed."
+          exit 1
+        fi
         echo "  Created."
         echo ""
         echo "=== Purge Complete ==="
@@ -821,8 +836,8 @@ services:
   # Usage: docker compose --profile scan-cache run --rm cache-scanner
   cache-scanner:
     build:
-      context: ./background-agents
-      dockerfile: packages/local-sandbox-manager/Dockerfile.cache-scanner
+      context: ./background-agents/packages/local-sandbox-manager
+      dockerfile: Dockerfile.cache-scanner
     container_name: druppie-cache-scanner
     profiles: [scan-cache]
     volumes:

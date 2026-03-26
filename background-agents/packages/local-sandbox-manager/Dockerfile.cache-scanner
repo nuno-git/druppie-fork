@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get purge -y curl && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-COPY packages/local-sandbox-manager/scripts/scan-cache.sh /usr/local/bin/scan-cache.sh
+COPY scripts/scan-cache.sh /usr/local/bin/scan-cache.sh
 RUN chmod +x /usr/local/bin/scan-cache.sh
 
 ENTRYPOINT ["/usr/local/bin/scan-cache.sh"]

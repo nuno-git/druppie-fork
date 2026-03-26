@@ -45,6 +45,8 @@ Last updated: 2026-03-24
 - Dependency Cache — Remote/Distributed Caching
 - Dependency Cache — Pre-Populated Common Packages
 - Dependency Cache — Automated Periodic Vulnerability Scanning
+- Dependency Cache — Read-Only Cache Mount with Separate Write Service
+- Sandbox — Investigate Rootless Docker (dockerd-rootless) for E2E Testing
 
 ---
 

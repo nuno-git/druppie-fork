@@ -49,7 +49,6 @@ class SandboxSupervisor:
     def __init__(self):
         self.opencode_process: asyncio.subprocess.Process | None = None
         self.bridge_process: asyncio.subprocess.Process | None = None
-        self.dockerd_process: asyncio.subprocess.Process | None = None
         self.shutdown_event = asyncio.Event()
         self.git_sync_complete = asyncio.Event()
         self.opencode_ready = asyncio.Event()
@@ -253,7 +252,7 @@ class SandboxSupervisor:
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
-                self.log.warn("git.rebase_error", base_branch=base_branch)
+                self.log.warning("git.rebase_error", base_branch=base_branch)
 
             # Get current SHA
             result = await asyncio.create_subprocess_exec(
@@ -310,7 +309,7 @@ class SandboxSupervisor:
 
             self.log.info("openai_oauth.setup")
         except Exception as e:
-            self.log.warn("openai_oauth.setup_error", exc=e)
+            self.log.warning("openai_oauth.setup_error", exc=e)
 
     def _setup_gh_wrapper(self) -> None:
         """Replace gh CLI with a wrapper that explains how to use the GitHub API proxy.
@@ -371,7 +370,7 @@ exit 1
             wrapper_path.chmod(0o755)
             self.log.info("gh_wrapper.installed")
         except Exception as e:
-            self.log.warn("gh_wrapper.install_error", exc=e)
+            self.log.warning("gh_wrapper.install_error", exc=e)
 
     async def start_opencode(self) -> None:
         """Start OpenCode server with configuration."""
@@ -424,7 +423,7 @@ exit 1
                 try:
                     node_modules.symlink_to(global_modules)
                 except Exception as e:
-                    self.log.warn("opencode.symlink_error", exc=e)
+                    self.log.warning("opencode.symlink_error", exc=e)
 
             # Create a minimal package.json so OpenCode sees this as a configured directory
             package_json = opencode_dir / "package.json"
@@ -640,7 +639,7 @@ exit 1
             # Bridge exited immediately - read any error output
             stdout, _ = await self.bridge_process.communicate()
             if exit_code == 0:
-                self.log.warn("bridge.early_exit", exit_code=exit_code)
+                self.log.warning("bridge.early_exit", exit_code=exit_code)
             else:
                 self.log.error(
                     "bridge.startup_crash",
@@ -794,7 +793,13 @@ exit 1
             self.log.error("git.identity_error", exc=e)
 
     async def _snapshot_cache_state(self) -> dict[str, set[str]]:
-        """List top-level entries in each cache directory for change tracking."""
+        """Enumerate files in each cache directory for change tracking.
+
+        Uses recursive enumeration (rglob) so that content-addressable stores
+        like npm's _cacache — whose top-level dirs are static — still report
+        new entries.  Capped at 5 000 files per manager to bound memory.
+        """
+        max_entries_per_manager = 5000
 
         def _scan() -> dict[str, set[str]]:
             cache_dirs = ["npm", "pnpm", "pip", "uv", "bun"]
@@ -803,7 +808,13 @@ exit 1
                 cache_path = Path(f"/cache/{name}")
                 try:
                     if cache_path.is_dir():
-                        snapshot[name] = {e.name for e in cache_path.iterdir()}
+                        entries: set[str] = set()
+                        for p in cache_path.rglob("*"):
+                            if p.is_file():
+                                entries.add(str(p.relative_to(cache_path)))
+                                if len(entries) >= max_entries_per_manager:
+                                    break
+                        snapshot[name] = entries
                     else:
                         snapshot[name] = set()
                 except OSError:
@@ -904,70 +915,6 @@ exit 1
             self.log.error("setup.error", exc=e, script=str(setup_script))
             return False
 
-    async def start_dockerd(self) -> bool:
-        """
-        Start Docker daemon for Docker-in-Docker (builder verification).
-
-        Non-fatal: if Docker can't start (e.g. missing SYS_ADMIN cap), log a
-        warning and continue — builder falls back to test-only verification.
-
-        Returns:
-            True if dockerd started successfully, False otherwise.
-        """
-        # Check if Docker is installed
-        check = await asyncio.create_subprocess_exec(
-            "which", "dockerd",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await check.communicate()
-        if check.returncode != 0:
-            self.log.debug("dockerd.skip", reason="not_installed")
-            return False
-
-        self.log.info("dockerd.start")
-
-        try:
-            # Create storage directory
-            os.makedirs("/var/lib/docker", exist_ok=True)
-
-            # Start dockerd in background, discard output to prevent pipe
-            # buffer from filling up and blocking the daemon
-            self.dockerd_process = await asyncio.create_subprocess_exec(
-                "dockerd",
-                "--storage-driver=overlay2",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-
-            # Wait for Docker socket (up to 10s)
-            socket_path = "/var/run/docker.sock"
-            for _ in range(20):
-                if os.path.exists(socket_path):
-                    # Verify docker info works
-                    info = await asyncio.create_subprocess_exec(
-                        "docker", "info",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    await asyncio.wait_for(info.communicate(), timeout=5)
-                    if info.returncode == 0:
-                        self.log.info("dockerd.ready")
-                        return True
-                await asyncio.sleep(0.5)
-
-            # Timed out
-            self.log.warn("dockerd.timeout", message="Docker socket not ready after 10s")
-            if self.dockerd_process.returncode is None:
-                self.dockerd_process.terminate()
-            self.dockerd_process = None
-            return False
-
-        except Exception as e:
-            self.log.warn("dockerd.start_error", exc=e)
-            self.dockerd_process = None
-            return False
-
     async def _quick_git_fetch(self) -> None:
         """
         Quick fetch to check if we're behind after snapshot restore.
@@ -1013,7 +960,7 @@ exit 1
             stdout, stderr = await result.communicate()
 
             if result.returncode != 0:
-                self.log.warn(
+                self.log.warning(
                     "git.quick_fetch_error",
                     stderr=stderr.decode(),
                     exit_code=result.returncode,
@@ -1104,11 +1051,6 @@ exit 1
             if not restored_from_snapshot:
                 setup_success = await self.run_setup_script()
 
-            # Phase 2.7: Start Docker daemon (DinD) for builder verification
-            dockerd_success: bool | None = None
-            if not restored_from_snapshot:
-                dockerd_success = await self.start_dockerd()
-
             # Phase 3: Start OpenCode server (in repo directory)
             await self.start_opencode()
             opencode_ready = True
@@ -1125,7 +1067,6 @@ exit 1
                 restored_from_snapshot=restored_from_snapshot,
                 git_sync_success=git_sync_success,
                 setup_success=setup_success,
-                dockerd_success=dockerd_success,
                 opencode_ready=opencode_ready,
                 duration_ms=duration_ms,
                 outcome="success",
@@ -1156,26 +1097,7 @@ exit 1
                 cache_after = await self._snapshot_cache_state()
                 await self._log_cache_changes(self._cache_snapshot_before, cache_after)
             except Exception as e:
-                self.log.warn("cache.snapshot_error", exc=e)
-
-        # Stop inner Docker containers and daemon (DinD cleanup)
-        if self.dockerd_process and self.dockerd_process.returncode is None:
-            self.log.info("dockerd.shutdown")
-            try:
-                # Try to stop any running compose projects
-                cleanup = await asyncio.create_subprocess_exec(
-                    "docker", "compose", "down", "-v",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                await asyncio.wait_for(cleanup.communicate(), timeout=10)
-            except Exception:
-                pass
-            self.dockerd_process.terminate()
-            try:
-                await asyncio.wait_for(self.dockerd_process.wait(), timeout=5.0)
-            except TimeoutError:
-                self.dockerd_process.kill()
+                self.log.warning("cache.snapshot_error", exc=e)
 
         # Terminate bridge first
         if self.bridge_process and self.bridge_process.returncode is None:
