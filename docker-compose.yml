@@ -238,6 +238,30 @@ services:
       retries: 5
       start_period: 10s
 
+  module-azure-datalake:
+    build:
+      context: ./druppie/mcp-servers/module-azure-datalake
+      dockerfile: Dockerfile
+    container_name: druppie-module-azure-datalake
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9008"
+      AZURE_DATA_LAKE_1: ${AZURE_DATA_LAKE_1:-}
+      AZURE_DATA_LAKE_2: ${AZURE_DATA_LAKE_2:-}
+      AZURE_DATA_LAKE_3: ${AZURE_DATA_LAKE_3:-}
+    volumes:
+      - druppie_new_workspace:/workspaces
+    ports:
+      - "${MCP_AZURE_DATALAKE_PORT:-9008}:9008"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9008/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   module-filesearch:
     build:
       context: ./druppie/mcp-servers
