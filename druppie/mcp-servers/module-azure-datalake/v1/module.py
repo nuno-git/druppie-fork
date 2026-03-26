@@ -26,12 +26,6 @@ class AzureDataLakeModule:
     """
 
     def __init__(self, datalake_configs: dict[str, dict]):
-        """Initialize with pre-configured lake definitions.
-
-        Args:
-            datalake_configs: Dict mapping lake names to their config
-                {"lake_name": {"account_name": "...", "key": "..."}}
-        """
         self.datalake_configs = datalake_configs
         self._clients: dict[str, DataLakeServiceClient] = {}
 
@@ -54,26 +48,19 @@ class AzureDataLakeModule:
 
     def _get_client_by_url(self, account_url: str) -> DataLakeServiceClient:
         """Get DataLakeServiceClient for a public lake (anonymous access)."""
-        # Normalize URL
         if not account_url.startswith("https://"):
             account_url = f"https://{account_url}"
 
-        # Public/anonymous access - no credential
         client = DataLakeServiceClient(
             account_url=account_url,
-            credential=None,  # Anonymous access
+            credential=None,
         )
         return client
 
     def _resolve_client(
         self, lake_name: str | None = None, account_url: str | None = None
     ) -> tuple[DataLakeServiceClient, str]:
-        """Resolve client from either lake_name or account_url.
-
-        Returns:
-            Tuple of (client, source_identifier) where source_identifier
-            is either the lake_name or account_url for logging purposes.
-        """
+        """Resolve client from either lake_name or account_url."""
         if lake_name:
             return self._get_client_by_name(lake_name), lake_name
         elif account_url:
@@ -82,18 +69,13 @@ class AzureDataLakeModule:
             raise ValueError("Either lake_name or account_url must be provided")
 
     def list_datalakes(self) -> dict:
-        """List all pre-configured Data Lakes.
-
-        Note: This only shows pre-configured lakes. Public lakes are accessed
-        ad-hoc via account_url parameter in other tools.
-        """
+        """List all pre-configured Data Lakes."""
         lakes = []
         for name, config in self.datalake_configs.items():
             lakes.append({
                 "name": name,
                 "account_name": config["account_name"],
                 "type": "pre-configured",
-                # Don't expose the key
             })
         return {
             "success": True,
@@ -107,15 +89,9 @@ class AzureDataLakeModule:
         lake_name: str | None = None,
         account_url: str | None = None,
     ) -> dict:
-        """Test connection to a Data Lake.
-
-        Args:
-            lake_name: Name of pre-configured lake (uses stored key)
-            account_url: Full URL to public lake (anonymous access)
-        """
+        """Test connection to a Data Lake."""
         try:
             client, source = self._resolve_client(lake_name, account_url)
-            # Try to list file systems (containers)
             containers = list(client.list_file_systems())
             return {
                 "success": True,
@@ -148,12 +124,7 @@ class AzureDataLakeModule:
         lake_name: str | None = None,
         account_url: str | None = None,
     ) -> dict:
-        """List containers (file systems) in a Data Lake.
-
-        Args:
-            lake_name: Name of pre-configured lake
-            account_url: Full URL to public lake
-        """
+        """List containers (file systems) in a Data Lake."""
         try:
             client, source = self._resolve_client(lake_name, account_url)
             containers = []
@@ -180,15 +151,7 @@ class AzureDataLakeModule:
         path: str = "",
         recursive: bool = False,
     ) -> dict:
-        """List paths in a container.
-
-        Args:
-            container: Container/file system name
-            lake_name: Name of pre-configured lake
-            account_url: Full URL to public lake
-            path: Path within container (default: root)
-            recursive: List recursively (default: false)
-        """
+        """List paths in a container."""
         try:
             client, source = self._resolve_client(lake_name, account_url)
             fs_client = client.get_file_system_client(container)
@@ -223,24 +186,14 @@ class AzureDataLakeModule:
         account_url: str | None = None,
         max_rows: int = 1000,
     ) -> dict:
-        """Read a CSV or Parquet file.
-
-        Args:
-            container: Container/file system name
-            path: Path to the file
-            lake_name: Name of pre-configured lake
-            account_url: Full URL to public lake
-            max_rows: Maximum rows to return (default: 1000)
-        """
+        """Read a CSV or Parquet file."""
         try:
             client, source = self._resolve_client(lake_name, account_url)
             file_client = client.get_file_client(container, path)
 
-            # Download file content
             download = file_client.download_file()
             content = download.readall()
 
-            # Detect file type and parse
             path_lower = path.lower()
             if path_lower.endswith(".parquet"):
                 df = pd.read_parquet(io.BytesIO(content))
@@ -252,7 +205,6 @@ class AzureDataLakeModule:
                     "error": f"Unsupported file type: {path}. Supported: .csv, .parquet",
                 }
 
-            # Limit rows for parquet too
             truncated = False
             if len(df) > max_rows:
                 df = df.head(max_rows)
@@ -282,21 +234,13 @@ class AzureDataLakeModule:
         lake_name: str | None = None,
         account_url: str | None = None,
     ) -> dict:
-        """Read only the schema of a file (no data rows).
-
-        Args:
-            container: Container/file system name
-            path: Path to the file
-            lake_name: Name of pre-configured lake
-            account_url: Full URL to public lake
-        """
+        """Read only the schema of a file (no data rows)."""
         try:
             client, source = self._resolve_client(lake_name, account_url)
             file_client = client.get_file_client(container, path)
 
             path_lower = path.lower()
             if path_lower.endswith(".parquet"):
-                # Read minimal amount for schema
                 download = file_client.download_file(max_concurrency=1)
                 content = download.readall()
                 pf = pq.ParquetFile(io.BytesIO(content))
@@ -314,7 +258,6 @@ class AzureDataLakeModule:
                     "num_rows": pf.metadata.num_rows if pf.metadata else None,
                 }
             elif path_lower.endswith(".csv"):
-                # Read just header
                 download = file_client.download_file(max_concurrency=1)
                 content = download.readall()
                 df = pd.read_csv(io.BytesIO(content), nrows=0)
@@ -345,24 +288,14 @@ class AzureDataLakeModule:
         lake_name: str | None = None,
         account_url: str | None = None,
     ) -> dict:
-        """Download a file from Data Lake and save it to a local path.
-
-        Args:
-            container: Container/file system name
-            path: Path to the file in the datalake
-            destination_path: Local path to save the file to
-            lake_name: Name of pre-configured lake
-            account_url: Full URL to public lake
-        """
+        """Download a file from Data Lake and save it to a local path."""
         try:
             client, source = self._resolve_client(lake_name, account_url)
             file_client = client.get_file_client(container, path)
 
-            # Download raw bytes
             download = file_client.download_file()
             content = download.readall()
 
-            # Ensure parent directory exists and write file
             destination_path.parent.mkdir(parents=True, exist_ok=True)
             destination_path.write_bytes(content)
 

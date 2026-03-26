@@ -11,7 +11,7 @@ langgraph>=0.2.0
 httpx>=0.26.0
 
 # LLM Provider (unified interface)
-litellm==1.82.6
+litellm==1.82.6  # Pinned: versions 1.82.7-1.82.8 compromised in supply chain attack (2026-03-24)
 
 # MCP Client
 fastmcp>=2.0.0,<3.0.0

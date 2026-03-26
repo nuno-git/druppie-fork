@@ -1,8 +1,9 @@
-"""Azure Data Lake MCP Server.
+"""Azure Data Lake v1 — MCP Tool Definitions.
 
-Read-only operations for Azure Data Lake Storage Gen2.
-Supports both pre-configured lakes (with keys) and ad-hoc public lakes.
-Uses FastMCP framework for HTTP transport.
+Single source of truth for tool contract:
+- Tool name, description, input schema via @mcp.tool()
+- Version and module_id via @mcp.tool(meta={...})
+- Agent guidance via FastMCP(instructions=...)
 """
 
 import logging
@@ -10,17 +11,19 @@ import os
 from pathlib import Path
 
 from fastmcp import FastMCP
-from module import AzureDataLakeModule
+from .module import AzureDataLakeModule
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger("azure-datalake-mcp")
 
+MODULE_ID = "azure-datalake"
+MODULE_VERSION = "1.0.0"
+
 # Initialize FastMCP server
-mcp = FastMCP("Azure Data Lake MCP Server")
+mcp = FastMCP(
+    "Azure Data Lake v1",
+    version=MODULE_VERSION,
+    instructions="Read-only operations for Azure Data Lake Storage Gen2. Supports pre-configured lakes (with keys) and ad-hoc public lakes.",
+)
 
 # Parse pre-configured lake configs from environment variables
 # Format: AZURE_DATA_LAKE_1=account_name:key  (name defaults to account_name)
@@ -29,7 +32,7 @@ DATALAKE_CONFIGS = {}
 for i in range(1, 10):
     config = os.getenv(f"AZURE_DATA_LAKE_{i}")
     if config:
-        parts = config.split(":", 2)  # Split into at most 3 parts (key may contain colons)
+        parts = config.split(":", 2)
         if len(parts) >= 3:
             name, account_name, key = parts[0], parts[1], parts[2]
         elif len(parts) == 2:
@@ -47,7 +50,7 @@ for i in range(1, 10):
 logger.info(f"Loaded {len(DATALAKE_CONFIGS)} pre-configured lakes")
 
 # Workspace root for file downloads (shared volume with coding MCP)
-WORKSPACE_ROOT = Path("/workspaces")
+WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", "/workspaces"))
 
 # Initialize business logic module
 module = AzureDataLakeModule(datalake_configs=DATALAKE_CONFIGS)
@@ -254,32 +257,4 @@ async def download_file(
         destination_path=destination_path,
         lake_name=lake_name,
         account_url=account_url,
-    )
-
-
-if __name__ == "__main__":
-    import uvicorn
-    from starlette.responses import JSONResponse
-    from starlette.routing import Route
-
-    app = mcp.http_app()
-
-    async def health(request):
-        """Health check endpoint."""
-        return JSONResponse({
-            "status": "healthy",
-            "service": "azure-datalake-mcp",
-            "configured_lakes": len(DATALAKE_CONFIGS),
-        })
-
-    app.routes.insert(0, Route("/health", health, methods=["GET"]))
-
-    port = int(os.getenv("MCP_PORT", "9006"))
-    logger.info(f"Starting Azure Data Lake MCP Server on port {port}")
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=port,
-        log_level="info",
     )

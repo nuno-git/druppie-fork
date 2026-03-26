@@ -267,7 +267,7 @@ mcps:
 
   azure-datalake:
     url: ${MCP_AZURE_DATALAKE_URL:-http://module-azure-datalake:9008}
-    description: "Azure Data Lake Storage Gen2 operations"
+    type: core
     inject:
       session_id:
         from: session.id
@@ -287,131 +287,22 @@ mcps:
         tools: [download_file]
     tools:
       - name: list_datalakes
-        description: "List all pre-configured Azure Data Lakes"
         requires_approval: false
-        parameters:
-          type: object
-          properties: {}
 
       - name: test_connection
-        description: "Test connection to a Data Lake (pre-configured or public)"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            lake_name:
-              type: string
-              description: "Name of pre-configured lake (optional if account_url provided)"
-            account_url:
-              type: string
-              description: "Full URL to public lake, e.g., https://account.dfs.core.windows.net"
 
       - name: list_containers
-        description: "List containers in a Data Lake"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            lake_name:
-              type: string
-              description: "Name of pre-configured lake"
-            account_url:
-              type: string
-              description: "Full URL to public lake"
 
       - name: list_paths
-        description: "List files and directories in a container path"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            lake_name:
-              type: string
-              description: "Name of pre-configured lake"
-            account_url:
-              type: string
-              description: "Full URL to public lake"
-            container:
-              type: string
-              description: "Container/file system name"
-            path:
-              type: string
-              description: "Path within container (default: root)"
-            recursive:
-              type: boolean
-              description: "List recursively (default: false)"
-          required:
-            - container
 
       - name: read_file
-        description: "Read a CSV or Parquet file from Data Lake"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            lake_name:
-              type: string
-              description: "Name of pre-configured lake"
-            account_url:
-              type: string
-              description: "Full URL to public lake"
-            container:
-              type: string
-              description: "Container/file system name"
-            path:
-              type: string
-              description: "Path to the file"
-            max_rows:
-              type: integer
-              description: "Maximum rows to return (default: 1000)"
-          required:
-            - container
-            - path
 
       - name: read_file_schema
-        description: "Read only the schema/structure of a CSV or Parquet file"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            lake_name:
-              type: string
-              description: "Name of pre-configured lake"
-            account_url:
-              type: string
-              description: "Full URL to public lake"
-            container:
-              type: string
-              description: "Container/file system name"
-            path:
-              type: string
-              description: "Path to the file"
-          required:
-            - container
-            - path
 
       - name: download_file
-        description: "Download a file from Data Lake to the project workspace"
         requires_approval: false
-        parameters:
-          type: object
-          properties:
-            lake_name:
-              type: string
-              description: "Name of pre-configured lake (from list_datalakes)"
-            account_url:
-              type: string
-              description: "Full URL to public lake"
-            container:
-              type: string
-              description: "Container/file system name"
-            path:
-              type: string
-              description: "Source file path in the datalake"
-            destination:
-              type: string
-              description: "Destination path relative to workspace (e.g., data/myfile.parquet)"
-          required:
-            - container
-            - path
-            - destination
