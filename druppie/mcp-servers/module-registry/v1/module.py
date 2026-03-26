@@ -28,6 +28,7 @@ class RegistryModule:
         self.mcp_servers: dict[str, dict] = {}
         self.builtin_tools: dict[str, dict] = {}
         self.default_builtin_tools: list[str] = []
+        self.modules: dict[str, dict] = {}
         self._tool_cache: dict[str, list[dict]] = {}
         self._cache_ttl = 60  # seconds
         self._cache_timestamps: dict[str, float] = {}
@@ -39,13 +40,15 @@ class RegistryModule:
         self._load_skills()
         self._load_mcp_config()
         self._load_builtin_tools()
+        self._load_modules()
         self._build_cross_references()
         logger.info(
-            "Registry loaded: %d agents, %d skills, %d MCP servers, %d builtin tools",
+            "Registry loaded: %d agents, %d skills, %d MCP servers, %d builtin tools, %d modules",
             len(self.agents),
             len(self.skills),
             len(self.mcp_servers),
             len(self.builtin_tools),
+            len(self.modules),
         )
 
     # --- Data Loading ---
@@ -148,6 +151,7 @@ class RegistryModule:
                     "name": server_name,
                     "description": server_data.get("description", ""),
                     "url": server_data.get("url", ""),
+                    "type": server_data.get("type", "core"),
                     "tools": tools,
                     "tool_count": len(tools),
                 }
@@ -213,6 +217,217 @@ class RegistryModule:
                     if key in agent.get("approval_overrides", {}):
                         overrides[agent_id] = agent["approval_overrides"][key]
                 tool["agent_overrides"] = overrides
+
+    # --- Module Loading ---
+
+    def _load_modules(self):
+        """Load MODULE.yaml manifests from all MCP server directories.
+
+        Scans the mcp-servers directory for module-* directories containing
+        MODULE.yaml files and merges them with mcp_config.yaml data.
+        """
+        mcp_servers_dir = self.data_dir / "mcp-servers"
+        if not mcp_servers_dir.is_dir():
+            logger.warning("MCP servers directory not found: %s", mcp_servers_dir)
+            return
+
+        for module_dir in sorted(mcp_servers_dir.iterdir()):
+            if not module_dir.is_dir() or not module_dir.name.startswith("module-"):
+                continue
+            manifest_path = module_dir / "MODULE.yaml"
+            if not manifest_path.is_file():
+                continue
+            try:
+                manifest = yaml.safe_load(manifest_path.read_text())
+                if not manifest or not isinstance(manifest, dict) or "id" not in manifest:
+                    continue
+
+                module_id = manifest["id"]
+                # Get type from mcp_config (core/module/both), default to "core"
+                mcp_type = "core"
+                if module_id in self.mcp_servers:
+                    mcp_type = self.mcp_servers[module_id].get("type", "core")
+
+                self.modules[module_id] = {
+                    "id": module_id,
+                    "directory": module_dir.name,
+                    "latest_version": manifest.get("latest_version", "1.0.0"),
+                    "versions": manifest.get("versions", []),
+                    "type": mcp_type,
+                    # Description and tools come from live MCP discovery
+                }
+                logger.info("Loaded module: %s (versions: %s)", module_id, manifest.get("versions", []))
+            except Exception as e:
+                logger.error("Failed to parse MODULE.yaml in %s: %s", module_dir.name, e)
+
+    # --- Module Public API ---
+
+    def list_modules(self, category: str = "") -> dict:
+        """List all available modules, optionally filtered by type.
+
+        Args:
+            category: Filter by type — "core", "module", or "both". Empty = all.
+        """
+        items = []
+        for module in sorted(self.modules.values(), key=lambda m: m["id"]):
+            if category and module["type"] != category:
+                continue
+            # Include tool count from mcp_config if available
+            tool_count = 0
+            if module["id"] in self.mcp_servers:
+                tool_count = self.mcp_servers[module["id"]].get("tool_count", 0)
+
+            items.append({
+                "id": module["id"],
+                "latest_version": module["latest_version"],
+                "versions": module["versions"],
+                "type": module["type"],
+                "tool_count": tool_count,
+            })
+
+        return {
+            "success": True,
+            "count": len(items),
+            "modules": items,
+        }
+
+    async def get_module(self, module_id: str, version: str = "") -> dict:
+        """Get detailed info for a specific module.
+
+        Fetches live tool schemas from the MCP server when available.
+
+        Args:
+            module_id: The module identifier (e.g. "coding", "ocr").
+            version: Major version to inspect (e.g. "v1", "v2"). Defaults to latest.
+        """
+        module = self.modules.get(module_id)
+        if not module:
+            return {
+                "success": False,
+                "error": f"Module '{module_id}' not found. Use list_modules() to see available modules.",
+            }
+
+        # Determine which version to show
+        if version:
+            display_version = version.lstrip("v")
+        else:
+            display_version = module["latest_version"].split(".")[0]
+
+        # Try to get live tools from the MCP server
+        live_tools = await self._get_live_tools(module_id)
+        if live_tools is not None:
+            tools = live_tools
+            description = ""
+            # Try to extract description from MCP server info
+            server_info = await self._get_server_info(module_id)
+            if server_info:
+                description = server_info.get("instructions", "")
+        else:
+            # Fall back to config-based tools
+            tools = []
+            description = ""
+            if module_id in self.mcp_servers:
+                server = self.mcp_servers[module_id]
+                description = server.get("description", "")
+                tools = [
+                    {"name": t["name"], "description": t.get("description", "")}
+                    for t in server.get("tools", [])
+                ]
+
+        # Which agents use this module
+        used_by_agents = []
+        for agent_id, agent in self.agents.items():
+            if module_id in agent.get("mcps", {}):
+                used_by_agents.append(agent_id)
+
+        return {
+            "success": True,
+            "module": {
+                "id": module_id,
+                "latest_version": module["latest_version"],
+                "versions": module["versions"],
+                "type": module["type"],
+                "description": description,
+                "showing_version": f"v{display_version}",
+                "tools": tools,
+                "used_by_agents": sorted(used_by_agents),
+            },
+        }
+
+    def search_modules(self, query: str) -> dict:
+        """Search modules by keyword across id, tools, and description.
+
+        Args:
+            query: Search keyword (case-insensitive).
+        """
+        if not query or not query.strip():
+            return {"success": False, "error": "Query must not be empty."}
+
+        query_lower = query.strip().lower()
+        results = []
+
+        for module in sorted(self.modules.values(), key=lambda m: m["id"]):
+            # Search in module ID
+            if query_lower in module["id"].lower():
+                results.append(self._module_search_result(module, "id"))
+                continue
+
+            # Search in tool names and descriptions from mcp_config
+            if module["id"] in self.mcp_servers:
+                server = self.mcp_servers[module["id"]]
+                matched_tools = []
+                for tool in server.get("tools", []):
+                    tool_name = tool.get("name", "")
+                    tool_desc = tool.get("description", "")
+                    if query_lower in tool_name.lower() or query_lower in tool_desc.lower():
+                        matched_tools.append(tool_name)
+                if matched_tools:
+                    results.append(self._module_search_result(module, "tools", matched_tools))
+                    continue
+
+                # Search in server description
+                if query_lower in server.get("description", "").lower():
+                    results.append(self._module_search_result(module, "description"))
+
+        return {
+            "success": True,
+            "query": query.strip(),
+            "count": len(results),
+            "results": results,
+        }
+
+    def _module_search_result(self, module: dict, match_field: str, matched_tools: list[str] | None = None) -> dict:
+        """Build a search result entry for a module."""
+        result = {
+            "id": module["id"],
+            "latest_version": module["latest_version"],
+            "type": module["type"],
+            "match_field": match_field,
+        }
+        if matched_tools:
+            result["matched_tools"] = matched_tools
+        return result
+
+    async def _get_server_info(self, server_name: str) -> dict | None:
+        """Fetch server info (name, version, instructions) from a live MCP server."""
+        url = self._get_server_url(server_name)
+        if not url:
+            return None
+
+        try:
+            transport = StreamableHttpTransport(url=f"{url}/mcp")
+            async with Client(transport) as client:
+                # The client stores server info after initialization
+                if hasattr(client, "_server_info") and client._server_info:
+                    return {
+                        "name": getattr(client._server_info, "name", ""),
+                        "version": getattr(client._server_info, "version", ""),
+                        "instructions": getattr(client, "_server_instructions", "") or "",
+                    }
+                return None
+        except Exception as e:
+            logger.warning("Failed to fetch server info from %s: %s", server_name, e)
+            return None
 
     # --- Live Tool Discovery ---
 
