@@ -1,22 +1,29 @@
-"""DeepInfra TTS MCP Server.
+"""DeepInfra TTS/STT MCP Server.
 
-Text-to-Speech synthesis module using DeepInfra API.
-Provides tools for TTS synthesis, voice listing, cache configuration, and status checking.
+Text-to-Speech and Speech-to-Text module using DeepInfra API.
+Provides tools for TTS synthesis, STT transcription, voice/model listing, and status checking.
 
-This is a STANDALONE MCP service that provides TTS capabilities.
+This is a STANDALONE MCP service that provides TTS and STT capabilities.
 Uses FastMCP framework for HTTP transport.
 
 Features:
+- TTS (Text-to-Speech) synthesis with multiple voices and languages
+- STT (Speech-to-Text) transcription with Whisper models
 - SSR (Server-Side Rendering) support with streaming capabilities
 - SSE (Server-Sent Events) for real-time audio streaming
 - Integration with Druppie core chat for voice sessions
 
-Tools:
+TTS Tools:
 - synthesize: Convert text to speech audio
 - synthesize_stream: Stream audio chunks via SSE
-- list_voices: List available voices from DeepInfra
+- list_voices: List available TTS voices from DeepInfra
 - configure_cache: Configure caching behavior
 - check_status: Check service availability
+
+STT Tools:
+- transcribe: Convert base64 audio to text
+- transcribe_url: Transcribe audio from URL
+- list_stt_models: List available STT models
 
 Environment Variables:
 - DEEPINFRA_API_KEY: API key for DeepInfra (required)
@@ -30,6 +37,9 @@ Environment Variables:
 - DEEPINFRA_TTS_STREAMING_ENABLED: Enable streaming mode (default: true)
 - DEEPINFRA_TTS_CHAT_INTEGRATION: Enable chat voice integration (default: true)
 - DEEPINFRA_TTS_DEFAULT_VOICE_FOR_CHAT: Default voice for chat sessions (default: nova)
+- DEEPINFRA_STT_ENABLED: Enable STT support (default: true)
+- DEEPINFRA_STT_DEFAULT_MODEL: Default STT model (default: openai/whisper-large-v3)
+- DEEPINFRA_STT_DEFAULT_LANGUAGE: Default STT language (optional, auto-detect if not set)
 """
 
 import base64
@@ -57,7 +67,8 @@ mcp = FastMCP("DeepInfra TTS MCP Server")
 
 # Configuration
 DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY", "")
-DEEPINFRA_API_URL = "https://api.deepinfra.com/v1/inference/TTS"
+DEEPINFRA_TTS_API_URL = "https://api.deepinfra.com/v1/inference/TTS"
+DEEPINFRA_STT_API_URL = "https://api.deepinfra.com/v1/inference/audio/transcriptions"
 MAX_TEXT_LENGTH = int(os.getenv("DEEPINFRA_TTS_MAX_TEXT_LENGTH", "5000"))
 DEFAULT_CACHE_ENABLED = os.getenv("DEEPINFRA_TTS_CACHE_ENABLED", "true").lower() == "true"
 DEFAULT_CACHE_TTL = int(os.getenv("DEEPINFRA_TTS_CACHE_TTL", "3600"))
@@ -68,6 +79,11 @@ SSR_ENABLED = os.getenv("DEEPINFRA_TTS_SSR_ENABLED", "true").lower() == "true"
 STREAMING_ENABLED = os.getenv("DEEPINFRA_TTS_STREAMING_ENABLED", "true").lower() == "true"
 CHAT_INTEGRATION = os.getenv("DEEPINFRA_TTS_CHAT_INTEGRATION", "true").lower() == "true"
 DEFAULT_VOICE_FOR_CHAT = os.getenv("DEEPINFRA_TTS_DEFAULT_VOICE_FOR_CHAT", "nova")
+
+# STT Configuration
+STT_ENABLED = os.getenv("DEEPINFRA_STT_ENABLED", "true").lower() == "true"
+DEFAULT_STT_MODEL = os.getenv("DEEPINFRA_STT_DEFAULT_MODEL", "openai/whisper-large-v3")
+DEFAULT_STT_LANGUAGE = os.getenv("DEEPINFRA_STT_DEFAULT_LANGUAGE", "")
 
 # Available output formats
 OutputFormat = Literal["base64", "url", "stream"]
@@ -195,7 +211,7 @@ class DeepInfraClient:
 
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.base_url = DEEPINFRA_API_URL
+        self.base_url = DEEPINFRA_TTS_API_URL
 
     async def synthesize(
         self,
@@ -732,6 +748,494 @@ async def check_status() -> dict:
 
 
 # =============================================================================
+# STT (SPEECH-TO-TEXT) TOOLS
+# =============================================================================
+
+
+class STTModelInfo(BaseModel):
+    """STT model information model."""
+
+    id: str
+    name: str
+    description: str
+    languages: list[str]
+    multilingual: bool
+
+
+class TranscribeRequest(BaseModel):
+    """Request model for STT transcription."""
+
+    audio_data: str = Field(..., description="Base64 encoded audio data")
+    model: str | None = Field(None, description="STT model to use (uses default if not specified)")
+    language: str | None = Field(None, description="Language code (e.g., 'en', 'nl')")
+    response_format: Literal["text", "json", "verbose_json"] = Field(
+        "json", description="Response format"
+    )
+
+
+class DeepInfraSTTClient:
+    """HTTP client for DeepInfra STT API."""
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.base_url = DEEPINFRA_STT_API_URL
+
+    async def transcribe(
+        self,
+        audio_data: bytes,
+        model: str | None = None,
+        language: str | None = None,
+        response_format: str = "json",
+    ) -> dict[str, Any]:
+        """Transcribe audio using DeepInfra STT API.
+
+        Args:
+            audio_data: Audio data as bytes
+            model: Model to use (e.g., 'openai/whisper-large-v3')
+            language: Language code
+            response_format: Response format (text, json, verbose_json)
+
+        Returns:
+            Transcription result dict
+
+        Raises:
+            httpx.HTTPStatusError: On API errors
+            httpx.TimeoutException: On timeout
+        """
+        if not self.api_key:
+            raise ValueError("DEEPINFRA_API_KEY is not configured")
+
+        if not STT_ENABLED:
+            raise ValueError("STT is not enabled")
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+        }
+
+        # Prepare form data
+        files = {
+            "file": ("audio.mp3", io.BytesIO(audio_data), "audio/mpeg"),
+        }
+
+        data: dict[str, Any] = {
+            "model": model or DEFAULT_STT_MODEL,
+            "response_format": response_format,
+        }
+
+        if language:
+            data["language"] = language
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                self.base_url,
+                headers=headers,
+                files=files,
+                data=data,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def transcribe_from_url(
+        self,
+        audio_url: str,
+        model: str | None = None,
+        language: str | None = None,
+        response_format: str = "json",
+    ) -> dict[str, Any]:
+        """Transcribe audio from URL.
+
+        Args:
+            audio_url: URL of the audio file
+            model: Model to use
+            language: Language code
+            response_format: Response format
+
+        Returns:
+            Transcription result dict
+        """
+        # Download audio from URL
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            audio_response = await client.get(audio_url)
+            audio_response.raise_for_status()
+            audio_data = audio_response.content
+
+        # Transcribe the downloaded audio
+        return await self.transcribe(
+            audio_data=audio_data,
+            model=model,
+            language=language,
+            response_format=response_format,
+        )
+
+    async def list_stt_models(self) -> list[STTModelInfo]:
+        """Fetch available STT models from DeepInfra.
+
+        Returns:
+            List of available STT models
+        """
+        # DeepInfra supports Whisper models
+        models = [
+            STTModelInfo(
+                id="openai/whisper-large-v3",
+                name="Whisper Large v3",
+                description="OpenAI's large speech recognition model with high accuracy",
+                languages=[
+                    "en",
+                    "es",
+                    "fr",
+                    "de",
+                    "nl",
+                    "it",
+                    "pt",
+                    "pl",
+                    "tr",
+                    "vi",
+                    "ar",
+                    "ja",
+                    "ko",
+                    "zh",
+                ],
+                multilingual=True,
+            ),
+            STTModelInfo(
+                id="openai/whisper-large-v2",
+                name="Whisper Large v2",
+                description="OpenAI's large speech recognition model (previous version)",
+                languages=[
+                    "en",
+                    "es",
+                    "fr",
+                    "de",
+                    "nl",
+                    "it",
+                    "pt",
+                    "pl",
+                    "tr",
+                    "vi",
+                    "ar",
+                    "ja",
+                    "ko",
+                    "zh",
+                ],
+                multilingual=True,
+            ),
+            STTModelInfo(
+                id="openai/whisper-medium",
+                name="Whisper Medium",
+                description="OpenAI's medium speech recognition model - balanced speed/accuracy",
+                languages=[
+                    "en",
+                    "es",
+                    "fr",
+                    "de",
+                    "nl",
+                    "it",
+                    "pt",
+                    "pl",
+                    "tr",
+                    "vi",
+                    "ar",
+                    "ja",
+                    "ko",
+                    "zh",
+                ],
+                multilingual=True,
+            ),
+            STTModelInfo(
+                id="openai/whisper-base",
+                name="Whisper Base",
+                description="OpenAI's base speech recognition model - faster processing",
+                languages=[
+                    "en",
+                    "es",
+                    "fr",
+                    "de",
+                    "nl",
+                    "it",
+                    "pt",
+                    "pl",
+                    "tr",
+                    "vi",
+                    "ar",
+                    "ja",
+                    "ko",
+                    "zh",
+                ],
+                multilingual=True,
+            ),
+        ]
+        return models
+
+
+# Global STT client instance
+stt_client = DeepInfraSTTClient(DEEPINFRA_API_KEY)
+
+
+@mcp.tool()
+async def transcribe(
+    audio_data: str,
+    model: str | None = None,
+    language: str | None = None,
+    response_format: Literal["text", "json", "verbose_json"] = "json",
+) -> dict:
+    """Transcribe audio data to text using DeepInfra STT.
+
+    Converts base64-encoded audio to text transcription using Whisper models.
+    Supports multiple languages and response formats.
+
+    Args:
+        audio_data: Base64-encoded audio data (required)
+        model: STT model to use (optional, uses default if not specified)
+        language: Language code like 'en', 'nl' (optional, auto-detected if not specified)
+        response_format: Response format - 'text', 'json', or 'verbose_json' (default: json)
+
+    Returns:
+        Dict with success status and transcription text or error information.
+        On success, contains 'text' field with transcribed text.
+    """
+    try:
+        if not STT_ENABLED:
+            return _build_error_response(
+                code="STT_DISABLED",
+                message="STT support is not enabled",
+            )
+
+        # Decode base64 audio data
+        try:
+            audio_bytes = base64.b64decode(audio_data)
+        except Exception as e:
+            return _build_error_response(
+                code="INVALID_AUDIO_DATA",
+                message="Failed to decode base64 audio data",
+                details={"error": str(e)},
+            )
+
+        # Check audio data is not empty
+        if len(audio_bytes) == 0:
+            return _build_error_response(
+                code="INVALID_AUDIO_DATA",
+                message="Audio data is empty",
+            )
+
+        # Check audio data size (limit to 25MB for DeepInfra)
+        if len(audio_bytes) > 25 * 1024 * 1024:
+            return _build_error_response(
+                code="AUDIO_TOO_LARGE",
+                message="Audio data exceeds maximum size of 25MB",
+                details={"max_size_bytes": 25 * 1024 * 1024, "actual_size": len(audio_bytes)},
+            )
+
+        # Use default model if not specified
+        selected_model = model or DEFAULT_STT_MODEL
+
+        # Use default language if not specified
+        selected_language = language or DEFAULT_STT_LANGUAGE or None
+
+        # Call DeepInfra STT API
+        logger.info("Calling DeepInfra STT API for transcription")
+        try:
+            result = await stt_client.transcribe(
+                audio_data=audio_bytes,
+                model=selected_model,
+                language=selected_language,
+                response_format=response_format,
+            )
+
+            # Extract text from result
+            text = result.get("text", "")
+            if not text:
+                return _build_error_response(
+                    code="TRANSCRIPTION_FAILED",
+                    message="STT API returned empty transcription",
+                    details={"api_response": result},
+                )
+
+            return _build_success_response(
+                {
+                    "text": text,
+                    "model_used": selected_model,
+                    "language_detected": result.get("language"),
+                    "language_requested": selected_language,
+                    "response_format": response_format,
+                }
+            )
+
+        except httpx.HTTPStatusError as e:
+            error_details = {}
+            try:
+                error_body = e.response.json()
+                error_details = {"api_response": error_body}
+            except Exception:
+                pass
+
+            return _build_error_response(
+                code="API_ERROR",
+                message=f"DeepInfra STT API error: {e.response.status_code}",
+                details=error_details,
+            )
+        except httpx.TimeoutException:
+            return _build_error_response(
+                code="API_TIMEOUT",
+                message="DeepInfra STT API request timed out",
+            )
+        except ValueError as e:
+            return _build_error_response(
+                code="API_ERROR",
+                message=str(e),
+            )
+
+    except Exception as e:
+        logger.error("Unexpected error in transcribe: %s", str(e))
+        return _build_error_response(
+            code="INTERNAL_ERROR",
+            message="An unexpected error occurred",
+            details={"error_type": type(e).__name__},
+        )
+
+
+@mcp.tool()
+async def transcribe_url(
+    audio_url: str,
+    model: str | None = None,
+    language: str | None = None,
+    response_format: Literal["text", "json", "verbose_json"] = "json",
+) -> dict:
+    """Transcribe audio from URL to text using DeepInfra STT.
+
+    Downloads audio from a URL and transcribes it to text using Whisper models.
+    Supports multiple languages and response formats.
+
+    Args:
+        audio_url: URL of the audio file to transcribe (required)
+        model: STT model to use (optional, uses default if not specified)
+        language: Language code like 'en', 'nl' (optional, auto-detected if not specified)
+        response_format: Response format - 'text', 'json', or 'verbose_json' (default: json)
+
+    Returns:
+        Dict with success status and transcription text or error information.
+        On success, contains 'text' field with transcribed text.
+    """
+    try:
+        if not STT_ENABLED:
+            return _build_error_response(
+                code="STT_DISABLED",
+                message="STT support is not enabled",
+            )
+
+        # Validate URL
+        if not audio_url or not audio_url.strip():
+            return _build_error_response(
+                code="INVALID_URL",
+                message="Audio URL cannot be empty",
+            )
+
+        # Use default model if not specified
+        selected_model = model or DEFAULT_STT_MODEL
+
+        # Use default language if not specified
+        selected_language = language or DEFAULT_STT_LANGUAGE or None
+
+        # Call DeepInfra STT API
+        logger.info("Calling DeepInfra STT API for URL transcription: %s", audio_url)
+        try:
+            result = await stt_client.transcribe_from_url(
+                audio_url=audio_url,
+                model=selected_model,
+                language=selected_language,
+                response_format=response_format,
+            )
+
+            # Extract text from result
+            text = result.get("text", "")
+            if not text:
+                return _build_error_response(
+                    code="TRANSCRIPTION_FAILED",
+                    message="STT API returned empty transcription",
+                    details={"api_response": result},
+                )
+
+            return _build_success_response(
+                {
+                    "text": text,
+                    "model_used": selected_model,
+                    "language_detected": result.get("language"),
+                    "language_requested": selected_language,
+                    "response_format": response_format,
+                    "source_url": audio_url,
+                }
+            )
+
+        except httpx.HTTPStatusError as e:
+            error_details = {}
+            try:
+                error_body = e.response.json()
+                error_details = {"api_response": error_body}
+            except Exception:
+                pass
+
+            return _build_error_response(
+                code="API_ERROR",
+                message=f"DeepInfra STT API error: {e.response.status_code}",
+                details=error_details,
+            )
+        except httpx.TimeoutException:
+            return _build_error_response(
+                code="API_TIMEOUT",
+                message="DeepInfra STT API request timed out",
+            )
+        except ValueError as e:
+            return _build_error_response(
+                code="API_ERROR",
+                message=str(e),
+            )
+
+    except Exception as e:
+        logger.error("Unexpected error in transcribe_url: %s", str(e))
+        return _build_error_response(
+            code="INTERNAL_ERROR",
+            message="An unexpected error occurred",
+            details={"error_type": type(e).__name__},
+        )
+
+
+@mcp.tool()
+async def list_stt_models() -> dict:
+    """List available STT models from DeepInfra.
+
+    Retrieves the catalog of available speech-to-text models.
+    Each model includes metadata like name, description, supported languages, and multilingual support.
+
+    Returns:
+        Dict with success status and list of available STT models.
+        Each model has id, name, description, languages, and multilingual flag.
+    """
+    try:
+        if not STT_ENABLED:
+            return _build_error_response(
+                code="STT_DISABLED",
+                message="STT support is not enabled",
+            )
+
+        models = await stt_client.list_stt_models()
+
+        return _build_success_response(
+            {
+                "models": [m.model_dump() for m in models],
+                "count": len(models),
+                "default_model": DEFAULT_STT_MODEL,
+            }
+        )
+
+    except Exception as e:
+        logger.error("Error listing STT models: %s", str(e))
+        return _build_error_response(
+            code="API_ERROR",
+            message="Failed to retrieve STT model list",
+            details={"error": str(e)},
+        )
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -750,10 +1254,17 @@ if __name__ == "__main__":
         return JSONResponse(
             {
                 "status": "healthy",
-                "service": "deepinfra-tts-mcp",
-                "cache_enabled": tts_cache.enabled,
-                "ssr_enabled": SSR_ENABLED,
-                "streaming_enabled": STREAMING_ENABLED,
+                "service": "deepinfra-tts-stt-mcp",
+                "tts": {
+                    "cache_enabled": tts_cache.enabled,
+                    "ssr_enabled": SSR_ENABLED,
+                    "streaming_enabled": STREAMING_ENABLED,
+                },
+                "stt": {
+                    "enabled": STT_ENABLED,
+                    "default_model": DEFAULT_STT_MODEL,
+                },
+                "chat_integration": CHAT_INTEGRATION,
             }
         )
 
