@@ -1,12 +1,14 @@
-"""Chat Integration Module for DeepInfra TTS.
+"""Chat Integration Module for DeepInfra TTS and STT.
 
-Provides integration between Druppie's core chat system and TTS capabilities.
-Enables voice sessions for chat conversations with real-time audio synthesis.
+Provides integration between Druppie's core chat system and TTS/STT capabilities.
+Enables voice sessions for chat conversations with real-time audio synthesis
+and speech recognition.
 
 This module provides:
-- Chat message to speech conversion
+- Chat message to speech conversion (TTS)
+- Chat audio to text transcription (STT)
 - Voice session management
-- Per-session voice configuration
+- Per-session voice and language configuration
 - Integration hooks for the chat system
 """
 
@@ -14,7 +16,7 @@ import base64
 import json
 import logging
 import os
-from typing import Any, AsyncGenerator, Literal
+from typing import Any, AsyncGenerator, Literal, Literal
 
 import httpx
 
@@ -29,6 +31,11 @@ logger = logging.getLogger("deepinfra-tts-chat-integration")
 TTS_SERVICE_URL = os.getenv("DEEPINFRA_TTS_SERVICE_URL", "http://localhost:9010")
 DEFAULT_VOICE_FOR_CHAT = os.getenv("DEEPINFRA_TTS_DEFAULT_VOICE_FOR_CHAT", "nova")
 CHAT_INTEGRATION = os.getenv("DEEPINFRA_TTS_CHAT_INTEGRATION", "true").lower() == "true"
+
+# STT Configuration
+STT_ENABLED = os.getenv("DEEPINFRA_STT_ENABLED", "true").lower() == "true"
+DEFAULT_STT_MODEL = os.getenv("DEEPINFRA_STT_DEFAULT_MODEL", "openai/whisper-large-v3")
+DEFAULT_STT_LANGUAGE = os.getenv("DEEPINFRA_STT_DEFAULT_LANGUAGE", "")
 
 
 # Voice session state
@@ -166,6 +173,106 @@ class ChatIntegration:
             }
         except Exception as e:
             logger.error("Unexpected error converting message to speech: %s", e)
+            return {
+                "success": False,
+                "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": f"Unexpected error: {str(e)}",
+                },
+            }
+
+    async def transcribe_message(
+        self,
+        session_id: str,
+        audio_data: str,
+        model: str | None = None,
+        language: str | None = None,
+        response_format: Literal["text", "json", "verbose_json"] = "json",
+    ) -> dict[str, Any]:
+        """Transcribe audio message to text using STT.
+
+        Args:
+            session_id: Chat session identifier
+            audio_data: Base64-encoded audio data
+            model: STT model to use (uses session default if not specified)
+            language: Language code (uses session default if not specified)
+            response_format: Response format (text, json, verbose_json)
+
+        Returns:
+            Dict with transcription text and metadata
+        """
+        if not CHAT_INTEGRATION:
+            return {
+                "success": False,
+                "error": {
+                    "code": "CHAT_INTEGRATION_DISABLED",
+                    "message": "Chat integration is not enabled",
+                },
+            }
+
+        if not STT_ENABLED:
+            return {
+                "success": False,
+                "error": {
+                    "code": "STT_DISABLED",
+                    "message": "STT support is not enabled",
+                },
+            }
+
+        # Get or create voice session
+        session = active_sessions.get(session_id)
+        if not session:
+            session = VoiceSession(
+                session_id=session_id,
+                voice=DEFAULT_VOICE_FOR_CHAT,
+                language=language,
+            )
+            active_sessions[session_id] = session
+            logger.info("Created new voice session for STT: %s", session_id)
+
+        # Use session defaults if not specified
+        selected_model = model or DEFAULT_STT_MODEL
+        selected_language = language or session.language or DEFAULT_STT_LANGUAGE or None
+
+        try:
+            # Call STT service transcribe endpoint
+            response = await self.http_client.post(
+                f"{self.tts_service_url}/tools/transcribe",
+                json={
+                    "audio_data": audio_data,
+                    "model": selected_model,
+                    "language": selected_language,
+                    "response_format": response_format,
+                },
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("success"):
+                # Add session context to response
+                result["session"] = {
+                    "id": session_id,
+                    "language_used": selected_language,
+                    "model_used": selected_model,
+                }
+
+                logger.info("Transcribed message for session %s", session_id)
+                return result
+            else:
+                logger.error("STT transcription failed: %s", result.get("error"))
+                return result
+
+        except httpx.HTTPStatusError as e:
+            logger.error("HTTP error calling STT service: %s", e)
+            return {
+                "success": False,
+                "error": {
+                    "code": "STT_SERVICE_ERROR",
+                    "message": f"STT service returned error: {e.response.status_code}",
+                },
+            }
+        except Exception as e:
+            logger.error("Unexpected error transcribing message: %s", e)
             return {
                 "success": False,
                 "error": {

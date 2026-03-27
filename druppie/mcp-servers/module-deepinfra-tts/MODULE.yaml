@@ -1,18 +1,20 @@
-# DeepInfra TTS MCP Module Configuration
+# DeepInfra TTS/STT MCP Module Configuration
 # This file defines the module metadata, tools, and configuration schema
 
 name: deepinfra-tts
-version: 1.1.0
+version: 2.0.0
 description: |
-  DeepInfra Text-to-Speech MCP module.
-  Provides TTS synthesis capabilities using the DeepInfra API.
+  DeepInfra Text-to-Speech and Speech-to-Text MCP module.
+  Provides TTS synthesis and STT transcription capabilities using the DeepInfra API.
   Supports multiple voices, languages, and output formats with configurable caching.
   
   Features:
+  - TTS (Text-to-Speech) synthesis with multiple voices and languages
+  - STT (Speech-to-Text) transcription with Whisper models
   - SSR (Server-Side Rendering) support with streaming capabilities
   - SSE (Server-Sent Events) for real-time audio streaming
   - Core chat integration for voice sessions
-  - Per-session voice configuration
+  - Per-session voice and language configuration
 
 author: Druppie Team
 license: MIT
@@ -111,6 +113,63 @@ tools:
       Returns service health and cache status information.
     parameters: []
 
+  # STT (Speech-to-Text) Tools
+  - name: transcribe
+    description: |
+      Transcribe base64-encoded audio to text using DeepInfra STT.
+      Uses Whisper models for high-accuracy speech recognition.
+      Supports multiple languages and response formats.
+    parameters:
+      - name: audio_data
+        type: string
+        required: true
+        description: Base64-encoded audio data to transcribe
+      - name: model
+        type: string
+        required: false
+        description: STT model to use (e.g., 'openai/whisper-large-v3')
+      - name: language
+        type: string
+        required: false
+        description: Language code (e.g., 'en', 'nl') for better accuracy
+      - name: response_format
+        type: string
+        required: false
+        default: json
+        enum: [text, json, verbose_json]
+        description: Response format for transcription output
+
+  - name: transcribe_url
+    description: |
+      Transcribe audio from URL to text using DeepInfra STT.
+      Downloads audio from a URL and transcribes it using Whisper models.
+      Useful for transcribing remote audio files.
+    parameters:
+      - name: audio_url
+        type: string
+        required: true
+        description: URL of the audio file to transcribe
+      - name: model
+        type: string
+        required: false
+        description: STT model to use (e.g., 'openai/whisper-large-v3')
+      - name: language
+        type: string
+        required: false
+        description: Language code (e.g., 'en', 'nl') for better accuracy
+      - name: response_format
+        type: string
+        required: false
+        default: json
+        enum: [text, json, verbose_json]
+        description: Response format for transcription output
+
+  - name: list_stt_models
+    description: |
+      List available STT models from DeepInfra.
+      Returns model metadata including name, description, and supported languages.
+    parameters: []
+
 # Configuration schema for module-level settings
 config_schema:
   type: object
@@ -178,6 +237,22 @@ config_schema:
       description: Default voice ID for chat sessions
       default: nova
 
+    # STT Configuration
+    stt_enabled:
+      type: boolean
+      description: Enable Speech-to-Text support
+      default: true
+
+    default_stt_model:
+      type: string
+      description: Default STT model for transcription
+      default: openai/whisper-large-v3
+
+    default_stt_language:
+      type: string
+      description: Default language for STT (empty for auto-detect)
+      default: ""
+
   required:
     - api_key
 
@@ -194,6 +269,9 @@ environment:
   DEEPINFRA_TTS_STREAMING_ENABLED: config.streaming_enabled
   DEEPINFRA_TTS_CHAT_INTEGRATION: config.chat_integration
   DEEPINFRA_TTS_DEFAULT_VOICE_FOR_CHAT: config.default_voice_for_chat
+  DEEPINFRA_STT_ENABLED: config.stt_enabled
+  DEEPINFRA_STT_DEFAULT_MODEL: config.default_stt_model
+  DEEPINFRA_STT_DEFAULT_LANGUAGE: config.default_stt_language
   MCP_PORT: .port
 
 # Health check configuration
