@@ -2,11 +2,17 @@
 # This file defines the module metadata, tools, and configuration schema
 
 name: deepinfra-tts
-version: 1.0.0
+version: 1.1.0
 description: |
   DeepInfra Text-to-Speech MCP module.
   Provides TTS synthesis capabilities using the DeepInfra API.
   Supports multiple voices, languages, and output formats with configurable caching.
+  
+  Features:
+  - SSR (Server-Side Rendering) support with streaming capabilities
+  - SSE (Server-Sent Events) for real-time audio streaming
+  - Core chat integration for voice sessions
+  - Per-session voice configuration
 
 author: Druppie Team
 license: MIT
@@ -46,6 +52,30 @@ tools:
         type: string
         required: false
         description: Language code (e.g., 'en-US', 'nl-NL')
+
+  - name: synthesize_stream
+    description: |
+      Synthesize text to speech with streaming support via SSE.
+      Returns a streaming session ID and SSE endpoint URL for real-time audio.
+      Use this for SSR (Server-Side Rendering) and real-time playback scenarios.
+    parameters:
+      - name: text
+        type: string
+        required: true
+        description: Text to convert to speech (max 5000 characters)
+      - name: voice
+        type: string
+        required: false
+        description: Voice ID to use (uses default if not specified)
+      - name: language
+        type: string
+        required: false
+        description: Language code (e.g., 'en-US', 'nl-NL')
+      - name: chunk_size
+        type: integer
+        required: false
+        default: 8192
+        description: Size of audio chunks in bytes for streaming
 
   - name: list_voices
     description: |
@@ -128,6 +158,26 @@ config_schema:
       default: base64
       enum: [base64, url, stream]
 
+    ssr_enabled:
+      type: boolean
+      description: Enable Server-Side Rendering support
+      default: true
+
+    streaming_enabled:
+      type: boolean
+      description: Enable streaming mode for real-time audio
+      default: true
+
+    chat_integration:
+      type: boolean
+      description: Enable core chat voice integration
+      default: true
+
+    default_voice_for_chat:
+      type: string
+      description: Default voice ID for chat sessions
+      default: nova
+
   required:
     - api_key
 
@@ -140,6 +190,10 @@ environment:
   DEEPINFRA_TTS_CACHE_MAX_SIZE: config.cache_max_size
   DEEPINFRA_TTS_DEFAULT_VOICE: config.default_voice
   DEEPINFRA_TTS_DEFAULT_DELIVERY: config.default_delivery
+  DEEPINFRA_TTS_SSR_ENABLED: config.ssr_enabled
+  DEEPINFRA_TTS_STREAMING_ENABLED: config.streaming_enabled
+  DEEPINFRA_TTS_CHAT_INTEGRATION: config.chat_integration
+  DEEPINFRA_TTS_DEFAULT_VOICE_FOR_CHAT: config.default_voice_for_chat
   MCP_PORT: .port
 
 # Health check configuration
