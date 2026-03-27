@@ -95,7 +95,11 @@ class DockerContainerManager:
             "--cgroupns=host",         # Share host cgroup namespace (required for DinD on cgroup v2)
             # Resource limits
             f"--memory={config.DOCKER_MEMORY_LIMIT}",
-            f"--cpus={config.DOCKER_CPU_LIMIT}",
+            *(
+                [f"--cpus={config.DOCKER_CPU_LIMIT}"]
+                if config.DOCKER_CPU_LIMIT and config.DOCKER_CPU_LIMIT != "0"
+                else []
+            ),
             f"--pids-limit={config.DOCKER_PIDS_LIMIT}",
             # Tmpfs for /tmp (faster I/O, auto-cleaned)
             "--tmpfs=/tmp:rw,exec,size=2g",
