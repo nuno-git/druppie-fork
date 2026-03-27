@@ -1,0 +1,179 @@
+# DeepInfra TTS MCP Module Configuration
+# This file defines the module metadata, tools, and configuration schema
+
+name: deepinfra-tts
+version: 1.0.0
+description: |
+  DeepInfra Text-to-Speech MCP module.
+  Provides TTS synthesis capabilities using the DeepInfra API.
+  Supports multiple voices, languages, and output formats with configurable caching.
+
+author: Druppie Team
+license: MIT
+
+# Module entry point
+entrypoint: v1/server.py
+port: 9010
+
+# Module tools exposed via MCP
+tools:
+  - name: synthesize
+    description: |
+      Convert text to speech audio using DeepInfra TTS API.
+      Supports multiple voices, languages, and output formats.
+      Includes caching for performance optimization.
+    parameters:
+      - name: text
+        type: string
+        required: true
+        description: Text to convert to speech (max 5000 characters)
+      - name: voice
+        type: string
+        required: false
+        description: Voice ID to use (uses default if not specified)
+      - name: output_format
+        type: string
+        required: false
+        default: base64
+        enum: [base64, url, stream]
+        description: Audio delivery method
+      - name: use_cache
+        type: boolean
+        required: false
+        default: true
+        description: Enable caching for this request
+      - name: language
+        type: string
+        required: false
+        description: Language code (e.g., 'en-US', 'nl-NL')
+
+  - name: list_voices
+    description: |
+      List available TTS voices from DeepInfra.
+      Returns voice metadata including name, language, and gender.
+    parameters: []
+
+  - name: configure_cache
+    description: |
+      Configure TTS caching behavior.
+      Allows enabling/disabling caching, setting TTL, and maximum cache size.
+    parameters:
+      - name: enabled
+        type: boolean
+        required: false
+        description: Enable or disable caching
+      - name: ttl_seconds
+        type: integer
+        required: false
+        minimum: 60
+        maximum: 86400
+        description: Cache time-to-live in seconds
+      - name: max_size
+        type: integer
+        required: false
+        minimum: 1
+        maximum: 10000
+        description: Maximum number of items to cache
+
+  - name: check_status
+    description: |
+      Check DeepInfra TTS service status and availability.
+      Returns service health and cache status information.
+    parameters: []
+
+# Configuration schema for module-level settings
+config_schema:
+  type: object
+  properties:
+    api_key:
+      type: string
+      description: DeepInfra API key for authentication
+      secret: true
+      required: true
+
+    max_text_length:
+      type: integer
+      description: Maximum text length in characters
+      default: 5000
+      minimum: 100
+      maximum: 50000
+
+    cache_enabled:
+      type: boolean
+      description: Enable or disable caching globally
+      default: true
+
+    cache_ttl_seconds:
+      type: integer
+      description: Cache time-to-live in seconds
+      default: 3600
+      minimum: 60
+      maximum: 86400
+
+    cache_max_size:
+      type: integer
+      description: Maximum number of cached items
+      default: 100
+      minimum: 1
+      maximum: 10000
+
+    default_voice:
+      type: string
+      description: Default voice ID to use when not specified
+      default: ""
+
+    default_delivery:
+      type: string
+      description: Default audio delivery mode
+      default: base64
+      enum: [base64, url, stream]
+
+  required:
+    - api_key
+
+# Environment variable mappings
+environment:
+  DEEPINFRA_API_KEY: config.api_key
+  DEEPINFRA_TTS_MAX_TEXT_LENGTH: config.max_text_length
+  DEEPINFRA_TTS_CACHE_ENABLED: config.cache_enabled
+  DEEPINFRA_TTS_CACHE_TTL: config.cache_ttl_seconds
+  DEEPINFRA_TTS_CACHE_MAX_SIZE: config.cache_max_size
+  DEEPINFRA_TTS_DEFAULT_VOICE: config.default_voice
+  DEEPINFRA_TTS_DEFAULT_DELIVERY: config.default_delivery
+  MCP_PORT: .port
+
+# Health check configuration
+health_check:
+  endpoint: /health
+  interval_seconds: 30
+  timeout_seconds: 10
+
+# Resource requirements
+resources:
+  cpu_min: 100m
+  cpu_max: 500m
+  memory_min: 128Mi
+  memory_max: 256Mi
+
+# Dependencies
+dependencies:
+  - name: httpx
+    version: ">=0.25.0"
+  - name: fastmcp
+    version: ">=2.0.0,<3.0.0"
+  - name: cachetools
+    version: ">=5.3.0"
+  - name: pydantic
+    version: ">=2.0.0"
+  - name: uvicorn
+    version: ">=0.24.0"
+
+# Security notes
+security:
+  data_processing: |
+    This module sends text content to DeepInfra API (external service).
+    Text may contain personal or sensitive information depending on usage.
+    Developers are responsible for ensuring GDPR compliance for their use cases.
+    Cache stores only audio blobs (no text content is persisted).
+  authentication: API key based (module-level configuration)
+  encryption: All API communication uses HTTPS/TLS 1.2+
