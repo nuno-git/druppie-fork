@@ -87,13 +87,17 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
         "type": "function",
         "function": {
             "name": "done",
-            "description": "Signal task completion with a DETAILED summary. The summary is the ONLY way to pass information to the next agent in the pipeline.",
+            "description": "Signal task completion with a DETAILED summary. The summary is the ONLY way to pass information to the next agent in the pipeline. Optionally specify next_agent to route directly to a specific agent, bypassing the Planner.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "summary": {
                         "type": "string",
                         "description": "DETAILED summary including: (1) your own 'Agent [role]:' line with key outputs (URLs, branch names, container names, file paths). Previous agent summaries are auto-prepended by the system. NEVER write just 'Task completed'.",
+                    },
+                    "next_agent": {
+                        "type": "string",
+                        "description": "Optional: ID of the agent to run next, bypassing the Planner. Use only when the next step is deterministic. If omitted, the Planner decides as usual.",
                     },
                 },
                 "required": ["summary"],
@@ -755,6 +759,7 @@ async def done(
     session_id: UUID,
     agent_run_id: UUID,
     execution_repo: "ExecutionRepository",
+    next_agent: str | None = None,
 ) -> dict:
     """Signal that the agent has completed its task.
 
@@ -763,11 +768,15 @@ async def done(
     an accumulated summary. Relays the full accumulated summary to the
     next pending agent by prepending it to that agent's planned_prompt.
 
+    When next_agent is specified, creates a direct pending run for that agent
+    (plus a follow-up planner run), bypassing the normal Planner routing.
+
     Args:
         summary: Summary of what was accomplished (this agent's own summary)
         session_id: Session UUID
         agent_run_id: Agent run UUID for tracking
         execution_repo: Execution repository
+        next_agent: Optional agent ID to route to directly
 
     Returns:
         Completion status with accumulated summary
@@ -820,12 +829,72 @@ async def done(
         accumulated_preview=accumulated_summary[:200],
     )
 
+    # Direct routing: if next_agent is specified, create pending runs for it
+    # (bypassing the Planner). Cancel any existing pending runs first so the
+    # directly-routed agent takes priority.
+    if next_agent:
+        # Validate that the agent exists
+        from druppie.agents.definition_loader import AgentDefinitionLoader
+        loader = AgentDefinitionLoader()
+        try:
+            loader.load(next_agent)
+        except Exception:
+            logger.warning(
+                "next_agent_invalid_fallback_to_planner",
+                next_agent=next_agent,
+                session_id=str(session_id),
+            )
+            next_agent = None  # Fall back to normal Planner routing
+
+    if next_agent:
+        from druppie.domain.common import AgentRunStatus
+
+        cancelled = execution_repo.cancel_pending_runs(session_id)
+        if cancelled > 0:
+            logger.info(
+                "next_agent_cancelled_pending",
+                session_id=str(session_id),
+                cancelled=cancelled,
+            )
+
+        start_seq = execution_repo.get_next_sequence_number(session_id)
+
+        # Create the target agent run
+        execution_repo.create_agent_run(
+            session_id=session_id,
+            agent_id=next_agent,
+            status=AgentRunStatus.PENDING,
+            planned_prompt="",  # Will be filled by relay below
+            sequence_number=start_seq,
+        )
+
+        # Create a planner run after the target agent (safety net)
+        execution_repo.create_agent_run(
+            session_id=session_id,
+            agent_id="planner",
+            status=AgentRunStatus.PENDING,
+            planned_prompt=(
+                f"Agent {next_agent} completed (directly routed via next_agent). "
+                f"Evaluate output and decide next step."
+            ),
+            sequence_number=start_seq + 1,
+        )
+        execution_repo.flush()
+
+        logger.info(
+            "next_agent_direct_route",
+            session_id=str(session_id),
+            from_agent_run=str(agent_run_id),
+            next_agent=next_agent,
+        )
+
     # Relay accumulated summary to next pending agent
     next_run = execution_repo.get_next_pending(session_id)
-    if next_run and next_run.planned_prompt:
+    if next_run:
+        existing_prompt = next_run.planned_prompt or ""
         new_prompt = (
             f"PREVIOUS AGENT SUMMARY:\n{accumulated_summary}\n\n---\n\n"
-            + next_run.planned_prompt
+            + existing_prompt
         )
         execution_repo.update_planned_prompt(next_run.id, new_prompt)
         execution_repo.flush()
@@ -837,10 +906,13 @@ async def done(
             to_agent_id=next_run.agent_id,
         )
 
-    return {
+    result = {
         "status": "completed",
         "summary": accumulated_summary,
     }
+    if next_agent:
+        result["next_agent"] = next_agent
+    return result
 
 
 # =============================================================================
@@ -1133,6 +1205,7 @@ async def execute_builtin(
             session_id=session_id,
             agent_run_id=agent_run_id,
             execution_repo=execution_repo,
+            next_agent=args.get("next_agent"),
         )
     elif tool_name == "make_plan":
         return await make_plan(

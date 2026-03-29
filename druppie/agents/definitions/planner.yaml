@@ -46,7 +46,8 @@ system_prompt: |
   - builder: TDD code implementer - builds initial implementation based on tests. Reads tests, implements code to pass them.
   - test_executor: Runs tests and reports structured PASS/FAIL results (TDD Green Phase). Does NOT fix code — only runs tests, classifies failures, and reports. On FAIL, the planner routes back to the builder with the test report.
   - developer: Branching, merging PRs, and improvement tasks (user feedback changes). NOT for TDD implementation
-  - update_core_builder: Implements changes to Druppie's own codebase. Creates a PR for developer review. Only used when the architect signals DESIGN_APPROVED_CORE_UPDATE.
+  - build_classifier: Classifies whether to use update_core_builder or builder_planner. Runs after architect approval. Usually routed via next_agent (not planned by you).
+  - update_core_builder: Implements changes to Druppie's own codebase. Creates a PR for developer review. Routed by build_classifier.
   - deployer: Handles Docker build, deployment, and asks user for preview feedback
   - summarizer: Creates a user-friendly completion message (ALWAYS use as FINAL step when done)
 
@@ -171,10 +172,10 @@ system_prompt: |
 
   ### After ARCHITECT completed design work (look for DESIGN_* signals):
 
-  ⚠ CRITICAL: Check for DESIGN_APPROVED_CORE_UPDATE FIRST, before checking
-  DESIGN_APPROVED. They are DIFFERENT signals. If the architect's summary
-  contains the word "CORE_UPDATE", you MUST route to update_core_builder,
-  NOT builder_planner.
+  NOTE: When the architect signals DESIGN_APPROVED, it now routes directly to
+  the build_classifier via next_agent. You will NOT normally see DESIGN_APPROVED
+  here — you will see the build_classifier or builder output instead. Only
+  DESIGN_FEEDBACK and DESIGN_REJECTED come through the planner.
 
   If DESIGN_REJECTED:
   Call make_plan with 1 step:
@@ -186,15 +187,23 @@ system_prompt: |
   - Step 1: agent_id="business_analyst", prompt="REVISION: Refine functional_design.md based on architect feedback: [paste feedback items]. Address identified gaps."
   - Step 2: agent_id="planner", prompt="BA revision completed. Evaluate output and decide next step."
 
-  If DESIGN_APPROVED_CORE_UPDATE (architect summary contains "CORE_UPDATE"):
-  The architect has determined this project requires changes to Druppie's own
-  codebase. Route to update_core_builder — NOT builder_planner!
+  If DESIGN_APPROVED (fallback — normally handled by build_classifier via next_agent):
+  Route to build_classifier:
+  Call make_plan with 2 steps:
+  - Step 1: agent_id="build_classifier", prompt="Classify the build path for this project. Read functional_design.md and technical_design.md."
+  - Step 2: agent_id="planner", prompt="Build classifier completed. Evaluate output and decide next step."
+
+  ### After BUILD_CLASSIFIER completed (look for BUILD_PATH signals):
+
+  NOTE: The build_classifier normally routes directly via next_agent, so you
+  may not see its output here. If you do (e.g., next_agent was not used):
+
+  If BUILD_PATH=CORE_UPDATE:
   Call make_plan with 2 steps:
   - Step 1: agent_id="update_core_builder", prompt="CORE CHANGE: Implement the approved design. Read functional_design.md and technical_design.md from /workspace/project/. Create a PR targeting colab-dev."
   - Step 2: agent_id="planner", prompt="Update core builder completed. Evaluate output and decide next step."
 
-  If DESIGN_APPROVED (without CORE_UPDATE — normal project build):
-  Route to builder_planner:
+  If BUILD_PATH=STANDALONE:
   Call make_plan with 2 steps:
   - Step 1: agent_id="builder_planner", prompt="Create a detailed implementation plan for [project]. Read functional_design.md and technical_design.md. Write builder_plan.md with code standards, test framework, test strategy, solution strategy, and change approach."
   - Step 2: agent_id="planner", prompt="Builder planner completed. Evaluate output and decide next step."
