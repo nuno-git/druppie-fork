@@ -1339,6 +1339,7 @@ Agent sends request
         <p><strong>Agent call:</strong> Platform injects <code>session_id</code>, <code>project_id</code> transparently. Agent never sees them.</p>
         <p style="margin-top:6px;"><strong>App call:</strong> SDK passes <code>app_id</code>, <code>project_id</code>, <code>user_id</code> explicitly from env vars + Keycloak token.</p>
         <p style="margin-top:6px;">The module doesn't care who's calling &mdash; the presence of <code>session_id</code> vs <code>app_id</code> tells the context.</p>
+        <p style="margin-top:10px; font-size:0.82rem; color:var(--text-dim);"><strong>Trade-off:</strong> Apps own their data and auth, but have a runtime dependency on the module platform for shared capabilities. This is a deliberate choice &mdash; it enables central governance, usage tracking, and one version to maintain.</p>
       </div>
     </div>
 
@@ -1417,12 +1418,13 @@ druppie/mcp-servers/module-ocr/
             <div class="layer-desc" style="font-size:0.82rem;"><strong>No schema coupling</strong> &mdash; Druppie renames a column, modules don't break</div>
           </div>
           <div class="layer" style="border-color: var(--warm); padding:10px 16px;">
-            <div class="layer-desc" style="font-size:0.82rem;"><strong>Fully portable</strong> &mdash; develop, test, run a module without Druppie's schema</div>
+            <div class="layer-desc" style="font-size:0.82rem;"><strong>Portable modules</strong> &mdash; develop, test, run a module without Druppie's schema</div>
           </div>
           <div class="layer" style="border-color: var(--reed); padding:10px 16px;">
             <div class="layer-desc" style="font-size:0.82rem;"><strong>Safe resets</strong> &mdash; Druppie's "reset DB" can't break modules</div>
           </div>
         </div>
+        <p style="margin-top:10px; font-size:0.82rem; color:var(--text-dim);">Module data is isolated from Druppie, but it's still hosted on the platform. Apps that call modules have a runtime dependency on the module infrastructure &mdash; like any app that uses cloud APIs.</p>
       </div>
 
       <div class="card fade-up" style="animation-delay:0.25s;">
@@ -1570,7 +1572,8 @@ result = <span class="keyword">await</span> client.ocr.extract(<span class="stri
       <div class="card fade-up" style="animation-delay:0.2s; margin-bottom:14px;">
         <h4>App-level RBAC</h4>
         <p>Each generated app owns its own role system in its own database. The project template provides RBAC tables, admin page, and auth helpers out of the box.</p>
-        <p style="margin-top:8px;"><strong>Why in the app?</strong> Access control is app-specific. Different apps need different roles. Apps work even if Druppie is down. No coupling to Druppie's DB.</p>
+        <p style="margin-top:8px;"><strong>Why in the app?</strong> Access control is app-specific. Different apps need different roles. No coupling between Druppie's DB and app-specific access data.</p>
+        <p style="margin-top:8px; font-size:0.82rem; color:var(--text-dim);"><strong>Note:</strong> Apps own their auth and business data, but depend on the module platform for shared capabilities (OCR, classification, etc.). This is a platform dependency &mdash; similar to apps that use Azure Cognitive Services or AWS Lambda.</p>
       </div>
 
       <div class="card fade-up" style="animation-delay:0.3s;">
