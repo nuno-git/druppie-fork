@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Druppie — Process Flows</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --deep: #0a1628;
+    --ocean: #0e2240;
+    --surface: #132e4f;
+    --water: #2196F3;
+    --water-light: #64B5F6;
+    --water-pale: rgba(33, 150, 243, 0.08);
+    --sand: #f5e6d0;
+    --reed: #8bc34a;
+    --warm: #ff8a65;
+    --coral: #ef5350;
+    --purple: #a78bfa;
+    --cyan: #22d3ee;
+    --pink: #f472b6;
+    --text: #e8edf5;
+    --text-mid: #94a8c4;
+    --text-dim: #5a7194;
+    --glass: rgba(19, 46, 79, 0.65);
+    --glass-border: rgba(33, 150, 243, 0.12);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--deep); color: var(--text); overflow: hidden; height: 100vh; }
+  body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(ellipse 120% 80% at 20% 100%, rgba(33,150,243,0.06) 0%, transparent 60%), radial-gradient(ellipse 100% 60% at 80% 0%, rgba(33,150,243,0.04) 0%, transparent 50%); pointer-events: none; z-index: 0; }
+
+  .slide { display: none; height: 100vh; padding: 50px 72px; flex-direction: column; justify-content: center; position: relative; z-index: 1; }
+  .slide.active { display: flex; }
+
+  h1 { font-family: 'DM Serif Display', serif; font-weight: 400; line-height: 1.1; }
+  h2 { font-family: 'DM Serif Display', serif; font-size: 2.4rem; font-weight: 400; color: #fff; margin-bottom: 20px; line-height: 1.15; }
+  h2 .accent { color: var(--water-light); }
+  h3 { font-size: 0.78rem; font-weight: 600; color: var(--water-light); text-transform: uppercase; letter-spacing: 3px; margin-bottom: 12px; }
+
+  .slide.title-slide { align-items: center; text-align: center; }
+  .title-slide .org-badge { display: inline-flex; align-items: center; gap: 10px; padding: 10px 24px; border-radius: 100px; background: var(--water-pale); border: 1px solid var(--glass-border); font-size: 0.88rem; font-weight: 500; color: var(--water-light); margin-bottom: 40px; }
+  .title-slide .org-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--water); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 0.5; transform: scale(1); } 50% { opacity: 1; transform: scale(1.3); } }
+  .title-slide h1 { font-size: 4.2rem; color: #fff; margin-bottom: 20px; }
+  .title-slide h1 .water-text { background: linear-gradient(135deg, var(--water-light), var(--water), #1565C0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .title-slide .subtitle { font-size: 1.25rem; color: var(--text-mid); font-weight: 300; max-width: 700px; line-height: 1.5; margin-bottom: 48px; }
+
+  .section-marker { position: absolute; top: 28px; left: 72px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 3px; color: var(--text-dim); }
+  code { font-family: 'JetBrains Mono', monospace; font-size: 0.8em; background: rgba(33,150,243,0.08); padding: 2px 7px; border-radius: 5px; color: var(--water-light); }
+
+  /* ── Flow node system ── */
+  .flow { display: flex; flex-direction: column; align-items: center; gap: 0; }
+  .flow-row { display: flex; align-items: center; gap: 0; }
+
+  .node {
+    border-radius: 14px;
+    padding: 12px 18px;
+    text-align: center;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #fff;
+    position: relative;
+    min-width: 120px;
+    border: 2px solid;
+  }
+  .node small { display: block; font-weight: 400; font-size: 0.72rem; color: rgba(255,255,255,0.7); margin-top: 2px; }
+  .node.router    { background: rgba(33,150,243,0.15); border-color: var(--water); }
+  .node.planner   { background: rgba(167,139,250,0.15); border-color: var(--purple); }
+  .node.ba        { background: rgba(139,195,74,0.15); border-color: var(--reed); }
+  .node.architect { background: rgba(255,138,101,0.15); border-color: var(--warm); }
+  .node.bplanner  { background: rgba(244,114,182,0.15); border-color: var(--pink); }
+  .node.tbuilder  { background: rgba(239,83,80,0.15); border-color: var(--coral); }
+  .node.builder   { background: rgba(34,211,238,0.15); border-color: var(--cyan); }
+  .node.texec     { background: rgba(139,195,74,0.15); border-color: var(--reed); }
+  .node.deployer  { background: rgba(255,138,101,0.15); border-color: var(--warm); }
+  .node.dev       { background: rgba(34,211,238,0.15); border-color: var(--cyan); }
+  .node.summary   { background: rgba(167,139,250,0.15); border-color: var(--purple); }
+  .node.user      { background: rgba(245,230,208,0.1); border-color: var(--sand); color: var(--sand); }
+  .node.core      { background: rgba(239,83,80,0.15); border-color: var(--coral); }
+  .node.decision  { background: rgba(33,150,243,0.1); border-color: rgba(33,150,243,0.3); border-radius: 50%; width: 52px; height: 52px; min-width: 52px; padding: 0; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; }
+  .node.hitl      { background: rgba(245,230,208,0.08); border-color: var(--sand); border-style: dashed; }
+  .node.approval  { background: rgba(239,83,80,0.08); border-color: var(--coral); border-style: dashed; }
+
+  .arrow { color: var(--text-dim); font-size: 0.9rem; padding: 0 8px; flex-shrink: 0; }
+  .arrow-down { color: var(--text-dim); font-size: 0.9rem; padding: 4px 0; text-align: center; }
+  .arrow-label { font-size: 0.68rem; color: var(--text-dim); font-weight: 500; }
+
+  /* ── Branch split ── */
+  .branch { display: flex; gap: 24px; align-items: flex-start; justify-content: center; margin: 8px 0; position: relative; }
+  .branch::before { content: ''; position: absolute; top: -8px; left: 50%; transform: translateX(-50%); width: 60%; height: 2px; background: rgba(33,150,243,0.15); }
+  .branch-arm { display: flex; flex-direction: column; align-items: center; gap: 0; min-width: 140px; }
+  .branch-label { font-size: 0.72rem; font-weight: 600; margin-bottom: 6px; }
+  .branch-label.yes { color: var(--reed); }
+  .branch-label.no { color: var(--coral); }
+  .branch-label.alt { color: var(--warm); }
+
+  /* ── Ref badge ── */
+  .ref { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border-radius: 100px; font-size: 0.72rem; font-weight: 600; color: var(--water-light); background: rgba(33,150,243,0.1); border: 1px solid rgba(33,150,243,0.2); cursor: pointer; }
+  .ref:hover { background: rgba(33,150,243,0.2); }
+
+  /* ── Signal tag ── */
+  .signal { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 0.68rem; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+  .signal.green { background: rgba(139,195,74,0.15); color: #aed581; }
+  .signal.red { background: rgba(239,83,80,0.15); color: #ef9a9a; }
+  .signal.blue { background: rgba(33,150,243,0.15); color: var(--water-light); }
+  .signal.orange { background: rgba(255,138,101,0.15); color: #ffab91; }
+  .signal.purple { background: rgba(167,139,250,0.15); color: #c4b5fd; }
+
+  /* ── Card / note ── */
+  .card { background: var(--glass); border: 1px solid var(--glass-border); border-radius: 14px; padding: 18px 22px; }
+  .card h4 { font-size: 0.92rem; font-weight: 600; color: #fff; margin-bottom: 6px; }
+  .card p, .card li { font-size: 0.82rem; color: var(--text-mid); line-height: 1.55; }
+  .card ul { list-style: none; padding: 0; }
+  .card ul li { padding: 2px 0 2px 14px; position: relative; }
+  .card ul li::before { content: ''; position: absolute; left: 0; top: 10px; width: 5px; height: 5px; border-radius: 50%; background: var(--water); opacity: 0.5; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: start; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+
+  .prose { font-size: 1rem; color: var(--text-mid); line-height: 1.65; max-width: 800px; }
+  .prose strong { color: #fff; }
+
+  /* ── Nav ── */
+  .nav { position: fixed; bottom: 30px; right: 40px; display: flex; gap: 10px; z-index: 100; }
+  .nav button { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--glass-border); background: var(--glass); color: var(--text-mid); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; backdrop-filter: blur(8px); transition: all 0.2s; }
+  .nav button:hover { background: rgba(33,150,243,0.15); border-color: rgba(33,150,243,0.35); color: var(--water-light); }
+  .progress { position: fixed; bottom: 0; left: 0; height: 3px; background: linear-gradient(90deg, var(--water), var(--water-light)); transition: width 0.3s; z-index: 100; }
+  .slide-counter { position: fixed; bottom: 38px; left: 40px; font-size: 0.82rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; z-index: 100; }
+
+  .slide.active .fade-up { animation: fadeUp 0.6s ease-out both; }
+  .slide.active .fade-up:nth-child(1) { animation-delay: 0s; }
+  .slide.active .fade-up:nth-child(2) { animation-delay: 0.08s; }
+  .slide.active .fade-up:nth-child(3) { animation-delay: 0.16s; }
+  .slide.active .fade-up:nth-child(4) { animation-delay: 0.24s; }
+  .slide.active .fade-up:nth-child(5) { animation-delay: 0.32s; }
+  .slide.active .fade-up:nth-child(6) { animation-delay: 0.4s; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+
+  .wave-decoration { position: absolute; bottom: 0; left: 0; right: 0; height: 120px; overflow: hidden; opacity: 0.04; pointer-events: none; }
+  .wave-decoration svg { position: absolute; bottom: -10px; width: 200%; height: 120px; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S1 — Title -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide title-slide active" id="s1">
+  <div class="org-badge fade-up"><span class="dot"></span> Process Flows</div>
+  <h1 class="fade-up" style="animation-delay:0.1s;">How <span class="water-text">Druppie</span> thinks</h1>
+  <div class="subtitle fade-up" style="animation-delay:0.2s;">Every loop, branch, approval gate, and human interaction<br>in the agent orchestration pipeline</div>
+  <div class="wave-decoration"><svg viewBox="0 0 1440 120" preserveAspectRatio="none"><path fill="var(--water)" d="M0,60 C360,120 720,0 1080,60 C1260,90 1380,30 1440,60 L1440,120 L0,120 Z"/></svg></div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S2 — The big picture -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide" id="s2">
+  <div class="section-marker">01 &mdash; Overview</div>
+  <h2 class="fade-up">The <span class="accent">big picture</span></h2>
+  <p class="prose fade-up" style="margin-bottom:20px;">Every user request flows through the same entry point: <strong>Router</strong> classifies, <strong>Planner</strong> orchestrates, specialized agents execute. The Planner re-evaluates after every agent.</p>
+
+  <div class="flow-row fade-up" style="animation-delay:0.15s; justify-content:center; flex-wrap:wrap; gap:6px;">
+    <div class="node user">User<small>request</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node router">Router<small>classify intent</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node decision">?</div>
+  </div>
+
+  <div class="branch fade-up" style="animation-delay:0.25s; margin-top:16px;">
+    <div class="branch-arm">
+      <div class="branch-label" style="color:var(--water-light);">create_project</div>
+      <div class="ref" onclick="show(3)">Slide 4 &rarr;</div>
+    </div>
+    <div class="branch-arm">
+      <div class="branch-label" style="color:var(--reed);">update_project</div>
+      <div class="ref" onclick="show(8)">Slide 9 &rarr;</div>
+    </div>
+    <div class="branch-arm">
+      <div class="branch-label" style="color:var(--sand);">general_chat</div>
+      <div class="ref" onclick="show(10)">Slide 11 &rarr;</div>
+    </div>
+  </div>
+
+  <div class="card fade-up" style="animation-delay:0.35s; margin-top:20px; max-width:700px; align-self:center;">
+    <h4>How the Router decides</h4>
+    <p><strong>create_project</strong> &mdash; "build me", "create", "make", "new"<br>
+    <strong>update_project</strong> &mdash; "change", "fix", "add to", "update" + existing project<br>
+    <strong>general_chat</strong> &mdash; questions, explanations, advice (no project action)</p>
+    <p style="margin-top:8px;">Router always confirms with the user via HITL before proceeding.</p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S3 — Planner: the brain -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide" id="s3">
+  <div class="section-marker">01 &mdash; Overview</div>
+  <h2 class="fade-up">The Planner: <span class="accent">the brain</span></h2>
+
+  <div class="two-col">
+    <div>
+      <p class="prose fade-up" style="margin-bottom:16px;">The Planner runs after <strong>every</strong> agent. It reads the previous agent's output, detects signals, and decides what happens next.</p>
+
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Rule: one agent at a time</h4>
+        <p>Every plan has exactly 2 steps: one working agent + Planner re-evaluation. Exception: Summarizer is always alone (terminal).</p>
+      </div>
+
+      <div class="card fade-up">
+        <h4>Loop prevention</h4>
+        <p>Max 30 Planner iterations. After that, forces finalization: merge &rarr; deploy &rarr; summarize.</p>
+      </div>
+    </div>
+    <div>
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Signal-based routing</h4>
+        <p>Agents signal the Planner via keywords in their <code>done()</code> summary:</p>
+        <ul>
+          <li><span class="signal green">DESIGN_APPROVED</span> &rarr; proceed to next phase</li>
+          <li><span class="signal orange">DESIGN_FEEDBACK</span> &rarr; loop back to BA</li>
+          <li><span class="signal red">DESIGN_REJECTED</span> &rarr; abort</li>
+          <li><span class="signal purple">DESIGN_APPROVED_CORE_UPDATE</span> &rarr; core flow</li>
+          <li><span class="signal green">TEST RESULT: PASS</span> &rarr; deploy</li>
+          <li><span class="signal red">TEST RESULT: FAIL</span> &rarr; retry or escalate</li>
+          <li><span class="signal blue">USER FEEDBACK: ...</span> &rarr; improve or finalize</li>
+        </ul>
+      </div>
+      <div class="card fade-up">
+        <h4>Summary relay</h4>
+        <p>When an agent calls <code>done()</code>, all previous agent summaries are collected and prepended to the next agent's prompt. This is how agents coordinate without direct communication.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S4 — create_project: full flow -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide" id="s4">
+  <div class="section-marker">02 &mdash; create_project</div>
+  <h2 class="fade-up"><span class="accent">create_project</span> &mdash; full flow</h2>
+
+  <div class="flow-row fade-up" style="justify-content:center; flex-wrap:wrap; gap:4px; margin-bottom:12px;">
+    <div class="node router" style="padding:8px 12px; min-width:auto;">Router</div>
+    <div class="arrow">&rarr;</div>
+    <div class="node ba" style="padding:8px 12px; min-width:auto;">BA</div>
+    <div class="arrow">&rarr;</div>
+    <div class="node architect" style="padding:8px 12px; min-width:auto;">Architect</div>
+    <div class="arrow">&rarr;</div>
+    <div class="node bplanner" style="padding:8px 12px; min-width:auto;">Builder Planner</div>
+    <div class="arrow">&rarr;</div>
+    <div class="node tbuilder" style="padding:8px 12px; min-width:auto;">Test Builder</div>
+    <div class="arrow">&rarr;</div>
+    <div class="node builder" style="padding:8px 12px; min-width:auto;">Builder</div>
+    <div class="arrow">&rarr;</div>
+    <div class="node texec" style="padding:8px 12px; min-width:auto;">Test Exec</div>
+    <div class="arrow">&rarr;</div>
+    <div class="node deployer" style="padding:8px 12px; min-width:auto;">Deployer</div>
+    <div class="arrow">&rarr;</div>
+    <div class="node summary" style="padding:8px 12px; min-width:auto;">Summarizer</div>
+  </div>
+
+  <p class="prose fade-up" style="margin-bottom:12px; text-align:center;">The Planner runs between every agent (not shown). Three major loops can occur:</p>
+
+  <div class="grid-3 fade-up" style="animation-delay:0.2s;">
+    <div class="card" style="border-top:3px solid var(--warm);">
+      <h4>Design loop</h4>
+      <p>BA &harr; Architect. Architect can send feedback items back to BA. BA revises only the flagged sections, re-presents to user.</p>
+      <div style="margin-top:8px;"><span class="ref" onclick="show(4)">Slide 5: Design loop &rarr;</span></div>
+    </div>
+    <div class="card" style="border-top:3px solid var(--coral);">
+      <h4>TDD retry loop</h4>
+      <p>Test Executor fails &rarr; Builder retries with escalating strategies. Max 3 retries, then HITL escalation.</p>
+      <div style="margin-top:8px;"><span class="ref" onclick="show(5)">Slide 6: TDD loop &rarr;</span></div>
+    </div>
+    <div class="card" style="border-top:3px solid var(--water);">
+      <h4>User feedback loop</h4>
+      <p>Deployer asks user. If changes needed &rarr; Developer implements &rarr; re-deploy &rarr; ask again.</p>
+      <div style="margin-top:8px;"><span class="ref" onclick="show(6)">Slide 7: Deploy loop &rarr;</span></div>
+    </div>
+  </div>
+
+  <div class="card fade-up" style="animation-delay:0.3s; margin-top:12px; max-width:600px; align-self:center;">
+    <h4>Approval gates in this flow</h4>
+    <p>
+      <span class="signal orange">BA writes FD</span> &rarr; needs <code>business_analyst</code> approval &nbsp;&nbsp;
+      <span class="signal orange">Architect writes TD</span> &rarr; needs <code>architect</code> approval &nbsp;&nbsp;
+      <span class="signal red">Docker build/run</span> &rarr; needs <code>developer</code> approval
+    </p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S5 — Design loop -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide" id="s5">
+  <div class="section-marker">02 &mdash; create_project</div>
+  <h2 class="fade-up">Design loop: <span class="accent">BA &harr; Architect</span></h2>
+
+  <div class="two-col">
+    <div>
+      <div class="flow fade-up" style="align-items:center;">
+        <div class="node ba">Business Analyst<small>gathers requirements</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node hitl">HITL: clarifying questions<small>multiple choice, max 1 at a time</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node hitl">HITL: confirm FD with user<small>"Does this capture your needs?"</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node approval">Approval: write FD<small>business_analyst role</small></div>
+        <div class="arrow-down">&darr; <span class="signal green">DESIGN_APPROVED</span></div>
+        <div class="node planner">Planner<small>routes to Architect</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node architect">Architect<small>reviews FD, writes TD</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node decision">?</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Architect outcomes</h4>
+        <ul>
+          <li><span class="signal green">DESIGN_APPROVED</span><br>TD complete &rarr; proceed to Builder Planner</li>
+          <li><span class="signal orange">DESIGN_FEEDBACK</span><br>FD needs work &rarr; <strong>loop back to BA</strong> with specific items</li>
+          <li><span class="signal purple">DESIGN_APPROVED_CORE_UPDATE</span><br>Project modifies Druppie itself &rarr; <span class="ref" onclick="show(7)">Slide 8: Core update &rarr;</span></li>
+          <li><span class="signal red">DESIGN_REJECTED</span><br>Fundamental issues &rarr; Summarizer (abort)</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up">
+        <h4>Feedback loop details</h4>
+        <p>Architect sends structured feedback items:</p>
+        <p style="font-family:'JetBrains Mono'; font-size:0.72rem; margin-top:6px; color:var(--text-dim);">
+          Section: Authentication<br>
+          Issue: Missing<br>
+          Description: No SSO mentioned<br>
+          Suggestion: Add Keycloak
+        </p>
+        <p style="margin-top:8px;">BA enters <strong>revision mode</strong> (not full elicitation). Only updates flagged sections. Re-presents to user. After 3+ revision cycles, escalates.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S6 — TDD loop -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide" id="s6">
+  <div class="section-marker">02 &mdash; create_project</div>
+  <h2 class="fade-up">TDD <span class="accent">retry loop</span></h2>
+
+  <div class="two-col">
+    <div>
+      <div class="flow fade-up" style="align-items:center;">
+        <div class="flow-row">
+          <div class="node tbuilder" style="min-width:100px;">Test Builder<small>RED: write tests</small></div>
+          <div class="arrow">&rarr;</div>
+          <div class="node builder" style="min-width:100px;">Builder<small>GREEN: write code</small></div>
+          <div class="arrow">&rarr;</div>
+          <div class="node texec" style="min-width:100px;">Test Executor<small>RUN tests</small></div>
+        </div>
+        <div class="arrow-down" style="margin-top:8px;">&darr;</div>
+        <div class="node decision" style="margin:4px 0;">?</div>
+      </div>
+
+      <div class="branch fade-up" style="margin-top:12px;">
+        <div class="branch-arm">
+          <div class="branch-label yes">PASS</div>
+          <div class="arrow-down">&darr;</div>
+          <div class="node deployer" style="padding:8px 14px;">Deployer<small>build &amp; deploy</small></div>
+        </div>
+        <div class="branch-arm">
+          <div class="branch-label no">FAIL</div>
+          <div class="arrow-down">&darr;</div>
+          <div class="node decision">retry<br>#?</div>
+          <div style="margin-top:8px;">
+            <div class="branch" style="gap:12px;">
+              <div class="branch-arm" style="min-width:100px;">
+                <div class="branch-label" style="color:var(--cyan); font-size:0.68rem;">&lt; 3</div>
+                <div class="arrow-down">&darr;</div>
+                <div class="node builder" style="padding:6px 10px; min-width:auto; font-size:0.75rem;">Builder<small>retry</small></div>
+              </div>
+              <div class="branch-arm" style="min-width:100px;">
+                <div class="branch-label" style="color:var(--coral); font-size:0.68rem;">&ge; 3</div>
+                <div class="arrow-down">&darr;</div>
+                <div class="node hitl" style="padding:6px 10px; min-width:auto; font-size:0.75rem;">HITL<small>escalate</small></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Retry strategies (escalating)</h4>
+        <ul>
+          <li><strong>Retry 1:</strong> Targeted fixes &mdash; minimal surgical changes per failing test</li>
+          <li><strong>Retry 2:</strong> Rethink &amp; rewrite &mdash; re-read TD, rewrite failing components</li>
+          <li><strong>Retry 3:</strong> Simplify &mdash; strip to simplest code that passes. Hardcode if needed.</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>HITL escalation (after 3 failures)</h4>
+        <p>BA asks the user (in Dutch):</p>
+        <ul>
+          <li><strong>Continue with guidance</strong> &rarr; user gives instructions, Builder retries</li>
+          <li><strong>Deploy anyway</strong> &rarr; Deployer deploys with test failure warning</li>
+          <li><strong>Abort</strong> &rarr; Summarizer ends the project</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up">
+        <h4>Builder works in sandbox</h4>
+        <p>Every Builder run delegates to <code>execute_coding_task</code>. Code is written in an isolated Docker container. Commits and pushes via git proxy. Builder then pulls the changes.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S7 — Deploy / feedback loop -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide" id="s7">
+  <div class="section-marker">02 &mdash; create_project</div>
+  <h2 class="fade-up">Deploy &amp; <span class="accent">feedback loop</span></h2>
+
+  <div class="two-col">
+    <div>
+      <div class="flow fade-up" style="align-items:center;">
+        <div class="node deployer">Deployer<small>docker build + run</small></div>
+        <div class="arrow-down">&darr; <span class="signal blue">approval: developer</span></div>
+        <div class="node approval">Approval: docker compose up<small>developer role</small></div>
+        <div class="arrow-down">&darr; health check passes</div>
+        <div class="node hitl">HITL: "Your app is live at URL.<br>Does this look good?"<small>free-form answer</small></div>
+        <div class="arrow-down">&darr; <span class="signal blue">USER FEEDBACK</span></div>
+        <div class="node planner">Planner<small>parse feedback</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node decision">?</div>
+      </div>
+
+      <div class="branch fade-up" style="margin-top:10px;">
+        <div class="branch-arm">
+          <div class="branch-label yes">Approved</div>
+          <div class="arrow-down">&darr;</div>
+          <div class="node summary" style="padding:8px 14px;">Summarizer<small>done!</small></div>
+        </div>
+        <div class="branch-arm">
+          <div class="branch-label no">Wants changes</div>
+          <div class="arrow-down">&darr;</div>
+          <div class="node dev" style="padding:8px 14px;">Developer<small>improvements</small></div>
+          <div class="arrow-down">&darr;</div>
+          <div style="font-size:0.72rem; color:var(--text-dim);">loop back to Deployer</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Deployment details</h4>
+        <ul>
+          <li>Deployer calls <code>docker_compose_up</code> (requires developer approval)</li>
+          <li>Health check: <code>GET /health</code> with 300s timeout</li>
+          <li>App gets auto-assigned port (9100-9199)</li>
+          <li>User gets the live URL in the HITL question</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Improvement loop</h4>
+        <p>If user wants changes, Developer implements via sandbox, commits, pushes. Then Deployer re-builds and re-deploys. User gets asked again. Loop repeats until approved.</p>
+      </div>
+
+      <div class="card fade-up">
+        <h4>For update_project: two deploys</h4>
+        <p><strong>Preview:</strong> From feature branch. Keeps production running.<br>
+        <strong>Final:</strong> After PR merge to main. Stops preview container.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S8 — Core update flow -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide" id="s8">
+  <div class="section-marker">03 &mdash; Core Update</div>
+  <h2 class="fade-up">Core update: <span class="accent">Druppie modifies itself</span></h2>
+
+  <div class="two-col">
+    <div>
+      <div class="flow fade-up" style="align-items:center;">
+        <div class="node architect">Architect (1st run)<small>detects core changes needed</small></div>
+        <div class="arrow-down">&darr; <span class="signal purple">DESIGN_APPROVED_CORE_UPDATE</span></div>
+        <div class="node planner">Planner<small>detects CORE_UPDATE</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node core">Update Core Builder<small>dual-repo sandbox</small></div>
+        <div class="arrow-down">&darr; creates PR on GitHub</div>
+        <div class="node approval">Approval: done()<small>developer reviews + merges PR</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node architect">Architect (2nd run)<small>now designs the project</small></div>
+        <div class="arrow-down">&darr; <span class="signal green">DESIGN_APPROVED</span></div>
+        <div style="font-size:0.72rem; color:var(--text-dim);">normal pipeline continues<br>Builder Planner &rarr; TDD &rarr; Deploy</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>When does this trigger?</h4>
+        <p>Architect detects the project modifies Druppie's own codebase: agent definitions, prompts, skills, MCP servers, workflows.</p>
+      </div>
+
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Dual-repo sandbox</h4>
+        <p>The sandbox clones <strong>two repos</strong>:</p>
+        <ul>
+          <li><code>/workspace/core/</code> &mdash; Druppie's GitHub repo (read+write)</li>
+          <li><code>/workspace/project/</code> &mdash; project repo with FD/TD (read-only)</li>
+        </ul>
+        <p style="margin-top:6px;">Creates branch <code>core/&lt;name&gt;</code> from <code>colab-dev</code>, commits, pushes, creates PR.</p>
+      </div>
+
+      <div class="card fade-up">
+        <h4>Key: Architect runs twice</h4>
+        <p><strong>1st:</strong> "This project needs core changes" &rarr; triggers core update<br>
+        <strong>2nd:</strong> "Core changes merged, now design the actual project" &rarr; normal flow</p>
+        <p style="margin-top:6px;">A human developer must review and merge the GitHub PR before the pipeline continues.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S9 — update_project flow -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide" id="s9">
+  <div class="section-marker">04 &mdash; update_project</div>
+  <h2 class="fade-up"><span class="accent">update_project</span> &mdash; feature branches</h2>
+
+  <div class="two-col">
+    <div>
+      <div class="flow fade-up" style="align-items:center;">
+        <div class="node router">Router<small>classifies update_project</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node dev">Developer<small>creates feature branch</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node ba">BA<small>gathers change requirements</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div style="font-size:0.72rem; color:var(--text-dim);">design loop + TDD (same as create)</div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node deployer">Deployer<small>PREVIEW from feature branch</small></div>
+        <div class="arrow-down">&darr; <span class="signal blue">USER FEEDBACK</span></div>
+        <div class="node decision">?</div>
+      </div>
+
+      <div class="branch fade-up" style="margin-top:10px;">
+        <div class="branch-arm">
+          <div class="branch-label yes">Approved</div>
+          <div class="arrow-down">&darr;</div>
+          <div class="node dev" style="padding:8px 12px;">Developer<small>merge PR</small></div>
+          <div class="arrow-down">&darr;</div>
+          <div class="node deployer" style="padding:8px 12px;">Deployer<small>FINAL from main</small></div>
+          <div class="arrow-down">&darr;</div>
+          <div class="node summary" style="padding:8px 12px;">Summarizer</div>
+        </div>
+        <div class="branch-arm">
+          <div class="branch-label no">Wants changes</div>
+          <div class="arrow-down">&darr;</div>
+          <div class="node dev" style="padding:8px 12px;">Developer<small>improvements</small></div>
+          <div class="arrow-down">&darr;</div>
+          <div style="font-size:0.72rem; color:var(--text-dim);">loop back to<br>Deployer (preview)</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Key difference: feature branches</h4>
+        <p>All work happens on <code>feature/&lt;name&gt;</code>. Production stays on main. The preview deploy runs alongside production.</p>
+      </div>
+
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>BA special case: NO_FD_CHANGE</h4>
+        <p>For technical fixes (bug fix, dependency update), BA signals <span class="signal blue">NO_FD_CHANGE</span>. Architect validates the fix against architecture without a full design cycle.</p>
+      </div>
+
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Two deploys</h4>
+        <ul>
+          <li><strong>Preview:</strong> Feature branch &rarr; separate container ("-preview")</li>
+          <li><strong>Final:</strong> After PR merge to main &rarr; replaces production</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up">
+        <h4>PR merge requires approval</h4>
+        <p><code>merge_pull_request</code> requires <code>developer</code> role approval.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S10 — general_chat flow -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide" id="s10">
+  <div class="section-marker">04 &mdash; update_project</div>
+  <h2 class="fade-up"><span class="accent">general_chat</span> &mdash; flexible routing</h2>
+
+  <div class="two-col">
+    <div>
+      <div class="flow fade-up" style="align-items:center;">
+        <div class="node router">Router<small>classifies general_chat</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node planner">Planner<small>picks best agent</small></div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node decision">?</div>
+      </div>
+
+      <div class="branch fade-up" style="margin-top:12px; gap:16px;">
+        <div class="branch-arm">
+          <div class="branch-label" style="color:var(--reed);">requirements Q</div>
+          <div class="node ba" style="padding:8px 12px;">BA</div>
+        </div>
+        <div class="branch-arm">
+          <div class="branch-label" style="color:var(--warm);">architecture Q</div>
+          <div class="node architect" style="padding:8px 12px;">Architect</div>
+        </div>
+        <div class="branch-arm">
+          <div class="branch-label" style="color:var(--purple);">other</div>
+          <div class="node summary" style="padding:8px 12px;">Summarizer</div>
+        </div>
+      </div>
+
+      <div class="flow fade-up" style="align-items:center; margin-top:16px;">
+        <div style="font-size:0.72rem; color:var(--text-dim);">agent answers via HITL</div>
+        <div class="arrow-down">&darr;</div>
+        <div class="node decision" style="width:44px; height:44px;">?</div>
+      </div>
+
+      <div class="branch fade-up" style="margin-top:10px; gap:12px;">
+        <div class="branch-arm" style="min-width:auto;">
+          <div class="branch-label" style="color:var(--reed); font-size:0.68rem;">CHAT_COMPLETE</div>
+          <div class="node summary" style="padding:6px 10px; font-size:0.75rem;">Summarizer</div>
+        </div>
+        <div class="branch-arm" style="min-width:auto;">
+          <div class="branch-label" style="color:var(--water-light); font-size:0.68rem;">ROUTE_AGENT</div>
+          <div style="font-size:0.7rem; color:var(--text-dim);">different agent</div>
+        </div>
+        <div class="branch-arm" style="min-width:auto;">
+          <div class="branch-label" style="color:var(--cyan); font-size:0.68rem;">ROUTE_CREATE</div>
+          <div style="font-size:0.7rem; color:var(--text-dim);">create flow</div>
+        </div>
+        <div class="branch-arm" style="min-width:auto;">
+          <div class="branch-label" style="color:var(--warm); font-size:0.68rem;">ROUTE_UPDATE</div>
+          <div style="font-size:0.7rem; color:var(--text-dim);">update flow</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Conversational entry point</h4>
+        <p>User asks a question without wanting anything built. The Planner picks the agent best suited to answer.</p>
+      </div>
+
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Can transition to project flows</h4>
+        <p>If the conversation reveals the user actually wants to build something, the agent signals <span class="signal blue">CHAT_ROUTE_CREATE_PROJECT</span> or <span class="signal blue">CHAT_ROUTE_UPDATE_PROJECT</span>, and the Planner transitions seamlessly.</p>
+      </div>
+
+      <div class="card fade-up">
+        <h4>No project created</h4>
+        <p>No Gitea repo, no project record. Just a conversation. Unless the user decides they want something built.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S11 — All approval gates -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide" id="s11">
+  <div class="section-marker">05 &mdash; Gates</div>
+  <h2 class="fade-up">All <span class="accent">gates</span> at a glance</h2>
+
+  <div class="two-col">
+    <div>
+      <div class="card fade-up" style="margin-bottom:14px; border-left:4px solid var(--coral);">
+        <h4>Approval gates</h4>
+        <p>Agent pauses. Authorized role must approve or reject.</p>
+        <ul>
+          <li><strong>BA writes functional_design.md</strong><br><code>business_analyst</code> role approves</li>
+          <li><strong>Architect writes technical_design.md</strong><br><code>architect</code> role approves</li>
+          <li><strong>Docker compose up</strong><br><code>developer</code> role approves</li>
+          <li><strong>Merge pull request</strong><br><code>developer</code> role approves</li>
+          <li><strong>Update Core Builder calls done()</strong><br><code>developer</code> role approves (PR review)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="margin-bottom:14px; border-left:4px solid var(--sand);">
+        <h4>HITL questions</h4>
+        <p>Agent pauses. User answers via chat UI.</p>
+        <ul>
+          <li><strong>Router:</strong> "Is this correct?" (confirm intent)</li>
+          <li><strong>BA:</strong> Clarifying questions (multiple choice, 1 at a time)</li>
+          <li><strong>BA:</strong> "Does this FD capture your needs?" (confirm design)</li>
+          <li><strong>Deployer:</strong> "App is live at URL. Does this look good?"</li>
+          <li><strong>BA (escalation):</strong> "Tests failed 3x. Continue / deploy anyway / abort?"</li>
+          <li><strong>BA/Architect (general_chat):</strong> Answer user questions</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up" style="border-left:4px solid var(--water);">
+        <h4>Sandbox pauses</h4>
+        <p>Agent pauses while sandbox container executes. Resumes automatically via webhook.</p>
+        <ul>
+          <li><strong>Builder:</strong> <code>execute_coding_task</code> (implementation)</li>
+          <li><strong>Developer:</strong> <code>execute_coding_task</code> (improvements)</li>
+          <li><strong>Update Core Builder:</strong> <code>execute_coding_task</code> (core changes)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S12 — Signal reference -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide" id="s12">
+  <div class="section-marker">05 &mdash; Gates</div>
+  <h2 class="fade-up">Signal <span class="accent">reference</span></h2>
+
+  <div class="two-col">
+    <div>
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Business Analyst signals</h4>
+        <ul>
+          <li><span class="signal green">DESIGN_APPROVED</span> &rarr; Architect</li>
+          <li><span class="signal blue">NO_FD_CHANGE</span> &rarr; Architect (validate only)</li>
+          <li><span class="signal red">DESIGN_REJECTED</span> &rarr; Summarizer (abort)</li>
+          <li><span class="signal blue">CHAT_COMPLETE</span> &rarr; Summarizer</li>
+          <li><span class="signal blue">CHAT_ROUTE_AGENT</span> &rarr; different agent</li>
+          <li><span class="signal blue">CHAT_ROUTE_CREATE_PROJECT</span> &rarr; create flow</li>
+          <li><span class="signal blue">CHAT_ROUTE_UPDATE_PROJECT</span> &rarr; update flow</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up">
+        <h4>Architect signals</h4>
+        <ul>
+          <li><span class="signal green">DESIGN_APPROVED</span> &rarr; Builder Planner</li>
+          <li><span class="signal purple">DESIGN_APPROVED_CORE_UPDATE</span> &rarr; Core Builder</li>
+          <li><span class="signal orange">DESIGN_FEEDBACK</span> &rarr; BA (revision loop)</li>
+          <li><span class="signal red">DESIGN_REJECTED</span> &rarr; Summarizer (abort)</li>
+          <li><span class="signal blue">CHAT_COMPLETE</span> &rarr; Summarizer</li>
+          <li><span class="signal blue">CHAT_ROUTE_AGENT</span> &rarr; different agent</li>
+        </ul>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Test Executor signals</h4>
+        <ul>
+          <li><span class="signal green">TEST RESULT: PASS</span> &rarr; Deployer</li>
+          <li><span class="signal red">TEST RESULT: FAIL</span> &rarr; Builder (retry &lt; 3) or BA (escalation)</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up" style="margin-bottom:14px;">
+        <h4>Deployer signals</h4>
+        <ul>
+          <li><span class="signal blue">USER FEEDBACK: (positive)</span> &rarr; Summarizer (or Developer merge)</li>
+          <li><span class="signal orange">USER FEEDBACK: (changes)</span> &rarr; Developer (improvements)</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up">
+        <h4>How it works</h4>
+        <p>Agents include these signal strings in their <code>done()</code> call. The Planner detects keywords in the summary relay and routes accordingly. No hardcoded routing &mdash; it's all prompt-driven.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ -->
+<!-- S13 — Closing -->
+<!-- ══════════════════════════════════════ -->
+<div class="slide title-slide" id="s13">
+  <h3 class="fade-up">Process Flows</h3>
+  <h1 class="fade-up" style="font-size:3rem; animation-delay:0.1s;">Every loop. Every <span class="water-text">decision</span>.</h1>
+  <div class="subtitle fade-up" style="animation-delay:0.2s; font-size:1.1rem;">
+    3 intents &middot; 13 agents &middot; signal-based routing &middot; human control at every critical step
+  </div>
+  <div class="wave-decoration"><svg viewBox="0 0 1440 120" preserveAspectRatio="none"><path fill="var(--water)" d="M0,60 C360,120 720,0 1080,60 C1260,90 1380,30 1440,60 L1440,120 L0,120 Z"/></svg></div>
+</div>
+
+<!-- Nav -->
+<div class="nav">
+  <button onclick="prev()" title="Previous">&#8592;</button>
+  <button onclick="next()" title="Next">&#8594;</button>
+</div>
+<div class="progress" id="progress"></div>
+<div class="slide-counter" id="counter"></div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  let current = 0;
+  function show(n) {
+    slides[current].classList.remove('active');
+    current = (n + slides.length) % slides.length;
+    slides[current].classList.add('active');
+    document.getElementById('progress').style.width = ((current+1)/slides.length*100)+'%';
+    document.getElementById('counter').textContent = (current+1)+' / '+slides.length;
+  }
+  function next() { show(current+1); }
+  function prev() { show(current-1); }
+  document.addEventListener('keydown', (e) => {
+    if (e.key==='ArrowRight'||e.key===' ') { e.preventDefault(); next(); }
+    if (e.key==='ArrowLeft') { e.preventDefault(); prev(); }
+  });
+  let touchStartX=0;
+  document.addEventListener('touchstart', (e) => { touchStartX=e.touches[0].clientX; });
+  document.addEventListener('touchend', (e) => { const d=touchStartX-e.changedTouches[0].clientX; if(Math.abs(d)>50){d>0?next():prev();} });
+  show(0);
+</script>
+</body>
+</html>
