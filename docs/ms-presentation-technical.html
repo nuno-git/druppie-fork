@@ -717,11 +717,11 @@
   <div class="grid grid-3 fade-up" style="animation-delay:0.3s;">
     <div class="card card-compact">
       <h4>Sandbox Control Plane :8787</h4>
-      <p>Session lifecycle, LLM proxy, git proxy, credential store</p>
+      <p>From <strong>background-agents</strong> (our fork). Session lifecycle, LLM proxy, git proxy, credential store</p>
     </div>
     <div class="card card-compact">
       <h4>Sandbox Manager :8000</h4>
-      <p>Creates Docker containers, enforces CPU/memory limits</p>
+      <p>From <strong>background-agents</strong>. Creates Docker containers running <strong>OpenCode</strong>, enforces resource limits</p>
     </div>
     <div class="card card-compact">
       <h4>PostgreSQL + Adminer</h4>
@@ -1049,7 +1049,7 @@
   <h2 class="fade-up">Isolated <span class="accent">sandbox</span> execution</h2>
 
   <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:16px;">
-    When an agent needs to write serious code, it delegates to an <strong>isolated Docker container</strong>. The sandbox has no access to the host, no real credentials, and no network access beyond the LLM proxy and git server.
+    When an agent needs to write serious code, it delegates to an <strong>isolated Docker container</strong> powered by <strong>OpenCode</strong> (open-source AI coding agent) running on our fork of <strong>background-agents</strong> (sandbox infrastructure). No access to the host, no real credentials, no network beyond the LLM proxy and git server.
   </p>
 
   <div class="two-col">
@@ -1074,7 +1074,7 @@
             </div>
             <div class="flow-step-content">
               <div class="step-title">2. Control plane creates session</div>
-              <div class="step-desc">Provisions per-sandbox Gitea user, proxy keys, credential store.</div>
+              <div class="step-desc">background-agents provisions per-sandbox Gitea user, proxy keys, credential store.</div>
             </div>
           </div>
           <div class="flow-step">
@@ -1084,7 +1084,7 @@
             </div>
             <div class="flow-step-content">
               <div class="step-title">3. Sandbox container starts</div>
-              <div class="step-desc">Fresh Docker container with OpenCode, git. Clones project from Gitea via proxy.</div>
+              <div class="step-desc">Fresh Docker container with <strong>OpenCode</strong> (AI coding agent). Clones project from Gitea via git proxy.</div>
             </div>
           </div>
           <div class="flow-step">
@@ -1094,7 +1094,7 @@
             </div>
             <div class="flow-step-content">
               <div class="step-title">4. OpenCode executes autonomously</div>
-              <div class="step-desc">Writes code, runs tests, commits, pushes. LLM calls go through proxy.</div>
+              <div class="step-desc">OpenCode (open-source, github.com/opencode-ai/opencode) writes code, runs tests, commits, pushes. All LLM calls routed through proxy.</div>
             </div>
           </div>
           <div class="flow-step">
@@ -1133,9 +1133,15 @@
         <p style="margin-top:6px;">No internet. No host filesystem. No other Docker containers.</p>
       </div>
 
-      <div class="card fade-up" style="animation-delay:0.35s;">
+      <div class="card fade-up" style="animation-delay:0.35s; margin-bottom:14px;">
+        <h4>Built on open-source</h4>
+        <p><strong>OpenCode</strong> (github.com/opencode-ai/opencode) &mdash; the AI coding agent running inside each sandbox. Supports multiple LLM providers via <code>@ai-sdk/openai-compatible</code>.</p>
+        <p style="margin-top:6px;"><strong>background-agents</strong> (our fork of open-inspect) &mdash; the sandbox infrastructure: control plane, manager, container lifecycle, credential proxying. Integrated as a git submodule.</p>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.45s;">
         <h4>Resource limits</h4>
-        <p>Each sandbox: <code>4GB RAM</code>, <code>2 CPUs</code> (configurable). Optional <strong>Kata Containers</strong> for VM-level isolation with a separate guest kernel — each sandbox gets its own QEMU lightweight VM.</p>
+        <p>Each sandbox: <code>4GB RAM</code>, <code>2 CPUs</code> (configurable). Optional <strong>Kata Containers</strong> for VM-level isolation &mdash; each sandbox gets its own lightweight QEMU VM with a separate guest kernel.</p>
       </div>
     </div>
   </div>
@@ -1149,7 +1155,7 @@
   <h2 class="fade-up">Credential <span class="accent">proxying</span></h2>
 
   <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:20px;">
-    Sandboxes never see real credentials. All access goes through the control plane, which injects tokens server-side.
+    Sandboxes never see real credentials. All access goes through the background-agents control plane, which injects tokens server-side.
   </p>
 
   <div class="grid grid-3 fade-up" style="animation-delay:0.1s; margin-bottom:20px;">
