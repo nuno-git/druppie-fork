@@ -1200,7 +1200,7 @@
   <h2 class="fade-up">LLM provider <span class="accent">routing</span></h2>
 
   <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:20px;">
-    We're not locked into any single LLM provider. Each agent has its own model profile, and the proxy handles failover transparently.
+    We use <strong>LiteLLM</strong> internally for standardized tool calling across providers. Each agent has its own model profile, and the proxy handles failover transparently. We're not locked into any single provider.
   </p>
 
   <div class="two-col fade-up" style="animation-delay:0.1s; margin-bottom:20px;">
@@ -1768,8 +1768,8 @@ result = <span class="keyword">await</span> client.ocr.extract(<span class="stri
       <div class="label">Sandbox agents</div>
     </div>
     <div class="stat-card">
-      <div class="num">3</div>
-      <div class="label">LLM failover layers</div>
+      <div class="num">LiteLLM</div>
+      <div class="label">Provider abstraction</div>
     </div>
   </div>
 
@@ -1782,7 +1782,7 @@ result = <span class="keyword">await</span> client.ocr.extract(<span class="stri
         <span class="badge water">SQLAlchemy</span>
         <span class="badge water">Pydantic</span>
         <span class="badge water">LangGraph</span>
-        <span class="badge water">LiteLLM</span>
+        <span class="badge water">LiteLLM (provider abstraction)</span>
         <span class="badge water">FastMCP</span>
       </div>
     </div>
@@ -1802,9 +1802,57 @@ result = <span class="keyword">await</span> client.ocr.extract(<span class="stri
 </div>
 
 <!-- ============================================================ -->
-<!-- SLIDE 18 — Closing -->
+<!-- SLIDE 18 — Where we are now -->
 <!-- ============================================================ -->
-<div class="slide title-slide" id="s18">
+<div class="slide" id="s18">
+  <div class="section-marker">11 &mdash; Status</div>
+  <h2 class="fade-up">Where we are <span class="accent">right now</span></h2>
+
+  <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:20px;">
+    We're being honest: this is a working platform, but it's not production-ready yet. We want it to work well before we put it in front of real users.
+  </p>
+
+  <div class="two-col">
+    <div>
+      <div class="card fade-up" style="animation-delay:0.1s; margin-bottom:14px; border-top: 3px solid var(--reed);">
+        <h4>What works</h4>
+        <ul>
+          <li>Full agent pipeline: requirements &rarr; architecture &rarr; code &rarr; test &rarr; deploy</li>
+          <li>Governance layer: approvals, HITL, audit trail, role-based access</li>
+          <li>Sandbox isolation with credential proxying</li>
+          <li>TDD enforcement by architecture</li>
+          <li>Provider-agnostic LLM routing via LiteLLM</li>
+          <li>Session stop/resume, retry from any agent run</li>
+          <li>Self-improvement flow (Druppie modifying its own code via PRs)</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.3s; border-top: 3px solid var(--water);">
+        <h4>Our approach</h4>
+        <p>We're building iteratively, testing each part thoroughly before moving to the next. No shortcuts. When something doesn't work, we fix the architecture &mdash; we don't patch around it.</p>
+        <p style="margin-top:8px;">Real user testing comes after the core platform is solid. We'd rather ship late and right than early and broken.</p>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="animation-delay:0.2s; margin-bottom:14px; border-top: 3px solid var(--warm);">
+        <h4>What we're actively working on</h4>
+        <ul>
+          <li><strong>Module system</strong> &mdash; The specification is done, implementation is in progress. This is the foundation for reusable capabilities across generated apps.</li>
+          <li><strong>Coding agent quality</strong> &mdash; The sandbox agents produce working code, but reliability and code quality need to improve before we're confident showing it to end users.</li>
+          <li><strong>Testing &amp; evaluation framework</strong> &mdash; Building systematic ways to measure agent behavior: are the right agents called? Do they produce correct output? Benchmarking the pipeline end-to-end.</li>
+          <li><strong>Infrastructure maturity</strong> &mdash; Moving from Docker Compose to a production-grade container orchestration (Kubernetes / managed platform).</li>
+          <li><strong>UI polish</strong> &mdash; Dashboard and settings pages are prototypes. The chat and approval flows work, but the overall UX needs refinement.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 19 — Closing -->
+<!-- ============================================================ -->
+<div class="slide title-slide" id="s19">
   <h3 class="fade-up">Technical Deep Dive</h3>
   <h1 class="fade-up" style="font-size:3.2rem; animation-delay:0.1s;">
     That's <span class="water-text">how it works</span>
