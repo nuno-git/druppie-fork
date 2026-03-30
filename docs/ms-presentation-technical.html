@@ -632,7 +632,7 @@
 </head>
 <body>
 
-<a href="ms-presentation.html" class="back-link">Back to overview</a>
+<!-- standalone technical deck -->
 
 <!-- ============================================================ -->
 <!-- SLIDE 1 — Title -->
@@ -669,7 +669,7 @@
   <h2 class="fade-up">The full <span class="accent">service map</span></h2>
 
   <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:20px;">
-    Everything runs in Docker Compose. One <code>docker compose --profile dev up -d</code> brings up the entire platform.
+    Currently running on Docker Compose for development. Production path is <strong>Kubernetes</strong> or a managed container platform (e.g., AKS, ECS).
   </p>
 
   <div class="grid grid-4 fade-up" style="animation-delay:0.1s; margin-bottom:14px;">
@@ -1728,7 +1728,7 @@ result = <span class="keyword">await</span> client.ocr.extract(<span class="stri
         <li>15+ services, 3 profiles (dev/prod/infra)</li>
         <li>Init container for Keycloak + Gitea setup</li>
         <li>One-command start, reset, rebuild</li>
-        <li>Hot reload in dev mode</li>
+        <li>Migration path to Kubernetes / managed containers</li>
       </ul>
     </div>
   </div>
@@ -1801,7 +1801,7 @@ result = <span class="keyword">await</span> client.ocr.extract(<span class="stri
         <span class="badge warm">Keycloak 24</span>
         <span class="badge warm">Gitea 1.21</span>
         <span class="badge warm">PostgreSQL 15</span>
-        <span class="badge sand">Docker Compose</span>
+        <span class="badge sand">Docker Compose &rarr; K8s</span>
       </div>
     </div>
   </div>
@@ -1823,7 +1823,7 @@ result = <span class="keyword">await</span> client.ocr.extract(<span class="stri
   </p>
 
   <div class="fade-up" style="animation-delay:0.3s;">
-    <a href="ms-presentation.html" class="closing-cta">Back to overview deck &rarr;</a>
+    <span class="closing-cta">Questions? Let's dig in.</span>
   </div>
 
   <div class="fade-up" style="animation-delay:0.4s; margin-top: 28px; text-align: center;">
