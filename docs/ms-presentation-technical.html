@@ -1197,39 +1197,30 @@
 <!-- ============================================================ -->
 <div class="slide" id="s9">
   <div class="section-marker">05 &mdash; Sandbox</div>
-  <h2 class="fade-up">LLM provider <span class="accent">resilience</span></h2>
+  <h2 class="fade-up">LLM provider <span class="accent">routing</span></h2>
 
   <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:20px;">
-    Three independent layers of defense keep sandbox coding alive when LLM providers fail.
+    We're not locked into any single LLM provider. Each agent has its own model profile, and the proxy handles failover transparently.
   </p>
 
-  <div class="grid grid-3 fade-up" style="animation-delay:0.1s; margin-bottom:24px;">
+  <div class="two-col fade-up" style="animation-delay:0.1s; margin-bottom:20px;">
     <div class="card" style="border-top: 3px solid var(--reed);">
-      <h4>Layer A: Proxy failover</h4>
+      <h4>Transparent proxy failover</h4>
       <div class="badge-row"><span class="badge green">sub-second</span></div>
-      <p>LLM proxy intercepts non-2xx responses. Transparently retries with next provider in chain, rewriting the model name. <strong>Sandbox agent never notices.</strong></p>
-      <div class="code-block" style="margin-top:10px; font-size:0.72rem;">
-Provider A &rarr; 429 rate limit
-  &rarr; Proxy rewrites to Provider B
-  &rarr; 200 OK (transparent)</div>
+      <p>The LLM proxy sits between every agent and the LLM providers. When a provider returns a non-2xx response (rate limit, auth error, outage), the proxy <strong>transparently retries with the next provider</strong> in the chain, rewriting the model name in the request body.</p>
+      <p style="margin-top:10px;">The agent never notices. From its perspective, the request just succeeded.</p>
+      <div class="code-block" style="margin-top:12px; font-size:0.75rem;">
+Agent sends request
+  &rarr; Provider A: 429 rate limit
+  &rarr; Proxy rewrites model to Provider B
+  &rarr; 200 OK
+  &rarr; Agent continues as normal</div>
     </div>
-    <div class="card" style="border-top: 3px solid var(--warm);">
-      <h4>Layer B: Druppie retry</h4>
-      <div class="badge-row"><span class="badge warm">30-60 seconds</span></div>
-      <p>If the entire sandbox fails (all providers exhausted, crash), the webhook arrives with <code>success=false</code>. Druppie creates a <strong>new sandbox session</strong> with the next model in chain.</p>
-    </div>
-    <div class="card" style="border-top: 3px solid var(--water);">
-      <h4>Layer C: Detection</h4>
-      <div class="badge-row"><span class="badge water">10s - 5min</span></div>
-      <p>Three signals in parallel: proxy error counter, bridge session error detection, and activity watchdog (no successful LLM call for N minutes).</p>
-    </div>
-  </div>
 
-  <div class="two-col fade-up" style="animation-delay:0.25s;">
-    <div class="card">
+    <div class="card" style="border-top: 3px solid var(--water);">
       <h4>Profile-based model routing</h4>
-      <p>Each sandbox agent has its own model profile in <code>sandbox_models.yaml</code>. The LLM proxy resolves profile names to real provider chains at request time.</p>
-      <div class="code-block" style="margin-top:10px; font-size:0.72rem;">
+      <p>Each agent and sandbox agent has its own model profile in <code>sandbox_models.yaml</code>. The LLM proxy resolves profile names to real provider chains at request time.</p>
+      <div class="code-block" style="margin-top:12px; font-size:0.75rem;">
 <span class="comment"># sandbox_models.yaml</span>
 <span class="keyword">sandbox/druppie-builder</span>:
   - provider: zai
@@ -1237,15 +1228,18 @@ Provider A &rarr; 429 rate limit
   - provider: deepinfra
     model: Qwen/Qwen3-32B
   - provider: openrouter
-    model: anthropic/claude-sonnet</div>
+    model: anthropic/claude-sonnet
+
+<span class="keyword">sandbox/druppie-tester</span>:
+  - provider: deepinfra
+    model: Qwen/Qwen3-32B</div>
+      <p style="margin-top:10px;">Different agents can use different providers. The Builder might use Claude for code quality, while the Tester uses a cheaper model.</p>
     </div>
-    <div class="card">
-      <h4>Force override</h4>
-      <p>Set <code>LLM_FORCE_PROVIDER</code> + <code>LLM_FORCE_MODEL</code> in <code>.env</code> to override all profiles with a single provider. Useful for testing or when one provider is known-good.</p>
-      <div class="highlight-box" style="margin-top:12px;">
-        <p><strong>Not locked in.</strong> Different agents can use different providers. The Builder might use Claude for code quality, while the BA uses a cheaper model for conversation. All configurable per profile.</p>
-      </div>
-    </div>
+  </div>
+
+  <div class="card fade-up" style="animation-delay:0.2s; max-width:600px;">
+    <h4>Force override</h4>
+    <p>Set <code>LLM_FORCE_PROVIDER</code> + <code>LLM_FORCE_MODEL</code> in <code>.env</code> to override all profiles with a single provider. Useful for testing or when one provider is known-good.</p>
   </div>
 </div>
 
