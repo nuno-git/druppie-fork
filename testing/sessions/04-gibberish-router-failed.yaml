@@ -1,0 +1,24 @@
+metadata:
+  id: gibberish-router-failed
+  title: "asdfghjkl"
+  status: failed
+  user: admin
+  intent: null
+  project_name: null
+  language: en
+  hours_ago: 48
+
+agents:
+  # seq 1: router — failed (not builder, so tool is "done")
+  - id: router
+    status: failed
+    error_message: "LLM returned empty response after 3 retries"
+    tool_calls:
+      - tool: builtin:done
+        arguments: {}
+        status: failed
+        error_message: "LLM returned empty response after 3 retries"
+
+messages:
+  - role: user
+    content: "asdfghjkl"

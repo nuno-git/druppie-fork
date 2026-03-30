@@ -1,0 +1,15 @@
+test:
+  name: router-gibberish
+  mode: live
+  description: "Router handles nonsensical input gracefully"
+  sessions: []
+  run:
+    message: "asdfghjkl qwerty zxcvbn"
+    real_agents: [router]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: agent-uses-done
+    - eval: router-correct-intent
+      expected:
+        intent: general_chat

@@ -1,0 +1,12 @@
+test:
+  name: planner-after-ba-approved
+  mode: live
+  description: "Planner plans architect after BA approval"
+  sessions: []
+  run:
+    message: "build a simple calculator"
+    real_agents: [router, planner, business_analyst, planner]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: planner-correct-next-agent

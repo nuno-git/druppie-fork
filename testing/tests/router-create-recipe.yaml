@@ -1,0 +1,16 @@
+test:
+  name: router-create-recipe
+  description: "Router creates new project for recipe app request"
+  sessions:
+    - weather-dashboard-completed
+    - todo-app-builder-failed
+  run:
+    message: "build me a recipe sharing app"
+    real_agents: [router]
+  hitl: non-technical-pm
+  judge: default
+  evals:
+    - eval: router-correct-intent
+      expected:
+        intent: create_project
+        project_name: "*"

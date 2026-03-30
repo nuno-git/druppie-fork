@@ -15,6 +15,10 @@ llm_retries       LlmRetry            LLMRetryDetail
 tool_call_normalizations ToolCallNormalization NormalizationDetail
 approvals         Approval            ApprovalSummary, ApprovalDetail
 questions         Question            QuestionSummary, QuestionDetail
+benchmark_runs    BenchmarkRun        —
+evaluation_results EvaluationResult   —
+test_runs         TestRun             —
+test_run_tags     TestRunTag          —
 
 Removed tables (handled by MCPs):
 - workspaces: Coding MCP manages workspace lifecycle
@@ -29,6 +33,15 @@ from .agent_run import AgentRun, Message
 # Approval model
 from .approval import Approval
 from .base import Base, new_uuid, utcnow
+
+# Benchmark and evaluation models
+from .benchmark_run import BenchmarkRun
+from .evaluation_result import EvaluationResult
+
+# Test run models (v2/v3 testing framework)
+from .test_assertion_result import TestAssertionResult
+from .test_run import TestRun
+from .test_run_tag import TestRunTag
 from .llm_call import LlmCall
 from .llm_retry import LlmRetry
 
@@ -75,4 +88,11 @@ __all__ = [
     "Question",
     # Sandbox session ownership
     "SandboxSession",
+    # Benchmark and evaluation
+    "BenchmarkRun",
+    "EvaluationResult",
+    # Test runs (v2/v3 testing framework)
+    "TestRun",
+    "TestRunTag",
+    "TestAssertionResult",
 ]

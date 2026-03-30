@@ -1,0 +1,23 @@
+## REPLAY TEST: Router creates project, architect reads README.
+
+test:
+  name: tool-coding-read-file
+  mode: replay
+  description: "Replay: router creates project, architect reads file"
+
+  sessions: []
+
+  seed_sessions:
+    - session: tool-test-read-file
+      mode: replay
+
+  run:
+    message: ""
+    real_agents: []
+
+  evaluate:
+    assertions:
+      - agent: architect
+        tool_called: coding:read_file
+        result_valid:
+          - not_empty

@@ -38,6 +38,14 @@ from .agent_run import (
 # Approval models
 from .approval import ApprovalDetail, ApprovalHistoryList, ApprovalSummary, PendingApprovalList
 
+# Evaluation models
+from .evaluation import (
+    BenchmarkRunDetail,
+    BenchmarkRunSummary,
+    EvaluationResultDetail,
+    EvaluationResultSummary,
+)
+
 # Common models
 from .common import (
     AgentRunStatus,
@@ -134,8 +142,15 @@ __all__ = [
     "ToolDefinition",
     "ToolDefinitionSummary",
     "ToolType",
+    "EmptyParams",
+    # Evaluation
+    "EvaluationResultSummary",
+    "EvaluationResultDetail",
+    "BenchmarkRunSummary",
+    "BenchmarkRunDetail",
 ]
 
 # Rebuild models to resolve forward references (circular imports between session/project)
 ProjectDetail.model_rebuild()
 SessionDetail.model_rebuild()
+BenchmarkRunDetail.model_rebuild()
