@@ -49,10 +49,10 @@ class SandboxSupervisor:
     def __init__(self):
         self.opencode_process: asyncio.subprocess.Process | None = None
         self.bridge_process: asyncio.subprocess.Process | None = None
-        self.dockerd_process: asyncio.subprocess.Process | None = None
         self.shutdown_event = asyncio.Event()
         self.git_sync_complete = asyncio.Event()
         self.opencode_ready = asyncio.Event()
+        self._cache_snapshot_before: dict[str, set[str]] | None = None
 
         # Configuration from environment (set by Modal/SandboxManager)
         self.sandbox_id = os.environ.get("SANDBOX_ID", "unknown")
@@ -252,7 +252,7 @@ class SandboxSupervisor:
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
-                self.log.warn("git.rebase_error", base_branch=base_branch)
+                self.log.warning("git.rebase_error", base_branch=base_branch)
 
             # Get current SHA
             result = await asyncio.create_subprocess_exec(
@@ -309,7 +309,7 @@ class SandboxSupervisor:
 
             self.log.info("openai_oauth.setup")
         except Exception as e:
-            self.log.warn("openai_oauth.setup_error", exc=e)
+            self.log.warning("openai_oauth.setup_error", exc=e)
 
     def _setup_gh_wrapper(self) -> None:
         """Replace gh CLI with a wrapper that explains how to use the GitHub API proxy.
@@ -370,7 +370,7 @@ exit 1
             wrapper_path.chmod(0o755)
             self.log.info("gh_wrapper.installed")
         except Exception as e:
-            self.log.warn("gh_wrapper.install_error", exc=e)
+            self.log.warning("gh_wrapper.install_error", exc=e)
 
     async def start_opencode(self) -> None:
         """Start OpenCode server with configuration."""
@@ -423,7 +423,7 @@ exit 1
                 try:
                     node_modules.symlink_to(global_modules)
                 except Exception as e:
-                    self.log.warn("opencode.symlink_error", exc=e)
+                    self.log.warning("opencode.symlink_error", exc=e)
 
             # Create a minimal package.json so OpenCode sees this as a configured directory
             package_json = opencode_dir / "package.json"
@@ -639,7 +639,7 @@ exit 1
             # Bridge exited immediately - read any error output
             stdout, _ = await self.bridge_process.communicate()
             if exit_code == 0:
-                self.log.warn("bridge.early_exit", exit_code=exit_code)
+                self.log.warning("bridge.early_exit", exit_code=exit_code)
             else:
                 self.log.error(
                     "bridge.startup_crash",
@@ -792,6 +792,96 @@ exit 1
         except Exception as e:
             self.log.error("git.identity_error", exc=e)
 
+    async def _snapshot_cache_state(self) -> dict[str, set[str]]:
+        """Enumerate files in each cache directory for change tracking.
+
+        Uses recursive enumeration (rglob) so that content-addressable stores
+        like npm's _cacache — whose top-level dirs are static — still report
+        new entries.  Capped at 5 000 files per manager to bound memory.
+        """
+        max_entries_per_manager = 5000
+
+        def _scan() -> dict[str, set[str]]:
+            cache_dirs = ["npm", "pnpm", "pip", "uv", "bun"]
+            snapshot: dict[str, set[str]] = {}
+            for name in cache_dirs:
+                cache_path = Path(f"/cache/{name}")
+                try:
+                    if cache_path.is_dir():
+                        entries: set[str] = set()
+                        for p in cache_path.rglob("*"):
+                            if p.is_file():
+                                entries.add(str(p.relative_to(cache_path)))
+                                if len(entries) >= max_entries_per_manager:
+                                    break
+                        snapshot[name] = entries
+                    else:
+                        snapshot[name] = set()
+                except OSError:
+                    snapshot[name] = set()
+            return snapshot
+
+        return await asyncio.to_thread(_scan)
+
+    async def _log_cache_changes(
+        self,
+        before: dict[str, set[str]],
+        after: dict[str, set[str]],
+    ) -> None:
+        """Diff two cache snapshots and emit structured log events."""
+        total_new = 0
+        total_cached = 0
+        per_manager: list[dict] = []
+
+        for pm in before:
+            after_set = after.get(pm, set())
+            before_set = before.get(pm, set())
+            new_entries = after_set - before_set
+            cached_count = len(after_set & before_set)
+            total_new += len(new_entries)
+            total_cached += cached_count
+
+            if new_entries:
+                entries_list = sorted(new_entries)[:50]
+                self.log.info(
+                    "cache.new_entries",
+                    package_manager=pm,
+                    count=len(new_entries),
+                    entries=entries_list,
+                    sandbox_id=self.sandbox_id,
+                    session_id=self.session_config.get("session_id", ""),
+                    repo_owner=self.repo_owner,
+                    repo_name=self.repo_name,
+                )
+
+            if new_entries or cached_count > 0:
+                per_manager.append({
+                    "manager": pm,
+                    "new": len(new_entries),
+                    "cached": cached_count,
+                })
+
+        if total_new > 0 or total_cached > 0:
+            self.log.info(
+                "cache.summary",
+                total_new=total_new,
+                total_cached=total_cached,
+                per_manager=per_manager,
+                sandbox_id=self.sandbox_id,
+                session_id=self.session_config.get("session_id", ""),
+            )
+            # Write summary file for the bridge to pick up
+            import json as _json
+            summary_path = Path("/tmp/cache_summary.json")
+            try:
+                summary_path.write_text(_json.dumps({
+                    "total_new": total_new,
+                    "total_cached": total_cached,
+                    "per_manager": per_manager,
+                }))
+            except Exception:
+                pass
+
     async def run_setup_script(self) -> bool:
         """
         Run .openinspect/setup.sh if it exists in the cloned repo.
@@ -861,70 +951,6 @@ exit 1
             self.log.error("setup.error", exc=e, script=str(setup_script))
             return False
 
-    async def start_dockerd(self) -> bool:
-        """
-        Start Docker daemon for Docker-in-Docker (builder verification).
-
-        Non-fatal: if Docker can't start (e.g. missing SYS_ADMIN cap), log a
-        warning and continue — builder falls back to test-only verification.
-
-        Returns:
-            True if dockerd started successfully, False otherwise.
-        """
-        # Check if Docker is installed
-        check = await asyncio.create_subprocess_exec(
-            "which", "dockerd",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await check.communicate()
-        if check.returncode != 0:
-            self.log.debug("dockerd.skip", reason="not_installed")
-            return False
-
-        self.log.info("dockerd.start")
-
-        try:
-            # Create storage directory
-            os.makedirs("/var/lib/docker", exist_ok=True)
-
-            # Start dockerd in background, discard output to prevent pipe
-            # buffer from filling up and blocking the daemon
-            self.dockerd_process = await asyncio.create_subprocess_exec(
-                "dockerd",
-                "--storage-driver=overlay2",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-
-            # Wait for Docker socket (up to 10s)
-            socket_path = "/var/run/docker.sock"
-            for _ in range(20):
-                if os.path.exists(socket_path):
-                    # Verify docker info works
-                    info = await asyncio.create_subprocess_exec(
-                        "docker", "info",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    await asyncio.wait_for(info.communicate(), timeout=5)
-                    if info.returncode == 0:
-                        self.log.info("dockerd.ready")
-                        return True
-                await asyncio.sleep(0.5)
-
-            # Timed out
-            self.log.warn("dockerd.timeout", message="Docker socket not ready after 10s")
-            if self.dockerd_process.returncode is None:
-                self.dockerd_process.terminate()
-            self.dockerd_process = None
-            return False
-
-        except Exception as e:
-            self.log.warn("dockerd.start_error", exc=e)
-            self.dockerd_process = None
-            return False
-
     async def _quick_git_fetch(self) -> None:
         """
         Quick fetch to check if we're behind after snapshot restore.
@@ -970,7 +996,7 @@ exit 1
             stdout, stderr = await result.communicate()
 
             if result.returncode != 0:
-                self.log.warn(
+                self.log.warning(
                     "git.quick_fetch_error",
                     stderr=stderr.decode(),
                     exit_code=result.returncode,
@@ -1052,15 +1078,22 @@ exit 1
             # Phase 2: Configure git identity (if repo was cloned)
             await self.configure_git_identity()
 
+            # Snapshot cache state before any package installs (setup + coding task).
+            # The "after" snapshot is taken at shutdown to capture the full lifecycle.
+            self._cache_snapshot_before = await self._snapshot_cache_state()
+
+            # Persist before-snapshot so the bridge can compute cache summary
+            import json as _json
+            try:
+                serializable = {k: sorted(v) for k, v in self._cache_snapshot_before.items()}
+                Path("/tmp/cache_snapshot_before.json").write_text(_json.dumps(serializable))
+            except Exception:
+                pass
+
             # Phase 2.5: Run repo setup script (fresh clone only)
             setup_success: bool | None = None
             if not restored_from_snapshot:
                 setup_success = await self.run_setup_script()
-
-            # Phase 2.7: Start Docker daemon (DinD) for builder verification
-            dockerd_success: bool | None = None
-            if not restored_from_snapshot:
-                dockerd_success = await self.start_dockerd()
 
             # Phase 3: Start OpenCode server (in repo directory)
             await self.start_opencode()
@@ -1078,7 +1111,6 @@ exit 1
                 restored_from_snapshot=restored_from_snapshot,
                 git_sync_success=git_sync_success,
                 setup_success=setup_success,
-                dockerd_success=dockerd_success,
                 opencode_ready=opencode_ready,
                 duration_ms=duration_ms,
                 outcome="success",
@@ -1103,24 +1135,13 @@ exit 1
         """Graceful shutdown of all processes."""
         self.log.info("supervisor.shutdown_start")
 
-        # Stop inner Docker containers and daemon (DinD cleanup)
-        if self.dockerd_process and self.dockerd_process.returncode is None:
-            self.log.info("dockerd.shutdown")
+        # Log cache changes across the full sandbox lifecycle (setup + coding task)
+        if self._cache_snapshot_before is not None:
             try:
-                # Try to stop any running compose projects
-                cleanup = await asyncio.create_subprocess_exec(
-                    "docker", "compose", "down", "-v",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                await asyncio.wait_for(cleanup.communicate(), timeout=10)
-            except Exception:
-                pass
-            self.dockerd_process.terminate()
-            try:
-                await asyncio.wait_for(self.dockerd_process.wait(), timeout=5.0)
-            except TimeoutError:
-                self.dockerd_process.kill()
+                cache_after = await self._snapshot_cache_state()
+                await self._log_cache_changes(self._cache_snapshot_before, cache_after)
+            except Exception as e:
+                self.log.warning("cache.snapshot_error", exc=e)
 
         # Terminate bridge first
         if self.bridge_process and self.bridge_process.returncode is None:

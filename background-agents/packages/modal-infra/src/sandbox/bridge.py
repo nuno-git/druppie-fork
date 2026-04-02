@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import secrets
 import subprocess
 import tempfile
@@ -491,6 +492,9 @@ class AgentBridge:
             # The control plane destroys git proxy credentials on execution_complete,
             # so the push MUST happen before that event is sent.
             await self._auto_push_if_needed()
+
+            # Send cache usage summary (X packages installed, Y from cache)
+            await self._send_cache_summary()
 
             await self._send_event(
                 {
@@ -1488,6 +1492,221 @@ class AgentBridge:
 
         except Exception as e:
             self.log.error("auto_push.error", exc=e)
+
+    async def _send_cache_summary(self) -> None:
+        """Read cache before-snapshot, diff with current state, send summary event."""
+        snapshot_path = Path("/tmp/cache_snapshot_before.json")
+        if not snapshot_path.exists():
+            return
+
+        try:
+            before_raw = json.loads(snapshot_path.read_text())
+            before = {k: set(v) for k, v in before_raw.items()}
+
+            cache_base = Path("/cache")
+            if not cache_base.is_dir():
+                return
+
+            # Quick after-snapshot (file count per manager)
+            per_manager = []
+            total_new = 0
+            total_cached = 0
+            new_files_by_manager: dict[str, set[str]] = {}
+            for name in ["npm", "pnpm", "pip", "uv", "bun"]:
+                cache_dir = cache_base / name
+                if not cache_dir.is_dir():
+                    continue
+                after_entries: set[str] = set()
+                for p in cache_dir.rglob("*"):
+                    if p.is_file():
+                        after_entries.add(str(p.relative_to(cache_dir)))
+                        if len(after_entries) >= 5000:
+                            break
+                before_entries = before.get(name, set())
+                new_entries = after_entries - before_entries
+                new = len(new_entries)
+                cached = len(after_entries & before_entries)
+                total_new += new
+                total_cached += cached
+                if new > 0 or cached > 0:
+                    per_manager.append({"manager": name, "new": new, "cached": cached})
+                if new > 0:
+                    new_files_by_manager[name] = new_entries
+
+            # Parse actual package name/version pairs from new files
+            packages = self._extract_new_packages(cache_base, new_files_by_manager)
+
+            if total_new > 0 or total_cached > 0:
+                event: dict[str, Any] = {
+                    "type": "cache_summary",
+                    "total_installed": total_new + total_cached,
+                    "total_new": total_new,
+                    "total_cached": total_cached,
+                    "per_manager": per_manager,
+                }
+                if packages:
+                    event["packages"] = packages
+                await self._send_event(event)
+
+        except Exception as e:
+            self.log.debug("cache_summary.error", exc=e)
+
+    def _extract_new_packages(
+        self, cache_base: Path, new_files_by_manager: dict[str, set[str]]
+    ) -> list[dict[str, str]]:
+        """Extract package name/version pairs from newly cached files.
+
+        Returns a deduplicated list of {"manager", "name", "version"} dicts,
+        capped at 200 entries. Errors during individual file parsing are silently
+        skipped so the overall summary is never blocked.
+        """
+        MAX_PACKAGES = 200
+        seen: set[tuple[str, str, str]] = set()
+        packages: list[dict[str, str]] = []
+
+        def _add(manager: str, name: str, version: str) -> bool:
+            """Add a package entry. Returns False when the cap is reached."""
+            key = (manager, name, version)
+            if key in seen:
+                return True
+            seen.add(key)
+            packages.append({"manager": manager, "name": name, "version": version})
+            return len(packages) < MAX_PACKAGES
+
+        for manager, new_entries in new_files_by_manager.items():
+            try:
+                if manager == "bun":
+                    self._parse_bun_packages(cache_base, new_entries, _add)
+                elif manager == "pnpm":
+                    self._parse_pnpm_packages(cache_base, new_entries, _add)
+                elif manager == "uv":
+                    self._parse_uv_packages(cache_base, new_entries, _add)
+                elif manager == "pip":
+                    self._parse_pip_packages(cache_base, new_entries, _add)
+                elif manager == "npm":
+                    self._parse_npm_packages(cache_base, new_entries, _add)
+            except Exception:
+                # Never let one manager's parsing failure block the rest
+                continue
+            if len(packages) >= MAX_PACKAGES:
+                break
+
+        return packages
+
+    def _parse_bun_packages(
+        self, cache_base: Path, new_entries: set[str],
+        add: "callable",
+    ) -> None:
+        """Parse bun packages from new package.json files."""
+        for entry in new_entries:
+            if not entry.endswith("package.json"):
+                continue
+            try:
+                data = json.loads((cache_base / "bun" / entry).read_text())
+                name = data.get("name", "")
+                version = data.get("version", "")
+                if name and version:
+                    if not add("bun", name, version):
+                        return
+            except Exception:
+                continue
+
+    def _parse_pnpm_packages(
+        self, cache_base: Path, new_entries: set[str],
+        add: "callable",
+    ) -> None:
+        """Parse pnpm packages from new package.json files."""
+        for entry in new_entries:
+            if not entry.endswith("package.json"):
+                continue
+            try:
+                data = json.loads((cache_base / "pnpm" / entry).read_text())
+                name = data.get("name", "")
+                version = data.get("version", "")
+                if name and version:
+                    if not add("pnpm", name, version):
+                        return
+            except Exception:
+                continue
+
+    def _parse_uv_packages(
+        self, cache_base: Path, new_entries: set[str],
+        add: "callable",
+    ) -> None:
+        """Parse uv packages from new METADATA files."""
+        for entry in new_entries:
+            if not entry.endswith("METADATA"):
+                continue
+            try:
+                text = (cache_base / "uv" / entry).read_text(errors="replace")
+                name_match = re.search(r"^Name:\s*(.+)$", text, re.MULTILINE)
+                version_match = re.search(r"^Version:\s*(.+)$", text, re.MULTILINE)
+                if name_match and version_match:
+                    name = name_match.group(1).strip()
+                    version = version_match.group(1).strip()
+                    if name and version:
+                        if not add("uv", name, version):
+                            return
+            except Exception:
+                continue
+
+    def _parse_pip_packages(
+        self, cache_base: Path, new_entries: set[str],
+        add: "callable",
+    ) -> None:
+        """Parse pip packages from new msgpack HTTP cache files."""
+        for entry in new_entries:
+            if not entry.startswith("http-v2/"):
+                continue
+            if entry.endswith(".body"):
+                continue
+            try:
+                data = (cache_base / "pip" / entry).read_bytes()
+                proj_match = re.search(rb"x-pypi-file-project.([\x20-\x7e]+)", data)
+                ver_match = re.search(rb"x-pypi-file-version.([\x20-\x7e]+)", data)
+                if proj_match and ver_match:
+                    name = proj_match.group(1).decode("ascii", errors="replace").strip()
+                    version = ver_match.group(1).decode("ascii", errors="replace").strip()
+                    if name and version:
+                        if not add("pip", name, version):
+                            return
+            except Exception:
+                continue
+
+    def _parse_npm_packages(
+        self, cache_base: Path, new_entries: set[str],
+        add: "callable",
+    ) -> None:
+        """Parse npm packages from new cacache index files."""
+        for entry in new_entries:
+            if "_cacache/index-v5/" not in entry:
+                continue
+            try:
+                text = (cache_base / "npm" / entry).read_text(errors="replace")
+                # npm cacache index files contain JSON with "key" fields referencing tgz URLs
+                for match in re.finditer(
+                    r"registry\.npmjs\.org/([^\"]+)\.tgz", text
+                ):
+                    url_path = match.group(1)
+                    # URL pattern: <scope/name>/-/<tarball>-<version>
+                    # or: <name>/-/<tarball>-<version>
+                    tarball_part = url_path.rsplit("/-/", 1)[-1] if "/-/" in url_path else url_path
+                    # Extract version: last segment matching semver-like pattern
+                    ver_match = re.search(r"-(\d[\d.]*(?:-[a-zA-Z0-9.]+)?)$", tarball_part)
+                    if not ver_match:
+                        continue
+                    version = ver_match.group(1)
+                    name_part = tarball_part[: ver_match.start()]
+                    # For scoped packages, use the full scope/name from the URL prefix
+                    if "/-/" in url_path:
+                        pkg_prefix = url_path.rsplit("/-/", 1)[0]
+                        if pkg_prefix:
+                            name_part = pkg_prefix
+                    if name_part and version:
+                        if not add("npm", name_part, version):
+                            return
+            except Exception:
+                continue
 
     async def _configure_git_identity(self, user: GitUser) -> None:
         """Configure git identity for commit attribution."""
