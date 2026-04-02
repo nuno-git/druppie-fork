@@ -176,11 +176,11 @@ services:
   # MCP SERVERS (Microservices)
   # ===========================================================================
 
-  mcp-coding:
+  module-coding:
     build:
-      context: ./druppie/mcp-servers/coding
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-coding
+      context: ./druppie/mcp-servers
+      dockerfile: module-coding/Dockerfile
+    container_name: druppie-module-coding
     profiles: [infra, dev, prod]
     environment:
       WORKSPACE_ROOT: /workspaces
@@ -211,16 +211,17 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-docker:
+  module-docker:
     build:
-      context: ./druppie/mcp-servers/docker
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-docker
+      context: ./druppie/mcp-servers
+      dockerfile: module-docker/Dockerfile
+    container_name: druppie-module-docker
     profiles: [infra, dev, prod]
     environment:
       MCP_PORT: "9002"
       WORKSPACE_ROOT: /workspaces
       DOCKER_NETWORK: druppie-new-network
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
     volumes:
       - druppie_new_workspace:/workspaces
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
@@ -235,11 +236,11 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-filesearch:
+  module-filesearch:
     build:
-      context: ./druppie/mcp-servers/filesearch
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-filesearch
+      context: ./druppie/mcp-servers
+      dockerfile: module-filesearch/Dockerfile
+    container_name: druppie-module-filesearch
     profiles: [infra, dev, prod]
     environment:
       SEARCH_ROOT: /dataset
@@ -257,17 +258,17 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-archimate:
+  module-archimate:
     build:
-      context: ./druppie/mcp-servers/archimate
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-archimate
+      context: ./druppie/mcp-servers
+      dockerfile: module-archimate/Dockerfile
+    container_name: druppie-module-archimate
     profiles: [infra, dev, prod]
     environment:
       MODELS_DIR: /models
       MCP_PORT: "9006"
     volumes:
-      - ./druppie/mcp-servers/archimate/models:/models:ro
+      - ./druppie/mcp-servers/module-archimate/models:/models:ro
     ports:
       - "${MCP_ARCHIMATE_PORT:-9006}:9006"
     networks:
@@ -279,11 +280,11 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-web:
+  module-web:
     build:
-      context: ./druppie/mcp-servers/web
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-web
+      context: ./druppie/mcp-servers
+      dockerfile: module-web/Dockerfile
+    container_name: druppie-module-web
     profiles: [infra, dev, prod]
     environment:
       SEARCH_ROOT: /dataset
@@ -301,11 +302,11 @@ services:
       retries: 5
       start_period: 10s
 
-  mcp-registry:
+  module-registry:
     build:
-      context: ./druppie/mcp-servers/registry
-      dockerfile: Dockerfile
-    container_name: druppie-mcp-registry
+      context: ./druppie/mcp-servers
+      dockerfile: module-registry/Dockerfile
+    container_name: druppie-module-registry
     profiles: [infra, dev, prod]
     environment:
       DATA_DIR: /data
@@ -315,6 +316,7 @@ services:
       - ./druppie/core/mcp_config.yaml:/data/mcp_config.yaml:ro
       - ./druppie/skills:/data/skills:ro
       - ./druppie/agents/builtin_tools.py:/data/builtin_tools.py:ro
+      - ./druppie/mcp-servers:/data/mcp-servers:ro
     ports:
       - "${MCP_REGISTRY_PORT:-9007}:9007"
     networks:
@@ -332,7 +334,7 @@ services:
 
   sandbox-control-plane:
     build:
-      context: ./vendor/open-inspect
+      context: ./background-agents
       dockerfile: packages/local-control-plane/Dockerfile
     container_name: druppie-sandbox-control-plane
     profiles: [infra, dev, prod]
@@ -360,7 +362,7 @@ services:
 
   sandbox-manager:
     build:
-      context: ./vendor/open-inspect
+      context: ./background-agents
       dockerfile: packages/local-sandbox-manager/Dockerfile
     container_name: druppie-sandbox-manager
     profiles: [infra, dev, prod]
@@ -372,7 +374,8 @@ services:
       CONTAINERD_NAMESPACE: ${CONTAINERD_NAMESPACE:-default}
       DOCKER_NETWORK: druppie-sandbox-network  # Isolated network — sandboxes can only reach control plane
       DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
-      DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-2}
+      DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-}
+      SANDBOX_CACHE_VOLUME: druppie_sandbox_dep_cache
       # LLM API keys and proxy URLs no longer needed here.
       # Credentials flow per-session from Druppie -> Control Plane -> Sandbox.
     volumes:
@@ -395,7 +398,7 @@ services:
   # Builds the sandbox base image, then exits. Docker caches it — only rebuilds when Dockerfile changes.
   sandbox-image-builder:
     build:
-      context: ./vendor/open-inspect
+      context: ./background-agents
       dockerfile: packages/local-sandbox-manager/Dockerfile.sandbox
     image: open-inspect-sandbox:latest
     profiles: [infra, dev, prod]
@@ -476,7 +479,7 @@ services:
       dockerfile: Dockerfile
     container_name: druppie-new-backend
     profiles: [dev]
-    command: ["uvicorn", "druppie.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["uvicorn", "druppie.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-include", "*.py"]
     environment:
       DATABASE_URL: postgresql://druppie:${DRUPPIE_DB_PASSWORD:-druppie_secret}@druppie-db:5432/druppie
       DEV_MODE: ${DEV_MODE:-false}
@@ -509,18 +512,25 @@ services:
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
       USE_MCP_MICROSERVICES: "true"
-      MCP_CODING_URL: ${MCP_CODING_URL:-http://mcp-coding:9001}
-      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
-      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
-      MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
-      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
-      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+      MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
+      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
+      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://module-filesearch:9004}
+      MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
+      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
+      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
+      SANDBOX_MANAGER_URL: http://sandbox-manager:8000
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
       BACKEND_URL: http://druppie-backend-dev:8000
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH:-}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
+      DRUPPIE_REPO_OWNER: ${DRUPPIE_REPO_OWNER:-}
+      DRUPPIE_REPO_NAME: ${DRUPPIE_REPO_NAME:-}
     volumes:
       - ./druppie:/app/druppie
+      - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     ports:
@@ -583,17 +593,23 @@ services:
       WORKSPACE_PATH: /app/workspace
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
       USE_MCP_MICROSERVICES: "true"
-      MCP_CODING_URL: ${MCP_CODING_URL:-http://mcp-coding:9001}
-      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://mcp-docker:9002}
-      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://mcp-filesearch:9004}
-      MCP_WEB_URL: ${MCP_WEB_URL:-http://mcp-web:9005}
-      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://mcp-archimate:9006}
-      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://mcp-registry:9007}
+      MCP_CODING_URL: ${MCP_CODING_URL:-http://module-coding:9001}
+      MCP_DOCKER_URL: ${MCP_DOCKER_URL:-http://module-docker:9002}
+      MCP_FILESEARCH_URL: ${MCP_FILESEARCH_URL:-http://module-filesearch:9004}
+      MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
+      MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
+      MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
       BACKEND_URL: http://druppie-backend:8000
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH:-}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
+      DRUPPIE_REPO_OWNER: ${DRUPPIE_REPO_OWNER:-}
+      DRUPPIE_REPO_NAME: ${DRUPPIE_REPO_NAME:-}
     volumes:
+      - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     ports:
@@ -745,6 +761,70 @@ services:
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - .:/project
 
+  # Emergency purge of the shared sandbox dependency cache
+  # Usage: docker compose --profile reset-cache run --rm reset-cache
+  # With reason: PURGE_REASON="suspected compromise" docker compose --profile reset-cache run --rm reset-cache
+  reset-cache:
+    image: docker:cli
+    container_name: druppie-reset-cache
+    profiles: [reset-cache]
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "=== Emergency Cache Purge ==="
+        echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "Reason: ${PURGE_REASON:-manual}"
+        echo ""
+        echo "Step 1: Stopping running sandbox containers..."
+        sandbox_ids=$(docker ps --filter "network=druppie-sandbox-network" -q)
+        if [ -n "$sandbox_ids" ]; then
+          echo "  Stopping sandbox(es)..."
+          if ! docker stop -t 5 $sandbox_ids 2>/dev/null; then
+            echo "  WARNING: Graceful stop failed, forcing..."
+            docker kill $sandbox_ids 2>/dev/null || true
+          fi
+          docker rm -f $sandbox_ids 2>/dev/null || true
+          echo "  Stopped."
+        else
+          echo "  None running."
+        fi
+        echo ""
+        echo "Step 2: Removing cache volume..."
+        if docker volume inspect druppie_sandbox_dep_cache >/dev/null 2>&1; then
+          if ! docker volume rm druppie_sandbox_dep_cache; then
+            echo "  ERROR: Failed to remove volume. Is it still in use?"
+            echo "  Check: docker ps --filter volume=druppie_sandbox_dep_cache"
+            exit 1
+          fi
+          echo "  Removed."
+        else
+          echo "  Volume does not exist (already removed)."
+        fi
+        echo ""
+        echo "Step 3: Recreating empty volume..."
+        docker volume create druppie_sandbox_dep_cache
+        if ! docker volume inspect druppie_sandbox_dep_cache >/dev/null 2>&1; then
+          echo "  ERROR: Volume creation failed."
+          exit 1
+        fi
+        echo "  Created."
+        echo ""
+        echo "=== Purge Complete ==="
+    volumes:
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+
+  # OSV vulnerability scanner for the shared dependency cache
+  # Usage: docker compose --profile scan-cache run --rm cache-scanner
+  cache-scanner:
+    build:
+      context: ./background-agents/packages/local-sandbox-manager
+      dockerfile: Dockerfile.cache-scanner
+    container_name: druppie-cache-scanner
+    profiles: [scan-cache]
+    volumes:
+      - sandbox_dep_cache:/cache:ro
+      - cache_scan_results:/scan-results
+
 # =============================================================================
 # VOLUMES
 # =============================================================================
@@ -768,6 +848,10 @@ volumes:
     name: druppie_sandbox_data
   sandbox_snapshots:
     name: druppie_sandbox_snapshots
+  sandbox_dep_cache:
+    name: druppie_sandbox_dep_cache
+  cache_scan_results:
+    name: druppie_cache_scan_results
 
 # =============================================================================
 # NETWORKS

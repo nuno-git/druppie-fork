@@ -11,7 +11,7 @@ langgraph>=0.2.0
 httpx>=0.26.0
 
 # LLM Provider (unified interface)
-litellm>=1.30.0
+litellm==1.82.6
 
 # MCP Client
 fastmcp>=2.0.0,<3.0.0
@@ -27,6 +27,7 @@ pydantic-settings>=2.1.0
 # Configuration
 pyyaml>=6.0.0
 python-dotenv>=1.0.0
+jsonschema>=4.0.0
 
 # Logging
 structlog>=24.1.0

@@ -39,7 +39,7 @@ system_prompt: |
   3. FOR GENERAL_CHAT (questions, explanations):
      - Call set_intent with intent: "general_chat"
      - Call done with summary: "General chat: [brief description of the user's question]"
-   
+
    If it is not clear if the request is for create/update or general chat, make sure to ask some short question for clarifying.
    But never ask long questions and do not propose to create things using the hitl_ask_question tool. 
    Just ask something like do you wanna create a project for this? Or do you wanna update project ...?
@@ -72,7 +72,7 @@ extra_builtin_tools:
   - set_intent
 
 mcps:
-  bestand-zoeker:
+  web:
     - search_files
     - list_directory
     - read_file

@@ -28,6 +28,8 @@ ENV/
 # Node.js
 node_modules/
 package-lock.json
+# Un-ignore background-agents lockfile (required by sandbox Dockerfiles)
+!background-agents/package-lock.json
 
 # IDE
 .idea/
@@ -45,6 +47,10 @@ test-results/
 # Build artifacts
 instance/
 *.db
+
+# Secrets (private keys, certificates)
+secrets/
+secrets
 
 # Local config
 .druppie/

@@ -133,10 +133,7 @@ druppie/
     user.py
     agent_definition.py
   tools/
-    params/
-      builtin.py         # Pydantic models for builtin tool params
-      coding.py          # Pydantic models for coding MCP tool params
-      docker.py          # Pydantic models for docker MCP tool params
+    # (params/ removed — tool schemas now live in each module's v1/tools.py)
   sandbox-config/
     opencode-config.json   # OpenCode default agent + permissions
     agents/
@@ -180,15 +177,20 @@ druppie/
     config.py            # Settings from env vars
     auth.py              # Keycloak JWT validation
     gitea.py             # Gitea API client
-    mcp_client.py        # MCP tool fetching
-    mcp_config.yaml      # MCP server + tool + approval definitions
-    tool_registry.py     # Unified tool registry with Pydantic models
+    mcp_config.yaml      # MCP server URLs, approval rules, injection — NOT tool schemas
+    mcp_config.py        # Loader for mcp_config.yaml
+    tool_registry.py     # Discovers tools via tools/list at startup; MCPHttp consolidated here
   mcp-servers/
-    coding/              # Port 9001 (includes mermaid_validator.py)
-    docker/              # Port 9002
-    filesearch/          # Port 9004
-    web/                 # Port 9005
-    archimate/           # Port 9006
+    module-coding/       # Port 9001 — file/git ops
+      MODULE.yaml
+      server.py
+      v1/tools.py        # @mcp.tool() definitions (single source of truth for schemas)
+      v1/module.py
+    module-docker/       # Port 9002 — container lifecycle
+    module-filesearch/   # Port 9004 — local file search
+    module-web/          # Port 9005 — web browsing/search
+    module-archimate/    # Port 9006 — ArchiMate model ops
+    module-registry/     # Port 9007 — platform catalog/discovery
 ```
 
 ---
@@ -412,16 +414,34 @@ All resolution decisions are logged as structured `model_resolved` events, and t
 
 MCP (Model Context Protocol) servers are HTTP microservices built with the FastMCP framework. Each exposes a `/health` endpoint and tool endpoints.
 
-### 6.1 Configuration
+### 6.1 Module Convention
 
-MCP servers, their tools, and approval requirements are defined in `druppie/core/mcp_config.yaml`. This is the single source of truth for:
+Each MCP server follows the **module convention**: it lives under `druppie/mcp-servers/module-<name>/` and has a standard layout:
 
-- Server URLs (with environment variable substitution)
-- Tool names, descriptions, and parameter schemas
-- Approval requirements per tool (which role can approve)
-- Parameter injection rules (what context values get auto-injected)
+```
+module-<name>/
+  MODULE.yaml       # Module metadata (name, version, description)
+  server.py         # FastMCP app + versioned router mounting (/v1, /v2, ...)
+  requirements.txt
+  Dockerfile
+  v1/
+    tools.py        # @mcp.tool() definitions — single source of truth for tool schemas
+    module.py       # Business logic
+```
 
-### 6.2 Coding Server (port 9001)
+`v1/tools.py` is where tool names, descriptions, parameters, and pre-validation (`meta.pre_validate`) are declared via `@mcp.tool()` decorators. `server.py` mounts versioned sub-routers so multiple API versions can coexist on one port.
+
+### 6.2 Configuration
+
+`druppie/core/mcp_config.yaml` defines:
+
+- **Server URLs** (with environment variable substitution)
+- **Approval requirements** per tool (which role can approve)
+- **Parameter injection rules** (what context values get auto-injected)
+
+Tool schemas are **not** stored here. At startup, `ToolRegistry` calls each server's `tools/list` endpoint to discover live schemas. This ensures there is one source of truth (the `@mcp.tool()` decorator) rather than two (config file + decorator).
+
+### 6.3 Coding Server (port 9001)
 
 File and git operations within workspace sandboxes.
 
@@ -440,7 +460,7 @@ File and git operations within workspace sandboxes.
 | `revert_to_commit` | None (internal) | Hard reset + force push to a target commit |
 | `close_pull_request` | None (internal) | Close a PR on Gitea without merging |
 
-### 6.3 Docker Server (port 9002)
+### 6.4 Docker Server (port 9002)
 
 Container lifecycle management.
 
@@ -455,7 +475,7 @@ Container lifecycle management.
 | `inspect` | None | Inspect container details |
 | `exec_command` | Developer | Execute command in container |
 
-### 6.4 Web / Bestand-Zoeker Server (port 9005)
+### 6.5 Web / Bestand-Zoeker Server (port 9005)
 
 Web browsing and local file search within datasets.
 
@@ -468,11 +488,11 @@ Web browsing and local file search within datasets.
 | `search_web` | None | Web search |
 | `get_page_info` | None | Get web page metadata |
 
-### 6.5 File Search Server (port 9004)
+### 6.6 File Search Server (port 9004)
 
 Local file search capability over mounted dataset volumes.
 
-### 6.6 ArchiMate Server (port 9006)
+### 6.7 ArchiMate Server (port 9006)
 
 ArchiMate model operations. Reads `.archimate` files from a mounted models directory.
 
@@ -483,7 +503,7 @@ ArchiMate model operations. Reads `.archimate` files from a mounted models direc
 | `search_model` | None | Search for elements by query |
 | `export_view` | None | Export an ArchiMate view |
 
-### 6.7 Declarative Parameter Injection
+### 6.8 Declarative Parameter Injection
 
 MCP tools can have parameters auto-injected from the session/project context. Injected parameters are marked `hidden: true` and are removed from the LLM-visible tool schema. This prevents the LLM from needing to know internal IDs.
 
@@ -500,7 +520,7 @@ inject:
     tools: [read_file, write_file, list_dir, ...]
 ```
 
-### 6.8 Layered Approval System
+### 6.9 Layered Approval System
 
 Approvals have two layers:
 
@@ -532,11 +552,12 @@ gitea-db            PostgreSQL 15     -       Gitea database (internal)
 gitea               Gitea 1.21        :3100   Git hosting
 druppie-backend     FastAPI           :8100   Backend API
 druppie-frontend    Vite/React        :5273   Frontend
-mcp-coding          FastMCP           :9001   File/git operations
-mcp-docker          FastMCP           :9002   Docker operations
-mcp-filesearch      FastMCP           :9004   File search
-mcp-web             FastMCP           :9005   Web browsing
-mcp-archimate       FastMCP           :9006   ArchiMate models
+module-coding       FastMCP           :9001   File/git operations
+module-docker       FastMCP           :9002   Docker operations
+module-filesearch   FastMCP           :9004   File search
+module-web          FastMCP           :9005   Web browsing
+module-archimate    FastMCP           :9006   ArchiMate models
+module-registry     FastMCP           :9007   Platform catalog/discovery
 adminer             Adminer           :8081   DB admin UI
 sandbox-control-plane  Node.js        :8787   Sandbox session/event management
 sandbox-manager     Node.js           :8000   Sandbox container lifecycle
@@ -545,7 +566,7 @@ sandbox-image-builder  Docker         -       Builds open-inspect-sandbox:latest
 
 ### 7.2 Network
 
-All containers share a single bridge network: `druppie-new-network`. Internal communication uses container hostnames (e.g., `druppie-db`, `keycloak`, `gitea`, `mcp-coding`).
+All containers share a single bridge network: `druppie-new-network`. Internal communication uses container hostnames (e.g., `druppie-db`, `keycloak`, `gitea`, `module-coding`).
 
 ### 7.3 Volumes
 
@@ -558,6 +579,7 @@ All containers share a single bridge network: `druppie-new-network`. Internal co
 | `druppie_new_workspace` | `/app/workspace` (backend), `/workspaces` (MCP) | Shared workspace for agent file operations |
 | `sandbox_data` | `/data` (control plane) | Sandbox session data (SQLite) |
 | `sandbox_snapshots` | `/data/snapshots` (manager) | Sandbox container snapshots |
+| `sandbox_dep_cache` | `/cache` (sandbox containers) | Shared dependency cache for npm/pnpm/bun/pip/uv |
 | Docker socket | `/var/run/docker.sock` | Allows backend and MCP Docker to manage containers |
 
 ### 7.4 Health Checks
@@ -569,7 +591,7 @@ druppie-db  <-- keycloak (via keycloak-db)
             <-- gitea (via gitea-db)
             <-- druppie-backend
                    <-- druppie-frontend
-                   <-- mcp-coding (depends on gitea)
+                   <-- module-coding (depends on gitea)
 ```
 
 ### 7.5 Development Setup
@@ -597,7 +619,34 @@ docker compose --profile dev --profile prod --profile infra down
 docker compose ps
 ```
 
-### 7.6 Database Reset
+### 7.6 Sandbox Security Architecture
+
+Sandbox containers are hardened with multiple isolation layers:
+
+**Capability reduction:** All Linux capabilities are dropped (`--cap-drop=ALL`), then only 3 are re-added: `CHOWN` and `FOWNER` (shared cache file ownership), `NET_RAW` (health checks). Combined with `--security-opt=no-new-privileges` to block setuid/setgid escalation. See `docker_manager.py`.
+
+**Non-root execution:** Sandboxes run as `sandbox:1000` (non-root user created in `Dockerfile.sandbox:83-84`).
+
+**Network isolation:** Sandboxes join `druppie-sandbox-network`, an isolated bridge network. Only the control plane bridges both networks — sandboxes cannot reach the database, Keycloak, Gitea, or backend directly.
+
+**Resource limits:** CPU, memory, and PID limits are configured via environment variables (`SANDBOX_MEMORY_LIMIT`, `SANDBOX_CPU_LIMIT`).
+
+### 7.7 Shared Dependency Cache
+
+A named Docker volume (`druppie_sandbox_dep_cache`) is mounted at `/cache` inside every sandbox container. Environment variables in `Dockerfile.sandbox` point each package manager to a subdirectory (`/cache/npm`, `/cache/pnpm`, `/cache/bun`, `/cache/uv`, `/cache/pip`).
+
+**Supply-chain hardening:**
+- Package manager configs (`.npmrc`, `.pnpmrc`, `pip.conf`) enforce HTTPS-only registries with `strict-ssl=true`
+- `UV_INDEX_URL` is set to `https://pypi.org/simple/`
+- npm lockfile enforcement: `package-lock=true`
+
+**Cache scanner:** A `cache-scanner` service (`Dockerfile.cache-scanner`) runs the [OSV scanner](https://github.com/google/osv-scanner) (v2.3.3, SHA256-verified binary) against all cached packages. It discovers npm/pnpm `package.json` files and pip `METADATA`/`PKG-INFO` files, then runs a recursive vulnerability scan. Usage: `docker compose --profile scan-cache run --rm cache-scanner`.
+
+**Emergency purge:** The `reset-cache` profile service stops all sandbox containers, removes the cache volume, and recreates it empty. Usage: `docker compose --profile reset-cache run --rm reset-cache`.
+
+**Cache entry logging:** The sandbox entrypoint (`entrypoint.py`) diffs cache snapshots before and after execution, emitting structured `cache.new_entries` JSON log events per package manager.
+
+### 7.8 Database Reset
 
 Two reset options are available:
 
@@ -611,7 +660,7 @@ docker compose --profile reset-hard up
 
 The soft reset is useful during development when you want to clear session/project data without re-running Keycloak/Gitea setup. The hard reset is a full wipe that requires re-initialization.
 
-### 7.7 Profiles
+### 7.9 Profiles
 
 | Profile | Purpose |
 |---------|---------|
@@ -621,8 +670,10 @@ The soft reset is useful during development when you want to clear session/proje
 | `init` | One-time Keycloak and Gitea setup (creates realm, users, OAuth apps) |
 | `reset-db` | Soft reset: drops application tables, keeps users |
 | `reset-hard` | Hard reset: wipes all volumes, reinitializes everything |
+| `reset-cache` | Purge sandbox dependency cache (stops sandboxes, removes + recreates volume) |
+| `scan-cache` | Scan cached dependencies for vulnerabilities (OSV scanner) |
 
-### 7.8 Cross-Platform Support
+### 7.10 Cross-Platform Support
 
 The Docker Compose setup works on Windows, macOS, and Linux. Shell scripts use LF line endings (enforced via `.gitattributes`) and Dockerfiles include `sed` commands to strip any CRLF characters that may be introduced on Windows.
 
@@ -768,22 +819,16 @@ execution_repo.update_planned_prompt(next_run.id, new_prompt)
 
 ### 8.5 Tool Registry
 
-`druppie/core/tool_registry.py` is the single source of truth for all tool definitions. It combines:
-- **MCP tools** fetched from MCP servers with Pydantic parameter models
+`druppie/core/tool_registry.py` is the single source of truth for all tool definitions at runtime. It combines:
+- **MCP tools** — discovered at startup by calling each server's `tools/list` endpoint (live schema, no duplication with config files)
 - **Builtin tools** (done, make_plan, hitl_ask_question, etc.)
 
 Each tool is represented by a `ToolDefinition` (`druppie/domain/tool.py`) which contains:
 - Tool metadata (name, description, server)
-- A Pydantic model class for type-safe parameters
-- Approval requirements
+- JSON schema for parameters (fetched from the module's `@mcp.tool()` decorator)
+- Approval requirements (from `mcp_config.yaml`)
 
-**Pydantic Parameter Models** (`druppie/tools/params/`):
-```
-params/
-  builtin.py   # DoneParams, MakePlanParams, HitlAskQuestionParams, ...
-  coding.py    # ReadFileParams, WriteFileParams, RunGitParams, ...
-  docker.py    # BuildImageParams, StartContainerParams, ...
-```
+`druppie/tools/params/` (previously hand-maintained Pydantic models per tool) no longer exists. Schemas come exclusively from the modules.
 
 **OpenAI Strict Mode**: Tool schemas follow OpenAI strict mode requirements:
 - `strict: true` on all function definitions
@@ -966,7 +1011,7 @@ Optional:
 
 | File | Purpose |
 |------|---------|
-| `druppie/core/mcp_config.yaml` | MCP server URLs, tool schemas, approval rules, parameter injection |
+| `druppie/core/mcp_config.yaml` | MCP server URLs, approval rules, parameter injection (tool schemas live in each module's `v1/tools.py`) |
 | `druppie/agents/definitions/*.yaml` | Agent definitions (prompt, tools, model config) |
 | `druppie/agents/definitions/system_prompts/*.yaml` | Composable system prompts (see Section 8.2) |
 | `docker-compose.yml` | Infrastructure service definitions (at repository root) |
@@ -980,7 +1025,7 @@ Optional:
 
 > Full documentation: [docs/SANDBOX.md](SANDBOX.md) — covers architecture, OpenCode integration, provider resilience, Kata Containers, and security.
 
-[Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`) is integrated as a git submodule at `vendor/open-inspect/`. Sandbox containers run OpenCode `v1.2.22` (pinned in `Dockerfile.sandbox`). They provide isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace.
+[Open-Inspect](https://github.com/nuno120/background-agents) (our fork, branch `druppie`) is integrated as a git submodule at `background-agents/`. Sandbox containers run OpenCode `v1.2.22` (pinned in `Dockerfile.sandbox`). They provide isolated Docker sandboxes where coding agents can clone a project, write code, run tests, commit, and push — all without touching the shared workspace.
 
 ### 10.1 Services
 

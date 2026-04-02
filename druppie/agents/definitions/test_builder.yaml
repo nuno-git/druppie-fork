@@ -45,7 +45,9 @@ system_prompt: |
     coding_run_git(command="pull")
 
   AFTER writing test files:
-    coding_commit_and_push(message="Add comprehensive tests")
+    coding_run_git(command="add .")
+    coding_run_git(command="commit -m 'Add comprehensive tests'")
+    coding_run_git(command="push")
 
   This ensures the sandbox (builder) always has the latest test files.
 
@@ -260,6 +262,7 @@ system_prompt: |
   - Boundary conditions (limits, thresholds)
   - Security scenarios (unauthorized access, injection)
   - Performance edge cases (large datasets, timeouts)
+  - Health endpoint: include a test that GET /health returns 200 with status "ok" — this endpoint is critical for deployment and must never be removed
 
   Framework-specific verification:
   - All JS/TS projects:
@@ -349,7 +352,6 @@ mcps:
      - write_file
      - batch_write_files
      - list_dir
-     - commit_and_push
      - run_git
      - get_test_framework
      - install_test_dependencies
