@@ -19,7 +19,7 @@ import re
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException, Request
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import httpx
@@ -425,7 +425,6 @@ def _build_agent_result_text(
 async def sandbox_complete_webhook(
     sandbox_session_id: str,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """Webhook called by the control plane when a sandbox session completes.
@@ -595,47 +594,50 @@ async def sandbox_complete_webhook(
         pr_urls=git_info.get("pr_urls", []),
     )
 
-    # Resume the agent in the background via Starlette BackgroundTasks
-    # (properly managed lifecycle — awaited before server shutdown)
-    tool_call_id = tool_call.id
-    background_tasks.add_task(_resume_agent_after_sandbox, tool_call_id)
+    # Resume the agent via create_session_task for proper lifecycle management:
+    # - Tracked by shutdown_background_tasks (survives hot-reload gracefully)
+    # - Session-level concurrency guard prevents duplicate resume tasks
+    from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
+
+    druppie_session_id = tool_call.session_id
+    tc_id = tool_call.id
+    try:
+        create_session_task(
+            druppie_session_id,
+            run_session_task(druppie_session_id, _make_sandbox_resume(tc_id), "sandbox-resume"),
+            name=f"sandbox-resume-{druppie_session_id}",
+        )
+    except SessionTaskConflict:
+        logger.warning(
+            "sandbox_resume_task_conflict",
+            sandbox_session_id=sandbox_session_id,
+            session_id=str(druppie_session_id),
+        )
 
     return {"status": "ok", "sandbox_session_id": sandbox_session_id}
 
 
-async def _resume_agent_after_sandbox(tool_call_id: UUID) -> None:
-    """Resume the paused agent after sandbox completion.
+def _make_sandbox_resume(tool_call_id: UUID):
+    """Build the resume coroutine function for run_session_task.
 
-    Runs as a Starlette BackgroundTask (proper lifecycle management).
-    Creates its own DB session. On failure, reverts statuses so the
-    session doesn't get permanently stuck.
-    
-    Idempotency: Checks that the agent run is still in PAUSED_SANDBOX state
-    before resuming, to prevent duplicate resume attempts.
+    Includes an idempotency guard: only resumes if the agent run is still
+    in PAUSED_SANDBOX state, preventing duplicate resume attempts from
+    concurrent webhook deliveries.
     """
-    from druppie.execution.orchestrator import Orchestrator
-    from druppie.repositories import ExecutionRepository, SessionRepository, ProjectRepository, QuestionRepository
-    from druppie.db.database import SessionLocal
-    from druppie.domain.common import AgentRunStatus, SessionStatus
+    from druppie.domain.common import AgentRunStatus
 
-    # Fresh DB session: this runs as a background task after the webhook request
-    # has completed and its DB session has been closed. The rollback in the
-    # except block only affects this session, not the webhook's committed data.
-    resume_db = SessionLocal()
-    try:
+    async def _resume(ctx) -> None:
         # Idempotency guard: check if the agent run is still paused for sandbox
-        execution_repo = ExecutionRepository(resume_db)
-        tool_call = execution_repo.get_tool_call(tool_call_id)
+        tool_call = ctx.execution_repo.get_tool_call(tool_call_id)
         if not tool_call or not tool_call.agent_run_id:
             logger.warning("sandbox_resume_no_tool_call_or_agent", tool_call_id=str(tool_call_id))
             return
-            
-        agent_run = execution_repo.get_by_id(tool_call.agent_run_id)
+
+        agent_run = ctx.execution_repo.get_by_id(tool_call.agent_run_id)
         if not agent_run:
             logger.warning("sandbox_resume_no_agent_run", tool_call_id=str(tool_call_id))
             return
-            
-        # Only resume if still in PAUSED_SANDBOX - prevents duplicate resume attempts
+
         if agent_run.status != AgentRunStatus.PAUSED_SANDBOX:
             logger.info(
                 "sandbox_resume_skipped_not_paused",
@@ -644,38 +646,10 @@ async def _resume_agent_after_sandbox(tool_call_id: UUID) -> None:
                 current_status=agent_run.status,
             )
             return
-        
-        orchestrator = Orchestrator(
-            session_repo=SessionRepository(resume_db),
-            execution_repo=ExecutionRepository(resume_db),
-            project_repo=ProjectRepository(resume_db),
-            question_repo=QuestionRepository(resume_db),
-        )
-        await orchestrator.resume_after_sandbox(tool_call_id)
-    except Exception as e:
-        logger.error("sandbox_resume_failed", tool_call_id=str(tool_call_id), error=str(e))
-        # Revert statuses so the session doesn't get permanently stuck
-        try:
-            resume_db.rollback()
-            execution_repo = ExecutionRepository(resume_db)
-            tool_call = execution_repo.get_tool_call(tool_call_id)
-            if tool_call and tool_call.agent_run_id:
-                agent_run = execution_repo.get_by_id(tool_call.agent_run_id)
-                # Fix: Also handle PAUSED_SANDBOX state in case error occurred before status change
-                if agent_run and agent_run.status in (AgentRunStatus.RUNNING, AgentRunStatus.PAUSED_SANDBOX):
-                    execution_repo.update_status(agent_run.id, AgentRunStatus.FAILED, error_message=f"Resume failed: {e}")
-                    session_repo = SessionRepository(resume_db)
-                    session_repo.update_status(agent_run.session_id, SessionStatus.FAILED)
-                    resume_db.commit()
-                    logger.info(
-                        "sandbox_resume_statuses_reverted",
-                        tool_call_id=str(tool_call_id),
-                        agent_run_id=str(agent_run.id),
-                    )
-        except Exception as revert_error:
-            logger.error("sandbox_resume_status_revert_failed", error=str(revert_error))
-    finally:
-        resume_db.close()
+
+        await ctx.orchestrator.resume_after_sandbox(tool_call_id)
+
+    return _resume
 
 
 # =============================================================================
