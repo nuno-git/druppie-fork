@@ -81,15 +81,15 @@ class DockerContainerManager:
             "--cap-add=NET_RAW",       # raw sockets (ping, health checks)
             # Resource limits
             f"--memory={config.DOCKER_MEMORY_LIMIT}",
+            *(
+                [f"--cpus={config.DOCKER_CPU_LIMIT}"]
+                if config.DOCKER_CPU_LIMIT and config.DOCKER_CPU_LIMIT != "0"
+                else []
+            ),
             f"--pids-limit={config.DOCKER_PIDS_LIMIT}",
             # Tmpfs for /tmp (faster I/O, auto-cleaned)
             "--tmpfs=/tmp:rw,exec,size=2g",
         ]
-
-        # CPU limit requires kernel CFS scheduler support; skip when unavailable
-        # (e.g. rootless Docker on kernels without CONFIG_CFS_BANDWIDTH).
-        if config.DOCKER_CPU_LIMIT:
-            security_flags.append(f"--cpus={config.DOCKER_CPU_LIMIT}")
 
         # Network mode: if DOCKER_NETWORK is set (e.g. Docker Compose), join that
         # network so containers use Docker DNS. Otherwise fall back to --network=host
