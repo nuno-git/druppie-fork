@@ -28,6 +28,7 @@ import {
   Zap,
   FileText,
   Container,
+  Package,
 } from 'lucide-react'
 
 import {
@@ -35,6 +36,7 @@ import {
   getDeployments,
   stopDeployment,
   getDeploymentLogs,
+  getProjectDependencies,
 } from '../services/api'
 import { useToast } from '../components/Toast'
 import SharedCopyButton from '../components/shared/CopyButton'
@@ -50,6 +52,7 @@ const formatTokens = (count) => {
 const TABS = {
   OVERVIEW: 'overview',
   CONVERSATIONS: 'conversations',
+  DEPENDENCIES: 'dependencies',
 }
 
 const CopyButton = SharedCopyButton
@@ -380,6 +383,7 @@ const ProjectDetail = () => {
   const tabs = [
     { id: TABS.OVERVIEW, label: 'Overview', icon: Server },
     { id: TABS.CONVERSATIONS, label: 'Conversations', icon: MessageSquare },
+    { id: TABS.DEPENDENCIES, label: 'Dependencies', icon: Package },
   ]
 
   if (isLoading) {
@@ -470,7 +474,78 @@ const ProjectDetail = () => {
           />
         )}
         {activeTab === TABS.CONVERSATIONS && <ConversationsTab sessions={project?.sessions} />}
+        {activeTab === TABS.DEPENDENCIES && <DependenciesTab projectId={projectId} />}
       </div>
+    </div>
+  )
+}
+
+const MANAGER_COLORS = {
+  npm: 'bg-red-100 text-red-700',
+  pnpm: 'bg-orange-100 text-orange-700',
+  bun: 'bg-yellow-100 text-yellow-800',
+  uv: 'bg-blue-100 text-blue-700',
+  pip: 'bg-green-100 text-green-700',
+}
+
+const DependenciesTab = ({ projectId }) => {
+  const { data: deps, isLoading } = useQuery({
+    queryKey: ['project-dependencies', projectId],
+    queryFn: () => getProjectDependencies(projectId),
+    enabled: !!projectId,
+  })
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="bg-white rounded-xl border border-gray-100 p-5 animate-pulse">
+            <div className="h-5 bg-gray-200 rounded w-32" />
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  if (!deps || deps.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-100 p-8 text-center text-gray-500">
+        <Package className="w-10 h-10 mx-auto mb-3 text-gray-300" />
+        <p>No dependencies discovered yet</p>
+        <p className="text-sm mt-1">Dependencies will appear after sandbox runs install packages</p>
+      </div>
+    )
+  }
+
+  // Group by manager
+  const grouped = {}
+  for (const dep of deps) {
+    if (!grouped[dep.manager]) grouped[dep.manager] = []
+    grouped[dep.manager].push(dep)
+  }
+
+  return (
+    <div className="space-y-3">
+      {Object.entries(grouped).map(([manager, pkgs]) => (
+        <div key={manager} className="bg-white rounded-xl border border-gray-100">
+          <div className="flex items-center gap-3 px-5 py-4">
+            <span className="font-medium text-gray-900">{manager}</span>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${MANAGER_COLORS[manager] || 'bg-gray-100 text-gray-700'}`}>
+              {pkgs.length}
+            </span>
+          </div>
+          <div className="border-t border-gray-100 px-5 py-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1">
+              {pkgs.map((pkg, i) => (
+                <div key={`${pkg.name}-${pkg.version}-${i}`} className="flex items-baseline gap-2 py-1">
+                  <span className="text-sm text-gray-900 font-mono truncate">{pkg.name}</span>
+                  <span className="text-xs text-gray-400 flex-shrink-0">{pkg.version}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
