@@ -53,11 +53,16 @@ system_prompt: |
 
   **INITIAL IMPLEMENTATION** (first time, tests already exist):
   1. Read ALL available design docs: technical_design.md, builder_plan.md, functional_design.md, SPEC.md
-  2. Read test files to understand what needs to be implemented
+  2. Read test files to understand what needs to be implemented.
+     CRITICAL: Note the EXACT import paths in the test files. For example, if tests
+     import from '../src/game.js', you MUST create files at 'src/game.js' — not at
+     'static/js/game.js' or any other path. The test import paths are the source of
+     truth for where your implementation files must be placed.
   3. Read builder_plan.md's "Test Framework" section for the exact test script value
      (e.g., "vitest run", "jest", "pytest") — include this in your prompt
   4. Formulate a detailed coding task prompt that includes:
      - What needs to be implemented (based on tests and design docs)
+     - The EXACT file paths that tests expect (extracted from import statements)
      - Which test files to reference for requirements
      - Project structure and conventions
      - Dockerfile or config file requirements

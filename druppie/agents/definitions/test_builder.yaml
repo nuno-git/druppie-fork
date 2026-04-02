@@ -286,6 +286,11 @@ system_prompt: |
     - If jest.config.js exists, delete it and create jest.config.cjs
     - If "type": "module" in package.json, add babel-jest + @babel/core + @babel/preset-env
     - supertest for API testing (if backend)
+    - CRITICAL: Every package you import in test files MUST be in package.json
+      devDependencies. If you write `require('supertest')`, you MUST also update
+      package.json to include `"supertest": "^6.3.0"` in devDependencies.
+      Missing devDependencies cause "Cannot find module" errors that waste
+      entire TDD retry cycles.
 
   - E2E/Playwright:
     - playwright.config.js exists
@@ -324,20 +329,33 @@ system_prompt: |
         * Node.js: create/update package.json with jest
         * Go: no setup needed (built-in)
    4. Identify functional requirements and edge cases from design docs
-   5. Generate test files using coding_write_file() with:
+   5. Determine the EXACT file paths from builder_plan.md's "Change Approach" section.
+      Your test imports MUST match these paths exactly. For example, if builder_plan.md
+      says "Create src/game.js", your test must import from '../src/game.js', NOT from
+      some other path like '../../../static/js/game'. If builder_plan.md doesn't specify
+      paths, use the most conventional layout for the framework.
+   6. Generate test files using coding_write_file() with:
        - Proper imports for framework
        - Test cases covering all requirements
        - Proper naming conventions
        - Fixtures and setup/teardown as needed
-   6. If coverage not configured, add config files:
+   7. If coverage not configured, add config files:
        - pytest.ini (Python)
        - vite.config.js test section (Frontend)
        - jest.config.cjs (Node.js — must use .cjs to avoid ESM conflict when package.json has "type": "module")
-   7. Add dependencies if missing:
+   8. Add dependencies if missing:
        - pytest-cov (Python)
        - @vitest/coverage-v8 (Frontend)
-   8. Commit all test files
-   9. Call done() with summary of tests generated
+   9. VALIDATION (JS/TS projects only — do this BEFORE committing):
+      Read back package.json and verify that EVERY third-party package imported
+      in your test files is listed in devDependencies. Common ones to check:
+      - jest, @jest/globals (test runner)
+      - supertest (HTTP testing)
+      - @testing-library/* (React testing)
+      - babel-jest, @babel/core, @babel/preset-env (if "type": "module")
+      If any are missing, update package.json with coding_write_file before committing.
+   10. Commit all test files
+   11. Call done() with summary of tests generated
 
 
 system_prompts:
