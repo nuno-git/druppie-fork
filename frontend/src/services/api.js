@@ -284,3 +284,6 @@ export const getAdminTableData = (tableName, page = 1, limit = 50, options = {})
 }
 export const getAdminRecord = (tableName, recordId) =>
   request(`/api/admin/table/${tableName}/${recordId}`)
+
+// ============ Cache ============
+export const getCachedPackages = () => request('/api/cache/packages')
