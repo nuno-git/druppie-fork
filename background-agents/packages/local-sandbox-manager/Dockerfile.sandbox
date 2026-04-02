@@ -32,17 +32,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Docker CE for Docker-in-Docker (builder verification)
-RUN install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
-    && chmod a+r /etc/apt/keyrings/docker.asc \
-    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
-       > /etc/apt/sources.list.d/docker.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-       docker-ce docker-ce-cli containerd.io docker-compose-plugin \
-    && rm -rf /var/lib/apt/lists/*
-
 # Install GitHub CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -79,27 +68,77 @@ RUN npm install -g opencode-ai@1.2.22 \
 RUN playwright install chromium \
     && playwright install-deps chromium
 
-# Default git identity (prevents agent from wasting time configuring)
-RUN git config --global user.name "Sandbox Agent" \
-    && git config --global user.email "sandbox@druppie.local"
-
 # Working directories
 RUN mkdir -p /workspace /app/plugins /tmp/opencode \
+    /cache/npm /cache/pnpm /cache/bun /cache/uv /cache/pip \
     && echo 'Image built for local Kata sandbox' > /app/image-version.txt
 
-# Environment variables
-ENV HOME=/root \
-    NODE_ENV=development \
-    PNPM_HOME=/root/.local/share/pnpm \
-    PATH=/root/.bun/bin:/root/.local/share/pnpm:/usr/local/bin:/usr/bin:/bin \
-    PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright \
-    PYTHONPATH=/app \
-    SANDBOX_VERSION=local-kata \
-    NODE_PATH=/usr/lib/node_modules
+# Supply chain integrity: HTTPS-only package manager configs.
+# pip.conf is system-wide (/etc/) so it applies regardless of which user runs pip.
+# npmrc/pnpmrc are per-user (~/.npmrc) because npm/pnpm ignore system-level configs.
+COPY packages/local-sandbox-manager/sandbox-config/pip.conf /etc/pip.conf
 
 # Copy sandbox code (entrypoint, bridge, plugins, types)
 COPY packages/modal-infra/src/sandbox/ /app/sandbox/
 
+# ── Non-root sandbox user ────────────────────────────────────────────
+RUN groupadd -g 1000 sandbox \
+    && useradd -m -u 1000 -g 1000 -s /bin/bash sandbox
+
+# Relocate Playwright browsers to shared location
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+RUN mkdir -p /opt/playwright-browsers \
+    && cp -a /root/.cache/ms-playwright/* /opt/playwright-browsers/ \
+    && rm -rf /root/.cache/ms-playwright
+
+# Relocate bun to sandbox user home
+RUN cp -a /root/.bun /home/sandbox/.bun \
+    && chown -R sandbox:sandbox /home/sandbox/.bun
+
+# Relocate pnpm global store
+RUN mkdir -p /home/sandbox/.local/share/pnpm \
+    && chown -R sandbox:sandbox /home/sandbox/.local
+
+# Fix ownership on all sandbox-writable directories
+RUN chown -R sandbox:sandbox \
+    /workspace /app \
+    /cache/npm /cache/pnpm /cache/bun /cache/uv /cache/pip \
+    /home/sandbox
+
+# Copy package manager configs to sandbox user home
+COPY packages/local-sandbox-manager/sandbox-config/npmrc /home/sandbox/.npmrc
+COPY packages/local-sandbox-manager/sandbox-config/pnpmrc /home/sandbox/.pnpmrc
+RUN chown sandbox:sandbox /home/sandbox/.npmrc /home/sandbox/.pnpmrc
+
+# Environment variables
+ENV HOME=/home/sandbox \
+    NODE_ENV=development \
+    PNPM_HOME=/home/sandbox/.local/share/pnpm \
+    PATH=/home/sandbox/.bun/bin:/home/sandbox/.local/share/pnpm:/usr/local/bin:/usr/bin:/bin \
+    PYTHONPATH=/app \
+    SANDBOX_VERSION=local-kata \
+    NODE_PATH=/usr/lib/node_modules \
+    NPM_CONFIG_CACHE=/cache/npm \
+    PNPM_STORE_DIR=/cache/pnpm \
+    BUN_INSTALL_CACHE_DIR=/cache/bun \
+    UV_CACHE_DIR=/cache/uv \
+    PIP_CACHE_DIR=/cache/pip \
+    UV_INDEX_URL=https://pypi.org/simple/
+
+# Git config for sandbox user
+RUN su sandbox -c 'git config --global user.name "Sandbox Agent"' \
+    && su sandbox -c 'git config --global user.email "sandbox@druppie.local"'
+
+# Make gh CLI writable by sandbox user so entrypoint.py can replace it
+# with a wrapper script that redirects to the GitHub API proxy.
+RUN rm -f /usr/local/bin/gh && touch /usr/local/bin/gh && chown sandbox:sandbox /usr/local/bin/gh
+
+# Entrypoint wrapper for cache permission checks
+COPY packages/local-sandbox-manager/sandbox-config/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+USER sandbox
 WORKDIR /workspace
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["python", "-m", "sandbox.entrypoint"]

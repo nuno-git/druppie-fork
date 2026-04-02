@@ -284,3 +284,11 @@ export const getAdminTableData = (tableName, page = 1, limit = 50, options = {})
 }
 export const getAdminRecord = (tableName, recordId) =>
   request(`/api/admin/table/${tableName}/${recordId}`)
+
+// ============ Cache ============
+export const getCachedPackages = () => request('/api/cache/packages')
+export const getAllProjectDependencies = () => request('/api/cache/dependencies')
+export const getPackageProjects = (manager, name) =>
+  request(`/api/cache/packages/${encodeURIComponent(manager)}/${encodeURIComponent(name)}/projects`)
+export const getProjectDependencies = (projectId) =>
+  request(`/api/projects/${projectId}/dependencies`)

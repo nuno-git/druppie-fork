@@ -50,6 +50,12 @@ docker compose --profile reset-db run --rm reset-db
 docker compose --profile dev down
 docker compose --profile infra --profile reset-hard run --rm reset-hard
 docker compose --profile dev up -d --build   # Always --build after reset (MCP servers have no volume mount)
+
+# Purge sandbox dependency cache (npm, pnpm, bun, uv, pip)
+docker compose --profile reset-cache run --rm reset-cache
+
+# Scan dependency cache for vulnerabilities (OSV)
+docker compose --profile scan-cache run --rm cache-scanner
 ```
 
 ### Backend (Python/FastAPI)

@@ -17,6 +17,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 
 from . import config
 from .auth import AuthConfigurationError, verify_internal_token
+from .cache_inspector import inspect_cached_packages
 from .github_token import generate_installation_token
 from .snapshot_store import SnapshotStore
 
@@ -331,6 +332,23 @@ async def warm_sandbox(
         }
     except Exception as e:
         log.error("Warm sandbox failed: %s", e)
+        return {"success": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/cache/packages
+# ---------------------------------------------------------------------------
+
+@app.get("/api/cache/packages")
+async def get_cache_packages(
+    authorization: str | None = Header(None),
+):
+    require_auth(authorization)
+    try:
+        result = inspect_cached_packages()
+        return {"success": True, "data": result}
+    except Exception as e:
+        log.error("Cache inspection failed: %s", e)
         return {"success": False, "error": str(e)}
 
 

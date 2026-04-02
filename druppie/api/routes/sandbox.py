@@ -357,6 +357,16 @@ def _extract_tool_results_summary(events: list[dict]) -> list[str]:
     return summaries
 
 
+def _extract_cache_packages(events: list[dict]) -> list[dict]:
+    """Extract package list from cache_summary event in sandbox events."""
+    for event in events:
+        if event.get("type") == "cache_summary":
+            packages = event.get("packages") or event.get("data", {}).get("packages")
+            if packages and isinstance(packages, list):
+                return packages
+    return []
+
+
 def _build_agent_result_text(
     success: bool,
     changed_files: list[dict],
@@ -581,6 +591,25 @@ async def sandbox_complete_webhook(
         db.add(sandbox_mapping)
     except Exception as e:
         logger.warning("sandbox_events_persist_failed", error=str(e))
+
+    # Store discovered package dependencies linked to the project
+    try:
+        cache_packages = _extract_cache_packages(events)
+        if cache_packages and sandbox_mapping.session_id:
+            from druppie.db.models.session import Session as SessionModel
+            session = db.query(SessionModel).filter_by(id=sandbox_mapping.session_id).first()
+            if session and session.project_id:
+                from druppie.repositories import ProjectDependencyRepository
+                dep_repo = ProjectDependencyRepository(db)
+                count = dep_repo.upsert_packages(session.project_id, cache_packages)
+                if count:
+                    logger.info(
+                        "project_dependencies_stored",
+                        project_id=str(session.project_id),
+                        package_count=count,
+                    )
+    except Exception as e:
+        logger.warning("project_dependencies_store_failed", error=str(e))
 
     db.commit()
 
