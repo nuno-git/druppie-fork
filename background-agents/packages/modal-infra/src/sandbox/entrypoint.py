@@ -828,23 +828,59 @@ exit 1
         before: dict[str, set[str]],
         after: dict[str, set[str]],
     ) -> None:
-        """Diff two cache snapshots and emit structured log events for new entries."""
+        """Diff two cache snapshots and emit structured log events."""
+        total_new = 0
+        total_cached = 0
+        per_manager: list[dict] = []
+
         for pm in before:
-            new_entries = after.get(pm, set()) - before.get(pm, set())
-            if not new_entries:
-                continue
-            # Cap logged entries to avoid oversized log lines
-            entries_list = sorted(new_entries)[:50]
+            after_set = after.get(pm, set())
+            before_set = before.get(pm, set())
+            new_entries = after_set - before_set
+            cached_count = len(after_set & before_set)
+            total_new += len(new_entries)
+            total_cached += cached_count
+
+            if new_entries:
+                entries_list = sorted(new_entries)[:50]
+                self.log.info(
+                    "cache.new_entries",
+                    package_manager=pm,
+                    count=len(new_entries),
+                    entries=entries_list,
+                    sandbox_id=self.sandbox_id,
+                    session_id=self.session_config.get("session_id", ""),
+                    repo_owner=self.repo_owner,
+                    repo_name=self.repo_name,
+                )
+
+            if new_entries or cached_count > 0:
+                per_manager.append({
+                    "manager": pm,
+                    "new": len(new_entries),
+                    "cached": cached_count,
+                })
+
+        if total_new > 0 or total_cached > 0:
             self.log.info(
-                "cache.new_entries",
-                package_manager=pm,
-                count=len(new_entries),
-                entries=entries_list,
+                "cache.summary",
+                total_new=total_new,
+                total_cached=total_cached,
+                per_manager=per_manager,
                 sandbox_id=self.sandbox_id,
                 session_id=self.session_config.get("session_id", ""),
-                repo_owner=self.repo_owner,
-                repo_name=self.repo_name,
             )
+            # Write summary file for the bridge to pick up
+            import json as _json
+            summary_path = Path("/tmp/cache_summary.json")
+            try:
+                summary_path.write_text(_json.dumps({
+                    "total_new": total_new,
+                    "total_cached": total_cached,
+                    "per_manager": per_manager,
+                }))
+            except Exception:
+                pass
 
     async def run_setup_script(self) -> bool:
         """
@@ -1045,6 +1081,14 @@ exit 1
             # Snapshot cache state before any package installs (setup + coding task).
             # The "after" snapshot is taken at shutdown to capture the full lifecycle.
             self._cache_snapshot_before = await self._snapshot_cache_state()
+
+            # Persist before-snapshot so the bridge can compute cache summary
+            import json as _json
+            try:
+                serializable = {k: sorted(v) for k, v in self._cache_snapshot_before.items()}
+                Path("/tmp/cache_snapshot_before.json").write_text(_json.dumps(serializable))
+            except Exception:
+                pass
 
             # Phase 2.5: Run repo setup script (fresh clone only)
             setup_success: bool | None = None

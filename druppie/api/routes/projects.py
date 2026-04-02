@@ -14,9 +14,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 import structlog
 
 from druppie.api.deps import get_current_user, get_project_service, get_user_roles
+from druppie.db.database import get_db
 from druppie.services import ProjectService
 from druppie.domain import ProjectSummary, ProjectDetail
 
@@ -125,3 +127,26 @@ async def delete_project(
     user_roles = get_user_roles(user)
 
     await service.delete(project_id, user_id, user_roles)
+
+
+@router.get("/projects/{project_id}/dependencies")
+async def get_project_dependencies(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """List all dependencies discovered for a project."""
+    from druppie.repositories import ProjectDependencyRepository
+
+    dep_repo = ProjectDependencyRepository(db)
+    deps = dep_repo.list_for_project(project_id)
+    return [
+        {
+            "manager": d.manager,
+            "name": d.name,
+            "version": d.version,
+            "first_seen_at": d.first_seen_at.isoformat() if d.first_seen_at else None,
+            "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
+        }
+        for d in deps
+    ]
