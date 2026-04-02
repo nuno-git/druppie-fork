@@ -159,18 +159,8 @@ mcps:
 
   # NOTE: HITL tools (hitl_ask_question, hitl_ask_multiple_choice_question) are
   # builtin tools defined in druppie/agents/builtin_tools.py, NOT an MCP server.
-  # Configure per-agent via `builtin_tools` in agent YAML files.
-
-  hitl:
-    url: ${MCP_HITL_URL:-http://module-hitl:9003}
-    type: core
-    tools:
-      - name: ask_question
-        requires_approval: false
-      - name: ask_choice
-        requires_approval: false
-      - name: submit_response
-        requires_approval: false
+  # There is no HITL module — HITL is handled entirely in-process because it
+  # needs to pause/resume the agent loop directly.
 
   filesearch:
     url: ${MCP_FILESEARCH_URL:-http://module-filesearch:9004}
@@ -239,6 +229,15 @@ mcps:
     url: ${MCP_REGISTRY_URL:-http://module-registry:9007}
     type: core
     tools:
+      - name: list_modules
+        requires_approval: false
+
+      - name: get_module
+        requires_approval: false
+
+      - name: search_modules
+        requires_approval: false
+
       - name: list_components
         requires_approval: false
 
@@ -246,10 +245,4 @@ mcps:
         requires_approval: false
 
       - name: get_skill
-        requires_approval: false
-
-      - name: get_mcp_server
-        requires_approval: false
-
-      - name: get_tool
         requires_approval: false
