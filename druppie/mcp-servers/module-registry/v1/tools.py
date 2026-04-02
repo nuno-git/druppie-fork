@@ -41,8 +41,8 @@ module = RegistryModule(data_dir=DATA_DIR)
     description=(
         "List all available Druppie modules with their versions, type, tool "
         "count, and which agents use them. Optionally filter by type: 'core' "
-        "(agents only), 'module' (apps only), or 'both' (agents + apps)."
-    ),
+        "(agents only) or 'module' (apps only). Empty = all."    
+        ),
     meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
 )
 async def list_modules(category: str = "") -> dict:
