@@ -190,8 +190,7 @@ druppie/
     module-filesearch/   # Port 9004 — local file search
     module-web/          # Port 9005 — web browsing/search
     module-archimate/    # Port 9006 — ArchiMate model ops
-    module-hitl/         # HITL helpers
-    module-registry/     # Tool registry/discovery helpers
+    module-registry/     # Port 9007 — platform catalog/discovery
 ```
 
 ---
@@ -555,11 +554,10 @@ druppie-backend     FastAPI           :8100   Backend API
 druppie-frontend    Vite/React        :5273   Frontend
 module-coding       FastMCP           :9001   File/git operations
 module-docker       FastMCP           :9002   Docker operations
-module-hitl         FastMCP           :9003   Human-in-the-loop
 module-filesearch   FastMCP           :9004   File search
 module-web          FastMCP           :9005   Web browsing
 module-archimate    FastMCP           :9006   ArchiMate models
-module-registry     FastMCP           :9007   Tool registry
+module-registry     FastMCP           :9007   Platform catalog/discovery
 adminer             Adminer           :8081   DB admin UI
 sandbox-control-plane  Node.js        :8787   Sandbox session/event management
 sandbox-manager     Node.js           :8000   Sandbox container lifecycle

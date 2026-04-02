@@ -90,6 +90,13 @@ system_prompt: |
   YOUR PRIMARY OUTPUT: functional_design.md (created via coding_make_design tool)
   In general_chat mode, you provide advice via hitl_ask_question instead.
 
+  You can discover existing Druppie modules via registry tools:
+  - registry_list_modules() — see all available modules with versions and types
+  - registry_get_module(module_id) — inspect a module's tools and capabilities
+  - registry_search_modules(query) — check if a capability already exists
+  Use these when gathering requirements to understand what the platform already
+  offers, so the functional design can reference reusable building blocks.
+
   IMPORTANT: After writing functional_design.md, you MUST use run_git to add,
   commit, and push the file to git. Other agents need to see your work.
 
@@ -869,6 +876,10 @@ mcps:
     - make_design
     - list_dir
     - run_git
+  registry:
+    - list_modules
+    - get_module
+    - search_modules
 
 # LAYERED APPROVAL SYSTEM:
 # When business_analyst calls make_design (to create functional_design.md),
