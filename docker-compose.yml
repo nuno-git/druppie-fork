@@ -302,28 +302,6 @@ services:
       retries: 5
       start_period: 10s
 
-  module-hitl:
-    build:
-      context: ./druppie/mcp-servers
-      dockerfile: module-hitl/Dockerfile
-    container_name: druppie-module-hitl
-    profiles: [infra, dev, prod]
-    environment:
-      MCP_PORT: "9003"
-      BACKEND_URL: http://druppie-backend:8000
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-druppie-internal-secret-key}
-      HITL_TIMEOUT: "300"
-    ports:
-      - "${MCP_HITL_PORT:-9003}:9003"
-    networks:
-      - druppie-new-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9003/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
   module-registry:
     build:
       context: ./druppie/mcp-servers
@@ -338,6 +316,7 @@ services:
       - ./druppie/core/mcp_config.yaml:/data/mcp_config.yaml:ro
       - ./druppie/skills:/data/skills:ro
       - ./druppie/agents/builtin_tools.py:/data/builtin_tools.py:ro
+      - ./druppie/mcp-servers:/data/mcp-servers:ro
     ports:
       - "${MCP_REGISTRY_PORT:-9007}:9007"
     networks:
