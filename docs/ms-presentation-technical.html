@@ -1,0 +1,1930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Druppie — Technical Deep Dive</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --deep: #0a1628;
+    --ocean: #0e2240;
+    --surface: #132e4f;
+    --water: #2196F3;
+    --water-light: #64B5F6;
+    --water-pale: rgba(33, 150, 243, 0.08);
+    --foam: #e3f2fd;
+    --sand: #f5e6d0;
+    --reed: #8bc34a;
+    --reed-dark: #558b2f;
+    --warm: #ff8a65;
+    --coral: #ef5350;
+    --text: #e8edf5;
+    --text-mid: #94a8c4;
+    --text-dim: #5a7194;
+    --glass: rgba(19, 46, 79, 0.65);
+    --glass-border: rgba(33, 150, 243, 0.12);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--deep);
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 120% 80% at 20% 100%, rgba(33, 150, 243, 0.06) 0%, transparent 60%),
+      radial-gradient(ellipse 100% 60% at 80% 0%, rgba(33, 150, 243, 0.04) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .slide {
+    display: none;
+    height: 100vh;
+    padding: 56px 80px;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+  }
+
+  .slide.active { display: flex; }
+
+  h1 {
+    font-family: 'DM Serif Display', serif;
+    font-weight: 400;
+    line-height: 1.1;
+  }
+
+  h2 {
+    font-family: 'DM Serif Display', serif;
+    font-size: 2.6rem;
+    font-weight: 400;
+    color: #fff;
+    margin-bottom: 28px;
+    line-height: 1.15;
+  }
+
+  h2 .accent { color: var(--water-light); }
+
+  h3 {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--water-light);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    margin-bottom: 16px;
+  }
+
+  .slide.title-slide {
+    align-items: center;
+    text-align: center;
+  }
+
+  .title-slide .org-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 24px;
+    border-radius: 100px;
+    background: var(--water-pale);
+    border: 1px solid var(--glass-border);
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: var(--water-light);
+    margin-bottom: 48px;
+    letter-spacing: 0.5px;
+  }
+
+  .title-slide .org-badge .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--water);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.5; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.3); }
+  }
+
+  .title-slide h1 {
+    font-size: 4.5rem;
+    color: #fff;
+    margin-bottom: 20px;
+  }
+
+  .title-slide h1 .water-text {
+    background: linear-gradient(135deg, var(--water-light), var(--water), #1565C0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .title-slide .subtitle {
+    font-size: 1.35rem;
+    color: var(--text-mid);
+    font-weight: 300;
+    max-width: 700px;
+    line-height: 1.5;
+    margin-bottom: 56px;
+  }
+
+  .title-slide .meta {
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    line-height: 1.8;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 24px 26px;
+    transition: border-color 0.3s, transform 0.3s;
+  }
+
+  .card:hover {
+    border-color: rgba(33, 150, 243, 0.25);
+    transform: translateY(-2px);
+  }
+
+  .card h4 {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+
+  .card p, .card li {
+    font-size: 0.88rem;
+    color: var(--text-mid);
+    line-height: 1.6;
+  }
+
+  .card .icon {
+    font-size: 1.5rem;
+    margin-bottom: 10px;
+    display: block;
+  }
+
+  .card ul {
+    list-style: none;
+    padding: 0;
+  }
+
+  .card ul li {
+    padding: 3px 0;
+    padding-left: 16px;
+    position: relative;
+  }
+
+  .card ul li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 11px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--water);
+    opacity: 0.5;
+  }
+
+  /* Grid */
+  .grid { display: grid; gap: 16px; }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .grid-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+
+  /* Two-column */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    align-items: start;
+  }
+
+  /* Prose */
+  .prose {
+    font-size: 1.05rem;
+    color: var(--text-mid);
+    line-height: 1.7;
+    max-width: 640px;
+  }
+
+  .prose strong { color: #fff; font-weight: 600; }
+  .prose em { color: var(--water-light); font-style: italic; }
+  .prose + .prose { margin-top: 16px; }
+
+  /* Badges */
+  .badge-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 12px 0;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 100px;
+    font-size: 0.78rem;
+    font-weight: 500;
+  }
+
+  .badge.water  { background: rgba(33,150,243,0.12); color: var(--water-light); border: 1px solid rgba(33,150,243,0.25); }
+  .badge.green  { background: rgba(139,195,74,0.12); color: #aed581; border: 1px solid rgba(139,195,74,0.25); }
+  .badge.warm   { background: rgba(255,138,101,0.12); color: #ffab91; border: 1px solid rgba(255,138,101,0.25); }
+  .badge.sand   { background: rgba(245,230,208,0.08); color: var(--sand); border: 1px solid rgba(245,230,208,0.15); }
+  .badge.coral  { background: rgba(239,83,80,0.12); color: #ef9a9a; border: 1px solid rgba(239,83,80,0.25); }
+  .badge.purple { background: rgba(167,139,250,0.12); color: #c4b5fd; border: 1px solid rgba(167,139,250,0.25); }
+
+  /* Layers */
+  .layers {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 12px 0;
+  }
+
+  .layer {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 20px;
+    border-radius: 12px;
+    background: var(--glass);
+    border-left: 4px solid;
+  }
+
+  .layer-label { font-weight: 600; min-width: 160px; color: #fff; font-size: 0.92rem; }
+  .layer-desc  { color: var(--text-mid); font-size: 0.88rem; }
+
+  /* Pipeline */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin: 20px 0;
+  }
+
+  .pipeline-node {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    text-align: center;
+    min-width: 100px;
+  }
+
+  .pipeline-node .role { font-size: 0.75rem; font-weight: 600; color: var(--water-light); }
+  .pipeline-node .name { font-size: 0.7rem; color: var(--text-dim); margin-top: 3px; }
+
+  .pipeline-arrow { color: var(--text-dim); font-size: 1.2rem; padding: 0 6px; }
+
+  /* Code blocks */
+  .code-block {
+    background: rgba(10, 22, 40, 0.8);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 18px 22px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--text-mid);
+    line-height: 1.6;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  .code-block .comment { color: var(--text-dim); }
+  .code-block .keyword { color: var(--water-light); }
+  .code-block .string { color: var(--reed); }
+  .code-block .accent { color: var(--warm); }
+
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82em;
+    background: rgba(33, 150, 243, 0.08);
+    padding: 2px 7px;
+    border-radius: 5px;
+    color: var(--water-light);
+  }
+
+  /* Stat cards */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin: 20px 0;
+  }
+
+  .stat-card {
+    text-align: center;
+    padding: 24px 14px;
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+  }
+
+  .stat-card .num {
+    font-family: 'DM Serif Display', serif;
+    font-size: 2.2rem;
+    color: var(--water-light);
+  }
+
+  .stat-card .label {
+    margin-top: 6px;
+    font-size: 0.82rem;
+    color: var(--text-mid);
+  }
+
+  /* Quote block */
+  .quote-block {
+    border-left: 3px solid var(--water);
+    padding: 16px 24px;
+    background: var(--water-pale);
+    border-radius: 0 12px 12px 0;
+    margin: 20px 0;
+  }
+
+  .quote-block p {
+    font-family: 'DM Serif Display', serif;
+    font-size: 1.2rem;
+    color: #fff;
+    font-style: italic;
+    line-height: 1.5;
+  }
+
+  /* Flow diagram (vertical) */
+  .flow-vertical {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .flow-step { display: flex; align-items: stretch; gap: 14px; }
+
+  .flow-step-line {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 32px;
+    flex-shrink: 0;
+  }
+
+  .flow-step-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 5px;
+  }
+
+  .flow-step-connector {
+    width: 2px;
+    flex-grow: 1;
+    background: rgba(33, 150, 243, 0.15);
+  }
+
+  .flow-step-content { padding-bottom: 14px; flex-grow: 1; }
+  .flow-step-content .step-title { font-size: 0.9rem; font-weight: 600; color: #fff; margin-bottom: 2px; }
+  .flow-step-content .step-agent { font-size: 0.78rem; font-weight: 500; }
+  .flow-step-content .step-desc  { font-size: 0.8rem; color: var(--text-mid); line-height: 1.5; }
+
+  /* Horizontal flow */
+  .flow-horizontal {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    margin: 16px 0;
+  }
+
+  .flow-h-node {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    text-align: center;
+    min-width: 90px;
+  }
+
+  .flow-h-node .node-label { font-size: 0.82rem; font-weight: 600; color: #fff; }
+  .flow-h-node .node-sub { font-size: 0.7rem; color: var(--text-dim); margin-top: 2px; }
+
+  .flow-h-arrow {
+    color: var(--text-dim);
+    font-size: 1.2rem;
+    padding: 0 8px;
+    flex-shrink: 0;
+  }
+
+  /* Table */
+  .slide-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin: 12px 0;
+  }
+
+  .slide-table th {
+    text-align: left;
+    padding: 10px 14px;
+    color: var(--water-light);
+    font-weight: 600;
+    border-bottom: 2px solid rgba(33, 150, 243, 0.2);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .slide-table td {
+    padding: 10px 14px;
+    color: var(--text-mid);
+    border-bottom: 1px solid rgba(33, 150, 243, 0.06);
+  }
+
+  .slide-table tr:hover td {
+    background: rgba(33, 150, 243, 0.03);
+  }
+
+  /* Section marker */
+  .section-marker {
+    position: absolute;
+    top: 30px;
+    left: 80px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: var(--text-dim);
+  }
+
+  /* Navigation */
+  .nav {
+    position: fixed;
+    bottom: 30px;
+    right: 40px;
+    display: flex;
+    gap: 10px;
+    z-index: 100;
+  }
+
+  .nav button {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    color: var(--text-mid);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    backdrop-filter: blur(8px);
+    transition: all 0.2s;
+  }
+
+  .nav button:hover {
+    background: rgba(33, 150, 243, 0.15);
+    border-color: rgba(33, 150, 243, 0.35);
+    color: var(--water-light);
+  }
+
+  .progress {
+    position: fixed;
+    bottom: 0; left: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--water), var(--water-light));
+    transition: width 0.3s;
+    z-index: 100;
+  }
+
+  .slide-counter {
+    position: fixed;
+    bottom: 38px;
+    left: 40px;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    z-index: 100;
+  }
+
+  /* Back link */
+  .back-link {
+    position: fixed;
+    top: 30px;
+    right: 40px;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    text-decoration: none;
+    z-index: 100;
+    padding: 8px 16px;
+    border-radius: 100px;
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    transition: all 0.2s;
+  }
+
+  .back-link:hover {
+    color: var(--water-light);
+    border-color: rgba(33, 150, 243, 0.35);
+  }
+
+  /* Closing CTA */
+  .closing-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 32px;
+    border-radius: 100px;
+    background: linear-gradient(135deg, var(--water), #1565C0);
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 600;
+    border: none;
+    margin-top: 32px;
+    letter-spacing: 0.3px;
+    text-decoration: none;
+  }
+
+  /* Animations */
+  .slide.active .fade-up {
+    animation: fadeUp 0.6s ease-out both;
+  }
+
+  .slide.active .fade-up:nth-child(1) { animation-delay: 0s; }
+  .slide.active .fade-up:nth-child(2) { animation-delay: 0.1s; }
+  .slide.active .fade-up:nth-child(3) { animation-delay: 0.2s; }
+  .slide.active .fade-up:nth-child(4) { animation-delay: 0.3s; }
+  .slide.active .fade-up:nth-child(5) { animation-delay: 0.4s; }
+  .slide.active .fade-up:nth-child(6) { animation-delay: 0.5s; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .wave-decoration {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 120px;
+    overflow: hidden;
+    opacity: 0.04;
+    pointer-events: none;
+  }
+
+  .wave-decoration svg {
+    position: absolute;
+    bottom: -10px;
+    width: 200%;
+    height: 120px;
+  }
+
+  /* Compact card variant */
+  .card-compact {
+    padding: 18px 22px;
+  }
+
+  .card-compact h4 {
+    font-size: 0.92rem;
+    margin-bottom: 6px;
+  }
+
+  .card-compact p {
+    font-size: 0.82rem;
+  }
+
+  /* Highlight box */
+  .highlight-box {
+    background: rgba(33, 150, 243, 0.06);
+    border: 1px solid rgba(33, 150, 243, 0.15);
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin: 12px 0;
+  }
+
+  .highlight-box p {
+    font-size: 0.88rem;
+    color: var(--text-mid);
+    line-height: 1.6;
+  }
+
+  .highlight-box strong { color: #fff; }
+</style>
+</head>
+<body>
+
+<!-- standalone technical deck -->
+
+<!-- ============================================================ -->
+<!-- SLIDE 1 — Title -->
+<!-- ============================================================ -->
+<div class="slide title-slide active" id="s1">
+  <div class="org-badge fade-up">
+    <span class="dot"></span>
+    Technical Deep Dive
+  </div>
+  <h1 class="fade-up" style="animation-delay:0.1s;">
+    <span class="water-text">Druppie</span> Under the Hood
+  </h1>
+  <div class="subtitle fade-up" style="animation-delay:0.2s;">
+    Architecture, orchestration, sandbox isolation, governance,<br>
+    and the module system — in detail
+  </div>
+  <div class="meta fade-up" style="animation-delay:0.35s;">
+    Companion deck to the main presentation<br>
+    <span style="color:var(--water-light);">Switch here when someone asks "but how does it actually work?"</span>
+  </div>
+
+  <div class="wave-decoration">
+    <svg viewBox="0 0 1440 120" preserveAspectRatio="none">
+      <path fill="var(--water)" d="M0,60 C360,120 720,0 1080,60 C1260,90 1380,30 1440,60 L1440,120 L0,120 Z"/>
+    </svg>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 2 — System overview -->
+<!-- ============================================================ -->
+<div class="slide" id="s2">
+  <div class="section-marker">01 &mdash; System Overview</div>
+  <h2 class="fade-up">The full <span class="accent">service map</span></h2>
+
+  <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:20px;">
+    Currently running on Docker Compose for development. Production path is probably <strong>Kubernetes</strong>.
+  </p>
+
+  <div class="grid grid-4 fade-up" style="animation-delay:0.1s; margin-bottom:14px;">
+    <div class="card card-compact">
+      <span class="icon">&#9881;</span>
+      <h4>Backend</h4>
+      <p>Python / FastAPI :8100<br>Orchestrator, agent runtime, API</p>
+    </div>
+    <div class="card card-compact">
+      <span class="icon">&#127912;</span>
+      <h4>Frontend</h4>
+      <p>React / Vite :5273<br>Chat UI, approvals, projects</p>
+    </div>
+    <div class="card card-compact">
+      <span class="icon">&#128274;</span>
+      <h4>Keycloak</h4>
+      <p>OAuth/OIDC :8180<br>SSO, roles, JWT tokens</p>
+    </div>
+    <div class="card card-compact">
+      <span class="icon">&#128193;</span>
+      <h4>Gitea</h4>
+      <p>Self-hosted git :3100<br>Agent-created repos, PRs</p>
+    </div>
+  </div>
+
+  <div class="grid grid-4 fade-up" style="animation-delay:0.2s; margin-bottom:14px;">
+    <div class="card card-compact">
+      <h4>MCP Coding :9001</h4>
+      <p>read_file, write_file, git ops, list_dir, search</p>
+    </div>
+    <div class="card card-compact">
+      <h4>MCP Docker :9002</h4>
+      <p>build_image, run_container, stop, logs, inspect</p>
+    </div>
+    <div class="card card-compact">
+      <h4>MCP Web :9005</h4>
+      <p>web_search, fetch_url, browse</p>
+    </div>
+    <div class="card card-compact">
+      <h4>MCP ArchiMate :9006</h4>
+      <p>Architecture model CRUD, export, search</p>
+    </div>
+  </div>
+
+  <div class="grid grid-3 fade-up" style="animation-delay:0.3s;">
+    <div class="card card-compact">
+      <h4>Sandbox Control Plane :8787</h4>
+      <p>From <strong>background-agents</strong> (our fork). Session lifecycle, LLM proxy, git proxy, credential store</p>
+    </div>
+    <div class="card card-compact">
+      <h4>Sandbox Manager :8000</h4>
+      <p>From <strong>background-agents</strong>. Creates Docker containers running <strong>OpenCode</strong>, enforces resource limits</p>
+    </div>
+    <div class="card card-compact">
+      <h4>PostgreSQL + Adminer</h4>
+      <p>Single source of truth. Fully relational schema. No JSON/JSONB columns.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 3 — Backend architecture -->
+<!-- ============================================================ -->
+<div class="slide" id="s3">
+  <div class="section-marker">02 &mdash; Backend Architecture</div>
+  <h2 class="fade-up">Layered <span class="accent">backend</span></h2>
+
+  <div class="two-col">
+    <div>
+      <p class="prose fade-up" style="animation-delay:0.05s;">
+        The backend follows a <strong>strict layered architecture</strong> with unidirectional data flow. No layer can skip another.
+      </p>
+
+      <div class="flow-horizontal fade-up" style="animation-delay:0.15s;">
+        <div class="flow-h-node">
+          <div class="node-label">Repository</div>
+          <div class="node-sub">SQLAlchemy</div>
+        </div>
+        <div class="flow-h-arrow">&rarr;</div>
+        <div class="flow-h-node">
+          <div class="node-label">Domain</div>
+          <div class="node-sub">Pydantic</div>
+        </div>
+        <div class="flow-h-arrow">&rarr;</div>
+        <div class="flow-h-node">
+          <div class="node-label">Service</div>
+          <div class="node-sub">Business logic</div>
+        </div>
+        <div class="flow-h-arrow">&rarr;</div>
+        <div class="flow-h-node">
+          <div class="node-label">Route</div>
+          <div class="node-sub">FastAPI</div>
+        </div>
+      </div>
+
+      <div class="highlight-box fade-up" style="animation-delay:0.25s;">
+        <p><strong>Summary/Detail pattern:</strong> <code>SessionSummary</code> for lists, <code>SessionDetail</code> for single items. All domain exports through a single <code>__init__.py</code>. Repositories return domain models, never ORM objects.</p>
+      </div>
+
+      <div class="highlight-box fade-up" style="animation-delay:0.3s;">
+        <p><strong>Dependency injection</strong> via FastAPI's <code>Depends()</code>. Repositories and services are wired in <code>deps.py</code>. Auth via Keycloak JWT validator.</p>
+      </div>
+    </div>
+
+    <div>
+      <div class="code-block fade-up" style="animation-delay:0.15s;">
+<span class="comment"># Simplified data flow example</span>
+
+<span class="comment"># 1. Repository (data access)</span>
+<span class="keyword">class</span> SessionRepository:
+    <span class="keyword">async def</span> get_detail(self, id) -&gt; SessionDetail:
+        row = <span class="keyword">await</span> db.execute(select(Session)...)
+        <span class="keyword">return</span> SessionDetail(...)
+
+<span class="comment"># 2. Service (business logic)</span>
+<span class="keyword">class</span> SessionService:
+    <span class="keyword">async def</span> get(self, id, user):
+        session = <span class="keyword">await</span> self.repo.get_detail(id)
+        self._check_access(session, user)
+        <span class="keyword">return</span> session
+
+<span class="comment"># 3. Route (thin HTTP layer)</span>
+@router.get(<span class="string">"/sessions/{id}"</span>)
+<span class="keyword">async def</span> get_session(
+    id: UUID,
+    service: SessionService = Depends()
+):
+    <span class="keyword">return await</span> service.get(id, current_user)</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 4 — Agent orchestration engine -->
+<!-- ============================================================ -->
+<div class="slide" id="s4">
+  <div class="section-marker">03 &mdash; Orchestration</div>
+  <h2 class="fade-up">The orchestration <span class="accent">engine</span></h2>
+
+  <div class="two-col">
+    <div>
+      <p class="prose fade-up" style="animation-delay:0.05s;">
+        The orchestrator is a <strong>LangGraph-based loop</strong> that runs agents sequentially. A Planner agent dynamically creates and revises the execution plan after every major phase.
+      </p>
+
+      <div class="card fade-up" style="animation-delay:0.15s; margin-bottom:14px;">
+        <h4>Orchestrator loop</h4>
+        <ul>
+          <li>Picks the next PENDING agent run from the plan</li>
+          <li>Loads the agent definition (YAML)</li>
+          <li>Enters the agent's tool-calling loop</li>
+          <li>Agent calls LLM &rarr; gets tool calls &rarr; executes &rarr; repeats</li>
+          <li>Agent calls <code>done()</code> &rarr; orchestrator moves to next run</li>
+          <li>If next run is Planner &rarr; Planner re-evaluates and creates new plan steps</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.25s;">
+        <h4>State reconstruction</h4>
+        <p>On resume (after pause, reboot, sandbox completion), the agent <strong>reconstructs its full LLM conversation from the database</strong>. Every message, tool call, and result is persisted. No in-memory state is needed.</p>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="animation-delay:0.1s; margin-bottom:14px;">
+        <h4>Adaptive planning</h4>
+        <p>The Planner doesn't create the full pipeline upfront. It plans a few steps, then re-evaluates:</p>
+        <ul>
+          <li>Did Architect approve or send feedback to BA? &rarr; design loop</li>
+          <li>Did tests pass or fail? &rarr; retry loop (max 3) or HITL escalation</li>
+          <li>Did user approve the preview or want changes? &rarr; feature branch loop</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.2s; margin-bottom:14px;">
+        <h4>Session status model</h4>
+        <table class="slide-table">
+          <tr><td><code>active</code></td><td>Processing in progress</td></tr>
+          <tr><td><code>paused</code></td><td>Stopped by user or after reboot</td></tr>
+          <tr><td><code>paused_approval</code></td><td>Waiting for role-based approval</td></tr>
+          <tr><td><code>paused_hitl</code></td><td>Waiting for user answer</td></tr>
+          <tr><td><code>paused_sandbox</code></td><td>Waiting for sandbox completion</td></tr>
+          <tr><td><code>completed</code></td><td>All agents finished</td></tr>
+          <tr><td><code>failed</code></td><td>Error occurred</td></tr>
+        </table>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.3s;">
+        <h4>Safety limits (per agent YAML)</h4>
+        <p><code>max_iterations</code>: 5 (Summarizer) to 100 (Builder). Planner: 15. The orchestrator enforces hard stops.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 5 — Agent definition system -->
+<!-- ============================================================ -->
+<div class="slide" id="s5">
+  <div class="section-marker">03 &mdash; Orchestration</div>
+  <h2 class="fade-up">Agents are <span class="accent">YAML</span></h2>
+
+  <div class="two-col">
+    <div>
+      <p class="prose fade-up" style="animation-delay:0.05s;">
+        Every agent is defined declaratively. <strong>No agent behavior is hardcoded.</strong> Want a new agent? Write a YAML file.
+      </p>
+
+      <div class="code-block fade-up" style="animation-delay:0.15s;">
+<span class="comment"># agents/definitions/business_analyst.yaml</span>
+<span class="keyword">id</span>: business_analyst
+<span class="keyword">name</span>: <span class="string">Business Analyst Agent</span>
+<span class="keyword">description</span>: <span class="string">Gathers requirements...</span>
+
+<span class="keyword">system_prompt</span>: |
+  You are a senior business analyst...
+
+<span class="comment"># Composable system prompt fragments</span>
+<span class="keyword">system_prompts</span>:
+  - summary_relay
+  - done_tool_format
+  - workspace_state
+
+<span class="comment"># Which MCP tools this agent can call</span>
+<span class="keyword">mcps</span>:
+  coding:
+    - read_file
+    - write_file
+    - list_dir
+
+<span class="comment"># Per-agent approval overrides</span>
+<span class="keyword">approval_overrides</span>:
+  <span class="string">"coding:write_file"</span>:
+    requires_approval: <span class="accent">true</span>
+    required_role: <span class="accent">business_analyst</span>
+
+<span class="comment"># LLM + limits</span>
+<span class="keyword">model</span>: glm-4
+<span class="keyword">temperature</span>: 0.2
+<span class="keyword">max_iterations</span>: 50</div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="animation-delay:0.1s; margin-bottom:14px;">
+        <h4>What the YAML controls</h4>
+        <ul>
+          <li>System prompt (+ composable fragments)</li>
+          <li>MCP tool whitelist per server</li>
+          <li>Approval overrides (tighten global defaults)</li>
+          <li>LLM model, temperature, max tokens</li>
+          <li>Iteration safety limit</li>
+          <li>Skills the agent can invoke</li>
+          <li>Extra builtin tools (<code>execute_coding_task</code>)</li>
+        </ul>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.2s; margin-bottom:14px;">
+        <h4>Two-layer approval model</h4>
+        <p><code>mcp_config.yaml</code> sets <strong>global defaults</strong> (e.g., <code>merge_pull_request</code> requires developer approval). Agent YAML can <strong>tighten</strong> for its context (e.g., BA's <code>write_file</code> needs BA role approval, but Builder's <code>write_file</code> is auto-approved).</p>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.3s; margin-bottom:14px;">
+        <h4>Skills: composable capability packs</h4>
+        <p>Markdown files with YAML frontmatter. When invoked at runtime, the agent gets temporary access to the skill's tools + instructions. Used for: code review, git workflows, coding standards, architecture templates.</p>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.4s;">
+        <h4>Hidden parameter injection</h4>
+        <p><code>session_id</code>, <code>repo_name</code>, <code>user_id</code> are injected by the platform and <strong>hidden from the LLM</strong>. Agents can't target arbitrary repos or sessions.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 6 — MCP Tool governance -->
+<!-- ============================================================ -->
+<div class="slide" id="s6">
+  <div class="section-marker">04 &mdash; Governance</div>
+  <h2 class="fade-up">Tool <span class="accent">governance</span></h2>
+
+  <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:20px;">
+    Every agent action is a tool call. Every tool call can be logged, inspected, and gated. This is how we keep AI agents under control.
+  </p>
+
+  <div class="two-col">
+    <div>
+      <div class="card fade-up" style="animation-delay:0.1s; margin-bottom:14px;">
+        <h4>Tool execution flow</h4>
+        <div class="flow-vertical" style="margin-top:10px;">
+          <div class="flow-step">
+            <div class="flow-step-line">
+              <div class="flow-step-dot" style="background:var(--water-light);"></div>
+              <div class="flow-step-connector"></div>
+            </div>
+            <div class="flow-step-content">
+              <div class="step-title">1. LLM returns tool call</div>
+              <div class="step-desc">Agent's LLM decides to call e.g. <code>docker:build_image</code></div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-step-line">
+              <div class="flow-step-dot" style="background:var(--warm);"></div>
+              <div class="flow-step-connector"></div>
+            </div>
+            <div class="flow-step-content">
+              <div class="step-title">2. Whitelist check</div>
+              <div class="step-desc">Is this tool in the agent's YAML <code>mcps</code> list? If not &rarr; rejected.</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-step-line">
+              <div class="flow-step-dot" style="background:var(--reed);"></div>
+              <div class="flow-step-connector"></div>
+            </div>
+            <div class="flow-step-content">
+              <div class="step-title">3. Parameter injection</div>
+              <div class="step-desc">Hidden params (<code>session_id</code>, <code>repo_name</code>) injected from session context.</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-step-line">
+              <div class="flow-step-dot" style="background:var(--coral);"></div>
+              <div class="flow-step-connector"></div>
+            </div>
+            <div class="flow-step-content">
+              <div class="step-title">4. Approval gate</div>
+              <div class="step-desc">If <code>requires_approval: true</code> &rarr; pause, wait for authorized role to approve/reject.</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-step-line">
+              <div class="flow-step-dot" style="background:#a78bfa;"></div>
+              <div class="flow-step-connector" style="background:transparent;"></div>
+            </div>
+            <div class="flow-step-content">
+              <div class="step-title">5. Execute via MCP</div>
+              <div class="step-desc">HTTP call to containerized MCP server. Result persisted to DB.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="animation-delay:0.15s; margin-bottom:14px;">
+        <h4>What gets approved (examples)</h4>
+        <table class="slide-table">
+          <tr><th>Tool</th><th>Required role</th></tr>
+          <tr><td><code>docker:build_image</code></td><td>developer</td></tr>
+          <tr><td><code>docker:run_container</code></td><td>developer</td></tr>
+          <tr><td><code>coding:merge_pull_request</code></td><td>developer</td></tr>
+          <tr><td><code>coding:write_file</code> (BA)</td><td>business_analyst</td></tr>
+          <tr><td><code>coding:write_file</code> (Architect)</td><td>architect</td></tr>
+          <tr><td><code>coding:write_file</code> (Builder)</td><td>auto-approved</td></tr>
+        </table>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.25s; margin-bottom:14px;">
+        <h4>Full audit trail</h4>
+        <p>Every tool call is persisted: who called it, which agent, arguments, result, approval status, who approved, timestamps. The Inspect view in the UI lets you drill into any call.</p>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.35s;">
+        <h4>Mermaid validation gate</h4>
+        <p>Design documents pass through a Mermaid syntax validator <strong>before</strong> the approval gate. Catches LLM mistakes (escaped quotes, wrong arrows, reserved keywords) so human reviewers don't waste time on broken diagrams.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 7 — Sandbox architecture -->
+<!-- ============================================================ -->
+<div class="slide" id="s7">
+  <div class="section-marker">05 &mdash; Sandbox</div>
+  <h2 class="fade-up">Isolated <span class="accent">sandbox</span> execution</h2>
+
+  <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:16px;">
+    When an agent needs to write serious code, it delegates to an <strong>isolated Docker container</strong> powered by <strong>OpenCode</strong> (open-source AI coding agent) running on our fork of <strong>background-agents</strong> (sandbox infrastructure). No access to the host, no real credentials, no network beyond the LLM proxy and git server.
+  </p>
+
+  <div class="two-col">
+    <div>
+      <div class="card fade-up" style="animation-delay:0.1s; margin-bottom:14px;">
+        <h4>Sandbox flow</h4>
+        <div class="flow-vertical" style="margin-top:10px;">
+          <div class="flow-step">
+            <div class="flow-step-line">
+              <div class="flow-step-dot" style="background:var(--water-light);"></div>
+              <div class="flow-step-connector"></div>
+            </div>
+            <div class="flow-step-content">
+              <div class="step-title">1. Agent calls execute_coding_task</div>
+              <div class="step-desc">Built-in tool (not MCP). Passes task description + sandbox agent name.</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-step-line">
+              <div class="flow-step-dot" style="background:var(--warm);"></div>
+              <div class="flow-step-connector"></div>
+            </div>
+            <div class="flow-step-content">
+              <div class="step-title">2. Control plane creates session</div>
+              <div class="step-desc">background-agents provisions per-sandbox Gitea user, proxy keys, credential store.</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-step-line">
+              <div class="flow-step-dot" style="background:var(--reed);"></div>
+              <div class="flow-step-connector"></div>
+            </div>
+            <div class="flow-step-content">
+              <div class="step-title">3. Sandbox container starts</div>
+              <div class="step-desc">Fresh Docker container with <strong>OpenCode</strong> (AI coding agent). Clones project from Gitea via git proxy.</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-step-line">
+              <div class="flow-step-dot" style="background:#22d3ee;"></div>
+              <div class="flow-step-connector"></div>
+            </div>
+            <div class="flow-step-content">
+              <div class="step-title">4. OpenCode executes autonomously</div>
+              <div class="step-desc">OpenCode (open-source, github.com/opencode-ai/opencode) writes code, runs tests, commits, pushes. All LLM calls routed through proxy.</div>
+            </div>
+          </div>
+          <div class="flow-step">
+            <div class="flow-step-line">
+              <div class="flow-step-dot" style="background:#a78bfa;"></div>
+              <div class="flow-step-connector" style="background:transparent;"></div>
+            </div>
+            <div class="flow-step-content">
+              <div class="step-title">5. Webhook callback resumes agent</div>
+              <div class="step-desc">HMAC-signed webhook. Fetches events, extracts file changes, resumes orchestrator.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="animation-delay:0.15s; margin-bottom:14px;">
+        <h4>Three sandbox agents</h4>
+        <table class="slide-table">
+          <tr><th>Agent</th><th>Purpose</th></tr>
+          <tr><td><code>druppie-builder</code></td><td>Implements features, writes code</td></tr>
+          <tr><td><code>druppie-tester</code></td><td>Writes tests, validates, reports</td></tr>
+          <tr><td><code>druppie-core-builder</code></td><td>Dual-repo: modifies Druppie's own code</td></tr>
+        </table>
+        <p style="margin-top:8px; font-size:0.82rem; color:var(--text-dim);">All enforce mandatory git workflow: add &rarr; commit &rarr; push. No unpushed work.</p>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.25s; margin-bottom:14px;">
+        <h4>Dual-network isolation</h4>
+        <p>Sandbox containers can only reach:</p>
+        <ul>
+          <li>LLM proxy (rewrites model requests to real providers)</li>
+          <li>Git proxy (injects Gitea/GitHub credentials server-side)</li>
+        </ul>
+        <p style="margin-top:6px;">No internet. No host filesystem. No other Docker containers.</p>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.35s; margin-bottom:14px;">
+        <h4>Built on open-source</h4>
+        <p><strong>OpenCode</strong> (github.com/opencode-ai/opencode) &mdash; the AI coding agent running inside each sandbox. Supports multiple LLM providers via <code>@ai-sdk/openai-compatible</code>.</p>
+        <p style="margin-top:6px;"><strong>background-agents</strong> (our fork of open-inspect) &mdash; the sandbox infrastructure: control plane, manager, container lifecycle, credential proxying. Integrated as a git submodule.</p>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.45s;">
+        <h4>Resource limits</h4>
+        <p>Each sandbox: <code>4GB RAM</code>, <code>2 CPUs</code> (configurable). Optional <strong>Kata Containers</strong> for VM-level isolation &mdash; each sandbox gets its own lightweight QEMU VM with a separate guest kernel.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 8 — Credential security -->
+<!-- ============================================================ -->
+<div class="slide" id="s8">
+  <div class="section-marker">05 &mdash; Sandbox</div>
+  <h2 class="fade-up">Credential <span class="accent">proxying</span></h2>
+
+  <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:20px;">
+    Sandboxes never see real credentials. All access goes through the background-agents control plane, which injects tokens server-side.
+  </p>
+
+  <div class="grid grid-3 fade-up" style="animation-delay:0.1s; margin-bottom:20px;">
+    <div class="card">
+      <span class="icon">&#128194;</span>
+      <h4>Git proxy</h4>
+      <p>Sandbox clones via proxy URL with random key. Control plane injects real Gitea password or GitHub App token. <strong>Validates owner/repo scope</strong> &mdash; requests for other repos return 403.</p>
+    </div>
+    <div class="card">
+      <span class="icon">&#129302;</span>
+      <h4>LLM proxy</h4>
+      <p>All LLM requests go through the control plane. Injects real API keys per provider. Handles <strong>transparent failover</strong> between providers on non-2xx responses.</p>
+    </div>
+    <div class="card">
+      <span class="icon">&#128279;</span>
+      <h4>GitHub API proxy</h4>
+      <p>Reverse proxy for <code>api.github.com</code>. Sandbox gets opaque <code>$GITHUB_API_PROXY_URL</code> with 256-bit random key. Bearer token injected server-side.</p>
+    </div>
+  </div>
+
+  <div class="two-col fade-up" style="animation-delay:0.2s;">
+    <div class="card">
+      <h4>Credential lifecycle</h4>
+      <ul>
+        <li><strong>Gitea:</strong> Per-sandbox user (<code>sandbox-{id}</code>) with write access to one repo only. Created before sandbox, deleted after.</li>
+        <li><strong>GitHub:</strong> Short-lived App installation tokens (~1h TTL). Auto-expire, no cleanup needed.</li>
+        <li><strong>Proxy keys:</strong> Invalidated on sandbox completion, container destroy, or session delete.</li>
+        <li><strong>Orphan cleanup:</strong> On backend startup, all <code>sandbox-*</code> Gitea users are deleted.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>The core update flow (dual-repo sandbox)</h4>
+      <p>For Druppie self-improvement, a special sandbox clones <strong>two repos</strong>:</p>
+      <ul>
+        <li><code>/workspace/core/</code> &mdash; Druppie's GitHub repo</li>
+        <li><code>/workspace/project/</code> &mdash; Project repo with FD/TD from Gitea</li>
+      </ul>
+      <p style="margin-top:8px;">Creates PR on GitHub targeting <code>colab-dev</code>. A human developer must review and merge the PR before the pipeline continues.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 9 — Provider resilience -->
+<!-- ============================================================ -->
+<div class="slide" id="s9">
+  <div class="section-marker">05 &mdash; Sandbox</div>
+  <h2 class="fade-up">LLM provider <span class="accent">routing</span></h2>
+
+  <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:20px;">
+    We use <strong>LiteLLM</strong> internally for standardized tool calling across providers. Each agent has its own model profile, and the proxy handles failover transparently. We're not locked into any single provider.
+  </p>
+
+  <div class="two-col fade-up" style="animation-delay:0.1s; margin-bottom:20px;">
+    <div class="card" style="border-top: 3px solid var(--reed);">
+      <h4>Transparent proxy failover</h4>
+      <div class="badge-row"><span class="badge green">sub-second</span></div>
+      <p>The LLM proxy sits between every agent and the LLM providers. When a provider returns a non-2xx response (rate limit, auth error, outage), the proxy <strong>transparently retries with the next provider</strong> in the chain, rewriting the model name in the request body.</p>
+      <p style="margin-top:10px;">The agent never notices. From its perspective, the request just succeeded.</p>
+      <div class="code-block" style="margin-top:12px; font-size:0.75rem;">
+Agent sends request
+  &rarr; Provider A: 429 rate limit
+  &rarr; Proxy rewrites model to Provider B
+  &rarr; 200 OK
+  &rarr; Agent continues as normal</div>
+    </div>
+
+    <div class="card" style="border-top: 3px solid var(--water);">
+      <h4>Profile-based model routing</h4>
+      <p>Each agent and sandbox agent has its own model profile in <code>sandbox_models.yaml</code>. The LLM proxy resolves profile names to real provider chains at request time.</p>
+      <div class="code-block" style="margin-top:12px; font-size:0.75rem;">
+<span class="comment"># sandbox_models.yaml</span>
+<span class="keyword">sandbox/druppie-builder</span>:
+  - provider: zai
+    model: glm-4-plus
+  - provider: deepinfra
+    model: Qwen/Qwen3-32B
+  - provider: openrouter
+    model: anthropic/claude-sonnet
+
+<span class="keyword">sandbox/druppie-tester</span>:
+  - provider: deepinfra
+    model: Qwen/Qwen3-32B</div>
+      <p style="margin-top:10px;">Different agents can use different providers. The Builder might use Claude for code quality, while the Tester uses a cheaper model.</p>
+    </div>
+  </div>
+
+  <div class="card fade-up" style="animation-delay:0.2s; max-width:600px;">
+    <h4>Force override</h4>
+    <p>Set <code>LLM_FORCE_PROVIDER</code> + <code>LLM_FORCE_MODEL</code> in <code>.env</code> to override all profiles with a single provider. Useful for testing or when one provider is known-good.</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 10 — TDD pipeline -->
+<!-- ============================================================ -->
+<div class="slide" id="s10">
+  <div class="section-marker">06 &mdash; TDD Pipeline</div>
+  <h2 class="fade-up">TDD by <span class="accent">architecture</span></h2>
+
+  <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:20px;">
+    Testing isn't optional or convention-based. It's <strong>enforced by the pipeline structure</strong>. The agents literally can't skip it.
+  </p>
+
+  <div class="flow-horizontal fade-up" style="animation-delay:0.1s; margin-bottom:24px;">
+    <div class="flow-h-node" style="border-top: 3px solid var(--coral);">
+      <div class="node-label">Test Builder</div>
+      <div class="node-sub" style="color:var(--coral);">RED phase</div>
+    </div>
+    <div class="flow-h-arrow">&rarr;</div>
+    <div class="flow-h-node" style="border-top: 3px solid var(--reed);">
+      <div class="node-label">Builder</div>
+      <div class="node-sub" style="color:var(--reed);">GREEN phase</div>
+    </div>
+    <div class="flow-h-arrow">&rarr;</div>
+    <div class="flow-h-node" style="border-top: 3px solid var(--water);">
+      <div class="node-label">Test Executor</div>
+      <div class="node-sub" style="color:var(--water-light);">RUN + FIX</div>
+    </div>
+    <div class="flow-h-arrow">&rarr;</div>
+    <div class="flow-h-node" style="border-top: 3px solid var(--warm);">
+      <div class="node-label">Planner</div>
+      <div class="node-sub" style="color:var(--warm);">DECIDE</div>
+    </div>
+  </div>
+
+  <div class="grid grid-2 fade-up" style="animation-delay:0.2s;">
+    <div class="card">
+      <h4>How the TDD loop works</h4>
+      <ul>
+        <li><strong>Builder Planner</strong> reads FD + TD, writes <code>builder_plan.md</code> with test strategy, code standards, file structure</li>
+        <li><strong>Test Builder</strong> writes comprehensive test suites based on the plan. Sets up frameworks and deps. Does NOT run tests.</li>
+        <li><strong>Builder</strong> reads the tests and implements code to pass them. Works in a sandbox.</li>
+        <li><strong>Test Executor</strong> runs tests, diagnoses failures, fixes code in an internal retry loop. Reports structured PASS/FAIL via <code>test_report</code> builtin.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Failure handling</h4>
+      <ul>
+        <li><strong>PASS:</strong> Planner routes to Deployer</li>
+        <li><strong>FAIL (retry &lt; 3):</strong> Planner sends back to Builder with failure feedback</li>
+        <li><strong>FAIL (retry &ge; 3):</strong> Planner escalates to user via HITL with three choices:</li>
+      </ul>
+      <div class="layers" style="margin-top:8px;">
+        <div class="layer" style="border-color: var(--reed); padding:10px 16px;">
+          <div class="layer-label" style="min-width:auto; font-size:0.82rem;">Continue</div>
+          <div class="layer-desc" style="font-size:0.78rem;">User gives specific instructions, Builder retries</div>
+        </div>
+        <div class="layer" style="border-color: var(--warm); padding:10px 16px;">
+          <div class="layer-label" style="min-width:auto; font-size:0.82rem;">Deploy anyway</div>
+          <div class="layer-desc" style="font-size:0.78rem;">Deployer deploys with warning despite failures</div>
+        </div>
+        <div class="layer" style="border-color: var(--coral); padding:10px 16px;">
+          <div class="layer-label" style="min-width:auto; font-size:0.82rem;">Abort</div>
+          <div class="layer-desc" style="font-size:0.78rem;">Summarizer ends the workflow</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 11 — Module system overview -->
+<!-- ============================================================ -->
+<div class="slide" id="s11">
+  <div class="section-marker">07 &mdash; Module System</div>
+  <h2 class="fade-up">The module <span class="accent">system</span></h2>
+
+  <div class="two-col">
+    <div>
+      <p class="prose fade-up" style="animation-delay:0.05s;">
+        A Druppie module is a <strong>containerized MCP server</strong> that exposes tools via the MCP protocol. The key insight: the same module can be called by AI agents during development AND by the generated application in production.
+      </p>
+
+      <div class="card fade-up" style="animation-delay:0.15s; margin-bottom:14px;">
+        <h4>Three categories</h4>
+        <table class="slide-table">
+          <tr><th>Type</th><th>Used by</th><th>Examples</th></tr>
+          <tr><td><code>core</code></td><td>Agents only</td><td>coding, docker, filesearch</td></tr>
+          <tr><td><code>module</code></td><td>Apps only</td><td>App-specific capabilities</td></tr>
+          <tr><td><code>both</code></td><td>Agents + Apps</td><td>OCR, classifier</td></tr>
+        </table>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.25s;">
+        <h4>Context-aware calling</h4>
+        <p><strong>Agent call:</strong> Platform injects <code>session_id</code>, <code>project_id</code> transparently. Agent never sees them.</p>
+        <p style="margin-top:6px;"><strong>App call:</strong> SDK passes <code>app_id</code>, <code>project_id</code>, <code>user_id</code> explicitly from env vars + Keycloak token.</p>
+        <p style="margin-top:6px;">The module doesn't care who's calling &mdash; the presence of <code>session_id</code> vs <code>app_id</code> tells the context.</p>
+        <p style="margin-top:10px; font-size:0.82rem; color:var(--text-dim);"><strong>Trade-off:</strong> Apps own their data and auth, but have a runtime dependency on the module platform for shared capabilities. This is a deliberate choice &mdash; it enables central governance, usage tracking, and one version to maintain.</p>
+      </div>
+    </div>
+
+    <div>
+      <div class="code-block fade-up" style="animation-delay:0.1s; margin-bottom:14px; font-size:0.72rem;">
+<span class="comment"># Module file structure</span>
+druppie/mcp-servers/module-ocr/
+  MODULE.yaml            <span class="comment"># 3 fields: id, versions, latest</span>
+  server.py              <span class="comment"># Routes /v1/mcp, /v2/mcp, /mcp</span>
+  db.py                  <span class="comment"># Module's OWN database</span>
+  auth.py                <span class="comment"># Keycloak JWT validation</span>
+  v1/
+    module.py            <span class="comment"># Business logic</span>
+    tools.py             <span class="comment"># MCP tool defs (source of truth)</span>
+    schema/
+      001_initial.sql
+      current.sql
+  v2/
+    module.py            <span class="comment"># Independent v2 logic</span>
+    tools.py             <span class="comment"># Independent v2 schema</span>
+    schema/
+      001_add_pages.sql
+      current.sql</div>
+
+      <div class="card fade-up" style="animation-delay:0.2s;">
+        <h4>Define once principle</h4>
+        <p><code>MODULE.yaml</code> has only 3 fields (id, versions, latest). Everything else &mdash; tool names, descriptions, schemas, agent guidance &mdash; lives in code via <code>@mcp.tool()</code> decorators and is discoverable via MCP <code>tools/list</code>. <strong>Zero duplication.</strong></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 12 — Module versioning & storage -->
+<!-- ============================================================ -->
+<div class="slide" id="s12">
+  <div class="section-marker">07 &mdash; Module System</div>
+  <h2 class="fade-up">Versioning &amp; <span class="accent">storage</span></h2>
+
+  <div class="two-col">
+    <div>
+      <div class="card fade-up" style="animation-delay:0.1s; margin-bottom:14px;">
+        <h4>Simultaneous major versions</h4>
+        <p>v1 and v2 run at the same time as independent codebases. No translation layer. No sunset mechanism. Path-based routing keeps them isolated.</p>
+        <table class="slide-table" style="margin-top:10px;">
+          <tr><th>Path</th><th>Routes to</th></tr>
+          <tr><td><code>/v1/mcp</code></td><td>v1/tools.py</td></tr>
+          <tr><td><code>/v2/mcp</code></td><td>v2/tools.py</td></tr>
+          <tr><td><code>/mcp</code></td><td>Latest version</td></tr>
+          <tr><td><code>/health</code></td><td>Aggregate health</td></tr>
+        </table>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.2s;">
+        <h4>Breaking change rules (SemVer)</h4>
+        <p><strong>New major version needed:</strong></p>
+        <ul>
+          <li>Removing/renaming a tool, parameter, or response field</li>
+          <li>Changing a field's type or semantics</li>
+          <li>Making an optional parameter required</li>
+        </ul>
+        <p style="margin-top:8px;"><strong>In-place update (minor/patch):</strong></p>
+        <ul>
+          <li>Adding new tool, optional parameter, response field</li>
+          <li>Bug fixes, performance improvements</li>
+        </ul>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="animation-delay:0.15s; margin-bottom:14px;">
+        <h4>Module-owned storage</h4>
+        <p>Modules <strong>never</strong> connect to Druppie's database. They get their own PostgreSQL container (or are stateless). Context comes through injected MCP parameters.</p>
+        <div class="layers" style="margin-top:10px;">
+          <div class="layer" style="border-color: var(--coral); padding:10px 16px;">
+            <div class="layer-desc" style="font-size:0.82rem;"><strong>No schema coupling</strong> &mdash; Druppie renames a column, modules don't break</div>
+          </div>
+          <div class="layer" style="border-color: var(--warm); padding:10px 16px;">
+            <div class="layer-desc" style="font-size:0.82rem;"><strong>Portable modules</strong> &mdash; develop, test, run a module without Druppie's schema</div>
+          </div>
+          <div class="layer" style="border-color: var(--reed); padding:10px 16px;">
+            <div class="layer-desc" style="font-size:0.82rem;"><strong>Safe resets</strong> &mdash; Druppie's "reset DB" can't break modules</div>
+          </div>
+        </div>
+        <p style="margin-top:10px; font-size:0.82rem; color:var(--text-dim);">Module data is isolated from Druppie, but it's still hosted on the platform. Apps that call modules have a runtime dependency on the module infrastructure &mdash; like any app that uses cloud APIs.</p>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.25s;">
+        <h4>Additive-only database changes</h4>
+        <p>Both v1 and v2 share the same module DB. Strict rules:</p>
+        <ul>
+          <li>Add columns (with defaults), tables, indexes &mdash; never drop or rename</li>
+          <li>No <code>SELECT *</code> &mdash; explicit columns so new fields don't break old versions</li>
+          <li>Every new column has a DEFAULT &mdash; older version code can INSERT without it</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 13 — SDK and project template -->
+<!-- ============================================================ -->
+<div class="slide" id="s13">
+  <div class="section-marker">07 &mdash; Module System</div>
+  <h2 class="fade-up">SDK &amp; project <span class="accent">template</span></h2>
+
+  <div class="two-col">
+    <div>
+      <div class="card fade-up" style="animation-delay:0.1s; margin-bottom:14px;">
+        <h4>Druppie SDK</h4>
+        <p>Lightweight Python package (<code>druppie_sdk</code>) included in every generated app. It's an MCP client that connects directly to module servers &mdash; no gateway proxy.</p>
+        <ul>
+          <li>Keycloak JWT authentication</li>
+          <li>Version selection per module (<code>{"ocr": "v1"}</code>)</li>
+          <li>Standard argument injection (user_id, app_id, project_id)</li>
+          <li>Usage reporting to Druppie backend</li>
+          <li>Retries and error handling</li>
+        </ul>
+        <div class="code-block" style="margin-top:10px; font-size:0.72rem;">
+<span class="keyword">from</span> druppie_sdk <span class="keyword">import</span> DruppieClient
+
+client = DruppieClient(
+    module_versions={<span class="string">"ocr"</span>: <span class="string">"v1"</span>}
+)
+result = <span class="keyword">await</span> client.ocr.extract(<span class="string">"invoice.png"</span>)
+<span class="comment"># POST http://module-ocr:9010/v1/mcp</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="animation-delay:0.15s; margin-bottom:14px;">
+        <h4>Project template: working app out of the box</h4>
+        <p>Every new project starts from <code>druppie/templates/project/</code>. The builder agent only adds business logic.</p>
+        <div class="layers" style="margin-top:10px;">
+          <div class="layer" style="border-color: var(--water); padding:10px 16px;">
+            <div class="layer-label" style="min-width:auto; font-size:0.82rem;">Auth</div>
+            <div class="layer-desc" style="font-size:0.78rem;">Keycloak login/logout, token refresh, session middleware</div>
+          </div>
+          <div class="layer" style="border-color: var(--reed); padding:10px 16px;">
+            <div class="layer-label" style="min-width:auto; font-size:0.82rem;">RBAC</div>
+            <div class="layer-desc" style="font-size:0.78rem;">Role tables in app's own DB, admin page, role checks</div>
+          </div>
+          <div class="layer" style="border-color: var(--warm); padding:10px 16px;">
+            <div class="layer-label" style="min-width:auto; font-size:0.82rem;">SDK</div>
+            <div class="layer-desc" style="font-size:0.78rem;">DruppieClient initialized, module connections configured</div>
+          </div>
+          <div class="layer" style="border-color: var(--sand); padding:10px 16px;">
+            <div class="layer-label" style="min-width:auto; font-size:0.82rem;">UI</div>
+            <div class="layer-desc" style="font-size:0.78rem;">Company-styled landing page, health endpoint</div>
+          </div>
+          <div class="layer" style="border-color: #a78bfa; padding:10px 16px;">
+            <div class="layer-label" style="min-width:auto; font-size:0.82rem;">Docker</div>
+            <div class="layer-desc" style="font-size:0.78rem;">Production-ready Dockerfile with SDK pre-installed</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.25s;">
+        <h4>Usage tracking flow</h4>
+        <p>Modules report cost and resource metrics in a <code>_meta</code> field on every response. The caller (core or SDK) records this to Druppie's DB. <strong>Modules never touch Druppie's database.</strong></p>
+        <div class="flow-horizontal" style="margin-top:8px;">
+          <div class="flow-h-node" style="min-width:70px;">
+            <div class="node-label" style="font-size:0.75rem;">Module</div>
+            <div class="node-sub">returns _meta</div>
+          </div>
+          <div class="flow-h-arrow">&rarr;</div>
+          <div class="flow-h-node" style="min-width:70px;">
+            <div class="node-label" style="font-size:0.75rem;">Caller</div>
+            <div class="node-sub">core or SDK</div>
+          </div>
+          <div class="flow-h-arrow">&rarr;</div>
+          <div class="flow-h-node" style="min-width:70px;">
+            <div class="node-label" style="font-size:0.75rem;">Druppie DB</div>
+            <div class="node-sub">module_usage</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 14 — Authentication architecture -->
+<!-- ============================================================ -->
+<div class="slide" id="s14">
+  <div class="section-marker">08 &mdash; Security</div>
+  <h2 class="fade-up">Authentication <span class="accent">architecture</span></h2>
+
+  <div class="two-col">
+    <div>
+      <p class="prose fade-up" style="animation-delay:0.05s;">
+        <strong>Keycloak</strong> is the single identity provider for everything: the platform, generated apps, and module MCP servers. All users exist in the <code>druppie</code> realm.
+      </p>
+
+      <div class="card fade-up" style="animation-delay:0.15s; margin-bottom:14px;">
+        <h4>Who authenticates how</h4>
+        <table class="slide-table">
+          <tr><th>Component</th><th>Token source</th></tr>
+          <tr><td>Platform users</td><td>Keycloak JWT via frontend login</td></tr>
+          <tr><td>Generated apps</td><td>Same Keycloak realm, app-specific client</td></tr>
+          <tr><td>Sandbox agents</td><td>Short-lived OBO token (15 min TTL)</td></tr>
+          <tr><td>Module servers</td><td>Validate JWT against Keycloak JWKS</td></tr>
+        </table>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.25s;">
+        <h4>Role-based access</h4>
+        <table class="slide-table">
+          <tr><th>Role</th><th>Can approve</th></tr>
+          <tr><td>admin</td><td>Everything</td></tr>
+          <tr><td>architect</td><td>Architecture designs</td></tr>
+          <tr><td>developer</td><td>Docker ops, PR merges</td></tr>
+          <tr><td>business_analyst</td><td>Functional designs</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="animation-delay:0.1s; margin-bottom:14px;">
+        <h4>Token for identity, arguments for context</h4>
+        <p>These are separate concerns:</p>
+        <ul>
+          <li><strong>JWT token</strong> proves <em>who the user is</em></li>
+          <li><strong>Standard MCP arguments</strong> provide <em>calling context</em> (session_id, project_id, app_id)</li>
+        </ul>
+        <p style="margin-top:8px;">Modules validate the JWT, then use injected arguments to attribute usage to the right user, project, and context.</p>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.2s; margin-bottom:14px;">
+        <h4>App-level RBAC</h4>
+        <p>Each generated app owns its own role system in its own database. The project template provides RBAC tables, admin page, and auth helpers out of the box.</p>
+        <p style="margin-top:8px;"><strong>Why in the app?</strong> Access control is app-specific. Different apps need different roles. No coupling between Druppie's DB and app-specific access data.</p>
+        <p style="margin-top:8px; font-size:0.82rem; color:var(--text-dim);"><strong>Note:</strong> Apps own their auth and business data, but depend on the module platform for shared capabilities (OCR, classification, etc.). This is a platform dependency</p>
+      </div>
+
+      <div class="card fade-up" style="animation-delay:0.3s;">
+        <h4>Sandbox token exchange</h4>
+        <p>Before sandbox launch: Druppie requests an OBO token from Keycloak (<code>token-exchange</code> grant). 15-minute TTL. Carries the original user's identity (<code>sub</code>). Usage is attributed correctly even when an agent acts on behalf of the user.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 15 — Data architecture -->
+<!-- ============================================================ -->
+<div class="slide" id="s15">
+  <div class="section-marker">08 &mdash; Security</div>
+  <h2 class="fade-up">Data <span class="accent">architecture</span></h2>
+
+  <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:20px;">
+    Single PostgreSQL database with a fully relational schema. <strong>No JSON/JSONB columns</strong> &mdash; everything is normalized into proper tables. The database is the single source of truth: agents reconstruct state from DB on resume.
+  </p>
+
+  <div class="grid grid-3 fade-up" style="animation-delay:0.1s; margin-bottom:16px;">
+    <div class="card card-compact">
+      <h4>Session &amp; execution</h4>
+      <ul>
+        <li><code>sessions</code> &mdash; User requests</li>
+        <li><code>agent_runs</code> &mdash; Per-agent execution</li>
+        <li><code>llm_calls</code> &mdash; Every LLM interaction</li>
+        <li><code>tool_calls</code> &mdash; Every tool invocation</li>
+        <li><code>messages</code> &mdash; Chat timeline</li>
+      </ul>
+    </div>
+    <div class="card card-compact">
+      <h4>Governance</h4>
+      <ul>
+        <li><code>approvals</code> &mdash; Pending/resolved gates</li>
+        <li><code>questions</code> &mdash; HITL interactions</li>
+        <li><code>plans</code> / <code>plan_steps</code> &mdash; Agent pipelines</li>
+        <li><code>module_usage</code> &mdash; Cost tracking</li>
+      </ul>
+    </div>
+    <div class="card card-compact">
+      <h4>Projects &amp; sandbox</h4>
+      <ul>
+        <li><code>projects</code> &mdash; Created applications</li>
+        <li><code>deployments</code> &mdash; Container deploys</li>
+        <li><code>sandbox_sessions</code> &mdash; Ownership mapping</li>
+        <li><code>users</code> &mdash; Keycloak-synced</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="two-col fade-up" style="animation-delay:0.2s;">
+    <div class="card">
+      <h4>Design rules</h4>
+      <ul>
+        <li><strong>No migrations</strong> &mdash; Update SQLAlchemy models directly, reset DB with docker compose</li>
+        <li><strong>No JSON/JSONB</strong> &mdash; If you need structured data, make a table</li>
+        <li><strong>No legacy/fallback code</strong> &mdash; Clean architecture only</li>
+        <li><strong>State reconstruction</strong> &mdash; On resume, full LLM conversation is rebuilt from DB records</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Inspect view: full observability</h4>
+      <p>Every session exposes a drill-down view:</p>
+      <ul>
+        <li>Timeline of all agent runs with status</li>
+        <li>Expand any LLM call: prompt, response, tokens, timing</li>
+        <li>Expand any tool call: arguments, result, approval status, who approved</li>
+        <li>Sandbox sessions: files changed, events timeline, full conversation</li>
+        <li>Retry from any agent run (reverts git state + re-executes)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 16 — Config as code -->
+<!-- ============================================================ -->
+<div class="slide" id="s16">
+  <div class="section-marker">09 &mdash; Configuration</div>
+  <h2 class="fade-up">Everything is <span class="accent">config</span></h2>
+
+  <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:16px;">
+    The entire platform behavior is driven by YAML configuration files. No behavior is hardcoded.
+  </p>
+
+  <div class="grid grid-3 fade-up" style="animation-delay:0.1s;">
+    <div class="card">
+      <h4>Agent definitions</h4>
+      <div class="badge-row"><span class="badge water">agents/definitions/*.yaml</span></div>
+      <ul>
+        <li>System prompt + composable fragments</li>
+        <li>MCP tool whitelist per server</li>
+        <li>Approval overrides</li>
+        <li>LLM model + temperature</li>
+        <li>Max iterations</li>
+        <li>Skills list</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>MCP configuration</h4>
+      <div class="badge-row"><span class="badge green">mcp_config.yaml</span></div>
+      <ul>
+        <li>MCP server URLs</li>
+        <li>Global approval rules per tool</li>
+        <li>Parameter injection rules</li>
+        <li>Hidden parameters</li>
+        <li>Server type (core/module/both)</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Model configuration</h4>
+      <div class="badge-row"><span class="badge warm">sandbox_models.yaml</span></div>
+      <ul>
+        <li>Profile-based model routing</li>
+        <li>Ordered failover chains</li>
+        <li>Per-agent/subagent profiles</li>
+        <li>Provider + model per entry</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="grid grid-3 fade-up" style="animation-delay:0.25s; margin-top:16px;">
+    <div class="card">
+      <h4>Skills</h4>
+      <div class="badge-row"><span class="badge purple">skills/*/SKILL.md</span></div>
+      <ul>
+        <li>Markdown with YAML frontmatter</li>
+        <li>Temporary tool grants</li>
+        <li>Instructions returned to agent</li>
+        <li>Coding standards, review checklists</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Module manifests</h4>
+      <div class="badge-row"><span class="badge sand">MODULE.yaml</span></div>
+      <ul>
+        <li>3 fields: id, versions, latest</li>
+        <li>Everything else from MCP protocol</li>
+        <li>Tool schemas via <code>@mcp.tool()</code></li>
+        <li>Agent guidance via <code>instructions=</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Infrastructure</h4>
+      <div class="badge-row"><span class="badge coral">docker-compose.yml + .env</span></div>
+      <ul>
+        <li>15+ services, 3 profiles (dev/prod/infra)</li>
+        <li>Init container for Keycloak + Gitea setup</li>
+        <li>One-command start, reset, rebuild</li>
+        <li>Migration path to Kubernetes / managed containers</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 17 — Numbers -->
+<!-- ============================================================ -->
+<div class="slide" id="s17">
+  <div class="section-marker">10 &mdash; By the Numbers</div>
+  <h2 class="fade-up">Platform <span class="accent">scale</span></h2>
+
+  <div class="stat-row fade-up" style="animation-delay:0.1s;">
+    <div class="stat-card">
+      <div class="num">13</div>
+      <div class="label">Agents defined</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">6</div>
+      <div class="label">MCP servers</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">30+</div>
+      <div class="label">Governed MCP tools</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">15+</div>
+      <div class="label">Docker services</div>
+    </div>
+  </div>
+
+  <div class="stat-row fade-up" style="animation-delay:0.2s;">
+    <div class="stat-card">
+      <div class="num">5</div>
+      <div class="label">Builtin tools</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">7</div>
+      <div class="label">Session states</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">3</div>
+      <div class="label">Sandbox agents</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">LiteLLM</div>
+      <div class="label">Provider abstraction</div>
+    </div>
+  </div>
+
+  <div class="grid grid-2 fade-up" style="animation-delay:0.3s; margin-top:16px;">
+    <div class="card">
+      <h4>Backend stack</h4>
+      <div class="badge-row">
+        <span class="badge water">Python 3.11</span>
+        <span class="badge water">FastAPI</span>
+        <span class="badge water">SQLAlchemy</span>
+        <span class="badge water">Pydantic</span>
+        <span class="badge water">LangGraph</span>
+        <span class="badge water">LiteLLM (provider abstraction)</span>
+        <span class="badge water">FastMCP</span>
+      </div>
+    </div>
+    <div class="card">
+      <h4>Frontend &amp; infra stack</h4>
+      <div class="badge-row">
+        <span class="badge green">React 18</span>
+        <span class="badge green">Vite</span>
+        <span class="badge green">React Query</span>
+        <span class="badge warm">Keycloak 24</span>
+        <span class="badge warm">Gitea 1.21</span>
+        <span class="badge warm">PostgreSQL 15</span>
+        <span class="badge sand">Docker Compose &rarr; K8s</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 18 — Where we are now -->
+<!-- ============================================================ -->
+<div class="slide" id="s18">
+  <div class="section-marker">11 &mdash; Status</div>
+  <h2 class="fade-up">Where we are <span class="accent">right now</span></h2>
+
+  <p class="prose fade-up" style="animation-delay:0.05s; max-width:900px; margin-bottom:20px;">
+    We're being honest: this is a working platform, but it's not production-ready yet. We want it to work well before we put it in front of real users.
+  </p>
+
+  <div class="two-col">
+    <div>
+      <div class="card fade-up" style="animation-delay:0.1s; margin-bottom:14px; border-top: 3px solid var(--reed);">
+        <h4>What works</h4>
+        <ul>
+          <li>Full agent pipeline: requirements &rarr; architecture &rarr; code &rarr; test &rarr; deploy</li>
+          <li>Governance layer: approvals, HITL, audit trail, role-based access</li>
+          <li>Sandbox isolation with credential proxying</li>
+          <li>TDD enforcement by architecture</li>
+          <li>Provider-agnostic LLM routing via LiteLLM</li>
+          <li>Session stop/resume, retry from any agent run</li>
+          <li>Basic Self-improvement flow (Druppie modifying its own code via PRs)</li>
+        </ul>
+      </div>
+
+    </div>
+
+    <div>
+      <div class="card fade-up" style="animation-delay:0.2s; margin-bottom:14px; border-top: 3px solid var(--warm);">
+        <h4>What we're actively working on</h4>
+        <ul>
+          <li><strong>Module system</strong> &mdash; The specification is done, implementation is in progress. This is the foundation for reusable capabilities across generated apps.</li>
+          <li><strong>Coding agent quality</strong> &mdash; The sandbox agents produce working code, but reliability and code quality need to improve before we're confident showing it to end users.</li>
+          <li><strong>Testing &amp; evaluation framework</strong> &mdash; Building systematic ways to measure agent behavior: are the right agents called? Do they produce correct output? Benchmarking the pipeline end-to-end.</li>
+          <li><strong>Infrastructure maturity</strong> &mdash; Moving from Docker Compose to a production-grade container orchestration (Kubernetes / managed platform).</li>
+          <li><strong>UI polish</strong> &mdash; Dashboard and settings pages are prototypes. The chat and approval flows work, but the overall UX needs refinement.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 19 — Closing -->
+<!-- ============================================================ -->
+<div class="slide title-slide" id="s19">
+  <h3 class="fade-up">Technical Deep Dive</h3>
+  <h1 class="fade-up" style="font-size:3.2rem; animation-delay:0.1s;">
+    That's <span class="water-text">how it works</span>
+  </h1>
+
+  <p class="subtitle fade-up" style="animation-delay:0.2s; font-size:1.15rem;">
+    Governed multi-agent orchestration, sandboxed execution,<br>
+    provider-agnostic LLM routing, and a module marketplace &mdash;<br>
+    built by a water authority.
+  </p>
+
+  <div class="fade-up" style="animation-delay:0.3s;">
+    <span class="closing-cta">Questions? Let's dig in.</span>
+  </div>
+
+  <div class="fade-up" style="animation-delay:0.4s; margin-top: 28px; text-align: center;">
+    <div style="font-size: 0.92rem; color: var(--text-mid);">
+      <code style="font-size: 0.95rem;">github.com/nuno-git/druppie-fork</code>
+    </div>
+  </div>
+
+  <div class="wave-decoration">
+    <svg viewBox="0 0 1440 120" preserveAspectRatio="none">
+      <path fill="var(--water)" d="M0,60 C360,120 720,0 1080,60 C1260,90 1380,30 1440,60 L1440,120 L0,120 Z"/>
+    </svg>
+  </div>
+</div>
+
+
+<!-- Navigation -->
+<div class="nav">
+  <button onclick="prev()" title="Previous">&#8592;</button>
+  <button onclick="next()" title="Next">&#8594;</button>
+</div>
+<div class="progress" id="progress"></div>
+<div class="slide-counter" id="counter"></div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  let current = 0;
+
+  function show(n) {
+    slides[current].classList.remove('active');
+    current = (n + slides.length) % slides.length;
+    slides[current].classList.add('active');
+    document.getElementById('progress').style.width =
+      ((current + 1) / slides.length * 100) + '%';
+    document.getElementById('counter').textContent =
+      (current + 1) + ' / ' + slides.length;
+  }
+
+  function next() { show(current + 1); }
+  function prev() { show(current - 1); }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); next(); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
+  });
+
+  let touchStartX = 0;
+  document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+  document.addEventListener('touchend', (e) => {
+    const diff = touchStartX - e.changedTouches[0].clientX;
+    if (Math.abs(diff) > 50) { diff > 0 ? next() : prev(); }
+  });
+
+  show(0);
+</script>
+
+</body>
+</html>
