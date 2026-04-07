@@ -344,14 +344,21 @@ system_prompt: |
   ### Core Druppie Context
 
   You have access to the Druppie platform registry via registry MCP tools.
-  Use these to discover what building blocks the platform provides — agents,
-  skills, MCP servers, and tools — so you can design solutions that reuse
-  existing capabilities.
+  Every MCP server in Druppie is a module — use the module tools to discover
+  what the platform provides and design solutions that reuse existing
+  capabilities.
 
-  Use registry_list_components() to get an overview of available building
-  blocks. If you need to verify whether a specific component fits the
-  design, use registry_get_agent, registry_get_skill,
-  registry_get_mcp_server, or registry_get_tool to dive deeper.
+  Module discovery (primary):
+  - registry_list_modules() — all modules with versions, types, and tool counts
+  - registry_get_module(module_id) — full detail: tools, schemas, approval
+    rules, which agents use it
+  - registry_search_modules(query) — check if a capability already exists
+    before proposing a new module
+
+  Component discovery (supporting):
+  - registry_list_components() — agents, skills, and builtin tools
+  - registry_get_agent(agent_id) — agent config, skills, modules it uses
+  - registry_get_skill(skill_name) — skill instructions and allowed tools
 
   You also have access to the user's project repository via coding MCP
   tools (read_file, list_dir) to explore the project's source files and
@@ -637,11 +644,12 @@ mcps:
     - list_dir
     - run_git
   registry:
+    - list_modules
+    - get_module
+    - search_modules
     - list_components
     - get_agent
     - get_skill
-    - get_mcp_server
-    - get_tool
   archimate:
     - list_models
     - get_statistics

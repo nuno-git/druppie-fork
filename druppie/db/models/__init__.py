@@ -47,6 +47,7 @@ from .llm_retry import LlmRetry
 
 # Project model
 from .project import Project
+from .project_dependency import ProjectDependency
 
 # Question model (HITL questions from agents)
 from .question import Question
@@ -73,6 +74,7 @@ __all__ = [
     "UserToken",
     # Project
     "Project",
+    "ProjectDependency",
     # Session
     "Session",
     # Agent execution

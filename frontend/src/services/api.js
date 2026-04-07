@@ -393,3 +393,11 @@ export const getAnalyticsBatchDetail = (batchId) =>
 
 export const getTestRunAssertions = (testRunId) =>
   request(`/api/evaluations/test-runs/${testRunId}/assertions`)
+
+// ============ Cache ============
+export const getCachedPackages = () => request('/api/cache/packages')
+export const getAllProjectDependencies = () => request('/api/cache/dependencies')
+export const getPackageProjects = (manager, name) =>
+  request(`/api/cache/packages/${encodeURIComponent(manager)}/${encodeURIComponent(name)}/projects`)
+export const getProjectDependencies = (projectId) =>
+  request(`/api/projects/${projectId}/dependencies`)
