@@ -17,7 +17,7 @@ Run with: pytest test_public_datalake.py -v
 
 import pytest
 
-from module import AzureDataLakeModule
+from .module import AzureDataLakeModule
 
 PUBLIC_ACCOUNT_URL = "https://azureopendatastorage.blob.core.windows.net"
 KNOWN_CONTAINER = "nyctlc"

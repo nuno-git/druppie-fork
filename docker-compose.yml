@@ -546,6 +546,7 @@ services:
       MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
+      MCP_AZURE_DATALAKE_URL: ${MCP_AZURE_DATALAKE_URL:-http://module-azure-datalake:9008}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_MANAGER_URL: http://sandbox-manager:8000
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
@@ -630,6 +631,7 @@ services:
       MCP_WEB_URL: ${MCP_WEB_URL:-http://module-web:9005}
       MCP_ARCHIMATE_URL: ${MCP_ARCHIMATE_URL:-http://module-archimate:9006}
       MCP_REGISTRY_URL: ${MCP_REGISTRY_URL:-http://module-registry:9007}
+      MCP_AZURE_DATALAKE_URL: ${MCP_AZURE_DATALAKE_URL:-http://module-azure-datalake:9008}
       SANDBOX_CONTROL_PLANE_URL: http://sandbox-control-plane:8787
       SANDBOX_API_SECRET: ${SANDBOX_API_SECRET:-sandbox-dev-secret}
       SANDBOX_MODEL: ${SANDBOX_MODEL:-}
@@ -790,6 +792,7 @@ services:
       KEYCLOAK_INTERNAL_URL: http://localhost:${KEYCLOAK_PORT:-8180}
       KEYCLOAK_REALM: druppie
       ENV_FILE: /project/.env
+      HOST_PROJECT_DIR: ${HOST_PROJECT_DIR:-${PWD}}
     volumes:
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - .:/project
