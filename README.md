@@ -14,7 +14,7 @@ cp .env.example .env
 # Edit .env and add your LLM API key (ZAI_API_KEY or DEEPINFRA_API_KEY)
 
 # 3. Start (first time includes --profile init)
-docker compose --profile dev --profile init up -d
+docker compose --profile dev --profile init up -d --build
 
 # 4. Open the app
 open http://localhost:5273
@@ -25,8 +25,6 @@ First startup takes a few minutes to build images and initialize services.
 > **Already cloned without `--recursive`?** Run: `git submodule update --init`
 
 ## Daily Usage
-
-After first-time setup, skip `--profile init`:
 
 ```bash
 docker compose --profile dev up -d    # Start
@@ -103,15 +101,23 @@ docker compose logs -f sandbox-manager       # Sandbox manager
 # Soft reset - clears projects, sessions, chats (keeps user accounts, make sure to logout in the browser because tokens are kept there in cache.)
 docker compose --profile reset-db run --rm reset-db
 
-# Hard reset - wipes EVERYTHING and re-initializes Keycloak & Gitea
+# Hard reset - wipes all data volumes and re-initializes Keycloak & Gitea
 docker compose --profile reset-hard run --rm reset-hard
 docker compose --profile dev up -d --build   # Rebuild + start (MCP servers need --build)
+
+# Full nuke - destroys EVERYTHING (containers, volumes, images) and rebuilds from scratch
+docker compose --profile nuke run --rm nuke
+
+# Nuke without restarting (tear down only)
+START_AFTER=false docker compose --profile nuke run --rm nuke
 ```
 
 **Soft reset keeps:** User accounts, Keycloak config, Gitea repos
 **Soft reset clears:** Projects, sessions, agent runs, messages, approvals, questions
 
-**Hard reset clears:** Everything (all databases, Keycloak, Gitea, workspace files)
+**Hard reset clears:** All data (databases, Keycloak, Gitea, workspace files). Keeps Docker images.
+
+**Nuke clears:** Everything including Docker images. Rebuilds all images and starts fresh.
 
 ## What is `--profile init`?
 
@@ -227,10 +233,9 @@ GITEA_PORT=3101
 docker compose logs -f
 ```
 
-**Fresh start:**
+**Fresh start (nuclear option):**
 ```bash
-docker compose --profile reset-hard run --rm reset-hard
-docker compose --profile dev up -d --build
+docker compose --profile nuke run --rm nuke
 ```
 
 **Container won't start:**
