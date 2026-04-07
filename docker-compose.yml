@@ -13,6 +13,7 @@
 #   docker compose --profile prod --profile init up -d       # Full production
 #   docker compose --profile reset-db run --rm reset-db      # Reset app database
 #   docker compose --profile reset-hard run --rm reset-hard  # Full reset + re-init
+#   docker compose --profile nuke run --rm nuke              # Full nuke & rebuild from scratch
 #   docker compose down                                       # Stop everything
 #
 # Ports:
@@ -759,6 +760,28 @@ services:
     volumes:
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - .:/project
+
+  # Full nuke & rebuild - destroys EVERYTHING (containers, volumes, images) and rebuilds from scratch
+  # Usage: docker compose --profile nuke run --rm nuke
+  # Stop only: START_AFTER=false docker compose --profile nuke run --rm nuke
+  nuke:
+    build:
+      context: .
+      dockerfile: Dockerfile.reset
+    container_name: druppie-nuke
+    profiles: [nuke]
+    network_mode: host
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-cleaner-druppie-docker-compose}
+      START_AFTER: ${START_AFTER:-true}
+      FRONTEND_PORT: ${FRONTEND_PORT:-5273}
+      BACKEND_PORT: ${BACKEND_PORT:-8100}
+      KEYCLOAK_PORT: ${KEYCLOAK_PORT:-8180}
+      GITEA_PORT: ${GITEA_PORT:-3100}
+    volumes:
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+      - .:/project
+    entrypoint: ["/app/scripts/nuke.sh"]
 
   # Emergency purge of the shared sandbox dependency cache
   # Usage: docker compose --profile reset-cache run --rm reset-cache
