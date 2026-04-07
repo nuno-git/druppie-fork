@@ -23,7 +23,7 @@ cd /project
 # /project/... on the host, which doesn't exist. --project-directory tells Docker to resolve
 # paths relative to the actual host directory instead.
 PROJECT_DIR="${HOST_PROJECT_DIR:-/project}"
-COMPOSE="docker compose --project-directory $PROJECT_DIR"
+COMPOSE="docker compose -f /project/docker-compose.yml --project-directory $PROJECT_DIR"
 
 # Step 1: Stop all services and remove volumes
 echo "--- Step 1: Stopping all services and removing volumes ---"
