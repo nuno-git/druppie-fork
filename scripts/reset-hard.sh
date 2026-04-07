@@ -18,9 +18,16 @@ echo ""
 
 cd /project
 
+# Use host project directory for Docker volume mount resolution (required for rootless Docker).
+# When this script runs inside a container, relative paths in docker-compose.yml resolve to
+# /project/... on the host, which doesn't exist. --project-directory tells Docker to resolve
+# paths relative to the actual host directory instead.
+PROJECT_DIR="${HOST_PROJECT_DIR:-/project}"
+COMPOSE="docker compose --project-directory $PROJECT_DIR"
+
 # Step 1: Stop all services and remove volumes
 echo "--- Step 1: Stopping all services and removing volumes ---"
-docker compose --profile dev --profile prod --profile infra down -v 2>/dev/null || true
+$COMPOSE --profile dev --profile prod --profile infra down -v 2>/dev/null || true
 echo "  Done"
 echo ""
 
@@ -36,7 +43,7 @@ echo ""
 
 # Step 3: Start infrastructure
 echo "--- Step 3: Starting infrastructure ---"
-docker compose --profile infra up -d
+$COMPOSE --profile infra up -d
 echo ""
 
 # Step 4: Wait for services to be healthy
