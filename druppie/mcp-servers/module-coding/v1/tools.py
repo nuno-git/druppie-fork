@@ -2044,6 +2044,139 @@ async def merge_pull_request(
 
 
 # =============================================================================
+# PROJECT DISCOVERY TOOLS (cross-project read-only access via Gitea API)
+# =============================================================================
+
+
+@mcp.tool(
+    name="list_projects",
+    description=(
+        "List all project repositories in the Gitea organization. "
+        "Returns name, description, last update time, and default branch "
+        "for each project. Use this to discover what has been built before."
+    ),
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def list_projects() -> dict:
+    """List all project repos in the Gitea organization."""
+    import httpx
+
+    if not GITEA_URL or not GITEA_ORG:
+        return {"success": False, "error": "Gitea not configured"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(
+                f"{GITEA_URL}/api/v1/orgs/{GITEA_ORG}/repos",
+                headers=_gitea_api_headers(),
+                params={"limit": 50},
+            )
+            if response.status_code != 200:
+                return {"success": False, "error": f"Gitea API returned {response.status_code}"}
+
+            repos = response.json()
+            projects = [
+                {
+                    "name": r["name"],
+                    "description": r.get("description", ""),
+                    "updated_at": r.get("updated_at", ""),
+                    "default_branch": r.get("default_branch", "main"),
+                }
+                for r in repos
+            ]
+            return {"success": True, "count": len(projects), "projects": projects}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(
+    name="read_project_file",
+    description=(
+        "Read a file from any project repository in Gitea. "
+        "Use this to inspect technical_design.md, Dockerfiles, or source "
+        "code from existing projects to understand patterns and reuse opportunities."
+    ),
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def read_project_file(repo_name: str, path: str, ref: str = "main") -> dict:
+    """Read a file from any project repository."""
+    import httpx
+
+    if not GITEA_URL or not GITEA_ORG:
+        return {"success": False, "error": "Gitea not configured"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(
+                f"{GITEA_URL}/api/v1/repos/{GITEA_ORG}/{repo_name}/raw/{path}",
+                headers=_gitea_api_headers(),
+                params={"ref": ref},
+            )
+            if response.status_code == 404:
+                return {"success": False, "error": f"File '{path}' not found in {repo_name} (ref: {ref})"}
+            if response.status_code != 200:
+                return {"success": False, "error": f"Gitea API returned {response.status_code}"}
+
+            content = response.text
+            # Cap large files
+            if len(content) > 50000:
+                content = content[:50000] + "\n\n... (truncated, file too large)"
+
+            return {"success": True, "repo": repo_name, "path": path, "ref": ref, "content": content}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(
+    name="list_project_files",
+    description=(
+        "List all files in a project repository. "
+        "Use this to understand a project's structure before reading specific files."
+    ),
+    meta={"module_id": MODULE_ID, "version": MODULE_VERSION},
+)
+async def list_project_files(repo_name: str, path: str = "", ref: str = "main") -> dict:
+    """List files in a project repository."""
+    import httpx
+
+    if not GITEA_URL or not GITEA_ORG:
+        return {"success": False, "error": "Gitea not configured"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(
+                f"{GITEA_URL}/api/v1/repos/{GITEA_ORG}/{repo_name}/git/trees/{ref}",
+                headers=_gitea_api_headers(),
+                params={"recursive": "true"},
+            )
+            if response.status_code == 404:
+                return {"success": False, "error": f"Repository '{repo_name}' not found or ref '{ref}' does not exist"}
+            if response.status_code != 200:
+                return {"success": False, "error": f"Gitea API returned {response.status_code}"}
+
+            tree = response.json().get("tree", [])
+            # Filter by path prefix if specified
+            if path:
+                prefix = path.rstrip("/") + "/"
+                tree = [e for e in tree if e.get("path", "").startswith(prefix)]
+
+            files = [
+                {
+                    "path": e["path"],
+                    "type": e.get("type", ""),  # "blob" or "tree"
+                    "size": e.get("size", 0),
+                }
+                for e in tree
+            ]
+            return {"success": True, "repo": repo_name, "ref": ref, "count": len(files), "files": files}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
 # INTERNAL TOOLS (used by backend, not exposed to agents)
 # =============================================================================
 

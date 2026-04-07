@@ -23,9 +23,13 @@ mcps:
       session_id:
         from: session.id
         hidden: true
+        # Not injected into project discovery tools (list_projects, read_project_file, list_project_files)
+        # — those use Gitea API directly, not workspaces
+        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, run_git, run_tests, get_test_framework, get_coverage_report, create_pull_request, merge_pull_request, install_test_dependencies, validate_tdd, get_git_status]
       project_id:
         from: project.id
         hidden: true
+        tools: [read_file, write_file, make_design, batch_write_files, list_dir, delete_file, run_git, run_tests, get_test_framework, get_coverage_report, create_pull_request, merge_pull_request, install_test_dependencies, validate_tdd, get_git_status]
       repo_name:
         from: project.repo_name
         hidden: true
@@ -83,6 +87,14 @@ mcps:
         requires_approval: false
 
       - name: get_git_status
+        requires_approval: false
+
+      # Project discovery tools (cross-project read-only via Gitea API)
+      - name: list_projects
+        requires_approval: false
+      - name: read_project_file
+        requires_approval: false
+      - name: list_project_files
         requires_approval: false
 
       # Internal tools (not visible to agents, callable by backend)
