@@ -69,6 +69,21 @@ class AgentLoop:
                 agent_run_id=str(agent_run_id),
             )
 
+        # Check if the `done` tool already completed (e.g. after approval resume).
+        # When `done` requires approval, the flow is: pause → approve → execute
+        # done → resume. At resume, the done result is in the reconstructed
+        # messages but the loop would call the LLM again (which calls done
+        # again → infinite loop). Detect this and return immediately.
+        if start_iteration > 0:
+            done_result = self._check_done_already_completed(messages)
+            if done_result is not None:
+                logger.info(
+                    "agent_done_already_completed_on_resume",
+                    agent_id=self.agent_id,
+                    start_iteration=start_iteration,
+                )
+                return done_result
+
         for iteration in range(start_iteration, max_iterations):
             # Check for user-initiated pause between iterations (cooperative pause)
             session_status = self._get_session_status(session_id)
@@ -122,6 +137,47 @@ class AgentLoop:
         self.db.expire_all()
         session = self.db.query(Session).filter(Session.id == session_id).first()
         return session.status if session else None
+
+    # ------------------------------------------------------------------
+    # Done-already-completed check (prevents infinite loop on resume)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _check_done_already_completed(messages: list[dict]) -> dict | None:
+        """Check if the last tool result in the message history is a completed `done`.
+
+        When `done` requires approval, the approval-resume flow executes the
+        tool and stores the result in DB. On resume the result is in the
+        reconstructed messages, but the loop would call the LLM again — which
+        typically calls `done` a second time, creating an infinite loop.
+
+        Returns:
+            A success dict if `done` already completed, else None.
+        """
+        # Walk backwards to find the last tool result message
+        for msg in reversed(messages):
+            if msg.get("role") == "tool":
+                try:
+                    result = json.loads(msg["content"]) if isinstance(msg["content"], str) else msg["content"]
+                except (json.JSONDecodeError, TypeError):
+                    return None
+                if isinstance(result, dict) and result.get("status") == "completed" and "summary" in result:
+                    # Confirm the corresponding assistant tool_call was `done`
+                    tool_call_id = msg.get("tool_call_id")
+                    if tool_call_id:
+                        for prev_msg in reversed(messages):
+                            if prev_msg.get("role") == "assistant" and prev_msg.get("tool_calls"):
+                                for tc in prev_msg["tool_calls"]:
+                                    if tc.get("id") == tool_call_id:
+                                        fn_name = tc.get("function", {}).get("name", "")
+                                        if fn_name == "done":
+                                            return {
+                                                "success": True,
+                                                "result": result.get("summary", "[NO_SUMMARY]"),
+                                            }
+                                break  # Only check the most recent assistant message
+                return None  # Last tool result wasn't a done completion
+        return None
 
     # ------------------------------------------------------------------
     # Tool preparation

@@ -1,0 +1,21 @@
+# OSV vulnerability scanner for the shared dependency cache.
+# Usage: docker compose --profile scan-cache run --rm cache-scanner
+
+FROM debian:bookworm-slim
+
+ARG OSV_SCANNER_VERSION=2.3.3
+ARG OSV_SCANNER_SHA256=777b4bb7ddd10bdcc8a1aa398d37d05e91e866e7586f9cff3fca2f72b8153033
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates jq curl \
+    && curl -fsSL "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64" \
+       -o /usr/local/bin/osv-scanner \
+    && echo "${OSV_SCANNER_SHA256}  /usr/local/bin/osv-scanner" | sha256sum -c - \
+    && chmod +x /usr/local/bin/osv-scanner \
+    && apt-get purge -y curl && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/scan-cache.sh /usr/local/bin/scan-cache.sh
+RUN chmod +x /usr/local/bin/scan-cache.sh
+
+ENTRYPOINT ["/usr/local/bin/scan-cache.sh"]

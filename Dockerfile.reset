@@ -23,9 +23,11 @@ RUN pip install --no-cache-dir requests pyyaml
 COPY scripts/setup_keycloak.py /app/scripts/setup_keycloak.py
 COPY scripts/setup_gitea.py /app/scripts/setup_gitea.py
 COPY scripts/reset-hard.sh /app/scripts/reset-hard.sh
+COPY scripts/nuke.sh /app/scripts/nuke.sh
 COPY iac/ /app/iac/
 
 # Fix line endings (in case files were copied from Windows) and make executable
-RUN sed -i 's/\r$//' /app/scripts/reset-hard.sh && chmod +x /app/scripts/reset-hard.sh
+RUN sed -i 's/\r$//' /app/scripts/reset-hard.sh /app/scripts/nuke.sh && \
+    chmod +x /app/scripts/reset-hard.sh /app/scripts/nuke.sh
 
 ENTRYPOINT ["/app/scripts/reset-hard.sh"]

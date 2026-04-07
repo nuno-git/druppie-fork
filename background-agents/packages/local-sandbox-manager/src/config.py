@@ -43,6 +43,7 @@ DOCKER_MEMORY_LIMIT = get("DOCKER_MEMORY_LIMIT", "4g")
 DOCKER_CPU_LIMIT = get("DOCKER_CPU_LIMIT", "2")
 DOCKER_PIDS_LIMIT = int(get("DOCKER_PIDS_LIMIT", "8192"))
 DOCKER_NETWORK = get("DOCKER_NETWORK")
+SANDBOX_CACHE_VOLUME = get("SANDBOX_CACHE_VOLUME", "")
 
 # Snapshot storage directory.
 _default_snapshot_dir = str(Path(__file__).parent.parent / "data" / "snapshots")
