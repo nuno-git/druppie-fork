@@ -18,15 +18,26 @@ echo ""
 
 cd /project
 
+# Rootless Docker fix: when this script runs inside a container, compose resolves relative
+# volume paths (./druppie/...) to /project/druppie/... on the host. Rootless Docker can't
+# mkdir /project at the system root. Fix: create a symlink so compose resolves paths to the
+# actual host directory, which the daemon can access.
+if [ -n "$HOST_PROJECT_DIR" ] && [ "$HOST_PROJECT_DIR" != "/project" ]; then
+    mkdir -p "$(dirname "$HOST_PROJECT_DIR")"
+    ln -sf /project "$HOST_PROJECT_DIR"
+    cd "$HOST_PROJECT_DIR"
+fi
+COMPOSE="docker compose"
+
 # Step 1: Stop all services and remove volumes
 echo "--- Step 1: Stopping all services and removing volumes ---"
-docker compose --profile dev --profile prod --profile infra down -v 2>/dev/null || true
+$COMPOSE --profile dev --profile prod --profile infra down -v 2>/dev/null || true
 echo "  Done"
 echo ""
 
 # Step 2: Remove any remaining druppie volumes (in case they were external)
 echo "--- Step 2: Cleaning up any remaining volumes ---"
-for vol in druppie_new_postgres druppie_new_keycloak_postgres druppie_new_gitea_postgres druppie_new_gitea druppie_new_workspace druppie_new_dataset druppie_init_marker; do
+for vol in druppie_new_postgres druppie_new_keycloak_postgres druppie_new_gitea_postgres druppie_new_gitea druppie_new_workspace druppie_new_dataset druppie_init_marker druppie_sandbox_dep_cache druppie_cache_scan_results; do
     if docker volume inspect "$vol" >/dev/null 2>&1; then
         echo "  Removing volume: $vol"
         docker volume rm "$vol" 2>/dev/null || echo "  Warning: Could not remove $vol"
@@ -36,7 +47,7 @@ echo ""
 
 # Step 3: Start infrastructure
 echo "--- Step 3: Starting infrastructure ---"
-docker compose --profile infra up -d
+$COMPOSE --profile infra up -d
 echo ""
 
 # Step 4: Wait for services to be healthy

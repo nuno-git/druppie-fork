@@ -24,6 +24,7 @@ import {
   Filter,
   GitBranch,
   MessageCircle,
+  Package,
 } from 'lucide-react'
 import { getSandboxEvents } from '../../services/api'
 
@@ -379,12 +380,43 @@ const AgentTextBlock = ({ event }) => {
   )
 }
 
+const CacheSummaryItem = ({ event }) => {
+  const data = event.data || event
+  const totalNew = data.total_new || 0
+  const totalCached = data.total_cached || 0
+  const total = totalNew + totalCached
+  const perManager = data.per_manager || []
+
+  if (total === 0) return null
+
+  return (
+    <div className="py-1.5 px-2 bg-blue-50 border border-blue-100 rounded-lg flex items-center gap-2 text-xs">
+      <Package className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+      <span className="text-blue-800 font-medium">
+        {total} packages installed
+      </span>
+      {totalCached > 0 && (
+        <span className="text-blue-600">
+          ({totalCached} from cache)
+        </span>
+      )}
+      {perManager.length > 0 && (
+        <span className="text-blue-400 ml-1">
+          {perManager.map(m => `${m.manager}: ${m.new + m.cached}`).join(', ')}
+        </span>
+      )}
+    </div>
+  )
+}
+
 const EventItem = ({ event, index }) => {
   const [showDetail, setShowDetail] = useState(false)
   const type = event.type || event.event_type || 'event'
   const timestamp = event.timestamp || event.createdAt || event.created_at
   const timeStr = timestamp ? new Date(typeof timestamp === 'number' ? timestamp * (timestamp < 1e12 ? 1000 : 1) : timestamp).toLocaleTimeString() : null
   const data = event.data || {}
+
+  if (type === 'cache_summary') return <CacheSummaryItem event={event} />
 
   const isToolCall = type === 'tool_call'
   const toolName = isToolCall ? (data.tool || 'tool') : null
