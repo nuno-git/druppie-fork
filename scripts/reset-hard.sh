@@ -18,12 +18,16 @@ echo ""
 
 cd /project
 
-# Use host project directory for Docker volume mount resolution (required for rootless Docker).
-# When this script runs inside a container, relative paths in docker-compose.yml resolve to
-# /project/... on the host, which doesn't exist. --project-directory tells Docker to resolve
-# paths relative to the actual host directory instead.
-PROJECT_DIR="${HOST_PROJECT_DIR:-/project}"
-COMPOSE="docker compose -f /project/docker-compose.yml --project-directory $PROJECT_DIR"
+# Rootless Docker fix: when this script runs inside a container, compose resolves relative
+# volume paths (./druppie/...) to /project/druppie/... on the host. Rootless Docker can't
+# mkdir /project at the system root. Fix: create a symlink so compose resolves paths to the
+# actual host directory, which the daemon can access.
+if [ -n "$HOST_PROJECT_DIR" ] && [ "$HOST_PROJECT_DIR" != "/project" ]; then
+    mkdir -p "$(dirname "$HOST_PROJECT_DIR")"
+    ln -sf /project "$HOST_PROJECT_DIR"
+    cd "$HOST_PROJECT_DIR"
+fi
+COMPOSE="docker compose"
 
 # Step 1: Stop all services and remove volumes
 echo "--- Step 1: Stopping all services and removing volumes ---"
