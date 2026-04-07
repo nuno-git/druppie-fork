@@ -95,13 +95,20 @@ fi
 echo ""
 
 if [ "$START_AFTER" = "true" ]; then
-    # Step 5: Build and start everything from scratch
-    echo "--- Step 5: Building and starting dev environment ---"
+    # Step 5: Purge build cache (ensures truly clean rebuild)
+    echo "--- Step 5: Purging Docker build cache ---"
+    docker builder prune -af 2>/dev/null || true
+    echo "  Done"
+    echo ""
+
+    # Step 6: Build and start everything from scratch
+    echo "--- Step 6: Building and starting dev environment ---"
     echo "  This will take a few minutes on first build..."
     echo ""
     docker compose --profile dev --profile init up -d --build
     echo ""
 
+    echo ""
     echo "=============================================="
     echo "  Nuke & Rebuild Complete!"
     echo "=============================================="
