@@ -13,8 +13,8 @@ cd cleaner-druppie
 cp .env.example .env
 # Edit .env and add your LLM API key (ZAI_API_KEY or DEEPINFRA_API_KEY)
 
-# 3. Build and start everything from scratch
-docker compose --profile nuke run --rm nuke
+# 3. Start (first time includes --profile init)
+docker compose --profile dev --profile init up -d --build
 
 # 4. Open the app
 open http://localhost:5273
