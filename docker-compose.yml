@@ -740,6 +740,8 @@ services:
     network_mode: host
     environment:
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-cleaner-druppie-docker-compose}
+      # Host project directory for Docker volume mount resolution (required for rootless Docker)
+      HOST_PROJECT_DIR: ${PWD}
       # Init container env vars for re-initialization (use localhost since we're on host network)
       KEYCLOAK_URL: http://localhost:${KEYCLOAK_PORT:-8180}
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
