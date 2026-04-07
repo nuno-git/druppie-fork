@@ -41,25 +41,20 @@ echo "--- Step 1: Stopping all containers and removing volumes ---"
 docker compose \
     --profile dev --profile prod --profile infra \
     --profile init --profile reset-db --profile reset-hard \
-    --profile reset-cache --profile scan-cache --profile nuke \
-    down -v --remove-orphans 2>/dev/null || true
+    --profile reset-cache --profile scan-cache \
+    down -v --remove-orphans || true
 echo "  Done"
 echo ""
 
-# Step 2: Remove any remaining named volumes
+# Step 2: Remove any remaining named volumes (catches volumes that survived Step 1)
 echo "--- Step 2: Cleaning up remaining volumes ---"
-for vol in \
-    druppie_new_postgres \
-    druppie_new_keycloak_postgres \
-    druppie_new_gitea_postgres \
-    druppie_new_gitea \
-    druppie_new_workspace \
-    druppie_new_dataset \
-    druppie_init_marker \
-    druppie_sandbox_data \
-    druppie_sandbox_snapshots \
-    druppie_sandbox_dep_cache \
-    druppie_cache_scan_results; do
+VOLUMES=$(docker compose \
+    --profile dev --profile prod --profile infra \
+    --profile init --profile reset-db --profile reset-hard \
+    --profile reset-cache --profile scan-cache \
+    config --volumes 2>/dev/null) || true
+
+for vol in $VOLUMES; do
     if docker volume inspect "$vol" >/dev/null 2>&1; then
         echo "  Removing volume: $vol"
         docker volume rm "$vol" 2>/dev/null || echo "  Warning: Could not remove $vol"
@@ -73,7 +68,7 @@ echo "--- Step 3: Removing built Docker images ---"
 IMAGES=$(docker compose \
     --profile dev --profile prod --profile infra \
     --profile init --profile reset-db --profile reset-hard \
-    --profile reset-cache --profile scan-cache --profile nuke \
+    --profile reset-cache --profile scan-cache \
     config --images 2>/dev/null | sort -u) || true
 
 for img in $IMAGES; do
