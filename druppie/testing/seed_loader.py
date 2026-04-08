@@ -359,7 +359,6 @@ def seed_fixture(
     db.flush()
 
     # -- 8. Agent runs --
-    msg_seq = 1  # next message sequence number
     for idx, agent in enumerate(fixture.agents):
         seq = idx + 1
         run_id = fixture_uuid(meta.id, "run", idx)
@@ -427,52 +426,6 @@ def seed_fixture(
             repo_name=_repo_name,
         )
 
-        # Assistant message for completed agents with a done() tool call
-        if agent.status == "completed":
-            done_summary = _find_done_summary(agent)
-            if done_summary:
-                db.add(Message(
-                    id=fixture_uuid(meta.id, "msg", msg_seq),
-                    session_id=session_id,
-                    agent_run_id=run_id,
-                    role="assistant",
-                    content=done_summary,
-                    agent_id=agent.id,
-                    sequence_number=msg_seq,
-                    created_at=run_ts,
-                ))
-                msg_seq += 1
-
-        # Error message for failed agents
-        elif agent.status == "failed" and agent.error_message:
-            db.add(Message(
-                id=fixture_uuid(meta.id, "msg", msg_seq),
-                session_id=session_id,
-                agent_run_id=run_id,
-                role="assistant",
-                content=f"Agent {agent.id}: Failed \u2014 {agent.error_message}",
-                agent_id=agent.id,
-                sequence_number=msg_seq,
-                created_at=run_ts,
-            ))
-            msg_seq += 1
-
-    # -- 9. Extra messages from fixture --
-    for msg_fix in fixture.messages:
-        # Skip user messages (already handled above)
-        if msg_fix.role == "user":
-            continue
-        db.add(Message(
-            id=fixture_uuid(meta.id, "msg", msg_seq),
-            session_id=session_id,
-            agent_run_id=None,
-            role=msg_fix.role,
-            content=msg_fix.content,
-            agent_id=msg_fix.agent_id,
-            sequence_number=msg_seq,
-            created_at=base_ts,
-        ))
-        msg_seq += 1
 
     db.flush()
 
