@@ -1,3 +1,6 @@
+## Project mid-pipeline with BA running and asking HITL questions.
+## Shows: active session, BA in progress, multiple HITL interactions.
+
 metadata:
   id: blog-platform-tester-running
   title: "make a blog platform with markdown support"
@@ -15,13 +18,46 @@ agents:
         arguments:
           intent: create_project
           project_name: blog-platform
+          description: "A blog platform with markdown rendering and post management"
         status: completed
         result: "Intent set to create_project"
       - tool: builtin:done
         arguments:
           summary: "Classified as create_project for blog-platform"
         status: completed
-        result: "Agent completed"
+
+  - id: planner
+    status: completed
+    tool_calls:
+      - tool: builtin:make_plan
+        arguments:
+          steps:
+            - agent_id: business_analyst
+              prompt: "Gather detailed requirements for the blog platform"
+            - agent_id: planner
+              prompt: "Re-evaluate after BA completes"
+        status: completed
+      - tool: builtin:done
+        arguments:
+          summary: "Planned business_analyst as next step"
+        status: completed
+
+  - id: business_analyst
+    status: running
+    planned_prompt: "Gather requirements for blog platform with markdown support"
+    tool_calls:
+      - tool: builtin:hitl_ask_question
+        arguments:
+          question: "Should the blog support multiple authors or just a single author?"
+        status: completed
+        result: "User answered: Multiple authors with different roles"
+        answer: "Multiple authors with different roles"
+      - tool: builtin:hitl_ask_question
+        arguments:
+          question: "Do you need comments on blog posts?"
+        status: completed
+        result: "User answered: Yes, with moderation"
+        answer: "Yes, with moderation"
 
 messages:
   - role: user

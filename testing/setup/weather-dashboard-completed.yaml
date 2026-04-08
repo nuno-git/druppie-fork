@@ -1,3 +1,6 @@
+## Completed project with actual files in Gitea.
+## Shows: full pipeline, outcome blocks creating real files.
+
 metadata:
   id: weather-dashboard-completed
   title: "build a weather dashboard"
@@ -15,13 +18,89 @@ agents:
         arguments:
           intent: create_project
           project_name: weather-dashboard
+          description: "A real-time weather dashboard showing rainfall and temperature"
         status: completed
         result: "Intent set to create_project"
       - tool: builtin:done
         arguments:
           summary: "Classified as create_project for weather-dashboard"
         status: completed
-        result: "Agent completed"
+
+  - id: planner
+    status: completed
+    tool_calls:
+      - tool: builtin:make_plan
+        arguments:
+          steps:
+            - agent_id: business_analyst
+              prompt: "Gather requirements for the weather dashboard"
+            - agent_id: planner
+              prompt: "Re-evaluate after BA"
+        status: completed
+      - tool: builtin:done
+        arguments:
+          summary: "Planned business_analyst as next step"
+        status: completed
+
+  - id: business_analyst
+    status: completed
+    tool_calls:
+      - tool: coding:make_design
+        arguments:
+          content: |
+            # Functional Design: Weather Dashboard
+            ## Requirements
+            - FR-01: Display real-time rainfall data per region
+            - FR-02: Show temperature trends over 7 days
+            - FR-03: Alert when rainfall exceeds threshold
+            - NFR-01: Dashboard loads within 2 seconds
+        status: completed
+        result: "Created docs/functional-design.md"
+        outcome:
+          target: gitea
+          files:
+            - path: docs/functional-design.md
+              content: |
+                # Functional Design: Weather Dashboard
+                ## Requirements
+                - FR-01: Display real-time rainfall data per region
+                - FR-02: Show temperature trends over 7 days
+                - FR-03: Alert when rainfall exceeds threshold
+                - NFR-01: Dashboard loads within 2 seconds
+      - tool: builtin:done
+        arguments:
+          summary: "DESIGN_APPROVED - Functional design created"
+        status: completed
+
+  - id: architect
+    status: completed
+    tool_calls:
+      - tool: coding:make_design
+        arguments:
+          content: |
+            # Technical Design: Weather Dashboard
+            ## Architecture
+            React frontend with FastAPI backend.
+            ## Components
+            - WeatherCard: displays sensor data
+            - AlertBanner: threshold warnings
+        status: completed
+        result: "Created docs/technical-design.md"
+        outcome:
+          target: gitea
+          files:
+            - path: docs/technical-design.md
+              content: |
+                # Technical Design: Weather Dashboard
+                ## Architecture
+                React frontend with FastAPI backend.
+                ## Components
+                - WeatherCard: displays sensor data
+                - AlertBanner: threshold warnings
+      - tool: builtin:done
+        arguments:
+          summary: "DESIGN_APPROVED - Technical design created"
+        status: completed
 
 messages:
   - role: user
