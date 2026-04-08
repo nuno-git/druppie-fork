@@ -428,7 +428,7 @@ async def list_available_setups(
 
 
 @router.post("/evaluations/seed")
-async def seed_sessions(
+def seed_sessions_endpoint(
     body: SeedRequest,
     user: dict = Depends(require_admin),
 ):
@@ -436,18 +436,17 @@ async def seed_sessions(
 
     Admin only. Seeds the specified sessions as the given user,
     so you can then interact with them in the UI manually.
+    Uses def (not async def) so synchronous DB calls run in a thread pool.
     """
+    import hashlib
     from pathlib import Path
 
     import yaml as _yaml
 
     from druppie.db.database import SessionLocal
+    from druppie.db.models import User, UserRole
     from druppie.testing.seed_loader import seed_fixture
     from druppie.testing.seed_schema import SessionFixture
-
-    import hashlib
-
-    from druppie.db.models import User, UserRole
 
     base_dir = Path(__file__).resolve().parents[3] / "testing" / "setup"
     db = SessionLocal()
@@ -460,7 +459,6 @@ async def seed_sessions(
         ).hexdigest()[:8]
         seed_user = f"s-{short_hash}"
 
-        # Create the user in DB
         new_user = User(
             id=uuid_mod.uuid4(),
             username=seed_user,
@@ -485,7 +483,8 @@ async def seed_sessions(
                 results.append({"session": name, "status": "not_found"})
                 continue
 
-            fixture = fixtures[name]
+            import copy
+            fixture = copy.deepcopy(fixtures[name])
             fixture.metadata.user = seed_user
 
             try:
