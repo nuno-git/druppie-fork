@@ -496,13 +496,20 @@ def seed_sessions_endpoint(
                     "project_name": fixture.metadata.project_name,
                 })
             except Exception as e:
+                # Rollback the failed transaction so we can continue
+                db.rollback()
                 results.append({"session": name, "status": "error", "error": str(e)})
                 logger.error("Seed failed for %s: %s", name, e, exc_info=True)
 
-        db.commit()
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error("Seed commit failed: %s", e, exc_info=True)
     except Exception as e:
         db.rollback()
-        raise
+        logger.error("Seed endpoint error: %s", e, exc_info=True)
+        return {"seeded": results, "user": seed_user, "error": str(e)}
     finally:
         db.close()
 

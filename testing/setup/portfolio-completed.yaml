@@ -29,6 +29,15 @@ agents:
   - id: business_analyst
     status: completed
     tool_calls:
+      - tool: builtin:hitl_ask_multiple_choice_question
+        arguments:
+          question: "What style do you prefer for your portfolio?"
+          choices:
+            - text: "Minimalist and clean"
+            - text: "Bold and colorful"
+            - text: "Professional and corporate"
+        status: completed
+        answer: "Minimalist and clean"
       - tool: coding:make_design
         arguments:
           content: "# Portfolio Site\n## Pages\n- Home with intro\n- Projects grid\n- Contact form"
