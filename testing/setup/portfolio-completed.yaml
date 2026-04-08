@@ -1,0 +1,28 @@
+metadata:
+  id: portfolio-completed
+  title: "create a portfolio website"
+  status: completed
+  user: admin
+  intent: create_project
+  project_name: portfolio-site
+  hours_ago: 120
+
+agents:
+  - id: router
+    status: completed
+    tool_calls:
+      - tool: builtin:set_intent
+        arguments:
+          intent: create_project
+          project_name: portfolio-site
+        status: completed
+        result: "Intent set to create_project"
+      - tool: builtin:done
+        arguments:
+          summary: "Classified as create_project for portfolio-site"
+        status: completed
+        result: "Agent completed"
+
+messages:
+  - role: user
+    content: "create a portfolio website"

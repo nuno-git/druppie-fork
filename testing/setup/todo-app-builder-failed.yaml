@@ -1,0 +1,28 @@
+metadata:
+  id: todo-app-builder-failed
+  title: "build me a to do app"
+  status: failed
+  user: admin
+  intent: create_project
+  project_name: todo-app
+  hours_ago: 0.5
+
+agents:
+  - id: router
+    status: completed
+    tool_calls:
+      - tool: builtin:set_intent
+        arguments:
+          intent: create_project
+          project_name: todo-app
+        status: completed
+        result: "Intent set to create_project"
+      - tool: builtin:done
+        arguments:
+          summary: "Classified as create_project for todo-app"
+        status: completed
+        result: "Agent completed"
+
+messages:
+  - role: user
+    content: "build me a to do app"

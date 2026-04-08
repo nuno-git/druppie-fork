@@ -1,0 +1,28 @@
+metadata:
+  id: calculator-architect-paused
+  title: "create a scientific calculator"
+  status: paused_approval
+  user: admin
+  intent: create_project
+  project_name: calculator
+  hours_ago: 3
+
+agents:
+  - id: router
+    status: completed
+    tool_calls:
+      - tool: builtin:set_intent
+        arguments:
+          intent: create_project
+          project_name: calculator
+        status: completed
+        result: "Intent set to create_project"
+      - tool: builtin:done
+        arguments:
+          summary: "Classified as create_project for calculator"
+        status: completed
+        result: "Agent completed"
+
+messages:
+  - role: user
+    content: "create a scientific calculator"
