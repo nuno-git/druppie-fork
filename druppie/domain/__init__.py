@@ -38,6 +38,14 @@ from .agent_run import (
 # Approval models
 from .approval import ApprovalDetail, ApprovalHistoryList, ApprovalSummary, PendingApprovalList
 
+# Custom agent models
+from .custom_agent import (
+    CustomAgentCreate,
+    CustomAgentDetail,
+    CustomAgentSummary,
+    CustomAgentUpdate,
+)
+
 # Common models
 from .common import (
     AgentRunStatus,
@@ -127,6 +135,11 @@ __all__ = [
     # Agent definition
     "AgentDefinition",
     "ApprovalOverride",
+    # Custom agent
+    "CustomAgentSummary",
+    "CustomAgentDetail",
+    "CustomAgentCreate",
+    "CustomAgentUpdate",
     # Skill
     "SkillSummary",
     "SkillDetail",

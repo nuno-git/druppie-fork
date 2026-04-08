@@ -118,6 +118,20 @@ def get_project_service(
     return ProjectService(project_repo)
 
 
+def get_custom_agent_repository(db: Session = Depends(get_db)) -> "CustomAgentRepository":
+    """Get CustomAgentRepository with DB session injected."""
+    from druppie.repositories import CustomAgentRepository
+    return CustomAgentRepository(db)
+
+
+def get_custom_agent_service(
+    repo: "CustomAgentRepository" = Depends(get_custom_agent_repository),
+) -> "CustomAgentService":
+    """Get CustomAgentService with repository injected."""
+    from druppie.services import CustomAgentService
+    return CustomAgentService(repo)
+
+
 def get_execution_repository(db: Session = Depends(get_db)) -> "ExecutionRepository":
     """Get ExecutionRepository with DB session injected."""
     from druppie.repositories import ExecutionRepository

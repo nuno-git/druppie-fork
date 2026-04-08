@@ -9,6 +9,7 @@ from .execution_repository import ExecutionRepository
 from .user_repository import UserRepository
 from .sandbox_session_repository import SandboxSessionRepository
 from .project_dependency_repository import ProjectDependencyRepository
+from .custom_agent_repository import CustomAgentRepository
 
 __all__ = [
     "BaseRepository",
@@ -20,4 +21,5 @@ __all__ = [
     "UserRepository",
     "SandboxSessionRepository",
     "ProjectDependencyRepository",
+    "CustomAgentRepository",
 ]

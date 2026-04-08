@@ -144,6 +144,11 @@ class LLMSettings(BaseSettings):
         alias="FOUNDRY_API_URL",
         description="Azure Foundry API URL",
     )
+    foundry_project_endpoint: str = Field(
+        default="",
+        alias="FOUNDRY_PROJECT_ENDPOINT",
+        description="Azure AI Foundry project endpoint for agent deployment",
+    )
 
 
 class GitHubAppSettings(BaseSettings):

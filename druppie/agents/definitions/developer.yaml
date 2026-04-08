@@ -95,6 +95,7 @@ mcps:
 
 extra_builtin_tools:
   - execute_coding_task
+  - create_foundry_agent
 
 # NO approval_overrides needed!
 # Per goal.md:

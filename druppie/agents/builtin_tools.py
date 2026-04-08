@@ -127,7 +127,7 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                 "properties": {
                     "intent": {
                         "type": "string",
-                        "enum": ["create_project", "update_project", "general_chat"],
+                        "enum": ["create_project", "update_project", "create_agent", "general_chat"],
                         "description": "The type of user intent",
                     },
                     "project_id": {
@@ -231,6 +231,47 @@ BUILTIN_TOOL_DEFS: dict[str, dict] = {
                     },
                 },
                 "required": ["task"],
+            },
+        },
+    },
+    "create_foundry_agent": {
+        "type": "function",
+        "function": {
+            "name": "create_foundry_agent",
+            "description": (
+                "Create a Foundry agent definition. Use this when the user wants to create "
+                "an AI agent for deployment to Azure AI Foundry. The agent will be stored in "
+                "the database and can be deployed to Foundry from the Agents page."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Unique kebab-case identifier (e.g. 'weather-monitor-agent')",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Human-readable name (e.g. 'Weather Monitor Agent')",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Short description of what the agent does",
+                    },
+                    "instructions": {
+                        "type": "string",
+                        "description": "The agent's system prompt / instructions. This is the core behavior definition.",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "LLM profile to use: 'standard' or 'cheap'. Default: 'standard'.",
+                    },
+                    "temperature": {
+                        "type": "number",
+                        "description": "Sampling temperature (0.0-1.0). Default: 0.1.",
+                    },
+                },
+                "required": ["agent_id", "name", "description", "instructions"],
             },
         },
     },
@@ -346,7 +387,7 @@ async def set_intent(
         project_name=project_name,
     )
 
-    valid_intents = ("create_project", "update_project", "general_chat")
+    valid_intents = ("create_project", "update_project", "create_agent", "general_chat")
     if intent not in valid_intents:
         return {
             "success": False,
@@ -504,6 +545,17 @@ async def set_intent(
                 "success": False,
                 "error": f"Invalid project_id format: {project_id}",
             }
+
+    elif intent == "create_agent":
+        # Create a lightweight project record to track the agent creation session
+        if not project_name:
+            project_name = "new-agent"
+        new_project = project_repo.create(name=project_name, user_id=session.user_id)
+        session_repo.update_project(session_id, new_project.id)
+        final_project_id = new_project.id
+        result["project_id"] = str(new_project.id)
+        result["project_name"] = project_name
+        result["message"] = f"Creating Foundry agent: {project_name}"
 
     else:  # general_chat
         result["message"] = "Intent set to general_chat"
@@ -1100,6 +1152,77 @@ async def test_report(
     }
 
 
+async def create_foundry_agent(
+    agent_id: str,
+    name: str,
+    description: str,
+    instructions: str,
+    model: str,
+    temperature: float,
+    session_id: UUID,
+    execution_repo: "ExecutionRepository",
+) -> dict:
+    """Create a Foundry agent definition in the database.
+
+    Called by the architect/builder when the intent is create_agent.
+    The agent can later be deployed to Azure AI Foundry from the Agents page.
+    """
+    from druppie.db.database import SessionLocal
+    from druppie.repositories.custom_agent_repository import CustomAgentRepository
+    from druppie.db.models.session import Session
+
+    db = SessionLocal()
+    try:
+        repo = CustomAgentRepository(db)
+
+        # Check for duplicates
+        if repo.agent_id_exists(agent_id):
+            return {"success": False, "error": f"Agent '{agent_id}' already exists"}
+
+        # Resolve owner from session
+        session = db.query(Session).filter_by(id=session_id).first()
+        owner_id = session.user_id if session else None
+
+        agent = repo.create(
+            agent_id=agent_id,
+            name=name,
+            description=description,
+            category="execution",
+            system_prompt=instructions,
+            llm_profile=model if model in ("standard", "cheap") else "standard",
+            temperature=temperature,
+            max_tokens=4096,
+            max_iterations=10,
+            owner_id=owner_id,
+            mcps=[],
+            skills=[],
+            system_prompts_list=[],
+            builtin_tools=[],
+            approval_overrides={},
+        )
+        db.commit()
+
+        logger.info(
+            "foundry_agent_created",
+            agent_id=agent_id,
+            name=name,
+            session_id=str(session_id),
+        )
+
+        return {
+            "success": True,
+            "agent_id": agent_id,
+            "name": name,
+            "description": description,
+            "message": f"Agent '{name}' created successfully. It can be deployed to Azure AI Foundry from the Agents page.",
+        }
+    except Exception as e:
+        logger.error("foundry_agent_creation_failed", error=str(e), agent_id=agent_id)
+        return {"success": False, "error": str(e)}
+    finally:
+        db.close()
+
+
 # =============================================================================
 # TOOL EXECUTION (called by ToolExecutor)
 # =============================================================================
@@ -1185,6 +1308,17 @@ async def execute_builtin(
             passed_count=args.get("passed_count"),
             error_classification=args.get("error_classification"),
             strategy=args.get("strategy"),
+        )
+    elif tool_name == "create_foundry_agent":
+        return await create_foundry_agent(
+            agent_id=args.get("agent_id", ""),
+            name=args.get("name", ""),
+            description=args.get("description", ""),
+            instructions=args.get("instructions", ""),
+            model=args.get("model", "standard"),
+            temperature=args.get("temperature", 0.1),
+            session_id=session_id,
+            execution_repo=execution_repo,
         )
     else:
         return {

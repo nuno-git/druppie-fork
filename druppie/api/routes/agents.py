@@ -7,12 +7,18 @@ Provides transparency about which models each agent uses.
 import os
 from pathlib import Path
 
+from uuid import UUID
+
 import structlog
 import yaml
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
-from druppie.api.deps import get_current_user
+from druppie.api.deps import get_current_user, get_custom_agent_service
+from druppie.db.database import get_db
+from druppie.domain.custom_agent import CustomAgentCreate, CustomAgentUpdate
+from druppie.services.custom_agent_service import CustomAgentService
 
 logger = structlog.get_logger()
 
@@ -157,3 +163,162 @@ async def get_agent(
     from druppie.api.errors import NotFoundError
 
     raise NotFoundError("agent", agent_id)
+
+
+# =============================================================================
+# CUSTOM AGENT ENDPOINTS
+# =============================================================================
+
+
+@router.get("/agents/metadata")
+async def get_agent_metadata(
+    service: CustomAgentService = Depends(get_custom_agent_service),
+    user: dict = Depends(get_current_user),
+):
+    """Get available MCPs, skills, tools, profiles for the agent editor form."""
+    return service.get_metadata()
+
+
+@router.get("/agents/custom")
+async def list_custom_agents(
+    service: CustomAgentService = Depends(get_custom_agent_service),
+    user: dict = Depends(get_current_user),
+):
+    """List all custom agents."""
+    agents = service.list_custom_agents()
+    return {"agents": [a.model_dump() for a in agents], "total": len(agents)}
+
+
+@router.post("/agents/custom")
+async def create_custom_agent(
+    data: CustomAgentCreate,
+    service: CustomAgentService = Depends(get_custom_agent_service),
+    user: dict = Depends(get_current_user),
+):
+    """Create a new custom agent."""
+    owner_id = UUID(user["sub"])
+    detail = service.create_custom_agent(data, owner_id)
+    return detail.model_dump()
+
+
+@router.get("/agents/custom/{agent_id}")
+async def get_custom_agent(
+    agent_id: str,
+    service: CustomAgentService = Depends(get_custom_agent_service),
+    user: dict = Depends(get_current_user),
+):
+    """Get a custom agent's full configuration."""
+    detail = service.get_custom_agent(agent_id)
+    return detail.model_dump()
+
+
+@router.put("/agents/custom/{agent_id}")
+async def update_custom_agent(
+    agent_id: str,
+    data: CustomAgentUpdate,
+    service: CustomAgentService = Depends(get_custom_agent_service),
+    user: dict = Depends(get_current_user),
+):
+    """Update a custom agent."""
+    user_id = UUID(user["sub"])
+    detail = service.update_custom_agent(agent_id, data, user_id)
+    return detail.model_dump()
+
+
+@router.delete("/agents/custom/{agent_id}", status_code=204)
+async def delete_custom_agent(
+    agent_id: str,
+    service: CustomAgentService = Depends(get_custom_agent_service),
+    user: dict = Depends(get_current_user),
+):
+    """Delete a custom agent."""
+    user_id = UUID(user["sub"])
+    service.delete_custom_agent(agent_id, user_id)
+
+
+@router.get("/agents/custom/{agent_id}/yaml")
+async def export_custom_agent_yaml(
+    agent_id: str,
+    service: CustomAgentService = Depends(get_custom_agent_service),
+    user: dict = Depends(get_current_user),
+):
+    """Export a custom agent as YAML."""
+    yaml_str = service.export_as_yaml(agent_id)
+    return {"agent_id": agent_id, "yaml": yaml_str}
+
+
+@router.post("/agents/custom/{agent_id}/validate")
+async def validate_custom_agent(
+    agent_id: str,
+    service: CustomAgentService = Depends(get_custom_agent_service),
+    user: dict = Depends(get_current_user),
+):
+    """Validate a custom agent's configuration."""
+    detail = service.get_custom_agent(agent_id)
+    data = CustomAgentCreate(
+        agent_id=detail.agent_id,
+        name=detail.name,
+        description=detail.description,
+        category=detail.category,
+        system_prompt=detail.system_prompt,
+        system_prompts=detail.system_prompts,
+        extra_builtin_tools=detail.extra_builtin_tools,
+        mcps=detail.mcps,
+        approval_overrides=detail.approval_overrides,
+        skills=detail.skills,
+        llm_profile=detail.llm_profile,
+        temperature=detail.temperature,
+        max_tokens=detail.max_tokens,
+        max_iterations=detail.max_iterations,
+    )
+    warnings = service.validate_definition(data)
+    return {"valid": len(warnings) == 0, "warnings": warnings}
+
+
+@router.post("/agents/custom/{agent_id}/deploy")
+async def deploy_custom_agent(
+    agent_id: str,
+    service: CustomAgentService = Depends(get_custom_agent_service),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Deploy a custom agent to Azure AI Foundry."""
+    from druppie.services.foundry_service import FoundryService, FoundryNotConfiguredError
+    from druppie.core.config import get_settings
+
+    settings = get_settings()
+    foundry = FoundryService(endpoint=settings.foundry_project_endpoint)
+
+    if not foundry.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Azure AI Foundry is not configured. Set FOUNDRY_PROJECT_ENDPOINT in .env.",
+        )
+
+    detail = service.get_custom_agent(agent_id)
+
+    try:
+        result = foundry.deploy_agent(detail)
+
+        # Update deployment status in DB
+        from druppie.repositories import CustomAgentRepository
+        repo = CustomAgentRepository(db)
+        agent = repo.get_by_agent_id(agent_id)
+        if agent:
+            from datetime import datetime, timezone
+            agent.deployment_status = "deployed"
+            agent.deployed_at = datetime.now(timezone.utc)
+            db.commit()
+
+        return result
+    except FoundryNotConfiguredError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        # Update status to failed
+        from druppie.repositories import CustomAgentRepository
+        repo = CustomAgentRepository(db)
+        agent = repo.get_by_agent_id(agent_id)
+        if agent:
+            agent.deployment_status = "failed"
+            db.commit()
+        raise HTTPException(status_code=500, detail=f"Deployment failed: {str(e)}")

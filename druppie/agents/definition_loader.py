@@ -11,9 +11,10 @@ logger = structlog.get_logger()
 
 
 class AgentDefinitionLoader:
-    """Loads and caches agent definitions from YAML files.
+    """Loads and caches agent definitions from YAML files and the database.
 
     Cache auto-invalidates when the file on disk changes (mtime check).
+    Custom agents from the DB are loaded via a registered callback.
     All methods are class-level — no instance state needed.
     """
 
@@ -22,6 +23,19 @@ class AgentDefinitionLoader:
     _cache_mtime: dict[str, float] = {}
     _system_prompt_cache: dict[str, str] = {}
     _system_prompt_mtime: dict[str, float] = {}
+    _db_loader: "callable | None" = None
+    _db_id_lister: "callable | None" = None
+
+    @classmethod
+    def register_db_loader(cls, loader: "callable", id_lister: "callable") -> None:
+        """Register callbacks for loading custom agents from the database.
+
+        Args:
+            loader: (agent_id: str) -> AgentDefinition | None
+            id_lister: () -> list[str]
+        """
+        cls._db_loader = loader
+        cls._db_id_lister = id_lister
 
     @classmethod
     def set_definitions_path(cls, path: str) -> None:
@@ -58,6 +72,15 @@ class AgentDefinitionLoader:
         path = os.path.join(cls._get_definitions_path(), f"{agent_id}.yaml")
 
         if not os.path.exists(path):
+            # Fall back to DB for custom agents
+            if cls._db_loader:
+                try:
+                    definition = cls._db_loader(agent_id)
+                    if definition:
+                        logger.debug("custom_agent_loaded_from_db", agent_id=agent_id)
+                        return definition
+                except Exception as e:
+                    logger.warning("custom_agent_db_load_failed", agent_id=agent_id, error=str(e))
             raise AgentNotFoundError(f"Agent '{agent_id}' not found at {path}")
 
         mtime = os.path.getmtime(path)
@@ -114,12 +137,19 @@ class AgentDefinitionLoader:
 
     @classmethod
     def list_agents(cls) -> list[str]:
-        """List available agent IDs from disk."""
+        """List available agent IDs from disk and database."""
         path = cls._get_definitions_path()
-        if not os.path.exists(path):
-            return []
-        return [
-            f.replace(".yaml", "").replace(".yml", "")
-            for f in os.listdir(path)
-            if f.endswith((".yaml", ".yml"))
-        ]
+        ids = set()
+        if os.path.exists(path):
+            ids = {
+                f.replace(".yaml", "").replace(".yml", "")
+                for f in os.listdir(path)
+                if f.endswith((".yaml", ".yml"))
+            }
+        # Add custom agents from DB
+        if cls._db_id_lister:
+            try:
+                ids.update(cls._db_id_lister())
+            except Exception as e:
+                logger.warning("custom_agent_db_list_failed", error=str(e))
+        return sorted(ids)

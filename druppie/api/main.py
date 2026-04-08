@@ -51,13 +51,44 @@ def _recover_zombie_sessions() -> None:
         db.close()
 
 
+def _register_custom_agent_db_loader() -> None:
+    """Register DB callbacks so AgentDefinitionLoader can find custom agents."""
+    from druppie.agents.definition_loader import AgentDefinitionLoader
+    from druppie.db.database import SessionLocal
+    from druppie.repositories.custom_agent_repository import CustomAgentRepository
+
+    def _load_from_db(agent_id: str):
+        db = SessionLocal()
+        try:
+            repo = CustomAgentRepository(db)
+            agent = repo.get_by_agent_id(agent_id)
+            if agent:
+                return repo.to_agent_definition(agent)
+            return None
+        finally:
+            db.close()
+
+    def _list_db_ids():
+        db = SessionLocal()
+        try:
+            repo = CustomAgentRepository(db)
+            return repo.list_agent_ids()
+        finally:
+            db.close()
+
+    AgentDefinitionLoader.register_db_loader(_load_from_db, _list_db_ids)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
     logger.info("druppie_starting")
 
-    # List available agents
+    # Register DB loader for custom agents so the definition loader can find them
+    _register_custom_agent_db_loader()
+
+    # List available agents (includes custom agents from DB)
     agents_list = Agent.list_agents()
     logger.info("druppie_initialized", agents=len(agents_list))
 
