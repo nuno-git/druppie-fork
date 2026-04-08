@@ -32,6 +32,8 @@ import {
 } from 'lucide-react'
 import {
   getAvailableTests,
+  getAvailableSetups,
+  seedSessions,
   getTestBatches,
   getTestRun,
   getTestRunAssertions,
@@ -227,15 +229,23 @@ const TestSelectorModal = ({
               {tests.filter((t) => {
                 if (modeFilter === 'all') return true
                 if (modeFilter === 'manual') return t.manual_input
+                if (modeFilter === 'tool') return t.mode === 'tool' || t.type === 'tool'
+                if (modeFilter === 'agent') return (t.mode === 'agent' || t.type === 'agent') && !t.manual_input
+                // backwards compat for old mode values
+                if (modeFilter === 'live') return t.mode === 'live' && !t.manual_input
+                if (modeFilter === 'replay') return t.mode === 'replay'
                 return t.mode === modeFilter && !t.manual_input
               }).map((test) => {
                 const checked = selectAll || selectedTests.has(test.name)
                 const expanded = expandedTests.has(test.name)
+                const testType = test.type || test.mode
                 const modeBg = {
+                  agent: 'bg-blue-100 text-blue-700',
+                  tool: 'bg-amber-100 text-amber-700',
                   live: 'bg-blue-100 text-blue-700',
                   replay: 'bg-amber-100 text-amber-700',
                   record_only: 'bg-gray-200 text-gray-700',
-                }[test.mode] || 'bg-gray-100 text-gray-600'
+                }[testType] || 'bg-gray-100 text-gray-600'
                 return (
                   <div
                     key={test.name}
@@ -252,7 +262,7 @@ const TestSelectorModal = ({
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${modeBg}`}>
-                              {test.mode === 'record_only' ? 'record' : test.mode}
+                              {testType === 'record_only' ? 'record' : testType}
                             </span>
                             {test.manual_input && (
                               <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-amber-100 text-amber-700">
@@ -394,7 +404,7 @@ const TestSelectorModal = ({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
           <div className="flex items-center gap-1">
-            {['all', 'live', 'record_only', 'replay', 'manual'].map((m) => (
+            {['all', 'agent', 'tool', 'manual'].map((m) => (
               <button
                 key={m}
                 onClick={() => setModeFilter(m)}
@@ -404,16 +414,16 @@ const TestSelectorModal = ({
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
               >
-                {m === 'all' ? 'All' : m === 'record_only' ? 'Record Only' : m === 'live' ? 'Live' : m === 'replay' ? 'Replay' : 'Manual'}
+                {m === 'all' ? 'All' : m === 'agent' ? 'Agent' : m === 'tool' ? 'Tool' : 'Manual'}
               </button>
             ))}
           </div>
           <div className="flex items-center gap-3">
             {(() => {
-              const hasLive = selectAll
-                ? tests.some((t) => t.mode === 'live')
-                : tests.some((t) => selectedTests.has(t.name) && t.mode === 'live')
-              return hasLive ? (
+              const hasAgent = selectAll
+                ? tests.some((t) => t.type === 'agent' || t.mode === 'agent' || t.mode === 'live')
+                : tests.some((t) => selectedTests.has(t.name) && (t.type === 'agent' || t.mode === 'agent' || t.mode === 'live'))
+              return hasAgent ? (
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input
                     type="checkbox"
@@ -1141,6 +1151,163 @@ const UnitTestsSection = () => {
   )
 }
 
+// ---- Seed Section ----
+
+const SeedSection = () => {
+  const [setups, setSetups] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [seeding, setSeeding] = useState(false)
+  const [selectedSetups, setSelectedSetups] = useState(new Set())
+  const [seedUser, setSeedUser] = useState('admin')
+  const [result, setResult] = useState(null)
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const data = await getAvailableSetups()
+        setSetups(data || [])
+      } catch (err) {
+        console.error('Failed to load setups:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
+  }, [])
+
+  const toggleSetup = (id) => {
+    setSelectedSetups((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleSeed = async () => {
+    if (selectedSetups.size === 0) return
+    setSeeding(true)
+    setResult(null)
+    try {
+      const res = await seedSessions([...selectedSetups], seedUser)
+      setResult(res)
+      setSelectedSetups(new Set())
+    } catch (err) {
+      setResult({ error: err.message })
+    } finally {
+      setSeeding(false)
+    }
+  }
+
+  const statusColor = {
+    completed: 'bg-green-100 text-green-700',
+    failed: 'bg-red-100 text-red-700',
+    active: 'bg-blue-100 text-blue-700',
+    paused_approval: 'bg-yellow-100 text-yellow-700',
+  }
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+      <div
+        className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="flex items-center gap-2">
+          <Play className="w-4 h-4 text-emerald-600" />
+          <h2 className="text-lg font-semibold text-gray-900">Seed Setup</h2>
+          <span className="text-xs text-gray-400">({setups.length} sessions)</span>
+        </div>
+        {expanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+      </div>
+
+      {expanded && (
+        <div className="px-6 pb-4 border-t border-gray-100">
+          <p className="text-xs text-gray-500 mt-3 mb-3">
+            Seed sessions into the database as a specific user. Use this to set up world state for manual testing.
+          </p>
+
+          {/* User selector */}
+          <div className="flex items-center gap-3 mb-3">
+            <label className="text-xs font-medium text-gray-600">Seed as user:</label>
+            <select
+              value={seedUser}
+              onChange={(e) => setSeedUser(e.target.value)}
+              className="text-xs border border-gray-300 rounded px-2 py-1"
+            >
+              <option value="admin">admin</option>
+              <option value="architect">architect</option>
+              <option value="developer">developer</option>
+              <option value="analyst">analyst</option>
+              <option value="normal_user">normal_user</option>
+            </select>
+            <button
+              onClick={handleSeed}
+              disabled={seeding || selectedSetups.size === 0}
+              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 text-white rounded text-xs font-medium hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+            >
+              {seeding ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+              Seed {selectedSetups.size > 0 ? `(${selectedSetups.size})` : ''}
+            </button>
+          </div>
+
+          {/* Result banner */}
+          {result && (
+            <div className={`mb-3 px-3 py-2 rounded text-xs ${result.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+              {result.error ? (
+                <span>Error: {result.error}</span>
+              ) : (
+                <span>Seeded {result.seeded?.filter((s) => s.status === 'seeded').length} session(s) as {seedUser}</span>
+              )}
+            </div>
+          )}
+
+          {/* Session list */}
+          {loading ? (
+            <div className="flex items-center gap-2 py-4 text-gray-400 text-sm">
+              <Loader2 className="w-4 h-4 animate-spin" />Loading...
+            </div>
+          ) : (
+            <div className="space-y-1 max-h-64 overflow-y-auto">
+              {setups.map((s) => (
+                <label
+                  key={s.id}
+                  className="flex items-center gap-3 px-3 py-2 rounded hover:bg-gray-50 cursor-pointer transition-colors"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedSetups.has(s.id)}
+                    onChange={() => toggleSetup(s.id)}
+                    className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${statusColor[s.status] || 'bg-gray-100 text-gray-600'}`}>
+                        {s.status}
+                      </span>
+                      <span className="text-xs font-medium text-gray-800 truncate">{s.id}</span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] text-gray-400 truncate">{s.title}</span>
+                      {s.project_name && (
+                        <span className="text-[10px] text-gray-400">project: {s.project_name}</span>
+                      )}
+                      {s.intent && (
+                        <span className="text-[10px] text-indigo-400">{s.intent}</span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-gray-400 flex-shrink-0">{s.num_agents} agents</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ===========================================================================
 // MAIN COMPONENT
 // ===========================================================================
@@ -1378,11 +1545,11 @@ export default function Evaluations() {
 
                 {/* Mode filter indicator */}
                 <div className="flex items-center gap-1 text-xs">
-                  {['all', 'live', 'record_only', 'replay'].map((m) => (
+                  {['all', 'agent', 'tool', 'manual'].map((m) => (
                     <span key={m} className={`px-2 py-1 rounded ${
                       modeFilter === m ? 'bg-indigo-100 text-indigo-700 font-medium' : 'bg-gray-100 text-gray-400'
                     }`}>
-                      {m === 'all' ? 'All' : m === 'record_only' ? 'Record' : m === 'live' ? 'Live' : 'Replay'}
+                      {m === 'all' ? 'All' : m === 'agent' ? 'Agent' : m === 'tool' ? 'Tool' : 'Manual'}
                     </span>
                   ))}
                 </div>
@@ -1467,7 +1634,10 @@ export default function Evaluations() {
             </div>
           </div>
 
-          {/* ============ SECTION 3: Unit Tests ============ */}
+          {/* ============ SECTION 3: Seed Setup ============ */}
+          <SeedSection />
+
+          {/* ============ SECTION 4: Unit Tests ============ */}
           <UnitTestsSection />
         </div>
       )}

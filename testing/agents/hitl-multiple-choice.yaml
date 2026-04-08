@@ -1,0 +1,11 @@
+agent-test:
+  name: hitl-multiple-choice
+  description: "Agent asks multiple-choice question, simulator picks option"
+  tags: [hitl]
+
+  message: "build me an app"
+  agents: [router]
+  hitl: non-technical-pm
+
+  judge:
+    - "If the router asks a multiple-choice question, the answer should be one of the provided options"

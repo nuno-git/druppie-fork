@@ -1,0 +1,14 @@
+agent-test:
+  name: planner-after-architect-approved
+  description: "Planner plans builder_planner after DESIGN_APPROVED"
+  tags: [planner]
+
+  message: "build a simple todo list"
+  agents: [router, planner, business_analyst, planner, architect, planner]
+  hitl: non-technical-pm
+
+  assert:
+    - check: planner-correct-next-agent
+
+  judge:
+    - "If the architect gave DESIGN_APPROVED, the planner should route to the builder_planner"

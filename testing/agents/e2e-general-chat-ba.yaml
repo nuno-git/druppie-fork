@@ -1,0 +1,16 @@
+agent-test:
+  name: e2e-general-chat-ba
+  description: "General chat question routed to BA"
+  tags: [e2e]
+
+  message: "I am struggling with managing our water pump maintenance schedules, what can I do?"
+  agents: [router, planner, business_analyst]
+  hitl: non-technical-pm
+
+  assert:
+    - check: router-correct-intent
+      expected:
+        intent: general_chat
+
+  judge:
+    - "The BA should help analyze the user's problem and suggest approaches"

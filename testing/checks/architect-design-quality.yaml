@@ -1,0 +1,11 @@
+check:
+  name: architect-design-quality
+  description: "Architect should produce a thorough technical design following the template"
+  tags: [architect, design, quality, tier:full]
+  assert:
+    - agent: architect
+      completed: true
+  judge:
+    - "The technical design should be thorough and follow the NORA 5-layer model"
+    - "The technical design should include requirements, architectural solution, and security sections"
+    - "The technical design should include at least one Mermaid diagram"

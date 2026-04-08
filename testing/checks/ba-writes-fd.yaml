@@ -1,0 +1,12 @@
+check:
+  name: ba-writes-fd
+  description: "Business analyst should produce a functional design document"
+  tags: [ba, design, tier:full]
+  assert:
+    - agent: business_analyst
+      completed: true
+    - agent: business_analyst
+      tool: coding:make_design
+  judge:
+    - "The BA should produce a functional design that covers the user's requirements"
+    - "The functional design should include clear functional requirements"

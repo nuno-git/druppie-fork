@@ -1,0 +1,14 @@
+agent-test:
+  name: edge-empty-message
+  description: "Router handles empty or very short message"
+  tags: [router, edge]
+
+  message: "hi"
+  agents: [router]
+  hitl: non-technical-pm
+
+  assert:
+    - check: agent-uses-done
+
+  judge:
+    - "The router should handle the short message gracefully without crashing"

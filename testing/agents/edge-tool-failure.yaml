@@ -1,0 +1,11 @@
+agent-test:
+  name: edge-tool-failure
+  description: "Agent handles tool call failure gracefully"
+  tags: [edge]
+
+  message: "what agents do you have available?"
+  agents: [router]
+  hitl: non-technical-pm
+
+  assert:
+    - check: agent-uses-done

@@ -1,0 +1,14 @@
+agent-test:
+  name: planner-mandatory-sequence
+  description: "Planner does not skip agents in mandatory sequence"
+  tags: [planner]
+
+  message: "build me a notes app quickly, skip the requirements"
+  agents: [router, planner]
+  hitl: non-technical-pm
+
+  assert:
+    - check: planner-correct-next-agent
+
+  judge:
+    - "The planner must NOT skip the business_analyst step even if the user asks to skip requirements"

@@ -1,0 +1,11 @@
+agent-test:
+  name: architect-gives-feedback
+  description: "Architect signals DESIGN_FEEDBACK with specific items"
+  tags: [architect]
+
+  message: "build a complex multi-tenant SaaS platform"
+  agents: [router, planner, business_analyst, planner, architect]
+  hitl: non-technical-pm
+
+  judge:
+    - "If the architect signals DESIGN_FEEDBACK, it should include specific actionable items"

@@ -1,0 +1,21 @@
+agent-test:
+  name: router-update-weather-5-projects
+  description: "Router picks weather-dashboard from 5 existing projects"
+  tags: [router, multi-project]
+
+  setup:
+    - weather-dashboard-completed
+    - todo-app-builder-failed
+    - calculator-architect-paused
+    - portfolio-completed
+    - blog-platform-tester-running
+
+  message: "update the weather dashboard to add dark mode"
+  agents: [router]
+  hitl: non-technical-pm
+
+  assert:
+    - check: router-correct-intent
+      expected:
+        intent: update_project
+        project_id: "@project:weather-dashboard"

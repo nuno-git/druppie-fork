@@ -1,0 +1,14 @@
+agent-test:
+  name: planner-after-architect-feedback
+  description: "Planner routes back to BA on DESIGN_FEEDBACK"
+  tags: [planner]
+
+  message: "build a sensor monitoring dashboard"
+  agents: [router, planner, business_analyst, planner, architect, planner]
+  hitl: non-technical-pm
+
+  assert:
+    - check: planner-correct-next-agent
+
+  judge:
+    - "If the architect gave DESIGN_FEEDBACK, the planner should route back to the business analyst"

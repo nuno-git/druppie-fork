@@ -1,0 +1,22 @@
+agent-test:
+  name: manual-general-chat-question
+  description: "General chat: {{question}}"
+  tags: [general-chat, manual]
+
+  inputs:
+    - name: question
+      label: "Your question"
+      type: textarea
+      default: "What is the NORA architecture framework?"
+
+  message: "{{question}}"
+  agents: [router, planner]
+  hitl: non-technical-pm
+
+  assert:
+    - check: router-correct-intent
+      expected:
+        intent: general_chat
+
+  judge:
+    - "The agent should provide a helpful, relevant answer to the user's question"

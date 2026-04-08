@@ -330,6 +330,15 @@ export const runUnitTests = () =>
 export const getAvailableTests = () =>
   request('/api/evaluations/available-tests')
 
+export const getAvailableSetups = () =>
+  request('/api/evaluations/available-setups')
+
+export const seedSessions = (sessionNames, user = 'admin') =>
+  request('/api/evaluations/seed', {
+    method: 'POST',
+    body: JSON.stringify({ session_names: sessionNames, user }),
+  })
+
 export const getTestRuns = (page = 1, limit = 20, tag = null) => {
   const params = new URLSearchParams({ page, limit })
   if (tag) params.append('tag', tag)

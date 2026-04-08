@@ -38,7 +38,7 @@ def match_assertions(
 
     Each assertion can check:
     - ``completed``: whether the agent completed (True) or failed (False)
-    - ``tool_called``: whether a specific tool was called, with optional
+    - ``tool``: whether a specific tool was called, with optional
       argument matching via *expected*
 
     Three argument matching modes:
@@ -55,8 +55,8 @@ def match_assertions(
         if assertion.completed is not None:
             result = _check_completed(db, session_id, assertion)
             results.append(result)
-        if assertion.tool_called:
-            result = _check_tool_called(db, session_id, assertion, resolved_expected)
+        if assertion.tool:
+            result = _check_tool(db, session_id, assertion, resolved_expected)
             results.append(result)
     return results
 
@@ -157,7 +157,7 @@ def _check_completed(
     )
 
 
-def _check_tool_called(
+def _check_tool(
     db: DbSession,
     session_id: UUID,
     assertion: EvalAssertion,
@@ -176,13 +176,13 @@ def _check_tool_called(
     )
     if agent_run is None:
         return AssertionResult(
-            f"{assertion.agent}.tool_called({assertion.tool_called})",
+            f"{assertion.agent}.tool({assertion.tool})",
             False,
             f"No agent run found for '{assertion.agent}'",
         )
 
     # Parse tool name (format: "server:tool_name")
-    parts = assertion.tool_called.split(":", 1)
+    parts = assertion.tool.split(":", 1)
     mcp_server = parts[0]
     tool_name = parts[1] if len(parts) > 1 else parts[0]
 
@@ -198,16 +198,16 @@ def _check_tool_called(
     )
     if tc is None:
         return AssertionResult(
-            f"{assertion.agent}.tool_called({assertion.tool_called})",
+            f"{assertion.agent}.tool({assertion.tool})",
             False,
-            f"Tool {assertion.tool_called} not found in agent run",
+            f"Tool {assertion.tool} not found in agent run",
         )
 
     # Check tool call status if assertion specifies one
     if assertion.status:
         if tc.status != assertion.status:
             return AssertionResult(
-                f"{assertion.agent}.tool_called({assertion.tool_called}).status",
+                f"{assertion.agent}.tool({assertion.tool}).status",
                 False,
                 f"Tool status: expected {assertion.status}, got {tc.status}",
             )
@@ -217,7 +217,7 @@ def _check_tool_called(
         error_msg = tc.error_message or tc.result or ""
         if assertion.error_contains.lower() not in error_msg.lower():
             return AssertionResult(
-                f"{assertion.agent}.tool_called({assertion.tool_called}).error",
+                f"{assertion.agent}.tool({assertion.tool}).error",
                 False,
                 f"Error does not contain '{assertion.error_contains}': {error_msg[:200]}",
             )
@@ -229,13 +229,13 @@ def _check_tool_called(
             actual_val = actual_args.get(key)
             if not _match_value(expected_val, actual_val):
                 return AssertionResult(
-                    f"{assertion.agent}.tool_called({assertion.tool_called}).{key}",
+                    f"{assertion.agent}.tool({assertion.tool}).{key}",
                     False,
                     f"Argument '{key}': expected {expected_val}, got {actual_val}",
                 )
 
     return AssertionResult(
-        f"{assertion.agent}.tool_called({assertion.tool_called})",
+        f"{assertion.agent}.tool({assertion.tool})",
         True,
         f"Tool called with status={tc.status}" + (" and matching arguments" if expected else ""),
     )

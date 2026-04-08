@@ -1,0 +1,82 @@
+metadata:
+  id: calculator-architect-paused
+  title: "create a scientific calculator"
+  status: paused_approval
+  user: admin
+  intent: create_project
+  project_name: calculator
+  language: en
+  hours_ago: 3
+
+agents:
+  # seq 1: router
+  - id: router
+    status: completed
+    tool_calls:
+      - tool: builtin:set_intent
+        arguments:
+          intent: create_project
+          project_name: calculator
+        status: completed
+        result: "Intent set to create_project"
+      - tool: builtin:done
+        arguments:
+          summary: "Agent router: Classified intent as create_project, project 'calculator'."
+        status: completed
+        result: "Agent completed"
+
+  # seq 2: planner (remaining non-planner: business_analyst, architect — 2 agents)
+  - id: planner
+    status: completed
+    tool_calls:
+      - tool: builtin:make_plan
+        arguments:
+          steps:
+            - agent_id: business_analyst
+              prompt: "Define calculator requirements: basic + scientific modes."
+            - agent_id: architect
+              prompt: "Design the calculator architecture with expression parser."
+        status: completed
+        result: "Plan created with 2 steps"
+      - tool: builtin:done
+        arguments:
+          summary: "Agent planner: Updated execution plan (iteration 1). Proceeding to next agent."
+        status: completed
+        result: "Agent completed"
+
+  # seq 3: business_analyst
+  - id: business_analyst
+    status: completed
+    planned_prompt: "Define calculator requirements: basic + scientific modes."
+    tool_calls:
+      - tool: builtin:done
+        arguments:
+          summary: "Agent business_analyst: Analyzed requirements for 'create a scientific calculator'. Created SPEC.md with user stories and acceptance criteria."
+        status: completed
+        result: "Agent completed"
+
+  # seq 4: planner (remaining non-planner: architect — 1 agent)
+  - id: planner
+    status: completed
+    tool_calls:
+      - tool: builtin:make_plan
+        arguments:
+          steps:
+            - agent_id: architect
+              prompt: "Design the calculator architecture with expression parser."
+        status: completed
+        result: "Plan created with 1 steps"
+      - tool: builtin:done
+        arguments:
+          summary: "Agent planner: Updated execution plan (iteration 2). Proceeding to next agent."
+        status: completed
+        result: "Agent completed"
+
+  # seq 5: architect — running (no tool calls)
+  - id: architect
+    status: running
+    planned_prompt: "Design the calculator architecture with expression parser."
+
+messages:
+  - role: user
+    content: "create a scientific calculator"

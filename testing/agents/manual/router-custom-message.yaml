@@ -1,0 +1,24 @@
+agent-test:
+  name: manual-router-custom-message
+  description: "Route a custom message: {{user_message}}"
+  tags: [router, manual]
+
+  inputs:
+    - name: user_message
+      label: "User message to classify"
+      type: textarea
+      default: "I want to build something cool"
+    - name: expected_intent
+      label: "Expected intent"
+      type: select
+      options: [create_project, update_project, general_chat]
+      default: create_project
+
+  message: "{{user_message}}"
+  agents: [router]
+  hitl: non-technical-pm
+
+  assert:
+    - check: router-correct-intent
+      expected:
+        intent: "{{expected_intent}}"

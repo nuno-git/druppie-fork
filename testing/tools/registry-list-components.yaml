@@ -1,0 +1,19 @@
+tool-test:
+  name: registry-list-components
+  description: Architect queries registry for available components
+  tags: [registry]
+
+  chain:
+    - agent: architect
+      tool: registry:list_components
+      arguments: {}
+      status: completed
+      assert:
+        completed: true
+        result: [not_empty, no_error]
+
+    - agent: architect
+      tool: builtin:done
+      arguments:
+        summary: "Agent architect: Listed registry components."
+      status: completed
