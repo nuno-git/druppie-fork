@@ -194,9 +194,9 @@ class TestCompletedAssertion:
 
 
 class TestToolCalled:
-    """tool_called assertions."""
+    """tool assertions."""
 
-    def test_tool_called_passes(self, db_session: DbSession):
+    def test_tool_passes(self, db_session: DbSession):
         """Tool exists -> pass."""
         sid = uuid.uuid4()
         rid = uuid.uuid4()
@@ -219,13 +219,13 @@ class TestToolCalled:
         results = match_assertions(
             db_session,
             sid,
-            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            [_assertion(agent="router", tool="builtin:set_intent")],
             {},
         )
         assert len(results) == 1
         assert results[0].passed is True
 
-    def test_tool_called_fails_missing_tool(self, db_session: DbSession):
+    def test_tool_fails_missing_tool(self, db_session: DbSession):
         """Tool missing -> fail."""
         sid = uuid.uuid4()
         rid = uuid.uuid4()
@@ -240,7 +240,7 @@ class TestToolCalled:
         results = match_assertions(
             db_session,
             sid,
-            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            [_assertion(agent="router", tool="builtin:set_intent")],
             {},
         )
         assert len(results) == 1
@@ -251,7 +251,7 @@ class TestToolCalled:
 class TestToolCalledExactMatch:
     """Exact argument matching."""
 
-    def test_tool_called_exact_match(self, db_session: DbSession):
+    def test_tool_exact_match(self, db_session: DbSession):
         """Exact argument match -> pass."""
         sid = uuid.uuid4()
         rid = uuid.uuid4()
@@ -274,13 +274,13 @@ class TestToolCalledExactMatch:
         results = match_assertions(
             db_session,
             sid,
-            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            [_assertion(agent="router", tool="builtin:set_intent")],
             {"intent": "update_project", "project_name": "weather-dashboard"},
         )
         assert len(results) == 1
         assert results[0].passed is True
 
-    def test_tool_called_exact_mismatch(self, db_session: DbSession):
+    def test_tool_exact_mismatch(self, db_session: DbSession):
         """Exact argument mismatch -> fail."""
         sid = uuid.uuid4()
         rid = uuid.uuid4()
@@ -303,7 +303,7 @@ class TestToolCalledExactMatch:
         results = match_assertions(
             db_session,
             sid,
-            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            [_assertion(agent="router", tool="builtin:set_intent")],
             {"intent": "update_project"},
         )
         assert len(results) == 1
@@ -314,7 +314,7 @@ class TestToolCalledExactMatch:
 class TestToolCalledWildcard:
     """Wildcard (*) argument matching."""
 
-    def test_tool_called_wildcard(self, db_session: DbSession):
+    def test_tool_wildcard(self, db_session: DbSession):
         """Wildcard '*' matches any non-None value -> pass."""
         sid = uuid.uuid4()
         rid = uuid.uuid4()
@@ -337,7 +337,7 @@ class TestToolCalledWildcard:
         results = match_assertions(
             db_session,
             sid,
-            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            [_assertion(agent="router", tool="builtin:set_intent")],
             {"intent": "create_project", "project_name": "*"},
         )
         assert len(results) == 1
@@ -347,7 +347,7 @@ class TestToolCalledWildcard:
 class TestToolCalledAnyOf:
     """Any-of list argument matching."""
 
-    def test_tool_called_any_of_match(self, db_session: DbSession):
+    def test_tool_any_of_match(self, db_session: DbSession):
         """Value in list -> pass."""
         sid = uuid.uuid4()
         rid = uuid.uuid4()
@@ -370,13 +370,13 @@ class TestToolCalledAnyOf:
         results = match_assertions(
             db_session,
             sid,
-            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            [_assertion(agent="router", tool="builtin:set_intent")],
             {"project_name": ["recipe-app", "recipe-application", "recipe-website"]},
         )
         assert len(results) == 1
         assert results[0].passed is True
 
-    def test_tool_called_any_of_mismatch(self, db_session: DbSession):
+    def test_tool_any_of_mismatch(self, db_session: DbSession):
         """Value not in list -> fail."""
         sid = uuid.uuid4()
         rid = uuid.uuid4()
@@ -399,7 +399,7 @@ class TestToolCalledAnyOf:
         results = match_assertions(
             db_session,
             sid,
-            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            [_assertion(agent="router", tool="builtin:set_intent")],
             {"project_name": ["recipe-app", "recipe-application", "recipe-website"]},
         )
         assert len(results) == 1
@@ -426,11 +426,11 @@ class TestMissingAgent:
         assert results[0].passed is False
         assert "No agent run found" in results[0].message
 
-        # Test for tool_called assertion
+        # Test for tool assertion
         results2 = match_assertions(
             db_session,
             sid,
-            [_assertion(agent="nonexistent", tool_called="builtin:done")],
+            [_assertion(agent="nonexistent", tool="builtin:done")],
             {},
         )
         assert len(results2) == 1
@@ -508,7 +508,7 @@ class TestProjectReference:
         results = match_assertions(
             db_session,
             sid,
-            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            [_assertion(agent="router", tool="builtin:set_intent")],
             {
                 "intent": "update_project",
                 "project_id": "@project:weather-dashboard",
@@ -551,7 +551,7 @@ class TestProjectReference:
         results = match_assertions(
             db_session,
             sid,
-            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            [_assertion(agent="router", tool="builtin:set_intent")],
             {
                 "intent": "update_project",
                 "project_id": "@project:weather-dashboard",
@@ -590,7 +590,7 @@ class TestProjectReference:
         results = match_assertions(
             db_session,
             sid,
-            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            [_assertion(agent="router", tool="builtin:set_intent")],
             {
                 "intent": "update_project",
                 "project_id": "@project:nonexistent",
@@ -622,7 +622,7 @@ class TestProjectReference:
         results = match_assertions(
             db_session,
             sid,
-            [_assertion(agent="router", tool_called="builtin:set_intent")],
+            [_assertion(agent="router", tool="builtin:set_intent")],
             {"intent": "create_project"},
         )
         assert len(results) == 1

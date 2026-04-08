@@ -1,0 +1,16 @@
+agent-test:
+  name: router-ambiguous-request
+  description: "Router asks clarifying question on ambiguous input"
+  tags: [router]
+
+  setup:
+    - weather-dashboard-completed
+
+  message: "something about weather"
+  agents: [router]
+  hitl: non-technical-pm
+
+  assert:
+    - check: router-correct-intent
+      expected:
+        intent: ["update_project", "create_project", "general_chat"]

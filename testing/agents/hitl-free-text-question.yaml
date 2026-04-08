@@ -1,0 +1,14 @@
+agent-test:
+  name: hitl-free-text-question
+  description: "Agent asks free-text question, simulator responds"
+  tags: [hitl]
+
+  message: "build a recipe sharing app"
+  agents: [router, planner, business_analyst]
+  hitl: non-technical-pm
+
+  assert:
+    - check: hitl-question-quality
+
+  judge:
+    - "The HITL simulator should provide a coherent answer to the agent's question"

@@ -1,0 +1,14 @@
+agent-test:
+  name: router-gibberish
+  description: "Router handles nonsensical input gracefully"
+  tags: [router, edge]
+
+  message: "asdfghjkl qwerty zxcvbn"
+  agents: [router]
+  hitl: non-technical-pm
+
+  assert:
+    - check: agent-uses-done
+    - check: router-correct-intent
+      expected:
+        intent: general_chat

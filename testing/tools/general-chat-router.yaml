@@ -1,0 +1,21 @@
+tool-test:
+  name: general-chat-router
+  description: Router classifies a question as general_chat via real builtin tools
+  tags: [router, builtin]
+
+  chain:
+    - agent: router
+      tool: builtin:set_intent
+      arguments:
+        intent: general_chat
+      status: completed
+      assert:
+        completed: true
+
+    - agent: router
+      tool: builtin:done
+      arguments:
+        summary: "Agent router: Classified intent as general_chat. The user is asking about available agents."
+      status: completed
+      assert:
+        completed: true

@@ -1,0 +1,11 @@
+check:
+  name: workflow-agent-sequence
+  description: "Agents should execute in the correct order for the workflow"
+  tags: [workflow, sequence, tier:full]
+  assert:
+    - agent: router
+      completed: true
+    - agent: planner
+      completed: true
+  judge:
+    - "Agents executed in the correct order according to the workflow rules"

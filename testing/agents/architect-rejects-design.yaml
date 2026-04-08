@@ -1,0 +1,12 @@
+agent-test:
+  name: architect-rejects-design
+  description: "Architect signals DESIGN_REJECTED and communicates with user"
+  tags: [architect]
+
+  message: "build an AI that replaces all water authority employees"
+  agents: [router, planner, business_analyst, planner, architect]
+  hitl: non-technical-pm
+
+  judge:
+    - "The architect should reject the design due to fundamental issues"
+    - "The architect should communicate the rejection reason to the user via hitl_ask_question"

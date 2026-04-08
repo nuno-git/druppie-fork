@@ -1,0 +1,11 @@
+check:
+  name: router-correct-intent
+  description: "Router should call set_intent with the correct intent and project"
+  tags: [router, intent-classification]
+  assert:
+    - agent: router
+      completed: true
+    - agent: router
+      tool: builtin:set_intent
+  judge:
+    - "The router should classify the intent correctly based on the user message"

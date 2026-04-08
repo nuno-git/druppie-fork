@@ -75,6 +75,13 @@ class RunTestsRequest(BaseModel):
     input_values: dict[str, str] | None = None
 
 
+class SeedRequest(BaseModel):
+    """Request body for seeding setup sessions."""
+
+    session_names: list[str]  # Setup session IDs to seed
+    user: str = "admin"  # Which user to seed as
+
+
 class AgentSummaryResponse(BaseModel):
     """Aggregated evaluation summary for an agent."""
 
@@ -281,65 +288,203 @@ async def list_available_tests(
 ):
     """List all test YAML definitions (not results).
 
-    Admin only. Scans the testing/tests directory for YAML test definitions
-    and returns their metadata without running anything.
-
-    Returns:
-        List of test definition summaries (name, description, sessions, agents, message)
+    Admin only. Scans testing/tools/, testing/agents/, and testing/agents/manual/
+    for YAML test definitions and returns their metadata.
     """
     from pathlib import Path
 
     import yaml as _yaml
 
-    from druppie.testing.v2_schema import TestFile
+    from druppie.testing.v2_schema import AgentTestFile, ToolTestFile
 
-    # parents[3] goes from druppie/api/routes/ up to project root (/app/)
     base_dir = Path(__file__).resolve().parents[3] / "testing"
     tests = []
 
-    # Scan both testing/tests/ and testing/manual-tests/
-    for subdir in ["tests", "manual-tests"]:
-        tests_dir = base_dir / subdir
-        if not tests_dir.exists():
+    # Scan tool tests
+    tools_dir = base_dir / "tools"
+    if tools_dir.exists():
+        for path in sorted(tools_dir.glob("*.yaml")):
+            try:
+                data = _yaml.safe_load(path.read_text())
+                test_def = ToolTestFile(**data).tool_test
+                tests.append({
+                    "name": test_def.name,
+                    "description": test_def.description,
+                    "type": "tool",
+                    "mode": "tool",  # backwards compat for frontend
+                    "manual_input": False,
+                    "inputs": [],
+                    "setup": test_def.setup,
+                    "sessions": test_def.setup,  # backwards compat
+                    "agents": [],
+                    "real_agents": [],  # backwards compat
+                    "message": "",
+                    "hitl": "none",
+                    "judge": "none",
+                    "num_sessions": len(test_def.setup),
+                    "tags": test_def.tags,
+                    "extends": test_def.extends,
+                    "checks": [],
+                    "evals": [],  # backwards compat
+                })
+            except Exception as e:
+                logger.warning("Failed to load tool test %s: %s", path, e)
+
+    # Scan agent tests (including manual/)
+    for subdir in ["agents", "agents/manual"]:
+        agents_dir = base_dir / subdir
+        if not agents_dir.exists():
             continue
-        for path in sorted(tests_dir.glob("*.yaml")):
-            data = _yaml.safe_load(path.read_text())
-            test_def = TestFile(**data).test
-            tests.append({
-                "name": test_def.name,
-                "description": test_def.description,
-                "mode": test_def.mode,
-                "manual_input": test_def.manual_input,
-                "inputs": [
-                    {
-                        "name": inp.name,
-                        "label": inp.label or inp.name,
-                        "type": inp.type,
-                        "required": inp.required,
-                        "default": inp.default,
-                        "options": inp.options,
-                    }
-                    for inp in test_def.inputs
-                ] if test_def.inputs else [],
-                "sessions": test_def.sessions,
-                "real_agents": test_def.run.real_agents,
-                "message": test_def.run.message,
-                "hitl": (
-                    test_def.hitl
-                    if isinstance(test_def.hitl, str)
-                    else "inline" if test_def.hitl else "default"
-                ),
-                "judge": test_def.judge or "default",
-                "num_sessions": len(test_def.sessions),
-                "evals": [
-                    {
-                        "name": e.eval,
-                        "expected": e.expected,
-                    }
-                    for e in test_def.evals
-                ],
-            })
+        for path in sorted(agents_dir.glob("*.yaml")):
+            try:
+                data = _yaml.safe_load(path.read_text())
+                test_def = AgentTestFile(**data).agent_test
+                tests.append({
+                    "name": test_def.name,
+                    "description": test_def.description,
+                    "type": "agent",
+                    "mode": "agent" if not test_def.is_manual else "manual",  # backwards compat
+                    "manual_input": test_def.is_manual,
+                    "inputs": [
+                        {
+                            "name": inp.name,
+                            "label": inp.label or inp.name,
+                            "type": inp.type,
+                            "required": inp.required,
+                            "default": inp.default,
+                            "options": inp.options,
+                        }
+                        for inp in test_def.inputs
+                    ] if test_def.inputs else [],
+                    "setup": test_def.setup,
+                    "sessions": test_def.setup,  # backwards compat
+                    "agents": test_def.agents,
+                    "real_agents": test_def.agents,  # backwards compat
+                    "message": test_def.message,
+                    "hitl": (
+                        test_def.hitl
+                        if isinstance(test_def.hitl, str)
+                        else "inline" if test_def.hitl else "default"
+                    ),
+                    "judge": test_def.judge_profile or "default",
+                    "num_sessions": len(test_def.setup),
+                    "tags": test_def.tags,
+                    "extends": test_def.extends,
+                    "checks": [
+                        {"name": c.check, "expected": c.expected}
+                        for c in test_def.assert_
+                    ],
+                    "evals": [  # backwards compat
+                        {"name": c.check, "expected": c.expected}
+                        for c in test_def.assert_
+                    ],
+                })
+            except Exception as e:
+                logger.warning("Failed to load agent test %s: %s", path, e)
+
     return tests
+
+
+@router.get("/evaluations/available-setups")
+async def list_available_setups(
+    user: dict = Depends(require_admin),
+):
+    """List all setup session fixtures available for seeding.
+
+    Admin only. Returns session metadata from testing/setup/*.yaml.
+    """
+    from pathlib import Path
+
+    import yaml as _yaml
+
+    from druppie.testing.seed_schema import SessionFixture
+
+    base_dir = Path(__file__).resolve().parents[3] / "testing" / "setup"
+    setups = []
+
+    if not base_dir.exists():
+        return setups
+
+    for path in sorted(base_dir.glob("*.yaml")):
+        try:
+            data = _yaml.safe_load(path.read_text())
+            fixture = SessionFixture(**data)
+            m = fixture.metadata
+            setups.append({
+                "id": m.id,
+                "title": m.title,
+                "status": m.status,
+                "user": m.user,
+                "intent": m.intent,
+                "project_name": m.project_name,
+                "language": m.language,
+                "num_agents": len(fixture.agents),
+                "num_messages": len(fixture.messages),
+            })
+        except Exception as e:
+            logger.warning("Failed to load setup %s: %s", path, e)
+
+    return setups
+
+
+@router.post("/evaluations/seed")
+async def seed_sessions(
+    body: SeedRequest,
+    user: dict = Depends(require_admin),
+):
+    """Seed setup sessions into the database for manual testing.
+
+    Admin only. Seeds the specified sessions as the given user,
+    so you can then interact with them in the UI manually.
+    """
+    from pathlib import Path
+
+    import yaml as _yaml
+
+    from druppie.db.database import SessionLocal
+    from druppie.testing.seed_loader import seed_fixture
+    from druppie.testing.seed_schema import SessionFixture
+
+    base_dir = Path(__file__).resolve().parents[3] / "testing" / "setup"
+    db = SessionLocal()
+
+    results = []
+    try:
+        # Load all session fixtures
+        fixtures: dict[str, SessionFixture] = {}
+        for path in sorted(base_dir.glob("*.yaml")):
+            data = _yaml.safe_load(path.read_text())
+            fixture = SessionFixture(**data)
+            fixtures[fixture.metadata.id] = fixture
+
+        for name in body.session_names:
+            if name not in fixtures:
+                results.append({"session": name, "status": "not_found"})
+                continue
+
+            fixture = fixtures[name]
+            fixture.metadata.user = body.user
+
+            try:
+                seed_fixture(db, fixture, gitea_url=None)
+                results.append({
+                    "session": name,
+                    "status": "seeded",
+                    "title": fixture.metadata.title,
+                    "project_name": fixture.metadata.project_name,
+                })
+            except Exception as e:
+                results.append({"session": name, "status": "error", "error": str(e)})
+                logger.error("Seed failed for %s: %s", name, e, exc_info=True)
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+    return {"seeded": results}
 
 
 @router.post("/evaluations/run-tests")
@@ -394,7 +539,12 @@ async def run_tests(
             phase_flags = dict(execute=execute, judge=judge, batch_id=run_id)
 
             def _find_test(name):
-                """Find test YAML in tests/ or manual-tests/."""
+                """Find test YAML in tools/, agents/, or agents/manual/."""
+                for subdir in ["tools", "agents", "agents/manual"]:
+                    p = runner._testing_dir / subdir / f"{name}.yaml"
+                    if p.exists():
+                        return p
+                # Backwards compat: also search old directories
                 for subdir in ["tests", "manual-tests"]:
                     p = runner._testing_dir / subdir / f"{name}.yaml"
                     if p.exists():
@@ -407,7 +557,9 @@ async def run_tests(
                 if not path:
                     return None
                 test_def = runner.load_test(path)
-                if test_def.manual_input and input_values:
+                if hasattr(test_def, "is_manual") and test_def.is_manual and input_values:
+                    test_def = test_def.resolve_inputs(input_values)
+                elif hasattr(test_def, "manual_input") and test_def.manual_input and input_values:
                     test_def = test_def.resolve_inputs(input_values)
                 return test_def
 
@@ -425,11 +577,22 @@ async def run_tests(
             elif tag:
                 all_tests = runner.load_all_tests()
                 for _path, test_def in all_tests:
-                    for eval_ref in test_def.evals:
-                        eval_def = runner._evals.get(eval_ref.eval)
-                        if eval_def and tag in eval_def.tags:
-                            tests_to_run.append((test_def.name, test_def))
-                            break
+                    # Check tags on the test itself
+                    test_tags = getattr(test_def, "tags", [])
+                    if tag in test_tags:
+                        tests_to_run.append((test_def.name, test_def))
+                        continue
+                    # Check tags on referenced checks
+                    check_refs = getattr(test_def, "assert_", [])
+                    for check_ref in check_refs:
+                        if hasattr(check_ref, "check"):
+                            try:
+                                check_def = runner._checks.get(check_ref.check)
+                                if check_def and tag in check_def.tags:
+                                    tests_to_run.append((test_def.name, test_def))
+                                    break
+                            except KeyError:
+                                pass
             elif run_all:
                 all_tests = runner.load_all_tests()
                 tests_to_run = [(td.name, td) for _p, td in all_tests]

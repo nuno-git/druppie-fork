@@ -1,0 +1,7 @@
+check:
+  name: agent-uses-done
+  description: "Agent should call done() as its final action"
+  tags: [agent, common, tier:fast]
+  assert:
+    - agent: router
+      tool: builtin:done

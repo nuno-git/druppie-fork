@@ -1,0 +1,33 @@
+## Session where the router already classified "what agents do you have?" as general_chat.
+## Used by record_only and replay tests to verify assertions/tools without LLM calls.
+
+metadata:
+  id: general-chat-router-done
+  title: "what agents do you have?"
+  status: completed
+  user: admin
+  intent: general_chat
+  hours_ago: 1
+
+agents:
+  - id: router
+    status: completed
+    tool_calls:
+      - tool: "builtin:set_intent"
+        arguments:
+          intent: general_chat
+        status: completed
+        result: "Intent set to general_chat"
+
+      - tool: "builtin:done"
+        arguments:
+          summary: "Agent router: Classified intent as general_chat. The user is asking about available agents."
+        status: completed
+        result: "Agent completed"
+
+messages:
+  - role: user
+    content: "what agents do you have?"
+  - role: assistant
+    content: "Classifying your request as a general question."
+    agent_id: router

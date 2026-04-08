@@ -4,232 +4,236 @@ import pytest
 from pydantic import ValidationError
 
 from druppie.testing.v2_schema import (
-    EvalAssertion,
-    EvalDefinition,
-    EvalFile,
-    EvalJudge,
+    CheckAssertion,
+    CheckDefinition,
+    CheckFile,
+    CheckRef,
     HITLProfile,
     HITLProfilesFile,
     JudgeProfile,
     JudgeProfilesFile,
-    TestDefinition,
-    TestEvalRef,
-    TestFile,
-    TestInlineEvaluate,
-    TestInlineJudge,
-    TestRun,
+    AgentTestDefinition,
+    AgentTestFile,
+    ToolTestDefinition,
+    ToolTestFile,
+    ChainStep,
+    ChainStepAssert,
+    TestInput,
+    VerifyCheck,
 )
 
 
-# --- Eval Schema ---
+# --- Check Schema ---
 
 
-def test_parse_minimal_eval():
-    """Eval with just a name is valid."""
-    ed = EvalDefinition(name="smoke-test")
-    assert ed.name == "smoke-test"
-    assert ed.description == ""
-    assert ed.tags == []
-    assert ed.assertions == []
-    assert ed.judge is None
+def test_parse_minimal_check():
+    cd = CheckDefinition(name="smoke-test")
+    assert cd.name == "smoke-test"
+    assert cd.description == ""
+    assert cd.tags == []
+    assert cd.assert_ == []
+    assert cd.judge == []
 
 
-def test_parse_full_eval_with_assertions_and_judge():
-    """Eval with assertions, judge checks, and tags parses correctly."""
-    ed = EvalDefinition(
+def test_parse_full_check():
+    cd = CheckDefinition(
         name="router-correct-intent",
-        description="Router should call set_intent with the correct intent",
-        tags=["router", "intent-classification"],
-        assertions=[
-            EvalAssertion(agent="router", completed=True),
-            EvalAssertion(agent="router", tool_called="builtin:set_intent"),
-        ],
-        judge=EvalJudge(
-            checks=[
-                "The router should classify the intent correctly",
-                "The router should identify the correct project",
-            ],
-        ),
+        description="Router should call set_intent",
+        tags=["router", "intent"],
+        **{"assert": [
+            CheckAssertion(agent="router", completed=True),
+            CheckAssertion(agent="router", tool="builtin:set_intent"),
+        ]},
+        judge=["The router should classify correctly"],
     )
-    assert ed.name == "router-correct-intent"
-    assert ed.description == "Router should call set_intent with the correct intent"
-    assert ed.tags == ["router", "intent-classification"]
-    assert len(ed.assertions) == 2
-    assert ed.assertions[0].agent == "router"
-    assert ed.assertions[0].completed is True
-    assert ed.assertions[0].tool_called is None
-    assert ed.assertions[1].tool_called == "builtin:set_intent"
-    assert ed.assertions[1].completed is None
-    assert ed.judge is not None
-    assert len(ed.judge.checks) == 2
+    assert cd.name == "router-correct-intent"
+    assert len(cd.assert_) == 2
+    assert cd.assert_[0].completed is True
+    assert cd.assert_[1].tool == "builtin:set_intent"
+    assert len(cd.judge) == 1
 
 
-def test_eval_file_wrapper():
-    """EvalFile wraps EvalDefinition under 'eval' key."""
-    ef = EvalFile(
-        eval=EvalDefinition(name="test-eval"),
-    )
-    assert ef.eval.name == "test-eval"
+def test_check_file_wrapper():
+    cf = CheckFile(check=CheckDefinition(name="test"))
+    assert cf.check.name == "test"
+
+
+def test_check_assertion_tool_field():
+    ca = CheckAssertion(agent="router", tool="builtin:set_intent")
+    assert ca.tool == "builtin:set_intent"
+    assert ca.completed is None
 
 
 # --- Profile Schema ---
 
 
-def test_parse_hitl_profiles_file():
-    """HITLProfilesFile parses a dict of named profiles."""
-    hpf = HITLProfilesFile(
-        profiles={
-            "non-technical-pm": HITLProfile(
-                model="claude-sonnet-4-6",
-                provider="zai",
-                prompt="You are a non-technical PM.",
-            ),
-            "developer": HITLProfile(
-                model="claude-haiku-4-5",
-                prompt="You are a senior developer.",
-            ),
-        },
-    )
+def test_parse_hitl_profiles():
+    hpf = HITLProfilesFile(profiles={
+        "pm": HITLProfile(model="glm-5", prompt="You are a PM."),
+        "dev": HITLProfile(model="glm-5", prompt="You are a dev."),
+    })
     assert len(hpf.profiles) == 2
-    assert hpf.profiles["non-technical-pm"].model == "claude-sonnet-4-6"
-    assert hpf.profiles["non-technical-pm"].provider == "zai"
-    assert "non-technical" in hpf.profiles["non-technical-pm"].prompt
-    assert hpf.profiles["developer"].provider == "zai"  # default
+    assert hpf.profiles["pm"].provider == "zai"
 
 
-def test_parse_judge_profiles_file():
-    """JudgeProfilesFile parses a dict of named profiles."""
-    jpf = JudgeProfilesFile(
-        profiles={
-            "strict-opus": JudgeProfile(model="claude-opus-4-6"),
-            "fast-sonnet": JudgeProfile(model="claude-sonnet-4-6", provider="zai"),
-        },
-    )
-    assert len(jpf.profiles) == 2
-    assert jpf.profiles["strict-opus"].model == "claude-opus-4-6"
-    assert jpf.profiles["strict-opus"].provider == "zai"  # default
-    assert jpf.profiles["fast-sonnet"].model == "claude-sonnet-4-6"
+def test_parse_judge_profiles():
+    jpf = JudgeProfilesFile(profiles={
+        "default": JudgeProfile(model="glm-5"),
+    })
+    assert jpf.profiles["default"].provider == "zai"
 
 
-# --- Test Schema ---
+# --- Tool Test Schema ---
 
 
-def test_parse_minimal_test():
-    """Test with name and run is valid."""
-    td = TestDefinition(
-        name="smoke",
-        run=TestRun(message="hello"),
-    )
-    assert td.name == "smoke"
-    assert td.run.message == "hello"
-    assert td.sessions == []
-    assert td.run.real_agents == []
-    assert td.hitl is None
-    assert td.judge is None
-    assert td.judges is None
-    assert td.evals == []
-    assert td.evaluate is None
-    assert td.description == ""
-
-
-def test_parse_full_test_with_evals_and_profiles():
-    """Test with sessions, evals, expected values, and profiles parses correctly."""
-    td = TestDefinition(
-        name="router-update-weather",
-        description="Router picks weather-dashboard from 5 existing projects",
-        sessions=["weather-dashboard", "todo-app", "calculator"],
-        run=TestRun(
-            message="update the weather dashboard to add dark mode",
-            real_agents=["router"],
-        ),
-        hitl="non-technical-pm",
-        judge="strict-opus",
-        evals=[
-            TestEvalRef(
-                eval="router-correct-intent",
-                expected={
-                    "intent": "update_project",
-                    "project_name": "weather-dashboard",
-                },
-            ),
+def test_parse_tool_test():
+    tt = ToolTestDefinition(
+        name="coding-list-dir",
+        tags=["coding"],
+        chain=[
+            ChainStep(agent="router", tool="builtin:set_intent",
+                      arguments={"intent": "create_project"}),
+            ChainStep(agent="architect", tool="coding:list_dir",
+                      arguments={"path": "."},
+                      **{"assert": ChainStepAssert(completed=True, result=["not_empty"])}),
         ],
     )
-    assert td.name == "router-update-weather"
-    assert td.description == "Router picks weather-dashboard from 5 existing projects"
-    assert len(td.sessions) == 3
-    assert td.run.message == "update the weather dashboard to add dark mode"
-    assert td.run.real_agents == ["router"]
-    assert td.hitl == "non-technical-pm"
-    assert td.judge == "strict-opus"
-    assert len(td.evals) == 1
-    assert td.evals[0].eval == "router-correct-intent"
-    assert td.evals[0].expected["intent"] == "update_project"
-    assert td.evals[0].expected["project_name"] == "weather-dashboard"
+    assert tt.name == "coding-list-dir"
+    assert len(tt.chain) == 2
+    assert tt.chain[1].assert_ is not None
+    assert tt.chain[1].assert_.result == ["not_empty"]
 
 
-def test_get_hitl_profiles_normalization():
-    """get_hitl_profiles normalizes various hitl field types to list of names."""
+def test_tool_test_with_setup_and_extends():
+    tt = ToolTestDefinition(
+        name="extended-test",
+        setup=["weather-dashboard"],
+        extends="coding-list-dir",
+        chain=[ChainStep(agent="architect", tool="coding:read_file", arguments={"path": "README.md"})],
+    )
+    assert tt.setup == ["weather-dashboard"]
+    assert tt.extends == "coding-list-dir"
+
+
+def test_tool_test_with_mock():
+    step = ChainStep(
+        agent="architect", tool="coding:execute_coding_task",
+        arguments={"task": "create file"},
+        mock=True, mock_result='{"status": "ok"}',
+    )
+    assert step.mock is True
+    assert step.mock_result == '{"status": "ok"}'
+
+
+def test_tool_test_file_wrapper():
+    data = {
+        "tool-test": {
+            "name": "test",
+            "chain": [{"agent": "router", "tool": "builtin:done", "arguments": {}}],
+        }
+    }
+    ttf = ToolTestFile(**data)
+    assert ttf.tool_test.name == "test"
+
+
+# --- Agent Test Schema ---
+
+
+def test_parse_minimal_agent_test():
+    at = AgentTestDefinition(name="smoke", message="hello")
+    assert at.name == "smoke"
+    assert at.message == "hello"
+    assert at.agents == []
+    assert at.setup == []
+    assert at.assert_ == []
+    assert at.judge == []
+    assert at.hitl is None
+    assert at.is_manual is False
+
+
+def test_parse_full_agent_test():
+    at = AgentTestDefinition(
+        name="router-update",
+        description="Router picks correct project",
+        tags=["router"],
+        setup=["weather-dashboard", "todo-app"],
+        message="update the weather dashboard",
+        agents=["router"],
+        hitl="non-technical-pm",
+        **{"assert": [
+            CheckRef(check="router-correct-intent", expected={"intent": "update_project"}),
+        ]},
+        judge=["The router should pick the correct project"],
+    )
+    assert at.setup == ["weather-dashboard", "todo-app"]
+    assert at.agents == ["router"]
+    assert at.hitl == "non-technical-pm"
+    assert len(at.assert_) == 1
+    assert at.assert_[0].check == "router-correct-intent"
+    assert at.assert_[0].expected["intent"] == "update_project"
+    assert len(at.judge) == 1
+
+
+def test_agent_test_with_extends():
+    at = AgentTestDefinition(
+        name="extended-agent",
+        extends="coding-list-dir",
+        message="review project",
+        agents=["architect"],
+    )
+    assert at.extends == "coding-list-dir"
+
+
+def test_manual_agent_test():
+    at = AgentTestDefinition(
+        name="manual-test",
+        message="{{user_input}}",
+        agents=["router"],
+        inputs=[
+            TestInput(name="user_input", label="Your message", type="textarea"),
+        ],
+    )
+    assert at.is_manual is True
+    assert len(at.inputs) == 1
+
+    resolved = at.resolve_inputs({"user_input": "build me an app"})
+    assert resolved.message == "build me an app"
+
+
+def test_get_hitl_profiles():
     # None -> ["default"]
-    td_none = TestDefinition(name="t", run=TestRun(message="m"), hitl=None)
-    assert td_none.get_hitl_profiles() == ["default"]
+    at = AgentTestDefinition(name="t", message="m")
+    assert at.get_hitl_profiles() == ["default"]
 
-    # Single string -> [string]
-    td_str = TestDefinition(name="t", run=TestRun(message="m"), hitl="non-technical-pm")
-    assert td_str.get_hitl_profiles() == ["non-technical-pm"]
+    # String -> [string]
+    at = AgentTestDefinition(name="t", message="m", hitl="pm")
+    assert at.get_hitl_profiles() == ["pm"]
 
-    # List of strings -> same list
-    td_list = TestDefinition(
-        name="t",
-        run=TestRun(message="m"),
-        hitl=["non-technical-pm", "developer"],
-    )
-    assert td_list.get_hitl_profiles() == ["non-technical-pm", "developer"]
-
-    # Inline HITLProfile -> ["inline"]
-    td_inline = TestDefinition(
-        name="t",
-        run=TestRun(message="m"),
-        hitl=HITLProfile(model="claude-sonnet-4-6", prompt="You are helpful."),
-    )
-    assert td_inline.get_hitl_profiles() == ["inline"]
+    # List -> same
+    at = AgentTestDefinition(name="t", message="m", hitl=["pm", "dev"])
+    assert at.get_hitl_profiles() == ["pm", "dev"]
 
 
-def test_get_judge_profiles_normalization():
-    """get_judge_profiles normalizes judge/judges fields to list of names."""
-    # Neither set -> ["default"]
-    td_none = TestDefinition(name="t", run=TestRun(message="m"))
-    assert td_none.get_judge_profiles() == ["default"]
-
-    # Single judge -> [judge]
-    td_single = TestDefinition(name="t", run=TestRun(message="m"), judge="strict-opus")
-    assert td_single.get_judge_profiles() == ["strict-opus"]
-
-    # Multiple judges -> same list
-    td_multi = TestDefinition(
-        name="t",
-        run=TestRun(message="m"),
-        judges=["strict-opus", "fast-sonnet"],
-    )
-    assert td_multi.get_judge_profiles() == ["strict-opus", "fast-sonnet"]
-
-    # judges takes precedence over judge
-    td_both = TestDefinition(
-        name="t",
-        run=TestRun(message="m"),
-        judge="cheap-haiku",
-        judges=["strict-opus", "fast-sonnet"],
-    )
-    assert td_both.get_judge_profiles() == ["strict-opus", "fast-sonnet"]
+def test_agent_test_file_wrapper():
+    data = {
+        "agent-test": {
+            "name": "test",
+            "message": "hello",
+            "agents": ["router"],
+        }
+    }
+    atf = AgentTestFile(**data)
+    assert atf.agent_test.name == "test"
+    assert atf.agent_test.agents == ["router"]
 
 
-def test_expected_values_exact_wildcard_list():
-    """Expected values support exact match, wildcard, and any-of list."""
-    ref = TestEvalRef(
-        eval="router-correct-intent",
+def test_check_ref_expected_values():
+    ref = CheckRef(
+        check="router-correct-intent",
         expected={
-            "intent": "update_project",           # exact
-            "project_name": "*",                   # wildcard
-            "language": ["en", "nl"],              # any-of list
+            "intent": "update_project",
+            "project_name": "*",
+            "language": ["en", "nl"],
         },
     )
     assert ref.expected["intent"] == "update_project"
@@ -237,50 +241,57 @@ def test_expected_values_exact_wildcard_list():
     assert ref.expected["language"] == ["en", "nl"]
 
 
-def test_inline_evaluate_block():
-    """TestDefinition can have an inline evaluate block."""
-    td = TestDefinition(
-        name="inline-test",
-        run=TestRun(message="test message"),
-        evaluate=TestInlineEvaluate(
-            assertions=[
-                EvalAssertion(agent="router", completed=True),
-            ],
-            judge=TestInlineJudge(
-                checks=["Router should not ask the user which project to update"],
-            ),
-        ),
-    )
-    assert td.evaluate is not None
-    assert len(td.evaluate.assertions) == 1
-    assert td.evaluate.assertions[0].agent == "router"
-    assert td.evaluate.assertions[0].completed is True
-    assert td.evaluate.judge is not None
-    assert len(td.evaluate.judge.checks) == 1
+def test_verify_check():
+    vc = VerifyCheck(file_exists="docs/fd.md")
+    assert vc.file_exists == "docs/fd.md"
+    assert vc.file_not_empty is None
 
 
-def test_test_file_wrapper():
-    """TestFile wraps TestDefinition under 'test' key."""
-    tf = TestFile(
-        test=TestDefinition(
-            name="wrapper-test",
-            run=TestRun(message="hello"),
-        ),
-    )
-    assert tf.test.name == "wrapper-test"
-    assert tf.test.run.message == "hello"
+# --- YAML parsing from actual files ---
 
 
-def test_eval_assertion_no_arguments():
-    """EvalAssertion does not have an arguments field -- tests provide expected values."""
-    ea = EvalAssertion(agent="router", tool_called="builtin:set_intent")
-    assert ea.agent == "router"
-    assert ea.tool_called == "builtin:set_intent"
-    assert ea.completed is None
-    assert not hasattr(ea, "arguments")
+def test_parse_check_yaml_file():
+    """Parse an actual check YAML file."""
+    import yaml
+    from pathlib import Path
+
+    check_path = Path(__file__).resolve().parents[2] / "testing" / "checks" / "router-correct-intent.yaml"
+    if not check_path.exists():
+        pytest.skip("check file not found")
+
+    data = yaml.safe_load(check_path.read_text())
+    cf = CheckFile(**data)
+    assert cf.check.name == "router-correct-intent"
+    assert len(cf.check.assert_) == 2
+    assert len(cf.check.judge) >= 1
 
 
-def test_test_run_empty_real_agents_means_all():
-    """Empty real_agents means all agents run for real."""
-    tr = TestRun(message="full e2e test")
-    assert tr.real_agents == []
+def test_parse_tool_test_yaml_file():
+    """Parse an actual tool test YAML file."""
+    import yaml
+    from pathlib import Path
+
+    tool_path = Path(__file__).resolve().parents[2] / "testing" / "tools" / "coding-list-dir.yaml"
+    if not tool_path.exists():
+        pytest.skip("tool test file not found")
+
+    data = yaml.safe_load(tool_path.read_text())
+    ttf = ToolTestFile(**data)
+    assert ttf.tool_test.name == "coding-list-dir"
+    assert len(ttf.tool_test.chain) >= 3
+
+
+def test_parse_agent_test_yaml_file():
+    """Parse an actual agent test YAML file."""
+    import yaml
+    from pathlib import Path
+
+    agent_path = Path(__file__).resolve().parents[2] / "testing" / "agents" / "router-create-recipe.yaml"
+    if not agent_path.exists():
+        pytest.skip("agent test file not found")
+
+    data = yaml.safe_load(agent_path.read_text())
+    atf = AgentTestFile(**data)
+    assert atf.agent_test.name == "router-create-recipe"
+    assert atf.agent_test.agents == ["router"]
+    assert len(atf.agent_test.assert_) >= 1

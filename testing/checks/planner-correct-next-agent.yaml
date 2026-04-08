@@ -1,0 +1,11 @@
+check:
+  name: planner-correct-next-agent
+  description: "Planner should call make_plan with the correct next agent"
+  tags: [planner, intent-routing, tier:standard]
+  assert:
+    - agent: planner
+      completed: true
+    - agent: planner
+      tool: builtin:make_plan
+  judge:
+    - "The planner should plan the correct next agent based on the current workflow state"

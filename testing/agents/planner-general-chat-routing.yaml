@@ -1,0 +1,14 @@
+agent-test:
+  name: planner-general-chat-routing
+  description: "Planner routes general chat to correct agent"
+  tags: [planner]
+
+  message: "what architecture principles do you follow?"
+  agents: [router, planner]
+  hitl: non-technical-pm
+
+  assert:
+    - check: router-correct-intent
+      expected:
+        intent: general_chat
+    - check: planner-correct-next-agent

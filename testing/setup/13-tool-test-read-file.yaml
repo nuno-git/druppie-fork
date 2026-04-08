@@ -1,0 +1,37 @@
+## Replay session: Router creates project, then architect reads README.
+
+metadata:
+  id: tool-test-read-file
+  title: "build a weather dashboard"
+  status: completed
+  user: admin
+
+agents:
+  - id: router
+    status: completed
+    tool_calls:
+      - tool: "builtin:set_intent"
+        arguments:
+          intent: create_project
+          project_name: weather-dashboard
+        status: completed
+      - tool: "builtin:done"
+        arguments:
+          summary: "Agent router: create_project weather-dashboard."
+        status: completed
+
+  - id: architect
+    status: completed
+    tool_calls:
+      - tool: "coding:read_file"
+        arguments:
+          path: "README.md"
+        status: completed
+      - tool: "builtin:done"
+        arguments:
+          summary: "Agent architect: Read README."
+        status: completed
+
+messages:
+  - role: user
+    content: "build a weather dashboard"

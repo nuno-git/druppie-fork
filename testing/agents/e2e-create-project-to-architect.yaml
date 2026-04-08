@@ -1,0 +1,15 @@
+agent-test:
+  name: e2e-create-project-to-architect
+  description: "Full pipeline: router -> planner -> BA -> architect"
+  tags: [e2e, full-pipeline]
+
+  message: "build me a weather dashboard for monitoring rainfall"
+  agents: [router, planner, business_analyst, planner, architect]
+  hitl: non-technical-pm
+
+  assert:
+    - check: router-correct-intent
+      expected:
+        intent: create_project
+    - check: architect-produces-design
+    - check: workflow-agent-sequence
