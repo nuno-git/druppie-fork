@@ -29,6 +29,11 @@ agents:
   - id: business_analyst
     status: completed
     tool_calls:
+      - tool: builtin:hitl_ask_question
+        arguments:
+          question: "Should the calculator support graphing functions?"
+        status: completed
+        answer: "No, just basic scientific functions"
       - tool: coding:make_design
         arguments:
           content: "# Functional Design: Calculator\n## Requirements\n- Expression parsing\n- Scientific functions (sin, cos, log)\n- History of calculations"

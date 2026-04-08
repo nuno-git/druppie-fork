@@ -544,6 +544,11 @@ def _seed_tool_calls(
     for tc_idx, tc in enumerate(agent.tool_calls):
         tc_id = fixture_uuid(meta.id, "run", agent_idx, "tc", tc_idx)
 
+        # For HITL tool calls, use answer as result if no explicit result
+        tc_result = tc.result
+        if tc.answer and not tc_result:
+            tc_result = tc.answer
+
         tool_call = ToolCall(
             id=tc_id,
             session_id=session_id,
@@ -554,12 +559,13 @@ def _seed_tool_calls(
             tool_call_index=tc_idx,
             arguments=tc.arguments or None,
             status=tc.status,
-            result=tc.result,
+            result=tc_result,
             error_message=tc.error_message,
             created_at=run_ts,
             executed_at=run_ts if tc.status in ("completed", "failed") else None,
         )
         db.add(tool_call)
+        db.flush()
 
         # Replay tool call against Gitea (create real files)
         if gitea_url and repo_owner and repo_name:

@@ -45,6 +45,17 @@ agents:
   - id: business_analyst
     status: running
     planned_prompt: "Gather requirements for blog platform with markdown support"
+    tool_calls:
+      - tool: builtin:hitl_ask_question
+        arguments:
+          question: "Should the blog support multiple authors or just a single author?"
+        status: completed
+        answer: "Multiple authors with different roles"
+      - tool: builtin:hitl_ask_question
+        arguments:
+          question: "Do you need comments on blog posts?"
+        status: completed
+        answer: "Yes, with moderation"
 
 messages:
   - role: user
