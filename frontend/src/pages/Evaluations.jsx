@@ -1158,7 +1158,7 @@ const SeedSection = () => {
   const [loading, setLoading] = useState(true)
   const [seeding, setSeeding] = useState(false)
   const [selectedSetups, setSelectedSetups] = useState(new Set())
-  const [seedUser, setSeedUser] = useState('admin')
+  const [seedUser, setSeedUser] = useState('__random__')
   const [result, setResult] = useState(null)
   const [expanded, setExpanded] = useState(false)
 
@@ -1235,6 +1235,7 @@ const SeedSection = () => {
               onChange={(e) => setSeedUser(e.target.value)}
               className="text-xs border border-gray-300 rounded px-2 py-1"
             >
+              <option value="__random__">New random user</option>
               <option value="admin">admin</option>
               <option value="architect">architect</option>
               <option value="developer">developer</option>
@@ -1257,7 +1258,7 @@ const SeedSection = () => {
               {result.error ? (
                 <span>Error: {result.error}</span>
               ) : (
-                <span>Seeded {result.seeded?.filter((s) => s.status === 'seeded').length} session(s) as {seedUser}</span>
+                <span>Seeded {result.seeded?.filter((s) => s.status === 'seeded').length} session(s) as <strong>{result.user || seedUser}</strong></span>
               )}
             </div>
           )}

@@ -79,7 +79,7 @@ class SeedRequest(BaseModel):
     """Request body for seeding setup sessions."""
 
     session_names: list[str]  # Setup session IDs to seed
-    user: str = "admin"  # Which user to seed as
+    user: str = "admin"  # Which user to seed as ("__random__" for a new random user)
 
 
 class AgentSummaryResponse(BaseModel):
@@ -445,8 +445,31 @@ async def seed_sessions(
     from druppie.testing.seed_loader import seed_fixture
     from druppie.testing.seed_schema import SessionFixture
 
+    import hashlib
+
+    from druppie.db.models import User, UserRole
+
     base_dir = Path(__file__).resolve().parents[3] / "testing" / "setup"
     db = SessionLocal()
+
+    # Handle random user creation
+    seed_user = body.user
+    if seed_user == "__random__":
+        short_hash = hashlib.md5(
+            f"seed-{uuid_mod.uuid4()}".encode()
+        ).hexdigest()[:8]
+        seed_user = f"s-{short_hash}"
+
+        # Create the user in DB
+        new_user = User(
+            id=uuid_mod.uuid4(),
+            username=seed_user,
+            email=f"{seed_user}@druppie.local",
+            display_name=f"Seed User {short_hash}",
+        )
+        db.add(new_user)
+        db.add(UserRole(user_id=new_user.id, role="admin"))
+        db.flush()
 
     results = []
     try:
@@ -463,7 +486,7 @@ async def seed_sessions(
                 continue
 
             fixture = fixtures[name]
-            fixture.metadata.user = body.user
+            fixture.metadata.user = seed_user
 
             try:
                 seed_fixture(db, fixture, gitea_url=None)
@@ -484,7 +507,7 @@ async def seed_sessions(
     finally:
         db.close()
 
-    return {"seeded": results}
+    return {"seeded": results, "user": seed_user}
 
 
 @router.post("/evaluations/run-tests")
