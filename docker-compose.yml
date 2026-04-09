@@ -374,7 +374,7 @@ services:
       CONTAINERD_NAMESPACE: ${CONTAINERD_NAMESPACE:-default}
       DOCKER_NETWORK: druppie-sandbox-network  # Isolated network — sandboxes can only reach control plane
       DOCKER_MEMORY_LIMIT: ${SANDBOX_MEMORY_LIMIT:-4g}
-      DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-}
+      DOCKER_CPU_LIMIT: ${SANDBOX_CPU_LIMIT:-0}
       SANDBOX_CACHE_VOLUME: druppie_sandbox_dep_cache
       # LLM API keys and proxy URLs no longer needed here.
       # Credentials flow per-session from Druppie -> Control Plane -> Sandbox.

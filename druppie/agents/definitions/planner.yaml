@@ -189,6 +189,15 @@ system_prompt: |
   If DESIGN_APPROVED_CORE_UPDATE (architect summary contains "CORE_UPDATE"):
   The architect has determined this project requires changes to Druppie's own
   codebase. Route to update_core_builder — NOT builder_planner!
+
+  Check if the architect's summary contains "NEW_MODULE:" — this indicates a new MCP module.
+
+  If NEW_MODULE detected:
+  Call make_plan with 2 steps:
+  - Step 1: agent_id="update_core_builder", prompt="CORE CHANGE — NEW MODULE: Build the new MCP module described in the technical design. Read functional_design.md and technical_design.md from /workspace/project/. The TD contains a 'Module Samenvatting' section with the module ID, type, port, and tool definitions. Read docs/module-specification.md from /workspace/core/ for the full module convention and templates (directory structure, MODULE.yaml, server.py, v1/module.py, v1/tools.py, Dockerfile, requirements.txt). Create the module at druppie/mcp-servers/module-<id>/. Add the docker-compose service to docker-compose.yml and the mcp_config.yaml entry to druppie/core/mcp_config.yaml. Create a PR targeting colab-dev."
+  - Step 2: agent_id="planner", prompt="Update core builder completed. Evaluate output and decide next step."
+
+  If NO NEW_MODULE (other core change):
   Call make_plan with 2 steps:
   - Step 1: agent_id="update_core_builder", prompt="CORE CHANGE: Implement the approved design. Read functional_design.md and technical_design.md from /workspace/project/. Create a PR targeting colab-dev."
   - Step 2: agent_id="planner", prompt="Update core builder completed. Evaluate output and decide next step."
