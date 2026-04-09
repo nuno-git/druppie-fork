@@ -329,6 +329,28 @@ services:
       retries: 5
       start_period: 10s
 
+  module-boter-kaas-eieren:
+    build:
+      context: ./druppie/mcp-servers/module-boter-kaas-eieren
+      dockerfile: Dockerfile
+    container_name: druppie-module-boter-kaas-eieren
+    profiles: [infra, dev, prod]
+    environment:
+      MCP_PORT: "9010"
+      DB_PATH: /app/data/games.db
+    volumes:
+      - module-boter-kaas-eieren-data:/app/data
+    ports:
+      - "${MODULE_BOTER_KAAS_EIEREN_PORT:-9010}:9010"
+    networks:
+      - druppie-new-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9010/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # ===========================================================================
   # SANDBOX INFRASTRUCTURE (background-agents)
   # ===========================================================================
@@ -876,8 +898,10 @@ volumes:
     name: druppie_sandbox_dep_cache
   cache_scan_results:
     name: druppie_cache_scan_results
+  module-boter-kaas-eieren-data:
+    name: module-boter-kaas-eieren-data
 
-# =============================================================================
+  # =============================================================================
 # NETWORKS
 # =============================================================================
 

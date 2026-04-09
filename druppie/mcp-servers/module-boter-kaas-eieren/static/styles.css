@@ -1,0 +1,142 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+.container {
+    background: white;
+    border-radius: 20px;
+    padding: 40px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    text-align: center;
+    max-width: 500px;
+    width: 100%;
+}
+
+h1 {
+    color: #333;
+    margin-bottom: 5px;
+    font-size: 2.5em;
+}
+
+.subtitle {
+    color: #666;
+    margin-bottom: 30px;
+    font-size: 1.1em;
+}
+
+.status {
+    font-size: 1.3em;
+    font-weight: bold;
+    margin-bottom: 25px;
+    padding: 15px;
+    border-radius: 10px;
+    background: #f0f0f0;
+    color: #333;
+}
+
+.status.playing {
+    background: #e3f2fd;
+    color: #1976d2;
+}
+
+.status.won-x {
+    background: #c8e6c9;
+    color: #388e3c;
+}
+
+.status.won-o {
+    background: #ffcdd2;
+    color: #d32f2f;
+}
+
+.status.draw {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.board {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 30px;
+    background: #ddd;
+    padding: 10px;
+    border-radius: 15px;
+}
+
+.cell {
+    width: 100px;
+    height: 100px;
+    background: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 3em;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 80px;
+    min-height: 80px;
+}
+
+.cell:hover:not(.occupied) {
+    background: #f5f5f5;
+    transform: scale(1.05);
+}
+
+.cell.occupied {
+    cursor: not-allowed;
+}
+
+.cell.x {
+    color: #2196f3;
+}
+
+.cell.o {
+    color: #f44336;
+}
+
+.info {
+    color: #666;
+    line-height: 1.6;
+}
+
+.player-x {
+    color: #2196f3;
+    font-weight: bold;
+}
+
+.player-o {
+    color: #f44336;
+    font-weight: bold;
+}
+
+@media (max-width: 600px) {
+    .container {
+        padding: 20px;
+    }
+
+    h1 {
+        font-size: 2em;
+    }
+
+    .cell {
+        width: 80px;
+        height: 80px;
+        font-size: 2.5em;
+    }
+}

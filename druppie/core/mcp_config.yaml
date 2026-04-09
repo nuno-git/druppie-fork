@@ -258,3 +258,44 @@ mcps:
 
       - name: get_skill
         requires_approval: false
+
+  boter-kaas-eieren:
+    url: ${MODULE_BOTER_KAAS_EIEREN_URL:-http://module-boter-kaas-eieren:9010}
+    type: module
+    description: "Tic-tac-toe game module (Dutch: Boter-Kaas-Eieren)"
+    tools:
+      - name: new_game
+        description: "Create a new tic-tac-toe game. Returns game_id and initial board state."
+        requires_approval: false
+        parameters:
+          type: object
+          properties: {}
+          required: []
+
+      - name: make_move
+        description: "Make a move in a tic-tac-toe game. After player (X) moves, AI (O) responds automatically."
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            game_id:
+              type: string
+              description: "Game identifier"
+            position:
+              type: integer
+              description: "Board position (0-8)"
+          required:
+            - game_id
+            - position
+
+      - name: get_game_state
+        description: "Get the current state of a tic-tac-toe game including board, whose turn it is, and game result if finished."
+        requires_approval: false
+        parameters:
+          type: object
+          properties:
+            game_id:
+              type: string
+              description: "Game identifier"
+          required:
+            - game_id
