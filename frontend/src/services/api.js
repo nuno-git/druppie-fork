@@ -293,6 +293,11 @@ export const getPackageProjects = (manager, name) =>
 export const getProjectDependencies = (projectId) =>
   request(`/api/projects/${projectId}/dependencies`)
 
+// ============ Azure Auth ============
+export const startAzureDeviceCode = () => request('/api/auth/azure/device-code', { method: 'POST' })
+export const getAzureAuthStatus = () => request('/api/auth/azure/status')
+export const disconnectAzure = () => request('/api/auth/azure/disconnect', { method: 'POST' })
+
 // ============ Custom Agents ============
 export const getCustomAgents = () => request('/api/agents/custom')
 export const getCustomAgent = (agentId) => request(`/api/agents/custom/${agentId}`)

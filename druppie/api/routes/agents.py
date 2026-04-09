@@ -148,25 +148,9 @@ async def list_agents(
     )
 
 
-@router.get("/agents/{agent_id}", response_model=AgentResponse)
-async def get_agent(
-    agent_id: str,
-    user: dict = Depends(get_current_user),
-):
-    """Get a specific agent's configuration."""
-    agents = load_agent_definitions()
-
-    for agent in agents:
-        if agent.id == agent_id:
-            return agent
-
-    from druppie.api.errors import NotFoundError
-
-    raise NotFoundError("agent", agent_id)
-
-
 # =============================================================================
 # CUSTOM AGENT ENDPOINTS
+# (Must be defined before /agents/{agent_id} to avoid path conflicts)
 # =============================================================================
 
 
@@ -287,7 +271,21 @@ async def deploy_custom_agent(
     from druppie.core.config import get_settings
 
     settings = get_settings()
-    foundry = FoundryService(endpoint=settings.foundry_project_endpoint)
+
+    # Check if user has a stored Azure token from device code flow
+    azure_token = None
+    user_id = user.get("sub")
+    if user_id:
+        from druppie.db.models.user import UserToken
+        token_record = db.query(UserToken).filter_by(user_id=user_id, service="azure").first()
+        if token_record:
+            azure_token = token_record.access_token
+
+    foundry = FoundryService(
+        endpoint=settings.foundry_project_endpoint,
+        api_key=settings.foundry_api_key or None,
+        azure_token=azure_token,
+    )
 
     if not foundry.is_configured():
         raise HTTPException(
@@ -322,3 +320,25 @@ async def deploy_custom_agent(
             agent.deployment_status = "failed"
             db.commit()
         raise HTTPException(status_code=500, detail=f"Deployment failed: {str(e)}")
+
+
+# =============================================================================
+# SINGLE AGENT LOOKUP (must be after /agents/custom and /agents/metadata)
+# =============================================================================
+
+
+@router.get("/agents/{agent_id}", response_model=AgentResponse)
+async def get_agent(
+    agent_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Get a specific agent's configuration."""
+    agents = load_agent_definitions()
+
+    for agent in agents:
+        if agent.id == agent_id:
+            return agent
+
+    from druppie.api.errors import NotFoundError
+
+    raise NotFoundError("agent", agent_id)
