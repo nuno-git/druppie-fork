@@ -21,6 +21,7 @@ import {
   Wrench,
   Server,
   Package,
+  BookOpen,
 } from 'lucide-react'
 
 import { useAuth } from '../App'
@@ -204,6 +205,7 @@ const NavRail = () => {
       <NavRailItem to="/tools/mcp" icon={Wrench} label="MCP Tools" active={isActive('/tools/mcp')} />
       <NavRailItem to="/tools/infrastructure" icon={Server} label="Infrastructure" active={isActive('/tools/infrastructure')} />
       <NavRailItem to="/tools/cache" icon={Package} label="Dep Cache" active={isActive('/tools/cache')} />
+      <NavRailItem to="/tools/architecture" icon={BookOpen} label="Architecture" active={isActive('/tools/architecture')} />
 
       {/* Admin */}
       {user?.roles?.includes('admin') && (

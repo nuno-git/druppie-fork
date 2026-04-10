@@ -530,6 +530,7 @@ services:
       DRUPPIE_REPO_NAME: ${DRUPPIE_REPO_NAME:-}
     volumes:
       - ./druppie:/app/druppie
+      - ./docs:/app/docs
       - ./secrets:/app/secrets:ro
       - druppie_new_workspace:/app/workspace
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
