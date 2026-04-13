@@ -222,6 +222,10 @@ class MCPConfig:
 
         return (requires, required_role)
 
+    def clear_cache(self) -> None:
+        """Clear cached config, forcing a re-read from disk on next access."""
+        self._config = None
+
     def get_server_type(self, server: str) -> str:
         """Get MCP server type (core, module, both).
 

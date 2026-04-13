@@ -142,12 +142,65 @@ const ArchNode = ({ node, isHovered, isDimmed, onHover, onClick }) => {
 
 const CSS = `
 @keyframes flowDash { to { stroke-dashoffset: -20; } }
-.arch-line { stroke-dasharray: 6 4; animation: flowDash 1s linear infinite; }
-.arch-line-hl { stroke-dasharray: 6 4; animation: flowDash 0.5s linear infinite; filter: drop-shadow(0 0 2px currentColor); }
-.arch-line-dim { opacity: 0.05; }
+.arch-line-dashed { stroke-dasharray: 6 4; animation: flowDash 1s linear infinite; }
+.arch-line-dim { opacity: 0.08; }
 @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
 .animate-slideIn { animation: slideIn 0.25s ease-out; }
 `
+
+/**
+ * Smart path routing:
+ * - Downward: smooth bezier from bottom-center to top-center
+ * - Same-row: arc above the nodes so the line doesn't cut through siblings
+ * - Upward: route along the outer edge of the diagram to avoid crossing nodes
+ */
+const computePath = (fromEl, toEl, containerRect) => {
+  const fr = fromEl.getBoundingClientRect()
+  const tr = toEl.getBoundingClientRect()
+  const rX = containerRect.left
+  const rY = containerRect.top
+
+  // Centers
+  const fcx = fr.left + fr.width / 2 - rX
+  const fcy = fr.top + fr.height / 2 - rY
+  const tcx = tr.left + tr.width / 2 - rX
+  const tcy = tr.top + tr.height / 2 - rY
+
+  const isDown = tcy > fcy + 20
+  const isUp = tcy < fcy - 20
+  const isSameRow = !isDown && !isUp
+
+  if (isSameRow) {
+    // Arc above: exit top, curve up, enter top
+    const x1 = fcx
+    const y1 = fr.top - rY           // top of source
+    const x2 = tcx
+    const y2 = tr.top - rY           // top of target
+    const arcHeight = Math.min(40, Math.abs(x2 - x1) * 0.2)
+    const peakY = Math.min(y1, y2) - arcHeight
+    return `M ${x1} ${y1} C ${x1} ${peakY}, ${x2} ${peakY}, ${x2} ${y2}`
+  }
+
+  if (isUp) {
+    // Route along the side: exit right/left, go up, enter right/left of target
+    const goRight = fcx <= tcx
+    const x1 = goRight ? fr.left + fr.width - rX : fr.left - rX   // right or left edge of source
+    const y1 = fcy
+    const x2 = goRight ? tr.left + tr.width - rX : tr.left - rX   // right or left edge of target
+    const y2 = tcy
+    const sideOffset = goRight ? 50 : -50
+    return `M ${x1} ${y1} C ${x1 + sideOffset} ${y1}, ${x2 + sideOffset} ${y2}, ${x2} ${y2}`
+  }
+
+  // Downward: bottom of source → top of target with smooth bezier
+  const x1 = fcx
+  const y1 = fr.top + fr.height - rY  // bottom of source
+  const x2 = tcx
+  const y2 = tr.top - rY              // top of target
+  const dy = y2 - y1
+  const cp = Math.min(dy * 0.45, 80)
+  return `M ${x1} ${y1} C ${x1} ${y1 + cp}, ${x2} ${y2 - cp}, ${x2} ${y2}`
+}
 
 const ConnectionLines = ({ connections, hoveredNode, containerRef }) => {
   const [paths, setPaths] = useState([])
@@ -162,19 +215,7 @@ const ConnectionLines = ({ connections, hoveredNode, containerRef }) => {
       const toEl = c.querySelector(`[data-node-id="${conn.to}"]`)
       if (!fromEl || !toEl) return null
 
-      const fr = fromEl.getBoundingClientRect()
-      const tr = toEl.getBoundingClientRect()
-      const x1 = fr.left + fr.width / 2 - rect.left
-      const y1 = fr.top + fr.height - rect.top
-      const x2 = tr.left + tr.width / 2 - rect.left
-      const y2 = tr.top - rect.top
-
-      const dy = Math.abs(y2 - y1)
-      const cp = Math.min(dy * 0.4, 50)
-      const d = dy < 10
-        ? `M ${x1} ${y1} C ${(x1+x2)/2} ${y1}, ${(x1+x2)/2} ${y2}, ${x2} ${y2}`
-        : `M ${x1} ${y1} C ${x1} ${y1 + cp}, ${x2} ${y2 - cp}, ${x2} ${y2}`
-
+      const d = computePath(fromEl, toEl, rect)
       return { ...conn, d }
     }).filter(Boolean))
   }, [connections, containerRef])
@@ -187,33 +228,42 @@ const ConnectionLines = ({ connections, hoveredNode, containerRef }) => {
 
   useEffect(() => { const t = setTimeout(compute, 50); return () => clearTimeout(t) }, [hoveredNode, compute])
 
+  const isHl = (conn) => hoveredNode && (conn.from === hoveredNode || conn.to === hoveredNode)
+
   const cls = (conn) => {
-    if (!hoveredNode) return 'arch-line'
-    return (conn.from === hoveredNode || conn.to === hoveredNode) ? 'arch-line-hl' : 'arch-line-dim'
+    if (!hoveredNode) return conn.dashed ? 'arch-line-dashed' : ''
+    return isHl(conn) ? (conn.dashed ? 'arch-line-dashed' : '') : 'arch-line-dim'
   }
 
   return (
     <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 0 }}>
       <defs>
-        <marker id="arr" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
-          <polygon points="0 0, 6 2.5, 0 5" fill="#94a3b8" opacity="0.5" />
-        </marker>
+        {paths.map((p, i) => (
+          <marker key={`arr-${i}`} id={`arr-${i}`} markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill={p.color} opacity={0.85} />
+          </marker>
+        ))}
       </defs>
-      {paths.map((p, i) => (
-        <g key={i}>
-          <path d={p.d} fill="none" stroke={p.color} strokeWidth={hoveredNode && (p.from === hoveredNode || p.to === hoveredNode) ? 2.5 : 1.5} className={cls(p)} markerEnd="url(#arr)" />
-          {hoveredNode && (p.from === hoveredNode || p.to === hoveredNode) && (
-            <circle r="3" fill={p.color} opacity="0.8">
-              <animateMotion dur="1.8s" repeatCount="indefinite" path={p.d} />
-            </circle>
-          )}
-          {/* Label on highlighted connection */}
-          {hoveredNode && (p.from === hoveredNode || p.to === hoveredNode) && p.label && (() => {
-            // Find midpoint from the path for label placement
-            return null // Labels shown via tooltip on hover, not inline, to keep it clean
-          })()}
-        </g>
-      ))}
+      {paths.map((p, i) => {
+        const hl = isHl(p)
+        const defaultOpacity = hoveredNode ? undefined : 0.45
+        return (
+          <g key={i}>
+            <path
+              d={p.d} fill="none" stroke={p.color}
+              strokeWidth={hl ? 2.5 : 1.5}
+              opacity={hl ? 1 : defaultOpacity}
+              className={cls(p)}
+              markerEnd={`url(#arr-${i})`}
+            />
+            {hl && (
+              <circle r="3" fill={p.color} opacity="0.9">
+                <animateMotion dur="1.8s" repeatCount="indefinite" path={p.d} />
+              </circle>
+            )}
+          </g>
+        )
+      })}
     </svg>
   )
 }
@@ -388,7 +438,7 @@ const OverviewTab = () => {
             <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wide">Systeem Architectuur</h2>
             <p className="text-xs text-gray-400 mt-0.5">Hover over componenten om verbindingen te zien. Klik voor details en technologie stack.</p>
           </div>
-          <div className="relative p-6" style={{ backgroundImage: 'radial-gradient(circle, #e5e7eb 0.5px, transparent 0.5px)', backgroundSize: '20px 20px' }}>
+          <div className="relative p-6">
             <InteractiveDiagram nodes={buildNodes(agents, mcpServers)} connections={CONNECTIONS} />
           </div>
           <div className="flex flex-wrap items-center gap-5 px-6 py-3 border-t border-gray-100 bg-gray-50/50">

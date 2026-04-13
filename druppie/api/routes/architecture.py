@@ -23,9 +23,50 @@ router = APIRouter()
 DEFINITIONS_DIR = Path(__file__).parent.parent.parent / "agents" / "definitions"
 DOCS_DIR = Path(__file__).parent.parent.parent.parent / "docs"
 
+# Cached agent definitions: {agent_id: raw_yaml_dict}
+_agent_defs_cache: dict[str, dict] = {}
+_agent_defs_mtimes: dict[str, float] = {}
+
+
+def _load_agent_definitions() -> dict[str, dict]:
+    """Load all agent definitions from YAML, with mtime-based cache.
+
+    Only re-reads files that changed on disk since last call.
+    """
+    if not DEFINITIONS_DIR.exists():
+        return {}
+
+    current_files = {f.stem: f for f in DEFINITIONS_DIR.glob("*.yaml")}
+
+    # Remove agents whose files were deleted
+    for agent_id in list(_agent_defs_cache.keys()):
+        if agent_id not in current_files:
+            del _agent_defs_cache[agent_id]
+            _agent_defs_mtimes.pop(agent_id, None)
+
+    for agent_id, yaml_file in current_files.items():
+        try:
+            mtime = yaml_file.stat().st_mtime
+            if agent_id in _agent_defs_cache and _agent_defs_mtimes.get(agent_id) == mtime:
+                continue
+
+            with open(yaml_file, "r") as f:
+                data = yaml.safe_load(f)
+
+            if not data or not data.get("id"):
+                continue
+            if data.get("id") == "llm_profiles":
+                continue
+
+            _agent_defs_cache[data["id"]] = data
+            _agent_defs_mtimes[agent_id] = mtime
+        except Exception as e:
+            logger.error("failed_to_load_agent_yaml", file=str(yaml_file), error=str(e))
+
+    return _agent_defs_cache
+
 # Allowed doc files (prevent path traversal)
 ALLOWED_DOCS = {
-    "ARCHITECTURE_AUTO": "ARCHITECTURE_AUTO.md",
     "TECHNICAL": "TECHNICAL.md",
     "FEATURES": "FEATURES.md",
     "SANDBOX": "SANDBOX.md",
@@ -109,21 +150,8 @@ async def list_architecture_agents(
     """List all agents with full architecture details."""
     agents = []
 
-    if not DEFINITIONS_DIR.exists():
-        return AgentsArchResponse(agents=[], total=0)
-
-    for yaml_file in DEFINITIONS_DIR.glob("*.yaml"):
+    for data in _load_agent_definitions().values():
         try:
-            with open(yaml_file, "r") as f:
-                data = yaml.safe_load(f)
-
-            if not data or not data.get("id"):
-                continue
-
-            # Skip non-agent files like llm_profiles
-            if data.get("id") == "llm_profiles":
-                continue
-
             # Parse MCP access
             mcps_raw = data.get("mcps", [])
             if isinstance(mcps_raw, dict):
@@ -161,7 +189,7 @@ async def list_architecture_agents(
             agents.append(agent)
 
         except Exception as e:
-            logger.error("failed_to_load_agent_for_architecture", file=str(yaml_file), error=str(e))
+            logger.error("failed_to_load_agent_for_architecture", agent_id=data.get("id"), error=str(e))
 
     # Sort by category then name
     category_order = {"system": 0, "execution": 1, "quality": 2, "deployment": 3}
@@ -178,17 +206,7 @@ async def get_permission_matrix(
     mcp_config = get_mcp_config()
     config = mcp_config.config
 
-    # Load all agent definitions
-    agent_definitions = {}
-    if DEFINITIONS_DIR.exists():
-        for yaml_file in DEFINITIONS_DIR.glob("*.yaml"):
-            try:
-                with open(yaml_file, "r") as f:
-                    data = yaml.safe_load(f)
-                if data and data.get("id") and data.get("id") != "llm_profiles":
-                    agent_definitions[data["id"]] = data
-            except Exception:
-                continue
+    agent_definitions = _load_agent_definitions()
 
     # Build the matrix
     entries = []
@@ -306,23 +324,11 @@ async def refresh_architecture(
     Called automatically after update_core_builder completes.
     """
     from druppie.agents.definition_loader import AgentDefinitionLoader
-    from druppie.core.mcp_config import get_mcp_config
 
-    # Clear agent definition cache
-    AgentDefinitionLoader._cache.clear()
-    AgentDefinitionLoader._cache_mtime.clear()
-
-    # Clear MCP config cache (force re-read from disk)
-    mcp_config = get_mcp_config()
-    mcp_config._config = None
-
-    # Regenerate auto-generated architecture doc
-    try:
-        from druppie.execution.orchestrator import Orchestrator
-        o = Orchestrator.__new__(Orchestrator)
-        o._regenerate_architecture_doc()
-    except Exception as e:
-        logger.warning("architecture_doc_regen_failed", error=str(e))
+    AgentDefinitionLoader.clear_cache()
+    get_mcp_config().clear_cache()
+    _agent_defs_cache.clear()
+    _agent_defs_mtimes.clear()
 
     logger.info("architecture_cache_refreshed", user_id=user.get("sub"))
 
@@ -346,29 +352,21 @@ class WorkflowResponse(BaseModel):
     connections: list[WorkflowConnection]
 
 
-# The workflow is derived from the planner's prompt logic.
-# These are the known orchestration patterns in Druppie.
-WORKFLOW_RULES = [
-    # Intake
-    {"from": "router", "to": "planner", "label": "intent", "color": "#3b82f6"},
-    # Design loop
-    {"from": "planner", "to": "business_analyst", "label": "requirements", "color": "#3b82f6"},
-    {"from": "business_analyst", "to": "architect", "label": "functional_design.md", "color": "#22c55e"},
-    {"from": "architect", "to": "business_analyst", "label": "feedback loop", "color": "#f59e0b", "dashed": True},
-    # Post-design
-    {"from": "architect", "to": "builder_planner", "label": "DESIGN_APPROVED", "color": "#22c55e"},
-    {"from": "architect", "to": "update_core_builder", "label": "CORE_UPDATE", "color": "#e11d48"},
-    {"from": "update_core_builder", "to": "architect", "label": "PR merged → re-design", "color": "#e11d48", "dashed": True},
-    # TDD loop
-    {"from": "builder_planner", "to": "test_builder", "label": "builder_plan.md", "color": "#22c55e"},
-    {"from": "test_builder", "to": "builder", "label": "tests → code", "color": "#f59e0b"},
-    {"from": "builder", "to": "test_executor", "label": "run tests", "color": "#f59e0b"},
-    {"from": "test_executor", "to": "builder", "label": "retry (max 3x)", "color": "#ef4444", "dashed": True},
-    # Deployment & finish
-    {"from": "planner", "to": "deployer", "label": "deploy", "color": "#8b5cf6"},
-    {"from": "planner", "to": "developer", "label": "", "color": "#3b82f6"},
-    {"from": "planner", "to": "summarizer", "label": "afsluiting", "color": "#8b5cf6"},
-]
+WORKFLOW_YAML = DEFINITIONS_DIR / "workflow.yaml"
+
+
+def _load_workflow_rules() -> list[dict]:
+    """Load workflow connections from workflow.yaml."""
+    if not WORKFLOW_YAML.exists():
+        logger.warning("workflow_yaml_not_found", path=str(WORKFLOW_YAML))
+        return []
+    try:
+        with open(WORKFLOW_YAML, "r") as f:
+            data = yaml.safe_load(f)
+        return data.get("connections", [])
+    except Exception as e:
+        logger.error("workflow_yaml_load_failed", error=str(e))
+        return []
 
 
 @router.get("/architecture/workflow", response_model=WorkflowResponse)
@@ -380,21 +378,11 @@ async def get_workflow(
     Returns only connections where both agents exist in the current definitions.
     This means new agents appear automatically, and removed agents disappear.
     """
-    # Get existing agent IDs
-    agent_ids = set()
-    if DEFINITIONS_DIR.exists():
-        for yaml_file in DEFINITIONS_DIR.glob("*.yaml"):
-            try:
-                with open(yaml_file, "r") as f:
-                    data = yaml.safe_load(f)
-                if data and data.get("id") and data.get("id") != "llm_profiles":
-                    agent_ids.add(data["id"])
-            except Exception:
-                continue
+    agent_ids = set(_load_agent_definitions().keys())
 
     # Filter connections to only include existing agents
     connections = []
-    for rule in WORKFLOW_RULES:
+    for rule in _load_workflow_rules():
         if rule["from"] in agent_ids and rule["to"] in agent_ids:
             connections.append(WorkflowConnection(
                 from_agent=rule["from"],

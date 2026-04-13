@@ -54,6 +54,77 @@ const PermissionDot = ({ hasAccess, requiresApproval, requiredRole }) => {
   )
 }
 
+const ServerPermissionSection = ({ serverId, tools, agents, lookup, shortName }) => {
+  const [expanded, setExpanded] = useState(false)
+
+  // Count access stats for the collapsed summary
+  const totalCells = tools.length * agents.length
+  const accessCount = tools.reduce((sum, tool) => {
+    return sum + agents.filter(a => lookup[`${a}:${serverId}:${tool}`]?.has_access).length
+  }, 0)
+
+  return (
+    <div className="border border-gray-100 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left bg-gray-50/50 hover:bg-gray-100/50 transition-colors"
+      >
+        {expanded
+          ? <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
+          : <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
+        }
+        <Server className="w-4 h-4 text-purple-500 flex-shrink-0" />
+        <span className="text-sm font-semibold text-gray-800 flex-1">{serverId}</span>
+        <span className="text-xs text-gray-400">{tools.length} tools</span>
+        <span className="text-xs text-gray-400 ml-2">{accessCount}/{totalCells} toegekend</span>
+      </button>
+      {expanded && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100">
+                <th className="text-left px-3 py-2 text-xs font-medium text-gray-500 uppercase tracking-wide sticky left-0 bg-white min-w-[140px]">
+                  Tool
+                </th>
+                {agents.map(agent => (
+                  <th
+                    key={agent}
+                    className="text-center px-2 py-2 text-xs font-medium text-gray-500 uppercase tracking-wide"
+                    title={agent}
+                  >
+                    {shortName(agent)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {tools.map(tool => (
+                <tr key={`${serverId}:${tool}`} className="border-b border-gray-50 hover:bg-blue-50/30">
+                  <td className="px-3 py-2 text-xs font-mono text-gray-600 sticky left-0 bg-white">
+                    {tool}
+                  </td>
+                  {agents.map(agent => {
+                    const entry = lookup[`${agent}:${serverId}:${tool}`]
+                    return (
+                      <td key={agent} className="text-center px-2 py-2">
+                        <PermissionDot
+                          hasAccess={entry?.has_access || false}
+                          requiresApproval={entry?.requires_approval || false}
+                          requiredRole={entry?.required_role}
+                        />
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const PermissionsTab = () => {
   const { data: permData, isLoading: permLoading } = useQuery({
     queryKey: ['architecture-permissions'],
@@ -116,64 +187,8 @@ const PermissionsTab = () => {
           </div>
         ) : agents.length > 0 ? (
           <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100">
-                    <th className="text-left px-3 py-2 text-xs font-medium text-gray-500 uppercase tracking-wide sticky left-0 bg-white min-w-[140px]">
-                      Tool
-                    </th>
-                    {agents.map(agent => (
-                      <th
-                        key={agent}
-                        className="text-center px-2 py-2 text-xs font-medium text-gray-500 uppercase tracking-wide"
-                        title={agent}
-                      >
-                        {shortName(agent)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(servers).map(([serverId, tools]) => (
-                    <>
-                      {/* Server header row */}
-                      <tr key={`header-${serverId}`}>
-                        <td
-                          colSpan={agents.length + 1}
-                          className="px-3 py-2 text-xs font-semibold text-gray-700 bg-gray-50/50 uppercase"
-                        >
-                          {serverId}
-                        </td>
-                      </tr>
-                      {/* Tool rows */}
-                      {tools.map(tool => (
-                        <tr key={`${serverId}:${tool}`} className="border-b border-gray-50 hover:bg-blue-50/30">
-                          <td className="px-3 py-2 text-xs font-mono text-gray-600 sticky left-0 bg-white">
-                            {tool}
-                          </td>
-                          {agents.map(agent => {
-                            const entry = lookup[`${agent}:${serverId}:${tool}`]
-                            return (
-                              <td key={agent} className="text-center px-2 py-2">
-                                <PermissionDot
-                                  hasAccess={entry?.has_access || false}
-                                  requiresApproval={entry?.requires_approval || false}
-                                  requiredRole={entry?.required_role}
-                                />
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      ))}
-                    </>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
             {/* Legend */}
-            <div className="flex items-center gap-6 mt-4 pt-4 border-t border-gray-100">
+            <div className="flex items-center gap-6 mb-4 pb-3 border-b border-gray-100">
               <div className="flex items-center gap-2 text-xs text-gray-500">
                 <span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500" />
                 Toegang zonder approval
@@ -186,6 +201,20 @@ const PermissionsTab = () => {
                 <span className="text-gray-300">-</span>
                 Geen toegang
               </div>
+            </div>
+
+            {/* Collapsible sections per MCP server */}
+            <div className="space-y-2">
+              {Object.entries(servers).map(([serverId, tools]) => (
+                <ServerPermissionSection
+                  key={serverId}
+                  serverId={serverId}
+                  tools={tools}
+                  agents={agents}
+                  lookup={lookup}
+                  shortName={shortName}
+                />
+              ))}
             </div>
           </>
         ) : (

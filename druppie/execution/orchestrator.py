@@ -514,11 +514,6 @@ class Orchestrator:
             agent_id=agent_id,
         )
 
-        # After update_core_builder completes, refresh architecture caches
-        # so the architecture page reflects the latest agent/MCP definitions
-        if agent_id == "update_core_builder":
-            self._refresh_architecture_cache()
-
         return "completed"
 
     def _handle_agent_resume_result(
@@ -881,126 +876,6 @@ class Orchestrator:
 
         return session_id
 
-    def _refresh_architecture_cache(self) -> None:
-        """Clear architecture caches and regenerate docs after a core update.
-
-        Called after update_core_builder completes so the architecture page
-        reflects the latest agent definitions and MCP configuration.
-
-        Steps:
-        1. Clear in-memory caches (agent definitions + MCP config)
-        2. Regenerate the ARCHITECTURE_AUTO.md doc from current state
-        """
-        try:
-            from druppie.agents.definition_loader import AgentDefinitionLoader
-            from druppie.core.mcp_config import get_mcp_config
-
-            # Step 1: Clear caches
-            AgentDefinitionLoader._cache.clear()
-            AgentDefinitionLoader._cache_mtime.clear()
-
-            mcp_config = get_mcp_config()
-            mcp_config._config = None
-
-            # Step 2: Regenerate auto-generated docs
-            self._regenerate_architecture_doc()
-
-            logger.info("architecture_cache_refreshed_after_core_update")
-        except Exception as e:
-            logger.warning("architecture_cache_refresh_failed", error=str(e))
-
-    def _regenerate_architecture_doc(self) -> None:
-        """Regenerate docs/ARCHITECTURE_AUTO.md from current agent and MCP definitions.
-
-        This file is auto-generated and shown in the architecture page's
-        documentation tab. It provides an always-up-to-date overview.
-        """
-        from pathlib import Path
-
-        import yaml
-
-        from druppie.core.mcp_config import get_mcp_config
-
-        definitions_dir = Path(__file__).parent.parent / "agents" / "definitions"
-        docs_dir = Path(__file__).parent.parent.parent / "docs"
-
-        if not docs_dir.exists():
-            return
-
-        # Load agents
-        agents = []
-        if definitions_dir.exists():
-            for f in sorted(definitions_dir.glob("*.yaml")):
-                try:
-                    with open(f) as fh:
-                        data = yaml.safe_load(fh)
-                    if data and data.get("id") and data.get("id") != "llm_profiles":
-                        agents.append(data)
-                except Exception:
-                    continue
-
-        # Load MCP config
-        mcp_config = get_mcp_config()
-        servers = mcp_config.config.get("mcps", {})
-
-        # Group agents by category
-        categories = {}
-        for a in agents:
-            cat = a.get("category", "execution")
-            if cat not in categories:
-                categories[cat] = []
-            categories[cat].append(a)
-
-        # Build markdown
-        lines = [
-            "# Platform Architectuur (Auto-generated)",
-            "",
-            "> Dit bestand wordt automatisch gegenereerd na elke core update.",
-            f"> Laatst bijgewerkt: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            "",
-            "---",
-            "",
-            f"## Agents ({len(agents)})",
-            "",
-            "| Agent | Categorie | Beschrijving | MCP Servers | Max Iterations |",
-            "|-------|-----------|-------------|-------------|----------------|",
-        ]
-
-        for a in agents:
-            mcps = a.get("mcps", [])
-            mcp_list = ", ".join(mcps.keys() if isinstance(mcps, dict) else mcps) or "-"
-            lines.append(
-                f"| **{a.get('name', a['id'])}** | {a.get('category', 'execution')} "
-                f"| {a.get('description', '')[:80]} | {mcp_list} | {a.get('max_iterations', 10)} |"
-            )
-
-        lines.extend(["", f"## MCP Servers ({len(servers)})", ""])
-
-        for server_id, server_config in servers.items():
-            tools = server_config.get("tools", [])
-            url = server_config.get("url", "")
-            approval_tools = [t["name"] for t in tools if t.get("requires_approval")]
-            lines.append(f"### {server_id.title()} (`{url}`)")
-            lines.append("")
-            lines.append(f"- **Tools**: {len(tools)} ({', '.join(t['name'] for t in tools)})")
-            if approval_tools:
-                lines.append(f"- **Approval vereist**: {', '.join(approval_tools)}")
-            lines.append("")
-
-        # Agent categories summary
-        lines.extend(["## Agent Categorieën", ""])
-        cat_order = ["system", "execution", "quality", "deployment"]
-        for cat in cat_order:
-            cat_agents = categories.get(cat, [])
-            if cat_agents:
-                names = ", ".join(a.get("name", a["id"]) for a in cat_agents)
-                lines.append(f"- **{cat.title()}** ({len(cat_agents)}): {names}")
-        lines.append("")
-
-        # Write
-        doc_path = docs_dir / "ARCHITECTURE_AUTO.md"
-        doc_path.write_text("\n".join(lines), encoding="utf-8")
-        logger.info("architecture_doc_regenerated", path=str(doc_path))
 
     def _sync_workspace(self, session_id: UUID) -> None:
         """Git pull in the workspace so it picks up sandbox commits.
