@@ -292,7 +292,7 @@ async def list_available_tests(
 
     import yaml as _yaml
 
-    from druppie.testing.v2_schema import AgentTestFile, ToolTestFile
+    from druppie.testing.schema import AgentTestFile, ToolTestFile
 
     base_dir = Path(__file__).resolve().parents[3] / "testing"
     tests = []
@@ -434,7 +434,7 @@ async def run_tests(
     def _run():
         from druppie.db.database import SessionLocal
         from druppie.repositories.evaluation_repository import EvaluationRepository
-        from druppie.testing.v2_runner import TestRunner
+        from druppie.testing.runner import TestRunner
 
         import os
         db = SessionLocal()

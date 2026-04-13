@@ -47,8 +47,8 @@ from druppie.db.models import TestRunTag
 from druppie.domain.common import AgentRunStatus, SessionStatus
 from druppie.testing.seed_ids import fixture_uuid
 from druppie.testing.seed_schema import SessionFixture
-from druppie.testing.v2_assertions import AssertionResult, match_assertions
-from druppie.testing.v2_schema import (
+from druppie.testing.assertions import AssertionResult, match_assertions
+from druppie.testing.schema import (
     AgentTestDefinition,
     AgentTestFile,
     CheckAssertion,
@@ -841,7 +841,7 @@ class TestRunner:
             return AgentTestFile(**data).agent_test
         else:
             # Backwards compat: old format with test: root key
-            from druppie.testing.v2_schema import TestFile
+            from druppie.testing.schema import TestFile
             return TestFile(**data).test
 
     def load_all_tests(self, tests_dir: Path | None = None) -> list[tuple[Path, AgentTestDefinition | ToolTestDefinition]]:
@@ -1380,7 +1380,7 @@ class TestRunner:
         - Legacy: list of strings → JudgeCheck(check=s, expected=True) with context="all"
         - New: JudgeDefinition with context and checks (strings or dicts)
         """
-        from druppie.testing.v2_schema import JudgeCheck, JudgeDefinition
+        from druppie.testing.schema import JudgeCheck, JudgeDefinition
 
         if isinstance(judge_config, JudgeDefinition):
             return judge_config.resolved_checks(), judge_config.context

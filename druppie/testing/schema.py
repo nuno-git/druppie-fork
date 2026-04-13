@@ -296,7 +296,7 @@ class AgentTestFile(BaseModel):
 # --- Backwards compat: keep old names as aliases for imports ---
 # These will be removed once all callers are updated.
 
-# Backwards compat aliases (used by v2_assertions, v2_runner, API routes)
+# Backwards compat aliases
 EvalAssertion = CheckAssertion
 EvalDefinition = CheckDefinition
 EvalJudge = None  # removed, judge is now list[str] on CheckDefinition
