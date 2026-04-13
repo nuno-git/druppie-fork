@@ -60,12 +60,11 @@ def _extract_all_tool_calls(
     tool_calls = (
         db.query(ToolCall)
         .filter(ToolCall.agent_run_id == agent_run_id)
-        .order_by(ToolCall.tool_call_index)
+        .order_by(ToolCall.created_at.asc())
         .all()
     )
     lines = []
-    for tc in tool_calls:
-        idx = tc.tool_call_index
+    for idx, tc in enumerate(tool_calls):
         server = tc.mcp_server
         name = tc.tool_name
         args_str = json.dumps(tc.arguments) if tc.arguments else "{}"
@@ -73,6 +72,8 @@ def _extract_all_tool_calls(
         result_part = ""
         if tc.result:
             result_part = f': "{tc.result}"'
+        if tc.error_message:
+            result_part += f' [error: {tc.error_message[:200]}]'
         lines.append(f"[{idx}] {server}:{name}({args_str}) -> {status}{result_part}")
     return "\n".join(lines)
 
