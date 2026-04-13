@@ -166,10 +166,13 @@ export const checkMCPPermission = (tool) =>
 export const getQuestions = (sessionId = null) =>
   request(`/api/questions${sessionId ? `?session_id=${sessionId}` : ''}`)
 export const getQuestion = (questionId) => request(`/api/questions/${questionId}`)
-export const answerQuestion = (questionId, answer) =>
+export const answerQuestion = (questionId, answer, selectedChoices = null) =>
   request(`/api/questions/${questionId}/answer`, {
     method: 'POST',
-    body: JSON.stringify({ answer }),
+    body: JSON.stringify({
+      answer,
+      ...(selectedChoices != null && { selected_choices: selectedChoices }),
+    }),
   })
 export const cancelQuestion = (questionId) =>
   request(`/api/questions/${questionId}/cancel`, { method: 'POST' })
@@ -281,3 +284,11 @@ export const getAdminTableData = (tableName, page = 1, limit = 50, options = {})
 }
 export const getAdminRecord = (tableName, recordId) =>
   request(`/api/admin/table/${tableName}/${recordId}`)
+
+// ============ Cache ============
+export const getCachedPackages = () => request('/api/cache/packages')
+export const getAllProjectDependencies = () => request('/api/cache/dependencies')
+export const getPackageProjects = (manager, name) =>
+  request(`/api/cache/packages/${encodeURIComponent(manager)}/${encodeURIComponent(name)}/projects`)
+export const getProjectDependencies = (projectId) =>
+  request(`/api/projects/${projectId}/dependencies`)

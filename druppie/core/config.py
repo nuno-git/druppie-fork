@@ -146,21 +146,53 @@ class LLMSettings(BaseSettings):
     )
 
 
+class GitHubAppSettings(BaseSettings):
+    """GitHub App configuration for update_core_builder agent.
+
+    When all three values are set, the backend can generate short-lived
+    installation tokens for pushing to GitHub repos. When any are missing,
+    the GitHubAppService is disabled (no error, just returns None).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="GITHUB_APP_")
+
+    # Numeric app ID from GitHub (Settings → Developer settings → GitHub Apps)
+    id: str = Field(
+        default="",
+        description="GitHub App ID",
+    )
+    # Absolute path to the .pem private key file downloaded from GitHub
+    private_key_path: str = Field(
+        default="",
+        description="Path to GitHub App private key (.pem file)",
+    )
+    # Numeric installation ID (visible in the URL after installing the app)
+    installation_id: str = Field(
+        default="",
+        description="GitHub App installation ID",
+    )
+
+    @property
+    def is_configured(self) -> bool:
+        """All three values must be set for the service to work."""
+        return bool(self.id and self.private_key_path and self.installation_id)
+
+
 class MCPSettings(BaseSettings):
     """MCP microservice configuration."""
 
     model_config = SettingsConfigDict(env_prefix="MCP_")
 
     coding_url: str = Field(
-        default="http://mcp-coding:9001",
+        default="http://module-coding:9001",
         description="Coding MCP server URL",
     )
     docker_url: str = Field(
-        default="http://mcp-docker:9002",
+        default="http://module-docker:9002",
         description="Docker MCP server URL",
     )
     filesearch_url: str = Field(
-        default="http://mcp-filesearch:9004",
+        default="http://module-filesearch:9004",
         description="Filesearch MCP server URL",
     )
     timeout: int = Field(
@@ -230,6 +262,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     keycloak: KeycloakSettings = Field(default_factory=KeycloakSettings)
     gitea: GiteaSettings = Field(default_factory=GiteaSettings)
+    github_app: GitHubAppSettings = Field(default_factory=GitHubAppSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     mcp: MCPSettings = Field(default_factory=MCPSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
@@ -248,6 +281,12 @@ class Settings(BaseSettings):
             llm_model=self.llm.zai_model,
             dev_mode=self.api.dev_mode,
             workspace_root=str(self.workspace.root),
+        )
+
+        # Log GitHub App status so operators know if update_core_builder is available
+        logger.info(
+            "github_app_config",
+            configured=self.github_app.is_configured,
         )
 
         # Security warnings for missing credentials

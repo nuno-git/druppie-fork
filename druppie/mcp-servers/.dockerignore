@@ -1,0 +1,5 @@
+# Each module's Dockerfile selectively copies only its own directory + module_router.py.
+# This .dockerignore keeps the build context small by excluding other modules' data.
+__pycache__
+*.pyc
+.pytest_cache
