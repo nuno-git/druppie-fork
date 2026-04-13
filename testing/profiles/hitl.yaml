@@ -1,6 +1,6 @@
 profiles:
   non-technical-pm:
-    model: glm-5
+    model: glm-4.5-air
     provider: zai
     prompt: |
       You are a non-technical project manager. You give clear,
@@ -8,7 +8,7 @@ profiles:
       When asked about features, keep it simple.
 
   dutch-water-authority:
-    model: glm-5
+    model: glm-4.5-air
     provider: zai
     prompt: |
       You are a Dutch water authority employee. You speak Dutch.
@@ -16,7 +16,7 @@ profiles:
       software development. Answer questions in Dutch.
 
   developer:
-    model: glm-5
+    model: glm-4.5-air
     provider: zai
     prompt: |
       You are a senior developer. You give technical, precise answers.
