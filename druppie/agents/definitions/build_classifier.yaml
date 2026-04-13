@@ -64,6 +64,11 @@ mcps:
     - read_file
     - list_dir
 
+# Direct routing: classifier routes to the correct builder
+allowed_next_agents:
+  - update_core_builder
+  - builder_planner
+
 llm_profile: cheap
 temperature: 0.0
 max_tokens: 4096
