@@ -14,7 +14,7 @@ cp .env.example .env
 # Edit .env and add your LLM API key (ZAI_API_KEY or DEEPINFRA_API_KEY)
 
 # 3. Start (first time includes --profile init)
-docker compose --profile dev --profile init up -d
+docker compose --profile dev --profile init up -d --build
 
 # 4. Open the app
 open http://localhost:5273
@@ -25,8 +25,6 @@ First startup takes a few minutes to build images and initialize services.
 > **Already cloned without `--recursive`?** Run: `git submodule update --init`
 
 ## Daily Usage
-
-After first-time setup, skip `--profile init`:
 
 ```bash
 docker compose --profile dev up -d    # Start
@@ -103,15 +101,23 @@ docker compose logs -f sandbox-manager       # Sandbox manager
 # Soft reset - clears projects, sessions, chats (keeps user accounts, make sure to logout in the browser because tokens are kept there in cache.)
 docker compose --profile reset-db run --rm reset-db
 
-# Hard reset - wipes EVERYTHING and re-initializes Keycloak & Gitea
+# Hard reset - wipes all data volumes and re-initializes Keycloak & Gitea
 docker compose --profile reset-hard run --rm reset-hard
 docker compose --profile dev up -d --build   # Rebuild + start (MCP servers need --build)
+
+# Full nuke - destroys EVERYTHING (containers, volumes, images) and rebuilds from scratch
+docker compose --profile nuke run --rm nuke
+
+# Nuke without restarting (tear down only)
+START_AFTER=false docker compose --profile nuke run --rm nuke
 ```
 
 **Soft reset keeps:** User accounts, Keycloak config, Gitea repos
 **Soft reset clears:** Projects, sessions, agent runs, messages, approvals, questions
 
-**Hard reset clears:** Everything (all databases, Keycloak, Gitea, workspace files)
+**Hard reset clears:** All data (databases, Keycloak, Gitea, workspace files). Keeps Docker images.
+
+**Nuke clears:** Everything including Docker images. Rebuilds all images and starts fresh.
 
 ## What is `--profile init`?
 
@@ -175,6 +181,31 @@ After editing `.env`, apply changes:
 docker compose --profile dev up -d
 ```
 
+## GitHub App Setup (for `update_core`)
+
+The `update_core` flow lets Druppie modify its own codebase via PRs on GitHub. It requires a GitHub App for authentication. **This is optional** — all other flows work without it.
+
+### Steps
+
+1. **Create a GitHub App** at [github.com/settings/apps/new](https://github.com/settings/apps/new):
+   - Permissions: **Contents** (R/W), **Pull requests** (R/W), **Metadata** (Read)
+   - Webhook: disabled
+
+2. **Generate a private key** on the App settings page → save as `secrets/github-app-private-key.pem`
+
+3. **Install the App** on the target repository (e.g., your Druppie fork)
+
+4. **Add to `.env`:**
+   ```bash
+   GITHUB_APP_ID=<from app settings page>
+   GITHUB_APP_PRIVATE_KEY_PATH=/app/secrets/github-app-private-key.pem
+   GITHUB_APP_INSTALLATION_ID=<from install URL>
+   ```
+
+5. **Restart:** `docker compose --profile dev up -d`
+
+> See [docs/SANDBOX.md](docs/SANDBOX.md#github-app-setup) for detailed setup instructions.
+
 ## Custom Ports
 
 Edit `.env` if default ports conflict:
@@ -202,10 +233,9 @@ GITEA_PORT=3101
 docker compose logs -f
 ```
 
-**Fresh start:**
+**Fresh start (nuclear option):**
 ```bash
-docker compose --profile reset-hard run --rm reset-hard
-docker compose --profile dev up -d --build
+docker compose --profile nuke run --rm nuke
 ```
 
 **Container won't start:**

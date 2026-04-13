@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import structlog
 
-from druppie.api.routes import agents, approvals, chat, deployments, mcp_bridge, mcps, projects, questions, sandbox, sessions, workspace
+from druppie.api.routes import agents, approvals, cache, chat, deployments, mcp_bridge, mcps, projects, questions, sandbox, sessions, workspace
 from druppie.api.errors import register_exception_handlers
 from druppie.core.auth import get_auth_service
 from druppie.core.config import get_settings
@@ -66,8 +66,17 @@ async def lifespan(app: FastAPI):
     _recover_zombie_sessions()
 
     # Clean up orphaned sandbox Gitea users from previous runs
-    from druppie.sandbox.gitea_cleanup import cleanup_orphaned_sandbox_users
+    from druppie.opencode.gitea_cleanup import cleanup_orphaned_sandbox_users
     await cleanup_orphaned_sandbox_users()
+
+    # Initialize tool registry (discovers MCP tools from servers via tools/list)
+    from druppie.core.tool_registry import initialize_tool_registry
+    try:
+        await initialize_tool_registry()
+        logger.info("tool_registry_initialized")
+    except Exception as e:
+        logger.warning("tool_registry_init_failed", error=str(e),
+                       hint="MCP servers may not be ready yet. Registry will load builtin tools only.")
 
     # Start sandbox watchdog (detects stuck WAITING_SANDBOX tool calls)
     from druppie.api.routes.sandbox import sandbox_watchdog_loop
@@ -117,6 +126,7 @@ def create_app() -> FastAPI:
     app.include_router(mcps.router, prefix="/api", tags=["MCPs"])
     app.include_router(mcp_bridge.router, prefix="/api/mcp", tags=["MCP Bridge"])
     app.include_router(sandbox.router, prefix="/api", tags=["Sandbox"])
+    app.include_router(cache.router, prefix="/api", tags=["Cache"])
 
     @app.get("/health")
     async def health_check():

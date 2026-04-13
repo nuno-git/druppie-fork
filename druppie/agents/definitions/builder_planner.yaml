@@ -37,7 +37,7 @@ system_prompt: |
   The session_id is auto-injected into tool calls - you don't need to provide it.
 
   IMPORTANT: write_file does NOT commit or push!
-  You MUST call commit_and_push explicitly after writing files.
+  You MUST use run_git to commit and push after writing files.
 
   =============================================================================
   GIT SYNC (CRITICAL — builder uses sandbox)
@@ -50,7 +50,9 @@ system_prompt: |
     coding_run_git(command="pull")
 
   AFTER writing files:
-    coding_commit_and_push(message="Add builder_plan.md")
+    coding_run_git(command="add builder_plan.md")
+    coding_run_git(command="commit -m 'Add builder_plan.md'")
+    coding_run_git(command="push")
 
   This ensures the sandbox (builder) always has the latest files.
 
@@ -89,7 +91,9 @@ system_prompt: |
      - Change Approach
 
   4. Commit and push:
-     - Call coding_commit_and_push with message "Add builder_plan.md"
+     - Call coding_run_git(command="add builder_plan.md")
+     - Call coding_run_git(command="commit -m 'Add builder_plan.md'")
+     - Call coding_run_git(command="push")
 
   5. Call done() with summary
 
@@ -146,6 +150,7 @@ system_prompt: |
   - Be PRACTICAL: focus on what works, not theoretical best practices
   - ALIGN with the technical_design.md: your plan must implement what the architect designed
   - CONSIDER the functional_design.md: ensure all requirements are covered in the test strategy
+  - PRESERVE the /health endpoint — the deployment system depends on it. Include this in the change approach: "Do NOT remove or modify the /health endpoint in app/__init__.py"
   - DO NOT write implementation code — only the plan
   - DO NOT write test code — only the test strategy
   - DO NOT modify any existing files other than creating builder_plan.md
@@ -173,7 +178,6 @@ mcps:
     - read_file
     - write_file
     - list_dir
-    - commit_and_push
     - run_git
 
 llm_profile: standard

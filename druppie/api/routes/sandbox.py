@@ -15,10 +15,11 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, HTTPException, Request
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import httpx
@@ -39,6 +40,21 @@ SANDBOX_TIMEOUT_MINUTES = int(os.getenv("SANDBOX_TIMEOUT_MINUTES", "30"))
 SANDBOX_WATCHDOG_INTERVAL_SECONDS = int(os.getenv("SANDBOX_WATCHDOG_INTERVAL_SECONDS", "300"))  # 5 min
 
 logger = structlog.get_logger()
+
+
+async def _cleanup_gitea_users(sandbox_mapping: SandboxSessionModel, context: str = "") -> None:
+    """Clean up per-sandbox Gitea service accounts (primary + context).
+
+    GitHub tokens expire automatically — git_user_id is None for GitHub sandboxes.
+    """
+    for uid_attr in ("git_user_id", "context_git_user_id"):
+        uid = getattr(sandbox_mapping, uid_attr)
+        if uid:
+            try:
+                from druppie.opencode.gitea_credentials import delete_sandbox_git_user
+                await delete_sandbox_git_user(uid)
+            except Exception as e:
+                logger.warning(f"sandbox_{context}gitea_cleanup_failed", attr=uid_attr, error=str(e))
 
 router = APIRouter()
 
@@ -111,13 +127,20 @@ async def get_sandbox_events(
                 timeout=10.0,
             )
             resp.raise_for_status()
-            return resp.json()
-    except httpx.HTTPStatusError as e:
-        logger.warning("sandbox_events_proxy_error", session_id=session_id, status=e.response.status_code)
-        raise HTTPException(status_code=e.response.status_code, detail="Failed to fetch sandbox events")
-    except httpx.RequestError as e:
-        logger.warning("sandbox_events_connection_error", session_id=session_id, error=str(e))
-        raise HTTPException(status_code=502, detail="Sandbox control plane unavailable")
+            data = resp.json()
+            # If control plane returned events, use them
+            if data.get("events"):
+                return data
+            # If control plane returned empty but we have a persisted snapshot, use that
+            if mapping.events_snapshot:
+                return {"events": json.loads(mapping.events_snapshot), "hasMore": False, "source": "snapshot"}
+            return data
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        # Control plane unavailable — fall back to persisted snapshot
+        logger.warning("sandbox_events_proxy_error", session_id=session_id, error=str(e))
+        if mapping.events_snapshot:
+            return {"events": json.loads(mapping.events_snapshot), "hasMore": False, "source": "snapshot"}
+        raise HTTPException(status_code=502, detail="Sandbox events unavailable")
 
 
 # =============================================================================
@@ -165,8 +188,23 @@ def _extract_changed_files(events: list[dict]) -> list[dict]:
     return files
 
 
+def _strip_think_tags(text: str) -> str:
+    """Strip <think>...</think> reasoning blocks from model output.
+
+    Some models (Qwen3, DeepSeek R1) emit chain-of-thought reasoning
+    inside <think> tags. This is useful for the model but should not
+    leak into agent results or user-facing output.
+    """
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
 def _extract_agent_output(events: list[dict]) -> str:
-    """Extract agent text output from token events, sorted chronologically."""
+    """Extract agent text output from token events, sorted chronologically.
+
+    Falls back to conversation_history assistant messages if token events
+    are empty after stripping think tags (common with Qwen3/DeepSeek R1
+    models that wrap everything in <think> blocks).
+    """
     parts = []
     for event in events:
         if event.get("type") == "token":
@@ -180,127 +218,223 @@ def _extract_agent_output(events: list[dict]) -> str:
                 ts = event.get("createdAt") or event.get("created_at") or ""
                 parts.append((ts, content))
     parts.sort(key=lambda x: x[0])
-    return "\n".join(c for _, c in parts).strip()
+    raw = "\n".join(c for _, c in parts).strip()
+    result = _strip_think_tags(raw)
+
+    # If stripping think tags left nothing, extract from conversation_history.
+    # This covers models that emit only <think> blocks (Qwen3, DeepSeek R1)
+    # where the useful output is in tool results within the conversation.
+    if not result:
+        result = _extract_output_from_conversation_history(events)
+
+    return result
 
 
-async def _retry_sandbox_with_next_model(
-    sandbox_mapping: SandboxSessionModel,
-    tool_call_id: UUID,
-    db: Session,
-) -> bool:
-    """Attempt to retry the sandbox with the next model in the chain.
+def _extract_output_from_conversation_history(events: list[dict]) -> str:
+    """Extract assistant text and tool results from conversation_history event.
 
-    Creates a new sandbox session on the control plane with the next model,
-    registers ownership, and sends the prompt. Returns True if retry was
-    initiated, False if no more models to try.
+    Used as fallback when token events contain only think-tagged content.
     """
-    from druppie.sandbox import create_and_start_sandbox, SandboxCreateError
-    from druppie.sandbox.model_resolver import PROVIDER_API_KEYS
+    for event in events:
+        if event.get("type") != "conversation_history":
+            continue
+        data = event.get("data") or {}
+        messages = data.get("messages", [])
+        output_parts = []
+        for msg in messages:
+            if msg.get("role") != "assistant":
+                continue
+            for part in msg.get("parts", []):
+                if part.get("type") == "text":
+                    text = _strip_think_tags(part.get("text", ""))
+                    if text:
+                        output_parts.append(text)
+                elif part.get("type") == "tool":
+                    state = part.get("state", {})
+                    tool_name = part.get("tool", "unknown")
+                    status = state.get("status", "")
+                    # Include tool output/error for context
+                    if status == "error":
+                        error = state.get("error", "")
+                        if error:
+                            output_parts.append(f"[{tool_name} error]: {error}")
+                    elif status == "completed":
+                        output = state.get("output", "")
+                        if output:
+                            # Cap individual tool output at 5000 chars
+                            truncated = output[:5000] if len(output) > 5000 else output
+                            output_parts.append(f"[{tool_name} output]: {truncated}")
+        if output_parts:
+            return "\n\n".join(output_parts)
+    return ""
 
-    if not sandbox_mapping.model_chain or not sandbox_mapping.task_prompt:
-        return False
 
-    chain = json.loads(sandbox_mapping.model_chain)
-    next_index = (sandbox_mapping.model_chain_index or 0) + 1
+def _extract_git_operations(events: list[dict]) -> dict:
+    """Extract git-related info from sandbox events: commits, PRs, branches."""
+    commits = []
+    pr_urls = []
+    branches = []
+    for event in events:
+        if event.get("type") != "tool_call":
+            continue
+        data = event.get("data", {})
+        tool = (data.get("tool") or "").lower()
+        result = data.get("result", {})
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                result = {}
 
-    # Skip providers whose API key is not configured
-    while next_index < len(chain):
-        entry = chain[next_index]
-        env_var = PROVIDER_API_KEYS.get(entry["provider"])
-        if env_var and os.getenv(env_var):
-            break
-        logger.warning(
-            "sandbox_retry_provider_unavailable",
-            provider=entry["provider"],
-            model=entry["model"],
-        )
-        next_index += 1
+        # Extract commit info
+        if tool in ("run_git", "git") and isinstance(result, dict):
+            output = result.get("output", "") or result.get("stdout", "") or ""
+            args = data.get("args", {})
+            command = args.get("command", "") or args.get("args", "")
+            if "commit" in str(command) and output:
+                commits.append(output.strip()[:200])
+            if "branch" in str(command) and output:
+                for line in output.strip().split("\n"):
+                    line = line.strip().lstrip("* ")
+                    if line and line not in branches:
+                        branches.append(line)
 
-    if next_index >= len(chain):
-        logger.info(
-            "sandbox_retry_chain_exhausted",
-            sandbox_session_id=sandbox_mapping.sandbox_session_id,
-            tried_models=next_index,
-            chain_length=len(chain),
-        )
-        return False
+        # Extract PR info
+        if tool in ("create_pull_request", "create_pr"):
+            if isinstance(result, dict):
+                pr_url = result.get("url") or result.get("pr_url") or result.get("html_url") or ""
+                if pr_url:
+                    pr_urls.append(pr_url)
+                pr_number = result.get("number") or result.get("pr_number")
+                if pr_number and not pr_url:
+                    pr_urls.append(f"PR #{pr_number}")
 
-    next_entry = chain[next_index]
-    agent = sandbox_mapping.agent_name or "druppie-builder"
-    # Use profile-based model name — the proxy handles real model resolution
-    profile_model = f"sandbox/{agent}"
+    return {
+        "commits": commits[-5:],  # Last 5 commits
+        "pr_urls": pr_urls,
+        "branches": branches[-3:],  # Last 3 branches
+    }
 
-    logger.info(
-        "sandbox_retry_with_next_model",
-        sandbox_session_id=sandbox_mapping.sandbox_session_id,
-        profile=profile_model,
-        next_provider=next_entry["provider"],
-        chain_index=next_index,
-    )
 
-    # Get repo info from the original session
-    repo_owner = os.getenv("GITEA_ORG", "druppie")
-    repo_name = ""
-    if sandbox_mapping.session_id:
-        from druppie.repositories import SessionRepository, ProjectRepository
-        session_repo = SessionRepository(db)
-        session = session_repo.get_by_id(sandbox_mapping.session_id)
-        if session and session.project_id:
-            project_repo = ProjectRepository(db)
-            project = project_repo.get_by_id(session.project_id)
-            if project:
-                repo_owner = project.repo_owner or repo_owner
-                repo_name = project.repo_name or ""
+def _extract_tool_results_summary(events: list[dict]) -> list[str]:
+    """Extract a summary of key tool calls and their results."""
+    summaries = []
+    for event in events:
+        if event.get("type") != "tool_call":
+            continue
+        data = event.get("data", {})
+        tool = data.get("tool") or ""
+        args = data.get("args", {})
+        result = data.get("result", {})
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-    # Clean up old sandbox's Gitea service account before creating new one
-    if sandbox_mapping.git_user_id:
-        try:
-            from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-            await delete_sandbox_git_user(sandbox_mapping.git_user_id)
-        except Exception as e:
-            logger.warning("sandbox_retry_gitea_cleanup_failed", error=str(e))
+        # Summarize important operations
+        tool_lower = tool.lower()
+        if tool_lower in ("write", "write_file"):
+            path = args.get("filePath") or args.get("path") or "?"
+            summaries.append(f"Wrote file: {path}")
+        elif tool_lower == "edit":
+            path = args.get("filePath") or args.get("path") or "?"
+            summaries.append(f"Edited file: {path}")
+        elif tool_lower in ("run_git", "git"):
+            command = args.get("command") or args.get("args") or ""
+            if isinstance(command, list):
+                command = " ".join(command)
+            summaries.append(f"Git: {command[:100]}")
+        elif tool_lower in ("create_pull_request", "create_pr"):
+            if isinstance(result, dict):
+                pr_url = result.get("url") or result.get("pr_url") or result.get("html_url") or ""
+                title = result.get("title") or args.get("title") or ""
+                summaries.append(f"Created PR: {title} ({pr_url})")
+        elif tool_lower == "bash":
+            command = args.get("command") or ""
+            summaries.append(f"Ran: {command[:100]}")
 
-    try:
-        result = await create_and_start_sandbox(
-            task_prompt=sandbox_mapping.task_prompt,
-            model=profile_model,
-            agent_name=agent,
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            user_id=sandbox_mapping.user_id,
-            session_id=sandbox_mapping.session_id,
-            model_chain=sandbox_mapping.model_chain,
-            model_chain_index=next_index,
-            title=f"Druppie sandbox (retry {next_index}): {sandbox_mapping.task_prompt[:80]}",
-            source="retry",
-            author_id=str(sandbox_mapping.user_id),
-            db=db,
-        )
+    return summaries
 
-        # Link the new sandbox to the same tool call
-        sandbox_repo = SandboxSessionRepository(db)
-        sandbox_repo.update_tool_call_id(result["sandbox_session_id"], tool_call_id)
-        db.flush()
 
-        logger.info(
-            "sandbox_retry_initiated",
-            old_sandbox=sandbox_mapping.sandbox_session_id,
-            new_sandbox=result["sandbox_session_id"],
-            profile=profile_model,
-            chain_index=next_index,
-        )
-        return True
+def _extract_cache_packages(events: list[dict]) -> list[dict]:
+    """Extract package list from cache_summary event in sandbox events."""
+    for event in events:
+        if event.get("type") == "cache_summary":
+            packages = event.get("packages") or event.get("data", {}).get("packages")
+            if packages and isinstance(packages, list):
+                return packages
+    return []
 
-    except SandboxCreateError as e:
-        logger.error("sandbox_retry_error", error=str(e))
-        return False
+
+def _build_agent_result_text(
+    success: bool,
+    changed_files: list[dict],
+    agent_output: str,
+    git_info: dict,
+    tool_summaries: list[str],
+) -> str:
+    """Build a structured, human-readable result for the Druppie agent.
+
+    This replaces the raw JSON blob with clear text the LLM can understand.
+    """
+    lines = []
+
+    if success:
+        lines.append("SANDBOX TASK COMPLETED SUCCESSFULLY")
+    else:
+        lines.append("SANDBOX TASK FAILED")
+
+    # PR info (most important for the agent)
+    if git_info.get("pr_urls"):
+        lines.append("")
+        lines.append("Pull Requests created:")
+        for url in git_info["pr_urls"]:
+            lines.append(f"  - {url}")
+
+    # Changed files
+    if changed_files:
+        lines.append("")
+        lines.append(f"Files changed ({len(changed_files)}):")
+        for f in changed_files[:20]:  # Cap at 20
+            lines.append(f"  - {f['action']}: {f['path']}")
+        if len(changed_files) > 20:
+            lines.append(f"  ... and {len(changed_files) - 20} more files")
+
+    # Git commits
+    if git_info.get("commits"):
+        lines.append("")
+        lines.append("Git commits:")
+        for c in git_info["commits"]:
+            lines.append(f"  - {c}")
+
+    # Tool operations summary
+    if tool_summaries:
+        lines.append("")
+        lines.append(f"Operations performed ({len(tool_summaries)}):")
+        # Show last 30 operations (most relevant)
+        for s in tool_summaries[-30:]:
+            lines.append(f"  - {s}")
+        if len(tool_summaries) > 30:
+            lines.append(f"  ... and {len(tool_summaries) - 30} earlier operations")
+
+    # Agent reasoning/output (last 10000 chars instead of 5000)
+    if agent_output:
+        lines.append("")
+        lines.append("Agent output (summary):")
+        truncated = agent_output[-10000:] if len(agent_output) > 10000 else agent_output
+        if len(agent_output) > 10000:
+            lines.append(f"  [... truncated {len(agent_output) - 10000} chars ...]")
+        lines.append(truncated)
+
+    return "\n".join(lines)
+
 
 
 @router.post("/sandbox-sessions/{sandbox_session_id}/complete")
 async def sandbox_complete_webhook(
     sandbox_session_id: str,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """Webhook called by the control plane when a sandbox session completes.
@@ -386,7 +520,10 @@ async def sandbox_complete_webhook(
     ).rstrip("/")
     changed_files = []
     agent_output = ""
+    git_info: dict = {}
+    tool_summaries: list[str] = []
     event_count = 0
+    events: list[dict] = []
 
     try:
         token = generate_control_plane_token(SANDBOX_API_SECRET)
@@ -401,6 +538,8 @@ async def sandbox_complete_webhook(
                 event_count = len(events)
                 changed_files = _extract_changed_files(events)
                 agent_output = _extract_agent_output(events)
+                git_info = _extract_git_operations(events)
+                tool_summaries = _extract_tool_results_summary(events)
     except Exception as e:
         logger.warning("sandbox_webhook_event_fetch_failed", error=str(e))
 
@@ -412,46 +551,66 @@ async def sandbox_complete_webhook(
     # Mark the sandbox session as completed (proxy key lifecycle managed by control plane)
     sandbox_repo.mark_completed(sandbox_session_id)
 
-    # Clean up the per-sandbox Gitea service account
-    if sandbox_mapping.git_user_id:
-        try:
-            from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-            await delete_sandbox_git_user(sandbox_mapping.git_user_id)
-        except Exception as e:
-            logger.warning("sandbox_gitea_cleanup_failed", error=str(e))
+    # Clean up the per-sandbox Gitea service accounts
+    await _cleanup_gitea_users(sandbox_mapping)
 
-    # On failure, attempt retry with next model in chain
-    if not body.success:
-        retry_initiated = await _retry_sandbox_with_next_model(
-            sandbox_mapping, sandbox_mapping.tool_call_id, db
-        )
-        if retry_initiated:
-            logger.info(
-                "sandbox_webhook_retry_initiated",
-                sandbox_session_id=sandbox_session_id,
-                tool_call_id=str(sandbox_mapping.tool_call_id),
-            )
-            # Don't complete the tool call — keep it in WAITING_SANDBOX state
-            # The new sandbox will fire its own webhook when done
-            db.commit()
-            return {"status": "retrying", "sandbox_session_id": sandbox_session_id}
+    # Build structured result text for the agent (readable by LLM)
+    agent_result_text = _build_agent_result_text(
+        success=body.success,
+        changed_files=changed_files,
+        agent_output=agent_output,
+        git_info=git_info,
+        tool_summaries=tool_summaries,
+    )
 
-    # Build the final tool result
+    # Also store structured data for the frontend/API
     result = {
         "success": body.success,
         "sandbox_session_id": sandbox_session_id,
         "status": "completed" if body.success else "failed",
         "event_count": event_count,
         "changed_files": changed_files,
-        "agent_output": agent_output[-5000:] if agent_output else "",
+        "git_info": git_info,
+        "tool_summaries": tool_summaries[-50:],
+        "agent_result_text": agent_result_text,
     }
 
-    # Complete the tool call
+    # Complete the tool call — use the readable text as the result so the
+    # agent sees a clear summary, not a raw JSON blob
     execution_repo.update_tool_call(
         tool_call.id,
         status=ToolCallStatus.COMPLETED if body.success else ToolCallStatus.FAILED,
-        result=result,
+        result=agent_result_text,
     )
+
+    # Persist events snapshot to sandbox_session so they survive control plane
+    # restarts and remain visible in the frontend details view
+    try:
+        sandbox_mapping.events_snapshot = json.dumps(events[-500:])  # Last 500 events
+        sandbox_mapping.result_summary = json.dumps(result)
+        db.add(sandbox_mapping)
+    except Exception as e:
+        logger.warning("sandbox_events_persist_failed", error=str(e))
+
+    # Store discovered package dependencies linked to the project
+    try:
+        cache_packages = _extract_cache_packages(events)
+        if cache_packages and sandbox_mapping.session_id:
+            from druppie.db.models.session import Session as SessionModel
+            session = db.query(SessionModel).filter_by(id=sandbox_mapping.session_id).first()
+            if session and session.project_id:
+                from druppie.repositories import ProjectDependencyRepository
+                dep_repo = ProjectDependencyRepository(db)
+                count = dep_repo.upsert_packages(session.project_id, cache_packages)
+                if count:
+                    logger.info(
+                        "project_dependencies_stored",
+                        project_id=str(session.project_id),
+                        package_count=count,
+                    )
+    except Exception as e:
+        logger.warning("project_dependencies_store_failed", error=str(e))
+
     db.commit()
 
     logger.info(
@@ -461,49 +620,53 @@ async def sandbox_complete_webhook(
         success=body.success,
         event_count=event_count,
         changed_files=len(changed_files),
+        pr_urls=git_info.get("pr_urls", []),
     )
 
-    # Resume the agent in the background via Starlette BackgroundTasks
-    # (properly managed lifecycle — awaited before server shutdown)
-    tool_call_id = tool_call.id
-    background_tasks.add_task(_resume_agent_after_sandbox, tool_call_id)
+    # Resume the agent via create_session_task for proper lifecycle management:
+    # - Tracked by shutdown_background_tasks (survives hot-reload gracefully)
+    # - Session-level concurrency guard prevents duplicate resume tasks
+    from druppie.core.background_tasks import create_session_task, run_session_task, SessionTaskConflict
+
+    druppie_session_id = tool_call.session_id
+    tc_id = tool_call.id
+    try:
+        create_session_task(
+            druppie_session_id,
+            run_session_task(druppie_session_id, _make_sandbox_resume(tc_id), "sandbox-resume"),
+            name=f"sandbox-resume-{druppie_session_id}",
+        )
+    except SessionTaskConflict:
+        logger.warning(
+            "sandbox_resume_task_conflict",
+            sandbox_session_id=sandbox_session_id,
+            session_id=str(druppie_session_id),
+        )
 
     return {"status": "ok", "sandbox_session_id": sandbox_session_id}
 
 
-async def _resume_agent_after_sandbox(tool_call_id: UUID) -> None:
-    """Resume the paused agent after sandbox completion.
+def _make_sandbox_resume(tool_call_id: UUID):
+    """Build the resume coroutine function for run_session_task.
 
-    Runs as a Starlette BackgroundTask (proper lifecycle management).
-    Creates its own DB session. On failure, reverts statuses so the
-    session doesn't get permanently stuck.
-    
-    Idempotency: Checks that the agent run is still in PAUSED_SANDBOX state
-    before resuming, to prevent duplicate resume attempts.
+    Includes an idempotency guard: only resumes if the agent run is still
+    in PAUSED_SANDBOX state, preventing duplicate resume attempts from
+    concurrent webhook deliveries.
     """
-    from druppie.execution.orchestrator import Orchestrator
-    from druppie.repositories import ExecutionRepository, SessionRepository, ProjectRepository, QuestionRepository
-    from druppie.db.database import SessionLocal
-    from druppie.domain.common import AgentRunStatus, SessionStatus
+    from druppie.domain.common import AgentRunStatus
 
-    # Fresh DB session: this runs as a background task after the webhook request
-    # has completed and its DB session has been closed. The rollback in the
-    # except block only affects this session, not the webhook's committed data.
-    resume_db = SessionLocal()
-    try:
+    async def _resume(ctx) -> None:
         # Idempotency guard: check if the agent run is still paused for sandbox
-        execution_repo = ExecutionRepository(resume_db)
-        tool_call = execution_repo.get_tool_call(tool_call_id)
+        tool_call = ctx.execution_repo.get_tool_call(tool_call_id)
         if not tool_call or not tool_call.agent_run_id:
             logger.warning("sandbox_resume_no_tool_call_or_agent", tool_call_id=str(tool_call_id))
             return
-            
-        agent_run = execution_repo.get_by_id(tool_call.agent_run_id)
+
+        agent_run = ctx.execution_repo.get_by_id(tool_call.agent_run_id)
         if not agent_run:
             logger.warning("sandbox_resume_no_agent_run", tool_call_id=str(tool_call_id))
             return
-            
-        # Only resume if still in PAUSED_SANDBOX - prevents duplicate resume attempts
+
         if agent_run.status != AgentRunStatus.PAUSED_SANDBOX:
             logger.info(
                 "sandbox_resume_skipped_not_paused",
@@ -512,38 +675,10 @@ async def _resume_agent_after_sandbox(tool_call_id: UUID) -> None:
                 current_status=agent_run.status,
             )
             return
-        
-        orchestrator = Orchestrator(
-            session_repo=SessionRepository(resume_db),
-            execution_repo=ExecutionRepository(resume_db),
-            project_repo=ProjectRepository(resume_db),
-            question_repo=QuestionRepository(resume_db),
-        )
-        await orchestrator.resume_after_sandbox(tool_call_id)
-    except Exception as e:
-        logger.error("sandbox_resume_failed", tool_call_id=str(tool_call_id), error=str(e))
-        # Revert statuses so the session doesn't get permanently stuck
-        try:
-            resume_db.rollback()
-            execution_repo = ExecutionRepository(resume_db)
-            tool_call = execution_repo.get_tool_call(tool_call_id)
-            if tool_call and tool_call.agent_run_id:
-                agent_run = execution_repo.get_by_id(tool_call.agent_run_id)
-                # Fix: Also handle PAUSED_SANDBOX state in case error occurred before status change
-                if agent_run and agent_run.status in (AgentRunStatus.RUNNING, AgentRunStatus.PAUSED_SANDBOX):
-                    execution_repo.update_status(agent_run.id, AgentRunStatus.FAILED, error_message=f"Resume failed: {e}")
-                    session_repo = SessionRepository(resume_db)
-                    session_repo.update_status(agent_run.session_id, SessionStatus.FAILED)
-                    resume_db.commit()
-                    logger.info(
-                        "sandbox_resume_statuses_reverted",
-                        tool_call_id=str(tool_call_id),
-                        agent_run_id=str(agent_run.id),
-                    )
-        except Exception as revert_error:
-            logger.error("sandbox_resume_status_revert_failed", error=str(revert_error))
-    finally:
-        resume_db.close()
+
+        await ctx.orchestrator.resume_after_sandbox(tool_call_id)
+
+    return _resume
 
 
 # =============================================================================
@@ -596,49 +731,9 @@ async def sandbox_watchdog_loop() -> None:
 
             for tc in stuck_tool_calls:
                 try:
-                    # Try retry with next model before failing
                     sandbox_mapping = sandbox_repo.get_by_tool_call_id(tc.id)
-                    if sandbox_mapping:
-                        retry_initiated = await _retry_sandbox_with_next_model(
-                            sandbox_mapping, tc.id, db
-                        )
-                        if retry_initiated:
-                            # Mark old sandbox as completed but keep tool call waiting
-                            sandbox_repo.mark_completed(sandbox_mapping.sandbox_session_id)
-                            # Clean up old sandbox's Gitea service account
-                            if sandbox_mapping.git_user_id:
-                                try:
-                                    from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-                                    await delete_sandbox_git_user(sandbox_mapping.git_user_id)
-                                except Exception as e:
-                                    logger.warning("sandbox_watchdog_gitea_cleanup_failed", error=str(e))
-                            # Reset sandbox_waiting_at so watchdog doesn't re-trigger immediately
-                            execution_repo.update_tool_call(
-                                tc.id,
-                                sandbox_waiting_at=datetime.now(timezone.utc),
-                            )
-                            db.commit()
-                            logger.info(
-                                "sandbox_watchdog_retry_initiated",
-                                tool_call_id=str(tc.id),
-                                old_sandbox=sandbox_mapping.sandbox_session_id,
-                            )
-                            # Best-effort cancel old sandbox
-                            try:
-                                control_plane_url = os.environ.get(
-                                    "SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787"
-                                ).rstrip("/")
-                                token = generate_control_plane_token(SANDBOX_API_SECRET)
-                                async with httpx.AsyncClient(timeout=10.0) as client:
-                                    await client.delete(
-                                        f"{control_plane_url}/sessions/{sandbox_mapping.sandbox_session_id}",
-                                        headers={"Authorization": f"Bearer {token}"},
-                                    )
-                            except Exception:
-                                pass
-                            continue  # Don't fail the tool call
 
-                    # No retry possible — fail as before
+                    # Fail the stuck tool call
                     execution_repo.update_tool_call(
                         tc.id,
                         status=ToolCallStatus.FAILED,
@@ -665,13 +760,7 @@ async def sandbox_watchdog_loop() -> None:
                     # Mark completed and cancel the sandbox container
                     if sandbox_mapping:
                         sandbox_repo.mark_completed(sandbox_mapping.sandbox_session_id)
-                        # Clean up the per-sandbox Gitea service account
-                        if sandbox_mapping.git_user_id:
-                            try:
-                                from druppie.sandbox.gitea_credentials import delete_sandbox_git_user
-                                await delete_sandbox_git_user(sandbox_mapping.git_user_id)
-                            except Exception as e:
-                                logger.warning("sandbox_watchdog_gitea_cleanup_failed", error=str(e))
+                        await _cleanup_gitea_users(sandbox_mapping, context="watchdog_")
                         try:
                             control_plane_url = os.environ.get(
                                 "SANDBOX_CONTROL_PLANE_URL", "http://sandbox-control-plane:8787"

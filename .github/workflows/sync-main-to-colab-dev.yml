@@ -1,0 +1,51 @@
+name: Sync main back to colab-dev
+
+# Triggers when a PR targeting main is closed (merged)
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  sync-back:
+    # Only run if the PR was actually merged (not just closed)
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout colab-dev
+        uses: actions/checkout@v4
+        with:
+          ref: colab-dev
+          fetch-depth: 0
+
+      - name: Merge main into colab-dev
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main
+
+          # Check if sync is needed
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "main is already an ancestor of colab-dev, no sync needed"
+            exit 0
+          fi
+
+          # Create sync branch
+          BRANCH="auto/sync-main-to-colab-dev-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b "$BRANCH"
+          git merge origin/main --no-edit -m "merge: sync main back into colab-dev after release"
+          git push origin "$BRANCH"
+
+          # Create PR for manual merge
+          gh pr create \
+            --base colab-dev \
+            --head "$BRANCH" \
+            --title "chore: sync main back into colab-dev" \
+            --body "Automated sync after release merge into main (PR #${{ github.event.pull_request.number }}). **Merge with a merge commit, NOT squash.**"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

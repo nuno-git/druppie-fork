@@ -1,0 +1,1172 @@
+#!/usr/bin/env python3
+"""
+Sandbox entrypoint - manages OpenCode server and bridge lifecycle.
+
+Runs as PID 1 inside the sandbox. Responsibilities:
+1. Perform git sync with latest code
+2. Run repo setup script (if present, fresh clone only)
+3. Start OpenCode server
+4. Start bridge process for control plane communication
+5. Monitor processes and restart on crash with exponential backoff
+6. Handle graceful shutdown on SIGTERM/SIGINT
+"""
+
+import asyncio
+import json
+import os
+import shutil
+import signal
+import time
+from pathlib import Path
+
+import httpx
+
+from .log_config import configure_logging, get_logger
+
+configure_logging()
+
+
+class SandboxSupervisor:
+    """
+    Supervisor process for sandbox lifecycle management.
+
+    Manages:
+    - Git synchronization with base branch
+    - OpenCode server process
+    - Bridge process for control plane communication
+    - Process monitoring with crash recovery
+    """
+
+    # Configuration
+    OPENCODE_PORT = 4096
+    HEALTH_CHECK_TIMEOUT = 30.0
+    MAX_RESTARTS = 5
+    BACKOFF_BASE = 2.0
+    BACKOFF_MAX = 60.0
+    SETUP_SCRIPT_PATH = ".openinspect/setup.sh"
+    DEFAULT_SETUP_TIMEOUT_SECONDS = 300
+
+    def __init__(self):
+        self.opencode_process: asyncio.subprocess.Process | None = None
+        self.bridge_process: asyncio.subprocess.Process | None = None
+        self.shutdown_event = asyncio.Event()
+        self.git_sync_complete = asyncio.Event()
+        self.opencode_ready = asyncio.Event()
+        self._cache_snapshot_before: dict[str, set[str]] | None = None
+
+        # Configuration from environment (set by Modal/SandboxManager)
+        self.sandbox_id = os.environ.get("SANDBOX_ID", "unknown")
+        self.control_plane_url = os.environ.get("CONTROL_PLANE_URL", "")
+        self.sandbox_token = os.environ.get("SANDBOX_AUTH_TOKEN", "")
+        self.repo_owner = os.environ.get("REPO_OWNER", "")
+        self.repo_name = os.environ.get("REPO_NAME", "")
+        self.github_app_token = os.environ.get("GITHUB_APP_TOKEN", "")
+        self.git_url = os.environ.get("GIT_URL", "")
+        self.context_git_url = os.environ.get("CONTEXT_GIT_URL", "")
+
+        # Parse session config if provided
+        session_config_json = os.environ.get("SESSION_CONFIG", "{}")
+        self.session_config = json.loads(session_config_json)
+
+        # Fallback: derive repo_owner/repo_name from SESSION_CONFIG if env vars are empty
+        if not self.repo_owner:
+            self.repo_owner = self.session_config.get("repo_owner", "")
+        if not self.repo_name:
+            self.repo_name = self.session_config.get("repo_name", "")
+
+        # Paths
+        self.workspace_path = Path("/workspace")
+        if self.context_git_url:
+            # Dual-repo mode: /workspace/core/ and /workspace/project/
+            self.repo_path = self.workspace_path / "core"
+            self.context_repo_path: Path | None = self.workspace_path / "project"
+        else:
+            # Single-repo mode: /workspace/<repo_name> (existing behavior)
+            self.repo_path = self.workspace_path / self.repo_name if self.repo_name else self.workspace_path
+            self.context_repo_path = None
+        self.session_id_file = Path("/tmp/opencode-session-id")
+
+        # Logger
+        session_id = self.session_config.get("session_id", "")
+        self.log = get_logger(
+            "supervisor",
+            service="sandbox",
+            sandbox_id=self.sandbox_id,
+            session_id=session_id,
+        )
+
+    async def perform_git_sync(self) -> bool:
+        """
+        Clone repository if needed, then synchronize with latest changes.
+
+        Returns:
+            True if sync completed successfully, False otherwise
+        """
+        self.log.debug(
+            "git.sync_start",
+            repo_owner=self.repo_owner,
+            repo_name=self.repo_name,
+            repo_path=str(self.repo_path),
+            has_github_token=bool(self.github_app_token),
+        )
+
+        # Clone the repository if it doesn't exist
+        if not self.repo_path.exists():
+            if not self.repo_owner or not self.repo_name:
+                self.log.info("git.skip_clone", reason="no_repo_configured")
+                self.git_sync_complete.set()
+                return True
+
+            self.log.info(
+                "git.clone_start",
+                repo_owner=self.repo_owner,
+                repo_name=self.repo_name,
+                authenticated=bool(self.github_app_token),
+            )
+
+            # Use GIT_URL override (e.g. Gitea), or fall back to GitHub
+            if self.git_url:
+                clone_url = self.git_url
+            elif self.github_app_token:
+                clone_url = f"https://x-access-token:{self.github_app_token}@github.com/{self.repo_owner}/{self.repo_name}.git"
+            else:
+                clone_url = f"https://github.com/{self.repo_owner}/{self.repo_name}.git"
+
+            result = await asyncio.create_subprocess_exec(
+                "git",
+                "clone",
+                clone_url,
+                str(self.repo_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await result.communicate()
+
+            if result.returncode != 0:
+                self.log.error(
+                    "git.clone_error",
+                    stderr=stderr.decode(),
+                    exit_code=result.returncode,
+                )
+                self.git_sync_complete.set()
+                return False
+
+            self.log.info("git.clone_complete", repo_path=str(self.repo_path))
+
+        # Clone context repo if configured (dual-repo mode)
+        if self.context_git_url and self.context_repo_path and not self.context_repo_path.exists():
+            self.log.info("git.context_clone_start", context_url="[proxied]")
+            result = await asyncio.create_subprocess_exec(
+                "git", "clone", self.context_git_url, str(self.context_repo_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await result.communicate()
+            if result.returncode != 0:
+                self.log.error("git.context_clone_error", stderr=stderr.decode())
+                # Non-fatal — core repo is the priority
+            else:
+                self.log.info("git.context_clone_complete", path=str(self.context_repo_path))
+
+        try:
+            # Configure remote URL with auth token if available
+            if self.git_url:
+                auth_url = self.git_url
+            elif self.github_app_token:
+                auth_url = f"https://x-access-token:{self.github_app_token}@github.com/{self.repo_owner}/{self.repo_name}.git"
+            else:
+                auth_url = None
+
+            if auth_url:
+                await asyncio.create_subprocess_exec(
+                    "git",
+                    "remote",
+                    "set-url",
+                    "origin",
+                    auth_url,
+                    cwd=self.repo_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+
+            # Configure credential helper so git never prompts interactively.
+            # The git-proxy handles auth server-side (injects Basic auth when
+            # forwarding to upstream), so the client doesn't need real credentials.
+            # Without this, `git push` fails in the headless sandbox with:
+            #   "fatal: could not read Username ... No such device or address"
+            await asyncio.create_subprocess_exec(
+                "git",
+                "config",
+                "--global",
+                "credential.helper",
+                "!f() { echo username=x; echo password=x; }; f",
+                cwd=self.repo_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            # Fetch latest changes
+            result = await asyncio.create_subprocess_exec(
+                "git",
+                "fetch",
+                "origin",
+                cwd=self.repo_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await result.wait()
+
+            if result.returncode != 0:
+                stderr = await result.stderr.read() if result.stderr else b""
+                self.log.error(
+                    "git.fetch_error",
+                    stderr=stderr.decode(),
+                    exit_code=result.returncode,
+                )
+                return False
+
+            # Get the base branch (default to main)
+            base_branch = self.session_config.get("branch", "main")
+
+            # Rebase onto latest
+            result = await asyncio.create_subprocess_exec(
+                "git",
+                "rebase",
+                f"origin/{base_branch}",
+                cwd=self.repo_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await result.wait()
+
+            if result.returncode != 0:
+                # Check if there's actually a rebase in progress before trying to abort
+                rebase_merge = self.repo_path / ".git" / "rebase-merge"
+                rebase_apply = self.repo_path / ".git" / "rebase-apply"
+                if rebase_merge.exists() or rebase_apply.exists():
+                    await asyncio.create_subprocess_exec(
+                        "git",
+                        "rebase",
+                        "--abort",
+                        cwd=self.repo_path,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                self.log.warning("git.rebase_error", base_branch=base_branch)
+
+            # Get current SHA
+            result = await asyncio.create_subprocess_exec(
+                "git",
+                "rev-parse",
+                "HEAD",
+                cwd=self.repo_path,
+                stdout=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await result.communicate()
+            current_sha = stdout.decode().strip()
+            self.log.info("git.sync_complete", head_sha=current_sha)
+
+            self.git_sync_complete.set()
+            return True
+
+        except Exception as e:
+            self.log.error("git.sync_error", exc=e)
+            self.git_sync_complete.set()  # Allow agent to proceed anyway
+            return False
+
+    def _setup_openai_oauth(self) -> None:
+        """Write OpenCode auth.json for ChatGPT OAuth if refresh token is configured."""
+        refresh_token = os.environ.get("OPENAI_OAUTH_REFRESH_TOKEN")
+        if not refresh_token:
+            return
+
+        try:
+            auth_dir = Path.home() / ".local" / "share" / "opencode"
+            auth_dir.mkdir(parents=True, exist_ok=True)
+
+            openai_entry = {
+                "type": "oauth",
+                "refresh": "managed-by-control-plane",
+                "access": "",
+                "expires": 0,
+            }
+
+            account_id = os.environ.get("OPENAI_OAUTH_ACCOUNT_ID")
+            if account_id:
+                openai_entry["accountId"] = account_id
+
+            auth_file = auth_dir / "auth.json"
+            tmp_file = auth_dir / ".auth.json.tmp"
+
+            # Write to a temp file created with 0o600 from the start, then
+            # atomically rename so the target is never world-readable.
+            fd = os.open(str(tmp_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, json.dumps({"openai": openai_entry}).encode())
+            finally:
+                os.close(fd)
+            tmp_file.replace(auth_file)
+
+            self.log.info("openai_oauth.setup")
+        except Exception as e:
+            self.log.warning("openai_oauth.setup_error", exc=e)
+
+    def _setup_gh_wrapper(self) -> None:
+        """Replace gh CLI with a wrapper that explains how to use the GitHub API proxy.
+
+        The real gh CLI cannot work in the sandbox because:
+        - Git remotes point to our proxy, not github.com (gh can't detect the repo)
+        - gh hardcodes HTTPS to api.github.com (can't redirect to our HTTP proxy)
+
+        This wrapper gives the agent clear instructions to use curl instead.
+        """
+        github_api_url = os.environ.get("GITHUB_API_PROXY_URL", "")
+        if not github_api_url:
+            return
+
+        owner = self.repo_owner
+        repo = self.repo_name
+
+        wrapper = f"""#!/bin/bash
+echo ""
+echo "ERROR: gh CLI is not available in this sandbox environment."
+echo ""
+echo "Use curl with \\$GITHUB_API_PROXY_URL instead. Examples:"
+echo ""
+echo "  # View a pull request"
+echo "  curl -s \\$GITHUB_API_PROXY_URL/repos/{owner}/{repo}/pulls/NUMBER | jq"
+echo ""
+echo "  # List open pull requests"
+echo "  curl -s \\$GITHUB_API_PROXY_URL/repos/{owner}/{repo}/pulls | jq"
+echo ""
+echo "  # Create a pull request"
+echo "  curl -s -X POST \\$GITHUB_API_PROXY_URL/repos/{owner}/{repo}/pulls \\\\"
+echo "    -H 'Content-Type: application/json' \\\\"
+echo "    -d '{{\\"title\\":\\"..\\",\\"body\\":\\"..\\",\\"head\\":\\"branch\\",\\"base\\":\\"main\\"}}'"
+echo ""
+echo "  # View PR comments"
+echo "  curl -s \\$GITHUB_API_PROXY_URL/repos/{owner}/{repo}/pulls/NUMBER/comments | jq"
+echo ""
+echo "  # View PR diff"
+echo "  curl -s -H 'Accept: application/vnd.github.diff' \\\\"
+echo "    \\$GITHUB_API_PROXY_URL/repos/{owner}/{repo}/pulls/NUMBER"
+echo ""
+echo "  # List issues"
+echo "  curl -s \\$GITHUB_API_PROXY_URL/repos/{owner}/{repo}/issues | jq"
+echo ""
+echo "  # View repo info"
+echo "  curl -s \\$GITHUB_API_PROXY_URL/repos/{owner}/{repo} | jq"
+echo ""
+echo "  # Any GitHub REST API endpoint"
+echo "  curl -s \\$GITHUB_API_PROXY_URL/<endpoint> | jq"
+echo ""
+echo "Authentication is handled automatically by the proxy."
+echo ""
+exit 1
+"""
+        wrapper_path = Path("/usr/local/bin/gh")
+        try:
+            wrapper_path.write_text(wrapper)
+            wrapper_path.chmod(0o755)
+            self.log.info("gh_wrapper.installed")
+        except Exception as e:
+            self.log.warning("gh_wrapper.install_error", exc=e)
+
+    async def start_opencode(self) -> None:
+        """Start OpenCode server with configuration."""
+        self._setup_openai_oauth()
+        self._setup_gh_wrapper()
+        self.log.info("opencode.start")
+
+        # Build OpenCode config from session settings
+        model = self.session_config.get("model", "claude-sonnet-4-6")
+        opencode_config = {
+            "model": model,
+            "permission": {
+                "*": {
+                    "*": "allow",
+                },
+                "skill": {
+                    "*": "allow",
+                },
+            },
+        }
+
+        # Determine working directory - use repo path if cloned, otherwise /workspace
+        workdir = self.workspace_path
+        if self.repo_path.exists() and (self.repo_path / ".git").exists():
+            workdir = self.repo_path
+
+        # Exclude .opencode/ from git so OpenCode never commits it
+        git_exclude = workdir / ".git" / "info" / "exclude"
+        if git_exclude.parent.exists():
+            exclude_text = git_exclude.read_text() if git_exclude.exists() else ""
+            if ".opencode/" not in exclude_text:
+                with open(git_exclude, "a") as f:
+                    f.write("\n.opencode/\n")
+
+        # Set up .opencode directory for custom tools
+        opencode_dir = workdir / ".opencode"
+        tool_dest = opencode_dir / "tool"
+        tool_source = Path("/app/sandbox/inspect-plugin.js")
+
+        if tool_source.exists():
+            # Create .opencode/tool directory
+            tool_dest.mkdir(parents=True, exist_ok=True)
+            shutil.copy(tool_source, tool_dest / "create-pull-request.js")
+
+            # Create node_modules symlink to global modules so OpenCode doesn't try to install
+            # and so imports resolve correctly via NODE_PATH
+            node_modules = opencode_dir / "node_modules"
+            global_modules = Path("/usr/lib/node_modules")
+            if not node_modules.exists() and global_modules.exists():
+                try:
+                    node_modules.symlink_to(global_modules)
+                except Exception as e:
+                    self.log.warning("opencode.symlink_error", exc=e)
+
+            # Create a minimal package.json so OpenCode sees this as a configured directory
+            package_json = opencode_dir / "package.json"
+            if not package_json.exists():
+                package_json.write_text('{"name": "opencode-tools", "type": "module"}')
+
+        # Deploy codex auth proxy plugin if OpenAI OAuth is configured
+        plugin_source = Path("/app/sandbox/codex-auth-plugin.ts")
+        if plugin_source.exists() and os.environ.get("OPENAI_OAUTH_REFRESH_TOKEN"):
+            plugin_dir = opencode_dir / "plugins"
+            plugin_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(plugin_source, plugin_dir / "codex-auth-plugin.ts")
+            self.log.info("openai_oauth.plugin_deployed")
+
+        # Deploy OpenCode files (.opencode/{key}.md) — agents, skills, etc.
+        opencode_files_json = os.environ.get("SANDBOX_OPENCODE_FILES") or os.environ.get(
+            "SANDBOX_AGENT_FILES", ""
+        )
+        opencode_files = json.loads(opencode_files_json) if opencode_files_json else {}
+        if opencode_files:
+            for key, content in opencode_files.items():
+                target = opencode_dir / f"{key}.md"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content)
+            self.log.info(
+                "opencode.files_deployed",
+                count=len(opencode_files),
+                keys=list(opencode_files.keys()),
+            )
+
+        # Parse per-agent model overrides
+        agent_models_json = os.environ.get("SANDBOX_AGENT_MODELS", "")
+        agent_models = json.loads(agent_models_json) if agent_models_json else {}
+        if agent_models:
+            agents_config = {}
+            for name, agent_model in agent_models.items():
+                if agent_model != model:  # only override if different from global
+                    agents_config[name] = {"model": agent_model}
+            if agents_config:
+                opencode_config["agent"] = agents_config
+            self.log.info("opencode.agent_models_configured", overrides=agents_config)
+
+        # If LLM_PROXY_URL is set, configure the "sandbox" virtual provider
+        # using @ai-sdk/openai-compatible so OpenCode accepts arbitrary
+        # profile-based model names (e.g. "sandbox/druppie-builder").
+        # The proxy resolves profile names to real provider chains.
+        llm_proxy = os.environ.get("LLM_PROXY_URL")
+        if llm_proxy:
+            # Build models dict from agent_models so OpenCode registers each profile.
+            # Each key is a profile name (e.g. "druppie-builder") which OpenCode
+            # sees as "sandbox/druppie-builder" (provider/model).
+            models_dict = {}
+            for profile_name in agent_models:
+                models_dict[profile_name] = {"name": profile_name}
+            # Ensure the global model profile is also registered
+            if "/" in model:
+                global_profile = model.split("/", 1)[1]
+                if global_profile not in models_dict:
+                    models_dict[global_profile] = {"name": global_profile}
+
+            opencode_config["provider"] = {
+                "sandbox": {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "name": "Sandbox LLM Proxy",
+                    "options": {
+                        "baseURL": f"{llm_proxy}/sandbox",
+                        "apiKey": "proxy-managed",
+                    },
+                    "models": models_dict,
+                }
+            }
+
+        # Write config to both global and project locations.
+        # Global: ~/.config/opencode/config.json (general settings)
+        # Project: {workdir}/opencode.json (custom provider with npm package)
+        config_dir = Path.home() / ".config" / "opencode"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_file = config_dir / "config.json"
+        config_file.write_text(json.dumps(opencode_config))
+        # Also write to project dir so OpenCode can resolve the npm package
+        project_config = workdir / "opencode.json"
+        project_config.write_text(json.dumps(opencode_config))
+        self.log.info("opencode.config_written", path=str(config_file), config=opencode_config)
+
+        env = {
+            **os.environ,
+            "OPENCODE_CONFIG_CONTENT": json.dumps(opencode_config),
+            # Disable OpenCode's question tool in headless mode. The tool blocks
+            # on a Promise waiting for user input via the HTTP API, but the bridge
+            # has no channel to relay questions to the web client and back. Without
+            # this, the session hangs until the SSE inactivity timeout (120s).
+            # See: https://github.com/anomalyco/opencode/blob/19b1222cd/packages/opencode/src/tool/registry.ts#L100
+            "OPENCODE_CLIENT": "serve",
+        }
+
+        if llm_proxy:
+            # Clear direct API keys from env to prevent leaking credentials
+            # into the sandbox. The proxy handles auth injection.
+            for key_var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GLM_API_KEY", "ZHIPU_API_KEY"):
+                env.pop(key_var, None)
+
+        # Strip credential-bearing env vars — the git remote URL in .git/config
+        # already points to the proxy, so git operations still work without these.
+        # NOTE: GITHUB_API_PROXY_URL is intentionally kept — the sandbox agent
+        # needs it for PR creation and GitHub API calls via curl. The URL contains
+        # a 256-bit proxy key, but the key is scoped to this session's authorized
+        # repo and the session is destroyed on completion.
+        for secret_var in ("GIT_URL", "CONTEXT_GIT_URL", "GITHUB_APP_TOKEN", "GITHUB_TOKEN"):
+            env.pop(secret_var, None)
+
+        # Start OpenCode server in the repo directory
+        self.opencode_process = await asyncio.create_subprocess_exec(
+            "opencode",
+            "serve",
+            "--port",
+            str(self.OPENCODE_PORT),
+            "--hostname",
+            "0.0.0.0",
+            "--print-logs",  # Print logs to stdout for debugging
+            cwd=workdir,  # Start in repo directory
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        # Start log forwarder
+        asyncio.create_task(self._forward_opencode_logs())
+
+        # Wait for health check
+        await self._wait_for_health()
+        self.opencode_ready.set()
+        self.log.info("opencode.ready")
+
+    async def _forward_opencode_logs(self) -> None:
+        """Forward OpenCode stdout to supervisor stdout."""
+        if not self.opencode_process or not self.opencode_process.stdout:
+            return
+
+        try:
+            async for line in self.opencode_process.stdout:
+                print(f"[opencode] {line.decode().rstrip()}")
+        except Exception as e:
+            print(f"[supervisor] Log forwarding error: {e}")
+
+    async def _wait_for_health(self) -> None:
+        """Poll health endpoint until server is ready."""
+        health_url = f"http://localhost:{self.OPENCODE_PORT}/global/health"
+        start_time = time.time()
+
+        async with httpx.AsyncClient() as client:
+            while time.time() - start_time < self.HEALTH_CHECK_TIMEOUT:
+                if self.shutdown_event.is_set():
+                    raise RuntimeError("Shutdown requested during startup")
+
+                try:
+                    resp = await client.get(health_url, timeout=2.0)
+                    if resp.status_code == 200:
+                        return
+                except httpx.ConnectError:
+                    pass
+                except Exception as e:
+                    self.log.debug("opencode.health_check_error", exc=e)
+
+                await asyncio.sleep(0.5)
+
+        raise RuntimeError("OpenCode server failed to become healthy")
+
+    async def start_bridge(self) -> None:
+        """Start the agent bridge process."""
+        self.log.info("bridge.start")
+
+        if not self.control_plane_url:
+            self.log.info("bridge.skip", reason="no_control_plane_url")
+            return
+
+        # Wait for OpenCode to be ready
+        await self.opencode_ready.wait()
+
+        # Get session_id from config (required for WebSocket connection)
+        session_id = self.session_config.get("session_id", "")
+        if not session_id:
+            self.log.info("bridge.skip", reason="no_session_id")
+            return
+
+        # Run bridge as a module (works with relative imports)
+        self.bridge_process = await asyncio.create_subprocess_exec(
+            "python",
+            "-m",
+            "sandbox.bridge",
+            "--sandbox-id",
+            self.sandbox_id,
+            "--session-id",
+            session_id,
+            "--control-plane",
+            self.control_plane_url,
+            "--token",
+            self.sandbox_token,
+            "--opencode-port",
+            str(self.OPENCODE_PORT),
+            env=os.environ,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        # Start log forwarder for bridge
+        asyncio.create_task(self._forward_bridge_logs())
+        self.log.info("bridge.started")
+
+        # Check if bridge exited immediately during startup
+        await asyncio.sleep(0.5)
+        if self.bridge_process.returncode is not None:
+            exit_code = self.bridge_process.returncode
+            # Bridge exited immediately - read any error output
+            stdout, _ = await self.bridge_process.communicate()
+            if exit_code == 0:
+                self.log.warning("bridge.early_exit", exit_code=exit_code)
+            else:
+                self.log.error(
+                    "bridge.startup_crash",
+                    exit_code=exit_code,
+                    output=stdout.decode() if stdout else "",
+                )
+
+    async def _forward_bridge_logs(self) -> None:
+        """Forward bridge stdout to supervisor stdout."""
+        if not self.bridge_process or not self.bridge_process.stdout:
+            return
+
+        try:
+            async for line in self.bridge_process.stdout:
+                # Bridge already prefixes its output with [bridge], don't double it
+                print(line.decode().rstrip())
+        except Exception as e:
+            print(f"[supervisor] Bridge log forwarding error: {e}")
+
+    async def monitor_processes(self) -> None:
+        """Monitor child processes and restart on crash."""
+        restart_count = 0
+        bridge_restart_count = 0
+
+        while not self.shutdown_event.is_set():
+            # Check OpenCode process
+            if self.opencode_process and self.opencode_process.returncode is not None:
+                exit_code = self.opencode_process.returncode
+                restart_count += 1
+
+                self.log.error(
+                    "opencode.crash",
+                    exit_code=exit_code,
+                    restart_count=restart_count,
+                )
+
+                if restart_count > self.MAX_RESTARTS:
+                    self.log.error(
+                        "opencode.max_restarts",
+                        restart_count=restart_count,
+                    )
+                    await self._report_fatal_error(
+                        f"OpenCode crashed {restart_count} times, giving up"
+                    )
+                    self.shutdown_event.set()
+                    break
+
+                # Exponential backoff
+                delay = min(self.BACKOFF_BASE**restart_count, self.BACKOFF_MAX)
+                self.log.info(
+                    "opencode.restart",
+                    delay_s=round(delay, 1),
+                    restart_count=restart_count,
+                )
+
+                await asyncio.sleep(delay)
+                self.opencode_ready.clear()
+                await self.start_opencode()
+
+            # Check bridge process
+            if self.bridge_process and self.bridge_process.returncode is not None:
+                exit_code = self.bridge_process.returncode
+
+                if exit_code == 0:
+                    # Graceful exit: shutdown command, session terminated, or fatal
+                    # connection error. Propagate shutdown rather than restarting.
+                    self.log.info(
+                        "bridge.graceful_exit",
+                        exit_code=exit_code,
+                    )
+                    self.shutdown_event.set()
+                    break
+                else:
+                    # Crash: restart with backoff and retry limit
+                    bridge_restart_count += 1
+                    self.log.error(
+                        "bridge.crash",
+                        exit_code=exit_code,
+                        restart_count=bridge_restart_count,
+                    )
+
+                    if bridge_restart_count > self.MAX_RESTARTS:
+                        self.log.error(
+                            "bridge.max_restarts",
+                            restart_count=bridge_restart_count,
+                        )
+                        await self._report_fatal_error(
+                            f"Bridge crashed {bridge_restart_count} times, giving up"
+                        )
+                        self.shutdown_event.set()
+                        break
+
+                    delay = min(self.BACKOFF_BASE**bridge_restart_count, self.BACKOFF_MAX)
+                    self.log.info(
+                        "bridge.restart",
+                        delay_s=round(delay, 1),
+                        restart_count=bridge_restart_count,
+                    )
+                    await asyncio.sleep(delay)
+                    await self.start_bridge()
+
+            await asyncio.sleep(1.0)
+
+    async def _report_fatal_error(self, message: str) -> None:
+        """Report a fatal error to the control plane."""
+        self.log.error("supervisor.fatal", message=message)
+
+        if not self.control_plane_url:
+            return
+
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    f"{self.control_plane_url}/sandbox/{self.sandbox_id}/error",
+                    json={"error": message, "fatal": True},
+                    headers={"Authorization": f"Bearer {self.sandbox_token}"},
+                    timeout=5.0,
+                )
+        except Exception as e:
+            self.log.error("supervisor.report_error_failed", exc=e)
+
+    async def configure_git_identity(self) -> None:
+        """Configure git identity from session owner."""
+        git_user = self.session_config.get("git_user")
+        if not git_user or not self.repo_path.exists():
+            return
+
+        try:
+            await asyncio.create_subprocess_exec(
+                "git",
+                "config",
+                "--local",
+                "user.name",
+                git_user["name"],
+                cwd=self.repo_path,
+            )
+            await asyncio.create_subprocess_exec(
+                "git",
+                "config",
+                "--local",
+                "user.email",
+                git_user["email"],
+                cwd=self.repo_path,
+            )
+            self.log.info(
+                "git.identity_configured",
+                git_name=git_user["name"],
+                git_email=git_user["email"],
+            )
+        except Exception as e:
+            self.log.error("git.identity_error", exc=e)
+
+    async def _snapshot_cache_state(self) -> dict[str, set[str]]:
+        """Enumerate files in each cache directory for change tracking.
+
+        Uses recursive enumeration (rglob) so that content-addressable stores
+        like npm's _cacache — whose top-level dirs are static — still report
+        new entries.  Capped at 5 000 files per manager to bound memory.
+        """
+        max_entries_per_manager = 5000
+
+        def _scan() -> dict[str, set[str]]:
+            cache_dirs = ["npm", "pnpm", "pip", "uv", "bun"]
+            snapshot: dict[str, set[str]] = {}
+            for name in cache_dirs:
+                cache_path = Path(f"/cache/{name}")
+                try:
+                    if cache_path.is_dir():
+                        entries: set[str] = set()
+                        for p in cache_path.rglob("*"):
+                            if p.is_file():
+                                entries.add(str(p.relative_to(cache_path)))
+                                if len(entries) >= max_entries_per_manager:
+                                    break
+                        snapshot[name] = entries
+                    else:
+                        snapshot[name] = set()
+                except OSError:
+                    snapshot[name] = set()
+            return snapshot
+
+        return await asyncio.to_thread(_scan)
+
+    async def _log_cache_changes(
+        self,
+        before: dict[str, set[str]],
+        after: dict[str, set[str]],
+    ) -> None:
+        """Diff two cache snapshots and emit structured log events."""
+        total_new = 0
+        total_cached = 0
+        per_manager: list[dict] = []
+
+        for pm in before:
+            after_set = after.get(pm, set())
+            before_set = before.get(pm, set())
+            new_entries = after_set - before_set
+            cached_count = len(after_set & before_set)
+            total_new += len(new_entries)
+            total_cached += cached_count
+
+            if new_entries:
+                entries_list = sorted(new_entries)[:50]
+                self.log.info(
+                    "cache.new_entries",
+                    package_manager=pm,
+                    count=len(new_entries),
+                    entries=entries_list,
+                    sandbox_id=self.sandbox_id,
+                    session_id=self.session_config.get("session_id", ""),
+                    repo_owner=self.repo_owner,
+                    repo_name=self.repo_name,
+                )
+
+            if new_entries or cached_count > 0:
+                per_manager.append({
+                    "manager": pm,
+                    "new": len(new_entries),
+                    "cached": cached_count,
+                })
+
+        if total_new > 0 or total_cached > 0:
+            self.log.info(
+                "cache.summary",
+                total_new=total_new,
+                total_cached=total_cached,
+                per_manager=per_manager,
+                sandbox_id=self.sandbox_id,
+                session_id=self.session_config.get("session_id", ""),
+            )
+            # Write summary file for the bridge to pick up
+            import json as _json
+            summary_path = Path("/tmp/cache_summary.json")
+            try:
+                summary_path.write_text(_json.dumps({
+                    "total_new": total_new,
+                    "total_cached": total_cached,
+                    "per_manager": per_manager,
+                }))
+            except Exception:
+                pass
+
+    async def run_setup_script(self) -> bool:
+        """
+        Run .openinspect/setup.sh if it exists in the cloned repo.
+
+        Non-fatal: failures are logged but don't block startup.
+
+        Returns:
+            True if script succeeded or was not present, False on failure/timeout.
+        """
+        setup_script = self.repo_path / self.SETUP_SCRIPT_PATH
+
+        if not setup_script.exists():
+            self.log.debug("setup.skip", reason="no_setup_script", path=str(setup_script))
+            return True
+
+        try:
+            timeout_seconds = int(
+                os.environ.get("SETUP_TIMEOUT_SECONDS", str(self.DEFAULT_SETUP_TIMEOUT_SECONDS))
+            )
+        except ValueError:
+            timeout_seconds = self.DEFAULT_SETUP_TIMEOUT_SECONDS
+
+        self.log.info("setup.start", script=str(setup_script), timeout_seconds=timeout_seconds)
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "bash",
+                str(setup_script),
+                cwd=self.repo_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=os.environ.copy(),
+            )
+
+            try:
+                stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+            except TimeoutError:
+                process.kill()
+                stdout = await process.stdout.read() if process.stdout else b""
+                await process.wait()
+                output_tail = "\n".join(stdout.decode(errors="replace").splitlines()[-50:])
+                self.log.error(
+                    "setup.timeout",
+                    timeout_seconds=timeout_seconds,
+                    output_tail=output_tail,
+                    script=str(setup_script),
+                )
+                return False
+
+            output_tail = "\n".join(
+                (stdout.decode(errors="replace") if stdout else "").splitlines()[-50:]
+            )
+
+            if process.returncode == 0:
+                self.log.debug("setup.complete", exit_code=0, output_tail=output_tail)
+                return True
+            else:
+                self.log.error(
+                    "setup.failed",
+                    exit_code=process.returncode,
+                    output_tail=output_tail,
+                    script=str(setup_script),
+                )
+                return False
+
+        except Exception as e:
+            self.log.error("setup.error", exc=e, script=str(setup_script))
+            return False
+
+    async def _quick_git_fetch(self) -> None:
+        """
+        Quick fetch to check if we're behind after snapshot restore.
+
+        When restored from a snapshot, the workspace already has all changes.
+        This just checks if the remote has new commits since the snapshot.
+        """
+        if not self.repo_path.exists():
+            self.log.info("git.quick_fetch_skip", reason="no_repo_path")
+            return
+
+        try:
+            # Configure remote URL with auth token if available
+            if self.git_url:
+                auth_url = self.git_url
+            elif self.github_app_token:
+                auth_url = f"https://x-access-token:{self.github_app_token}@github.com/{self.repo_owner}/{self.repo_name}.git"
+            else:
+                auth_url = None
+
+            if auth_url:
+                await asyncio.create_subprocess_exec(
+                    "git",
+                    "remote",
+                    "set-url",
+                    "origin",
+                    auth_url,
+                    cwd=self.repo_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+
+            # Fetch from origin
+            result = await asyncio.create_subprocess_exec(
+                "git",
+                "fetch",
+                "--quiet",
+                "origin",
+                cwd=self.repo_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await result.communicate()
+
+            if result.returncode != 0:
+                self.log.warning(
+                    "git.quick_fetch_error",
+                    stderr=stderr.decode(),
+                    exit_code=result.returncode,
+                )
+                return
+
+            # Check if we're behind the remote
+            # Get the current branch
+            result = await asyncio.create_subprocess_exec(
+                "git",
+                "rev-parse",
+                "--abbrev-ref",
+                "HEAD",
+                cwd=self.repo_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await result.communicate()
+            current_branch = stdout.decode().strip()
+
+            # Check if we have an upstream set
+            result = await asyncio.create_subprocess_exec(
+                "git",
+                "rev-list",
+                "--count",
+                f"HEAD..origin/{current_branch}",
+                cwd=self.repo_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await result.communicate()
+
+            if result.returncode == 0:
+                commits_behind = int(stdout.decode().strip() or "0")
+                self.log.info(
+                    "git.snapshot_status",
+                    commits_behind=commits_behind,
+                    current_branch=current_branch,
+                )
+            else:
+                self.log.debug("git.snapshot_status_unknown", reason="no_upstream")
+
+        except Exception as e:
+            self.log.error("git.quick_fetch_error", exc=e)
+
+    async def run(self) -> None:
+        """Main supervisor loop."""
+        startup_start = time.time()
+
+        self.log.info(
+            "supervisor.start",
+            repo_owner=self.repo_owner,
+            repo_name=self.repo_name,
+        )
+
+        # Check if restored from snapshot
+        restored_from_snapshot = os.environ.get("RESTORED_FROM_SNAPSHOT") == "true"
+        if restored_from_snapshot:
+            self.log.info("supervisor.restored_from_snapshot")
+
+        # Set up signal handlers
+        loop = asyncio.get_event_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(self._handle_signal(s)))
+
+        git_sync_success = False
+        opencode_ready = False
+        try:
+            # Phase 1: Git sync
+            if restored_from_snapshot:
+                # Restored from snapshot - just do a quick fetch to check for updates
+                await self._quick_git_fetch()
+                self.git_sync_complete.set()
+                git_sync_success = True
+            else:
+                # Fresh sandbox - full git clone and sync
+                git_sync_success = await self.perform_git_sync()
+
+            # Phase 2: Configure git identity (if repo was cloned)
+            await self.configure_git_identity()
+
+            # Snapshot cache state before any package installs (setup + coding task).
+            # The "after" snapshot is taken at shutdown to capture the full lifecycle.
+            self._cache_snapshot_before = await self._snapshot_cache_state()
+
+            # Persist before-snapshot so the bridge can compute cache summary
+            import json as _json
+            try:
+                serializable = {k: sorted(v) for k, v in self._cache_snapshot_before.items()}
+                Path("/tmp/cache_snapshot_before.json").write_text(_json.dumps(serializable))
+            except Exception:
+                pass
+
+            # Phase 2.5: Run repo setup script (fresh clone only)
+            setup_success: bool | None = None
+            if not restored_from_snapshot:
+                setup_success = await self.run_setup_script()
+
+            # Phase 3: Start OpenCode server (in repo directory)
+            await self.start_opencode()
+            opencode_ready = True
+
+            # Phase 4: Start bridge (after OpenCode is ready)
+            await self.start_bridge()
+
+            # Emit sandbox.startup wide event
+            duration_ms = int((time.time() - startup_start) * 1000)
+            self.log.info(
+                "sandbox.startup",
+                repo_owner=self.repo_owner,
+                repo_name=self.repo_name,
+                restored_from_snapshot=restored_from_snapshot,
+                git_sync_success=git_sync_success,
+                setup_success=setup_success,
+                opencode_ready=opencode_ready,
+                duration_ms=duration_ms,
+                outcome="success",
+            )
+
+            # Phase 5: Monitor processes
+            await self.monitor_processes()
+
+        except Exception as e:
+            self.log.error("supervisor.error", exc=e)
+            await self._report_fatal_error(str(e))
+
+        finally:
+            await self.shutdown()
+
+    async def _handle_signal(self, sig: signal.Signals) -> None:
+        """Handle shutdown signal."""
+        self.log.info("supervisor.signal", signal_name=sig.name)
+        self.shutdown_event.set()
+
+    async def shutdown(self) -> None:
+        """Graceful shutdown of all processes."""
+        self.log.info("supervisor.shutdown_start")
+
+        # Log cache changes across the full sandbox lifecycle (setup + coding task)
+        if self._cache_snapshot_before is not None:
+            try:
+                cache_after = await self._snapshot_cache_state()
+                await self._log_cache_changes(self._cache_snapshot_before, cache_after)
+            except Exception as e:
+                self.log.warning("cache.snapshot_error", exc=e)
+
+        # Terminate bridge first
+        if self.bridge_process and self.bridge_process.returncode is None:
+            self.bridge_process.terminate()
+            try:
+                await asyncio.wait_for(self.bridge_process.wait(), timeout=5.0)
+            except TimeoutError:
+                self.bridge_process.kill()
+
+        # Terminate OpenCode
+        if self.opencode_process and self.opencode_process.returncode is None:
+            self.opencode_process.terminate()
+            try:
+                await asyncio.wait_for(self.opencode_process.wait(), timeout=10.0)
+            except TimeoutError:
+                self.opencode_process.kill()
+
+        self.log.info("supervisor.shutdown_complete")
+
+
+async def main():
+    """Entry point for the sandbox supervisor."""
+    supervisor = SandboxSupervisor()
+    await supervisor.run()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

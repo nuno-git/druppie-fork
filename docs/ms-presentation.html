@@ -1,0 +1,1177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Druppie — Rijnland Water Authority × Agentic AI</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --deep: #0a1628;
+    --ocean: #0e2240;
+    --surface: #132e4f;
+    --water: #2196F3;
+    --water-light: #64B5F6;
+    --water-pale: rgba(33, 150, 243, 0.08);
+    --foam: #e3f2fd;
+    --sand: #f5e6d0;
+    --reed: #8bc34a;
+    --reed-dark: #558b2f;
+    --warm: #ff8a65;
+    --coral: #ef5350;
+    --text: #e8edf5;
+    --text-mid: #94a8c4;
+    --text-dim: #5a7194;
+    --glass: rgba(19, 46, 79, 0.65);
+    --glass-border: rgba(33, 150, 243, 0.12);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--deep);
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  /* ── Water ambient background ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 120% 80% at 20% 100%, rgba(33, 150, 243, 0.06) 0%, transparent 60%),
+      radial-gradient(ellipse 100% 60% at 80% 0%, rgba(33, 150, 243, 0.04) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── Slide system ── */
+  .slide {
+    display: none;
+    height: 100vh;
+    padding: 64px 88px;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+  }
+
+  .slide.active { display: flex; }
+
+  /* ── Typography ── */
+  h1 {
+    font-family: 'DM Serif Display', serif;
+    font-weight: 400;
+    line-height: 1.1;
+  }
+
+  h2 {
+    font-family: 'DM Serif Display', serif;
+    font-size: 2.8rem;
+    font-weight: 400;
+    color: #fff;
+    margin-bottom: 36px;
+    line-height: 1.15;
+  }
+
+  h2 .accent { color: var(--water-light); }
+
+  h3 {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--water-light);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    margin-bottom: 16px;
+  }
+
+  /* ── Title slide ── */
+  .slide.title-slide {
+    align-items: center;
+    text-align: center;
+  }
+
+  .title-slide .org-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 24px;
+    border-radius: 100px;
+    background: var(--water-pale);
+    border: 1px solid var(--glass-border);
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: var(--water-light);
+    margin-bottom: 48px;
+    letter-spacing: 0.5px;
+  }
+
+  .title-slide .org-badge .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--water);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  .org-logo {
+    height: 64px;
+    width: auto;
+    object-fit: contain;
+    filter: brightness(0) invert(1) brightness(2) sepia(1) hue-rotate(180deg) saturate(3);
+    margin-bottom: 12px;
+  }
+
+  .rijnland-crest {
+    height: 80px;
+    width: auto;
+    object-fit: contain;
+    filter: brightness(0) invert(1) brightness(2) sepia(1) hue-rotate(180deg) saturate(3);
+    opacity: 0.85;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.5; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.3); }
+  }
+
+  .title-slide h1 {
+    font-size: 5.5rem;
+    color: #fff;
+    margin-bottom: 20px;
+  }
+
+  .title-slide h1 .water-text {
+    background: linear-gradient(135deg, var(--water-light), var(--water), #1565C0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .title-slide .subtitle {
+    font-size: 1.5rem;
+    color: var(--text-mid);
+    font-weight: 300;
+    max-width: 700px;
+    line-height: 1.5;
+    margin-bottom: 56px;
+  }
+
+  .title-slide .meta {
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    line-height: 1.8;
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 28px 30px;
+    transition: border-color 0.3s, transform 0.3s;
+  }
+
+  .card:hover {
+    border-color: rgba(33, 150, 243, 0.25);
+    transform: translateY(-2px);
+  }
+
+  .card h4 {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+
+  .card p {
+    font-size: 0.92rem;
+    color: var(--text-mid);
+    line-height: 1.65;
+  }
+
+  .card .icon {
+    font-size: 1.6rem;
+    margin-bottom: 12px;
+    display: block;
+  }
+
+  /* ── Grid ── */
+  .grid { display: grid; gap: 20px; }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .grid-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+
+  /* ── Two-column layout ── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    align-items: start;
+  }
+
+  /* ── Prose ── */
+  .prose {
+    font-size: 1.15rem;
+    color: var(--text-mid);
+    line-height: 1.75;
+    max-width: 640px;
+  }
+
+  .prose strong { color: #fff; font-weight: 600; }
+  .prose em { color: var(--water-light); font-style: italic; }
+
+  .prose + .prose { margin-top: 20px; }
+
+  /* ── Badges ── */
+  .badge-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 16px 0;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 16px;
+    border-radius: 100px;
+    font-size: 0.82rem;
+    font-weight: 500;
+  }
+
+  .badge.water  { background: rgba(33,150,243,0.12); color: var(--water-light); border: 1px solid rgba(33,150,243,0.25); }
+  .badge.green  { background: rgba(139,195,74,0.12); color: #aed581; border: 1px solid rgba(139,195,74,0.25); }
+  .badge.warm   { background: rgba(255,138,101,0.12); color: #ffab91; border: 1px solid rgba(255,138,101,0.25); }
+  .badge.sand   { background: rgba(245,230,208,0.08); color: var(--sand); border: 1px solid rgba(245,230,208,0.15); }
+  .badge.coral  { background: rgba(239,83,80,0.12); color: #ef9a9a; border: 1px solid rgba(239,83,80,0.25); }
+
+  /* ── Layers ── */
+  .layers {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 16px 0;
+  }
+
+  .layer {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 24px;
+    border-radius: 12px;
+    background: var(--glass);
+    border-left: 4px solid;
+  }
+
+  .layer-label { font-weight: 600; min-width: 180px; color: #fff; }
+  .layer-desc  { color: var(--text-mid); font-size: 0.92rem; }
+
+  /* ── Pipeline ── */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin: 24px 0;
+  }
+
+  .pipeline-node {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    text-align: center;
+    min-width: 110px;
+  }
+
+  .pipeline-node .role { font-size: 0.78rem; font-weight: 600; color: var(--water-light); }
+  .pipeline-node .name { font-size: 0.72rem; color: var(--text-dim); margin-top: 3px; }
+
+  .pipeline-arrow { color: var(--text-dim); font-size: 1.2rem; padding: 0 6px; }
+
+  /* ── Dev flow (vertical timeline) ── */
+  .dev-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .dev-step { display: flex; align-items: stretch; gap: 18px; }
+
+  .dev-step-line {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 36px;
+    flex-shrink: 0;
+  }
+
+  .dev-step-dot {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 6px;
+  }
+
+  .dev-step-connector {
+    width: 2px;
+    flex-grow: 1;
+    background: rgba(33, 150, 243, 0.15);
+  }
+
+  .dev-step-content { padding-bottom: 18px; flex-grow: 1; }
+  .dev-step-content .step-title { font-size: 0.95rem; font-weight: 600; color: #fff; margin-bottom: 2px; }
+  .dev-step-content .step-agent { font-size: 0.8rem; font-weight: 500; }
+  .dev-step-content .step-desc  { font-size: 0.82rem; color: var(--text-mid); line-height: 1.5; }
+
+  /* ── Person card ── */
+  .person-card {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 32px 28px;
+    text-align: center;
+    transition: border-color 0.3s;
+  }
+
+  .person-card:hover { border-color: rgba(33, 150, 243, 0.3); }
+
+  .person-card .avatar {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--surface), var(--ocean));
+    border: 2px solid var(--glass-border);
+    margin: 0 auto 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.6rem;
+  }
+
+  .person-card .name {
+    font-family: 'DM Serif Display', serif;
+    font-size: 1.25rem;
+    color: #fff;
+    margin-bottom: 4px;
+  }
+
+  .person-card .role-label {
+    font-size: 0.85rem;
+    color: var(--water-light);
+    margin-bottom: 10px;
+  }
+
+  .person-card .desc {
+    font-size: 0.85rem;
+    color: var(--text-mid);
+    line-height: 1.5;
+  }
+
+  /* ── Stat cards ── */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin: 24px 0;
+  }
+
+  .stat-card {
+    text-align: center;
+    padding: 28px 16px;
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+  }
+
+  .stat-card .num {
+    font-family: 'DM Serif Display', serif;
+    font-size: 2.4rem;
+    color: var(--water-light);
+  }
+
+  .stat-card .label {
+    margin-top: 6px;
+    font-size: 0.85rem;
+    color: var(--text-mid);
+  }
+
+  /* ── Quote block ── */
+  .quote-block {
+    border-left: 3px solid var(--water);
+    padding: 20px 28px;
+    background: var(--water-pale);
+    border-radius: 0 12px 12px 0;
+    margin: 24px 0;
+  }
+
+  .quote-block p {
+    font-family: 'DM Serif Display', serif;
+    font-size: 1.3rem;
+    color: #fff;
+    font-style: italic;
+    line-height: 1.5;
+  }
+
+  /* ── Challenge cards ── */
+  .challenge-card {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 28px 30px;
+    border-top: 3px solid;
+  }
+
+  .challenge-card h4 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 10px;
+  }
+
+  .challenge-card p {
+    font-size: 0.9rem;
+    color: var(--text-mid);
+    line-height: 1.6;
+  }
+
+  .challenge-card .tag {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 12px;
+  }
+
+  /* ── Code-like text ── */
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82em;
+    background: rgba(33, 150, 243, 0.08);
+    padding: 2px 7px;
+    border-radius: 5px;
+    color: var(--water-light);
+  }
+
+  /* ── Navigation ── */
+  .nav {
+    position: fixed;
+    bottom: 30px;
+    right: 40px;
+    display: flex;
+    gap: 10px;
+    z-index: 100;
+  }
+
+  .nav button {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    color: var(--text-mid);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    backdrop-filter: blur(8px);
+    transition: all 0.2s;
+  }
+
+  .nav button:hover {
+    background: rgba(33, 150, 243, 0.15);
+    border-color: rgba(33, 150, 243, 0.35);
+    color: var(--water-light);
+  }
+
+  .progress {
+    position: fixed;
+    bottom: 0; left: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--water), var(--water-light));
+    transition: width 0.3s;
+    z-index: 100;
+  }
+
+  .slide-counter {
+    position: fixed;
+    bottom: 38px;
+    left: 40px;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    z-index: 100;
+  }
+
+  /* ── Section marker ── */
+  .section-marker {
+    position: absolute;
+    top: 36px;
+    left: 88px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: var(--text-dim);
+  }
+
+  /* ── Closing slide ── */
+  .closing-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 32px;
+    border-radius: 100px;
+    background: linear-gradient(135deg, var(--water), #1565C0);
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 600;
+    border: none;
+    margin-top: 32px;
+    letter-spacing: 0.3px;
+  }
+
+  /* ── Animations ── */
+  .slide.active .fade-up {
+    animation: fadeUp 0.6s ease-out both;
+  }
+
+  .slide.active .fade-up:nth-child(1) { animation-delay: 0s; }
+  .slide.active .fade-up:nth-child(2) { animation-delay: 0.1s; }
+  .slide.active .fade-up:nth-child(3) { animation-delay: 0.2s; }
+  .slide.active .fade-up:nth-child(4) { animation-delay: 0.3s; }
+  .slide.active .fade-up:nth-child(5) { animation-delay: 0.4s; }
+  .slide.active .fade-up:nth-child(6) { animation-delay: 0.5s; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── Water wave decoration ── */
+  .wave-decoration {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 120px;
+    overflow: hidden;
+    opacity: 0.04;
+    pointer-events: none;
+  }
+
+  .wave-decoration svg {
+    position: absolute;
+    bottom: -10px;
+    width: 200%;
+    height: 120px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- SLIDE 1 — Title -->
+<!-- ============================================================ -->
+<div class="slide title-slide active" id="s1">
+  <div class="fade-up" style="margin-bottom:16px;">
+    <img src="Logo Hoogheemraadschap Rijnland_Fullcolor_RGB.png" alt="Hoogheemraadschap van Rijnland" class="org-logo">
+  </div>
+  <div class="org-badge fade-up" style="animation-delay:0.05s;">
+    <span class="dot"></span>
+    Rijnland Water Authority
+  </div>
+  <h1 class="fade-up" style="animation-delay:0.15s;">
+    <span class="water-text">Druppie</span>
+  </h1>
+  <div class="subtitle fade-up" style="animation-delay:0.25s;">
+    How a Dutch water authority built an agentic AI platform<br>that designs, builds, tests, and deploys software
+  </div>
+  <div class="meta fade-up" style="animation-delay:0.4s;">
+    <span style="color:var(--water-light);">github.com/nuno-git/druppie-fork</span>
+  </div>
+
+  <div class="wave-decoration">
+    <svg viewBox="0 0 1440 120" preserveAspectRatio="none">
+      <path fill="var(--water)" d="M0,60 C360,120 720,0 1080,60 C1260,90 1380,30 1440,60 L1440,120 L0,120 Z"/>
+    </svg>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 2 — Who we are -->
+<!-- ============================================================ -->
+<div class="slide" id="s2">
+  <div class="section-marker">01 &mdash; Introduction</div>
+  <h2 class="fade-up">Who <span class="accent">we are</span></h2>
+
+  <p class="prose fade-up" style="animation-delay:0.15s; margin-top: 36px; text-align: center; max-width: 100%;">
+    We're part of the innovation team at <strong>Rijnland Water Authority</strong> — one of 21 regional water authorities in the Netherlands.
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 3 — What is Rijnland? -->
+<!-- ============================================================ -->
+<div class="slide" id="s3">
+  <div class="section-marker">02 &mdash; Context</div>
+  <h2 class="fade-up">What is <span class="accent">Rijnland?</span></h2>
+
+  <div class="two-col">
+    <div>
+      <p class="prose fade-up" style="animation-delay:0.1s;">
+        Rijnland is a <strong>water authority</strong> — a public-law government body unique to the Netherlands. We manage water levels, flood defenses, and wastewater treatment for <strong>1.3 million people</strong> in the western Netherlands, including parts of Amsterdam, Leiden, and the surrounding polder landscape.
+      </p>
+      <p class="prose fade-up" style="animation-delay:0.2s;">
+        Our core tasks are keeping feet dry, water clean, and dikes strong. Not exactly a tech company. But running this infrastructure increasingly depends on <em>good software</em> — and as a public authority, everything we build must be explainable and serve the public interest.
+      </p>
+
+      <div class="quote-block fade-up" style="animation-delay:0.3s;">
+        <p>We're not a tech company — but we need tech to do our job.</p>
+      </div>
+    </div>
+
+    <div>
+      <div class="fade-up" style="text-align:center; margin-bottom:18px;">
+        <img src="Logo Hoogheemraadschap Rijnland_Fullcolor_RGB.png" alt="Rijnland coat of arms" class="rijnland-crest">
+      </div>
+      <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="card fade-up" style="animation-delay:0.15s;">
+          <span class="icon">🌊</span>
+          <h4>Water Level Management</h4>
+          <p>Safe water levels across a complex polder system</p>
+        </div>
+        <div class="card fade-up" style="animation-delay:0.25s;">
+          <span class="icon">🛡️</span>
+          <h4>Flood Protection</h4>
+          <p>700+ km of dikes in a region largely below sea level</p>
+        </div>
+        <div class="card fade-up" style="animation-delay:0.35s;">
+          <span class="icon">🧪</span>
+          <h4>Wastewater Treatment</h4>
+          <p>Cleaning water before it returns to the environment</p>
+        </div>
+        <div class="card fade-up" style="animation-delay:0.45s;">
+          <span class="icon">💧</span>
+          <h4>Water Quality</h4>
+          <p>Monitoring and improving surface water quality</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 4 — The problem / opportunity -->
+<!-- ============================================================ -->
+<div class="slide" id="s4">
+  <div class="section-marker">03 &mdash; Why we built this</div>
+  <h2 class="fade-up">The problem <span class="accent">we faced</span></h2>
+
+  <div class="two-col">
+    <div>
+      <p class="prose fade-up" style="animation-delay:0.1s;">
+        Like many public-sector organizations, we have a <strong>growing need for internal tooling</strong> — dashboards, data pipelines, operational apps — but a <strong>limited development team</strong> to build them.
+      </p>
+      <p class="prose fade-up" style="animation-delay:0.2s;">
+        We explored off-the-shelf solutions and Microsoft's low-code tools. They cover a lot, but when you need <strong>custom software</strong> — something tailored to a specific water management process — you hit a wall.
+      </p>
+      <p class="prose fade-up" style="animation-delay:0.3s;">
+        Then agentic AI entered the picture. We started asking: <em>what if AI agents could do the structured parts of software development, while humans stay in control of the decisions that matter?</em>
+      </p>
+    </div>
+
+    <div>
+      <div class="layers fade-up" style="animation-delay:0.2s;">
+        <div class="layer" style="border-color: var(--coral);">
+          <div class="layer-label">High demand</div>
+          <div class="layer-desc">Many internal apps needed, not enough developer capacity</div>
+        </div>
+        <div class="layer" style="border-color: var(--warm);">
+          <div class="layer-label">Custom needs</div>
+          <div class="layer-desc">Water management processes don't fit generic low-code templates</div>
+        </div>
+        <div class="layer" style="border-color: var(--water);">
+          <div class="layer-label">The hypothesis</div>
+          <div class="layer-desc">AI agents can handle structured dev work — under human oversight</div>
+        </div>
+      </div>
+
+      <div class="quote-block fade-up" style="animation-delay:0.35s;">
+        <p>What if the next developer on the team wasn't a person — but a network of agents?</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 5 — The product: overview -->
+<!-- ============================================================ -->
+<div class="slide" id="s5">
+  <div class="section-marker">04 &mdash; The Product</div>
+  <h2 class="fade-up">What we <span class="accent">built</span></h2>
+
+  <p class="prose fade-up" style="animation-delay:0.1s; max-width: 800px; margin-bottom: 36px;">
+    <strong>Druppie</strong> is a multi-agent platform that takes a user's request — <em>"build me a dashboard for pump station monitoring"</em> — and works through the full software development lifecycle: requirements, architecture, code, tests, and deployment. All with humans in control at every critical step.
+  </p>
+
+  <div class="stat-row fade-up" style="animation-delay:0.2s;">
+    <div class="stat-card">
+      <div class="num">12</div>
+      <div class="label">Specialized Agents</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">6</div>
+      <div class="label">MCP Servers</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">30+</div>
+      <div class="label">Governed Tools</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">15+</div>
+      <div class="label">Docker Services</div>
+    </div>
+  </div>
+
+  <div class="badge-row fade-up" style="animation-delay:0.35s; justify-content: center;">
+    <span class="badge water">MCP Protocol</span>
+    <span class="badge green">Multi-Agent Orchestration</span>
+    <span class="badge warm">Human-in-the-Loop</span>
+    <span class="badge sand">YAML-Driven Configuration</span>
+    <span class="badge coral">TDD Workflow</span>
+    <span class="badge water">OpenCode Sandboxes</span>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 6 — How it works: the pipeline -->
+<!-- ============================================================ -->
+<div class="slide" id="s6">
+  <div class="section-marker">04 &mdash; The Product</div>
+  <h2 class="fade-up">How software <span class="accent">gets built</span></h2>
+  <p class="fade-up" style="color:var(--text-mid); margin-bottom:20px; font-size:0.95rem; animation-delay:0.05s;">
+    A user says <code>"Build me a todo app"</code>. Here's what happens inside Druppie:
+  </p>
+
+  <div class="two-col" style="gap:32px;">
+    <div class="fade-up" style="animation-delay:0.1s;">
+      <div class="dev-flow">
+        <div class="dev-step">
+          <div class="dev-step-line">
+            <div class="dev-step-dot" style="background:var(--water-light);"></div>
+            <div class="dev-step-connector"></div>
+          </div>
+          <div class="dev-step-content">
+            <div class="step-title">1. Classify Intent</div>
+            <div class="step-agent" style="color:var(--water-light);">Router Agent</div>
+            <div class="step-desc">Determines this is a "create project" request. Creates a Git repository.</div>
+          </div>
+        </div>
+        <div class="dev-step">
+          <div class="dev-step-line">
+            <div class="dev-step-dot" style="background:#a78bfa;"></div>
+            <div class="dev-step-connector"></div>
+          </div>
+          <div class="dev-step-content">
+            <div class="step-title">2. Plan the Pipeline</div>
+            <div class="step-agent" style="color:#a78bfa;">Planner Agent</div>
+            <div class="step-desc">Decides which agents to run and in what order. Re-plans after each phase.</div>
+          </div>
+        </div>
+        <div class="dev-step">
+          <div class="dev-step-line">
+            <div class="dev-step-dot" style="background:var(--reed);"></div>
+            <div class="dev-step-connector"></div>
+          </div>
+          <div class="dev-step-content">
+            <div class="step-title">3. Gather Requirements</div>
+            <div class="step-agent" style="color:var(--reed);">Business Analyst Agent</div>
+            <div class="step-desc">Asks the user structured questions (multiple choice + text). Produces a functional design doc.</div>
+          </div>
+        </div>
+        <div class="dev-step">
+          <div class="dev-step-line">
+            <div class="dev-step-dot" style="background:var(--warm);"></div>
+            <div class="dev-step-connector"></div>
+          </div>
+          <div class="dev-step-content">
+            <div class="step-title">4. Design Architecture</div>
+            <div class="step-agent" style="color:var(--warm);">Architect Agent</div>
+            <div class="step-desc">Validates against standards, writes a technical design with diagrams. Can reject back to BA.</div>
+          </div>
+        </div>
+        <div class="dev-step">
+          <div class="dev-step-line">
+            <div class="dev-step-dot" style="background:#f472b6;"></div>
+            <div class="dev-step-connector" style="background:transparent;"></div>
+          </div>
+          <div class="dev-step-content">
+            <div class="step-title">5. Plan Implementation</div>
+            <div class="step-agent" style="color:#f472b6;">Builder Planner Agent</div>
+            <div class="step-desc">Creates a detailed code plan with standards, file structure, and test strategy.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fade-up" style="animation-delay:0.2s;">
+      <div class="dev-flow">
+        <div class="dev-step">
+          <div class="dev-step-line">
+            <div class="dev-step-dot" style="background:var(--coral);"></div>
+            <div class="dev-step-connector"></div>
+          </div>
+          <div class="dev-step-content">
+            <div class="step-title">6. Write Tests First</div>
+            <div class="step-agent" style="color:var(--coral);">Test Builder Agent — TDD Red</div>
+            <div class="step-desc">Writes comprehensive test suites based on the plan. Does not run them yet.</div>
+          </div>
+        </div>
+        <div class="dev-step">
+          <div class="dev-step-line">
+            <div class="dev-step-dot" style="background:#22d3ee;"></div>
+            <div class="dev-step-connector"></div>
+          </div>
+          <div class="dev-step-content">
+            <div class="step-title">7. Build the Code</div>
+            <div class="step-agent" style="color:#22d3ee;">Builder Agent → OpenCode Sandbox — TDD Green</div>
+            <div class="step-desc">Delegates to an isolated sandbox container. Writes code, commits, pushes to git.</div>
+          </div>
+        </div>
+        <div class="dev-step">
+          <div class="dev-step-line">
+            <div class="dev-step-dot" style="background:var(--reed);"></div>
+            <div class="dev-step-connector"></div>
+          </div>
+          <div class="dev-step-content">
+            <div class="step-title">8. Run Tests &amp; Fix</div>
+            <div class="step-agent" style="color:var(--reed);">Test Executor Agent</div>
+            <div class="step-desc">Runs tests, diagnoses failures, fixes code. Iterates up to 3 times, then escalates.</div>
+          </div>
+        </div>
+        <div class="dev-step">
+          <div class="dev-step-line">
+            <div class="dev-step-dot" style="background:var(--warm);"></div>
+            <div class="dev-step-connector"></div>
+          </div>
+          <div class="dev-step-content">
+            <div class="step-title">9. Deploy Preview</div>
+            <div class="step-agent" style="color:var(--warm);">Deployer Agent</div>
+            <div class="step-desc">Builds Docker image, runs container, gives user a preview URL. Requires approval.</div>
+          </div>
+        </div>
+        <div class="dev-step">
+          <div class="dev-step-line">
+            <div class="dev-step-dot" style="background:#a78bfa;"></div>
+            <div class="dev-step-connector" style="background:transparent;"></div>
+          </div>
+          <div class="dev-step-content">
+            <div class="step-title">10. User Feedback Loop</div>
+            <div class="step-agent" style="color:#a78bfa;">Planner re-evaluates</div>
+            <div class="step-desc">User approves → summarize &amp; wrap up. User wants changes → loop back.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 7 — Architecture on a page -->
+<!-- ============================================================ -->
+<div class="slide" id="s7">
+  <div class="section-marker">04 &mdash; The Product</div>
+  <h2 class="fade-up">Architecture at <span class="accent">a glance</span></h2>
+
+  <div class="grid grid-3 fade-up" style="animation-delay:0.1s; margin-bottom: 20px;">
+    <div class="card">
+      <span class="icon">⚙️</span>
+      <h4>Application Layer</h4>
+      <div class="badge-row">
+        <span class="badge water">FastAPI</span>
+        <span class="badge water">React</span>
+      </div>
+      <p>Python backend with layered architecture. React frontend with real-time chat UI and agent status updates.</p>
+    </div>
+    <div class="card">
+      <span class="icon">🔐</span>
+      <h4>Identity &amp; Git</h4>
+      <div class="badge-row">
+        <span class="badge sand">Keycloak SSO</span>
+        <span class="badge sand">Gitea</span>
+      </div>
+      <p>Keycloak for OAuth/OIDC with role-based access. Gitea for self-hosted git repos — full audit trail.</p>
+    </div>
+    <div class="card">
+      <span class="icon">🗄️</span>
+      <h4>Data Layer</h4>
+      <div class="badge-row">
+        <span class="badge green">PostgreSQL</span>
+      </div>
+      <p>Fully relational schema. DB is single source of truth — agents reconstruct state from database on resume.</p>
+    </div>
+  </div>
+
+  <div class="grid grid-2 fade-up" style="animation-delay:0.25s;">
+    <div class="card">
+      <h4>6 MCP Servers (containerized microservices)</h4>
+      <div class="badge-row">
+        <span class="badge water">Coding :9001</span>
+        <span class="badge water">Docker :9002</span>
+        <span class="badge water">FileSearch :9004</span>
+        <span class="badge water">Web :9005</span>
+        <span class="badge water">ArchiMate :9006</span>
+        <span class="badge water">Registry :9007</span>
+      </div>
+      <p>Each server wraps a <strong>Module</strong> — a clean business-logic layer. Thin <code>server.py</code> exposes tools over HTTP via the MCP protocol.</p>
+    </div>
+    <div class="card">
+      <h4>OpenCode Sandbox Infrastructure</h4>
+      <div class="badge-row">
+        <span class="badge warm">Control Plane</span>
+        <span class="badge warm">Sandbox Manager</span>
+        <span class="badge warm">OpenCode Agent</span>
+      </div>
+      <p>Isolated containers for heavy coding. Dual-network security, credential proxying, webhook-based completion. No secrets touch the sandbox.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 8 — Key technical choices -->
+<!-- ============================================================ -->
+<div class="slide" id="s8">
+  <div class="section-marker">04 &mdash; The Product</div>
+  <h2 class="fade-up">Key technical <span class="accent">choices</span></h2>
+
+  <div class="two-col">
+    <div>
+      <div class="card fade-up" style="animation-delay:0.1s; margin-bottom: 20px;">
+        <h4>Everything is YAML-configured</h4>
+        <p>Every agent is defined declaratively — system prompt, tool whitelist, LLM profile, approval overrides, iteration limits. No behavior is hardcoded. Want a new agent? Write a YAML file.</p>
+      </div>
+      <div class="card fade-up" style="animation-delay:0.2s; margin-bottom: 20px;">
+        <h4>MCP &amp; built-in tools</h4>
+        <p>Agents interact with the world through MCP (Model Context Protocol) tool servers and built-in tools. Every action — file write, git push, Docker build — is auditable and governable.</p>
+      </div>
+      <div class="card fade-up" style="animation-delay:0.3s;">
+        <h4>TDD by design</h4>
+        <p>Tests are written before code. A separate agent writes tests (Red phase), another writes code to pass them (Green phase), and a third runs and fixes them. The agents can't skip testing.</p>
+      </div>
+    </div>
+
+    <div>
+      <div class="card fade-up" style="animation-delay:0.15s; margin-bottom: 20px;">
+        <h4>Human-in-the-loop at every critical step</h4>
+        <p>Every tool has an approval policy. Dangerous operations — Docker builds, merges, deployments — pause execution and wait for the right role to approve. Agents also ask structured questions to gather user input.</p>
+      </div>
+      <div class="card fade-up" style="animation-delay:0.25s; margin-bottom: 20px;">
+        <h4>Skills as composable capabilities</h4>
+        <p>Skills are Markdown-based capability packs agents invoke at runtime, granting temporary tool access and instructions. Code review, git workflows, diagram generation — all reusable across agents.</p>
+      </div>
+      <div class="card fade-up" style="animation-delay:0.35s;">
+        <h4>LLM provider resilience</h4>
+        <p>Three-layer failover: proxy-level switch, Druppie-level retry with a different model chain, and a watchdog that detects stalled sessions. We're not locked into a single provider.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 9 — Demo / Screenshots -->
+<!-- ============================================================ -->
+<div class="slide" id="s9">
+  <div class="section-marker">04 &mdash; The Product</div>
+  <h2 class="fade-up"><span class="accent">Demo</span></h2>
+
+  <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; flex:1;">
+    <div class="card fade-up" style="animation-delay:0.1s; max-width:720px; text-align:center; padding: 60px 48px;">
+      <span style="font-size:3.5rem; display:block; margin-bottom:24px;">🎬</span>
+      <h4 style="font-size:1.5rem; margin-bottom:16px; font-family:'DM Serif Display',serif; font-weight:400;">Live demo or screenshots</h4>
+      <p style="font-size:1.05rem; line-height:1.7;">
+      </p>
+      <div class="badge-row" style="justify-content:center; margin-top:24px;">
+        <span class="badge water">Chat UI</span>
+        <span class="badge green">Agent Flow</span>
+        <span class="badge warm">Deployed Output</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 10 — The elephant in the room -->
+<!-- ============================================================ -->
+<div class="slide" id="s10">
+  <div class="section-marker">05 &mdash; Challenges</div>
+  <h2 class="fade-up">The elephant <span class="accent">in the room</span></h2>
+
+  <div class="two-col">
+    <div>
+      <p class="prose fade-up" style="animation-delay:0.1s;">
+        We manage water. We run pumps and dikes and treatment plants. We have <strong>never in our history built and shipped software as a product</strong>. And now we're doing exactly that.
+      </p>
+      <p class="prose fade-up" style="animation-delay:0.2s;">
+        That forces a set of questions we’ve never had to answer before — questions that are second nature to software companies but completely new to us. And as a public authority, we can’t just move fast and break things — we need to be able to justify and explain what we ship.
+      </p>
+
+      <div class="quote-block fade-up" style="animation-delay:0.3s;">
+        <p>We went from &lsquo;we use software&rsquo; to &lsquo;we build software&rsquo; — and those are very different things.</p>
+      </div>
+    </div>
+
+    <div>
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <div class="challenge-card fade-up" style="animation-delay:0.15s; border-top-color: var(--coral);">
+          <div class="tag" style="color:var(--coral);">New territory</div>
+          <h4>How do you write good software?</h4>
+          <p>What does quality look like when you don't have decades of engineering culture? How do you enforce standards when you're still figuring out what the standards should be?</p>
+        </div>
+        <div class="challenge-card fade-up" style="animation-delay:0.25s; border-top-color: var(--warm);">
+          <div class="tag" style="color:var(--warm);">Security</div>
+          <h4>How do you keep it safe?</h4>
+          <p>Supply chain attacks, dependency management, vulnerability scanning, secrets handling — we're a government body running AI agents that write and deploy code. The security bar is high and we're learning as we go.</p>
+        </div>
+        <div class="challenge-card fade-up" style="animation-delay:0.35s; border-top-color: var(--water);">
+          <div class="tag" style="color:var(--water-light);">Infrastructure</div>
+          <h4>How do you set up the infra?</h4>
+          <p>CI/CD pipelines, container orchestration, monitoring, logging, environments — all things we had to figure out from scratch. We're running 15+ Docker services. That's a lot for a water authority.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 11 — Technical & organizational challenges -->
+<!-- ============================================================ -->
+<div class="slide" id="s11">
+  <div class="section-marker">05 &mdash; Challenges</div>
+  <h2 class="fade-up">Technical <span class="accent">&amp; organizational</span> challenges</h2>
+
+  <p class="prose fade-up" style="animation-delay:0.05s; max-width:800px; margin-bottom:32px;">
+    Beyond the identity question, these are the specific walls we're hitting. We're sharing them openly — because we think the interesting conversations start here.
+  </p>
+
+  <div class="grid grid-3 fade-up" style="animation-delay:0.15s;">
+    <div class="challenge-card" style="border-top-color: var(--coral);">
+      <div class="tag" style="color:var(--coral);">Technical</div>
+      <h4>Context window limits</h4>
+      <p>Complex projects generate massive context across 12 agents. Keeping each agent informed without blowing token limits is a constant balancing act.</p>
+    </div>
+    <div class="challenge-card" style="border-top-color: var(--warm);">
+      <div class="tag" style="color:var(--warm);">Technical</div>
+      <h4>Agent reliability</h4>
+      <p>LLMs can be unpredictable. An agent might misinterpret a plan, skip a step, or loop endlessly. We've built guardrails, but reliability is an ongoing effort.</p>
+    </div>
+    <div class="challenge-card" style="border-top-color: var(--water);">
+      <div class="tag" style="color:var(--water-light);">Technical</div>
+      <h4>Testing AI behavior</h4>
+      <p>How do you write tests for a system whose behavior is nondeterministic? Our TDD pipeline helps for generated code, but validating the orchestration layer is genuinely hard.</p>
+    </div>
+  </div>
+
+  <div class="grid grid-3 fade-up" style="animation-delay:0.3s; margin-top: 20px;">
+    <div class="challenge-card" style="border-top-color: var(--sand);">
+      <div class="tag" style="color:var(--sand);">Organizational</div>
+      <h4>Public sector &amp; AI governance</h4>
+      <p>As a public authority, building an AI platform raises questions that private companies rarely face — data sovereignty, procurement rules, legal compliance, public accountability, and the need for transparency and explainability in how AI-generated software serves the public interest.</p>
+    </div>
+    <div class="challenge-card" style="border-top-color: var(--reed);">
+      <div class="tag" style="color:var(--reed);">Feasibility</div>
+      <h4>Where's the ceiling?</h4>
+      <p>Druppie handles well-structured apps today. Complex, stateful, or UI-heavy applications stretch current capabilities. Are we building a useful tool or chasing a moving target?</p>
+    </div>
+    <div class="challenge-card" style="border-top-color: #a78bfa;">
+      <div class="tag" style="color:#a78bfa;">Sustainability</div>
+      <h4>Maintaining what we build</h4>
+      <p>Building software is one thing — maintaining it is another. Patching, upgrading, monitoring, on-call. Can a small team inside a water authority sustain a platform this complex long-term?</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SLIDE 12 — Closing -->
+<!-- ============================================================ -->
+<div class="slide title-slide" id="s12">
+  <h3 class="fade-up">Thank you</h3>
+  <h1 class="fade-up" style="font-size:3.5rem; animation-delay:0.1s;">
+    Let's <span class="water-text">talk</span>
+  </h1>
+
+  <p class="subtitle fade-up" style="animation-delay:0.2s; font-size:1.2rem;">
+    We're here for two days — find us for deeper dives,<br>
+    technical questions, or just to chat about agentic AI in the wild.
+  </p>
+
+  <div class="fade-up" style="animation-delay:0.3s;">
+    <div class="card" style="max-width: 560px; text-align: center; padding: 28px 36px;">
+      <h4 style="margin-bottom: 12px;">What we're hoping to take home</h4>
+      <p>How are other organizations handling AI governance, agent reliability, and the leap from using software to building it?</p>
+    </div>
+  </div>
+
+  <div class="fade-up" style="animation-delay:0.4s; margin-top: 28px; text-align: center;">
+    <div style="font-size: 0.92rem; color: var(--text-mid);">
+      <code style="font-size: 0.95rem;">github.com/nuno-git/druppie-fork</code>
+    </div>
+  </div>
+
+  <div class="wave-decoration">
+    <svg viewBox="0 0 1440 120" preserveAspectRatio="none">
+      <path fill="var(--water)" d="M0,60 C360,120 720,0 1080,60 C1260,90 1380,30 1440,60 L1440,120 L0,120 Z"/>
+    </svg>
+  </div>
+</div>
+
+
+<!-- ── Navigation ── -->
+<div class="nav">
+  <button onclick="prev()" title="Previous (←)">←</button>
+  <button onclick="next()" title="Next (→)">→</button>
+</div>
+<div class="progress" id="progress"></div>
+<div class="slide-counter" id="counter"></div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  let current = 0;
+
+  function show(n) {
+    slides[current].classList.remove('active');
+    current = (n + slides.length) % slides.length;
+    slides[current].classList.add('active');
+    document.getElementById('progress').style.width =
+      ((current + 1) / slides.length * 100) + '%';
+    document.getElementById('counter').textContent =
+      (current + 1) + ' / ' + slides.length;
+  }
+
+  function next() { show(current + 1); }
+  function prev() { show(current - 1); }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); next(); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
+  });
+
+  // Touch support
+  let touchStartX = 0;
+  document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+  document.addEventListener('touchend', (e) => {
+    const diff = touchStartX - e.changedTouches[0].clientX;
+    if (Math.abs(diff) > 50) { diff > 0 ? next() : prev(); }
+  });
+
+  show(0);
+</script>
+
+</body>
+</html>
