@@ -4,32 +4,26 @@
 # Destroys EVERYTHING (containers, volumes, images) and rebuilds from scratch.
 # As if you just cloned the repo and set up for the first time.
 #
-# Usage:
+# Dockerized usage (recommended):
 #   docker compose --profile nuke run --rm nuke
 #   START_AFTER=false docker compose --profile nuke run --rm nuke   # nuke only, don't start
-#   ./scripts/nuke.sh                                               # direct usage (Linux/Mac)
+#
+# Direct usage:
+#   ./scripts/nuke.sh [--stop]
 
 set -e
 
-# Detect if running inside the nuke container
+# When running inside the container, /project is the repo root
 if [ -d /project ]; then
     cd /project
-    # Get the real host path by inspecting our own container's mounts
-    HOST_PROJECT_DIR=$(docker inspect druppie-nuke --format '{{range .Mounts}}{{if eq .Destination "/project"}}{{.Source}}{{end}}{{end}}')
-    echo "  Host project path: $HOST_PROJECT_DIR"
 else
     cd "$(dirname "$0")/.."
-    HOST_PROJECT_DIR="$(pwd)"
 fi
-
-COMPOSE="docker compose --project-directory $HOST_PROJECT_DIR"
 
 START_AFTER="${START_AFTER:-true}"
 if [ "$1" = "--stop" ]; then
     START_AFTER="false"
 fi
-
-ALL_PROFILES="--profile dev --profile prod --profile infra --profile init --profile reset-db --profile reset-hard --profile reset-cache --profile scan-cache --profile nuke"
 
 echo "=============================================="
 echo "  Druppie Platform - FULL NUKE & REBUILD"
@@ -44,22 +38,22 @@ echo ""
 
 # Step 1: Stop all containers and remove volumes
 echo "--- Step 1: Stopping all containers and removing volumes ---"
-$COMPOSE $ALL_PROFILES down -v --remove-orphans || true
-
-# Force-remove ALL druppie containers that survived (including from other Docker instances)
-for cid in $(docker ps -aq --filter "name=druppie-" 2>/dev/null); do
-    NAME=$(docker inspect --format '{{.Name}}' "$cid" 2>/dev/null)
-    # Skip the nuke container (that's us)
-    if [ "$NAME" = "/druppie-nuke" ]; then continue; fi
-    echo "  Removing stale container: $NAME"
-    docker rm -f "$cid" 2>/dev/null || true
-done
+docker compose \
+    --profile dev --profile prod --profile infra \
+    --profile init --profile reset-db --profile reset-hard \
+    --profile reset-cache --profile scan-cache \
+    down -v --remove-orphans || true
 echo "  Done"
 echo ""
 
-# Step 2: Remove any remaining named volumes
+# Step 2: Remove any remaining named volumes (catches volumes that survived Step 1)
 echo "--- Step 2: Cleaning up remaining volumes ---"
-VOLUMES=$($COMPOSE $ALL_PROFILES config --volumes 2>/dev/null) || true
+VOLUMES=$(docker compose \
+    --profile dev --profile prod --profile infra \
+    --profile init --profile reset-db --profile reset-hard \
+    --profile reset-cache --profile scan-cache \
+    config --volumes 2>/dev/null) || true
+
 for vol in $VOLUMES; do
     if docker volume inspect "$vol" >/dev/null 2>&1; then
         echo "  Removing volume: $vol"
@@ -69,12 +63,18 @@ done
 echo "  Done"
 echo ""
 
-# Step 3: Remove all locally built images
+# Step 3: Remove all locally built images (forces full rebuild)
 echo "--- Step 3: Removing built Docker images ---"
-IMAGES=$($COMPOSE $ALL_PROFILES config --images 2>/dev/null | sort -u) || true
+IMAGES=$(docker compose \
+    --profile dev --profile prod --profile infra \
+    --profile init --profile reset-db --profile reset-hard \
+    --profile reset-cache --profile scan-cache \
+    config --images 2>/dev/null | sort -u) || true
+
 for img in $IMAGES; do
+    # Skip upstream images - only remove locally built ones
     case "$img" in
-        postgres:*|quay.io/*|docker:*|adminer:*|gitea/*) continue ;;
+        postgres:*|quay.io/*|docker:*) continue ;;
     esac
     if docker image inspect "$img" >/dev/null 2>&1; then
         echo "  Removing image: $img"
@@ -90,22 +90,16 @@ if command -v git >/dev/null 2>&1 && [ -d .git ]; then
     git submodule update --init --recursive
     echo "  Done"
 else
-    echo "  Skipped (no git available or not a git repo)"
+    echo "  Skipped (no git available in container)"
 fi
 echo ""
 
 if [ "$START_AFTER" = "true" ]; then
-    # Step 5: Purge build cache
-    echo "--- Step 5: Purging Docker build cache ---"
-    docker builder prune -af 2>/dev/null || true
-    echo "  Done"
-    echo ""
-
-    # Step 6: Build and start everything
-    echo "--- Step 6: Building and starting dev environment ---"
+    # Step 5: Build and start everything from scratch
+    echo "--- Step 5: Building and starting dev environment ---"
     echo "  This will take a few minutes on first build..."
     echo ""
-    $COMPOSE --profile dev --profile init up -d --build
+    docker compose --profile dev --profile init up -d --build
     echo ""
 
     echo "=============================================="
